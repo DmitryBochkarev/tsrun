@@ -298,24 +298,24 @@
 - [ ] `String.prototype.localeCompare(other)`
 
 #### Number
-- [ ] `Number.isNaN(value)`
-- [ ] `Number.isFinite(value)`
-- [ ] `Number.isInteger(value)`
-- [ ] `Number.isSafeInteger(value)`
-- [ ] `Number.parseInt(string, radix?)`
-- [ ] `Number.parseFloat(string)`
-- [ ] `Number.prototype.toFixed(digits?)`
+- [x] `Number.isNaN(value)`
+- [x] `Number.isFinite(value)`
+- [x] `Number.isInteger(value)`
+- [x] `Number.isSafeInteger(value)`
+- [x] `Number.parseInt(string, radix?)`
+- [x] `Number.parseFloat(string)`
+- [x] `Number.prototype.toFixed(digits?)`
 - [ ] `Number.prototype.toPrecision(precision?)`
 - [ ] `Number.prototype.toExponential(digits?)`
-- [ ] `Number.prototype.toString(radix?)`
-- [ ] `Number.POSITIVE_INFINITY`
-- [ ] `Number.NEGATIVE_INFINITY`
-- [ ] `Number.MAX_VALUE`
-- [ ] `Number.MIN_VALUE`
-- [ ] `Number.MAX_SAFE_INTEGER`
-- [ ] `Number.MIN_SAFE_INTEGER`
-- [ ] `Number.EPSILON`
-- [ ] `Number.NaN`
+- [x] `Number.prototype.toString(radix?)`
+- [x] `Number.POSITIVE_INFINITY`
+- [x] `Number.NEGATIVE_INFINITY`
+- [x] `Number.MAX_VALUE`
+- [x] `Number.MIN_VALUE`
+- [x] `Number.MAX_SAFE_INTEGER`
+- [x] `Number.MIN_SAFE_INTEGER`
+- [x] `Number.EPSILON`
+- [x] `Number.NaN`
 
 #### Math
 - [x] `Math.abs(x)`

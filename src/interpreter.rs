@@ -34,6 +34,8 @@ pub struct Interpreter {
     pub array_prototype: JsObjectRef,
     /// String.prototype for string methods
     pub string_prototype: JsObjectRef,
+    /// Number.prototype for number methods
+    pub number_prototype: JsObjectRef,
 }
 
 impl Interpreter {
@@ -551,7 +553,104 @@ impl Interpreter {
         }));
         env.define("parseFloat".to_string(), JsValue::Object(parsefloat_fn), false);
 
-        Self { global, env, array_prototype, string_prototype }
+        // Add global isNaN
+        let isnan_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "isNaN".to_string(),
+            func: global_is_nan,
+            arity: 1,
+        }));
+        env.define("isNaN".to_string(), JsValue::Object(isnan_fn), false);
+
+        // Add global isFinite
+        let isfinite_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "isFinite".to_string(),
+            func: global_is_finite,
+            arity: 1,
+        }));
+        env.define("isFinite".to_string(), JsValue::Object(isfinite_fn), false);
+
+        // Add Number object
+        let number_proto = create_object();
+        {
+            let mut proto = number_proto.borrow_mut();
+
+            let tofixed_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "toFixed".to_string(),
+                func: number_to_fixed,
+                arity: 1,
+            }));
+            proto.set_property(PropertyKey::from("toFixed"), JsValue::Object(tofixed_fn));
+
+            let tostring_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "toString".to_string(),
+                func: number_to_string,
+                arity: 1,
+            }));
+            proto.set_property(PropertyKey::from("toString"), JsValue::Object(tostring_fn));
+        }
+
+        let number_obj = create_object();
+        {
+            let mut num = number_obj.borrow_mut();
+
+            // Static methods
+            let isnan_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "isNaN".to_string(),
+                func: number_is_nan,
+                arity: 1,
+            }));
+            num.set_property(PropertyKey::from("isNaN"), JsValue::Object(isnan_fn));
+
+            let isfinite_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "isFinite".to_string(),
+                func: number_is_finite,
+                arity: 1,
+            }));
+            num.set_property(PropertyKey::from("isFinite"), JsValue::Object(isfinite_fn));
+
+            let isinteger_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "isInteger".to_string(),
+                func: number_is_integer,
+                arity: 1,
+            }));
+            num.set_property(PropertyKey::from("isInteger"), JsValue::Object(isinteger_fn));
+
+            let issafeinteger_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "isSafeInteger".to_string(),
+                func: number_is_safe_integer,
+                arity: 1,
+            }));
+            num.set_property(PropertyKey::from("isSafeInteger"), JsValue::Object(issafeinteger_fn));
+
+            let parseint_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "parseInt".to_string(),
+                func: global_parse_int,
+                arity: 2,
+            }));
+            num.set_property(PropertyKey::from("parseInt"), JsValue::Object(parseint_fn));
+
+            let parsefloat_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "parseFloat".to_string(),
+                func: global_parse_float,
+                arity: 1,
+            }));
+            num.set_property(PropertyKey::from("parseFloat"), JsValue::Object(parsefloat_fn));
+
+            // Constants
+            num.set_property(PropertyKey::from("POSITIVE_INFINITY"), JsValue::Number(f64::INFINITY));
+            num.set_property(PropertyKey::from("NEGATIVE_INFINITY"), JsValue::Number(f64::NEG_INFINITY));
+            num.set_property(PropertyKey::from("MAX_VALUE"), JsValue::Number(f64::MAX));
+            num.set_property(PropertyKey::from("MIN_VALUE"), JsValue::Number(f64::MIN_POSITIVE));
+            num.set_property(PropertyKey::from("MAX_SAFE_INTEGER"), JsValue::Number(9007199254740991.0));
+            num.set_property(PropertyKey::from("MIN_SAFE_INTEGER"), JsValue::Number(-9007199254740991.0));
+            num.set_property(PropertyKey::from("EPSILON"), JsValue::Number(f64::EPSILON));
+            num.set_property(PropertyKey::from("NaN"), JsValue::Number(f64::NAN));
+
+            num.set_property(PropertyKey::from("prototype"), JsValue::Object(number_proto.clone()));
+        }
+        env.define("Number".to_string(), JsValue::Object(number_obj), false);
+
+        Self { global, env, array_prototype, string_prototype, number_prototype: number_proto }
     }
 
     /// Create an array with the proper prototype
@@ -1576,6 +1675,13 @@ impl Interpreter {
                 }
                 // Look up on String.prototype
                 if let Some(method) = self.string_prototype.borrow().get_property(&key) {
+                    return Ok(method);
+                }
+                Ok(JsValue::Undefined)
+            }
+            JsValue::Number(_) => {
+                // Look up on Number.prototype
+                if let Some(method) = self.number_prototype.borrow().get_property(&key) {
                     return Ok(method);
                 }
                 Ok(JsValue::Undefined)
@@ -2936,6 +3042,118 @@ fn global_parse_float(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsVal
     }
 }
 
+// Global isNaN - converts argument to number first
+fn global_is_nan(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let n = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
+    Ok(JsValue::Boolean(n.is_nan()))
+}
+
+// Global isFinite - converts argument to number first
+fn global_is_finite(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let n = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
+    Ok(JsValue::Boolean(n.is_finite()))
+}
+
+// Number.isNaN - stricter, no type coercion
+fn number_is_nan(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    match args.first() {
+        Some(JsValue::Number(n)) => Ok(JsValue::Boolean(n.is_nan())),
+        _ => Ok(JsValue::Boolean(false)),
+    }
+}
+
+// Number.isFinite - stricter, no type coercion
+fn number_is_finite(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    match args.first() {
+        Some(JsValue::Number(n)) => Ok(JsValue::Boolean(n.is_finite())),
+        _ => Ok(JsValue::Boolean(false)),
+    }
+}
+
+// Number.isInteger
+fn number_is_integer(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    match args.first() {
+        Some(JsValue::Number(n)) => {
+            let is_int = n.is_finite() && n.trunc() == *n;
+            Ok(JsValue::Boolean(is_int))
+        }
+        _ => Ok(JsValue::Boolean(false)),
+    }
+}
+
+// Number.isSafeInteger
+fn number_is_safe_integer(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    const MAX_SAFE: f64 = 9007199254740991.0;
+    match args.first() {
+        Some(JsValue::Number(n)) => {
+            let is_safe = n.is_finite() && n.trunc() == *n && n.abs() <= MAX_SAFE;
+            Ok(JsValue::Boolean(is_safe))
+        }
+        _ => Ok(JsValue::Boolean(false)),
+    }
+}
+
+// Number.prototype.toFixed
+fn number_to_fixed(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let n = this.to_number();
+    let digits = args.first().map(|v| v.to_number() as i32).unwrap_or(0);
+
+    if digits < 0 || digits > 100 {
+        return Err(JsError::range_error("toFixed() digits argument must be between 0 and 100"));
+    }
+
+    let result = format!("{:.prec$}", n, prec = digits as usize);
+    Ok(JsValue::String(JsString::from(result)))
+}
+
+// Number.prototype.toString
+fn number_to_string(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let n = this.to_number();
+    let radix = args.first().map(|v| v.to_number() as i32).unwrap_or(10);
+
+    if radix < 2 || radix > 36 {
+        return Err(JsError::range_error("toString() radix must be between 2 and 36"));
+    }
+
+    if radix == 10 {
+        return Ok(JsValue::String(JsString::from(format!("{}", n))));
+    }
+
+    // For other radixes, we need integer conversion
+    if !n.is_finite() || n.fract() != 0.0 {
+        return Ok(JsValue::String(JsString::from(format!("{}", n))));
+    }
+
+    let int_val = n as i64;
+    let result = match radix {
+        2 => format!("{:b}", int_val.abs()),
+        8 => format!("{:o}", int_val.abs()),
+        16 => format!("{:x}", int_val.abs()),
+        _ => {
+            // Generic radix conversion
+            let chars: Vec<char> = "0123456789abcdefghijklmnopqrstuvwxyz".chars().collect();
+            let mut num = int_val.abs();
+            let mut result = String::new();
+            while num > 0 {
+                result.insert(0, chars[(num % radix as i64) as usize]);
+                num /= radix as i64;
+            }
+            if result.is_empty() {
+                result = "0".to_string();
+            }
+            result
+        }
+    };
+
+    let result = if int_val < 0 {
+        format!("-{}", result)
+    } else {
+        result
+    };
+
+    Ok(JsValue::String(JsString::from(result)))
+}
+
 // JSON conversion helpers
 
 fn js_value_to_json(value: &JsValue) -> Result<serde_json::Value, JsError> {
@@ -3544,5 +3762,72 @@ mod tests {
         assert_eq!(eval("parseFloat('3.14')"), JsValue::Number(3.14));
         assert_eq!(eval("parseFloat('  3.14  ')"), JsValue::Number(3.14));
         assert_eq!(eval("parseFloat('3.14abc')"), JsValue::Number(3.14));
+    }
+
+    #[test]
+    fn test_isnan() {
+        assert_eq!(eval("isNaN(NaN)"), JsValue::Boolean(true));
+        assert_eq!(eval("isNaN(42)"), JsValue::Boolean(false));
+        assert_eq!(eval("isNaN('hello')"), JsValue::Boolean(true));
+        assert_eq!(eval("isNaN('42')"), JsValue::Boolean(false));
+    }
+
+    #[test]
+    fn test_isfinite() {
+        assert_eq!(eval("isFinite(42)"), JsValue::Boolean(true));
+        assert_eq!(eval("isFinite(Infinity)"), JsValue::Boolean(false));
+        assert_eq!(eval("isFinite(-Infinity)"), JsValue::Boolean(false));
+        assert_eq!(eval("isFinite(NaN)"), JsValue::Boolean(false));
+    }
+
+    #[test]
+    fn test_number_isnan() {
+        assert_eq!(eval("Number.isNaN(NaN)"), JsValue::Boolean(true));
+        assert_eq!(eval("Number.isNaN(42)"), JsValue::Boolean(false));
+        assert_eq!(eval("Number.isNaN('NaN')"), JsValue::Boolean(false)); // Different from global isNaN
+    }
+
+    #[test]
+    fn test_number_isfinite() {
+        assert_eq!(eval("Number.isFinite(42)"), JsValue::Boolean(true));
+        assert_eq!(eval("Number.isFinite(Infinity)"), JsValue::Boolean(false));
+        assert_eq!(eval("Number.isFinite('42')"), JsValue::Boolean(false)); // Different from global isFinite
+    }
+
+    #[test]
+    fn test_number_isinteger() {
+        assert_eq!(eval("Number.isInteger(42)"), JsValue::Boolean(true));
+        assert_eq!(eval("Number.isInteger(42.0)"), JsValue::Boolean(true));
+        assert_eq!(eval("Number.isInteger(42.5)"), JsValue::Boolean(false));
+        assert_eq!(eval("Number.isInteger('42')"), JsValue::Boolean(false));
+    }
+
+    #[test]
+    fn test_number_issafeinteger() {
+        assert_eq!(eval("Number.isSafeInteger(42)"), JsValue::Boolean(true));
+        assert_eq!(eval("Number.isSafeInteger(9007199254740991)"), JsValue::Boolean(true));
+        assert_eq!(eval("Number.isSafeInteger(9007199254740992)"), JsValue::Boolean(false));
+    }
+
+    #[test]
+    fn test_number_constants() {
+        assert_eq!(eval("Number.POSITIVE_INFINITY"), JsValue::Number(f64::INFINITY));
+        assert_eq!(eval("Number.NEGATIVE_INFINITY"), JsValue::Number(f64::NEG_INFINITY));
+        assert_eq!(eval("Number.MAX_SAFE_INTEGER"), JsValue::Number(9007199254740991.0));
+        assert_eq!(eval("Number.MIN_SAFE_INTEGER"), JsValue::Number(-9007199254740991.0));
+    }
+
+    #[test]
+    fn test_number_tofixed() {
+        assert_eq!(eval("(3.14159).toFixed(2)"), JsValue::String(JsString::from("3.14")));
+        assert_eq!(eval("(3.14159).toFixed(0)"), JsValue::String(JsString::from("3")));
+        assert_eq!(eval("(3.5).toFixed(0)"), JsValue::String(JsString::from("4")));
+    }
+
+    #[test]
+    fn test_number_tostring() {
+        assert_eq!(eval("(255).toString(16)"), JsValue::String(JsString::from("ff")));
+        assert_eq!(eval("(10).toString(2)"), JsValue::String(JsString::from("1010")));
+        assert_eq!(eval("(42).toString()"), JsValue::String(JsString::from("42")));
     }
 }
