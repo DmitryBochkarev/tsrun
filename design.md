@@ -206,19 +206,19 @@
 - [x] `Object.values(obj)`
 - [x] `Object.entries(obj)`
 - [x] `Object.assign(target, ...sources)`
-- [ ] `Object.freeze(obj)`
-- [ ] `Object.seal(obj)`
-- [ ] `Object.isFrozen(obj)`
-- [ ] `Object.isSealed(obj)`
+- [x] `Object.freeze(obj)`
+- [x] `Object.seal(obj)`
+- [x] `Object.isFrozen(obj)`
+- [x] `Object.isSealed(obj)`
 - [ ] `Object.getOwnPropertyNames(obj)`
 - [ ] `Object.getOwnPropertyDescriptor(obj, prop)`
 - [ ] `Object.defineProperty(obj, prop, descriptor)`
 - [ ] `Object.defineProperties(obj, props)`
 - [ ] `Object.getPrototypeOf(obj)`
 - [ ] `Object.setPrototypeOf(obj, proto)`
-- [ ] `Object.create(proto, props?)`
-- [ ] `Object.fromEntries(iterable)`
-- [ ] `Object.hasOwn(obj, prop)`
+- [x] `Object.create(proto, props?)`
+- [x] `Object.fromEntries(iterable)`
+- [x] `Object.hasOwn(obj, prop)`
 - [x] `Object.prototype.hasOwnProperty(prop)`
 - [x] `Object.prototype.toString()`
 - [x] `Object.prototype.valueOf()`

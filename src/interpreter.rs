@@ -148,6 +148,55 @@ impl Interpreter {
                 arity: 2,
             }));
             obj.set_property(PropertyKey::from("assign"), JsValue::Object(assign_fn));
+
+            let fromentries_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "fromEntries".to_string(),
+                func: object_from_entries,
+                arity: 1,
+            }));
+            obj.set_property(PropertyKey::from("fromEntries"), JsValue::Object(fromentries_fn));
+
+            let hasown_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "hasOwn".to_string(),
+                func: object_has_own,
+                arity: 2,
+            }));
+            obj.set_property(PropertyKey::from("hasOwn"), JsValue::Object(hasown_fn));
+
+            let create_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "create".to_string(),
+                func: object_create,
+                arity: 1,
+            }));
+            obj.set_property(PropertyKey::from("create"), JsValue::Object(create_fn));
+
+            let freeze_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "freeze".to_string(),
+                func: object_freeze,
+                arity: 1,
+            }));
+            obj.set_property(PropertyKey::from("freeze"), JsValue::Object(freeze_fn));
+
+            let isfrozen_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "isFrozen".to_string(),
+                func: object_is_frozen,
+                arity: 1,
+            }));
+            obj.set_property(PropertyKey::from("isFrozen"), JsValue::Object(isfrozen_fn));
+
+            let seal_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "seal".to_string(),
+                func: object_seal,
+                arity: 1,
+            }));
+            obj.set_property(PropertyKey::from("seal"), JsValue::Object(seal_fn));
+
+            let issealed_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "isSealed".to_string(),
+                func: object_is_sealed,
+                arity: 1,
+            }));
+            obj.set_property(PropertyKey::from("isSealed"), JsValue::Object(issealed_fn));
         }
         // Create Object.prototype
         let object_prototype = create_object();
@@ -2064,8 +2113,11 @@ impl Interpreter {
                     return Ok(val);
                 }
                 // Fall back to Object.prototype for ordinary objects
-                if let Some(method) = self.object_prototype.borrow().get_property(&key) {
-                    return Ok(method);
+                // (but not for objects created with Object.create(null))
+                if !obj.borrow().null_prototype {
+                    if let Some(method) = self.object_prototype.borrow().get_property(&key) {
+                        return Ok(method);
+                    }
                 }
                 Ok(JsValue::Undefined)
             }
@@ -2382,6 +2434,128 @@ fn object_assign(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) 
     }
 
     Ok(target)
+}
+
+fn object_from_entries(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let iterable = args.first().cloned().unwrap_or(JsValue::Undefined);
+
+    let JsValue::Object(arr) = iterable else {
+        return Err(JsError::type_error("Object.fromEntries requires an iterable"));
+    };
+
+    let result = create_object();
+
+    let length = {
+        let arr_ref = arr.borrow();
+        match &arr_ref.exotic {
+            ExoticObject::Array { length } => *length,
+            _ => return Err(JsError::type_error("Object.fromEntries requires an array-like")),
+        }
+    };
+
+    for i in 0..length {
+        let entry = arr.borrow().get_property(&PropertyKey::Index(i)).unwrap_or(JsValue::Undefined);
+        if let JsValue::Object(entry_ref) = entry {
+            let entry_borrow = entry_ref.borrow();
+            if let ExoticObject::Array { .. } = entry_borrow.exotic {
+                let key = entry_borrow.get_property(&PropertyKey::Index(0)).unwrap_or(JsValue::Undefined);
+                let value = entry_borrow.get_property(&PropertyKey::Index(1)).unwrap_or(JsValue::Undefined);
+                let key_str = key.to_js_string().to_string();
+                drop(entry_borrow);
+                result.borrow_mut().set_property(PropertyKey::from(key_str), value);
+            }
+        }
+    }
+
+    Ok(JsValue::Object(result))
+}
+
+fn object_has_own(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
+    let key = args.get(1).cloned().unwrap_or(JsValue::Undefined);
+
+    let JsValue::Object(obj_ref) = obj else {
+        return Ok(JsValue::Boolean(false));
+    };
+
+    let key_str = key.to_js_string().to_string();
+    let has = obj_ref.borrow().properties.contains_key(&PropertyKey::from(key_str));
+    Ok(JsValue::Boolean(has))
+}
+
+fn object_create(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let proto = args.first().cloned().unwrap_or(JsValue::Undefined);
+
+    let result = create_object();
+
+    // Set prototype (or null)
+    match proto {
+        JsValue::Null => {
+            // No prototype - object won't have hasOwnProperty etc.
+            let mut obj = result.borrow_mut();
+            obj.prototype = None;
+            obj.null_prototype = true;
+        }
+        JsValue::Object(proto_ref) => {
+            result.borrow_mut().prototype = Some(proto_ref);
+        }
+        _ => return Err(JsError::type_error("Object prototype may only be an Object or null")),
+    }
+
+    Ok(JsValue::Object(result))
+}
+
+fn object_freeze(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
+
+    if let JsValue::Object(obj_ref) = &obj {
+        let mut obj_mut = obj_ref.borrow_mut();
+        obj_mut.frozen = true;
+        // Mark all properties as non-writable and non-configurable
+        for (_, prop) in obj_mut.properties.iter_mut() {
+            prop.writable = false;
+            prop.configurable = false;
+        }
+    }
+
+    Ok(obj)
+}
+
+fn object_is_frozen(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
+
+    let is_frozen = match obj {
+        JsValue::Object(obj_ref) => obj_ref.borrow().frozen,
+        _ => true, // Non-objects are considered frozen
+    };
+
+    Ok(JsValue::Boolean(is_frozen))
+}
+
+fn object_seal(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
+
+    if let JsValue::Object(obj_ref) = &obj {
+        let mut obj_mut = obj_ref.borrow_mut();
+        obj_mut.sealed = true;
+        // Mark all properties as non-configurable (but still writable)
+        for (_, prop) in obj_mut.properties.iter_mut() {
+            prop.configurable = false;
+        }
+    }
+
+    Ok(obj)
+}
+
+fn object_is_sealed(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
+
+    let is_sealed = match obj {
+        JsValue::Object(obj_ref) => obj_ref.borrow().sealed,
+        _ => true, // Non-objects are considered sealed
+    };
+
+    Ok(JsValue::Boolean(is_sealed))
 }
 
 fn array_constructor_fn(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
@@ -5621,5 +5795,34 @@ mod tests {
     fn test_array_with() {
         assert_eq!(eval("[1, 2, 3].with(1, 'x')[1]"), JsValue::String(JsString::from("x")));
         assert_eq!(eval("let a = [1, 2, 3]; let b = a.with(1, 'x'); a[1]"), JsValue::Number(2.0)); // Original unchanged
+    }
+
+    #[test]
+    fn test_object_fromentries() {
+        assert_eq!(eval("Object.fromEntries([['a', 1], ['b', 2]]).a"), JsValue::Number(1.0));
+        assert_eq!(eval("Object.fromEntries([['a', 1], ['b', 2]]).b"), JsValue::Number(2.0));
+    }
+
+    #[test]
+    fn test_object_hasown() {
+        assert_eq!(eval("Object.hasOwn({a: 1}, 'a')"), JsValue::Boolean(true));
+        assert_eq!(eval("Object.hasOwn({a: 1}, 'b')"), JsValue::Boolean(false));
+    }
+
+    #[test]
+    fn test_object_create() {
+        assert_eq!(eval("Object.create(null).hasOwnProperty"), JsValue::Undefined);
+        assert_eq!(eval("let proto = {x: 1}; let o = Object.create(proto); o.x"), JsValue::Number(1.0));
+    }
+
+    #[test]
+    fn test_object_freeze() {
+        assert_eq!(eval("let o = {a: 1}; Object.freeze(o); o.a = 2; o.a"), JsValue::Number(1.0));
+        assert_eq!(eval("Object.isFrozen(Object.freeze({a: 1}))"), JsValue::Boolean(true));
+    }
+
+    #[test]
+    fn test_object_seal() {
+        assert_eq!(eval("Object.isSealed(Object.seal({a: 1}))"), JsValue::Boolean(true));
     }
 }

@@ -291,6 +291,12 @@ pub struct JsObject {
     pub prototype: Option<JsObjectRef>,
     /// Whether the object can have properties added
     pub extensible: bool,
+    /// Whether the object is frozen (no modifications allowed)
+    pub frozen: bool,
+    /// Whether the object is sealed (no new properties, but existing can be modified)
+    pub sealed: bool,
+    /// Whether this object was explicitly created with null prototype (Object.create(null))
+    pub null_prototype: bool,
     /// Object properties
     pub properties: HashMap<PropertyKey, Property>,
     /// Exotic object behavior
@@ -303,6 +309,9 @@ impl JsObject {
         Self {
             prototype: None,
             extensible: true,
+            frozen: false,
+            sealed: false,
+            null_prototype: false,
             properties: HashMap::new(),
             exotic: ExoticObject::Ordinary,
         }
@@ -313,6 +322,9 @@ impl JsObject {
         Self {
             prototype: Some(prototype),
             extensible: true,
+            frozen: false,
+            sealed: false,
+            null_prototype: false,
             properties: HashMap::new(),
             exotic: ExoticObject::Ordinary,
         }
@@ -343,9 +355,17 @@ impl JsObject {
 
     /// Set a property
     pub fn set_property(&mut self, key: PropertyKey, value: JsValue) {
+        // Frozen objects cannot be modified at all
+        if self.frozen {
+            return;
+        }
         if let Some(prop) = self.properties.get_mut(&key) {
-            prop.value = value;
-        } else if self.extensible {
+            // Only set if writable
+            if prop.writable {
+                prop.value = value;
+            }
+        } else if self.extensible && !self.sealed {
+            // Sealed objects cannot have new properties added
             self.properties.insert(
                 key,
                 Property {
@@ -657,6 +677,9 @@ pub fn create_array(elements: Vec<JsValue>) -> JsObjectRef {
     let mut obj = JsObject {
         prototype: None, // Should be Array.prototype
         extensible: true,
+        frozen: false,
+        sealed: false,
+        null_prototype: false,
         properties: HashMap::new(),
         exotic: ExoticObject::Array { length: len },
     };
@@ -686,6 +709,9 @@ pub fn create_function(func: JsFunction) -> JsObjectRef {
     let mut obj = JsObject {
         prototype: None, // Should be Function.prototype
         extensible: true,
+        frozen: false,
+        sealed: false,
+        null_prototype: false,
         properties: HashMap::new(),
         exotic: ExoticObject::Function(func),
     };
