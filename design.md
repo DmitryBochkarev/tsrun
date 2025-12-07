@@ -237,9 +237,9 @@
 - [ ] `Array.prototype.join(separator?)`
 - [ ] `Array.prototype.reverse()`
 - [ ] `Array.prototype.sort(compareFn?)`
-- [ ] `Array.prototype.indexOf(item, fromIndex?)`
+- [x] `Array.prototype.indexOf(item, fromIndex?)`
 - [ ] `Array.prototype.lastIndexOf(item, fromIndex?)`
-- [ ] `Array.prototype.includes(item, fromIndex?)`
+- [x] `Array.prototype.includes(item, fromIndex?)`
 - [x] `Array.prototype.find(predicate)`
 - [x] `Array.prototype.findIndex(predicate)`
 - [ ] `Array.prototype.findLast(predicate)`

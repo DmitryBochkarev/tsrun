@@ -183,6 +183,22 @@ impl Interpreter {
                 arity: 1,
             }));
             proto.set_property(PropertyKey::from("findIndex"), JsValue::Object(findindex_fn));
+
+            // Array.prototype.indexOf
+            let indexof_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "indexOf".to_string(),
+                func: array_index_of,
+                arity: 1,
+            }));
+            proto.set_property(PropertyKey::from("indexOf"), JsValue::Object(indexof_fn));
+
+            // Array.prototype.includes
+            let includes_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "includes".to_string(),
+                func: array_includes,
+                arity: 1,
+            }));
+            proto.set_property(PropertyKey::from("includes"), JsValue::Object(includes_fn));
         }
 
         // Add Array global
@@ -1864,6 +1880,90 @@ fn array_find_index(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>)
     Ok(JsValue::Number(-1.0))
 }
 
+fn array_index_of(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let JsValue::Object(arr) = this else {
+        return Err(JsError::type_error("Array.prototype.indexOf called on non-object"));
+    };
+
+    let search_element = args.first().cloned().unwrap_or(JsValue::Undefined);
+    let from_index = args
+        .get(1)
+        .map(|v| v.to_number() as i64)
+        .unwrap_or(0);
+
+    let length = {
+        let arr_ref = arr.borrow();
+        match &arr_ref.exotic {
+            ExoticObject::Array { length } => *length as i64,
+            _ => return Err(JsError::type_error("Not an array")),
+        }
+    };
+
+    let start = if from_index < 0 {
+        (length + from_index).max(0) as u32
+    } else {
+        from_index.min(length) as u32
+    };
+
+    for i in start..(length as u32) {
+        let elem = arr
+            .borrow()
+            .get_property(&PropertyKey::Index(i))
+            .unwrap_or(JsValue::Undefined);
+
+        if elem.strict_equals(&search_element) {
+            return Ok(JsValue::Number(i as f64));
+        }
+    }
+
+    Ok(JsValue::Number(-1.0))
+}
+
+fn array_includes(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let JsValue::Object(arr) = this else {
+        return Err(JsError::type_error("Array.prototype.includes called on non-object"));
+    };
+
+    let search_element = args.first().cloned().unwrap_or(JsValue::Undefined);
+    let from_index = args
+        .get(1)
+        .map(|v| v.to_number() as i64)
+        .unwrap_or(0);
+
+    let length = {
+        let arr_ref = arr.borrow();
+        match &arr_ref.exotic {
+            ExoticObject::Array { length } => *length as i64,
+            _ => return Err(JsError::type_error("Not an array")),
+        }
+    };
+
+    let start = if from_index < 0 {
+        (length + from_index).max(0) as u32
+    } else {
+        from_index.min(length) as u32
+    };
+
+    for i in start..(length as u32) {
+        let elem = arr
+            .borrow()
+            .get_property(&PropertyKey::Index(i))
+            .unwrap_or(JsValue::Undefined);
+
+        // includes uses SameValueZero which treats NaN as equal to NaN
+        let found = match (&elem, &search_element) {
+            (JsValue::Number(a), JsValue::Number(b)) if a.is_nan() && b.is_nan() => true,
+            _ => elem.strict_equals(&search_element),
+        };
+
+        if found {
+            return Ok(JsValue::Boolean(true));
+        }
+    }
+
+    Ok(JsValue::Boolean(false))
+}
+
 // JSON conversion helpers
 
 fn js_value_to_json(value: &JsValue) -> Result<serde_json::Value, JsError> {
@@ -2173,5 +2273,42 @@ mod tests {
     #[test]
     fn test_array_findindex_first() {
         assert_eq!(eval("[5, 10, 15].findIndex(x => x >= 5)"), JsValue::Number(0.0));
+    }
+
+    // Array.prototype.indexOf tests
+    #[test]
+    fn test_array_indexof_found() {
+        assert_eq!(eval("[1, 2, 3, 4].indexOf(3)"), JsValue::Number(2.0));
+    }
+
+    #[test]
+    fn test_array_indexof_not_found() {
+        assert_eq!(eval("[1, 2, 3].indexOf(5)"), JsValue::Number(-1.0));
+    }
+
+    #[test]
+    fn test_array_indexof_first_occurrence() {
+        assert_eq!(eval("[1, 2, 3, 2, 1].indexOf(2)"), JsValue::Number(1.0));
+    }
+
+    #[test]
+    fn test_array_indexof_from_index() {
+        assert_eq!(eval("[1, 2, 3, 2, 1].indexOf(2, 2)"), JsValue::Number(3.0));
+    }
+
+    // Array.prototype.includes tests
+    #[test]
+    fn test_array_includes_found() {
+        assert_eq!(eval("[1, 2, 3].includes(2)"), JsValue::Boolean(true));
+    }
+
+    #[test]
+    fn test_array_includes_not_found() {
+        assert_eq!(eval("[1, 2, 3].includes(5)"), JsValue::Boolean(false));
+    }
+
+    #[test]
+    fn test_array_includes_from_index() {
+        assert_eq!(eval("[1, 2, 3].includes(1, 1)"), JsValue::Boolean(false));
     }
 }
