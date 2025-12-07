@@ -223,6 +223,22 @@ impl Interpreter {
                 arity: 1,
             }));
             proto.set_property(PropertyKey::from("join"), JsValue::Object(join_fn));
+
+            // Array.prototype.every
+            let every_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "every".to_string(),
+                func: array_every,
+                arity: 1,
+            }));
+            proto.set_property(PropertyKey::from("every"), JsValue::Object(every_fn));
+
+            // Array.prototype.some
+            let some_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "some".to_string(),
+                func: array_some,
+                arity: 1,
+            }));
+            proto.set_property(PropertyKey::from("some"), JsValue::Object(some_fn));
         }
 
         // Add Array global
@@ -2103,6 +2119,86 @@ fn array_join(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> R
     Ok(JsValue::String(JsString::from(parts.join(&separator))))
 }
 
+fn array_every(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let JsValue::Object(arr) = this.clone() else {
+        return Err(JsError::type_error("Array.prototype.every called on non-object"));
+    };
+
+    let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
+    if !callback.is_callable() {
+        return Err(JsError::type_error("Array.prototype.every callback is not a function"));
+    }
+
+    let this_arg = args.get(1).cloned().unwrap_or(JsValue::Undefined);
+
+    let length = {
+        let arr_ref = arr.borrow();
+        match &arr_ref.exotic {
+            ExoticObject::Array { length } => *length,
+            _ => return Err(JsError::type_error("Not an array")),
+        }
+    };
+
+    for i in 0..length {
+        let elem = arr
+            .borrow()
+            .get_property(&PropertyKey::Index(i))
+            .unwrap_or(JsValue::Undefined);
+
+        let result = interp.call_function(
+            callback.clone(),
+            this_arg.clone(),
+            vec![elem, JsValue::Number(i as f64), this.clone()],
+        )?;
+
+        if !result.to_boolean() {
+            return Ok(JsValue::Boolean(false));
+        }
+    }
+
+    Ok(JsValue::Boolean(true))
+}
+
+fn array_some(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let JsValue::Object(arr) = this.clone() else {
+        return Err(JsError::type_error("Array.prototype.some called on non-object"));
+    };
+
+    let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
+    if !callback.is_callable() {
+        return Err(JsError::type_error("Array.prototype.some callback is not a function"));
+    }
+
+    let this_arg = args.get(1).cloned().unwrap_or(JsValue::Undefined);
+
+    let length = {
+        let arr_ref = arr.borrow();
+        match &arr_ref.exotic {
+            ExoticObject::Array { length } => *length,
+            _ => return Err(JsError::type_error("Not an array")),
+        }
+    };
+
+    for i in 0..length {
+        let elem = arr
+            .borrow()
+            .get_property(&PropertyKey::Index(i))
+            .unwrap_or(JsValue::Undefined);
+
+        let result = interp.call_function(
+            callback.clone(),
+            this_arg.clone(),
+            vec![elem, JsValue::Number(i as f64), this.clone()],
+        )?;
+
+        if result.to_boolean() {
+            return Ok(JsValue::Boolean(true));
+        }
+    }
+
+    Ok(JsValue::Boolean(false))
+}
+
 // JSON conversion helpers
 
 fn js_value_to_json(value: &JsValue) -> Result<serde_json::Value, JsError> {
@@ -2505,5 +2601,37 @@ mod tests {
     #[test]
     fn test_array_join_empty() {
         assert_eq!(eval("[1, 2, 3].join('')"), JsValue::String(JsString::from("123")));
+    }
+
+    // Array.prototype.every tests
+    #[test]
+    fn test_array_every_all_pass() {
+        assert_eq!(eval("[2, 4, 6].every(x => x % 2 === 0)"), JsValue::Boolean(true));
+    }
+
+    #[test]
+    fn test_array_every_some_fail() {
+        assert_eq!(eval("[2, 3, 6].every(x => x % 2 === 0)"), JsValue::Boolean(false));
+    }
+
+    #[test]
+    fn test_array_every_empty() {
+        assert_eq!(eval("[].every(x => false)"), JsValue::Boolean(true));
+    }
+
+    // Array.prototype.some tests
+    #[test]
+    fn test_array_some_one_passes() {
+        assert_eq!(eval("[1, 2, 3].some(x => x > 2)"), JsValue::Boolean(true));
+    }
+
+    #[test]
+    fn test_array_some_none_pass() {
+        assert_eq!(eval("[1, 2, 3].some(x => x > 10)"), JsValue::Boolean(false));
+    }
+
+    #[test]
+    fn test_array_some_empty() {
+        assert_eq!(eval("[].some(x => true)"), JsValue::Boolean(false));
     }
 }

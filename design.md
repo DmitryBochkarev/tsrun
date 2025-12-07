@@ -249,8 +249,8 @@
 - [x] `Array.prototype.forEach(callback)`
 - [x] `Array.prototype.reduce(callback, initial?)`
 - [ ] `Array.prototype.reduceRight(callback, initial?)`
-- [ ] `Array.prototype.every(predicate)`
-- [ ] `Array.prototype.some(predicate)`
+- [x] `Array.prototype.every(predicate)`
+- [x] `Array.prototype.some(predicate)`
 - [ ] `Array.prototype.flat(depth?)`
 - [ ] `Array.prototype.flatMap(callback)`
 - [ ] `Array.prototype.fill(value, start?, end?)`
