@@ -2711,37 +2711,37 @@ mod tests {
 
     #[test]
     fn test_variable_declaration() {
-        let prog = parse("let x = 1;");
+        let prog = parse("let x: number = 1;");
         assert_eq!(prog.body.len(), 1);
     }
 
     #[test]
     fn test_binary_expression() {
-        let prog = parse("1 + 2 * 3;");
+        let prog = parse("(1 as number) + (2 as number) * (3 as number);");
         assert_eq!(prog.body.len(), 1);
     }
 
     #[test]
     fn test_function_declaration() {
-        let prog = parse("function add(a, b) { return a + b; }");
+        let prog = parse("function add(a: number, b: number): number { return a + b; }");
         assert_eq!(prog.body.len(), 1);
     }
 
     #[test]
     fn test_arrow_function() {
-        let prog = parse("const add = (a, b) => a + b;");
+        let prog = parse("const add: Function = (a, b) => a + b;");
         assert_eq!(prog.body.len(), 1);
     }
 
     #[test]
     fn test_object_literal() {
-        let prog = parse("const obj = { a: 1, b: 2 };");
+        let prog = parse("const obj: { a: number; b: number } = { a: 1, b: 2 };");
         assert_eq!(prog.body.len(), 1);
     }
 
     #[test]
     fn test_array_literal() {
-        let prog = parse("const arr = [1, 2, 3];");
+        let prog = parse("const arr: number[] = [1, 2, 3];");
         assert_eq!(prog.body.len(), 1);
     }
 }
