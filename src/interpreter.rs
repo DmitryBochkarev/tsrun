@@ -40,6 +40,10 @@ pub struct Interpreter {
     pub number_prototype: JsObjectRef,
     /// Function.prototype for function methods (call, apply, bind)
     pub function_prototype: JsObjectRef,
+    /// Map.prototype for map methods
+    pub map_prototype: JsObjectRef,
+    /// Set.prototype for set methods
+    pub set_prototype: JsObjectRef,
 }
 
 impl Interpreter {
@@ -1191,7 +1195,122 @@ impl Interpreter {
             proto.set_property(PropertyKey::from("bind"), JsValue::Object(bind_fn));
         }
 
-        Self { global, env, object_prototype, array_prototype, string_prototype, number_prototype: number_proto, function_prototype }
+        // Create Map.prototype with Map methods
+        let map_prototype = create_object();
+        {
+            let mut proto = map_prototype.borrow_mut();
+
+            let get_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "get".to_string(),
+                func: map_get,
+                arity: 1,
+            }));
+            proto.set_property(PropertyKey::from("get"), JsValue::Object(get_fn));
+
+            let set_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "set".to_string(),
+                func: map_set,
+                arity: 2,
+            }));
+            proto.set_property(PropertyKey::from("set"), JsValue::Object(set_fn));
+
+            let has_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "has".to_string(),
+                func: map_has,
+                arity: 1,
+            }));
+            proto.set_property(PropertyKey::from("has"), JsValue::Object(has_fn));
+
+            let delete_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "delete".to_string(),
+                func: map_delete,
+                arity: 1,
+            }));
+            proto.set_property(PropertyKey::from("delete"), JsValue::Object(delete_fn));
+
+            let clear_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "clear".to_string(),
+                func: map_clear,
+                arity: 0,
+            }));
+            proto.set_property(PropertyKey::from("clear"), JsValue::Object(clear_fn));
+
+            let foreach_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "forEach".to_string(),
+                func: map_foreach,
+                arity: 1,
+            }));
+            proto.set_property(PropertyKey::from("forEach"), JsValue::Object(foreach_fn));
+        }
+
+        // Add Map constructor
+        let map_constructor_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "Map".to_string(),
+            func: map_constructor,
+            arity: 0,
+        }));
+        env.define("Map".to_string(), JsValue::Object(map_constructor_fn), false);
+
+        // Create Set.prototype with Set methods
+        let set_prototype = create_object();
+        {
+            let mut proto = set_prototype.borrow_mut();
+
+            let add_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "add".to_string(),
+                func: set_add,
+                arity: 1,
+            }));
+            proto.set_property(PropertyKey::from("add"), JsValue::Object(add_fn));
+
+            let has_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "has".to_string(),
+                func: set_has,
+                arity: 1,
+            }));
+            proto.set_property(PropertyKey::from("has"), JsValue::Object(has_fn));
+
+            let delete_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "delete".to_string(),
+                func: set_delete,
+                arity: 1,
+            }));
+            proto.set_property(PropertyKey::from("delete"), JsValue::Object(delete_fn));
+
+            let clear_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "clear".to_string(),
+                func: set_clear,
+                arity: 0,
+            }));
+            proto.set_property(PropertyKey::from("clear"), JsValue::Object(clear_fn));
+
+            let foreach_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "forEach".to_string(),
+                func: set_foreach,
+                arity: 1,
+            }));
+            proto.set_property(PropertyKey::from("forEach"), JsValue::Object(foreach_fn));
+        }
+
+        // Add Set constructor
+        let set_constructor_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "Set".to_string(),
+            func: set_constructor,
+            arity: 0,
+        }));
+        env.define("Set".to_string(), JsValue::Object(set_constructor_fn), false);
+
+        Self {
+            global,
+            env,
+            object_prototype,
+            array_prototype,
+            string_prototype,
+            number_prototype: number_proto,
+            function_prototype,
+            map_prototype,
+            set_prototype,
+        }
     }
 
     /// Create an array with the proper prototype
@@ -2712,6 +2831,355 @@ fn syntax_error_constructor(_interp: &mut Interpreter, _this: JsValue, args: Vec
 fn range_error_constructor(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
     let message = args.first().cloned().unwrap_or(JsValue::Undefined);
     Ok(create_error_object("RangeError", message))
+}
+
+// Helper to check SameValueZero equality for Map/Set keys
+fn same_value_zero(a: &JsValue, b: &JsValue) -> bool {
+    match (a, b) {
+        (JsValue::Number(x), JsValue::Number(y)) => {
+            // NaN equals NaN, -0 equals +0
+            if x.is_nan() && y.is_nan() {
+                return true;
+            }
+            x == y
+        }
+        (JsValue::String(x), JsValue::String(y)) => x == y,
+        (JsValue::Boolean(x), JsValue::Boolean(y)) => x == y,
+        (JsValue::Null, JsValue::Null) => true,
+        (JsValue::Undefined, JsValue::Undefined) => true,
+        (JsValue::Object(x), JsValue::Object(y)) => std::ptr::eq(x.as_ptr(), y.as_ptr()),
+        _ => false,
+    }
+}
+
+fn map_constructor(interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let map_obj = create_object();
+    {
+        let mut obj = map_obj.borrow_mut();
+        obj.exotic = ExoticObject::Map { entries: Vec::new() };
+        obj.prototype = Some(interp.map_prototype.clone());
+        obj.set_property(PropertyKey::from("size"), JsValue::Number(0.0));
+    }
+
+    // If an iterable is passed, add its entries
+    // First collect all pairs from the array, then add them to the map
+    if let Some(JsValue::Object(arr)) = args.first() {
+        let pairs: Vec<(JsValue, JsValue)> = {
+            let arr_ref = arr.borrow();
+            let mut result = Vec::new();
+            if let ExoticObject::Array { length } = arr_ref.exotic {
+                for i in 0..length {
+                    if let Some(JsValue::Object(pair_arr)) = arr_ref.get_property(&PropertyKey::Index(i)) {
+                        let pair_ref = pair_arr.borrow();
+                        if let ExoticObject::Array { .. } = pair_ref.exotic {
+                            let key = pair_ref.get_property(&PropertyKey::Index(0)).unwrap_or(JsValue::Undefined);
+                            let value = pair_ref.get_property(&PropertyKey::Index(1)).unwrap_or(JsValue::Undefined);
+                            result.push((key, value));
+                        }
+                    }
+                }
+            }
+            result
+        };
+
+        // Now add all pairs to the map
+        let mut map = map_obj.borrow_mut();
+        if let ExoticObject::Map { ref mut entries } = map.exotic {
+            for (key, value) in pairs {
+                // Check if key already exists
+                let mut found = false;
+                for entry in entries.iter_mut() {
+                    if same_value_zero(&entry.0, &key) {
+                        entry.1 = value.clone();
+                        found = true;
+                        break;
+                    }
+                }
+                if !found {
+                    entries.push((key, value));
+                }
+            }
+            let len = entries.len();
+            map.set_property(PropertyKey::from("size"), JsValue::Number(len as f64));
+        }
+    }
+
+    Ok(JsValue::Object(map_obj))
+}
+
+fn map_get(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let JsValue::Object(map_obj) = this else {
+        return Err(JsError::type_error("Map.prototype.get called on non-object"));
+    };
+
+    let key = args.first().cloned().unwrap_or(JsValue::Undefined);
+    let map = map_obj.borrow();
+
+    if let ExoticObject::Map { ref entries } = map.exotic {
+        for (k, v) in entries {
+            if same_value_zero(k, &key) {
+                return Ok(v.clone());
+            }
+        }
+    }
+
+    Ok(JsValue::Undefined)
+}
+
+fn map_set(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let JsValue::Object(map_obj) = this.clone() else {
+        return Err(JsError::type_error("Map.prototype.set called on non-object"));
+    };
+
+    let key = args.first().cloned().unwrap_or(JsValue::Undefined);
+    let value = args.get(1).cloned().unwrap_or(JsValue::Undefined);
+
+    let mut map = map_obj.borrow_mut();
+
+    if let ExoticObject::Map { ref mut entries } = map.exotic {
+        // Check if key already exists
+        for entry in entries.iter_mut() {
+            if same_value_zero(&entry.0, &key) {
+                entry.1 = value;
+                drop(map);
+                return Ok(this); // Return the map for chaining
+            }
+        }
+        entries.push((key, value));
+        // Update size property
+        let len = entries.len();
+        map.set_property(PropertyKey::from("size"), JsValue::Number(len as f64));
+    }
+
+    drop(map);
+    Ok(this) // Return the map for chaining
+}
+
+fn map_has(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let JsValue::Object(map_obj) = this else {
+        return Err(JsError::type_error("Map.prototype.has called on non-object"));
+    };
+
+    let key = args.first().cloned().unwrap_or(JsValue::Undefined);
+    let map = map_obj.borrow();
+
+    if let ExoticObject::Map { ref entries } = map.exotic {
+        for (k, _) in entries {
+            if same_value_zero(k, &key) {
+                return Ok(JsValue::Boolean(true));
+            }
+        }
+    }
+
+    Ok(JsValue::Boolean(false))
+}
+
+fn map_delete(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let JsValue::Object(map_obj) = this else {
+        return Err(JsError::type_error("Map.prototype.delete called on non-object"));
+    };
+
+    let key = args.first().cloned().unwrap_or(JsValue::Undefined);
+    let mut map = map_obj.borrow_mut();
+
+    if let ExoticObject::Map { ref mut entries } = map.exotic {
+        for i in 0..entries.len() {
+            if same_value_zero(&entries[i].0, &key) {
+                entries.remove(i);
+                let len = entries.len();
+                map.set_property(PropertyKey::from("size"), JsValue::Number(len as f64));
+                return Ok(JsValue::Boolean(true));
+            }
+        }
+    }
+
+    Ok(JsValue::Boolean(false))
+}
+
+fn map_clear(_interp: &mut Interpreter, this: JsValue, _args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let JsValue::Object(map_obj) = this else {
+        return Err(JsError::type_error("Map.prototype.clear called on non-object"));
+    };
+
+    let mut map = map_obj.borrow_mut();
+
+    if let ExoticObject::Map { ref mut entries } = map.exotic {
+        entries.clear();
+        map.set_property(PropertyKey::from("size"), JsValue::Number(0.0));
+    }
+
+    Ok(JsValue::Undefined)
+}
+
+fn map_foreach(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let JsValue::Object(map_obj) = this.clone() else {
+        return Err(JsError::type_error("Map.prototype.forEach called on non-object"));
+    };
+
+    let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
+    let this_arg = args.get(1).cloned().unwrap_or(JsValue::Undefined);
+
+    // Collect entries first to avoid borrow issues
+    let entries: Vec<(JsValue, JsValue)>;
+    {
+        let map = map_obj.borrow();
+        if let ExoticObject::Map { entries: ref e } = map.exotic {
+            entries = e.clone();
+        } else {
+            return Err(JsError::type_error("Map.prototype.forEach called on non-Map"));
+        }
+    }
+
+    for (key, value) in entries {
+        interp.call_function(callback.clone(), this_arg.clone(), vec![value, key, this.clone()])?;
+    }
+
+    Ok(JsValue::Undefined)
+}
+
+// Set implementation
+fn set_constructor(interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let set_obj = create_object();
+    {
+        let mut obj = set_obj.borrow_mut();
+        obj.exotic = ExoticObject::Set { entries: Vec::new() };
+        obj.prototype = Some(interp.set_prototype.clone());
+        obj.set_property(PropertyKey::from("size"), JsValue::Number(0.0));
+    }
+
+    // If an iterable (array) is passed, add its elements
+    if let Some(JsValue::Object(arr)) = args.first() {
+        let arr_ref = arr.borrow();
+        if let ExoticObject::Array { length } = arr_ref.exotic {
+            let mut items = Vec::new();
+            for i in 0..length {
+                if let Some(value) = arr_ref.get_property(&PropertyKey::Index(i)) {
+                    items.push(value);
+                }
+            }
+            drop(arr_ref);
+
+            let mut set = set_obj.borrow_mut();
+            if let ExoticObject::Set { ref mut entries } = set.exotic {
+                for value in items {
+                    // Only add if not already present
+                    let exists = entries.iter().any(|e| same_value_zero(e, &value));
+                    if !exists {
+                        entries.push(value);
+                    }
+                }
+                let len = entries.len();
+                set.set_property(PropertyKey::from("size"), JsValue::Number(len as f64));
+            }
+        }
+    }
+
+    Ok(JsValue::Object(set_obj))
+}
+
+fn set_add(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let JsValue::Object(set_obj) = this.clone() else {
+        return Err(JsError::type_error("Set.prototype.add called on non-object"));
+    };
+
+    let value = args.first().cloned().unwrap_or(JsValue::Undefined);
+    let mut set = set_obj.borrow_mut();
+
+    if let ExoticObject::Set { ref mut entries } = set.exotic {
+        // Only add if not already present
+        let exists = entries.iter().any(|e| same_value_zero(e, &value));
+        if !exists {
+            entries.push(value);
+            let len = entries.len();
+            set.set_property(PropertyKey::from("size"), JsValue::Number(len as f64));
+        }
+    }
+
+    drop(set);
+    Ok(this) // Return the set for chaining
+}
+
+fn set_has(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let JsValue::Object(set_obj) = this else {
+        return Err(JsError::type_error("Set.prototype.has called on non-object"));
+    };
+
+    let value = args.first().cloned().unwrap_or(JsValue::Undefined);
+    let set = set_obj.borrow();
+
+    if let ExoticObject::Set { ref entries } = set.exotic {
+        for e in entries {
+            if same_value_zero(e, &value) {
+                return Ok(JsValue::Boolean(true));
+            }
+        }
+    }
+
+    Ok(JsValue::Boolean(false))
+}
+
+fn set_delete(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let JsValue::Object(set_obj) = this else {
+        return Err(JsError::type_error("Set.prototype.delete called on non-object"));
+    };
+
+    let value = args.first().cloned().unwrap_or(JsValue::Undefined);
+    let mut set = set_obj.borrow_mut();
+
+    if let ExoticObject::Set { ref mut entries } = set.exotic {
+        for i in 0..entries.len() {
+            if same_value_zero(&entries[i], &value) {
+                entries.remove(i);
+                let len = entries.len();
+                set.set_property(PropertyKey::from("size"), JsValue::Number(len as f64));
+                return Ok(JsValue::Boolean(true));
+            }
+        }
+    }
+
+    Ok(JsValue::Boolean(false))
+}
+
+fn set_clear(_interp: &mut Interpreter, this: JsValue, _args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let JsValue::Object(set_obj) = this else {
+        return Err(JsError::type_error("Set.prototype.clear called on non-object"));
+    };
+
+    let mut set = set_obj.borrow_mut();
+
+    if let ExoticObject::Set { ref mut entries } = set.exotic {
+        entries.clear();
+        set.set_property(PropertyKey::from("size"), JsValue::Number(0.0));
+    }
+
+    Ok(JsValue::Undefined)
+}
+
+fn set_foreach(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let JsValue::Object(set_obj) = this.clone() else {
+        return Err(JsError::type_error("Set.prototype.forEach called on non-object"));
+    };
+
+    let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
+    let this_arg = args.get(1).cloned().unwrap_or(JsValue::Undefined);
+
+    // Collect entries first to avoid borrow issues
+    let entries: Vec<JsValue>;
+    {
+        let set = set_obj.borrow();
+        if let ExoticObject::Set { entries: ref e } = set.exotic {
+            entries = e.clone();
+        } else {
+            return Err(JsError::type_error("Set.prototype.forEach called on non-Set"));
+        }
+    }
+
+    for value in entries {
+        // Set.forEach passes (value, value, set) - value is passed twice
+        interp.call_function(callback.clone(), this_arg.clone(), vec![value.clone(), value, this.clone()])?;
+    }
+
+    Ok(JsValue::Undefined)
 }
 
 fn array_constructor_fn(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
@@ -4499,6 +4967,12 @@ fn object_to_string(_interp: &mut Interpreter, this: JsValue, _args: Vec<JsValue
                 ExoticObject::Ordinary => {
                     Ok(JsValue::String(JsString::from("[object Object]")))
                 }
+                ExoticObject::Map { .. } => {
+                    Ok(JsValue::String(JsString::from("[object Map]")))
+                }
+                ExoticObject::Set { .. } => {
+                    Ok(JsValue::String(JsString::from("[object Set]")))
+                }
             }
         }
         _ => Ok(JsValue::String(JsString::from("[object Object]"))),
@@ -5184,6 +5658,8 @@ fn js_value_to_json(value: &JsValue) -> Result<serde_json::Value, JsError> {
                     serde_json::Value::Array(arr)
                 }
                 ExoticObject::Function(_) => serde_json::Value::Null,
+                ExoticObject::Map { .. } => serde_json::Value::Null,
+                ExoticObject::Set { .. } => serde_json::Value::Null,
                 ExoticObject::Ordinary => {
                     let mut map = serde_json::Map::new();
                     for (key, prop) in obj_ref.properties.iter() {
@@ -6062,6 +6538,32 @@ mod tests {
         assert_eq!(eval("new Error('oops').name"), JsValue::from("Error"));
         assert_eq!(eval("new TypeError('bad type').name"), JsValue::from("TypeError"));
         assert_eq!(eval("new RangeError('out of range').name"), JsValue::from("RangeError"));
+    }
+
+    #[test]
+    fn test_map() {
+        // Basic Map creation and operations
+        assert_eq!(eval("let m = new Map(); m.size"), JsValue::Number(0.0));
+        assert_eq!(eval("let m = new Map(); m.set('a', 1); m.get('a')"), JsValue::Number(1.0));
+        assert_eq!(eval("let m = new Map(); m.set('a', 1); m.has('a')"), JsValue::Boolean(true));
+        assert_eq!(eval("let m = new Map(); m.has('a')"), JsValue::Boolean(false));
+        assert_eq!(eval("let m = new Map(); m.set('a', 1); m.size"), JsValue::Number(1.0));
+
+        // Delete and clear (use bracket notation for 'delete' since it's a reserved word)
+        assert_eq!(eval("let m = new Map(); m.set('a', 1); m['delete']('a'); m.has('a')"), JsValue::Boolean(false));
+        assert_eq!(eval("let m = new Map(); m.set('a', 1); m.set('b', 2); m.clear(); m.size"), JsValue::Number(0.0));
+
+        // Object keys
+        assert_eq!(eval("let m = new Map(); let obj = {}; m.set(obj, 'value'); m.get(obj)"), JsValue::from("value"));
+
+        // Initialize with array of pairs
+        assert_eq!(eval("let m = new Map([['a', 1], ['b', 2]]); m.get('b')"), JsValue::Number(2.0));
+
+        // forEach
+        assert_eq!(eval("let result = []; let m = new Map([['a', 1], ['b', 2]]); m.forEach((v, k) => result.push(k + ':' + v)); result.join(',')"), JsValue::from("a:1,b:2"));
+
+        // Method chaining (set returns Map)
+        assert_eq!(eval("let m = new Map(); m.set('a', 1).set('b', 2).get('b')"), JsValue::Number(2.0));
     }
 
     #[test]

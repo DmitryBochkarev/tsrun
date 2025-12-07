@@ -153,6 +153,8 @@ impl fmt::Debug for JsValue {
                         let name = func.name().unwrap_or("anonymous");
                         write!(f, "[Function: {}]", name)
                     }
+                    ExoticObject::Map { entries } => write!(f, "Map({})", entries.len()),
+                    ExoticObject::Set { entries } => write!(f, "Set({})", entries.len()),
                 }
             }
         }
@@ -503,6 +505,10 @@ pub enum ExoticObject {
     Array { length: u32 },
     /// Function exotic object
     Function(JsFunction),
+    /// Map exotic object - stores key-value pairs preserving insertion order
+    Map { entries: Vec<(JsValue, JsValue)> },
+    /// Set exotic object - stores unique values preserving insertion order
+    Set { entries: Vec<JsValue> },
 }
 
 /// Function representation

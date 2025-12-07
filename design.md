@@ -358,17 +358,17 @@
 - [ ] `Error.prototype.toString()`
 
 #### Map
-- [ ] `new Map(iterable?)`
-- [ ] `Map.prototype.get(key)`
-- [ ] `Map.prototype.set(key, value)`
-- [ ] `Map.prototype.has(key)`
-- [ ] `Map.prototype.delete(key)`
-- [ ] `Map.prototype.clear()`
-- [ ] `Map.prototype.size`
+- [x] `new Map(iterable?)`
+- [x] `Map.prototype.get(key)`
+- [x] `Map.prototype.set(key, value)`
+- [x] `Map.prototype.has(key)`
+- [x] `Map.prototype.delete(key)`
+- [x] `Map.prototype.clear()`
+- [x] `Map.prototype.size`
 - [ ] `Map.prototype.keys()`
 - [ ] `Map.prototype.values()`
 - [ ] `Map.prototype.entries()`
-- [ ] `Map.prototype.forEach(callback)`
+- [x] `Map.prototype.forEach(callback)`
 
 #### Set
 - [ ] `new Set(iterable?)`
