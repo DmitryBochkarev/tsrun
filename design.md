@@ -242,8 +242,8 @@
 - [x] `Array.prototype.includes(item, fromIndex?)`
 - [x] `Array.prototype.find(predicate)`
 - [x] `Array.prototype.findIndex(predicate)`
-- [ ] `Array.prototype.findLast(predicate)`
-- [ ] `Array.prototype.findLastIndex(predicate)`
+- [x] `Array.prototype.findLast(predicate)`
+- [x] `Array.prototype.findLastIndex(predicate)`
 - [x] `Array.prototype.filter(predicate)`
 - [x] `Array.prototype.map(callback)`
 - [x] `Array.prototype.forEach(callback)`
@@ -259,10 +259,10 @@
 - [ ] `Array.prototype.keys()`
 - [ ] `Array.prototype.values()`
 - [x] `Array.prototype.at(index)`
-- [ ] `Array.prototype.toReversed()`
-- [ ] `Array.prototype.toSorted(compareFn?)`
-- [ ] `Array.prototype.toSpliced(start, deleteCount?, ...items)`
-- [ ] `Array.prototype.with(index, value)`
+- [x] `Array.prototype.toReversed()`
+- [x] `Array.prototype.toSorted(compareFn?)`
+- [x] `Array.prototype.toSpliced(start, deleteCount?, ...items)`
+- [x] `Array.prototype.with(index, value)`
 
 #### String
 - [x] `String.fromCharCode(...codes)`
