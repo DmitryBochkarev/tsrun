@@ -22,6 +22,7 @@ cargo test -- --nocapture      # Show test output
 - **Always use the proper Edit tool to modify files** - never use shell commands like `echo >>` to modify files
 - Prefer small, focused edits over large rewrites
 - **Always add TypeScript type annotations in test code** - even though types are stripped at runtime, tests should use proper TypeScript syntax
+- **Use TDD**: If a test fails because a feature is not implemented, implement the feature first rather than deleting or modifying the test to work around the limitation
 
 ## Development Workflow
 

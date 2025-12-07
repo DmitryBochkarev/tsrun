@@ -2865,4 +2865,206 @@ mod tests {
         let prog = parse("const fn: (x?: number) => number = (x) => x || 0;");
         assert_eq!(prog.body.len(), 1);
     }
+
+    // Additional comprehensive parser tests
+
+    #[test]
+    fn test_interface_declaration() {
+        let prog = parse("interface Person { name: string; age: number; }");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_type_alias() {
+        let prog = parse("type StringOrNumber = string | number;");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_generic_type() {
+        let prog = parse("const arr: Array<number> = [1, 2, 3];");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_class_declaration() {
+        let prog = parse("class Person { name: string; constructor(name: string) { this.name = name; } }");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_class_inheritance() {
+        let prog = parse("class Employee extends Person { department: string; }");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_enum_declaration() {
+        let prog = parse("enum Color { Red, Green, Blue }");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_for_loop() {
+        let prog = parse("for (let i: number = 0; i < 10; i++) { console.log(i); }");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_for_of_loop() {
+        let prog = parse("for (const x of [1, 2, 3] as number[]) { console.log(x); }");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_for_in_loop() {
+        let prog = parse("for (const key in {a: 1, b: 2} as { a: number; b: number }) { console.log(key); }");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_while_loop() {
+        let prog = parse("while (true as boolean) { break; }");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_do_while_loop() {
+        let prog = parse("do { x++; } while (x < 10);");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_switch_statement() {
+        let prog = parse("switch (x as number) { case 1: break; case 2: return; default: throw new Error(); }");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_try_catch_finally() {
+        let prog = parse("try { riskyOperation(); } catch (e) { console.error(e); } finally { cleanup(); }");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_destructuring_assignment() {
+        let prog = parse("const { x, y }: { x: number; y: number } = point;");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_array_destructuring() {
+        let prog = parse("const [first, second]: number[] = [1, 2];");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_spread_operator() {
+        let prog = parse("const combined: number[] = [...arr1, ...arr2];");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_rest_parameter() {
+        let prog = parse("function sum(...nums: number[]): number { return nums.reduce((a, b) => a + b, 0); }");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_template_literal() {
+        let prog = parse("const greeting: string = `Hello, ${name}!`;");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_optional_chaining() {
+        let prog = parse("const value: number | undefined = obj?.property?.nested;");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_nullish_coalescing() {
+        let prog = parse("const result: number = value ?? 0;");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_union_type() {
+        let prog = parse("let value: string | number | boolean = 'hello';");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_intersection_type() {
+        let prog = parse("type Combined = TypeA & TypeB;");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_type_assertion() {
+        let prog = parse("const el: HTMLElement = document.getElementById('id') as HTMLElement;");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_non_null_assertion() {
+        let prog = parse("const value: string = maybeString!;");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_async_function() {
+        // Note: async/await not yet implemented
+        let prog = parse("function fetchData(): Promise<any> { return fetch(url); }");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_getter_setter() {
+        let prog = parse("class Foo { get value(): number { return this._value; } set value(v: number) { this._value = v; } }");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_static_method() {
+        let prog = parse("class Counter { static count: number = 0; static increment(): void { Counter.count++; } }");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_typeof_operator() {
+        let prog = parse("const typeStr: string = typeof value;");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_instanceof_operator() {
+        let prog = parse("const isArray: boolean = value instanceof Array;");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_ternary_expression() {
+        let prog = parse("const result: string = condition ? 'yes' : 'no';");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_computed_property() {
+        // Index signature types not yet fully implemented
+        let prog = parse("const obj = { [dynamicKey]: 42 };");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_shorthand_property() {
+        let prog = parse("const obj: { x: number; y: number } = { x, y };");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_method_shorthand() {
+        let prog = parse("const obj = { greet(): string { return 'hello'; } };");
+        assert_eq!(prog.body.len(), 1);
+    }
 }

@@ -1062,4 +1062,153 @@ mod tests {
             TokenKind::Number(1.0), TokenKind::Number(2.0)
         ]);
     }
+
+    // Additional lexer tests for comprehensive coverage
+
+    #[test]
+    fn test_comparison_operators() {
+        assert_eq!(lex("< > <= >= == !="), vec![
+            TokenKind::Lt, TokenKind::Gt, TokenKind::LtEq, TokenKind::GtEq,
+            TokenKind::EqEq, TokenKind::BangEq
+        ]);
+    }
+
+    #[test]
+    fn test_logical_operators() {
+        assert_eq!(lex("&& || !"), vec![
+            TokenKind::AmpAmp, TokenKind::PipePipe, TokenKind::Bang
+        ]);
+    }
+
+    #[test]
+    fn test_bitwise_operators() {
+        assert_eq!(lex("& | ^ ~ << >>"), vec![
+            TokenKind::Amp, TokenKind::Pipe, TokenKind::Caret, TokenKind::Tilde,
+            TokenKind::LtLt, TokenKind::GtGt
+        ]);
+    }
+
+    #[test]
+    fn test_assignment_operators() {
+        assert_eq!(lex("= += -= *= /= %="), vec![
+            TokenKind::Eq, TokenKind::PlusEq, TokenKind::MinusEq,
+            TokenKind::StarEq, TokenKind::SlashEq, TokenKind::PercentEq
+        ]);
+    }
+
+    #[test]
+    fn test_increment_decrement() {
+        assert_eq!(lex("++ --"), vec![TokenKind::PlusPlus, TokenKind::MinusMinus]);
+    }
+
+    #[test]
+    fn test_delimiters() {
+        assert_eq!(lex("( ) [ ] { }"), vec![
+            TokenKind::LParen, TokenKind::RParen,
+            TokenKind::LBracket, TokenKind::RBracket,
+            TokenKind::LBrace, TokenKind::RBrace
+        ]);
+    }
+
+    #[test]
+    fn test_punctuation() {
+        assert_eq!(lex(", ; : ."), vec![
+            TokenKind::Comma, TokenKind::Semicolon, TokenKind::Colon, TokenKind::Dot
+        ]);
+    }
+
+    #[test]
+    fn test_arrow_and_spread() {
+        assert_eq!(lex("=> ..."), vec![TokenKind::Arrow, TokenKind::DotDotDot]);
+    }
+
+    #[test]
+    fn test_optional_and_nullish() {
+        assert_eq!(lex("?. ?? ?"), vec![
+            TokenKind::QuestionDot, TokenKind::QuestionQuestion, TokenKind::Question
+        ]);
+    }
+
+    #[test]
+    fn test_control_keywords() {
+        assert_eq!(lex("if else switch case default"), vec![
+            TokenKind::If, TokenKind::Else, TokenKind::Switch,
+            TokenKind::Case, TokenKind::Default
+        ]);
+    }
+
+    #[test]
+    fn test_loop_keywords() {
+        assert_eq!(lex("for while do break continue"), vec![
+            TokenKind::For, TokenKind::While, TokenKind::Do,
+            TokenKind::Break, TokenKind::Continue
+        ]);
+    }
+
+    #[test]
+    fn test_class_keywords() {
+        assert_eq!(lex("class extends new this super"), vec![
+            TokenKind::Class, TokenKind::Extends, TokenKind::New,
+            TokenKind::This, TokenKind::Super
+        ]);
+    }
+
+    #[test]
+    fn test_typescript_keywords() {
+        assert_eq!(lex("interface type implements"), vec![
+            TokenKind::Interface, TokenKind::Type, TokenKind::Implements
+        ]);
+    }
+
+    #[test]
+    fn test_error_handling_keywords() {
+        assert_eq!(lex("try catch finally throw"), vec![
+            TokenKind::Try, TokenKind::Catch, TokenKind::Finally, TokenKind::Throw
+        ]);
+    }
+
+    #[test]
+    fn test_type_keywords() {
+        assert_eq!(lex("void null undefined"), vec![
+            TokenKind::Void, TokenKind::Null, TokenKind::Identifier("undefined".to_string())
+        ]);
+    }
+
+    #[test]
+    fn test_boolean_literals() {
+        assert_eq!(lex("true false"), vec![TokenKind::True, TokenKind::False]);
+    }
+
+    #[test]
+    fn test_template_literal_basic() {
+        // Simple template without interpolation becomes TemplateNoSub
+        assert_eq!(lex("`hello`"), vec![
+            TokenKind::TemplateNoSub("hello".to_string())
+        ]);
+    }
+
+    #[test]
+    fn test_string_escape_sequences() {
+        assert_eq!(lex(r#""hello\tworld""#), vec![TokenKind::String("hello\tworld".to_string())]);
+        assert_eq!(lex(r#""line\\break""#), vec![TokenKind::String("line\\break".to_string())]);
+        assert_eq!(lex(r#""quote\"test""#), vec![TokenKind::String("quote\"test".to_string())]);
+    }
+
+    #[test]
+    fn test_exponentiation_operator() {
+        assert_eq!(lex("**"), vec![TokenKind::StarStar]);
+        assert_eq!(lex("**="), vec![TokenKind::StarStarEq]);
+    }
+
+    #[test]
+    fn test_in_instanceof_operators() {
+        assert_eq!(lex("in instanceof"), vec![
+            TokenKind::In, TokenKind::Instanceof
+        ]);
+    }
+
+    #[test]
+    fn test_typeof_operator() {
+        assert_eq!(lex("typeof"), vec![TokenKind::Typeof]);
+    }
 }
