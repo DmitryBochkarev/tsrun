@@ -729,6 +729,118 @@ impl Interpreter {
                 arity: 1,
             }));
             math.set_property(PropertyKey::from("tan"), JsValue::Object(tan_fn));
+
+            let asin_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "asin".to_string(),
+                func: math_asin,
+                arity: 1,
+            }));
+            math.set_property(PropertyKey::from("asin"), JsValue::Object(asin_fn));
+
+            let acos_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "acos".to_string(),
+                func: math_acos,
+                arity: 1,
+            }));
+            math.set_property(PropertyKey::from("acos"), JsValue::Object(acos_fn));
+
+            let atan_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "atan".to_string(),
+                func: math_atan,
+                arity: 1,
+            }));
+            math.set_property(PropertyKey::from("atan"), JsValue::Object(atan_fn));
+
+            let atan2_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "atan2".to_string(),
+                func: math_atan2,
+                arity: 2,
+            }));
+            math.set_property(PropertyKey::from("atan2"), JsValue::Object(atan2_fn));
+
+            let sinh_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "sinh".to_string(),
+                func: math_sinh,
+                arity: 1,
+            }));
+            math.set_property(PropertyKey::from("sinh"), JsValue::Object(sinh_fn));
+
+            let cosh_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "cosh".to_string(),
+                func: math_cosh,
+                arity: 1,
+            }));
+            math.set_property(PropertyKey::from("cosh"), JsValue::Object(cosh_fn));
+
+            let tanh_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "tanh".to_string(),
+                func: math_tanh,
+                arity: 1,
+            }));
+            math.set_property(PropertyKey::from("tanh"), JsValue::Object(tanh_fn));
+
+            let asinh_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "asinh".to_string(),
+                func: math_asinh,
+                arity: 1,
+            }));
+            math.set_property(PropertyKey::from("asinh"), JsValue::Object(asinh_fn));
+
+            let acosh_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "acosh".to_string(),
+                func: math_acosh,
+                arity: 1,
+            }));
+            math.set_property(PropertyKey::from("acosh"), JsValue::Object(acosh_fn));
+
+            let atanh_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "atanh".to_string(),
+                func: math_atanh,
+                arity: 1,
+            }));
+            math.set_property(PropertyKey::from("atanh"), JsValue::Object(atanh_fn));
+
+            let cbrt_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "cbrt".to_string(),
+                func: math_cbrt,
+                arity: 1,
+            }));
+            math.set_property(PropertyKey::from("cbrt"), JsValue::Object(cbrt_fn));
+
+            let hypot_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "hypot".to_string(),
+                func: math_hypot,
+                arity: 2,
+            }));
+            math.set_property(PropertyKey::from("hypot"), JsValue::Object(hypot_fn));
+
+            let log10_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "log10".to_string(),
+                func: math_log10,
+                arity: 1,
+            }));
+            math.set_property(PropertyKey::from("log10"), JsValue::Object(log10_fn));
+
+            let log2_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "log2".to_string(),
+                func: math_log2,
+                arity: 1,
+            }));
+            math.set_property(PropertyKey::from("log2"), JsValue::Object(log2_fn));
+
+            let log1p_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "log1p".to_string(),
+                func: math_log1p,
+                arity: 1,
+            }));
+            math.set_property(PropertyKey::from("log1p"), JsValue::Object(log1p_fn));
+
+            let expm1_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "expm1".to_string(),
+                func: math_expm1,
+                arity: 1,
+            }));
+            math.set_property(PropertyKey::from("expm1"), JsValue::Object(expm1_fn));
         }
         env.define("Math".to_string(), JsValue::Object(math_object), false);
 
@@ -3836,6 +3948,93 @@ fn math_tan(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Re
     Ok(JsValue::Number(n.tan()))
 }
 
+fn math_asin(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let n = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
+    Ok(JsValue::Number(n.asin()))
+}
+
+fn math_acos(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let n = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
+    Ok(JsValue::Number(n.acos()))
+}
+
+fn math_atan(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let n = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
+    Ok(JsValue::Number(n.atan()))
+}
+
+fn math_atan2(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let y = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
+    let x = args.get(1).map(|v| v.to_number()).unwrap_or(f64::NAN);
+    Ok(JsValue::Number(y.atan2(x)))
+}
+
+fn math_sinh(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let n = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
+    Ok(JsValue::Number(n.sinh()))
+}
+
+fn math_cosh(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let n = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
+    Ok(JsValue::Number(n.cosh()))
+}
+
+fn math_tanh(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let n = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
+    Ok(JsValue::Number(n.tanh()))
+}
+
+fn math_asinh(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let n = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
+    Ok(JsValue::Number(n.asinh()))
+}
+
+fn math_acosh(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let n = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
+    Ok(JsValue::Number(n.acosh()))
+}
+
+fn math_atanh(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let n = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
+    Ok(JsValue::Number(n.atanh()))
+}
+
+fn math_cbrt(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let n = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
+    Ok(JsValue::Number(n.cbrt()))
+}
+
+fn math_hypot(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    if args.is_empty() {
+        return Ok(JsValue::Number(0.0));
+    }
+    let sum_sq: f64 = args.iter().map(|v| {
+        let n = v.to_number();
+        n * n
+    }).sum();
+    Ok(JsValue::Number(sum_sq.sqrt()))
+}
+
+fn math_log10(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let n = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
+    Ok(JsValue::Number(n.log10()))
+}
+
+fn math_log2(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let n = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
+    Ok(JsValue::Number(n.log2()))
+}
+
+fn math_log1p(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let n = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
+    Ok(JsValue::Number(n.ln_1p()))
+}
+
+fn math_expm1(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let n = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
+    Ok(JsValue::Number(n.exp_m1()))
+}
+
 // Global functions
 
 fn global_parse_int(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
@@ -4650,6 +4849,53 @@ mod tests {
     fn test_math_trig() {
         assert_eq!(eval("Math.sin(0)"), JsValue::Number(0.0));
         assert_eq!(eval("Math.cos(0)"), JsValue::Number(1.0));
+    }
+
+    #[test]
+    fn test_math_cbrt() {
+        assert_eq!(eval("Math.cbrt(27)"), JsValue::Number(3.0));
+        assert_eq!(eval("Math.cbrt(8)"), JsValue::Number(2.0));
+        assert_eq!(eval("Math.cbrt(-8)"), JsValue::Number(-2.0));
+    }
+
+    #[test]
+    fn test_math_hypot() {
+        assert_eq!(eval("Math.hypot(3, 4)"), JsValue::Number(5.0));
+        assert_eq!(eval("Math.hypot(5, 12)"), JsValue::Number(13.0));
+        assert_eq!(eval("Math.hypot()"), JsValue::Number(0.0));
+    }
+
+    #[test]
+    fn test_math_log10_log2() {
+        assert_eq!(eval("Math.log10(100)"), JsValue::Number(2.0));
+        assert_eq!(eval("Math.log10(1000)"), JsValue::Number(3.0));
+        assert_eq!(eval("Math.log2(8)"), JsValue::Number(3.0));
+        assert_eq!(eval("Math.log2(16)"), JsValue::Number(4.0));
+    }
+
+    #[test]
+    fn test_math_log1p_expm1() {
+        // log1p(0) = 0
+        assert_eq!(eval("Math.log1p(0)"), JsValue::Number(0.0));
+        // expm1(0) = 0
+        assert_eq!(eval("Math.expm1(0)"), JsValue::Number(0.0));
+    }
+
+    #[test]
+    fn test_math_inverse_trig() {
+        assert_eq!(eval("Math.asin(0)"), JsValue::Number(0.0));
+        assert_eq!(eval("Math.acos(1)"), JsValue::Number(0.0));
+        assert_eq!(eval("Math.atan(0)"), JsValue::Number(0.0));
+        assert_eq!(eval("Math.atan2(0, 1)"), JsValue::Number(0.0));
+    }
+
+    #[test]
+    fn test_math_hyperbolic() {
+        assert_eq!(eval("Math.sinh(0)"), JsValue::Number(0.0));
+        assert_eq!(eval("Math.cosh(0)"), JsValue::Number(1.0));
+        assert_eq!(eval("Math.tanh(0)"), JsValue::Number(0.0));
+        assert_eq!(eval("Math.asinh(0)"), JsValue::Number(0.0));
+        assert_eq!(eval("Math.atanh(0)"), JsValue::Number(0.0));
     }
 
     // Global function tests

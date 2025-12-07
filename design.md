@@ -328,19 +328,19 @@
 - [x] `Math.min(...values)`
 - [x] `Math.pow(base, exp)`
 - [x] `Math.sqrt(x)`
-- [ ] `Math.cbrt(x)`
-- [ ] `Math.hypot(...values)`
+- [x] `Math.cbrt(x)`
+- [x] `Math.hypot(...values)`
 - [x] `Math.log(x)`
-- [ ] `Math.log10(x)`
-- [ ] `Math.log2(x)`
-- [ ] `Math.log1p(x)`
+- [x] `Math.log10(x)`
+- [x] `Math.log2(x)`
+- [x] `Math.log1p(x)`
 - [x] `Math.exp(x)`
-- [ ] `Math.expm1(x)`
+- [x] `Math.expm1(x)`
 - [x] `Math.sin(x)`, `Math.cos(x)`, `Math.tan(x)`
-- [ ] `Math.asin(x)`, `Math.acos(x)`, `Math.atan(x)`
-- [ ] `Math.sinh(x)`, `Math.cosh(x)`, `Math.tanh(x)`
-- [ ] `Math.asinh(x)`, `Math.acosh(x)`, `Math.atanh(x)`
-- [ ] `Math.atan2(y, x)`
+- [x] `Math.asin(x)`, `Math.acos(x)`, `Math.atan(x)`
+- [x] `Math.sinh(x)`, `Math.cosh(x)`, `Math.tanh(x)`
+- [x] `Math.asinh(x)`, `Math.acosh(x)`, `Math.atanh(x)`
+- [x] `Math.atan2(y, x)`
 - [x] `Math.random()`
 - [x] `Math.PI`, `Math.E`, `Math.LN2`, `Math.LN10`, etc.
 
