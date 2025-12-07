@@ -17,6 +17,12 @@ cargo test parser              # Run only parser tests
 cargo test -- --nocapture      # Show test output
 ```
 
+## Important Rules
+
+- **Always use the proper Edit tool to modify files** - never use shell commands like `echo >>` to modify files
+- Prefer small, focused edits over large rewrites
+- **Always add TypeScript type annotations in test code** - even though types are stripped at runtime, tests should use proper TypeScript syntax
+
 ## Development Workflow
 
 Use TDD (Test-Driven Development) for new features:

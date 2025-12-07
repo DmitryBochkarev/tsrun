@@ -255,9 +255,9 @@
 - [x] `Array.prototype.flatMap(callback)`
 - [x] `Array.prototype.fill(value, start?, end?)`
 - [x] `Array.prototype.copyWithin(target, start?, end?)`
-- [ ] `Array.prototype.entries()`
-- [ ] `Array.prototype.keys()`
-- [ ] `Array.prototype.values()`
+- [x] `Array.prototype.entries()`
+- [x] `Array.prototype.keys()`
+- [x] `Array.prototype.values()`
 - [x] `Array.prototype.at(index)`
 - [x] `Array.prototype.toReversed()`
 - [x] `Array.prototype.toSorted(compareFn?)`

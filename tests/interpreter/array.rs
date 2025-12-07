@@ -695,3 +695,57 @@ fn test_array_with() {
         JsValue::Number(2.0)
     ); // Original unchanged
 }
+
+// Array.prototype.keys tests
+#[test]
+fn test_array_keys() {
+    // keys() returns an array of indices
+    assert_eq!(
+        eval("let arr: string[] = ['a', 'b', 'c']; let keys: number[] = arr.keys(); keys[0]"),
+        JsValue::Number(0.0)
+    );
+    assert_eq!(
+        eval("let arr: string[] = ['a', 'b', 'c']; let keys: number[] = arr.keys(); keys[2]"),
+        JsValue::Number(2.0)
+    );
+    assert_eq!(
+        eval("([1, 2, 3] as number[]).keys().length"),
+        JsValue::Number(3.0)
+    );
+}
+
+// Array.prototype.values tests
+#[test]
+fn test_array_values() {
+    // values() returns an array of values
+    assert_eq!(
+        eval("let arr: string[] = ['a', 'b', 'c']; let vals: string[] = arr.values(); vals[0]"),
+        JsValue::String(JsString::from("a"))
+    );
+    assert_eq!(
+        eval("([1, 2, 3] as number[]).values()[1]"),
+        JsValue::Number(2.0)
+    );
+}
+
+// Array.prototype.entries tests
+#[test]
+fn test_array_entries() {
+    // entries() returns an array of [index, value] pairs
+    assert_eq!(
+        eval("let arr: string[] = ['a', 'b']; let entries = arr.entries(); entries[0][0]"),
+        JsValue::Number(0.0)
+    );
+    assert_eq!(
+        eval("let arr: string[] = ['a', 'b']; let entries = arr.entries(); entries[0][1]"),
+        JsValue::String(JsString::from("a"))
+    );
+    assert_eq!(
+        eval("let arr: string[] = ['a', 'b']; let entries = arr.entries(); entries[1][0]"),
+        JsValue::Number(1.0)
+    );
+    assert_eq!(
+        eval("([1, 2, 3] as number[]).entries().length"),
+        JsValue::Number(3.0)
+    );
+}

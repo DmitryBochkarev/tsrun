@@ -240,6 +240,27 @@ pub fn create_array_prototype() -> JsObjectRef {
             arity: 2,
         }));
         p.set_property(PropertyKey::from("with"), JsValue::Object(with_fn));
+
+        let keys_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "keys".to_string(),
+            func: array_keys,
+            arity: 0,
+        }));
+        p.set_property(PropertyKey::from("keys"), JsValue::Object(keys_fn));
+
+        let values_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "values".to_string(),
+            func: array_values,
+            arity: 0,
+        }));
+        p.set_property(PropertyKey::from("values"), JsValue::Object(values_fn));
+
+        let entries_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "entries".to_string(),
+            func: array_entries,
+            arity: 0,
+        }));
+        p.set_property(PropertyKey::from("entries"), JsValue::Object(entries_fn));
     }
     proto
 }
@@ -1649,4 +1670,63 @@ pub fn array_with(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -
         .collect();
 
     Ok(JsValue::Object(interp.create_array(elements)))
+}
+
+pub fn array_keys(interp: &mut Interpreter, this: JsValue, _args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let JsValue::Object(arr) = this else {
+        return Err(JsError::type_error("Array.prototype.keys called on non-object"));
+    };
+
+    let length = {
+        let arr_ref = arr.borrow();
+        match &arr_ref.exotic {
+            ExoticObject::Array { length } => *length,
+            _ => return Err(JsError::type_error("Not an array")),
+        }
+    };
+
+    let keys: Vec<JsValue> = (0..length).map(|i| JsValue::Number(i as f64)).collect();
+    Ok(JsValue::Object(interp.create_array(keys)))
+}
+
+pub fn array_values(interp: &mut Interpreter, this: JsValue, _args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let JsValue::Object(arr) = this else {
+        return Err(JsError::type_error("Array.prototype.values called on non-object"));
+    };
+
+    let length = {
+        let arr_ref = arr.borrow();
+        match &arr_ref.exotic {
+            ExoticObject::Array { length } => *length,
+            _ => return Err(JsError::type_error("Not an array")),
+        }
+    };
+
+    let values: Vec<JsValue> = (0..length)
+        .map(|i| arr.borrow().get_property(&PropertyKey::Index(i)).unwrap_or(JsValue::Undefined))
+        .collect();
+    Ok(JsValue::Object(interp.create_array(values)))
+}
+
+pub fn array_entries(interp: &mut Interpreter, this: JsValue, _args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let JsValue::Object(arr) = this else {
+        return Err(JsError::type_error("Array.prototype.entries called on non-object"));
+    };
+
+    let length = {
+        let arr_ref = arr.borrow();
+        match &arr_ref.exotic {
+            ExoticObject::Array { length } => *length,
+            _ => return Err(JsError::type_error("Not an array")),
+        }
+    };
+
+    let entries: Vec<JsValue> = (0..length)
+        .map(|i| {
+            let value = arr.borrow().get_property(&PropertyKey::Index(i)).unwrap_or(JsValue::Undefined);
+            let pair = vec![JsValue::Number(i as f64), value];
+            JsValue::Object(interp.create_array(pair))
+        })
+        .collect();
+    Ok(JsValue::Object(interp.create_array(entries)))
 }
