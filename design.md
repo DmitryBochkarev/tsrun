@@ -383,18 +383,18 @@
 - [x] `Set.prototype.forEach(callback)`
 
 #### Date
-- [ ] `new Date()`
-- [ ] `new Date(timestamp)`
-- [ ] `new Date(dateString)`
-- [ ] `new Date(year, month, day?, ...)`
-- [ ] `Date.now()`
-- [ ] `Date.parse(dateString)`
-- [ ] `Date.UTC(year, month, day?, ...)`
-- [ ] `Date.prototype.getTime()`
-- [ ] `Date.prototype.getFullYear()`, `getMonth()`, `getDate()`, etc.
+- [x] `new Date()`
+- [x] `new Date(timestamp)`
+- [x] `new Date(dateString)`
+- [x] `new Date(year, month, day?, ...)`
+- [x] `Date.now()`
+- [x] `Date.parse(dateString)`
+- [x] `Date.UTC(year, month, day?, ...)`
+- [x] `Date.prototype.getTime()`
+- [x] `Date.prototype.getFullYear()`, `getMonth()`, `getDate()`, etc.
 - [ ] `Date.prototype.setFullYear()`, `setMonth()`, `setDate()`, etc.
-- [ ] `Date.prototype.toISOString()`
-- [ ] `Date.prototype.toJSON()`
+- [x] `Date.prototype.toISOString()`
+- [x] `Date.prototype.toJSON()`
 - [ ] `Date.prototype.toString()`
 - [ ] `Date.prototype.toDateString()`
 - [ ] `Date.prototype.toTimeString()`

@@ -44,6 +44,8 @@ pub struct Interpreter {
     pub map_prototype: JsObjectRef,
     /// Set.prototype for set methods
     pub set_prototype: JsObjectRef,
+    /// Date.prototype for date methods
+    pub date_prototype: JsObjectRef,
 }
 
 impl Interpreter {
@@ -1300,6 +1302,130 @@ impl Interpreter {
         }));
         env.define("Set".to_string(), JsValue::Object(set_constructor_fn), false);
 
+        // Create Date.prototype with Date methods
+        let date_prototype = create_object();
+        {
+            let mut proto = date_prototype.borrow_mut();
+
+            let get_time_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "getTime".to_string(),
+                func: date_get_time,
+                arity: 0,
+            }));
+            proto.set_property(PropertyKey::from("getTime"), JsValue::Object(get_time_fn));
+
+            let get_full_year_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "getFullYear".to_string(),
+                func: date_get_full_year,
+                arity: 0,
+            }));
+            proto.set_property(PropertyKey::from("getFullYear"), JsValue::Object(get_full_year_fn));
+
+            let get_month_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "getMonth".to_string(),
+                func: date_get_month,
+                arity: 0,
+            }));
+            proto.set_property(PropertyKey::from("getMonth"), JsValue::Object(get_month_fn));
+
+            let get_date_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "getDate".to_string(),
+                func: date_get_date,
+                arity: 0,
+            }));
+            proto.set_property(PropertyKey::from("getDate"), JsValue::Object(get_date_fn));
+
+            let get_day_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "getDay".to_string(),
+                func: date_get_day,
+                arity: 0,
+            }));
+            proto.set_property(PropertyKey::from("getDay"), JsValue::Object(get_day_fn));
+
+            let get_hours_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "getHours".to_string(),
+                func: date_get_hours,
+                arity: 0,
+            }));
+            proto.set_property(PropertyKey::from("getHours"), JsValue::Object(get_hours_fn));
+
+            let get_minutes_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "getMinutes".to_string(),
+                func: date_get_minutes,
+                arity: 0,
+            }));
+            proto.set_property(PropertyKey::from("getMinutes"), JsValue::Object(get_minutes_fn));
+
+            let get_seconds_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "getSeconds".to_string(),
+                func: date_get_seconds,
+                arity: 0,
+            }));
+            proto.set_property(PropertyKey::from("getSeconds"), JsValue::Object(get_seconds_fn));
+
+            let get_milliseconds_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "getMilliseconds".to_string(),
+                func: date_get_milliseconds,
+                arity: 0,
+            }));
+            proto.set_property(PropertyKey::from("getMilliseconds"), JsValue::Object(get_milliseconds_fn));
+
+            let to_iso_string_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "toISOString".to_string(),
+                func: date_to_iso_string,
+                arity: 0,
+            }));
+            proto.set_property(PropertyKey::from("toISOString"), JsValue::Object(to_iso_string_fn));
+
+            let to_json_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "toJSON".to_string(),
+                func: date_to_iso_string, // toJSON returns the same as toISOString
+                arity: 0,
+            }));
+            proto.set_property(PropertyKey::from("toJSON"), JsValue::Object(to_json_fn));
+
+            let value_of_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "valueOf".to_string(),
+                func: date_get_time, // valueOf returns the same as getTime
+                arity: 0,
+            }));
+            proto.set_property(PropertyKey::from("valueOf"), JsValue::Object(value_of_fn));
+        }
+
+        // Add Date constructor with static methods
+        let date_obj = create_function(JsFunction::Native(NativeFunction {
+            name: "Date".to_string(),
+            func: date_constructor,
+            arity: 0,
+        }));
+        {
+            let mut date = date_obj.borrow_mut();
+
+            let now_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "now".to_string(),
+                func: date_now,
+                arity: 0,
+            }));
+            date.set_property(PropertyKey::from("now"), JsValue::Object(now_fn));
+
+            let utc_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "UTC".to_string(),
+                func: date_utc,
+                arity: 7,
+            }));
+            date.set_property(PropertyKey::from("UTC"), JsValue::Object(utc_fn));
+
+            let parse_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "parse".to_string(),
+                func: date_parse,
+                arity: 1,
+            }));
+            date.set_property(PropertyKey::from("parse"), JsValue::Object(parse_fn));
+
+            date.set_property(PropertyKey::from("prototype"), JsValue::Object(date_prototype.clone()));
+        }
+        env.define("Date".to_string(), JsValue::Object(date_obj), false);
+
         Self {
             global,
             env,
@@ -1310,6 +1436,7 @@ impl Interpreter {
             function_prototype,
             map_prototype,
             set_prototype,
+            date_prototype,
         }
     }
 
@@ -3182,6 +3309,188 @@ fn set_foreach(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> R
     Ok(JsValue::Undefined)
 }
 
+// Date implementation
+use chrono::{Datelike, Timelike, TimeZone, Utc};
+
+fn date_constructor(interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let timestamp = if args.is_empty() {
+        // new Date() - current time
+        Utc::now().timestamp_millis() as f64
+    } else if args.len() == 1 {
+        match &args[0] {
+            JsValue::Number(n) => *n,
+            JsValue::String(s) => {
+                // Parse date string
+                chrono::DateTime::parse_from_rfc3339(&s.to_string())
+                    .map(|dt| dt.timestamp_millis() as f64)
+                    .unwrap_or(f64::NAN)
+            }
+            _ => f64::NAN,
+        }
+    } else {
+        // new Date(year, month, day?, hours?, minutes?, seconds?, ms?)
+        let year = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN) as i32;
+        let month = args.get(1).map(|v| v.to_number()).unwrap_or(0.0) as u32;
+        let day = args.get(2).map(|v| v.to_number()).unwrap_or(1.0) as u32;
+        let hours = args.get(3).map(|v| v.to_number()).unwrap_or(0.0) as u32;
+        let minutes = args.get(4).map(|v| v.to_number()).unwrap_or(0.0) as u32;
+        let seconds = args.get(5).map(|v| v.to_number()).unwrap_or(0.0) as u32;
+        let ms = args.get(6).map(|v| v.to_number()).unwrap_or(0.0) as u32;
+
+        // Handle 2-digit years (0-99 map to 1900-1999)
+        let year = if (0..100).contains(&year) { year + 1900 } else { year };
+
+        Utc.with_ymd_and_hms(year, month + 1, day, hours, minutes, seconds)
+            .single()
+            .map(|dt| dt.timestamp_millis() as f64 + ms as f64)
+            .unwrap_or(f64::NAN)
+    };
+
+    let date_obj = create_object();
+    {
+        let mut obj = date_obj.borrow_mut();
+        obj.exotic = ExoticObject::Date { timestamp };
+        obj.prototype = Some(interp.date_prototype.clone());
+    }
+    Ok(JsValue::Object(date_obj))
+}
+
+fn date_now(_interp: &mut Interpreter, _this: JsValue, _args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    Ok(JsValue::Number(Utc::now().timestamp_millis() as f64))
+}
+
+fn date_utc(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let year = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN) as i32;
+    let month = args.get(1).map(|v| v.to_number()).unwrap_or(0.0) as u32;
+    let day = args.get(2).map(|v| v.to_number()).unwrap_or(1.0) as u32;
+    let hours = args.get(3).map(|v| v.to_number()).unwrap_or(0.0) as u32;
+    let minutes = args.get(4).map(|v| v.to_number()).unwrap_or(0.0) as u32;
+    let seconds = args.get(5).map(|v| v.to_number()).unwrap_or(0.0) as u32;
+    let ms = args.get(6).map(|v| v.to_number()).unwrap_or(0.0) as u32;
+
+    // Handle 2-digit years (0-99 map to 1900-1999)
+    let year = if (0..100).contains(&year) { year + 1900 } else { year };
+
+    let timestamp = Utc.with_ymd_and_hms(year, month + 1, day, hours, minutes, seconds)
+        .single()
+        .map(|dt| dt.timestamp_millis() as f64 + ms as f64)
+        .unwrap_or(f64::NAN);
+
+    Ok(JsValue::Number(timestamp))
+}
+
+fn date_parse(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let s = args.first().cloned().unwrap_or(JsValue::Undefined).to_js_string().to_string();
+    let timestamp = chrono::DateTime::parse_from_rfc3339(&s)
+        .map(|dt| dt.timestamp_millis() as f64)
+        .unwrap_or(f64::NAN);
+    Ok(JsValue::Number(timestamp))
+}
+
+fn get_date_timestamp(this: &JsValue) -> Result<f64, JsError> {
+    let JsValue::Object(obj) = this else {
+        return Err(JsError::type_error("this is not a Date"));
+    };
+    let obj_ref = obj.borrow();
+    if let ExoticObject::Date { timestamp } = obj_ref.exotic {
+        Ok(timestamp)
+    } else {
+        Err(JsError::type_error("this is not a Date"))
+    }
+}
+
+fn date_get_time(_interp: &mut Interpreter, this: JsValue, _args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    Ok(JsValue::Number(get_date_timestamp(&this)?))
+}
+
+fn date_get_full_year(_interp: &mut Interpreter, this: JsValue, _args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let ts = get_date_timestamp(&this)?;
+    if ts.is_nan() {
+        return Ok(JsValue::Number(f64::NAN));
+    }
+    let dt = chrono::DateTime::from_timestamp_millis(ts as i64)
+        .unwrap_or(chrono::DateTime::UNIX_EPOCH);
+    Ok(JsValue::Number(dt.year() as f64))
+}
+
+fn date_get_month(_interp: &mut Interpreter, this: JsValue, _args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let ts = get_date_timestamp(&this)?;
+    if ts.is_nan() {
+        return Ok(JsValue::Number(f64::NAN));
+    }
+    let dt = chrono::DateTime::from_timestamp_millis(ts as i64)
+        .unwrap_or(chrono::DateTime::UNIX_EPOCH);
+    Ok(JsValue::Number((dt.month() - 1) as f64)) // 0-indexed
+}
+
+fn date_get_date(_interp: &mut Interpreter, this: JsValue, _args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let ts = get_date_timestamp(&this)?;
+    if ts.is_nan() {
+        return Ok(JsValue::Number(f64::NAN));
+    }
+    let dt = chrono::DateTime::from_timestamp_millis(ts as i64)
+        .unwrap_or(chrono::DateTime::UNIX_EPOCH);
+    Ok(JsValue::Number(dt.day() as f64))
+}
+
+fn date_get_day(_interp: &mut Interpreter, this: JsValue, _args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let ts = get_date_timestamp(&this)?;
+    if ts.is_nan() {
+        return Ok(JsValue::Number(f64::NAN));
+    }
+    let dt = chrono::DateTime::from_timestamp_millis(ts as i64)
+        .unwrap_or(chrono::DateTime::UNIX_EPOCH);
+    Ok(JsValue::Number(dt.weekday().num_days_from_sunday() as f64))
+}
+
+fn date_get_hours(_interp: &mut Interpreter, this: JsValue, _args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let ts = get_date_timestamp(&this)?;
+    if ts.is_nan() {
+        return Ok(JsValue::Number(f64::NAN));
+    }
+    let dt = chrono::DateTime::from_timestamp_millis(ts as i64)
+        .unwrap_or(chrono::DateTime::UNIX_EPOCH);
+    Ok(JsValue::Number(dt.hour() as f64))
+}
+
+fn date_get_minutes(_interp: &mut Interpreter, this: JsValue, _args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let ts = get_date_timestamp(&this)?;
+    if ts.is_nan() {
+        return Ok(JsValue::Number(f64::NAN));
+    }
+    let dt = chrono::DateTime::from_timestamp_millis(ts as i64)
+        .unwrap_or(chrono::DateTime::UNIX_EPOCH);
+    Ok(JsValue::Number(dt.minute() as f64))
+}
+
+fn date_get_seconds(_interp: &mut Interpreter, this: JsValue, _args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let ts = get_date_timestamp(&this)?;
+    if ts.is_nan() {
+        return Ok(JsValue::Number(f64::NAN));
+    }
+    let dt = chrono::DateTime::from_timestamp_millis(ts as i64)
+        .unwrap_or(chrono::DateTime::UNIX_EPOCH);
+    Ok(JsValue::Number(dt.second() as f64))
+}
+
+fn date_get_milliseconds(_interp: &mut Interpreter, this: JsValue, _args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let ts = get_date_timestamp(&this)?;
+    if ts.is_nan() {
+        return Ok(JsValue::Number(f64::NAN));
+    }
+    Ok(JsValue::Number((ts as i64 % 1000) as f64))
+}
+
+fn date_to_iso_string(_interp: &mut Interpreter, this: JsValue, _args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let ts = get_date_timestamp(&this)?;
+    if ts.is_nan() {
+        return Err(JsError::range_error("Invalid Date"));
+    }
+    let dt = chrono::DateTime::from_timestamp_millis(ts as i64)
+        .unwrap_or(chrono::DateTime::UNIX_EPOCH);
+    Ok(JsValue::String(JsString::from(dt.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string())))
+}
+
 fn array_constructor_fn(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
     if args.len() == 1 {
         if let JsValue::Number(n) = &args[0] {
@@ -4973,6 +5282,9 @@ fn object_to_string(_interp: &mut Interpreter, this: JsValue, _args: Vec<JsValue
                 ExoticObject::Set { .. } => {
                     Ok(JsValue::String(JsString::from("[object Set]")))
                 }
+                ExoticObject::Date { .. } => {
+                    Ok(JsValue::String(JsString::from("[object Date]")))
+                }
             }
         }
         _ => Ok(JsValue::String(JsString::from("[object Object]"))),
@@ -5660,6 +5972,12 @@ fn js_value_to_json(value: &JsValue) -> Result<serde_json::Value, JsError> {
                 ExoticObject::Function(_) => serde_json::Value::Null,
                 ExoticObject::Map { .. } => serde_json::Value::Null,
                 ExoticObject::Set { .. } => serde_json::Value::Null,
+                ExoticObject::Date { timestamp } => {
+                    // Dates serialize as their ISO string
+                    let datetime = chrono::DateTime::from_timestamp_millis(*timestamp as i64)
+                        .unwrap_or(chrono::DateTime::UNIX_EPOCH);
+                    serde_json::Value::String(datetime.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string())
+                }
                 ExoticObject::Ordinary => {
                     let mut map = serde_json::Map::new();
                     for (key, prop) in obj_ref.properties.iter() {
@@ -6593,6 +6911,28 @@ mod tests {
 
         // Method chaining (add returns Set)
         assert_eq!(eval("let s = new Set(); s.add(1).add(2).has(2)"), JsValue::Boolean(true));
+    }
+
+    #[test]
+    fn test_date() {
+        // Date.now() returns a number (timestamp)
+        let result = eval("Date.now()");
+        assert!(matches!(result, JsValue::Number(_)));
+
+        // new Date() with timestamp
+        assert_eq!(eval("new Date(0).getTime()"), JsValue::Number(0.0));
+        assert_eq!(eval("new Date(1000).getTime()"), JsValue::Number(1000.0));
+
+        // Date methods
+        assert_eq!(eval("new Date(0).getFullYear()"), JsValue::Number(1970.0));
+        assert_eq!(eval("new Date(0).getMonth()"), JsValue::Number(0.0)); // January = 0
+        assert_eq!(eval("new Date(0).getDate()"), JsValue::Number(1.0));
+
+        // Date.UTC
+        assert_eq!(eval("Date.UTC(1970, 0, 1)"), JsValue::Number(0.0));
+
+        // toISOString
+        assert_eq!(eval("new Date(0).toISOString()"), JsValue::from("1970-01-01T00:00:00.000Z"));
     }
 
     #[test]
