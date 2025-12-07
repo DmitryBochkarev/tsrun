@@ -196,10 +196,10 @@
 - [x] `parseFloat(string)`
 - [x] `isNaN(value)`
 - [x] `isFinite(value)`
-- [ ] `encodeURI(uri)`
-- [ ] `decodeURI(uri)`
-- [ ] `encodeURIComponent(str)`
-- [ ] `decodeURIComponent(str)`
+- [x] `encodeURI(uri)`
+- [x] `decodeURI(uri)`
+- [x] `encodeURIComponent(str)`
+- [x] `decodeURIComponent(str)`
 
 #### Object
 - [x] `Object.keys(obj)`

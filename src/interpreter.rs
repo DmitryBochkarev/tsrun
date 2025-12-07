@@ -1002,6 +1002,35 @@ impl Interpreter {
         }));
         env.define("isFinite".to_string(), JsValue::Object(isfinite_fn), false);
 
+        // Add URI encoding/decoding functions
+        let encodeuri_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "encodeURI".to_string(),
+            func: global_encode_uri,
+            arity: 1,
+        }));
+        env.define("encodeURI".to_string(), JsValue::Object(encodeuri_fn), false);
+
+        let decodeuri_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "decodeURI".to_string(),
+            func: global_decode_uri,
+            arity: 1,
+        }));
+        env.define("decodeURI".to_string(), JsValue::Object(decodeuri_fn), false);
+
+        let encodeuricomponent_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "encodeURIComponent".to_string(),
+            func: global_encode_uri_component,
+            arity: 1,
+        }));
+        env.define("encodeURIComponent".to_string(), JsValue::Object(encodeuricomponent_fn), false);
+
+        let decodeuricomponent_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "decodeURIComponent".to_string(),
+            func: global_decode_uri_component,
+            arity: 1,
+        }));
+        env.define("decodeURIComponent".to_string(), JsValue::Object(decodeuricomponent_fn), false);
+
         // Add Number object
         let number_proto = create_object();
         {
@@ -4685,6 +4714,88 @@ fn global_is_finite(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue
     Ok(JsValue::Boolean(n.is_finite()))
 }
 
+// Characters that encodeURI should NOT encode (RFC 3986 + extra URI chars)
+const URI_UNESCAPED: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.!~*'()";
+const URI_RESERVED: &str = ";/?:@&=+$,#";
+
+fn global_encode_uri(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let s = args.first().map(|v| v.to_js_string()).unwrap_or_else(|| JsString::from(""));
+    let allowed: Vec<char> = URI_UNESCAPED.chars().chain(URI_RESERVED.chars()).collect();
+    let mut result = String::new();
+    for c in s.as_str().chars() {
+        if allowed.contains(&c) {
+            result.push(c);
+        } else {
+            // Percent-encode the character
+            for byte in c.to_string().as_bytes() {
+                result.push_str(&format!("%{:02X}", byte));
+            }
+        }
+    }
+    Ok(JsValue::String(JsString::from(result)))
+}
+
+fn global_decode_uri(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let s = args.first().map(|v| v.to_js_string()).unwrap_or_else(|| JsString::from(""));
+    let result = percent_decode(s.as_str(), true);
+    Ok(JsValue::String(JsString::from(result)))
+}
+
+fn global_encode_uri_component(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let s = args.first().map(|v| v.to_js_string()).unwrap_or_else(|| JsString::from(""));
+    let allowed: Vec<char> = URI_UNESCAPED.chars().collect();
+    let mut result = String::new();
+    for c in s.as_str().chars() {
+        if allowed.contains(&c) {
+            result.push(c);
+        } else {
+            // Percent-encode the character
+            for byte in c.to_string().as_bytes() {
+                result.push_str(&format!("%{:02X}", byte));
+            }
+        }
+    }
+    Ok(JsValue::String(JsString::from(result)))
+}
+
+fn global_decode_uri_component(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let s = args.first().map(|v| v.to_js_string()).unwrap_or_else(|| JsString::from(""));
+    let result = percent_decode(s.as_str(), false);
+    Ok(JsValue::String(JsString::from(result)))
+}
+
+fn percent_decode(s: &str, preserve_reserved: bool) -> String {
+    let mut result = String::new();
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '%' {
+            // Try to read two hex digits
+            let hex: String = chars.by_ref().take(2).collect();
+            if hex.len() == 2 {
+                if let Ok(byte) = u8::from_str_radix(&hex, 16) {
+                    let decoded = byte as char;
+                    // For decodeURI, don't decode reserved characters
+                    if preserve_reserved && URI_RESERVED.contains(decoded) {
+                        result.push('%');
+                        result.push_str(&hex);
+                    } else {
+                        result.push(decoded);
+                    }
+                } else {
+                    result.push('%');
+                    result.push_str(&hex);
+                }
+            } else {
+                result.push('%');
+                result.push_str(&hex);
+            }
+        } else {
+            result.push(c);
+        }
+    }
+    result
+}
+
 // Number.isNaN - stricter, no type coercion
 fn number_is_nan(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
     match args.first() {
@@ -5523,6 +5634,32 @@ mod tests {
         assert_eq!(eval("isFinite(Infinity)"), JsValue::Boolean(false));
         assert_eq!(eval("isFinite(-Infinity)"), JsValue::Boolean(false));
         assert_eq!(eval("isFinite(NaN)"), JsValue::Boolean(false));
+    }
+
+    #[test]
+    fn test_encodeuri() {
+        assert_eq!(eval("encodeURI('hello world')"), JsValue::from("hello%20world"));
+        assert_eq!(eval("encodeURI('a=1&b=2')"), JsValue::from("a=1&b=2"));
+        assert_eq!(eval("encodeURI('http://example.com/path?q=hello world')"), JsValue::from("http://example.com/path?q=hello%20world"));
+    }
+
+    #[test]
+    fn test_decodeuri() {
+        assert_eq!(eval("decodeURI('hello%20world')"), JsValue::from("hello world"));
+        assert_eq!(eval("decodeURI('a=1&b=2')"), JsValue::from("a=1&b=2"));
+    }
+
+    #[test]
+    fn test_encodeuricomponent() {
+        assert_eq!(eval("encodeURIComponent('hello world')"), JsValue::from("hello%20world"));
+        assert_eq!(eval("encodeURIComponent('a=1&b=2')"), JsValue::from("a%3D1%26b%3D2"));
+        assert_eq!(eval("encodeURIComponent('http://example.com')"), JsValue::from("http%3A%2F%2Fexample.com"));
+    }
+
+    #[test]
+    fn test_decodeuricomponent() {
+        assert_eq!(eval("decodeURIComponent('hello%20world')"), JsValue::from("hello world"));
+        assert_eq!(eval("decodeURIComponent('a%3D1%26b%3D2')"), JsValue::from("a=1&b=2"));
     }
 
     #[test]
