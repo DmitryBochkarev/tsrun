@@ -45,6 +45,27 @@ pub fn create_set_prototype() -> JsObjectRef {
             arity: 1,
         }));
         p.set_property(PropertyKey::from("forEach"), JsValue::Object(foreach_fn));
+
+        let keys_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "keys".to_string(),
+            func: set_keys,
+            arity: 0,
+        }));
+        p.set_property(PropertyKey::from("keys"), JsValue::Object(keys_fn));
+
+        let values_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "values".to_string(),
+            func: set_values,
+            arity: 0,
+        }));
+        p.set_property(PropertyKey::from("values"), JsValue::Object(values_fn));
+
+        let entries_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "entries".to_string(),
+            func: set_entries,
+            arity: 0,
+        }));
+        p.set_property(PropertyKey::from("entries"), JsValue::Object(entries_fn));
     }
     proto
 }
@@ -200,4 +221,50 @@ pub fn set_foreach(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) 
     }
 
     Ok(JsValue::Undefined)
+}
+
+pub fn set_keys(interp: &mut Interpreter, this: JsValue, _args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    // For Set, keys() returns the same as values()
+    set_values(interp, this, _args)
+}
+
+pub fn set_values(interp: &mut Interpreter, this: JsValue, _args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let JsValue::Object(set_obj) = this else {
+        return Err(JsError::type_error("Set.prototype.values called on non-object"));
+    };
+
+    let values: Vec<JsValue>;
+    {
+        let set = set_obj.borrow();
+        if let ExoticObject::Set { entries: ref e } = set.exotic {
+            values = e.clone();
+        } else {
+            return Err(JsError::type_error("Set.prototype.values called on non-Set"));
+        }
+    }
+
+    Ok(JsValue::Object(interp.create_array(values)))
+}
+
+pub fn set_entries(interp: &mut Interpreter, this: JsValue, _args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let JsValue::Object(set_obj) = this else {
+        return Err(JsError::type_error("Set.prototype.entries called on non-object"));
+    };
+
+    let raw_entries: Vec<JsValue>;
+    {
+        let set = set_obj.borrow();
+        if let ExoticObject::Set { entries: ref e } = set.exotic {
+            raw_entries = e.clone();
+        } else {
+            return Err(JsError::type_error("Set.prototype.entries called on non-Set"));
+        }
+    }
+
+    // For Set, entries returns [value, value] pairs
+    let entries: Vec<JsValue> = raw_entries.into_iter().map(|v| {
+        JsValue::Object(interp.create_array(vec![v.clone(), v]))
+    }).collect();
+
+    Ok(JsValue::Object(interp.create_array(entries)))
 }

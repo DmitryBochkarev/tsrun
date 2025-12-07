@@ -81,3 +81,29 @@ fn test_set_method_chaining() {
         JsValue::Boolean(true)
     );
 }
+
+#[test]
+fn test_set_keys() {
+    // For Set, keys() returns values (same as values())
+    assert_eq!(
+        eval("let s = new Set([1, 2, 3]); Array.from(s.keys()).join(',')"),
+        JsValue::from("1,2,3")
+    );
+}
+
+#[test]
+fn test_set_values() {
+    assert_eq!(
+        eval("let s = new Set(['a', 'b', 'c']); Array.from(s.values()).join(',')"),
+        JsValue::from("a,b,c")
+    );
+}
+
+#[test]
+fn test_set_entries() {
+    // For Set, entries() returns [value, value] pairs
+    assert_eq!(
+        eval("let s = new Set([1, 2]); let result = []; for (let e of s.entries()) { result.push(e[0] + ':' + e[1]); } result.join(',')"),
+        JsValue::from("1:1,2:2")
+    );
+}

@@ -365,9 +365,9 @@
 - [x] `Map.prototype.delete(key)`
 - [x] `Map.prototype.clear()`
 - [x] `Map.prototype.size`
-- [ ] `Map.prototype.keys()`
-- [ ] `Map.prototype.values()`
-- [ ] `Map.prototype.entries()`
+- [x] `Map.prototype.keys()`
+- [x] `Map.prototype.values()`
+- [x] `Map.prototype.entries()`
 - [x] `Map.prototype.forEach(callback)`
 
 #### Set
@@ -377,9 +377,9 @@
 - [x] `Set.prototype.delete(value)`
 - [x] `Set.prototype.clear()`
 - [x] `Set.prototype.size`
-- [ ] `Set.prototype.keys()`
-- [ ] `Set.prototype.values()`
-- [ ] `Set.prototype.entries()`
+- [x] `Set.prototype.keys()`
+- [x] `Set.prototype.values()`
+- [x] `Set.prototype.entries()`
 - [x] `Set.prototype.forEach(callback)`
 
 #### Date

@@ -82,3 +82,27 @@ fn test_map_chaining() {
         JsValue::Number(2.0)
     );
 }
+
+#[test]
+fn test_map_keys() {
+    assert_eq!(
+        eval("let m = new Map([['a', 1], ['b', 2]]); Array.from(m.keys()).join(',')"),
+        JsValue::from("a,b")
+    );
+}
+
+#[test]
+fn test_map_values() {
+    assert_eq!(
+        eval("let m = new Map([['a', 1], ['b', 2]]); Array.from(m.values()).join(',')"),
+        JsValue::from("1,2")
+    );
+}
+
+#[test]
+fn test_map_entries() {
+    assert_eq!(
+        eval("let m = new Map([['a', 1], ['b', 2]]); let result = []; for (let e of m.entries()) { result.push(e[0] + ':' + e[1]); } result.join(',')"),
+        JsValue::from("a:1,b:2")
+    );
+}
