@@ -227,8 +227,8 @@
 - [x] `Array.isArray(value)`
 - [ ] `Array.from(arrayLike, mapFn?)`
 - [ ] `Array.of(...items)`
-- [ ] `Array.prototype.push(...items)`
-- [ ] `Array.prototype.pop()`
+- [x] `Array.prototype.push(...items)`
+- [x] `Array.prototype.pop()`
 - [ ] `Array.prototype.shift()`
 - [ ] `Array.prototype.unshift(...items)`
 - [ ] `Array.prototype.slice(start?, end?)`
@@ -244,8 +244,8 @@
 - [ ] `Array.prototype.findIndex(predicate)`
 - [ ] `Array.prototype.findLast(predicate)`
 - [ ] `Array.prototype.findLastIndex(predicate)`
-- [ ] `Array.prototype.filter(predicate)`
-- [ ] `Array.prototype.map(callback)`
+- [x] `Array.prototype.filter(predicate)`
+- [x] `Array.prototype.map(callback)`
 - [ ] `Array.prototype.forEach(callback)`
 - [ ] `Array.prototype.reduce(callback, initial?)`
 - [ ] `Array.prototype.reduceRight(callback, initial?)`

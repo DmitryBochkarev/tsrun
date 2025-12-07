@@ -30,6 +30,8 @@ pub struct Interpreter {
     pub global: JsObjectRef,
     /// Current environment
     pub env: Environment,
+    /// Array.prototype for all array instances
+    pub array_prototype: JsObjectRef,
 }
 
 impl Interpreter {
@@ -113,6 +115,44 @@ impl Interpreter {
         }
         env.define("Object".to_string(), JsValue::Object(object_constructor), false);
 
+        // Create Array.prototype with methods
+        let array_prototype = create_object();
+        {
+            let mut proto = array_prototype.borrow_mut();
+
+            // Array.prototype.push
+            let push_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "push".to_string(),
+                func: array_push,
+                arity: 1,
+            }));
+            proto.set_property(PropertyKey::from("push"), JsValue::Object(push_fn));
+
+            // Array.prototype.pop
+            let pop_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "pop".to_string(),
+                func: array_pop,
+                arity: 0,
+            }));
+            proto.set_property(PropertyKey::from("pop"), JsValue::Object(pop_fn));
+
+            // Array.prototype.map
+            let map_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "map".to_string(),
+                func: array_map,
+                arity: 1,
+            }));
+            proto.set_property(PropertyKey::from("map"), JsValue::Object(map_fn));
+
+            // Array.prototype.filter
+            let filter_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "filter".to_string(),
+                func: array_filter,
+                arity: 1,
+            }));
+            proto.set_property(PropertyKey::from("filter"), JsValue::Object(filter_fn));
+        }
+
         // Add Array global
         let array_constructor = create_function(JsFunction::Native(NativeFunction {
             name: "Array".to_string(),
@@ -128,10 +168,20 @@ impl Interpreter {
                 arity: 1,
             }));
             arr.set_property(PropertyKey::from("isArray"), JsValue::Object(is_array_fn));
+
+            // Set Array.prototype
+            arr.set_property(PropertyKey::from("prototype"), JsValue::Object(array_prototype.clone()));
         }
         env.define("Array".to_string(), JsValue::Object(array_constructor), false);
 
-        Self { global, env }
+        Self { global, env, array_prototype }
+    }
+
+    /// Create an array with the proper prototype
+    pub fn create_array(&self, elements: Vec<JsValue>) -> JsObjectRef {
+        let arr = create_array(elements);
+        arr.borrow_mut().prototype = Some(self.array_prototype.clone());
+        arr
     }
 
     /// Execute a program
@@ -769,7 +819,7 @@ impl Interpreter {
                         }
                     }
                 }
-                Ok(JsValue::Object(create_array(elements)))
+                Ok(JsValue::Object(self.create_array(elements)))
             }
 
             Expression::Object(obj) => {
@@ -1440,6 +1490,178 @@ fn array_is_array(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>)
     Ok(JsValue::Boolean(is_array))
 }
 
+fn array_push(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let JsValue::Object(arr) = this else {
+        return Err(JsError::type_error("Array.prototype.push called on non-object"));
+    };
+
+    let mut arr_ref = arr.borrow_mut();
+
+    // Get current length
+    let mut current_length = match &arr_ref.exotic {
+        ExoticObject::Array { length } => *length,
+        _ => return Err(JsError::type_error("Array.prototype.push called on non-array")),
+    };
+
+    // Add each argument
+    for arg in args {
+        arr_ref.properties.insert(
+            PropertyKey::Index(current_length),
+            crate::value::Property::data(arg),
+        );
+        current_length += 1;
+    }
+
+    // Update the exotic length
+    if let ExoticObject::Array { ref mut length } = arr_ref.exotic {
+        *length = current_length;
+    }
+
+    // Update length property
+    arr_ref.properties.insert(
+        PropertyKey::from("length"),
+        crate::value::Property {
+            value: JsValue::Number(current_length as f64),
+            writable: true,
+            enumerable: false,
+            configurable: false,
+        },
+    );
+
+    Ok(JsValue::Number(current_length as f64))
+}
+
+fn array_pop(_interp: &mut Interpreter, this: JsValue, _args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let JsValue::Object(arr) = this else {
+        return Err(JsError::type_error("Array.prototype.pop called on non-object"));
+    };
+
+    let mut arr_ref = arr.borrow_mut();
+
+    // Get current length
+    let current_length = match &arr_ref.exotic {
+        ExoticObject::Array { length } => *length,
+        _ => return Err(JsError::type_error("Array.prototype.pop called on non-array")),
+    };
+
+    if current_length == 0 {
+        return Ok(JsValue::Undefined);
+    }
+
+    let new_length = current_length - 1;
+
+    // Get and remove the last element
+    let value = arr_ref
+        .properties
+        .remove(&PropertyKey::Index(new_length))
+        .map(|p| p.value)
+        .unwrap_or(JsValue::Undefined);
+
+    // Update the exotic length
+    if let ExoticObject::Array { ref mut length } = arr_ref.exotic {
+        *length = new_length;
+    }
+
+    // Update length property
+    arr_ref.properties.insert(
+        PropertyKey::from("length"),
+        crate::value::Property {
+            value: JsValue::Number(new_length as f64),
+            writable: true,
+            enumerable: false,
+            configurable: false,
+        },
+    );
+
+    Ok(value)
+}
+
+fn array_map(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let JsValue::Object(arr) = this.clone() else {
+        return Err(JsError::type_error("Array.prototype.map called on non-object"));
+    };
+
+    let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
+    if !callback.is_callable() {
+        return Err(JsError::type_error("Array.prototype.map callback is not a function"));
+    }
+
+    let this_arg = args.get(1).cloned().unwrap_or(JsValue::Undefined);
+
+    // Get array length
+    let length = {
+        let arr_ref = arr.borrow();
+        match &arr_ref.exotic {
+            ExoticObject::Array { length } => *length,
+            _ => return Err(JsError::type_error("Not an array")),
+        }
+    };
+
+    // Map elements
+    let mut result = Vec::with_capacity(length as usize);
+    for i in 0..length {
+        let elem = arr
+            .borrow()
+            .get_property(&PropertyKey::Index(i))
+            .unwrap_or(JsValue::Undefined);
+
+        // Call callback(element, index, array)
+        let mapped = interp.call_function(
+            callback.clone(),
+            this_arg.clone(),
+            vec![elem, JsValue::Number(i as f64), this.clone()],
+        )?;
+
+        result.push(mapped);
+    }
+
+    Ok(JsValue::Object(interp.create_array(result)))
+}
+
+fn array_filter(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let JsValue::Object(arr) = this.clone() else {
+        return Err(JsError::type_error("Array.prototype.filter called on non-object"));
+    };
+
+    let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
+    if !callback.is_callable() {
+        return Err(JsError::type_error("Array.prototype.filter callback is not a function"));
+    }
+
+    let this_arg = args.get(1).cloned().unwrap_or(JsValue::Undefined);
+
+    // Get array length
+    let length = {
+        let arr_ref = arr.borrow();
+        match &arr_ref.exotic {
+            ExoticObject::Array { length } => *length,
+            _ => return Err(JsError::type_error("Not an array")),
+        }
+    };
+
+    // Filter elements
+    let mut result = Vec::new();
+    for i in 0..length {
+        let elem = arr
+            .borrow()
+            .get_property(&PropertyKey::Index(i))
+            .unwrap_or(JsValue::Undefined);
+
+        // Call callback(element, index, array)
+        let keep = interp.call_function(
+            callback.clone(),
+            this_arg.clone(),
+            vec![elem.clone(), JsValue::Number(i as f64), this.clone()],
+        )?;
+
+        if keep.to_boolean() {
+            result.push(elem);
+        }
+    }
+
+    Ok(JsValue::Object(interp.create_array(result)))
+}
+
 // JSON conversion helpers
 
 fn js_value_to_json(value: &JsValue) -> Result<serde_json::Value, JsError> {
@@ -1575,5 +1797,103 @@ mod tests {
     #[test]
     fn test_array() {
         assert_eq!(eval("const arr = [1, 2, 3]; arr[1]"), JsValue::Number(2.0));
+    }
+
+    // Array.prototype.push tests
+    #[test]
+    fn test_array_push_single() {
+        assert_eq!(eval("const arr = [1, 2]; arr.push(3); arr.length"), JsValue::Number(3.0));
+    }
+
+    #[test]
+    fn test_array_push_returns_length() {
+        assert_eq!(eval("const arr = [1, 2]; arr.push(3)"), JsValue::Number(3.0));
+    }
+
+    #[test]
+    fn test_array_push_multiple() {
+        assert_eq!(eval("const arr = [1]; arr.push(2, 3, 4); arr.length"), JsValue::Number(4.0));
+    }
+
+    #[test]
+    fn test_array_push_element_access() {
+        assert_eq!(eval("const arr = [1, 2]; arr.push(3); arr[2]"), JsValue::Number(3.0));
+    }
+
+    // Array.prototype.pop tests
+    #[test]
+    fn test_array_pop_returns_last() {
+        assert_eq!(eval("const arr = [1, 2, 3]; arr.pop()"), JsValue::Number(3.0));
+    }
+
+    #[test]
+    fn test_array_pop_modifies_length() {
+        assert_eq!(eval("const arr = [1, 2, 3]; arr.pop(); arr.length"), JsValue::Number(2.0));
+    }
+
+    #[test]
+    fn test_array_pop_empty() {
+        assert_eq!(eval("const arr = []; arr.pop()"), JsValue::Undefined);
+    }
+
+    // Array.prototype.map tests
+    #[test]
+    fn test_array_map_double() {
+        // [1, 2, 3].map(x => x * 2) should equal [2, 4, 6]
+        assert_eq!(eval("const arr = [1, 2, 3].map(x => x * 2); arr[0]"), JsValue::Number(2.0));
+        assert_eq!(eval("const arr = [1, 2, 3].map(x => x * 2); arr[1]"), JsValue::Number(4.0));
+        assert_eq!(eval("const arr = [1, 2, 3].map(x => x * 2); arr[2]"), JsValue::Number(6.0));
+    }
+
+    #[test]
+    fn test_array_map_preserves_length() {
+        assert_eq!(eval("[1, 2, 3].map(x => x * 2).length"), JsValue::Number(3.0));
+    }
+
+    #[test]
+    fn test_array_map_with_index() {
+        // map callback receives (element, index, array)
+        assert_eq!(eval("[10, 20, 30].map((x, i) => i)[1]"), JsValue::Number(1.0));
+    }
+
+    #[test]
+    fn test_array_map_to_strings() {
+        assert_eq!(eval("[1, 2, 3].map(x => 'n' + x)[0]"), JsValue::String(JsString::from("n1")));
+    }
+
+    // Array.prototype.filter tests
+    #[test]
+    fn test_array_filter_evens() {
+        assert_eq!(eval("[1, 2, 3, 4].filter(x => x % 2 === 0).length"), JsValue::Number(2.0));
+    }
+
+    #[test]
+    fn test_array_filter_values() {
+        assert_eq!(eval("[1, 2, 3, 4].filter(x => x % 2 === 0)[0]"), JsValue::Number(2.0));
+        assert_eq!(eval("[1, 2, 3, 4].filter(x => x % 2 === 0)[1]"), JsValue::Number(4.0));
+    }
+
+    #[test]
+    fn test_array_filter_none_match() {
+        assert_eq!(eval("[1, 2, 3].filter(x => x > 10).length"), JsValue::Number(0.0));
+    }
+
+    #[test]
+    fn test_array_filter_all_match() {
+        assert_eq!(eval("[1, 2, 3].filter(x => x > 0).length"), JsValue::Number(3.0));
+    }
+
+    #[test]
+    fn test_array_filter_with_index() {
+        // Filter elements at even indices
+        assert_eq!(eval("[10, 20, 30, 40].filter((x, i) => i % 2 === 0).length"), JsValue::Number(2.0));
+    }
+
+    // Chaining tests
+    #[test]
+    fn test_array_map_filter_chain() {
+        // [1, 2, 3, 4].map(x => x * 2).filter(x => x > 4) should be [6, 8]
+        assert_eq!(eval("[1, 2, 3, 4].map(x => x * 2).filter(x => x > 4).length"), JsValue::Number(2.0));
+        assert_eq!(eval("[1, 2, 3, 4].map(x => x * 2).filter(x => x > 4)[0]"), JsValue::Number(6.0));
     }
 }
