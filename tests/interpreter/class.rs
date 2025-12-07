@@ -9,7 +9,6 @@ use typescript_eval::JsValue;
 
 // Basic class test to verify class functionality
 #[test]
-#[ignore] // TODO: Class declarations not implemented - execute_class_declaration is a stub
 fn test_class_basic() {
     assert_eq!(
         eval(r#"

@@ -8,12 +8,12 @@ use builtins::*;
 
 use crate::ast::{
     Argument, ArrayElement, AssignmentExpression, AssignmentOp, AssignmentTarget, BinaryExpression,
-    BinaryOp, BlockStatement, CallExpression, ClassDeclaration, ConditionalExpression,
-    EnumDeclaration, Expression, ForInOfLeft, ForInStatement, ForInit, ForOfStatement,
-    ForStatement, FunctionDeclaration, LiteralValue, LogicalExpression, LogicalOp,
-    MemberExpression, MemberProperty, NewExpression, ObjectPatternProperty, ObjectProperty,
-    ObjectPropertyKey, Pattern, Program, Statement, UnaryExpression, UnaryOp, UpdateExpression,
-    UpdateOp, VariableDeclaration, VariableKind,
+    BinaryOp, BlockStatement, CallExpression, ClassConstructor, ClassDeclaration, ClassMember,
+    ClassMethod, ClassProperty, ConditionalExpression, EnumDeclaration, Expression, ForInOfLeft,
+    ForInStatement, ForInit, ForOfStatement, ForStatement, FunctionDeclaration, LiteralValue,
+    LogicalExpression, LogicalOp, MemberExpression, MemberProperty, NewExpression,
+    ObjectPatternProperty, ObjectProperty, ObjectPropertyKey, Pattern, Program, Statement,
+    UnaryExpression, UnaryOp, UpdateExpression, UpdateOp, VariableDeclaration, VariableKind,
 };
 use crate::error::JsError;
 use crate::value::{
@@ -418,10 +418,219 @@ impl Interpreter {
         Ok(())
     }
 
-    fn execute_class_declaration(&mut self, _class: &ClassDeclaration) -> Result<(), JsError> {
-        // Simplified class handling - create constructor function
-        // Full implementation would handle methods, static members, etc.
+    fn execute_class_declaration(&mut self, class: &ClassDeclaration) -> Result<(), JsError> {
+        let constructor_fn = self.create_class_constructor(class)?;
+
+        if let Some(id) = &class.id {
+            self.env.define(id.name.clone(), JsValue::Object(constructor_fn), false);
+        }
+
         Ok(())
+    }
+
+    fn create_class_constructor(&mut self, class: &ClassDeclaration) -> Result<JsObjectRef, JsError> {
+        // Create prototype object
+        let prototype = create_object();
+
+        // Find constructor and collect methods/properties
+        let mut constructor: Option<&ClassConstructor> = None;
+        let mut instance_fields: Vec<&ClassProperty> = Vec::new();
+        let mut static_fields: Vec<&ClassProperty> = Vec::new();
+        let mut instance_methods: Vec<&ClassMethod> = Vec::new();
+        let mut static_methods: Vec<&ClassMethod> = Vec::new();
+
+        for member in &class.body.members {
+            match member {
+                ClassMember::Constructor(ctor) => {
+                    constructor = Some(ctor);
+                }
+                ClassMember::Method(method) => {
+                    if method.static_ {
+                        static_methods.push(method);
+                    } else {
+                        instance_methods.push(method);
+                    }
+                }
+                ClassMember::Property(prop) => {
+                    if prop.static_ {
+                        static_fields.push(prop);
+                    } else {
+                        instance_fields.push(prop);
+                    }
+                }
+                ClassMember::StaticBlock(_) => {
+                    // TODO: implement static initialization blocks
+                }
+            }
+        }
+
+        // Add instance methods to prototype
+        for method in &instance_methods {
+            let method_name = match &method.key {
+                ObjectPropertyKey::Identifier(id) => id.name.clone(),
+                ObjectPropertyKey::String(s) => s.value.clone(),
+                ObjectPropertyKey::Number(lit) => match &lit.value {
+                    LiteralValue::Number(n) => n.to_string(),
+                    _ => continue,
+                },
+                ObjectPropertyKey::Computed(_) => continue, // Skip computed for now
+                ObjectPropertyKey::PrivateIdentifier(_) => continue, // Handle separately
+            };
+
+            let func = &method.value;
+            let interpreted = InterpretedFunction {
+                name: Some(method_name.clone()),
+                params: func.params.clone(),
+                body: FunctionBody::Block(func.body.clone()),
+                closure: self.env.clone(),
+                source_location: func.span,
+            };
+
+            let func_obj = create_function(JsFunction::Interpreted(interpreted));
+
+            // For now, treat all methods as regular methods
+            // TODO: implement proper getter/setter support
+            prototype.borrow_mut().set_property(
+                PropertyKey::from(method_name),
+                JsValue::Object(func_obj),
+            );
+        }
+
+        // Build constructor body that initializes instance fields then runs user constructor
+        // We store instance fields info in the constructor function
+        let field_initializers: Vec<(String, Option<Expression>)> = instance_fields
+            .iter()
+            .filter_map(|prop| {
+                let name = match &prop.key {
+                    ObjectPropertyKey::Identifier(id) => id.name.clone(),
+                    ObjectPropertyKey::String(s) => s.value.clone(),
+                    _ => return None,
+                };
+                Some((name, prop.value.clone()))
+            })
+            .collect();
+
+        // Create the constructor function with field initializers stored in closure
+        let ctor_body = if let Some(ctor) = constructor {
+            ctor.body.clone()
+        } else {
+            // Default constructor - empty body
+            BlockStatement {
+                body: vec![],
+                span: class.span,
+            }
+        };
+
+        let ctor_params = if let Some(ctor) = constructor {
+            ctor.params.clone()
+        } else {
+            vec![]
+        };
+
+        // Store field initializers in a special property so evaluate_new can access them
+        let constructor_fn = create_function(JsFunction::Interpreted(InterpretedFunction {
+            name: class.id.as_ref().map(|id| id.name.clone()),
+            params: ctor_params,
+            body: FunctionBody::Block(ctor_body),
+            closure: self.env.clone(),
+            source_location: class.span,
+        }));
+
+        // Store field initializers as a property on the constructor
+        // We'll use a special internal format
+        {
+            let mut ctor = constructor_fn.borrow_mut();
+            ctor.set_property(PropertyKey::from("prototype"), JsValue::Object(prototype.clone()));
+
+            // Store field initializers as internal data
+            // For now, we'll evaluate them at class definition time and store as default values
+        }
+
+        // Store field info that will be evaluated at construction time
+        // We need a way to pass this to the new operator
+        // For now, let's store the field expressions in a special way
+        if !field_initializers.is_empty() {
+            // First, evaluate all field values
+            let mut field_values: Vec<(String, JsValue)> = Vec::new();
+            for (name, value_expr) in field_initializers {
+                let value = if let Some(expr) = value_expr {
+                    self.evaluate(&expr).unwrap_or(JsValue::Undefined)
+                } else {
+                    JsValue::Undefined
+                };
+                field_values.push((name, value));
+            }
+
+            // Then create the fields array
+            let mut field_pairs: Vec<JsValue> = Vec::new();
+            for (name, value) in field_values {
+                let pair = self.create_array(vec![
+                    JsValue::String(JsString::from(name)),
+                    value,
+                ]);
+                field_pairs.push(JsValue::Object(pair));
+            }
+
+            let fields_array = self.create_array(field_pairs);
+            constructor_fn.borrow_mut().set_property(
+                PropertyKey::from("__fields__"),
+                JsValue::Object(fields_array),
+            );
+        }
+
+        // Add static methods to constructor function
+        for method in &static_methods {
+            let method_name = match &method.key {
+                ObjectPropertyKey::Identifier(id) => id.name.clone(),
+                ObjectPropertyKey::String(s) => s.value.clone(),
+                ObjectPropertyKey::Number(lit) => match &lit.value {
+                    LiteralValue::Number(n) => n.to_string(),
+                    _ => continue,
+                },
+                ObjectPropertyKey::Computed(_) => continue,
+                ObjectPropertyKey::PrivateIdentifier(_) => continue,
+            };
+
+            let func = &method.value;
+            let interpreted = InterpretedFunction {
+                name: Some(method_name.clone()),
+                params: func.params.clone(),
+                body: FunctionBody::Block(func.body.clone()),
+                closure: self.env.clone(),
+                source_location: func.span,
+            };
+
+            let func_obj = create_function(JsFunction::Interpreted(interpreted));
+            constructor_fn.borrow_mut().set_property(
+                PropertyKey::from(method_name),
+                JsValue::Object(func_obj),
+            );
+        }
+
+        // Initialize static fields
+        for prop in &static_fields {
+            let name = match &prop.key {
+                ObjectPropertyKey::Identifier(id) => id.name.clone(),
+                ObjectPropertyKey::String(s) => s.value.clone(),
+                _ => continue,
+            };
+
+            let value = if let Some(expr) = &prop.value {
+                self.evaluate(expr)?
+            } else {
+                JsValue::Undefined
+            };
+
+            constructor_fn.borrow_mut().set_property(PropertyKey::from(name), value);
+        }
+
+        // Set prototype.constructor = constructor
+        prototype.borrow_mut().set_property(
+            PropertyKey::from("constructor"),
+            JsValue::Object(constructor_fn.clone()),
+        );
+
+        Ok(constructor_fn)
     }
 
     fn execute_enum(&mut self, enum_decl: &EnumDeclaration) -> Result<(), JsError> {
@@ -1355,8 +1564,41 @@ impl Interpreter {
             }
         }
 
-        // Create new object
+        // Create new object with prototype from constructor
         let new_obj = create_object();
+
+        // Get prototype from constructor.prototype and set it on the new object
+        if let JsValue::Object(ctor_obj) = &callee {
+            let ctor_ref = ctor_obj.borrow();
+            if let Some(JsValue::Object(proto)) = ctor_ref.get_property(&PropertyKey::from("prototype")) {
+                drop(ctor_ref);
+                new_obj.borrow_mut().prototype = Some(proto);
+            } else {
+                drop(ctor_ref);
+            }
+
+            // Initialize instance fields from __fields__
+            let fields = ctor_obj.borrow().get_property(&PropertyKey::from("__fields__"));
+            if let Some(JsValue::Object(fields_arr)) = fields {
+                let fields_ref = fields_arr.borrow();
+                if let ExoticObject::Array { length } = fields_ref.exotic {
+                    for i in 0..length {
+                        if let Some(JsValue::Object(pair)) = fields_ref.get_property(&PropertyKey::Index(i)) {
+                            let pair_ref = pair.borrow();
+                            if let Some(JsValue::String(name)) = pair_ref.get_property(&PropertyKey::Index(0)) {
+                                let value = pair_ref.get_property(&PropertyKey::Index(1))
+                                    .unwrap_or(JsValue::Undefined);
+                                drop(pair_ref);
+                                new_obj.borrow_mut().set_property(
+                                    PropertyKey::from(name.to_string()),
+                                    value,
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         // Call constructor
         let result = self.call_function(callee, JsValue::Object(new_obj.clone()), args)?;

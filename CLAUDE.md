@@ -29,9 +29,31 @@ cargo test -- --nocapture      # Show test output
 ## Development Workflow
 
 Use TDD (Test-Driven Development) for new features:
-1. Write a failing test that demonstrates the desired behavior
-2. Implement the minimal code to make the test pass
-3. Refactor if needed while keeping tests green
+1. **Verify parser support first** - Before implementing an interpreter feature, write a parser test to ensure the syntax is correctly parsed. If parsing fails, implement parser support first.
+2. Write a failing interpreter test that demonstrates the desired behavior
+3. Implement the minimal code to make the test pass
+4. Refactor if needed while keeping tests green
+
+### Parser Testing Before Implementation
+
+When implementing a new language feature (e.g., private fields, class methods, etc.):
+
+1. **Write a parser test first** in `src/parser.rs` tests section:
+```rust
+#[test]
+fn test_parse_private_field() {
+    let source = "class Foo { #bar = 1; }";
+    let program = parse(source).expect("should parse");
+    // Assert on the AST structure
+}
+```
+
+2. **Run the parser test** to verify parsing works:
+```bash
+cargo test test_parse_private_field -- --nocapture
+```
+
+3. **Only then** proceed to interpreter implementation and tests.
 
 ### Implementing Built-in Methods
 

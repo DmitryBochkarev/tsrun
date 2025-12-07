@@ -119,18 +119,51 @@
 
 #### Classes
 - [x] Class declarations
-- [x] Class expressions
+- [ ] Class expressions
 - [x] Constructor
 - [x] Instance methods
 - [x] Static methods
 - [x] Instance fields
 - [x] Static fields
-- [x] `extends` (inheritance)
-- [x] `super` calls
-- [x] `super` property access
-- [ ] Private fields (`#field`)
+- [ ] `extends` (inheritance)
+- [ ] `super` calls
+- [ ] `super` property access
+- [ ] Private fields (`#field`) (parsing done)
 - [ ] Private methods (`#method()`)
 - [ ] Static initialization blocks
+
+**Classes Implementation Notes:**
+To fully implement classes, the following components are needed:
+
+1. **Class Declaration Execution** (`execute_class_declaration`):
+   - Create constructor function from class body
+   - Set up prototype object with methods
+   - Handle static methods and fields on constructor
+   - Handle instance fields in constructor body
+   - Handle `extends` for inheritance (prototype chain)
+
+2. **Class Expression Evaluation** (`evaluate_class`):
+   - Same as declaration but returns the constructor function
+
+3. **Constructor Handling**:
+   - Create new object with class prototype
+   - Execute constructor body with `this` bound
+   - Initialize instance fields before constructor body
+   - Handle `super()` calls for derived classes
+
+4. **Method Definition**:
+   - Add methods to prototype object
+   - Bind `this` correctly when method is called
+   - Handle getters/setters
+
+5. **Inheritance (`extends`)**:
+   - Set up prototype chain correctly
+   - Handle `super` calls in constructor
+   - Handle `super.method()` property access
+
+6. **Private Fields/Methods**:
+   - Store private fields in separate map keyed by class
+   - Validate access to private fields/methods
 
 #### Error Handling
 - [x] `try` / `catch` / `finally`
