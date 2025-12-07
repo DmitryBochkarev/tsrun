@@ -1,0 +1,18 @@
+[package]
+name = "typescript-eval"
+version = "0.1.0"
+edition = "2021"
+description = "A TypeScript interpreter in Rust for config/manifest generation"
+license = "MIT"
+
+[dependencies]
+thiserror = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+indexmap = { version = "2.0", features = ["serde"] }
+unicode-xid = "0.2"
+regex = "1.10"
+chrono = "0.4"
+
+[dev-dependencies]
+pretty_assertions = "1.4"
