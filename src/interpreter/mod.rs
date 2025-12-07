@@ -1009,7 +1009,7 @@ impl Interpreter {
             BinaryOp::BitXor => JsValue::Number((left.to_number() as i32 ^ right.to_number() as i32) as f64),
             BinaryOp::LShift => JsValue::Number(((left.to_number() as i32) << (right.to_number() as u32 & 0x1f)) as f64),
             BinaryOp::RShift => JsValue::Number(((left.to_number() as i32) >> (right.to_number() as u32 & 0x1f)) as f64),
-            BinaryOp::URShift => JsValue::Number(((left.to_number() as u32) >> (right.to_number() as u32 & 0x1f)) as f64),
+            BinaryOp::URShift => JsValue::Number((((left.to_number() as i32) as u32) >> (right.to_number() as u32 & 0x1f)) as f64),
 
             // Other
             BinaryOp::In => {
@@ -1094,7 +1094,7 @@ impl Interpreter {
                 AssignmentOp::BitXorAssign => JsValue::Number((left.to_number() as i32 ^ right.to_number() as i32) as f64),
                 AssignmentOp::LShiftAssign => JsValue::Number(((left.to_number() as i32) << (right.to_number() as u32 & 0x1f)) as f64),
                 AssignmentOp::RShiftAssign => JsValue::Number(((left.to_number() as i32) >> (right.to_number() as u32 & 0x1f)) as f64),
-                AssignmentOp::URShiftAssign => JsValue::Number(((left.to_number() as u32) >> (right.to_number() as u32 & 0x1f)) as f64),
+                AssignmentOp::URShiftAssign => JsValue::Number((((left.to_number() as i32) as u32) >> (right.to_number() as u32 & 0x1f)) as f64),
                 AssignmentOp::AndAssign => {
                     if !left.to_boolean() {
                         left

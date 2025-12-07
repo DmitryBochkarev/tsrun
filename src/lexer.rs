@@ -1298,6 +1298,12 @@ mod tests {
     }
 
     #[test]
+    fn test_unsigned_right_shift() {
+        assert_eq!(lex(">>>"), vec![TokenKind::GtGtGt]);
+        assert_eq!(lex(">>>="), vec![TokenKind::GtGtGtEq]);
+    }
+
+    #[test]
     fn test_regexp_literal_scan() {
         // Test the explicit regex scanning method
         let mut lexer = Lexer::new("/abc/");

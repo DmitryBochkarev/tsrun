@@ -37,3 +37,36 @@ fn test_conditional() {
     assert_eq!(eval("(true as boolean) ? (1 as number) : (2 as number)"), JsValue::Number(1.0));
     assert_eq!(eval("(false as boolean) ? (1 as number) : (2 as number)"), JsValue::Number(2.0));
 }
+
+// Bitwise operators
+#[test]
+fn test_bitwise_shift() {
+    // Left shift
+    assert_eq!(eval("(8 as number) << (2 as number)"), JsValue::Number(32.0));
+    // Right shift (signed)
+    assert_eq!(eval("(32 as number) >> (2 as number)"), JsValue::Number(8.0));
+    // Right shift preserves sign for negative numbers
+    assert_eq!(eval("((-8 as number) >> (2 as number))"), JsValue::Number(-2.0));
+}
+
+#[test]
+fn test_unsigned_right_shift() {
+    // Unsigned right shift (>>>)
+    assert_eq!(eval("(32 as number) >>> (2 as number)"), JsValue::Number(8.0));
+    // Unsigned right shift converts to unsigned 32-bit first
+    assert_eq!(eval("((-1 as number) >>> (0 as number))"), JsValue::Number(4294967295.0));
+    // Unsigned right shift on negative numbers
+    assert_eq!(eval("((-8 as number) >>> (2 as number))"), JsValue::Number(1073741822.0));
+}
+
+#[test]
+fn test_unsigned_right_shift_assignment() {
+    assert_eq!(
+        eval("let x: number = 32; x >>>= 2; x"),
+        JsValue::Number(8.0)
+    );
+    assert_eq!(
+        eval("let x: number = -1; x >>>= 0; x"),
+        JsValue::Number(4294967295.0)
+    );
+}
