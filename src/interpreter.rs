@@ -406,6 +406,136 @@ impl Interpreter {
             proto.set_property(PropertyKey::from("padEnd"), JsValue::Object(padend_fn));
         }
 
+        // Create Math object with methods and constants
+        let math_object = create_object();
+        {
+            let mut math = math_object.borrow_mut();
+
+            // Constants
+            math.set_property(PropertyKey::from("PI"), JsValue::Number(std::f64::consts::PI));
+            math.set_property(PropertyKey::from("E"), JsValue::Number(std::f64::consts::E));
+            math.set_property(PropertyKey::from("LN2"), JsValue::Number(std::f64::consts::LN_2));
+            math.set_property(PropertyKey::from("LN10"), JsValue::Number(std::f64::consts::LN_10));
+            math.set_property(PropertyKey::from("LOG2E"), JsValue::Number(std::f64::consts::LOG2_E));
+            math.set_property(PropertyKey::from("LOG10E"), JsValue::Number(std::f64::consts::LOG10_E));
+            math.set_property(PropertyKey::from("SQRT2"), JsValue::Number(std::f64::consts::SQRT_2));
+            math.set_property(PropertyKey::from("SQRT1_2"), JsValue::Number(std::f64::consts::FRAC_1_SQRT_2));
+
+            // Methods
+            let abs_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "abs".to_string(),
+                func: math_abs,
+                arity: 1,
+            }));
+            math.set_property(PropertyKey::from("abs"), JsValue::Object(abs_fn));
+
+            let floor_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "floor".to_string(),
+                func: math_floor,
+                arity: 1,
+            }));
+            math.set_property(PropertyKey::from("floor"), JsValue::Object(floor_fn));
+
+            let ceil_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "ceil".to_string(),
+                func: math_ceil,
+                arity: 1,
+            }));
+            math.set_property(PropertyKey::from("ceil"), JsValue::Object(ceil_fn));
+
+            let round_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "round".to_string(),
+                func: math_round,
+                arity: 1,
+            }));
+            math.set_property(PropertyKey::from("round"), JsValue::Object(round_fn));
+
+            let trunc_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "trunc".to_string(),
+                func: math_trunc,
+                arity: 1,
+            }));
+            math.set_property(PropertyKey::from("trunc"), JsValue::Object(trunc_fn));
+
+            let sign_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "sign".to_string(),
+                func: math_sign,
+                arity: 1,
+            }));
+            math.set_property(PropertyKey::from("sign"), JsValue::Object(sign_fn));
+
+            let min_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "min".to_string(),
+                func: math_min,
+                arity: 2,
+            }));
+            math.set_property(PropertyKey::from("min"), JsValue::Object(min_fn));
+
+            let max_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "max".to_string(),
+                func: math_max,
+                arity: 2,
+            }));
+            math.set_property(PropertyKey::from("max"), JsValue::Object(max_fn));
+
+            let pow_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "pow".to_string(),
+                func: math_pow,
+                arity: 2,
+            }));
+            math.set_property(PropertyKey::from("pow"), JsValue::Object(pow_fn));
+
+            let sqrt_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "sqrt".to_string(),
+                func: math_sqrt,
+                arity: 1,
+            }));
+            math.set_property(PropertyKey::from("sqrt"), JsValue::Object(sqrt_fn));
+
+            let log_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "log".to_string(),
+                func: math_log,
+                arity: 1,
+            }));
+            math.set_property(PropertyKey::from("log"), JsValue::Object(log_fn));
+
+            let exp_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "exp".to_string(),
+                func: math_exp,
+                arity: 1,
+            }));
+            math.set_property(PropertyKey::from("exp"), JsValue::Object(exp_fn));
+
+            let random_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "random".to_string(),
+                func: math_random,
+                arity: 0,
+            }));
+            math.set_property(PropertyKey::from("random"), JsValue::Object(random_fn));
+
+            let sin_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "sin".to_string(),
+                func: math_sin,
+                arity: 1,
+            }));
+            math.set_property(PropertyKey::from("sin"), JsValue::Object(sin_fn));
+
+            let cos_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "cos".to_string(),
+                func: math_cos,
+                arity: 1,
+            }));
+            math.set_property(PropertyKey::from("cos"), JsValue::Object(cos_fn));
+
+            let tan_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "tan".to_string(),
+                func: math_tan,
+                arity: 1,
+            }));
+            math.set_property(PropertyKey::from("tan"), JsValue::Object(tan_fn));
+        }
+        env.define("Math".to_string(), JsValue::Object(math_object), false);
+
         Self { global, env, array_prototype, string_prototype }
     }
 
@@ -2558,6 +2688,128 @@ fn string_pad_end(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) 
     Ok(JsValue::String(JsString::from(format!("{}{}", s.as_str(), padding))))
 }
 
+// Math methods
+
+fn math_abs(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let n = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
+    Ok(JsValue::Number(n.abs()))
+}
+
+fn math_floor(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let n = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
+    Ok(JsValue::Number(n.floor()))
+}
+
+fn math_ceil(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let n = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
+    Ok(JsValue::Number(n.ceil()))
+}
+
+fn math_round(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let n = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
+    Ok(JsValue::Number(n.round()))
+}
+
+fn math_trunc(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let n = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
+    Ok(JsValue::Number(n.trunc()))
+}
+
+fn math_sign(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let n = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
+    let result = if n.is_nan() {
+        f64::NAN
+    } else if n > 0.0 {
+        1.0
+    } else if n < 0.0 {
+        -1.0
+    } else {
+        0.0
+    };
+    Ok(JsValue::Number(result))
+}
+
+fn math_min(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    if args.is_empty() {
+        return Ok(JsValue::Number(f64::INFINITY));
+    }
+    let mut min = f64::INFINITY;
+    for arg in args {
+        let n = arg.to_number();
+        if n.is_nan() {
+            return Ok(JsValue::Number(f64::NAN));
+        }
+        if n < min {
+            min = n;
+        }
+    }
+    Ok(JsValue::Number(min))
+}
+
+fn math_max(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    if args.is_empty() {
+        return Ok(JsValue::Number(f64::NEG_INFINITY));
+    }
+    let mut max = f64::NEG_INFINITY;
+    for arg in args {
+        let n = arg.to_number();
+        if n.is_nan() {
+            return Ok(JsValue::Number(f64::NAN));
+        }
+        if n > max {
+            max = n;
+        }
+    }
+    Ok(JsValue::Number(max))
+}
+
+fn math_pow(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let base = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
+    let exp = args.get(1).map(|v| v.to_number()).unwrap_or(f64::NAN);
+    Ok(JsValue::Number(base.powf(exp)))
+}
+
+fn math_sqrt(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let n = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
+    Ok(JsValue::Number(n.sqrt()))
+}
+
+fn math_log(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let n = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
+    Ok(JsValue::Number(n.ln()))
+}
+
+fn math_exp(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let n = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
+    Ok(JsValue::Number(n.exp()))
+}
+
+fn math_random(_interp: &mut Interpreter, _this: JsValue, _args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    // Simple pseudo-random using system time (not cryptographically secure)
+    let seed = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .subsec_nanos() as f64;
+    let random = (seed / 1_000_000_000.0) % 1.0;
+    Ok(JsValue::Number(random))
+}
+
+fn math_sin(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let n = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
+    Ok(JsValue::Number(n.sin()))
+}
+
+fn math_cos(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let n = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
+    Ok(JsValue::Number(n.cos()))
+}
+
+fn math_tan(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let n = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
+    Ok(JsValue::Number(n.tan()))
+}
+
 // JSON conversion helpers
 
 fn js_value_to_json(value: &JsValue) -> Result<serde_json::Value, JsError> {
@@ -3084,5 +3336,70 @@ mod tests {
     #[test]
     fn test_string_padend() {
         assert_eq!(eval("'5'.padEnd(3, '0')"), JsValue::String(JsString::from("500")));
+    }
+
+    // Math tests
+    #[test]
+    fn test_math_abs() {
+        assert_eq!(eval("Math.abs(-5)"), JsValue::Number(5.0));
+        assert_eq!(eval("Math.abs(5)"), JsValue::Number(5.0));
+    }
+
+    #[test]
+    fn test_math_floor_ceil_round() {
+        assert_eq!(eval("Math.floor(4.7)"), JsValue::Number(4.0));
+        assert_eq!(eval("Math.ceil(4.3)"), JsValue::Number(5.0));
+        assert_eq!(eval("Math.round(4.5)"), JsValue::Number(5.0));
+        assert_eq!(eval("Math.round(4.4)"), JsValue::Number(4.0));
+    }
+
+    #[test]
+    fn test_math_trunc_sign() {
+        assert_eq!(eval("Math.trunc(4.7)"), JsValue::Number(4.0));
+        assert_eq!(eval("Math.trunc(-4.7)"), JsValue::Number(-4.0));
+        assert_eq!(eval("Math.sign(-5)"), JsValue::Number(-1.0));
+        assert_eq!(eval("Math.sign(5)"), JsValue::Number(1.0));
+        assert_eq!(eval("Math.sign(0)"), JsValue::Number(0.0));
+    }
+
+    #[test]
+    fn test_math_min_max() {
+        assert_eq!(eval("Math.min(1, 2, 3)"), JsValue::Number(1.0));
+        assert_eq!(eval("Math.max(1, 2, 3)"), JsValue::Number(3.0));
+    }
+
+    #[test]
+    fn test_math_pow_sqrt() {
+        assert_eq!(eval("Math.pow(2, 3)"), JsValue::Number(8.0));
+        assert_eq!(eval("Math.sqrt(16)"), JsValue::Number(4.0));
+    }
+
+    #[test]
+    fn test_math_log_exp() {
+        assert_eq!(eval("Math.log(Math.E)"), JsValue::Number(1.0));
+        assert_eq!(eval("Math.exp(0)"), JsValue::Number(1.0));
+    }
+
+    #[test]
+    fn test_math_constants() {
+        assert!(matches!(eval("Math.PI"), JsValue::Number(n) if (n - std::f64::consts::PI).abs() < 0.0001));
+        assert!(matches!(eval("Math.E"), JsValue::Number(n) if (n - std::f64::consts::E).abs() < 0.0001));
+    }
+
+    #[test]
+    fn test_math_random() {
+        // Random should return a number between 0 and 1
+        let result = eval("Math.random()");
+        if let JsValue::Number(n) = result {
+            assert!(n >= 0.0 && n < 1.0);
+        } else {
+            panic!("Math.random() should return a number");
+        }
+    }
+
+    #[test]
+    fn test_math_trig() {
+        assert_eq!(eval("Math.sin(0)"), JsValue::Number(0.0));
+        assert_eq!(eval("Math.cos(0)"), JsValue::Number(1.0));
     }
 }

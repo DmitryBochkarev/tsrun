@@ -318,31 +318,31 @@
 - [ ] `Number.NaN`
 
 #### Math
-- [ ] `Math.abs(x)`
-- [ ] `Math.ceil(x)`
-- [ ] `Math.floor(x)`
-- [ ] `Math.round(x)`
-- [ ] `Math.trunc(x)`
-- [ ] `Math.sign(x)`
-- [ ] `Math.max(...values)`
-- [ ] `Math.min(...values)`
-- [ ] `Math.pow(base, exp)`
-- [ ] `Math.sqrt(x)`
+- [x] `Math.abs(x)`
+- [x] `Math.ceil(x)`
+- [x] `Math.floor(x)`
+- [x] `Math.round(x)`
+- [x] `Math.trunc(x)`
+- [x] `Math.sign(x)`
+- [x] `Math.max(...values)`
+- [x] `Math.min(...values)`
+- [x] `Math.pow(base, exp)`
+- [x] `Math.sqrt(x)`
 - [ ] `Math.cbrt(x)`
 - [ ] `Math.hypot(...values)`
-- [ ] `Math.log(x)`
+- [x] `Math.log(x)`
 - [ ] `Math.log10(x)`
 - [ ] `Math.log2(x)`
 - [ ] `Math.log1p(x)`
-- [ ] `Math.exp(x)`
+- [x] `Math.exp(x)`
 - [ ] `Math.expm1(x)`
-- [ ] `Math.sin(x)`, `Math.cos(x)`, `Math.tan(x)`
+- [x] `Math.sin(x)`, `Math.cos(x)`, `Math.tan(x)`
 - [ ] `Math.asin(x)`, `Math.acos(x)`, `Math.atan(x)`
 - [ ] `Math.sinh(x)`, `Math.cosh(x)`, `Math.tanh(x)`
 - [ ] `Math.asinh(x)`, `Math.acosh(x)`, `Math.atanh(x)`
 - [ ] `Math.atan2(y, x)`
-- [ ] `Math.random()`
-- [ ] `Math.PI`, `Math.E`, `Math.LN2`, `Math.LN10`, etc.
+- [x] `Math.random()`
+- [x] `Math.PI`, `Math.E`, `Math.LN2`, `Math.LN10`, etc.
 
 #### JSON
 - [x] `JSON.parse(text, reviver?)`
