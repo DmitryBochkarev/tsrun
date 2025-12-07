@@ -512,6 +512,19 @@ pub enum JsFunction {
     Interpreted(InterpretedFunction),
     /// Native Rust function
     Native(NativeFunction),
+    /// Bound function (created by Function.prototype.bind)
+    Bound(Box<BoundFunctionData>),
+}
+
+/// Data for a bound function
+#[derive(Debug, Clone)]
+pub struct BoundFunctionData {
+    /// The target function to call
+    pub target: JsObjectRef,
+    /// The bound this value
+    pub this_arg: JsValue,
+    /// Pre-filled arguments
+    pub bound_args: Vec<JsValue>,
 }
 
 impl JsFunction {
@@ -519,6 +532,7 @@ impl JsFunction {
         match self {
             JsFunction::Interpreted(f) => f.name.as_deref(),
             JsFunction::Native(f) => Some(&f.name),
+            JsFunction::Bound(_) => Some("bound"),
         }
     }
 }

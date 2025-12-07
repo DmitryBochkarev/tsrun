@@ -84,9 +84,9 @@
 - [ ] `yield` / `yield*`
 - [x] `this` binding
 - [ ] `arguments` object
-- [ ] `Function.prototype.call`
-- [ ] `Function.prototype.apply`
-- [ ] `Function.prototype.bind`
+- [x] `Function.prototype.call`
+- [x] `Function.prototype.apply`
+- [x] `Function.prototype.bind`
 
 #### Objects
 - [x] Object literals

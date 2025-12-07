@@ -11,7 +11,7 @@ use crate::ast::{
 };
 use crate::error::JsError;
 use crate::value::{
-    create_array, create_function, create_object, Environment, ExoticObject, FunctionBody,
+    create_array, create_function, create_object, BoundFunctionData, Environment, ExoticObject, FunctionBody,
     InterpretedFunction, JsFunction, JsObjectRef, JsString, JsValue, NativeFunction, PropertyKey,
 };
 
@@ -38,6 +38,8 @@ pub struct Interpreter {
     pub string_prototype: JsObjectRef,
     /// Number.prototype for number methods
     pub number_prototype: JsObjectRef,
+    /// Function.prototype for function methods (call, apply, bind)
+    pub function_prototype: JsObjectRef,
 }
 
 impl Interpreter {
@@ -1126,7 +1128,34 @@ impl Interpreter {
         }
         env.define("Number".to_string(), JsValue::Object(number_obj), false);
 
-        Self { global, env, object_prototype, array_prototype, string_prototype, number_prototype: number_proto }
+        // Create Function.prototype with call, apply, bind
+        let function_prototype = create_object();
+        {
+            let mut proto = function_prototype.borrow_mut();
+
+            let call_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "call".to_string(),
+                func: function_call,
+                arity: 1,
+            }));
+            proto.set_property(PropertyKey::from("call"), JsValue::Object(call_fn));
+
+            let apply_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "apply".to_string(),
+                func: function_apply,
+                arity: 2,
+            }));
+            proto.set_property(PropertyKey::from("apply"), JsValue::Object(apply_fn));
+
+            let bind_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "bind".to_string(),
+                func: function_bind,
+                arity: 1,
+            }));
+            proto.set_property(PropertyKey::from("bind"), JsValue::Object(bind_fn));
+        }
+
+        Self { global, env, object_prototype, array_prototype, string_prototype, number_prototype: number_proto, function_prototype }
     }
 
     /// Create an array with the proper prototype
@@ -1742,8 +1771,8 @@ impl Interpreter {
             }
 
             Expression::This(_) => {
-                // Simplified - would need proper this binding
-                Ok(JsValue::Undefined)
+                // Look up 'this' from the environment
+                Ok(self.env.get("this").unwrap_or(JsValue::Undefined))
             }
 
             Expression::Array(arr) => {
@@ -2141,6 +2170,12 @@ impl Interpreter {
                 if let Some(val) = obj.borrow().get_property(&key) {
                     return Ok(val);
                 }
+                // For functions, check Function.prototype
+                if obj.borrow().is_callable() {
+                    if let Some(method) = self.function_prototype.borrow().get_property(&key) {
+                        return Ok(method);
+                    }
+                }
                 // Fall back to Object.prototype for ordinary objects
                 // (but not for objects created with Object.create(null))
                 if !obj.borrow().null_prototype {
@@ -2297,6 +2332,9 @@ impl Interpreter {
                 let prev_env = self.env.clone();
                 self.env = Environment::with_outer(interpreted.closure.clone());
 
+                // Bind 'this' value
+                self.env.define("this".to_string(), this_value.clone(), false);
+
                 // Bind parameters
                 for (i, param) in interpreted.params.iter().enumerate() {
                     let arg = args.get(i).cloned().unwrap_or(JsValue::Undefined);
@@ -2321,6 +2359,22 @@ impl Interpreter {
 
             JsFunction::Native(native) => {
                 (native.func)(self, this_value, args)
+            }
+
+            JsFunction::Bound(bound_data) => {
+                // For bound functions:
+                // - Use the bound this value (ignore the passed this_value)
+                // - Prepend bound args to the call args
+                let bound_this = bound_data.this_arg.clone();
+                let mut full_args = bound_data.bound_args.clone();
+                full_args.extend(args);
+
+                // Call the target function with bound this and combined args
+                self.call_function(
+                    JsValue::Object(bound_data.target.clone()),
+                    bound_this,
+                    full_args,
+                )
             }
         }
     }
@@ -4796,6 +4850,69 @@ fn percent_decode(s: &str, preserve_reserved: bool) -> String {
     result
 }
 
+// Function.prototype.call - call function with specified this value and arguments
+fn function_call(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    // `this` is the function to call
+    // args[0] is the thisArg for the call
+    // args[1..] are the arguments
+    let this_arg = args.first().cloned().unwrap_or(JsValue::Undefined);
+    let call_args: Vec<JsValue> = args.iter().skip(1).cloned().collect();
+    interp.call_function(this, this_arg, call_args)
+}
+
+// Function.prototype.apply - call function with specified this value and array of arguments
+fn function_apply(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    // `this` is the function to call
+    // args[0] is the thisArg for the call
+    // args[1] is an array of arguments
+    let this_arg = args.first().cloned().unwrap_or(JsValue::Undefined);
+    let args_array = args.get(1).cloned().unwrap_or(JsValue::Undefined);
+
+    let call_args: Vec<JsValue> = match args_array {
+        JsValue::Object(arr_ref) => {
+            let arr = arr_ref.borrow();
+            if let ExoticObject::Array { length } = &arr.exotic {
+                (0..*length)
+                    .filter_map(|i| arr.get_property(&PropertyKey::Index(i)))
+                    .collect()
+            } else {
+                vec![]
+            }
+        }
+        JsValue::Undefined | JsValue::Null => vec![],
+        _ => return Err(JsError::type_error("Second argument to apply must be an array")),
+    };
+
+    interp.call_function(this, this_arg, call_args)
+}
+
+// Function.prototype.bind - create a new function with bound this value and pre-filled arguments
+fn function_bind(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    // `this` is the function to bind
+    // args[0] is the thisArg to bind
+    // args[1..] are pre-filled arguments
+    let JsValue::Object(target_fn) = this else {
+        return Err(JsError::type_error("Bind must be called on a function"));
+    };
+
+    // Verify it's actually a function
+    if !target_fn.borrow().is_callable() {
+        return Err(JsError::type_error("Bind must be called on a function"));
+    }
+
+    let this_arg = args.first().cloned().unwrap_or(JsValue::Undefined);
+    let bound_args: Vec<JsValue> = args.iter().skip(1).cloned().collect();
+
+    // Create a bound function using JsFunction::Bound
+    let bound_fn = create_function(JsFunction::Bound(Box::new(BoundFunctionData {
+        target: target_fn,
+        this_arg,
+        bound_args,
+    })));
+
+    Ok(JsValue::Object(bound_fn))
+}
+
 // Number.isNaN - stricter, no type coercion
 fn number_is_nan(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
     match args.first() {
@@ -5083,6 +5200,30 @@ mod tests {
     #[test]
     fn test_function() {
         assert_eq!(eval("function add(a, b) { return a + b; } add(2, 3)"), JsValue::Number(5.0));
+    }
+
+    #[test]
+    fn test_this_binding() {
+        // Test that 'this' is properly bound in method calls
+        assert_eq!(eval("let obj = {x: 42, getX: function() { return this.x; }}; obj.getX()"), JsValue::Number(42.0));
+    }
+
+    #[test]
+    fn test_function_call() {
+        assert_eq!(eval("function greet() { return 'Hello ' + this.name; } greet.call({name: 'World'})"), JsValue::from("Hello World"));
+        assert_eq!(eval("function add(a, b) { return a + b; } add.call(null, 2, 3)"), JsValue::Number(5.0));
+    }
+
+    #[test]
+    fn test_function_apply() {
+        assert_eq!(eval("function greet() { return 'Hello ' + this.name; } greet.apply({name: 'World'})"), JsValue::from("Hello World"));
+        assert_eq!(eval("function add(a, b) { return a + b; } add.apply(null, [2, 3])"), JsValue::Number(5.0));
+    }
+
+    #[test]
+    fn test_function_bind() {
+        assert_eq!(eval("function greet() { return 'Hello ' + this.name; } const boundGreet = greet.bind({name: 'World'}); boundGreet()"), JsValue::from("Hello World"));
+        assert_eq!(eval("function add(a, b) { return a + b; } const add5 = add.bind(null, 5); add5(3)"), JsValue::Number(8.0));
     }
 
     #[test]
