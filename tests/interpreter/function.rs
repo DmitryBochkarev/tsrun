@@ -71,3 +71,52 @@ fn test_arguments_in_nested_function() {
         JsValue::Number(42.0)
     );
 }
+
+// Tests for destructuring in function parameters
+#[test]
+fn test_destructuring_object_param() {
+    assert_eq!(
+        eval("function f({ x, y }) { return x + y; } f({ x: 1, y: 2 })"),
+        JsValue::Number(3.0)
+    );
+}
+
+#[test]
+fn test_destructuring_object_param_with_default() {
+    assert_eq!(
+        eval("function f({ x, y = 10 }) { return x + y; } f({ x: 1 })"),
+        JsValue::Number(11.0)
+    );
+}
+
+#[test]
+fn test_destructuring_array_param() {
+    assert_eq!(
+        eval("function f([a, b]) { return a + b; } f([3, 4])"),
+        JsValue::Number(7.0)
+    );
+}
+
+#[test]
+fn test_destructuring_array_param_with_rest() {
+    assert_eq!(
+        eval("function f([first, ...rest]) { return rest.length; } f([1, 2, 3, 4])"),
+        JsValue::Number(3.0)
+    );
+}
+
+#[test]
+fn test_destructuring_nested_param() {
+    assert_eq!(
+        eval("function f({ person: { name } }) { return name; } f({ person: { name: 'John' } })"),
+        JsValue::from("John")
+    );
+}
+
+#[test]
+fn test_arrow_destructuring_param() {
+    assert_eq!(
+        eval("const f = ({ x }) => x * 2; f({ x: 5 })"),
+        JsValue::Number(10.0)
+    );
+}

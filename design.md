@@ -114,7 +114,7 @@
 - [x] Nested destructuring
 - [x] Default values in destructuring
 - [x] Rest in destructuring (`{ a, ...rest }`)
-- [ ] Destructuring in function parameters
+- [x] Destructuring in function parameters
 - [ ] Destructuring in assignment expressions
 
 #### Classes
