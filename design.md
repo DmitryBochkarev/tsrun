@@ -305,8 +305,8 @@
 - [x] `Number.parseInt(string, radix?)`
 - [x] `Number.parseFloat(string)`
 - [x] `Number.prototype.toFixed(digits?)`
-- [ ] `Number.prototype.toPrecision(precision?)`
-- [ ] `Number.prototype.toExponential(digits?)`
+- [x] `Number.prototype.toPrecision(precision?)`
+- [x] `Number.prototype.toExponential(digits?)`
 - [x] `Number.prototype.toString(radix?)`
 - [x] `Number.POSITIVE_INFINITY`
 - [x] `Number.NEGATIVE_INFINITY`

@@ -893,6 +893,20 @@ impl Interpreter {
                 arity: 1,
             }));
             proto.set_property(PropertyKey::from("toString"), JsValue::Object(tostring_fn));
+
+            let toprecision_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "toPrecision".to_string(),
+                func: number_to_precision,
+                arity: 1,
+            }));
+            proto.set_property(PropertyKey::from("toPrecision"), JsValue::Object(toprecision_fn));
+
+            let toexponential_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "toExponential".to_string(),
+                func: number_to_exponential,
+                arity: 1,
+            }));
+            proto.set_property(PropertyKey::from("toExponential"), JsValue::Object(toexponential_fn));
         }
 
         let number_obj = create_object();
@@ -4258,6 +4272,73 @@ fn number_to_string(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>
     Ok(JsValue::String(JsString::from(result)))
 }
 
+// Number.prototype.toPrecision
+fn number_to_precision(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let n = this.to_number();
+
+    if args.is_empty() || matches!(args.first(), Some(JsValue::Undefined)) {
+        return Ok(JsValue::String(JsString::from(format!("{}", n))));
+    }
+
+    let precision = args.first().map(|v| v.to_number() as i32).unwrap_or(1);
+
+    if precision < 1 || precision > 100 {
+        return Err(JsError::range_error("toPrecision() argument must be between 1 and 100"));
+    }
+
+    if !n.is_finite() {
+        return Ok(JsValue::String(JsString::from(format!("{}", n))));
+    }
+
+    let result = format!("{:.prec$e}", n, prec = (precision - 1) as usize);
+    // Parse and reformat to match JS behavior
+    let parts: Vec<&str> = result.split('e').collect();
+    if parts.len() == 2 {
+        let mantissa = parts[0].parse::<f64>().unwrap_or(0.0);
+        let exp: i32 = parts[1].parse().unwrap_or(0);
+
+        // If exponent is small enough, use fixed notation
+        if exp >= 0 && exp < precision {
+            let decimals = precision - 1 - exp;
+            if decimals >= 0 {
+                return Ok(JsValue::String(JsString::from(format!("{:.prec$}", n, prec = decimals as usize))));
+            }
+        } else if exp < 0 && exp >= -(4) {
+            // For small numbers, use fixed notation
+            let decimals = precision as i32 - 1 - exp;
+            if decimals >= 0 && decimals <= 100 {
+                return Ok(JsValue::String(JsString::from(format!("{:.prec$}", n, prec = decimals as usize))));
+            }
+        }
+
+        // Use exponential notation
+        let exp_sign = if exp >= 0 { "+" } else { "" };
+        return Ok(JsValue::String(JsString::from(format!("{}e{}{}", mantissa, exp_sign, exp))));
+    }
+
+    Ok(JsValue::String(JsString::from(format!("{}", n))))
+}
+
+// Number.prototype.toExponential
+fn number_to_exponential(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let n = this.to_number();
+
+    if !n.is_finite() {
+        return Ok(JsValue::String(JsString::from(format!("{}", n))));
+    }
+
+    let digits = args.first().map(|v| v.to_number() as i32).unwrap_or(6);
+
+    if digits < 0 || digits > 100 {
+        return Err(JsError::range_error("toExponential() argument must be between 0 and 100"));
+    }
+
+    let result = format!("{:.prec$e}", n, prec = digits as usize);
+    // Convert Rust's "e" notation to JS format (e.g., "1.23e2" -> "1.23e+2")
+    let result = result.replace("e", "e+").replace("e+-", "e-");
+    Ok(JsValue::String(JsString::from(result)))
+}
+
 // JSON conversion helpers
 
 fn js_value_to_json(value: &JsValue) -> Result<serde_json::Value, JsError> {
@@ -4980,6 +5061,20 @@ mod tests {
         assert_eq!(eval("(255).toString(16)"), JsValue::String(JsString::from("ff")));
         assert_eq!(eval("(10).toString(2)"), JsValue::String(JsString::from("1010")));
         assert_eq!(eval("(42).toString()"), JsValue::String(JsString::from("42")));
+    }
+
+    #[test]
+    fn test_number_toprecision() {
+        assert_eq!(eval("(123.456).toPrecision(4)"), JsValue::String(JsString::from("123.5")));
+        assert_eq!(eval("(0.000123).toPrecision(2)"), JsValue::String(JsString::from("0.00012")));
+        assert_eq!(eval("(1234.5).toPrecision(2)"), JsValue::String(JsString::from("1.2e+3")));
+    }
+
+    #[test]
+    fn test_number_toexponential() {
+        assert_eq!(eval("(123.456).toExponential(2)"), JsValue::String(JsString::from("1.23e+2")));
+        assert_eq!(eval("(0.00123).toExponential(2)"), JsValue::String(JsString::from("1.23e-3")));
+        assert_eq!(eval("(12345).toExponential(1)"), JsValue::String(JsString::from("1.2e+4")));
     }
 
     #[test]
