@@ -83,7 +83,7 @@
 - [ ] Generator functions (`function*`)
 - [ ] `yield` / `yield*`
 - [x] `this` binding
-- [ ] `arguments` object
+- [x] `arguments` object
 - [x] `Function.prototype.call`
 - [x] `Function.prototype.apply`
 - [x] `Function.prototype.bind`

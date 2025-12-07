@@ -1316,6 +1316,10 @@ impl Interpreter {
                 // Bind 'this' value
                 self.env.define("this".to_string(), this_value.clone(), false);
 
+                // Create and bind 'arguments' object (array-like object with all args)
+                let arguments_obj = self.create_array(args.clone());
+                self.env.define("arguments".to_string(), JsValue::Object(arguments_obj), false);
+
                 // Bind parameters
                 for (i, param) in interpreted.params.iter().enumerate() {
                     let arg = args.get(i).cloned().unwrap_or(JsValue::Undefined);
