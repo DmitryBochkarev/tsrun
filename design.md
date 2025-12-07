@@ -243,12 +243,12 @@ To fully implement classes, the following components are needed:
 - [x] `Object.seal(obj)`
 - [x] `Object.isFrozen(obj)`
 - [x] `Object.isSealed(obj)`
-- [ ] `Object.getOwnPropertyNames(obj)`
-- [ ] `Object.getOwnPropertyDescriptor(obj, prop)`
-- [ ] `Object.defineProperty(obj, prop, descriptor)`
+- [x] `Object.getOwnPropertyNames(obj)`
+- [x] `Object.getOwnPropertyDescriptor(obj, prop)`
+- [x] `Object.defineProperty(obj, prop, descriptor)`
 - [ ] `Object.defineProperties(obj, props)`
-- [ ] `Object.getPrototypeOf(obj)`
-- [ ] `Object.setPrototypeOf(obj, proto)`
+- [x] `Object.getPrototypeOf(obj)`
+- [x] `Object.setPrototypeOf(obj, proto)`
 - [x] `Object.create(proto, props?)`
 - [x] `Object.fromEntries(iterable)`
 - [x] `Object.hasOwn(obj, prop)`

@@ -89,3 +89,76 @@ fn test_object_seal() {
         JsValue::Boolean(true)
     );
 }
+
+#[test]
+fn test_object_get_own_property_descriptor() {
+    // Basic property descriptor
+    assert_eq!(
+        eval(r#"
+            const obj = { x: 42 };
+            const desc = Object.getOwnPropertyDescriptor(obj, 'x');
+            desc.value
+        "#),
+        JsValue::Number(42.0)
+    );
+    assert_eq!(
+        eval(r#"
+            const obj = { x: 42 };
+            const desc = Object.getOwnPropertyDescriptor(obj, 'x');
+            desc.writable
+        "#),
+        JsValue::Boolean(true)
+    );
+    assert_eq!(
+        eval(r#"
+            const obj = { x: 42 };
+            const desc = Object.getOwnPropertyDescriptor(obj, 'x');
+            desc.enumerable
+        "#),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_object_define_property() {
+    assert_eq!(
+        eval(r#"
+            const obj: any = {};
+            Object.defineProperty(obj, 'x', { value: 10, writable: true });
+            obj.x
+        "#),
+        JsValue::Number(10.0)
+    );
+    // Non-writable property
+    assert_eq!(
+        eval(r#"
+            const obj: any = {};
+            Object.defineProperty(obj, 'x', { value: 10, writable: false });
+            obj.x = 20;
+            obj.x
+        "#),
+        JsValue::Number(10.0)
+    );
+}
+
+#[test]
+fn test_object_get_prototype_of() {
+    assert_eq!(
+        eval(r#"
+            const arr: number[] = [1, 2, 3];
+            Object.getPrototypeOf(arr) === Array.prototype
+        "#),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_object_get_own_property_names() {
+    assert_eq!(
+        eval(r#"
+            const obj = { a: 1, b: 2 };
+            Object.getOwnPropertyNames(obj).length
+        "#),
+        JsValue::Number(2.0)
+    );
+}
