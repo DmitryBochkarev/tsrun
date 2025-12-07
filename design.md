@@ -128,8 +128,8 @@
 - [x] `extends` (inheritance)
 - [x] `super` calls
 - [x] `super` property access
-- [ ] Private fields (`#field`) (parsing done)
-- [ ] Private methods (`#method()`)
+- [x] Private fields (`#field`)
+- [x] Private methods (`#method()`)
 - [ ] Static initialization blocks
 
 **Classes Implementation Notes:**

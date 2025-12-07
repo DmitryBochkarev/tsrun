@@ -131,7 +131,6 @@ fn test_class_super_method() {
 
 // Private field tests
 #[test]
-#[ignore] // TODO: Private fields not implemented
 fn test_private_field_basic() {
     assert_eq!(
         eval(r#"
@@ -154,7 +153,6 @@ fn test_private_field_basic() {
 }
 
 #[test]
-#[ignore] // TODO: Implement private fields
 fn test_private_field_initial_value() {
     assert_eq!(
         eval(r#"
@@ -172,7 +170,6 @@ fn test_private_field_initial_value() {
 }
 
 #[test]
-#[ignore] // TODO: Implement private fields
 fn test_private_method() {
     assert_eq!(
         eval(r#"

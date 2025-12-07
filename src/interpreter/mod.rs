@@ -495,7 +495,7 @@ impl Interpreter {
                     _ => continue,
                 },
                 ObjectPropertyKey::Computed(_) => continue, // Skip computed for now
-                ObjectPropertyKey::PrivateIdentifier(_) => continue, // Handle separately
+                ObjectPropertyKey::PrivateIdentifier(id) => format!("#{}", id.name),
             };
 
             let func = &method.value;
@@ -533,6 +533,7 @@ impl Interpreter {
                 let name = match &prop.key {
                     ObjectPropertyKey::Identifier(id) => id.name.clone(),
                     ObjectPropertyKey::String(s) => s.value.clone(),
+                    ObjectPropertyKey::PrivateIdentifier(id) => format!("#{}", id.name),
                     _ => return None,
                 };
                 Some((name, prop.value.clone()))
