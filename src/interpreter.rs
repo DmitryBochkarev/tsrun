@@ -32,6 +32,8 @@ pub struct Interpreter {
     pub env: Environment,
     /// Array.prototype for all array instances
     pub array_prototype: JsObjectRef,
+    /// String.prototype for string methods
+    pub string_prototype: JsObjectRef,
 }
 
 impl Interpreter {
@@ -262,7 +264,149 @@ impl Interpreter {
         }
         env.define("Array".to_string(), JsValue::Object(array_constructor), false);
 
-        Self { global, env, array_prototype }
+        // Create String.prototype with methods
+        let string_prototype = create_object();
+        {
+            let mut proto = string_prototype.borrow_mut();
+
+            // String.prototype.charAt
+            let charat_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "charAt".to_string(),
+                func: string_char_at,
+                arity: 1,
+            }));
+            proto.set_property(PropertyKey::from("charAt"), JsValue::Object(charat_fn));
+
+            // String.prototype.indexOf
+            let indexof_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "indexOf".to_string(),
+                func: string_index_of,
+                arity: 1,
+            }));
+            proto.set_property(PropertyKey::from("indexOf"), JsValue::Object(indexof_fn));
+
+            // String.prototype.includes
+            let includes_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "includes".to_string(),
+                func: string_includes,
+                arity: 1,
+            }));
+            proto.set_property(PropertyKey::from("includes"), JsValue::Object(includes_fn));
+
+            // String.prototype.startsWith
+            let startswith_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "startsWith".to_string(),
+                func: string_starts_with,
+                arity: 1,
+            }));
+            proto.set_property(PropertyKey::from("startsWith"), JsValue::Object(startswith_fn));
+
+            // String.prototype.endsWith
+            let endswith_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "endsWith".to_string(),
+                func: string_ends_with,
+                arity: 1,
+            }));
+            proto.set_property(PropertyKey::from("endsWith"), JsValue::Object(endswith_fn));
+
+            // String.prototype.slice
+            let slice_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "slice".to_string(),
+                func: string_slice,
+                arity: 2,
+            }));
+            proto.set_property(PropertyKey::from("slice"), JsValue::Object(slice_fn));
+
+            // String.prototype.substring
+            let substring_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "substring".to_string(),
+                func: string_substring,
+                arity: 2,
+            }));
+            proto.set_property(PropertyKey::from("substring"), JsValue::Object(substring_fn));
+
+            // String.prototype.toLowerCase
+            let tolower_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "toLowerCase".to_string(),
+                func: string_to_lower_case,
+                arity: 0,
+            }));
+            proto.set_property(PropertyKey::from("toLowerCase"), JsValue::Object(tolower_fn));
+
+            // String.prototype.toUpperCase
+            let toupper_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "toUpperCase".to_string(),
+                func: string_to_upper_case,
+                arity: 0,
+            }));
+            proto.set_property(PropertyKey::from("toUpperCase"), JsValue::Object(toupper_fn));
+
+            // String.prototype.trim
+            let trim_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "trim".to_string(),
+                func: string_trim,
+                arity: 0,
+            }));
+            proto.set_property(PropertyKey::from("trim"), JsValue::Object(trim_fn));
+
+            // String.prototype.trimStart
+            let trimstart_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "trimStart".to_string(),
+                func: string_trim_start,
+                arity: 0,
+            }));
+            proto.set_property(PropertyKey::from("trimStart"), JsValue::Object(trimstart_fn));
+
+            // String.prototype.trimEnd
+            let trimend_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "trimEnd".to_string(),
+                func: string_trim_end,
+                arity: 0,
+            }));
+            proto.set_property(PropertyKey::from("trimEnd"), JsValue::Object(trimend_fn));
+
+            // String.prototype.split
+            let split_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "split".to_string(),
+                func: string_split,
+                arity: 2,
+            }));
+            proto.set_property(PropertyKey::from("split"), JsValue::Object(split_fn));
+
+            // String.prototype.repeat
+            let repeat_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "repeat".to_string(),
+                func: string_repeat,
+                arity: 1,
+            }));
+            proto.set_property(PropertyKey::from("repeat"), JsValue::Object(repeat_fn));
+
+            // String.prototype.replace
+            let replace_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "replace".to_string(),
+                func: string_replace,
+                arity: 2,
+            }));
+            proto.set_property(PropertyKey::from("replace"), JsValue::Object(replace_fn));
+
+            // String.prototype.padStart
+            let padstart_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "padStart".to_string(),
+                func: string_pad_start,
+                arity: 2,
+            }));
+            proto.set_property(PropertyKey::from("padStart"), JsValue::Object(padstart_fn));
+
+            // String.prototype.padEnd
+            let padend_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "padEnd".to_string(),
+                func: string_pad_end,
+                arity: 2,
+            }));
+            proto.set_property(PropertyKey::from("padEnd"), JsValue::Object(padend_fn));
+        }
+
+        Self { global, env, array_prototype, string_prototype }
     }
 
     /// Create an array with the proper prototype
@@ -1285,6 +1429,10 @@ impl Interpreter {
                 if key.to_string() == "length" {
                     return Ok(JsValue::Number(s.len() as f64));
                 }
+                // Look up on String.prototype
+                if let Some(method) = self.string_prototype.borrow().get_property(&key) {
+                    return Ok(method);
+                }
                 Ok(JsValue::Undefined)
             }
             _ => Ok(JsValue::Undefined),
@@ -2199,6 +2347,217 @@ fn array_some(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Re
     Ok(JsValue::Boolean(false))
 }
 
+// String methods
+
+fn string_char_at(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let s = this.to_js_string();
+    let index = args.first().map(|v| v.to_number() as usize).unwrap_or(0);
+
+    if let Some(ch) = s.as_str().chars().nth(index) {
+        Ok(JsValue::String(JsString::from(ch.to_string())))
+    } else {
+        Ok(JsValue::String(JsString::from("")))
+    }
+}
+
+fn string_index_of(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let s = this.to_js_string();
+    let search = args.first().map(|v| v.to_js_string().to_string()).unwrap_or_default();
+    let from_index = args.get(1).map(|v| v.to_number() as usize).unwrap_or(0);
+
+    if from_index >= s.len() {
+        return Ok(JsValue::Number(-1.0));
+    }
+
+    match s.as_str()[from_index..].find(&search) {
+        Some(pos) => Ok(JsValue::Number((from_index + pos) as f64)),
+        None => Ok(JsValue::Number(-1.0)),
+    }
+}
+
+fn string_includes(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let s = this.to_js_string();
+    let search = args.first().map(|v| v.to_js_string().to_string()).unwrap_or_default();
+    let from_index = args.get(1).map(|v| v.to_number() as usize).unwrap_or(0);
+
+    if from_index >= s.len() {
+        return Ok(JsValue::Boolean(search.is_empty()));
+    }
+
+    Ok(JsValue::Boolean(s.as_str()[from_index..].contains(&search)))
+}
+
+fn string_starts_with(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let s = this.to_js_string();
+    let search = args.first().map(|v| v.to_js_string().to_string()).unwrap_or_default();
+    let position = args.get(1).map(|v| v.to_number() as usize).unwrap_or(0);
+
+    if position >= s.len() {
+        return Ok(JsValue::Boolean(search.is_empty()));
+    }
+
+    Ok(JsValue::Boolean(s.as_str()[position..].starts_with(&search)))
+}
+
+fn string_ends_with(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let s = this.to_js_string();
+    let search = args.first().map(|v| v.to_js_string().to_string()).unwrap_or_default();
+    let end_position = args.get(1).map(|v| v.to_number() as usize).unwrap_or(s.len());
+
+    let end = end_position.min(s.len());
+    Ok(JsValue::Boolean(s.as_str()[..end].ends_with(&search)))
+}
+
+fn string_slice(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let s = this.to_js_string();
+    let len = s.len() as i64;
+
+    let start_arg = args.first().map(|v| v.to_number() as i64).unwrap_or(0);
+    let end_arg = args.get(1).map(|v| v.to_number() as i64).unwrap_or(len);
+
+    let start = if start_arg < 0 { (len + start_arg).max(0) } else { start_arg.min(len) } as usize;
+    let end = if end_arg < 0 { (len + end_arg).max(0) } else { end_arg.min(len) } as usize;
+
+    if start >= end {
+        return Ok(JsValue::String(JsString::from("")));
+    }
+
+    // Need to handle UTF-8 properly - slice by characters, not bytes
+    let chars: Vec<char> = s.as_str().chars().collect();
+    let result: String = chars[start.min(chars.len())..end.min(chars.len())].iter().collect();
+    Ok(JsValue::String(JsString::from(result)))
+}
+
+fn string_substring(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let s = this.to_js_string();
+    let len = s.len();
+
+    let start = args.first().map(|v| {
+        let n = v.to_number();
+        if n.is_nan() { 0 } else { (n as usize).min(len) }
+    }).unwrap_or(0);
+
+    let end = args.get(1).map(|v| {
+        let n = v.to_number();
+        if n.is_nan() { 0 } else { (n as usize).min(len) }
+    }).unwrap_or(len);
+
+    let (start, end) = if start > end { (end, start) } else { (start, end) };
+
+    let chars: Vec<char> = s.as_str().chars().collect();
+    let result: String = chars[start.min(chars.len())..end.min(chars.len())].iter().collect();
+    Ok(JsValue::String(JsString::from(result)))
+}
+
+fn string_to_lower_case(_interp: &mut Interpreter, this: JsValue, _args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let s = this.to_js_string();
+    Ok(JsValue::String(JsString::from(s.as_str().to_lowercase())))
+}
+
+fn string_to_upper_case(_interp: &mut Interpreter, this: JsValue, _args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let s = this.to_js_string();
+    Ok(JsValue::String(JsString::from(s.as_str().to_uppercase())))
+}
+
+fn string_trim(_interp: &mut Interpreter, this: JsValue, _args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let s = this.to_js_string();
+    Ok(JsValue::String(JsString::from(s.as_str().trim())))
+}
+
+fn string_trim_start(_interp: &mut Interpreter, this: JsValue, _args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let s = this.to_js_string();
+    Ok(JsValue::String(JsString::from(s.as_str().trim_start())))
+}
+
+fn string_trim_end(_interp: &mut Interpreter, this: JsValue, _args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let s = this.to_js_string();
+    Ok(JsValue::String(JsString::from(s.as_str().trim_end())))
+}
+
+fn string_split(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let s = this.to_js_string();
+    let separator = args.first().map(|v| v.to_js_string().to_string());
+    let limit = args.get(1).map(|v| v.to_number() as usize);
+
+    let parts: Vec<JsValue> = match separator {
+        Some(sep) if !sep.is_empty() => {
+            let split: Vec<&str> = match limit {
+                Some(l) => s.as_str().splitn(l, &sep).collect(),
+                None => s.as_str().split(&sep).collect(),
+            };
+            split.into_iter().map(|p| JsValue::String(JsString::from(p))).collect()
+        }
+        Some(_) => {
+            // Empty separator - split into characters
+            let chars: Vec<JsValue> = s.as_str().chars()
+                .map(|c| JsValue::String(JsString::from(c.to_string())))
+                .collect();
+            match limit {
+                Some(l) => chars.into_iter().take(l).collect(),
+                None => chars,
+            }
+        }
+        None => vec![JsValue::String(JsString::from(s.to_string()))],
+    };
+
+    Ok(JsValue::Object(interp.create_array(parts)))
+}
+
+fn string_repeat(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let s = this.to_js_string();
+    let count = args.first().map(|v| v.to_number() as usize).unwrap_or(0);
+    Ok(JsValue::String(JsString::from(s.as_str().repeat(count))))
+}
+
+fn string_replace(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let s = this.to_js_string();
+    let search = args.first().map(|v| v.to_js_string().to_string()).unwrap_or_default();
+    let replacement = args.get(1).map(|v| v.to_js_string().to_string()).unwrap_or_default();
+
+    // Only replace first occurrence (like JS)
+    Ok(JsValue::String(JsString::from(s.as_str().replacen(&search, &replacement, 1))))
+}
+
+fn string_pad_start(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let s = this.to_js_string();
+    let target_length = args.first().map(|v| v.to_number() as usize).unwrap_or(0);
+    let pad_string = args.get(1).map(|v| v.to_js_string().to_string()).unwrap_or_else(|| " ".to_string());
+
+    let current_len = s.as_str().chars().count();
+    if current_len >= target_length || pad_string.is_empty() {
+        return Ok(JsValue::String(s));
+    }
+
+    let pad_len = target_length - current_len;
+    let mut padding = String::new();
+    while padding.len() < pad_len {
+        padding.push_str(&pad_string);
+    }
+    padding.truncate(pad_len);
+
+    Ok(JsValue::String(JsString::from(format!("{}{}", padding, s.as_str()))))
+}
+
+fn string_pad_end(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let s = this.to_js_string();
+    let target_length = args.first().map(|v| v.to_number() as usize).unwrap_or(0);
+    let pad_string = args.get(1).map(|v| v.to_js_string().to_string()).unwrap_or_else(|| " ".to_string());
+
+    let current_len = s.as_str().chars().count();
+    if current_len >= target_length || pad_string.is_empty() {
+        return Ok(JsValue::String(s));
+    }
+
+    let pad_len = target_length - current_len;
+    let mut padding = String::new();
+    while padding.len() < pad_len {
+        padding.push_str(&pad_string);
+    }
+    padding.truncate(pad_len);
+
+    Ok(JsValue::String(JsString::from(format!("{}{}", s.as_str(), padding))))
+}
+
 // JSON conversion helpers
 
 fn js_value_to_json(value: &JsValue) -> Result<serde_json::Value, JsError> {
@@ -2633,5 +2992,97 @@ mod tests {
     #[test]
     fn test_array_some_empty() {
         assert_eq!(eval("[].some(x => true)"), JsValue::Boolean(false));
+    }
+
+    // String method tests
+    #[test]
+    fn test_string_charat() {
+        assert_eq!(eval("'hello'.charAt(1)"), JsValue::String(JsString::from("e")));
+    }
+
+    #[test]
+    fn test_string_indexof() {
+        assert_eq!(eval("'hello world'.indexOf('world')"), JsValue::Number(6.0));
+        assert_eq!(eval("'hello'.indexOf('x')"), JsValue::Number(-1.0));
+    }
+
+    #[test]
+    fn test_string_includes() {
+        assert_eq!(eval("'hello world'.includes('world')"), JsValue::Boolean(true));
+        assert_eq!(eval("'hello'.includes('x')"), JsValue::Boolean(false));
+    }
+
+    #[test]
+    fn test_string_startswith() {
+        assert_eq!(eval("'hello world'.startsWith('hello')"), JsValue::Boolean(true));
+        assert_eq!(eval("'hello world'.startsWith('world')"), JsValue::Boolean(false));
+    }
+
+    #[test]
+    fn test_string_endswith() {
+        assert_eq!(eval("'hello world'.endsWith('world')"), JsValue::Boolean(true));
+        assert_eq!(eval("'hello world'.endsWith('hello')"), JsValue::Boolean(false));
+    }
+
+    #[test]
+    fn test_string_slice() {
+        assert_eq!(eval("'hello'.slice(1, 4)"), JsValue::String(JsString::from("ell")));
+        assert_eq!(eval("'hello'.slice(-2)"), JsValue::String(JsString::from("lo")));
+    }
+
+    #[test]
+    fn test_string_substring() {
+        assert_eq!(eval("'hello'.substring(1, 4)"), JsValue::String(JsString::from("ell")));
+    }
+
+    #[test]
+    fn test_string_tolowercase() {
+        assert_eq!(eval("'HELLO'.toLowerCase()"), JsValue::String(JsString::from("hello")));
+    }
+
+    #[test]
+    fn test_string_touppercase() {
+        assert_eq!(eval("'hello'.toUpperCase()"), JsValue::String(JsString::from("HELLO")));
+    }
+
+    #[test]
+    fn test_string_trim() {
+        assert_eq!(eval("'  hello  '.trim()"), JsValue::String(JsString::from("hello")));
+    }
+
+    #[test]
+    fn test_string_trimstart() {
+        assert_eq!(eval("'  hello  '.trimStart()"), JsValue::String(JsString::from("hello  ")));
+    }
+
+    #[test]
+    fn test_string_trimend() {
+        assert_eq!(eval("'  hello  '.trimEnd()"), JsValue::String(JsString::from("  hello")));
+    }
+
+    #[test]
+    fn test_string_split() {
+        assert_eq!(eval("'a,b,c'.split(',').length"), JsValue::Number(3.0));
+        assert_eq!(eval("'a,b,c'.split(',')[1]"), JsValue::String(JsString::from("b")));
+    }
+
+    #[test]
+    fn test_string_repeat() {
+        assert_eq!(eval("'ab'.repeat(3)"), JsValue::String(JsString::from("ababab")));
+    }
+
+    #[test]
+    fn test_string_replace() {
+        assert_eq!(eval("'hello world'.replace('world', 'rust')"), JsValue::String(JsString::from("hello rust")));
+    }
+
+    #[test]
+    fn test_string_padstart() {
+        assert_eq!(eval("'5'.padStart(3, '0')"), JsValue::String(JsString::from("005")));
+    }
+
+    #[test]
+    fn test_string_padend() {
+        assert_eq!(eval("'5'.padEnd(3, '0')"), JsValue::String(JsString::from("500")));
     }
 }

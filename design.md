@@ -267,28 +267,28 @@
 #### String
 - [ ] `String.fromCharCode(...codes)`
 - [ ] `String.fromCodePoint(...codePoints)`
-- [ ] `String.prototype.charAt(index)`
+- [x] `String.prototype.charAt(index)`
 - [ ] `String.prototype.charCodeAt(index)`
 - [ ] `String.prototype.codePointAt(index)`
 - [ ] `String.prototype.concat(...strings)`
-- [ ] `String.prototype.includes(search, position?)`
-- [ ] `String.prototype.startsWith(search, position?)`
-- [ ] `String.prototype.endsWith(search, length?)`
-- [ ] `String.prototype.indexOf(search, position?)`
+- [x] `String.prototype.includes(search, position?)`
+- [x] `String.prototype.startsWith(search, position?)`
+- [x] `String.prototype.endsWith(search, length?)`
+- [x] `String.prototype.indexOf(search, position?)`
 - [ ] `String.prototype.lastIndexOf(search, position?)`
-- [ ] `String.prototype.slice(start?, end?)`
-- [ ] `String.prototype.substring(start, end?)`
+- [x] `String.prototype.slice(start?, end?)`
+- [x] `String.prototype.substring(start, end?)`
 - [ ] `String.prototype.substr(start, length?)` (deprecated)
-- [ ] `String.prototype.split(separator?, limit?)`
-- [ ] `String.prototype.toLowerCase()`
-- [ ] `String.prototype.toUpperCase()`
-- [ ] `String.prototype.trim()`
-- [ ] `String.prototype.trimStart()`
-- [ ] `String.prototype.trimEnd()`
-- [ ] `String.prototype.padStart(length, padString?)`
-- [ ] `String.prototype.padEnd(length, padString?)`
-- [ ] `String.prototype.repeat(count)`
-- [ ] `String.prototype.replace(search, replacement)`
+- [x] `String.prototype.split(separator?, limit?)`
+- [x] `String.prototype.toLowerCase()`
+- [x] `String.prototype.toUpperCase()`
+- [x] `String.prototype.trim()`
+- [x] `String.prototype.trimStart()`
+- [x] `String.prototype.trimEnd()`
+- [x] `String.prototype.padStart(length, padString?)`
+- [x] `String.prototype.padEnd(length, padString?)`
+- [x] `String.prototype.repeat(count)`
+- [x] `String.prototype.replace(search, replacement)`
 - [ ] `String.prototype.replaceAll(search, replacement)`
 - [ ] `String.prototype.match(regexp)`
 - [ ] `String.prototype.matchAll(regexp)`
