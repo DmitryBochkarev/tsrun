@@ -549,6 +549,10 @@ impl<'a> Parser<'a> {
             let expr = self.parse_assignment_expression()?;
             self.expect(&TokenKind::RBracket)?;
             Ok((ObjectPropertyKey::Computed(Box::new(expr)), true))
+        } else if self.match_token(&TokenKind::Hash) {
+            // Private identifier: #name
+            let name = self.parse_identifier()?;
+            Ok((ObjectPropertyKey::PrivateIdentifier(name), false))
         } else {
             Ok((self.parse_property_name()?, false))
         }
@@ -1363,14 +1367,26 @@ impl<'a> Parser<'a> {
                     span,
                 });
             } else if self.match_token(&TokenKind::Dot) {
-                let property = self.parse_identifier()?;
-                let span = self.span_from(start);
-                expr = Expression::Member(MemberExpression {
-                    object: Box::new(expr),
-                    property: MemberProperty::Identifier(property),
-                    computed: false,
-                    span,
-                });
+                // Check for private identifier (#name)
+                if self.match_token(&TokenKind::Hash) {
+                    let name = self.parse_identifier()?;
+                    let span = self.span_from(start);
+                    expr = Expression::Member(MemberExpression {
+                        object: Box::new(expr),
+                        property: MemberProperty::PrivateIdentifier(name),
+                        computed: false,
+                        span,
+                    });
+                } else {
+                    let property = self.parse_identifier()?;
+                    let span = self.span_from(start);
+                    expr = Expression::Member(MemberExpression {
+                        object: Box::new(expr),
+                        property: MemberProperty::Identifier(property),
+                        computed: false,
+                        span,
+                    });
+                }
             } else if self.match_token(&TokenKind::LBracket) {
                 let property = self.parse_expression()?;
                 self.expect(&TokenKind::RBracket)?;

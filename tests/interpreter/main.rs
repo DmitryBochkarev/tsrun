@@ -4,6 +4,7 @@
 
 mod array;
 mod basics;
+mod class;
 mod console;
 mod date;
 mod error;

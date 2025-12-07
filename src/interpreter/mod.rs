@@ -660,6 +660,7 @@ impl Interpreter {
                                     }
                                 }
                                 ObjectPropertyKey::Computed(_) => continue,
+                                ObjectPropertyKey::PrivateIdentifier(id) => format!("#{}", id.name),
                             };
 
                             let prop_value = obj
@@ -989,6 +990,10 @@ impl Interpreter {
                 let val = self.evaluate(expr)?;
                 PropertyKey::from_value(&val)
             }
+            ObjectPropertyKey::PrivateIdentifier(id) => {
+                // Private fields are stored with # prefix
+                PropertyKey::from(format!("#{}", id.name))
+            }
         })
     }
 
@@ -1211,8 +1216,9 @@ impl Interpreter {
                 let val = self.evaluate(expr)?;
                 crate::value::PropertyKey::from_value(&val)
             }
-            MemberProperty::PrivateIdentifier(_) => {
-                return Err(JsError::type_error("Private fields not supported"));
+            MemberProperty::PrivateIdentifier(id) => {
+                // Private fields are stored with # prefix
+                crate::value::PropertyKey::from(format!("#{}", id.name))
             }
         };
 
@@ -1273,8 +1279,9 @@ impl Interpreter {
                 let val = self.evaluate(expr)?;
                 crate::value::PropertyKey::from_value(&val)
             }
-            MemberProperty::PrivateIdentifier(_) => {
-                return Err(JsError::type_error("Private fields not supported"));
+            MemberProperty::PrivateIdentifier(id) => {
+                // Private fields are stored with # prefix
+                crate::value::PropertyKey::from(format!("#{}", id.name))
             }
         };
 

@@ -540,6 +540,7 @@ pub enum ObjectPropertyKey {
     String(StringLiteral),
     Number(Literal),
     Computed(Box<Expression>),
+    PrivateIdentifier(Identifier),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
