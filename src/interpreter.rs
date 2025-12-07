@@ -6567,6 +6567,35 @@ mod tests {
     }
 
     #[test]
+    fn test_set() {
+        // Basic Set creation and operations
+        assert_eq!(eval("let s = new Set(); s.size"), JsValue::Number(0.0));
+        assert_eq!(eval("let s = new Set(); s.add(1); s.has(1)"), JsValue::Boolean(true));
+        assert_eq!(eval("let s = new Set(); s.has(1)"), JsValue::Boolean(false));
+        assert_eq!(eval("let s = new Set(); s.add(1); s.size"), JsValue::Number(1.0));
+
+        // Uniqueness - adding same value twice doesn't increase size
+        assert_eq!(eval("let s = new Set(); s.add(1); s.add(1); s.size"), JsValue::Number(1.0));
+
+        // Delete and clear (use bracket notation for 'delete' since it's a reserved word)
+        assert_eq!(eval("let s = new Set(); s.add(1); s['delete'](1); s.has(1)"), JsValue::Boolean(false));
+        assert_eq!(eval("let s = new Set(); s.add(1); s.add(2); s.clear(); s.size"), JsValue::Number(0.0));
+
+        // Object values
+        assert_eq!(eval("let s = new Set(); let obj = {}; s.add(obj); s.has(obj)"), JsValue::Boolean(true));
+
+        // Initialize with array
+        assert_eq!(eval("let s = new Set([1, 2, 3]); s.size"), JsValue::Number(3.0));
+        assert_eq!(eval("let s = new Set([1, 2, 2, 3]); s.size"), JsValue::Number(3.0)); // Duplicates removed
+
+        // forEach
+        assert_eq!(eval("let result = []; let s = new Set([1, 2, 3]); s.forEach(v => result.push(v)); result.join(',')"), JsValue::from("1,2,3"));
+
+        // Method chaining (add returns Set)
+        assert_eq!(eval("let s = new Set(); s.add(1).add(2).has(2)"), JsValue::Boolean(true));
+    }
+
+    #[test]
     fn test_string_concat() {
         assert_eq!(eval("'hello'.concat(' ', 'world')"), JsValue::String(JsString::from("hello world")));
     }

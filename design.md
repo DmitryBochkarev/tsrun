@@ -371,16 +371,16 @@
 - [x] `Map.prototype.forEach(callback)`
 
 #### Set
-- [ ] `new Set(iterable?)`
-- [ ] `Set.prototype.add(value)`
-- [ ] `Set.prototype.has(value)`
-- [ ] `Set.prototype.delete(value)`
-- [ ] `Set.prototype.clear()`
-- [ ] `Set.prototype.size`
+- [x] `new Set(iterable?)`
+- [x] `Set.prototype.add(value)`
+- [x] `Set.prototype.has(value)`
+- [x] `Set.prototype.delete(value)`
+- [x] `Set.prototype.clear()`
+- [x] `Set.prototype.size`
 - [ ] `Set.prototype.keys()`
 - [ ] `Set.prototype.values()`
 - [ ] `Set.prototype.entries()`
-- [ ] `Set.prototype.forEach(callback)`
+- [x] `Set.prototype.forEach(callback)`
 
 #### Date
 - [ ] `new Date()`
