@@ -4,7 +4,136 @@ use chrono::{Datelike, Timelike, TimeZone, Utc};
 
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
-use crate::value::{create_object, ExoticObject, JsString, JsValue};
+use crate::value::{create_function, create_object, ExoticObject, JsFunction, JsObjectRef, JsString, JsValue, NativeFunction, PropertyKey};
+
+/// Create Date.prototype with getTime, getFullYear, getMonth, etc.
+pub fn create_date_prototype() -> JsObjectRef {
+    let proto = create_object();
+    {
+        let mut p = proto.borrow_mut();
+
+        let get_time_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "getTime".to_string(),
+            func: date_get_time,
+            arity: 0,
+        }));
+        p.set_property(PropertyKey::from("getTime"), JsValue::Object(get_time_fn));
+
+        let get_full_year_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "getFullYear".to_string(),
+            func: date_get_full_year,
+            arity: 0,
+        }));
+        p.set_property(PropertyKey::from("getFullYear"), JsValue::Object(get_full_year_fn));
+
+        let get_month_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "getMonth".to_string(),
+            func: date_get_month,
+            arity: 0,
+        }));
+        p.set_property(PropertyKey::from("getMonth"), JsValue::Object(get_month_fn));
+
+        let get_date_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "getDate".to_string(),
+            func: date_get_date,
+            arity: 0,
+        }));
+        p.set_property(PropertyKey::from("getDate"), JsValue::Object(get_date_fn));
+
+        let get_day_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "getDay".to_string(),
+            func: date_get_day,
+            arity: 0,
+        }));
+        p.set_property(PropertyKey::from("getDay"), JsValue::Object(get_day_fn));
+
+        let get_hours_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "getHours".to_string(),
+            func: date_get_hours,
+            arity: 0,
+        }));
+        p.set_property(PropertyKey::from("getHours"), JsValue::Object(get_hours_fn));
+
+        let get_minutes_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "getMinutes".to_string(),
+            func: date_get_minutes,
+            arity: 0,
+        }));
+        p.set_property(PropertyKey::from("getMinutes"), JsValue::Object(get_minutes_fn));
+
+        let get_seconds_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "getSeconds".to_string(),
+            func: date_get_seconds,
+            arity: 0,
+        }));
+        p.set_property(PropertyKey::from("getSeconds"), JsValue::Object(get_seconds_fn));
+
+        let get_milliseconds_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "getMilliseconds".to_string(),
+            func: date_get_milliseconds,
+            arity: 0,
+        }));
+        p.set_property(PropertyKey::from("getMilliseconds"), JsValue::Object(get_milliseconds_fn));
+
+        let to_iso_string_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "toISOString".to_string(),
+            func: date_to_iso_string,
+            arity: 0,
+        }));
+        p.set_property(PropertyKey::from("toISOString"), JsValue::Object(to_iso_string_fn));
+
+        let to_json_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "toJSON".to_string(),
+            func: date_to_iso_string, // toJSON returns the same as toISOString
+            arity: 0,
+        }));
+        p.set_property(PropertyKey::from("toJSON"), JsValue::Object(to_json_fn));
+
+        let value_of_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "valueOf".to_string(),
+            func: date_get_time, // valueOf returns the same as getTime
+            arity: 0,
+        }));
+        p.set_property(PropertyKey::from("valueOf"), JsValue::Object(value_of_fn));
+    }
+    proto
+}
+
+/// Create Date constructor with static methods (now, UTC, parse)
+pub fn create_date_constructor(date_prototype: &JsObjectRef) -> JsObjectRef {
+    let constructor = create_function(JsFunction::Native(NativeFunction {
+        name: "Date".to_string(),
+        func: date_constructor,
+        arity: 0,
+    }));
+    {
+        let mut date = constructor.borrow_mut();
+
+        let now_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "now".to_string(),
+            func: date_now,
+            arity: 0,
+        }));
+        date.set_property(PropertyKey::from("now"), JsValue::Object(now_fn));
+
+        let utc_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "UTC".to_string(),
+            func: date_utc,
+            arity: 7,
+        }));
+        date.set_property(PropertyKey::from("UTC"), JsValue::Object(utc_fn));
+
+        let parse_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "parse".to_string(),
+            func: date_parse,
+            arity: 1,
+        }));
+        date.set_property(PropertyKey::from("parse"), JsValue::Object(parse_fn));
+
+        date.set_property(PropertyKey::from("prototype"), JsValue::Object(date_prototype.clone()));
+    }
+    constructor
+}
 
 pub fn date_constructor(interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
     let timestamp = if args.is_empty() {

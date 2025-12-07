@@ -2,7 +2,283 @@
 
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
-use crate::value::{create_array, ExoticObject, JsObjectRef, JsString, JsValue, Property, PropertyKey};
+use crate::value::{create_array, create_function, create_object, ExoticObject, JsFunction, JsObjectRef, JsString, JsValue, NativeFunction, Property, PropertyKey};
+
+/// Create Array.prototype with all array methods
+pub fn create_array_prototype() -> JsObjectRef {
+    let proto = create_object();
+    {
+        let mut p = proto.borrow_mut();
+
+        let push_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "push".to_string(),
+            func: array_push,
+            arity: 1,
+        }));
+        p.set_property(PropertyKey::from("push"), JsValue::Object(push_fn));
+
+        let pop_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "pop".to_string(),
+            func: array_pop,
+            arity: 0,
+        }));
+        p.set_property(PropertyKey::from("pop"), JsValue::Object(pop_fn));
+
+        let map_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "map".to_string(),
+            func: array_map,
+            arity: 1,
+        }));
+        p.set_property(PropertyKey::from("map"), JsValue::Object(map_fn));
+
+        let filter_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "filter".to_string(),
+            func: array_filter,
+            arity: 1,
+        }));
+        p.set_property(PropertyKey::from("filter"), JsValue::Object(filter_fn));
+
+        let foreach_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "forEach".to_string(),
+            func: array_foreach,
+            arity: 1,
+        }));
+        p.set_property(PropertyKey::from("forEach"), JsValue::Object(foreach_fn));
+
+        let reduce_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "reduce".to_string(),
+            func: array_reduce,
+            arity: 1,
+        }));
+        p.set_property(PropertyKey::from("reduce"), JsValue::Object(reduce_fn));
+
+        let find_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "find".to_string(),
+            func: array_find,
+            arity: 1,
+        }));
+        p.set_property(PropertyKey::from("find"), JsValue::Object(find_fn));
+
+        let findindex_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "findIndex".to_string(),
+            func: array_find_index,
+            arity: 1,
+        }));
+        p.set_property(PropertyKey::from("findIndex"), JsValue::Object(findindex_fn));
+
+        let indexof_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "indexOf".to_string(),
+            func: array_index_of,
+            arity: 1,
+        }));
+        p.set_property(PropertyKey::from("indexOf"), JsValue::Object(indexof_fn));
+
+        let includes_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "includes".to_string(),
+            func: array_includes,
+            arity: 1,
+        }));
+        p.set_property(PropertyKey::from("includes"), JsValue::Object(includes_fn));
+
+        let slice_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "slice".to_string(),
+            func: array_slice,
+            arity: 2,
+        }));
+        p.set_property(PropertyKey::from("slice"), JsValue::Object(slice_fn));
+
+        let concat_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "concat".to_string(),
+            func: array_concat,
+            arity: 1,
+        }));
+        p.set_property(PropertyKey::from("concat"), JsValue::Object(concat_fn));
+
+        let join_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "join".to_string(),
+            func: array_join,
+            arity: 1,
+        }));
+        p.set_property(PropertyKey::from("join"), JsValue::Object(join_fn));
+
+        let every_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "every".to_string(),
+            func: array_every,
+            arity: 1,
+        }));
+        p.set_property(PropertyKey::from("every"), JsValue::Object(every_fn));
+
+        let some_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "some".to_string(),
+            func: array_some,
+            arity: 1,
+        }));
+        p.set_property(PropertyKey::from("some"), JsValue::Object(some_fn));
+
+        let shift_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "shift".to_string(),
+            func: array_shift,
+            arity: 0,
+        }));
+        p.set_property(PropertyKey::from("shift"), JsValue::Object(shift_fn));
+
+        let unshift_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "unshift".to_string(),
+            func: array_unshift,
+            arity: 1,
+        }));
+        p.set_property(PropertyKey::from("unshift"), JsValue::Object(unshift_fn));
+
+        let reverse_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "reverse".to_string(),
+            func: array_reverse,
+            arity: 0,
+        }));
+        p.set_property(PropertyKey::from("reverse"), JsValue::Object(reverse_fn));
+
+        let sort_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "sort".to_string(),
+            func: array_sort,
+            arity: 1,
+        }));
+        p.set_property(PropertyKey::from("sort"), JsValue::Object(sort_fn));
+
+        let fill_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "fill".to_string(),
+            func: array_fill,
+            arity: 3,
+        }));
+        p.set_property(PropertyKey::from("fill"), JsValue::Object(fill_fn));
+
+        let copywithin_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "copyWithin".to_string(),
+            func: array_copy_within,
+            arity: 3,
+        }));
+        p.set_property(PropertyKey::from("copyWithin"), JsValue::Object(copywithin_fn));
+
+        let splice_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "splice".to_string(),
+            func: array_splice,
+            arity: 2,
+        }));
+        p.set_property(PropertyKey::from("splice"), JsValue::Object(splice_fn));
+
+        let at_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "at".to_string(),
+            func: array_at,
+            arity: 1,
+        }));
+        p.set_property(PropertyKey::from("at"), JsValue::Object(at_fn));
+
+        let lastindexof_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "lastIndexOf".to_string(),
+            func: array_last_index_of,
+            arity: 1,
+        }));
+        p.set_property(PropertyKey::from("lastIndexOf"), JsValue::Object(lastindexof_fn));
+
+        let reduceright_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "reduceRight".to_string(),
+            func: array_reduce_right,
+            arity: 1,
+        }));
+        p.set_property(PropertyKey::from("reduceRight"), JsValue::Object(reduceright_fn));
+
+        let flat_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "flat".to_string(),
+            func: array_flat,
+            arity: 1,
+        }));
+        p.set_property(PropertyKey::from("flat"), JsValue::Object(flat_fn));
+
+        let flatmap_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "flatMap".to_string(),
+            func: array_flat_map,
+            arity: 1,
+        }));
+        p.set_property(PropertyKey::from("flatMap"), JsValue::Object(flatmap_fn));
+
+        let findlast_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "findLast".to_string(),
+            func: array_find_last,
+            arity: 1,
+        }));
+        p.set_property(PropertyKey::from("findLast"), JsValue::Object(findlast_fn));
+
+        let findlastindex_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "findLastIndex".to_string(),
+            func: array_find_last_index,
+            arity: 1,
+        }));
+        p.set_property(PropertyKey::from("findLastIndex"), JsValue::Object(findlastindex_fn));
+
+        let toreversed_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "toReversed".to_string(),
+            func: array_to_reversed,
+            arity: 0,
+        }));
+        p.set_property(PropertyKey::from("toReversed"), JsValue::Object(toreversed_fn));
+
+        let tosorted_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "toSorted".to_string(),
+            func: array_to_sorted,
+            arity: 1,
+        }));
+        p.set_property(PropertyKey::from("toSorted"), JsValue::Object(tosorted_fn));
+
+        let tospliced_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "toSpliced".to_string(),
+            func: array_to_spliced,
+            arity: 2,
+        }));
+        p.set_property(PropertyKey::from("toSpliced"), JsValue::Object(tospliced_fn));
+
+        let with_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "with".to_string(),
+            func: array_with,
+            arity: 2,
+        }));
+        p.set_property(PropertyKey::from("with"), JsValue::Object(with_fn));
+    }
+    proto
+}
+
+/// Create Array constructor with static methods (isArray, of, from)
+pub fn create_array_constructor(array_prototype: &JsObjectRef) -> JsObjectRef {
+    let constructor = create_function(JsFunction::Native(NativeFunction {
+        name: "Array".to_string(),
+        func: array_constructor_fn,
+        arity: 0,
+    }));
+    {
+        let mut arr = constructor.borrow_mut();
+
+        let is_array_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "isArray".to_string(),
+            func: array_is_array,
+            arity: 1,
+        }));
+        arr.set_property(PropertyKey::from("isArray"), JsValue::Object(is_array_fn));
+
+        let of_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "of".to_string(),
+            func: array_of,
+            arity: 0,
+        }));
+        arr.set_property(PropertyKey::from("of"), JsValue::Object(of_fn));
+
+        let from_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "from".to_string(),
+            func: array_from,
+            arity: 1,
+        }));
+        arr.set_property(PropertyKey::from("from"), JsValue::Object(from_fn));
+
+        arr.set_property(PropertyKey::from("prototype"), JsValue::Object(array_prototype.clone()));
+    }
+    constructor
+}
 
 pub fn array_constructor_fn(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
     if args.len() == 1 {

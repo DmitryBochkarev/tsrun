@@ -2,7 +2,67 @@
 
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
-use crate::value::{create_object, ExoticObject, JsValue, PropertyKey};
+use crate::value::{create_function, create_object, ExoticObject, JsFunction, JsObjectRef, JsValue, NativeFunction, PropertyKey};
+
+/// Create Map.prototype with get, set, has, delete, clear, forEach methods
+pub fn create_map_prototype() -> JsObjectRef {
+    let proto = create_object();
+    {
+        let mut p = proto.borrow_mut();
+
+        let get_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "get".to_string(),
+            func: map_get,
+            arity: 1,
+        }));
+        p.set_property(PropertyKey::from("get"), JsValue::Object(get_fn));
+
+        let set_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "set".to_string(),
+            func: map_set,
+            arity: 2,
+        }));
+        p.set_property(PropertyKey::from("set"), JsValue::Object(set_fn));
+
+        let has_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "has".to_string(),
+            func: map_has,
+            arity: 1,
+        }));
+        p.set_property(PropertyKey::from("has"), JsValue::Object(has_fn));
+
+        let delete_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "delete".to_string(),
+            func: map_delete,
+            arity: 1,
+        }));
+        p.set_property(PropertyKey::from("delete"), JsValue::Object(delete_fn));
+
+        let clear_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "clear".to_string(),
+            func: map_clear,
+            arity: 0,
+        }));
+        p.set_property(PropertyKey::from("clear"), JsValue::Object(clear_fn));
+
+        let foreach_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "forEach".to_string(),
+            func: map_foreach,
+            arity: 1,
+        }));
+        p.set_property(PropertyKey::from("forEach"), JsValue::Object(foreach_fn));
+    }
+    proto
+}
+
+/// Create Map constructor
+pub fn create_map_constructor() -> JsObjectRef {
+    create_function(JsFunction::Native(NativeFunction {
+        name: "Map".to_string(),
+        func: map_constructor,
+        arity: 0,
+    }))
+}
 
 // Helper to check SameValueZero equality for Map/Set keys
 pub fn same_value_zero(a: &JsValue, b: &JsValue) -> bool {

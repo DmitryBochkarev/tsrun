@@ -2,7 +2,127 @@
 
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
-use crate::value::{create_array, create_object, ExoticObject, JsString, JsValue, PropertyKey};
+use crate::value::{create_array, create_function, create_object, ExoticObject, JsFunction, JsObjectRef, JsString, JsValue, NativeFunction, PropertyKey};
+
+/// Create Object.prototype with hasOwnProperty, toString, valueOf
+pub fn create_object_prototype() -> JsObjectRef {
+    let proto = create_object();
+    {
+        let mut p = proto.borrow_mut();
+
+        let hasownprop_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "hasOwnProperty".to_string(),
+            func: object_has_own_property,
+            arity: 1,
+        }));
+        p.set_property(PropertyKey::from("hasOwnProperty"), JsValue::Object(hasownprop_fn));
+
+        let tostring_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "toString".to_string(),
+            func: object_to_string,
+            arity: 0,
+        }));
+        p.set_property(PropertyKey::from("toString"), JsValue::Object(tostring_fn));
+
+        let valueof_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "valueOf".to_string(),
+            func: object_value_of,
+            arity: 0,
+        }));
+        p.set_property(PropertyKey::from("valueOf"), JsValue::Object(valueof_fn));
+    }
+    proto
+}
+
+/// Create Object constructor with static methods (keys, values, entries, assign, etc.)
+pub fn create_object_constructor() -> JsObjectRef {
+    let constructor = create_function(JsFunction::Native(NativeFunction {
+        name: "Object".to_string(),
+        func: object_constructor,
+        arity: 1,
+    }));
+    {
+        let mut obj = constructor.borrow_mut();
+
+        let keys_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "keys".to_string(),
+            func: object_keys,
+            arity: 1,
+        }));
+        obj.set_property(PropertyKey::from("keys"), JsValue::Object(keys_fn));
+
+        let values_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "values".to_string(),
+            func: object_values,
+            arity: 1,
+        }));
+        obj.set_property(PropertyKey::from("values"), JsValue::Object(values_fn));
+
+        let entries_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "entries".to_string(),
+            func: object_entries,
+            arity: 1,
+        }));
+        obj.set_property(PropertyKey::from("entries"), JsValue::Object(entries_fn));
+
+        let assign_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "assign".to_string(),
+            func: object_assign,
+            arity: 2,
+        }));
+        obj.set_property(PropertyKey::from("assign"), JsValue::Object(assign_fn));
+
+        let fromentries_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "fromEntries".to_string(),
+            func: object_from_entries,
+            arity: 1,
+        }));
+        obj.set_property(PropertyKey::from("fromEntries"), JsValue::Object(fromentries_fn));
+
+        let hasown_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "hasOwn".to_string(),
+            func: object_has_own,
+            arity: 2,
+        }));
+        obj.set_property(PropertyKey::from("hasOwn"), JsValue::Object(hasown_fn));
+
+        let create_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "create".to_string(),
+            func: object_create,
+            arity: 1,
+        }));
+        obj.set_property(PropertyKey::from("create"), JsValue::Object(create_fn));
+
+        let freeze_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "freeze".to_string(),
+            func: object_freeze,
+            arity: 1,
+        }));
+        obj.set_property(PropertyKey::from("freeze"), JsValue::Object(freeze_fn));
+
+        let isfrozen_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "isFrozen".to_string(),
+            func: object_is_frozen,
+            arity: 1,
+        }));
+        obj.set_property(PropertyKey::from("isFrozen"), JsValue::Object(isfrozen_fn));
+
+        let seal_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "seal".to_string(),
+            func: object_seal,
+            arity: 1,
+        }));
+        obj.set_property(PropertyKey::from("seal"), JsValue::Object(seal_fn));
+
+        let issealed_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "isSealed".to_string(),
+            func: object_is_sealed,
+            arity: 1,
+        }));
+        obj.set_property(PropertyKey::from("isSealed"), JsValue::Object(issealed_fn));
+    }
+    constructor
+}
 
 pub fn object_constructor(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
     let value = args.first().cloned().unwrap_or(JsValue::Undefined);

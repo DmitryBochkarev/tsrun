@@ -2,7 +2,37 @@
 
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
-use crate::value::{create_function, BoundFunctionData, ExoticObject, JsFunction, JsValue, PropertyKey};
+use crate::value::{create_function, create_object, BoundFunctionData, ExoticObject, JsFunction, JsObjectRef, JsValue, NativeFunction, PropertyKey};
+
+/// Create Function.prototype with call, apply, bind methods
+pub fn create_function_prototype() -> JsObjectRef {
+    let proto = create_object();
+    {
+        let mut p = proto.borrow_mut();
+
+        let call_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "call".to_string(),
+            func: function_call,
+            arity: 1,
+        }));
+        p.set_property(PropertyKey::from("call"), JsValue::Object(call_fn));
+
+        let apply_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "apply".to_string(),
+            func: function_apply,
+            arity: 2,
+        }));
+        p.set_property(PropertyKey::from("apply"), JsValue::Object(apply_fn));
+
+        let bind_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "bind".to_string(),
+            func: function_bind,
+            arity: 1,
+        }));
+        p.set_property(PropertyKey::from("bind"), JsValue::Object(bind_fn));
+    }
+    proto
+}
 
 // Function.prototype.call - call function with specified this value and arguments
 pub fn function_call(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {

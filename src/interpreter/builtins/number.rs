@@ -2,7 +2,110 @@
 
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
-use crate::value::{JsString, JsValue};
+use crate::value::{create_function, create_object, JsFunction, JsObjectRef, JsString, JsValue, NativeFunction, PropertyKey};
+
+use super::global::{global_parse_float, global_parse_int};
+
+/// Create Number.prototype with toFixed, toString, toPrecision, toExponential
+pub fn create_number_prototype() -> JsObjectRef {
+    let proto = create_object();
+    {
+        let mut p = proto.borrow_mut();
+
+        let tofixed_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "toFixed".to_string(),
+            func: number_to_fixed,
+            arity: 1,
+        }));
+        p.set_property(PropertyKey::from("toFixed"), JsValue::Object(tofixed_fn));
+
+        let tostring_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "toString".to_string(),
+            func: number_to_string,
+            arity: 1,
+        }));
+        p.set_property(PropertyKey::from("toString"), JsValue::Object(tostring_fn));
+
+        let toprecision_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "toPrecision".to_string(),
+            func: number_to_precision,
+            arity: 1,
+        }));
+        p.set_property(PropertyKey::from("toPrecision"), JsValue::Object(toprecision_fn));
+
+        let toexponential_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "toExponential".to_string(),
+            func: number_to_exponential,
+            arity: 1,
+        }));
+        p.set_property(PropertyKey::from("toExponential"), JsValue::Object(toexponential_fn));
+    }
+    proto
+}
+
+/// Create Number constructor with static methods and constants
+pub fn create_number_constructor(number_prototype: &JsObjectRef) -> JsObjectRef {
+    let constructor = create_object();
+    {
+        let mut num = constructor.borrow_mut();
+
+        // Static methods
+        let isnan_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "isNaN".to_string(),
+            func: number_is_nan,
+            arity: 1,
+        }));
+        num.set_property(PropertyKey::from("isNaN"), JsValue::Object(isnan_fn));
+
+        let isfinite_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "isFinite".to_string(),
+            func: number_is_finite,
+            arity: 1,
+        }));
+        num.set_property(PropertyKey::from("isFinite"), JsValue::Object(isfinite_fn));
+
+        let isinteger_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "isInteger".to_string(),
+            func: number_is_integer,
+            arity: 1,
+        }));
+        num.set_property(PropertyKey::from("isInteger"), JsValue::Object(isinteger_fn));
+
+        let issafeinteger_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "isSafeInteger".to_string(),
+            func: number_is_safe_integer,
+            arity: 1,
+        }));
+        num.set_property(PropertyKey::from("isSafeInteger"), JsValue::Object(issafeinteger_fn));
+
+        let parseint_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "parseInt".to_string(),
+            func: global_parse_int,
+            arity: 2,
+        }));
+        num.set_property(PropertyKey::from("parseInt"), JsValue::Object(parseint_fn));
+
+        let parsefloat_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "parseFloat".to_string(),
+            func: global_parse_float,
+            arity: 1,
+        }));
+        num.set_property(PropertyKey::from("parseFloat"), JsValue::Object(parsefloat_fn));
+
+        // Constants
+        num.set_property(PropertyKey::from("POSITIVE_INFINITY"), JsValue::Number(f64::INFINITY));
+        num.set_property(PropertyKey::from("NEGATIVE_INFINITY"), JsValue::Number(f64::NEG_INFINITY));
+        num.set_property(PropertyKey::from("MAX_VALUE"), JsValue::Number(f64::MAX));
+        num.set_property(PropertyKey::from("MIN_VALUE"), JsValue::Number(f64::MIN_POSITIVE));
+        num.set_property(PropertyKey::from("MAX_SAFE_INTEGER"), JsValue::Number(9007199254740991.0));
+        num.set_property(PropertyKey::from("MIN_SAFE_INTEGER"), JsValue::Number(-9007199254740991.0));
+        num.set_property(PropertyKey::from("EPSILON"), JsValue::Number(f64::EPSILON));
+        num.set_property(PropertyKey::from("NaN"), JsValue::Number(f64::NAN));
+
+        num.set_property(PropertyKey::from("prototype"), JsValue::Object(number_prototype.clone()));
+    }
+    constructor
+}
 
 // Number.isNaN - stricter, no type coercion
 pub fn number_is_nan(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {

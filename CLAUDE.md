@@ -28,7 +28,7 @@ Use TDD (Test-Driven Development) for new features:
 When adding new built-in methods (Array, String, Object, etc.), follow this pattern:
 
 #### 1. Write Tests First
-Add tests in `interpreter.rs` in the `mod tests` section:
+Add tests in `interpreter/mod.rs` in the `mod tests` section:
 ```rust
 #[test]
 fn test_array_mymethod() {
@@ -36,27 +36,27 @@ fn test_array_mymethod() {
 }
 ```
 
-#### 2. Register the Method on Prototype
-In `Interpreter::new()`, find the appropriate prototype setup section and add:
+#### 2. Add the Native Function Implementation
+Add the implementation in the appropriate builtins file (e.g., `interpreter/builtins/array.rs`):
 ```rust
-let mymethod_fn = create_function(JsFunction::Native(NativeFunction {
-    name: "myMethod".to_string(),
-    func: array_my_method,  // native function reference
-    arity: 1,               // number of expected arguments
-}));
-proto.set_property(PropertyKey::from("myMethod"), JsValue::Object(mymethod_fn));
-```
-
-#### 3. Implement the Native Function
-Add the implementation near other methods of the same type:
-```rust
-fn array_my_method(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn array_my_method(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this else {
         return Err(JsError::type_error("Array.prototype.myMethod called on non-object"));
     };
     // Implementation here
     Ok(result)
 }
+```
+
+#### 3. Register the Method on Prototype
+In the same builtins file, add the method registration in the `create_*_prototype()` function:
+```rust
+let mymethod_fn = create_function(JsFunction::Native(NativeFunction {
+    name: "myMethod".to_string(),
+    func: array_my_method,
+    arity: 1,
+}));
+p.set_property(PropertyKey::from("myMethod"), JsValue::Object(mymethod_fn));
 ```
 
 #### 4. Update design.md
@@ -127,8 +127,30 @@ Source → Lexer → Parser → AST → Interpreter → JsValue
 - **parser.rs**: Recursive descent + Pratt parsing for expressions
 - **ast.rs**: All AST node types (statements, expressions, patterns, types)
 - **value.rs**: Runtime values (`JsValue` enum), object model, environments
-- **interpreter.rs**: Statement execution and expression evaluation
+- **interpreter/mod.rs**: Statement execution and expression evaluation
+- **interpreter/builtins/**: Built-in function implementations (split by type)
 - **error.rs**: Error types (`JsError`) with source locations
+
+### Builtins Module Structure
+
+Each builtin type has its own file in `interpreter/builtins/`:
+
+| File | Contents |
+|------|----------|
+| `array.rs` | `create_array_prototype()`, `create_array_constructor()`, array methods |
+| `string.rs` | `create_string_prototype()`, `create_string_constructor()`, string methods |
+| `number.rs` | `create_number_prototype()`, `create_number_constructor()`, number methods |
+| `object.rs` | `create_object_prototype()`, `create_object_constructor()`, object methods |
+| `function.rs` | `create_function_prototype()`, call/apply/bind |
+| `math.rs` | `create_math_object()`, math functions and constants |
+| `json.rs` | `create_json_object()`, stringify/parse |
+| `console.rs` | `create_console_object()`, log/error/warn/info/debug |
+| `date.rs` | `create_date_prototype()`, `create_date_constructor()`, date methods |
+| `regexp.rs` | `create_regexp_prototype()`, `create_regexp_constructor()`, test/exec |
+| `map.rs` | `create_map_prototype()`, `create_map_constructor()`, map methods |
+| `set.rs` | `create_set_prototype()`, `create_set_constructor()`, set methods |
+| `error.rs` | `create_error_constructors()`, Error/TypeError/etc. |
+| `global.rs` | `register_global_functions()`, parseInt/parseFloat/isNaN/etc. |
 
 ### Key Types
 
@@ -147,14 +169,20 @@ Source → Lexer → Parser → AST → Interpreter → JsValue
 **Language Features:** variables (let/const/var), functions (declarations, expressions, arrows), closures, control flow (if/for/while/switch/try-catch), classes with inheritance, object/array literals, destructuring, spread operator, template literals, most operators.
 
 **Built-in Objects:**
-- `Array`: isArray, from, of, push, pop, shift, unshift, slice, splice, concat, join, reverse, sort, indexOf, lastIndexOf, includes, find, findIndex, filter, map, forEach, reduce, reduceRight, every, some, flat, flatMap, fill, copyWithin, at
-- `String`: fromCharCode, charAt, charCodeAt, indexOf, includes, startsWith, endsWith, slice, substring, toLowerCase, toUpperCase, trim, trimStart, trimEnd, split, repeat, replace, padStart, padEnd, concat
-- `Object`: keys, values, entries, assign, hasOwnProperty, toString, valueOf
-- `Number`: isNaN, isFinite, isInteger, isSafeInteger, parseInt, parseFloat, toFixed, toString, constants
-- `Math`: abs, floor, ceil, round, trunc, sign, min, max, pow, sqrt, log, exp, sin, cos, tan, random, PI, E, etc.
+- `Array`: isArray, from, of, push, pop, shift, unshift, slice, splice, concat, join, reverse, sort, indexOf, lastIndexOf, includes, find, findIndex, findLast, findLastIndex, filter, map, forEach, reduce, reduceRight, every, some, flat, flatMap, fill, copyWithin, at, toReversed, toSorted, toSpliced, with
+- `String`: fromCharCode, charAt, charCodeAt, at, indexOf, lastIndexOf, includes, startsWith, endsWith, slice, substring, toLowerCase, toUpperCase, trim, trimStart, trimEnd, split, repeat, replace, replaceAll, padStart, padEnd, concat
+- `Object`: keys, values, entries, assign, fromEntries, hasOwn, create, freeze, isFrozen, seal, isSealed, hasOwnProperty, toString, valueOf
+- `Number`: isNaN, isFinite, isInteger, isSafeInteger, parseInt, parseFloat, toFixed, toString, toPrecision, toExponential, constants
+- `Math`: abs, floor, ceil, round, trunc, sign, min, max, pow, sqrt, cbrt, hypot, log, log10, log2, log1p, exp, expm1, sin, cos, tan, asin, acos, atan, atan2, sinh, cosh, tanh, asinh, acosh, atanh, random, PI, E, LN2, LN10, LOG2E, LOG10E, SQRT2, SQRT1_2
 - `JSON`: stringify, parse
-- Global: parseInt, parseFloat, isNaN, isFinite, console.log
+- `Map`: get, set, has, delete, clear, forEach, size
+- `Set`: add, has, delete, clear, forEach, size
+- `Date`: now, UTC, parse, getTime, getFullYear, getMonth, getDate, getDay, getHours, getMinutes, getSeconds, getMilliseconds, toISOString, toJSON, valueOf
+- `RegExp`: test, exec, source, flags, global, ignoreCase, multiline
+- `Function`: call, apply, bind
+- `Error`: Error, TypeError, ReferenceError, SyntaxError, RangeError
+- Global: parseInt, parseFloat, isNaN, isFinite, encodeURI, decodeURI, encodeURIComponent, decodeURIComponent, console.log/error/warn/info/debug
 
-**Not yet implemented:** module resolution/loading, generators, Map/Set, Date, RegExp, Promise.
+**Not yet implemented:** module resolution/loading, generators, Promise, WeakMap/WeakSet.
 
 See design.md for the complete feature checklist.

@@ -2,7 +2,44 @@
 
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
-use crate::value::{create_object, ExoticObject, JsString, JsValue, PropertyKey};
+use crate::value::{create_function, create_object, ExoticObject, JsFunction, JsObjectRef, JsString, JsValue, NativeFunction, PropertyKey};
+
+/// Create RegExp.prototype with test and exec methods
+pub fn create_regexp_prototype() -> JsObjectRef {
+    let proto = create_object();
+    {
+        let mut p = proto.borrow_mut();
+
+        let test_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "test".to_string(),
+            func: regexp_test,
+            arity: 1,
+        }));
+        p.set_property(PropertyKey::from("test"), JsValue::Object(test_fn));
+
+        let exec_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "exec".to_string(),
+            func: regexp_exec,
+            arity: 1,
+        }));
+        p.set_property(PropertyKey::from("exec"), JsValue::Object(exec_fn));
+    }
+    proto
+}
+
+/// Create RegExp constructor
+pub fn create_regexp_constructor(regexp_prototype: &JsObjectRef) -> JsObjectRef {
+    let constructor = create_function(JsFunction::Native(NativeFunction {
+        name: "RegExp".to_string(),
+        func: regexp_constructor,
+        arity: 2,
+    }));
+    {
+        let mut re = constructor.borrow_mut();
+        re.set_property(PropertyKey::from("prototype"), JsValue::Object(regexp_prototype.clone()));
+    }
+    constructor
+}
 
 pub fn regexp_constructor(interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
     let pattern = args.first().cloned().unwrap_or(JsValue::String(JsString::from("")))

@@ -2,7 +2,66 @@
 
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
-use crate::value::{JsString, JsValue};
+use crate::value::{create_function, Environment, JsFunction, JsString, JsValue, NativeFunction};
+
+/// Register global functions (parseInt, parseFloat, isNaN, isFinite, URI functions) into environment
+pub fn register_global_functions(env: &mut Environment) {
+    let parseint_fn = create_function(JsFunction::Native(NativeFunction {
+        name: "parseInt".to_string(),
+        func: global_parse_int,
+        arity: 2,
+    }));
+    env.define("parseInt".to_string(), JsValue::Object(parseint_fn), false);
+
+    let parsefloat_fn = create_function(JsFunction::Native(NativeFunction {
+        name: "parseFloat".to_string(),
+        func: global_parse_float,
+        arity: 1,
+    }));
+    env.define("parseFloat".to_string(), JsValue::Object(parsefloat_fn), false);
+
+    let isnan_fn = create_function(JsFunction::Native(NativeFunction {
+        name: "isNaN".to_string(),
+        func: global_is_nan,
+        arity: 1,
+    }));
+    env.define("isNaN".to_string(), JsValue::Object(isnan_fn), false);
+
+    let isfinite_fn = create_function(JsFunction::Native(NativeFunction {
+        name: "isFinite".to_string(),
+        func: global_is_finite,
+        arity: 1,
+    }));
+    env.define("isFinite".to_string(), JsValue::Object(isfinite_fn), false);
+
+    let encodeuri_fn = create_function(JsFunction::Native(NativeFunction {
+        name: "encodeURI".to_string(),
+        func: global_encode_uri,
+        arity: 1,
+    }));
+    env.define("encodeURI".to_string(), JsValue::Object(encodeuri_fn), false);
+
+    let decodeuri_fn = create_function(JsFunction::Native(NativeFunction {
+        name: "decodeURI".to_string(),
+        func: global_decode_uri,
+        arity: 1,
+    }));
+    env.define("decodeURI".to_string(), JsValue::Object(decodeuri_fn), false);
+
+    let encodeuricomponent_fn = create_function(JsFunction::Native(NativeFunction {
+        name: "encodeURIComponent".to_string(),
+        func: global_encode_uri_component,
+        arity: 1,
+    }));
+    env.define("encodeURIComponent".to_string(), JsValue::Object(encodeuricomponent_fn), false);
+
+    let decodeuricomponent_fn = create_function(JsFunction::Native(NativeFunction {
+        name: "decodeURIComponent".to_string(),
+        func: global_decode_uri_component,
+        arity: 1,
+    }));
+    env.define("decodeURIComponent".to_string(), JsValue::Object(decodeuricomponent_fn), false);
+}
 
 pub fn global_parse_int(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
     let string = args.first().map(|v| v.to_js_string()).unwrap_or_else(|| JsString::from(""));

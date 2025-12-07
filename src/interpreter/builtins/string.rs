@@ -2,7 +2,188 @@
 
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
-use crate::value::{JsString, JsValue};
+use crate::value::{create_function, create_object, JsFunction, JsObjectRef, JsString, JsValue, NativeFunction, PropertyKey};
+
+/// Create String.prototype with all string methods
+pub fn create_string_prototype() -> JsObjectRef {
+    let proto = create_object();
+    {
+        let mut p = proto.borrow_mut();
+
+        let charat_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "charAt".to_string(),
+            func: string_char_at,
+            arity: 1,
+        }));
+        p.set_property(PropertyKey::from("charAt"), JsValue::Object(charat_fn));
+
+        let indexof_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "indexOf".to_string(),
+            func: string_index_of,
+            arity: 1,
+        }));
+        p.set_property(PropertyKey::from("indexOf"), JsValue::Object(indexof_fn));
+
+        let lastindexof_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "lastIndexOf".to_string(),
+            func: string_last_index_of,
+            arity: 1,
+        }));
+        p.set_property(PropertyKey::from("lastIndexOf"), JsValue::Object(lastindexof_fn));
+
+        let at_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "at".to_string(),
+            func: string_at,
+            arity: 1,
+        }));
+        p.set_property(PropertyKey::from("at"), JsValue::Object(at_fn));
+
+        let includes_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "includes".to_string(),
+            func: string_includes,
+            arity: 1,
+        }));
+        p.set_property(PropertyKey::from("includes"), JsValue::Object(includes_fn));
+
+        let startswith_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "startsWith".to_string(),
+            func: string_starts_with,
+            arity: 1,
+        }));
+        p.set_property(PropertyKey::from("startsWith"), JsValue::Object(startswith_fn));
+
+        let endswith_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "endsWith".to_string(),
+            func: string_ends_with,
+            arity: 1,
+        }));
+        p.set_property(PropertyKey::from("endsWith"), JsValue::Object(endswith_fn));
+
+        let slice_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "slice".to_string(),
+            func: string_slice,
+            arity: 2,
+        }));
+        p.set_property(PropertyKey::from("slice"), JsValue::Object(slice_fn));
+
+        let substring_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "substring".to_string(),
+            func: string_substring,
+            arity: 2,
+        }));
+        p.set_property(PropertyKey::from("substring"), JsValue::Object(substring_fn));
+
+        let tolower_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "toLowerCase".to_string(),
+            func: string_to_lower_case,
+            arity: 0,
+        }));
+        p.set_property(PropertyKey::from("toLowerCase"), JsValue::Object(tolower_fn));
+
+        let toupper_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "toUpperCase".to_string(),
+            func: string_to_upper_case,
+            arity: 0,
+        }));
+        p.set_property(PropertyKey::from("toUpperCase"), JsValue::Object(toupper_fn));
+
+        let trim_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "trim".to_string(),
+            func: string_trim,
+            arity: 0,
+        }));
+        p.set_property(PropertyKey::from("trim"), JsValue::Object(trim_fn));
+
+        let trimstart_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "trimStart".to_string(),
+            func: string_trim_start,
+            arity: 0,
+        }));
+        p.set_property(PropertyKey::from("trimStart"), JsValue::Object(trimstart_fn));
+
+        let trimend_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "trimEnd".to_string(),
+            func: string_trim_end,
+            arity: 0,
+        }));
+        p.set_property(PropertyKey::from("trimEnd"), JsValue::Object(trimend_fn));
+
+        let split_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "split".to_string(),
+            func: string_split,
+            arity: 2,
+        }));
+        p.set_property(PropertyKey::from("split"), JsValue::Object(split_fn));
+
+        let repeat_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "repeat".to_string(),
+            func: string_repeat,
+            arity: 1,
+        }));
+        p.set_property(PropertyKey::from("repeat"), JsValue::Object(repeat_fn));
+
+        let replace_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "replace".to_string(),
+            func: string_replace,
+            arity: 2,
+        }));
+        p.set_property(PropertyKey::from("replace"), JsValue::Object(replace_fn));
+
+        let replaceall_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "replaceAll".to_string(),
+            func: string_replace_all,
+            arity: 2,
+        }));
+        p.set_property(PropertyKey::from("replaceAll"), JsValue::Object(replaceall_fn));
+
+        let padstart_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "padStart".to_string(),
+            func: string_pad_start,
+            arity: 2,
+        }));
+        p.set_property(PropertyKey::from("padStart"), JsValue::Object(padstart_fn));
+
+        let padend_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "padEnd".to_string(),
+            func: string_pad_end,
+            arity: 2,
+        }));
+        p.set_property(PropertyKey::from("padEnd"), JsValue::Object(padend_fn));
+
+        let concat_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "concat".to_string(),
+            func: string_concat,
+            arity: 1,
+        }));
+        p.set_property(PropertyKey::from("concat"), JsValue::Object(concat_fn));
+
+        let charcodeat_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "charCodeAt".to_string(),
+            func: string_char_code_at,
+            arity: 1,
+        }));
+        p.set_property(PropertyKey::from("charCodeAt"), JsValue::Object(charcodeat_fn));
+    }
+    proto
+}
+
+/// Create String constructor with static methods (fromCharCode)
+pub fn create_string_constructor(string_prototype: &JsObjectRef) -> JsObjectRef {
+    let constructor = create_object();
+    {
+        let mut str_obj = constructor.borrow_mut();
+
+        let fromcharcode_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "fromCharCode".to_string(),
+            func: string_from_char_code,
+            arity: 1,
+        }));
+        str_obj.set_property(PropertyKey::from("fromCharCode"), JsValue::Object(fromcharcode_fn));
+
+        str_obj.set_property(PropertyKey::from("prototype"), JsValue::Object(string_prototype.clone()));
+    }
+    constructor
+}
 
 pub fn string_char_at(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
     let s = this.to_js_string();
