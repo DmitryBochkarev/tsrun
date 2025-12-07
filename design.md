@@ -231,10 +231,10 @@
 - [x] `Array.prototype.pop()`
 - [ ] `Array.prototype.shift()`
 - [ ] `Array.prototype.unshift(...items)`
-- [ ] `Array.prototype.slice(start?, end?)`
+- [x] `Array.prototype.slice(start?, end?)`
 - [ ] `Array.prototype.splice(start, deleteCount?, ...items)`
-- [ ] `Array.prototype.concat(...items)`
-- [ ] `Array.prototype.join(separator?)`
+- [x] `Array.prototype.concat(...items)`
+- [x] `Array.prototype.join(separator?)`
 - [ ] `Array.prototype.reverse()`
 - [ ] `Array.prototype.sort(compareFn?)`
 - [x] `Array.prototype.indexOf(item, fromIndex?)`

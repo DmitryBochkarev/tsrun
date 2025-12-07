@@ -199,6 +199,30 @@ impl Interpreter {
                 arity: 1,
             }));
             proto.set_property(PropertyKey::from("includes"), JsValue::Object(includes_fn));
+
+            // Array.prototype.slice
+            let slice_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "slice".to_string(),
+                func: array_slice,
+                arity: 2,
+            }));
+            proto.set_property(PropertyKey::from("slice"), JsValue::Object(slice_fn));
+
+            // Array.prototype.concat
+            let concat_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "concat".to_string(),
+                func: array_concat,
+                arity: 1,
+            }));
+            proto.set_property(PropertyKey::from("concat"), JsValue::Object(concat_fn));
+
+            // Array.prototype.join
+            let join_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "join".to_string(),
+                func: array_join,
+                arity: 1,
+            }));
+            proto.set_property(PropertyKey::from("join"), JsValue::Object(join_fn));
         }
 
         // Add Array global
@@ -1964,6 +1988,121 @@ fn array_includes(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) 
     Ok(JsValue::Boolean(false))
 }
 
+fn array_slice(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let JsValue::Object(arr) = this else {
+        return Err(JsError::type_error("Array.prototype.slice called on non-object"));
+    };
+
+    let length = {
+        let arr_ref = arr.borrow();
+        match &arr_ref.exotic {
+            ExoticObject::Array { length } => *length as i64,
+            _ => return Err(JsError::type_error("Not an array")),
+        }
+    };
+
+    let start_arg = args.first().map(|v| v.to_number() as i64).unwrap_or(0);
+    let end_arg = args.get(1).map(|v| v.to_number() as i64).unwrap_or(length);
+
+    let start = if start_arg < 0 {
+        (length + start_arg).max(0)
+    } else {
+        start_arg.min(length)
+    };
+
+    let end = if end_arg < 0 {
+        (length + end_arg).max(0)
+    } else {
+        end_arg.min(length)
+    };
+
+    let mut result = Vec::new();
+    for i in start..end {
+        let elem = arr
+            .borrow()
+            .get_property(&PropertyKey::Index(i as u32))
+            .unwrap_or(JsValue::Undefined);
+        result.push(elem);
+    }
+
+    Ok(JsValue::Object(interp.create_array(result)))
+}
+
+fn array_concat(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let mut result = Vec::new();
+
+    // Helper to add elements from an array or a single value
+    fn add_elements(result: &mut Vec<JsValue>, value: JsValue) {
+        match &value {
+            JsValue::Object(obj) => {
+                let obj_ref = obj.borrow();
+                if let ExoticObject::Array { length } = &obj_ref.exotic {
+                    for i in 0..*length {
+                        let elem = obj_ref
+                            .get_property(&PropertyKey::Index(i))
+                            .unwrap_or(JsValue::Undefined);
+                        result.push(elem);
+                    }
+                } else {
+                    result.push(value.clone());
+                }
+            }
+            _ => result.push(value),
+        }
+    }
+
+    // Add elements from this array
+    add_elements(&mut result, this);
+
+    // Add elements from each argument
+    for arg in args {
+        add_elements(&mut result, arg);
+    }
+
+    Ok(JsValue::Object(interp.create_array(result)))
+}
+
+fn array_join(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let JsValue::Object(arr) = this else {
+        return Err(JsError::type_error("Array.prototype.join called on non-object"));
+    };
+
+    let separator = args
+        .first()
+        .map(|v| {
+            if matches!(v, JsValue::Undefined) {
+                ",".to_string()
+            } else {
+                v.to_js_string().to_string()
+            }
+        })
+        .unwrap_or_else(|| ",".to_string());
+
+    let length = {
+        let arr_ref = arr.borrow();
+        match &arr_ref.exotic {
+            ExoticObject::Array { length } => *length,
+            _ => return Err(JsError::type_error("Not an array")),
+        }
+    };
+
+    let mut parts = Vec::with_capacity(length as usize);
+    for i in 0..length {
+        let elem = arr
+            .borrow()
+            .get_property(&PropertyKey::Index(i))
+            .unwrap_or(JsValue::Undefined);
+
+        let part = match elem {
+            JsValue::Undefined | JsValue::Null => String::new(),
+            _ => elem.to_js_string().to_string(),
+        };
+        parts.push(part);
+    }
+
+    Ok(JsValue::String(JsString::from(parts.join(&separator))))
+}
+
 // JSON conversion helpers
 
 fn js_value_to_json(value: &JsValue) -> Result<serde_json::Value, JsError> {
@@ -2310,5 +2449,61 @@ mod tests {
     #[test]
     fn test_array_includes_from_index() {
         assert_eq!(eval("[1, 2, 3].includes(1, 1)"), JsValue::Boolean(false));
+    }
+
+    // Array.prototype.slice tests
+    #[test]
+    fn test_array_slice_basic() {
+        assert_eq!(eval("[1, 2, 3, 4, 5].slice(1, 4).length"), JsValue::Number(3.0));
+        assert_eq!(eval("[1, 2, 3, 4, 5].slice(1, 4)[0]"), JsValue::Number(2.0));
+    }
+
+    #[test]
+    fn test_array_slice_no_args() {
+        assert_eq!(eval("[1, 2, 3].slice().length"), JsValue::Number(3.0));
+    }
+
+    #[test]
+    fn test_array_slice_negative() {
+        assert_eq!(eval("[1, 2, 3, 4, 5].slice(-2).length"), JsValue::Number(2.0));
+        assert_eq!(eval("[1, 2, 3, 4, 5].slice(-2)[0]"), JsValue::Number(4.0));
+    }
+
+    #[test]
+    fn test_array_slice_start_only() {
+        assert_eq!(eval("[1, 2, 3, 4].slice(2).length"), JsValue::Number(2.0));
+    }
+
+    // Array.prototype.concat tests
+    #[test]
+    fn test_array_concat_arrays() {
+        assert_eq!(eval("[1, 2].concat([3, 4]).length"), JsValue::Number(4.0));
+        assert_eq!(eval("[1, 2].concat([3, 4])[2]"), JsValue::Number(3.0));
+    }
+
+    #[test]
+    fn test_array_concat_values() {
+        assert_eq!(eval("[1, 2].concat(3, 4).length"), JsValue::Number(4.0));
+    }
+
+    #[test]
+    fn test_array_concat_mixed() {
+        assert_eq!(eval("[1].concat([2, 3], 4, [5]).length"), JsValue::Number(5.0));
+    }
+
+    // Array.prototype.join tests
+    #[test]
+    fn test_array_join_default() {
+        assert_eq!(eval("[1, 2, 3].join()"), JsValue::String(JsString::from("1,2,3")));
+    }
+
+    #[test]
+    fn test_array_join_custom_separator() {
+        assert_eq!(eval("[1, 2, 3].join('-')"), JsValue::String(JsString::from("1-2-3")));
+    }
+
+    #[test]
+    fn test_array_join_empty() {
+        assert_eq!(eval("[1, 2, 3].join('')"), JsValue::String(JsString::from("123")));
     }
 }
