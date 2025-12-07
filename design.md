@@ -246,7 +246,7 @@
 - [ ] `Array.prototype.findLastIndex(predicate)`
 - [x] `Array.prototype.filter(predicate)`
 - [x] `Array.prototype.map(callback)`
-- [ ] `Array.prototype.forEach(callback)`
+- [x] `Array.prototype.forEach(callback)`
 - [ ] `Array.prototype.reduce(callback, initial?)`
 - [ ] `Array.prototype.reduceRight(callback, initial?)`
 - [ ] `Array.prototype.every(predicate)`

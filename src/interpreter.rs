@@ -151,6 +151,14 @@ impl Interpreter {
                 arity: 1,
             }));
             proto.set_property(PropertyKey::from("filter"), JsValue::Object(filter_fn));
+
+            // Array.prototype.forEach
+            let foreach_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "forEach".to_string(),
+                func: array_foreach,
+                arity: 1,
+            }));
+            proto.set_property(PropertyKey::from("forEach"), JsValue::Object(foreach_fn));
         }
 
         // Add Array global
@@ -1662,6 +1670,45 @@ fn array_filter(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> 
     Ok(JsValue::Object(interp.create_array(result)))
 }
 
+fn array_foreach(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let JsValue::Object(arr) = this.clone() else {
+        return Err(JsError::type_error("Array.prototype.forEach called on non-object"));
+    };
+
+    let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
+    if !callback.is_callable() {
+        return Err(JsError::type_error("Array.prototype.forEach callback is not a function"));
+    }
+
+    let this_arg = args.get(1).cloned().unwrap_or(JsValue::Undefined);
+
+    // Get array length
+    let length = {
+        let arr_ref = arr.borrow();
+        match &arr_ref.exotic {
+            ExoticObject::Array { length } => *length,
+            _ => return Err(JsError::type_error("Not an array")),
+        }
+    };
+
+    // Call callback for each element
+    for i in 0..length {
+        let elem = arr
+            .borrow()
+            .get_property(&PropertyKey::Index(i))
+            .unwrap_or(JsValue::Undefined);
+
+        // Call callback(element, index, array)
+        interp.call_function(
+            callback.clone(),
+            this_arg.clone(),
+            vec![elem, JsValue::Number(i as f64), this.clone()],
+        )?;
+    }
+
+    Ok(JsValue::Undefined)
+}
+
 // JSON conversion helpers
 
 fn js_value_to_json(value: &JsValue) -> Result<serde_json::Value, JsError> {
@@ -1895,5 +1942,21 @@ mod tests {
         // [1, 2, 3, 4].map(x => x * 2).filter(x => x > 4) should be [6, 8]
         assert_eq!(eval("[1, 2, 3, 4].map(x => x * 2).filter(x => x > 4).length"), JsValue::Number(2.0));
         assert_eq!(eval("[1, 2, 3, 4].map(x => x * 2).filter(x => x > 4)[0]"), JsValue::Number(6.0));
+    }
+
+    // Array.prototype.forEach tests
+    #[test]
+    fn test_array_foreach_side_effect() {
+        assert_eq!(eval("let sum = 0; [1, 2, 3].forEach(x => sum += x); sum"), JsValue::Number(6.0));
+    }
+
+    #[test]
+    fn test_array_foreach_returns_undefined() {
+        assert_eq!(eval("[1, 2, 3].forEach(x => x * 2)"), JsValue::Undefined);
+    }
+
+    #[test]
+    fn test_array_foreach_with_index() {
+        assert_eq!(eval("let result = 0; [10, 20, 30].forEach((x, i) => result += i); result"), JsValue::Number(3.0));
     }
 }
