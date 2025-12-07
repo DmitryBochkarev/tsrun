@@ -251,3 +251,52 @@ fn test_tagged_template_two_substitutions() {
         JsValue::String("1+2".into())
     );
 }
+
+// Destructuring assignment tests
+#[test]
+fn test_destructuring_assignment_array() {
+    assert_eq!(
+        eval(r#"
+            let a: number, b: number;
+            [a, b] = [1, 2];
+            a + b
+        "#),
+        JsValue::Number(3.0)
+    );
+}
+
+#[test]
+fn test_destructuring_assignment_array_with_rest() {
+    assert_eq!(
+        eval(r#"
+            let first: number, rest: number[];
+            [first, ...rest] = [1, 2, 3, 4];
+            rest.length
+        "#),
+        JsValue::Number(3.0)
+    );
+}
+
+#[test]
+fn test_destructuring_assignment_object() {
+    assert_eq!(
+        eval(r#"
+            let x: number, y: number;
+            ({ x, y } = { x: 10, y: 20 });
+            x + y
+        "#),
+        JsValue::Number(30.0)
+    );
+}
+
+#[test]
+fn test_destructuring_assignment_object_rename() {
+    assert_eq!(
+        eval(r#"
+            let a: number, b: number;
+            ({ x: a, y: b } = { x: 5, y: 15 });
+            a + b
+        "#),
+        JsValue::Number(20.0)
+    );
+}

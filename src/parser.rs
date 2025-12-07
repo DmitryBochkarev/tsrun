@@ -3147,6 +3147,20 @@ mod tests {
     }
 
     #[test]
+    fn test_destructuring_assignment_array() {
+        // Array destructuring in assignment
+        let prog = parse("let a, b; [a, b] = [1, 2];");
+        assert_eq!(prog.body.len(), 2);
+    }
+
+    #[test]
+    fn test_destructuring_assignment_object() {
+        // Object destructuring in assignment requires parentheses
+        let prog = parse("let x, y; ({ x, y } = { x: 1, y: 2 });");
+        assert_eq!(prog.body.len(), 2);
+    }
+
+    #[test]
     fn test_typeof_operator() {
         let prog = parse("const typeStr: string = typeof value;");
         assert_eq!(prog.body.len(), 1);
