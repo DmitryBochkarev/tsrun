@@ -91,6 +91,19 @@ impl JsError {
         }
     }
 
+    /// Create a syntax error without location info (for internal use during parsing)
+    pub fn syntax_error_simple(message: impl Into<String>) -> Self {
+        JsError::SyntaxError {
+            message: message.into(),
+            location: SourceLocation {
+                file: None,
+                line: 0,
+                column: 0,
+                length: 0,
+            },
+        }
+    }
+
     pub fn type_error(message: impl Into<String>) -> Self {
         JsError::TypeError {
             message: message.into(),

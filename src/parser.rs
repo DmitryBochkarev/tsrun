@@ -2074,8 +2074,13 @@ impl<'a> Parser<'a> {
                 }))
             }
 
-            // Parenthesized type
+            // Parenthesized type or function type expression
             TokenKind::LParen => {
+                // Try to parse as function type expression: (a: T, b: T) => R
+                if let Ok(func_type) = self.try_parse_function_type() {
+                    return Ok(func_type);
+                }
+                // Fall back to parenthesized type
                 self.advance();
                 let ty = self.parse_type_annotation()?;
                 self.expect(&TokenKind::RParen)?;
@@ -2136,6 +2141,104 @@ impl<'a> Parser<'a> {
 
             _ => Err(self.unexpected_token("type")),
         }
+    }
+
+    /// Try to parse a function type expression: (a: T, b: T) => R
+    /// Returns Err if this doesn't look like a function type.
+    fn try_parse_function_type(&mut self) -> Result<TypeAnnotation, JsError> {
+        let start = self.current.span;
+
+        // Save state for potential rollback
+        let lexer_checkpoint = self.lexer.checkpoint();
+        let saved_current = self.current.clone();
+        let saved_previous = self.previous.clone();
+
+        // Parse parameters
+        let params = match self.parse_function_type_params() {
+            Ok(p) => p,
+            Err(_) => {
+                // Rollback
+                self.lexer.restore(lexer_checkpoint);
+                self.current = saved_current;
+                self.previous = saved_previous;
+                return Err(JsError::syntax_error_simple("Not a function type"));
+            }
+        };
+
+        // Must have => after params for it to be a function type
+        if !self.match_token(&TokenKind::Arrow) {
+            // Rollback
+            self.lexer.restore(lexer_checkpoint);
+            self.current = saved_current;
+            self.previous = saved_previous;
+            return Err(JsError::syntax_error_simple("Not a function type"));
+        }
+
+        // Parse return type
+        let return_type = Box::new(self.parse_type_annotation()?);
+
+        Ok(TypeAnnotation::Function(FunctionType {
+            params,
+            return_type,
+            type_parameters: None,
+            span: self.span_from(start),
+        }))
+    }
+
+    /// Parse function type parameters: (a: T, b?: T, ...rest: T[])
+    fn parse_function_type_params(&mut self) -> Result<Vec<FunctionParam>, JsError> {
+        self.expect(&TokenKind::LParen)?;
+
+        let mut params = vec![];
+
+        while !self.check(&TokenKind::RParen) && !self.is_at_end() {
+            let param_start = self.current.span;
+
+            // Check for rest parameter
+            let is_rest = self.match_token(&TokenKind::DotDotDot);
+
+            // Parameter name (must be identifier for function type)
+            let name = match &self.current.kind {
+                TokenKind::Identifier(n) => n.clone(),
+                _ => return Err(self.unexpected_token("parameter name")),
+            };
+            self.advance();
+
+            let pattern = if is_rest {
+                Pattern::Rest(RestElement {
+                    argument: Box::new(Pattern::Identifier(Identifier {
+                        name: name.clone(),
+                        span: self.span_from(param_start),
+                    })),
+                    type_annotation: None,
+                    span: self.span_from(param_start),
+                })
+            } else {
+                Pattern::Identifier(Identifier {
+                    name: name.clone(),
+                    span: self.span_from(param_start),
+                })
+            };
+
+            let optional = self.match_token(&TokenKind::Question);
+
+            // Type annotation (required for function type params to distinguish from parenthesized)
+            let type_annotation = if self.match_token(&TokenKind::Colon) {
+                Some(self.parse_type_annotation()?)
+            } else {
+                None
+            };
+
+            let span = self.span_from(param_start);
+            params.push(FunctionParam { pattern, type_annotation, optional, span });
+
+            if !self.match_token(&TokenKind::Comma) {
+                break;
+            }
+        }
+
+        self.expect(&TokenKind::RParen)?;
+        Ok(params)
     }
 
     fn parse_type_reference(&mut self) -> Result<TypeReference, JsError> {
@@ -2742,6 +2845,24 @@ mod tests {
     #[test]
     fn test_array_literal() {
         let prog = parse("const arr: number[] = [1, 2, 3];");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_function_type_expression() {
+        let prog = parse("const add: (a: number, b: number) => number = (a, b) => a + b;");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_function_type_expression_no_params() {
+        let prog = parse("const fn: () => void = () => {};");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_function_type_expression_optional_param() {
+        let prog = parse("const fn: (x?: number) => number = (x) => x || 0;");
         assert_eq!(prog.body.len(), 1);
     }
 }

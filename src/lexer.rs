@@ -197,6 +197,18 @@ impl Token {
     }
 }
 
+/// Lexer state checkpoint for backtracking
+#[derive(Clone)]
+pub struct LexerCheckpoint {
+    current_pos: usize,
+    line: u32,
+    column: u32,
+    start_pos: usize,
+    start_line: u32,
+    start_column: u32,
+    saw_newline: bool,
+}
+
 /// Lexer for tokenizing TypeScript source code
 pub struct Lexer<'a> {
     source: &'a str,
@@ -223,6 +235,39 @@ impl<'a> Lexer<'a> {
             start_line: 1,
             start_column: 1,
             saw_newline: false,
+        }
+    }
+
+    /// Create a checkpoint of the current lexer state for backtracking
+    pub fn checkpoint(&self) -> LexerCheckpoint {
+        LexerCheckpoint {
+            current_pos: self.current_pos,
+            line: self.line,
+            column: self.column,
+            start_pos: self.start_pos,
+            start_line: self.start_line,
+            start_column: self.start_column,
+            saw_newline: self.saw_newline,
+        }
+    }
+
+    /// Restore the lexer state from a checkpoint
+    pub fn restore(&mut self, checkpoint: LexerCheckpoint) {
+        self.current_pos = checkpoint.current_pos;
+        self.line = checkpoint.line;
+        self.column = checkpoint.column;
+        self.start_pos = checkpoint.start_pos;
+        self.start_line = checkpoint.start_line;
+        self.start_column = checkpoint.start_column;
+        self.saw_newline = checkpoint.saw_newline;
+        // Recreate the chars iterator from the beginning and skip to checkpoint position
+        self.chars = self.source.char_indices().peekable();
+        // Skip characters until we reach the checkpoint position
+        while let Some((pos, _)) = self.chars.peek() {
+            if *pos >= checkpoint.current_pos {
+                break;
+            }
+            self.chars.next();
         }
     }
 
