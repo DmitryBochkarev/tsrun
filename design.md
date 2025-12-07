@@ -229,14 +229,14 @@
 - [ ] `Array.of(...items)`
 - [x] `Array.prototype.push(...items)`
 - [x] `Array.prototype.pop()`
-- [ ] `Array.prototype.shift()`
-- [ ] `Array.prototype.unshift(...items)`
+- [x] `Array.prototype.shift()`
+- [x] `Array.prototype.unshift(...items)`
 - [x] `Array.prototype.slice(start?, end?)`
-- [ ] `Array.prototype.splice(start, deleteCount?, ...items)`
+- [x] `Array.prototype.splice(start, deleteCount?, ...items)`
 - [x] `Array.prototype.concat(...items)`
 - [x] `Array.prototype.join(separator?)`
-- [ ] `Array.prototype.reverse()`
-- [ ] `Array.prototype.sort(compareFn?)`
+- [x] `Array.prototype.reverse()`
+- [x] `Array.prototype.sort(compareFn?)`
 - [x] `Array.prototype.indexOf(item, fromIndex?)`
 - [ ] `Array.prototype.lastIndexOf(item, fromIndex?)`
 - [x] `Array.prototype.includes(item, fromIndex?)`
@@ -253,8 +253,8 @@
 - [x] `Array.prototype.some(predicate)`
 - [ ] `Array.prototype.flat(depth?)`
 - [ ] `Array.prototype.flatMap(callback)`
-- [ ] `Array.prototype.fill(value, start?, end?)`
-- [ ] `Array.prototype.copyWithin(target, start?, end?)`
+- [x] `Array.prototype.fill(value, start?, end?)`
+- [x] `Array.prototype.copyWithin(target, start?, end?)`
 - [ ] `Array.prototype.entries()`
 - [ ] `Array.prototype.keys()`
 - [ ] `Array.prototype.values()`

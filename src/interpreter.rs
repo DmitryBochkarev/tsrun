@@ -243,6 +243,62 @@ impl Interpreter {
                 arity: 1,
             }));
             proto.set_property(PropertyKey::from("some"), JsValue::Object(some_fn));
+
+            // Array.prototype.shift
+            let shift_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "shift".to_string(),
+                func: array_shift,
+                arity: 0,
+            }));
+            proto.set_property(PropertyKey::from("shift"), JsValue::Object(shift_fn));
+
+            // Array.prototype.unshift
+            let unshift_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "unshift".to_string(),
+                func: array_unshift,
+                arity: 1,
+            }));
+            proto.set_property(PropertyKey::from("unshift"), JsValue::Object(unshift_fn));
+
+            // Array.prototype.reverse
+            let reverse_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "reverse".to_string(),
+                func: array_reverse,
+                arity: 0,
+            }));
+            proto.set_property(PropertyKey::from("reverse"), JsValue::Object(reverse_fn));
+
+            // Array.prototype.sort
+            let sort_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "sort".to_string(),
+                func: array_sort,
+                arity: 1,
+            }));
+            proto.set_property(PropertyKey::from("sort"), JsValue::Object(sort_fn));
+
+            // Array.prototype.fill
+            let fill_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "fill".to_string(),
+                func: array_fill,
+                arity: 3,
+            }));
+            proto.set_property(PropertyKey::from("fill"), JsValue::Object(fill_fn));
+
+            // Array.prototype.copyWithin
+            let copywithin_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "copyWithin".to_string(),
+                func: array_copy_within,
+                arity: 3,
+            }));
+            proto.set_property(PropertyKey::from("copyWithin"), JsValue::Object(copywithin_fn));
+
+            // Array.prototype.splice
+            let splice_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "splice".to_string(),
+                func: array_splice,
+                arity: 2,
+            }));
+            proto.set_property(PropertyKey::from("splice"), JsValue::Object(splice_fn));
         }
 
         // Add Array global
@@ -2598,6 +2654,316 @@ fn array_some(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Re
     Ok(JsValue::Boolean(false))
 }
 
+// Array.prototype.shift - remove first element
+fn array_shift(_interp: &mut Interpreter, this: JsValue, _args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let JsValue::Object(arr) = this else {
+        return Err(JsError::type_error("Array.prototype.shift called on non-object"));
+    };
+
+    let mut arr_ref = arr.borrow_mut();
+    let length = match &arr_ref.exotic {
+        ExoticObject::Array { length } => *length,
+        _ => return Err(JsError::type_error("Not an array")),
+    };
+
+    if length == 0 {
+        return Ok(JsValue::Undefined);
+    }
+
+    // Get first element
+    let first = arr_ref.get_property(&PropertyKey::Index(0)).unwrap_or(JsValue::Undefined);
+
+    // Shift all elements down
+    for i in 1..length {
+        let val = arr_ref.get_property(&PropertyKey::Index(i)).unwrap_or(JsValue::Undefined);
+        arr_ref.set_property(PropertyKey::Index(i - 1), val);
+    }
+
+    // Remove last element and update length
+    arr_ref.properties.remove(&PropertyKey::Index(length - 1));
+    let new_len = length - 1;
+    if let ExoticObject::Array { ref mut length } = arr_ref.exotic {
+        *length = new_len;
+    }
+    arr_ref.set_property(PropertyKey::from("length"), JsValue::Number(new_len as f64));
+
+    Ok(first)
+}
+
+// Array.prototype.unshift - add elements to beginning
+fn array_unshift(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let JsValue::Object(arr) = this else {
+        return Err(JsError::type_error("Array.prototype.unshift called on non-object"));
+    };
+
+    let mut arr_ref = arr.borrow_mut();
+    let current_length = match &arr_ref.exotic {
+        ExoticObject::Array { length } => *length,
+        _ => return Err(JsError::type_error("Not an array")),
+    };
+
+    let arg_count = args.len() as u32;
+    if arg_count == 0 {
+        return Ok(JsValue::Number(current_length as f64));
+    }
+
+    // Shift existing elements up
+    for i in (0..current_length).rev() {
+        let val = arr_ref.get_property(&PropertyKey::Index(i)).unwrap_or(JsValue::Undefined);
+        arr_ref.set_property(PropertyKey::Index(i + arg_count), val);
+    }
+
+    // Insert new elements at beginning
+    for (i, val) in args.into_iter().enumerate() {
+        arr_ref.set_property(PropertyKey::Index(i as u32), val);
+    }
+
+    // Update length
+    let new_length = current_length + arg_count;
+    if let ExoticObject::Array { ref mut length } = arr_ref.exotic {
+        *length = new_length;
+    }
+    arr_ref.set_property(PropertyKey::from("length"), JsValue::Number(new_length as f64));
+
+    Ok(JsValue::Number(new_length as f64))
+}
+
+// Array.prototype.reverse - reverse in place
+fn array_reverse(_interp: &mut Interpreter, this: JsValue, _args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let JsValue::Object(arr) = this.clone() else {
+        return Err(JsError::type_error("Array.prototype.reverse called on non-object"));
+    };
+
+    let mut arr_ref = arr.borrow_mut();
+    let length = match &arr_ref.exotic {
+        ExoticObject::Array { length } => *length,
+        _ => return Err(JsError::type_error("Not an array")),
+    };
+
+    if length <= 1 {
+        return Ok(this);
+    }
+
+    // Collect all elements
+    let mut elements: Vec<JsValue> = (0..length)
+        .map(|i| arr_ref.get_property(&PropertyKey::Index(i)).unwrap_or(JsValue::Undefined))
+        .collect();
+
+    // Reverse and set back
+    elements.reverse();
+    for (i, val) in elements.into_iter().enumerate() {
+        arr_ref.set_property(PropertyKey::Index(i as u32), val);
+    }
+
+    drop(arr_ref);
+    Ok(this)
+}
+
+// Array.prototype.sort - sort in place
+fn array_sort(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let JsValue::Object(arr) = this.clone() else {
+        return Err(JsError::type_error("Array.prototype.sort called on non-object"));
+    };
+
+    let compare_fn = args.first().cloned();
+
+    let length = {
+        let arr_ref = arr.borrow();
+        match &arr_ref.exotic {
+            ExoticObject::Array { length } => *length,
+            _ => return Err(JsError::type_error("Not an array")),
+        }
+    };
+
+    // Collect all elements
+    let mut elements: Vec<JsValue> = {
+        let arr_ref = arr.borrow();
+        (0..length)
+            .map(|i| arr_ref.get_property(&PropertyKey::Index(i)).unwrap_or(JsValue::Undefined))
+            .collect()
+    };
+
+    // Sort with comparator if provided
+    if let Some(cmp) = compare_fn {
+        if cmp.is_callable() {
+            // Use a simple bubble sort to avoid closure issues with Result
+            for i in 0..elements.len() {
+                for j in 0..elements.len() - 1 - i {
+                    let result = interp.call_function(
+                        cmp.clone(),
+                        JsValue::Undefined,
+                        vec![elements[j].clone(), elements[j + 1].clone()],
+                    )?;
+                    if result.to_number() > 0.0 {
+                        elements.swap(j, j + 1);
+                    }
+                }
+            }
+        }
+    } else {
+        // Default string comparison sort
+        elements.sort_by(|a, b| {
+            let a_str = a.to_js_string();
+            let b_str = b.to_js_string();
+            a_str.as_str().cmp(b_str.as_str())
+        });
+    }
+
+    // Set sorted elements back
+    {
+        let mut arr_ref = arr.borrow_mut();
+        for (i, val) in elements.into_iter().enumerate() {
+            arr_ref.set_property(PropertyKey::Index(i as u32), val);
+        }
+    }
+
+    Ok(this)
+}
+
+// Array.prototype.fill - fill with value
+fn array_fill(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let JsValue::Object(arr) = this.clone() else {
+        return Err(JsError::type_error("Array.prototype.fill called on non-object"));
+    };
+
+    let value = args.first().cloned().unwrap_or(JsValue::Undefined);
+
+    let mut arr_ref = arr.borrow_mut();
+    let length = match &arr_ref.exotic {
+        ExoticObject::Array { length } => *length as i64,
+        _ => return Err(JsError::type_error("Not an array")),
+    };
+
+    let start = args.get(1).map(|v| {
+        let n = v.to_number() as i64;
+        if n < 0 { (length + n).max(0) } else { n.min(length) }
+    }).unwrap_or(0) as u32;
+
+    let end = args.get(2).map(|v| {
+        let n = v.to_number() as i64;
+        if n < 0 { (length + n).max(0) } else { n.min(length) }
+    }).unwrap_or(length as i64) as u32;
+
+    for i in start..end {
+        arr_ref.set_property(PropertyKey::Index(i), value.clone());
+    }
+
+    drop(arr_ref);
+    Ok(this)
+}
+
+// Array.prototype.copyWithin - copy part of array to another location
+fn array_copy_within(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let JsValue::Object(arr) = this.clone() else {
+        return Err(JsError::type_error("Array.prototype.copyWithin called on non-object"));
+    };
+
+    let mut arr_ref = arr.borrow_mut();
+    let length = match &arr_ref.exotic {
+        ExoticObject::Array { length } => *length as i64,
+        _ => return Err(JsError::type_error("Not an array")),
+    };
+
+    let target = args.first().map(|v| {
+        let n = v.to_number() as i64;
+        if n < 0 { (length + n).max(0) } else { n.min(length) }
+    }).unwrap_or(0) as u32;
+
+    let start = args.get(1).map(|v| {
+        let n = v.to_number() as i64;
+        if n < 0 { (length + n).max(0) } else { n.min(length) }
+    }).unwrap_or(0) as u32;
+
+    let end = args.get(2).map(|v| {
+        let n = v.to_number() as i64;
+        if n < 0 { (length + n).max(0) } else { n.min(length) }
+    }).unwrap_or(length as i64) as u32;
+
+    // Collect elements to copy
+    let elements: Vec<JsValue> = (start..end)
+        .map(|i| arr_ref.get_property(&PropertyKey::Index(i)).unwrap_or(JsValue::Undefined))
+        .collect();
+
+    // Copy to target
+    for (i, val) in elements.into_iter().enumerate() {
+        let target_idx = target + i as u32;
+        if target_idx < length as u32 {
+            arr_ref.set_property(PropertyKey::Index(target_idx), val);
+        }
+    }
+
+    drop(arr_ref);
+    Ok(this)
+}
+
+// Array.prototype.splice - remove/replace elements
+fn array_splice(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let JsValue::Object(arr) = this else {
+        return Err(JsError::type_error("Array.prototype.splice called on non-object"));
+    };
+
+    let mut arr_ref = arr.borrow_mut();
+    let length = match &arr_ref.exotic {
+        ExoticObject::Array { length } => *length as i64,
+        _ => return Err(JsError::type_error("Not an array")),
+    };
+
+    let start = args.first().map(|v| {
+        let n = v.to_number() as i64;
+        if n < 0 { (length + n).max(0) } else { n.min(length) }
+    }).unwrap_or(0) as u32;
+
+    let delete_count = args.get(1).map(|v| {
+        let n = v.to_number() as i64;
+        n.max(0).min(length - start as i64) as u32
+    }).unwrap_or((length - start as i64) as u32);
+
+    // Collect removed elements
+    let removed: Vec<JsValue> = (start..start + delete_count)
+        .map(|i| arr_ref.get_property(&PropertyKey::Index(i)).unwrap_or(JsValue::Undefined))
+        .collect();
+
+    // Get items to insert
+    let insert_items: Vec<JsValue> = args.into_iter().skip(2).collect();
+    let insert_count = insert_items.len() as u32;
+
+    let new_length = (length as u32 - delete_count + insert_count) as u32;
+
+    if insert_count > delete_count {
+        // Shift elements right
+        let shift = insert_count - delete_count;
+        for i in (start + delete_count..length as u32).rev() {
+            let val = arr_ref.get_property(&PropertyKey::Index(i)).unwrap_or(JsValue::Undefined);
+            arr_ref.set_property(PropertyKey::Index(i + shift), val);
+        }
+    } else if insert_count < delete_count {
+        // Shift elements left
+        let shift = delete_count - insert_count;
+        for i in start + delete_count..length as u32 {
+            let val = arr_ref.get_property(&PropertyKey::Index(i)).unwrap_or(JsValue::Undefined);
+            arr_ref.set_property(PropertyKey::Index(i - shift), val);
+        }
+        // Remove trailing elements
+        for i in new_length..length as u32 {
+            arr_ref.properties.remove(&PropertyKey::Index(i));
+        }
+    }
+
+    // Insert new items
+    for (i, val) in insert_items.into_iter().enumerate() {
+        arr_ref.set_property(PropertyKey::Index(start + i as u32), val);
+    }
+
+    // Update length
+    if let ExoticObject::Array { ref mut length } = arr_ref.exotic {
+        *length = new_length;
+    }
+    arr_ref.set_property(PropertyKey::from("length"), JsValue::Number(new_length as f64));
+
+    drop(arr_ref);
+    Ok(JsValue::Object(interp.create_array(removed)))
+}
+
 // String methods
 
 fn string_char_at(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
@@ -3829,5 +4195,57 @@ mod tests {
         assert_eq!(eval("(255).toString(16)"), JsValue::String(JsString::from("ff")));
         assert_eq!(eval("(10).toString(2)"), JsValue::String(JsString::from("1010")));
         assert_eq!(eval("(42).toString()"), JsValue::String(JsString::from("42")));
+    }
+
+    #[test]
+    fn test_array_shift() {
+        assert_eq!(eval("let a = [1, 2, 3]; a.shift()"), JsValue::Number(1.0));
+        assert_eq!(eval("let a = [1, 2, 3]; a.shift(); a.length"), JsValue::Number(2.0));
+        assert_eq!(eval("let a = [1, 2, 3]; a.shift(); a[0]"), JsValue::Number(2.0));
+        assert_eq!(eval("let a = []; a.shift()"), JsValue::Undefined);
+    }
+
+    #[test]
+    fn test_array_unshift() {
+        assert_eq!(eval("let a = [1, 2, 3]; a.unshift(0)"), JsValue::Number(4.0));
+        assert_eq!(eval("let a = [1, 2, 3]; a.unshift(0); a[0]"), JsValue::Number(0.0));
+        assert_eq!(eval("let a = [1, 2, 3]; a.unshift(-1, 0); a.length"), JsValue::Number(5.0));
+    }
+
+    #[test]
+    fn test_array_reverse() {
+        assert_eq!(eval("let a = [1, 2, 3]; a.reverse(); a[0]"), JsValue::Number(3.0));
+        assert_eq!(eval("let a = [1, 2, 3]; a.reverse(); a[2]"), JsValue::Number(1.0));
+    }
+
+    #[test]
+    fn test_array_sort() {
+        assert_eq!(eval("let a = [3, 1, 2]; a.sort(); a[0]"), JsValue::Number(1.0));
+        assert_eq!(eval("let a = [3, 1, 2]; a.sort(); a[2]"), JsValue::Number(3.0));
+        assert_eq!(eval("let a = ['c', 'a', 'b']; a.sort(); a[0]"), JsValue::String(JsString::from("a")));
+        // Sort with comparator
+        assert_eq!(eval("let a = [3, 1, 2]; a.sort((a, b) => b - a); a[0]"), JsValue::Number(3.0));
+    }
+
+    #[test]
+    fn test_array_fill() {
+        assert_eq!(eval("let a = [1, 2, 3]; a.fill(0); a[1]"), JsValue::Number(0.0));
+        assert_eq!(eval("let a = [1, 2, 3]; a.fill(0, 1); a[0]"), JsValue::Number(1.0));
+        assert_eq!(eval("let a = [1, 2, 3]; a.fill(0, 1); a[1]"), JsValue::Number(0.0));
+        assert_eq!(eval("let a = [1, 2, 3]; a.fill(0, 1, 2); a[2]"), JsValue::Number(3.0));
+    }
+
+    #[test]
+    fn test_array_copywithin() {
+        assert_eq!(eval("let a = [1, 2, 3, 4, 5]; a.copyWithin(0, 3); a[0]"), JsValue::Number(4.0));
+        assert_eq!(eval("let a = [1, 2, 3, 4, 5]; a.copyWithin(0, 3); a[1]"), JsValue::Number(5.0));
+    }
+
+    #[test]
+    fn test_array_splice() {
+        assert_eq!(eval("let a = [1, 2, 3]; let r = a.splice(1, 1); r[0]"), JsValue::Number(2.0));
+        assert_eq!(eval("let a = [1, 2, 3]; a.splice(1, 1); a.length"), JsValue::Number(2.0));
+        assert_eq!(eval("let a = [1, 2, 3]; a.splice(1, 1, 'a', 'b'); a.length"), JsValue::Number(4.0));
+        assert_eq!(eval("let a = [1, 2, 3]; a.splice(1, 1, 'a', 'b'); a[1]"), JsValue::String(JsString::from("a")));
     }
 }
