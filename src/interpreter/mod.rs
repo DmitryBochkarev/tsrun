@@ -1,5 +1,9 @@
 //! Interpreter for executing TypeScript AST
 
+// Builtin function implementations (split into separate files)
+#[allow(dead_code)]
+pub mod builtins;
+
 use crate::ast::{
     Argument, ArrayElement, AssignmentExpression, AssignmentOp, AssignmentTarget, BinaryExpression,
     BinaryOp, BlockStatement, CallExpression, ClassDeclaration, ConditionalExpression,
