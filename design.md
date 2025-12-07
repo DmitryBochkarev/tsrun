@@ -401,14 +401,14 @@
 
 #### RegExp
 - [ ] RegExp literals (`/pattern/flags`)
-- [ ] `new RegExp(pattern, flags?)`
-- [ ] `RegExp.prototype.test(string)`
-- [ ] `RegExp.prototype.exec(string)`
-- [ ] `RegExp.prototype.source`
-- [ ] `RegExp.prototype.flags`
-- [ ] `RegExp.prototype.global`
-- [ ] `RegExp.prototype.ignoreCase`
-- [ ] `RegExp.prototype.multiline`
+- [x] `new RegExp(pattern, flags?)`
+- [x] `RegExp.prototype.test(string)`
+- [x] `RegExp.prototype.exec(string)`
+- [x] `RegExp.prototype.source`
+- [x] `RegExp.prototype.flags`
+- [x] `RegExp.prototype.global`
+- [x] `RegExp.prototype.ignoreCase`
+- [x] `RegExp.prototype.multiline`
 - [ ] `RegExp.prototype.dotAll`
 - [ ] `RegExp.prototype.unicode`
 - [ ] `RegExp.prototype.sticky`

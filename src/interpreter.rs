@@ -46,6 +46,8 @@ pub struct Interpreter {
     pub set_prototype: JsObjectRef,
     /// Date.prototype for date methods
     pub date_prototype: JsObjectRef,
+    /// RegExp.prototype for regex methods
+    pub regexp_prototype: JsObjectRef,
 }
 
 impl Interpreter {
@@ -1426,6 +1428,38 @@ impl Interpreter {
         }
         env.define("Date".to_string(), JsValue::Object(date_obj), false);
 
+        // Create RegExp.prototype with RegExp methods
+        let regexp_prototype = create_object();
+        {
+            let mut proto = regexp_prototype.borrow_mut();
+
+            let test_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "test".to_string(),
+                func: regexp_test,
+                arity: 1,
+            }));
+            proto.set_property(PropertyKey::from("test"), JsValue::Object(test_fn));
+
+            let exec_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "exec".to_string(),
+                func: regexp_exec,
+                arity: 1,
+            }));
+            proto.set_property(PropertyKey::from("exec"), JsValue::Object(exec_fn));
+        }
+
+        // Add RegExp constructor
+        let regexp_constructor_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "RegExp".to_string(),
+            func: regexp_constructor,
+            arity: 2,
+        }));
+        {
+            let mut re = regexp_constructor_fn.borrow_mut();
+            re.set_property(PropertyKey::from("prototype"), JsValue::Object(regexp_prototype.clone()));
+        }
+        env.define("RegExp".to_string(), JsValue::Object(regexp_constructor_fn), false);
+
         Self {
             global,
             env,
@@ -1437,6 +1471,7 @@ impl Interpreter {
             map_prototype,
             set_prototype,
             date_prototype,
+            regexp_prototype,
         }
     }
 
@@ -3491,6 +3526,91 @@ fn date_to_iso_string(_interp: &mut Interpreter, this: JsValue, _args: Vec<JsVal
     Ok(JsValue::String(JsString::from(dt.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string())))
 }
 
+// RegExp implementation
+fn regexp_constructor(interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let pattern = args.first().cloned().unwrap_or(JsValue::String(JsString::from("")))
+        .to_js_string().to_string();
+    let flags = args.get(1).cloned().unwrap_or(JsValue::String(JsString::from("")))
+        .to_js_string().to_string();
+
+    let regexp_obj = create_object();
+    {
+        let mut obj = regexp_obj.borrow_mut();
+        obj.exotic = ExoticObject::RegExp { pattern: pattern.clone(), flags: flags.clone() };
+        obj.prototype = Some(interp.regexp_prototype.clone());
+        obj.set_property(PropertyKey::from("source"), JsValue::String(JsString::from(pattern)));
+        obj.set_property(PropertyKey::from("flags"), JsValue::String(JsString::from(flags.clone())));
+        obj.set_property(PropertyKey::from("global"), JsValue::Boolean(flags.contains('g')));
+        obj.set_property(PropertyKey::from("ignoreCase"), JsValue::Boolean(flags.contains('i')));
+        obj.set_property(PropertyKey::from("multiline"), JsValue::Boolean(flags.contains('m')));
+    }
+    Ok(JsValue::Object(regexp_obj))
+}
+
+fn get_regexp_data(this: &JsValue) -> Result<(String, String), JsError> {
+    let JsValue::Object(obj) = this else {
+        return Err(JsError::type_error("this is not a RegExp"));
+    };
+    let obj_ref = obj.borrow();
+    if let ExoticObject::RegExp { ref pattern, ref flags } = obj_ref.exotic {
+        Ok((pattern.clone(), flags.clone()))
+    } else {
+        Err(JsError::type_error("this is not a RegExp"))
+    }
+}
+
+fn build_regex(pattern: &str, flags: &str) -> Result<regex::Regex, JsError> {
+    let mut regex_pattern = pattern.to_string();
+
+    // Handle case-insensitive flag
+    if flags.contains('i') {
+        regex_pattern = format!("(?i){}", regex_pattern);
+    }
+
+    // Handle multiline flag
+    if flags.contains('m') {
+        regex_pattern = format!("(?m){}", regex_pattern);
+    }
+
+    regex::Regex::new(&regex_pattern)
+        .map_err(|e| JsError::syntax_error(&format!("Invalid regular expression: {}", e), 0, 0))
+}
+
+fn regexp_test(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let (pattern, flags) = get_regexp_data(&this)?;
+    let input = args.first().cloned().unwrap_or(JsValue::Undefined).to_js_string().to_string();
+
+    let re = build_regex(&pattern, &flags)?;
+    Ok(JsValue::Boolean(re.is_match(&input)))
+}
+
+fn regexp_exec(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let (pattern, flags) = get_regexp_data(&this)?;
+    let input = args.first().cloned().unwrap_or(JsValue::Undefined).to_js_string().to_string();
+
+    let re = build_regex(&pattern, &flags)?;
+
+    match re.captures(&input) {
+        Some(caps) => {
+            let mut result = Vec::new();
+            for cap in caps.iter() {
+                match cap {
+                    Some(m) => result.push(JsValue::String(JsString::from(m.as_str()))),
+                    None => result.push(JsValue::Undefined),
+                }
+            }
+            let arr = interp.create_array(result);
+            // Add index property
+            if let Some(m) = caps.get(0) {
+                arr.borrow_mut().set_property(PropertyKey::from("index"), JsValue::Number(m.start() as f64));
+            }
+            arr.borrow_mut().set_property(PropertyKey::from("input"), JsValue::String(JsString::from(input)));
+            Ok(JsValue::Object(arr))
+        }
+        None => Ok(JsValue::Null),
+    }
+}
+
 fn array_constructor_fn(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
     if args.len() == 1 {
         if let JsValue::Number(n) = &args[0] {
@@ -5285,6 +5405,9 @@ fn object_to_string(_interp: &mut Interpreter, this: JsValue, _args: Vec<JsValue
                 ExoticObject::Date { .. } => {
                     Ok(JsValue::String(JsString::from("[object Date]")))
                 }
+                ExoticObject::RegExp { .. } => {
+                    Ok(JsValue::String(JsString::from("[object RegExp]")))
+                }
             }
         }
         _ => Ok(JsValue::String(JsString::from("[object Object]"))),
@@ -5978,6 +6101,7 @@ fn js_value_to_json(value: &JsValue) -> Result<serde_json::Value, JsError> {
                         .unwrap_or(chrono::DateTime::UNIX_EPOCH);
                     serde_json::Value::String(datetime.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string())
                 }
+                ExoticObject::RegExp { .. } => serde_json::Value::Object(serde_json::Map::new()),
                 ExoticObject::Ordinary => {
                     let mut map = serde_json::Map::new();
                     for (key, prop) in obj_ref.properties.iter() {
@@ -6933,6 +7057,27 @@ mod tests {
 
         // toISOString
         assert_eq!(eval("new Date(0).toISOString()"), JsValue::from("1970-01-01T00:00:00.000Z"));
+    }
+
+    #[test]
+    fn test_regexp() {
+        // Basic RegExp creation and test
+        assert_eq!(eval("new RegExp('abc').test('abc')"), JsValue::Boolean(true));
+        assert_eq!(eval("new RegExp('abc').test('def')"), JsValue::Boolean(false));
+        assert_eq!(eval("new RegExp('a.c').test('abc')"), JsValue::Boolean(true));
+        assert_eq!(eval("new RegExp('a.c').test('adc')"), JsValue::Boolean(true));
+
+        // Case insensitive flag
+        assert_eq!(eval("new RegExp('abc', 'i').test('ABC')"), JsValue::Boolean(true));
+
+        // Source and flags properties
+        assert_eq!(eval("new RegExp('abc', 'gi').source"), JsValue::from("abc"));
+        assert_eq!(eval("new RegExp('abc', 'gi').flags"), JsValue::from("gi"));
+
+        // exec method
+        assert_eq!(eval("new RegExp('a(b)c').exec('abc')[0]"), JsValue::from("abc"));
+        assert_eq!(eval("new RegExp('a(b)c').exec('abc')[1]"), JsValue::from("b"));
+        assert_eq!(eval("new RegExp('xyz').exec('abc')"), JsValue::Null);
     }
 
     #[test]

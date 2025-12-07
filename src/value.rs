@@ -156,6 +156,7 @@ impl fmt::Debug for JsValue {
                     ExoticObject::Map { entries } => write!(f, "Map({})", entries.len()),
                     ExoticObject::Set { entries } => write!(f, "Set({})", entries.len()),
                     ExoticObject::Date { timestamp } => write!(f, "Date({})", timestamp),
+                    ExoticObject::RegExp { pattern, flags } => write!(f, "/{}/{}", pattern, flags),
                 }
             }
         }
@@ -512,6 +513,8 @@ pub enum ExoticObject {
     Set { entries: Vec<JsValue> },
     /// Date exotic object - stores timestamp in milliseconds since Unix epoch
     Date { timestamp: f64 },
+    /// RegExp exotic object - stores pattern and flags
+    RegExp { pattern: String, flags: String },
 }
 
 /// Function representation
