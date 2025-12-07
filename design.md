@@ -219,9 +219,9 @@
 - [ ] `Object.create(proto, props?)`
 - [ ] `Object.fromEntries(iterable)`
 - [ ] `Object.hasOwn(obj, prop)`
-- [ ] `Object.prototype.hasOwnProperty(prop)`
-- [ ] `Object.prototype.toString()`
-- [ ] `Object.prototype.valueOf()`
+- [x] `Object.prototype.hasOwnProperty(prop)`
+- [x] `Object.prototype.toString()`
+- [x] `Object.prototype.valueOf()`
 
 #### Array
 - [x] `Array.isArray(value)`
@@ -265,12 +265,12 @@
 - [ ] `Array.prototype.with(index, value)`
 
 #### String
-- [ ] `String.fromCharCode(...codes)`
+- [x] `String.fromCharCode(...codes)`
 - [ ] `String.fromCodePoint(...codePoints)`
 - [x] `String.prototype.charAt(index)`
-- [ ] `String.prototype.charCodeAt(index)`
+- [x] `String.prototype.charCodeAt(index)`
 - [ ] `String.prototype.codePointAt(index)`
-- [ ] `String.prototype.concat(...strings)`
+- [x] `String.prototype.concat(...strings)`
 - [x] `String.prototype.includes(search, position?)`
 - [x] `String.prototype.startsWith(search, position?)`
 - [x] `String.prototype.endsWith(search, length?)`

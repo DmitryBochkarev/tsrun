@@ -30,6 +30,8 @@ pub struct Interpreter {
     pub global: JsObjectRef,
     /// Current environment
     pub env: Environment,
+    /// Object.prototype for all objects
+    pub object_prototype: JsObjectRef,
     /// Array.prototype for all array instances
     pub array_prototype: JsObjectRef,
     /// String.prototype for string methods
@@ -116,6 +118,32 @@ impl Interpreter {
                 arity: 2,
             }));
             obj.set_property(PropertyKey::from("assign"), JsValue::Object(assign_fn));
+        }
+        // Create Object.prototype
+        let object_prototype = create_object();
+        {
+            let mut proto = object_prototype.borrow_mut();
+
+            let hasownprop_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "hasOwnProperty".to_string(),
+                func: object_has_own_property,
+                arity: 1,
+            }));
+            proto.set_property(PropertyKey::from("hasOwnProperty"), JsValue::Object(hasownprop_fn));
+
+            let tostring_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "toString".to_string(),
+                func: object_to_string,
+                arity: 0,
+            }));
+            proto.set_property(PropertyKey::from("toString"), JsValue::Object(tostring_fn));
+
+            let valueof_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "valueOf".to_string(),
+                func: object_value_of,
+                arity: 0,
+            }));
+            proto.set_property(PropertyKey::from("valueOf"), JsValue::Object(valueof_fn));
         }
         env.define("Object".to_string(), JsValue::Object(object_constructor), false);
 
@@ -516,7 +544,39 @@ impl Interpreter {
                 arity: 2,
             }));
             proto.set_property(PropertyKey::from("padEnd"), JsValue::Object(padend_fn));
+
+            // String.prototype.concat
+            let concat_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "concat".to_string(),
+                func: string_concat,
+                arity: 1,
+            }));
+            proto.set_property(PropertyKey::from("concat"), JsValue::Object(concat_fn));
+
+            // String.prototype.charCodeAt
+            let charcodeat_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "charCodeAt".to_string(),
+                func: string_char_code_at,
+                arity: 1,
+            }));
+            proto.set_property(PropertyKey::from("charCodeAt"), JsValue::Object(charcodeat_fn));
         }
+
+        // Add String global object
+        let string_obj = create_object();
+        {
+            let mut str = string_obj.borrow_mut();
+
+            let fromcharcode_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "fromCharCode".to_string(),
+                func: string_from_char_code,
+                arity: 1,
+            }));
+            str.set_property(PropertyKey::from("fromCharCode"), JsValue::Object(fromcharcode_fn));
+
+            str.set_property(PropertyKey::from("prototype"), JsValue::Object(string_prototype.clone()));
+        }
+        env.define("String".to_string(), JsValue::Object(string_obj), false);
 
         // Create Math object with methods and constants
         let math_object = create_object();
@@ -760,7 +820,7 @@ impl Interpreter {
         }
         env.define("Number".to_string(), JsValue::Object(number_obj), false);
 
-        Self { global, env, array_prototype, string_prototype, number_prototype: number_proto }
+        Self { global, env, object_prototype, array_prototype, string_prototype, number_prototype: number_proto }
     }
 
     /// Create an array with the proper prototype
@@ -1771,7 +1831,15 @@ impl Interpreter {
 
         match object {
             JsValue::Object(obj) => {
-                Ok(obj.borrow().get_property(&key).unwrap_or(JsValue::Undefined))
+                // First, try own properties and prototype chain
+                if let Some(val) = obj.borrow().get_property(&key) {
+                    return Ok(val);
+                }
+                // Fall back to Object.prototype for ordinary objects
+                if let Some(method) = self.object_prototype.borrow().get_property(&key) {
+                    return Ok(method);
+                }
+                Ok(JsValue::Undefined)
             }
             JsValue::String(s) => {
                 // String indexing
@@ -3483,6 +3551,83 @@ fn string_pad_end(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) 
     Ok(JsValue::String(JsString::from(format!("{}{}", s.as_str(), padding))))
 }
 
+fn string_concat(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let mut result = this.to_js_string().to_string();
+    for arg in args {
+        result.push_str(&arg.to_js_string().to_string());
+    }
+    Ok(JsValue::String(JsString::from(result)))
+}
+
+fn string_char_code_at(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let s = this.to_js_string();
+    let index = args.first().map(|v| v.to_number() as usize).unwrap_or(0);
+
+    if let Some(ch) = s.as_str().chars().nth(index) {
+        Ok(JsValue::Number(ch as u32 as f64))
+    } else {
+        Ok(JsValue::Number(f64::NAN))
+    }
+}
+
+fn string_from_char_code(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let chars: String = args
+        .iter()
+        .map(|v| {
+            let code = v.to_number() as u32;
+            char::from_u32(code).unwrap_or('\u{FFFD}')
+        })
+        .collect();
+    Ok(JsValue::String(JsString::from(chars)))
+}
+
+// Object.prototype methods
+
+fn object_has_own_property(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let JsValue::Object(obj) = this else {
+        return Ok(JsValue::Boolean(false));
+    };
+
+    let prop_name = args.first().map(|v| v.to_js_string().to_string()).unwrap_or_default();
+    let key = PropertyKey::from(prop_name.as_str());
+
+    let has_prop = obj.borrow().properties.contains_key(&key);
+    Ok(JsValue::Boolean(has_prop))
+}
+
+fn object_to_string(_interp: &mut Interpreter, this: JsValue, _args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    match this {
+        JsValue::Object(obj) => {
+            let obj_ref = obj.borrow();
+            match &obj_ref.exotic {
+                ExoticObject::Array { length } => {
+                    // Array.prototype.toString returns comma-separated values
+                    let parts: Vec<String> = (0..*length)
+                        .map(|i| {
+                            obj_ref
+                                .get_property(&PropertyKey::Index(i))
+                                .map(|v| v.to_js_string().to_string())
+                                .unwrap_or_default()
+                        })
+                        .collect();
+                    Ok(JsValue::String(JsString::from(parts.join(","))))
+                }
+                ExoticObject::Function(_) => {
+                    Ok(JsValue::String(JsString::from("[object Function]")))
+                }
+                ExoticObject::Ordinary => {
+                    Ok(JsValue::String(JsString::from("[object Object]")))
+                }
+            }
+        }
+        _ => Ok(JsValue::String(JsString::from("[object Object]"))),
+    }
+}
+
+fn object_value_of(_interp: &mut Interpreter, this: JsValue, _args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    Ok(this)
+}
+
 // Math methods
 
 fn math_abs(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
@@ -4605,5 +4750,34 @@ mod tests {
     fn test_array_flatmap() {
         assert_eq!(eval("[1, 2, 3].flatMap(x => [x, x * 2]).length"), JsValue::Number(6.0));
         assert_eq!(eval("[1, 2, 3].flatMap(x => [x, x * 2])[1]"), JsValue::Number(2.0));
+    }
+
+    #[test]
+    fn test_object_hasownproperty() {
+        assert_eq!(eval("({a: 1}).hasOwnProperty('a')"), JsValue::Boolean(true));
+        assert_eq!(eval("({a: 1}).hasOwnProperty('b')"), JsValue::Boolean(false));
+        assert_eq!(eval("let o = {x: 1}; o.hasOwnProperty('x')"), JsValue::Boolean(true));
+    }
+
+    #[test]
+    fn test_object_tostring() {
+        assert_eq!(eval("({}).toString()"), JsValue::String(JsString::from("[object Object]")));
+        assert_eq!(eval("[1,2,3].toString()"), JsValue::String(JsString::from("1,2,3")));
+    }
+
+    #[test]
+    fn test_string_concat() {
+        assert_eq!(eval("'hello'.concat(' ', 'world')"), JsValue::String(JsString::from("hello world")));
+    }
+
+    #[test]
+    fn test_string_charat_index() {
+        assert_eq!(eval("'hello'.charCodeAt(0)"), JsValue::Number(104.0));
+        assert_eq!(eval("'hello'.charCodeAt(1)"), JsValue::Number(101.0));
+    }
+
+    #[test]
+    fn test_string_fromcharcode() {
+        assert_eq!(eval("String.fromCharCode(104, 105)"), JsValue::String(JsString::from("hi")));
     }
 }
