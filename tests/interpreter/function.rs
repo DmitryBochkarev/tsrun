@@ -34,7 +34,7 @@ fn test_function_bind() {
 
 #[test]
 fn test_arrow_function() {
-    assert_eq!(eval("const add: Function = (a, b) => (a as number) + (b as number); add(2, 3)"), JsValue::Number(5.0));
+    assert_eq!(eval("const add: (a: number, b: number) => number = (a, b) => a + b; add(2, 3)"), JsValue::Number(5.0));
 }
 
 // Tests for the `arguments` object
@@ -116,7 +116,7 @@ fn test_destructuring_nested_param() {
 #[test]
 fn test_arrow_destructuring_param() {
     assert_eq!(
-        eval("const f: Function = ({ x }) => (x as number) * 2; f({ x: 5 })"),
+        eval("const f: (obj: { x: number }) => number = ({ x }) => x * 2; f({ x: 5 })"),
         JsValue::Number(10.0)
     );
 }
