@@ -418,10 +418,10 @@
 
 #### Console
 - [x] `console.log(...args)`
-- [ ] `console.error(...args)`
-- [ ] `console.warn(...args)`
-- [ ] `console.info(...args)`
-- [ ] `console.debug(...args)`
+- [x] `console.error(...args)`
+- [x] `console.warn(...args)`
+- [x] `console.info(...args)`
+- [x] `console.debug(...args)`
 - [ ] `console.table(data)`
 - [ ] `console.dir(obj)`
 - [ ] `console.time(label)`

@@ -51,15 +51,45 @@ impl Interpreter {
         env.define("NaN".to_string(), JsValue::Number(f64::NAN), false);
         env.define("Infinity".to_string(), JsValue::Number(f64::INFINITY), false);
 
-        // Add console.log as a basic output
+        // Add console object with methods
         let console = create_object();
         {
+            let mut con = console.borrow_mut();
+
             let log_fn = create_function(JsFunction::Native(NativeFunction {
                 name: "log".to_string(),
                 func: console_log,
                 arity: 0,
             }));
-            console.borrow_mut().set_property(PropertyKey::from("log"), JsValue::Object(log_fn));
+            con.set_property(PropertyKey::from("log"), JsValue::Object(log_fn));
+
+            let error_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "error".to_string(),
+                func: console_error,
+                arity: 0,
+            }));
+            con.set_property(PropertyKey::from("error"), JsValue::Object(error_fn));
+
+            let warn_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "warn".to_string(),
+                func: console_warn,
+                arity: 0,
+            }));
+            con.set_property(PropertyKey::from("warn"), JsValue::Object(warn_fn));
+
+            let info_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "info".to_string(),
+                func: console_info,
+                arity: 0,
+            }));
+            con.set_property(PropertyKey::from("info"), JsValue::Object(info_fn));
+
+            let debug_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "debug".to_string(),
+                func: console_debug,
+                arity: 0,
+            }));
+            con.set_property(PropertyKey::from("debug"), JsValue::Object(debug_fn));
         }
         env.define("console".to_string(), JsValue::Object(console), false);
 
@@ -2176,6 +2206,30 @@ impl Default for Interpreter {
 // Native function implementations
 
 fn console_log(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let output: Vec<String> = args.iter().map(|v| format!("{:?}", v)).collect();
+    println!("{}", output.join(" "));
+    Ok(JsValue::Undefined)
+}
+
+fn console_error(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let output: Vec<String> = args.iter().map(|v| format!("{:?}", v)).collect();
+    eprintln!("{}", output.join(" "));
+    Ok(JsValue::Undefined)
+}
+
+fn console_warn(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let output: Vec<String> = args.iter().map(|v| format!("{:?}", v)).collect();
+    eprintln!("{}", output.join(" "));
+    Ok(JsValue::Undefined)
+}
+
+fn console_info(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let output: Vec<String> = args.iter().map(|v| format!("{:?}", v)).collect();
+    println!("{}", output.join(" "));
+    Ok(JsValue::Undefined)
+}
+
+fn console_debug(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
     let output: Vec<String> = args.iter().map(|v| format!("{:?}", v)).collect();
     println!("{}", output.join(" "));
     Ok(JsValue::Undefined)
@@ -5234,5 +5288,15 @@ mod tests {
         assert_eq!(eval("'aaa'.replaceAll('a', 'bb')"), JsValue::String(JsString::from("bbbbbb")));
         assert_eq!(eval("'hello'.replaceAll('x', 'y')"), JsValue::String(JsString::from("hello")));
         assert_eq!(eval("''.replaceAll('a', 'b')"), JsValue::String(JsString::from("")));
+    }
+
+    #[test]
+    fn test_console_methods() {
+        // All console methods return undefined
+        assert_eq!(eval("console.log('test')"), JsValue::Undefined);
+        assert_eq!(eval("console.error('test')"), JsValue::Undefined);
+        assert_eq!(eval("console.warn('test')"), JsValue::Undefined);
+        assert_eq!(eval("console.info('test')"), JsValue::Undefined);
+        assert_eq!(eval("console.debug('test')"), JsValue::Undefined);
     }
 }
