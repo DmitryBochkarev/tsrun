@@ -32,6 +32,7 @@ pub enum TokenKind {
     // Literals
     Number(f64),
     String(String),
+    RegExp(String, String), // (pattern, flags)
     True,
     False,
     Null,
@@ -271,6 +272,30 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    /// Reset the lexer to a specific position (from a Span) to rescan as regexp.
+    /// Used when parser determines that a `/` should start a regexp literal.
+    pub fn rescan_as_regexp(&mut self, span: Span) -> Token {
+        // Reset lexer position to the start of the span
+        self.current_pos = span.start;
+        self.line = span.line;
+        self.column = span.column;
+        self.start_pos = span.start;
+        self.start_line = span.line;
+        self.start_column = span.column;
+
+        // Recreate the chars iterator and skip to the correct position
+        self.chars = self.source.char_indices().peekable();
+        while let Some((pos, _)) = self.chars.peek() {
+            if *pos >= span.start {
+                break;
+            }
+            self.chars.next();
+        }
+
+        // Now scan as regexp
+        self.scan_regexp()
+    }
+
     /// Get the next token from the source
     pub fn next_token(&mut self) -> Token {
         self.skip_whitespace_and_comments();
@@ -483,6 +508,66 @@ impl<'a> Lexer<'a> {
         } else {
             TokenKind::Slash
         }
+    }
+
+    /// Scan a regular expression literal.
+    /// Called by the parser when a regex is expected (e.g., after `=`, `(`, `,`, etc.)
+    /// The leading `/` should be the current position (not yet consumed).
+    pub fn scan_regexp(&mut self) -> Token {
+        let start_pos = self.current_pos;
+        let start_line = self.line;
+        let start_column = self.column;
+
+        // Consume the opening /
+        self.advance();
+
+        let mut pattern = String::new();
+        let mut in_class = false; // inside character class [...]
+
+        loop {
+            match self.advance() {
+                Some((_, '/')) if !in_class => {
+                    // End of pattern (only if not inside character class)
+                    break;
+                }
+                Some((_, '[')) => {
+                    in_class = true;
+                    pattern.push('[');
+                }
+                Some((_, ']')) => {
+                    in_class = false;
+                    pattern.push(']');
+                }
+                Some((_, '\\')) => {
+                    // Escape sequence - include both backslash and next char
+                    pattern.push('\\');
+                    if let Some((_, c)) = self.advance() {
+                        pattern.push(c);
+                    }
+                }
+                Some((_, c)) => {
+                    pattern.push(c);
+                }
+                None => {
+                    // Unterminated regex
+                    break;
+                }
+            }
+        }
+
+        // Scan flags (g, i, m, s, u, y, d)
+        let mut flags = String::new();
+        while let Some(ch) = self.peek() {
+            if ch.is_ascii_alphabetic() {
+                flags.push(ch);
+                self.advance();
+            } else {
+                break;
+            }
+        }
+
+        let span = Span::new(start_pos, self.current_pos, start_line, start_column);
+        Token::new(TokenKind::RegExp(pattern, flags), span)
     }
 
     fn scan_percent(&mut self) -> TokenKind {
@@ -1210,5 +1295,42 @@ mod tests {
     #[test]
     fn test_typeof_operator() {
         assert_eq!(lex("typeof"), vec![TokenKind::Typeof]);
+    }
+
+    #[test]
+    fn test_regexp_literal_scan() {
+        // Test the explicit regex scanning method
+        let mut lexer = Lexer::new("/abc/");
+        let token = lexer.scan_regexp();
+        assert_eq!(token.kind, TokenKind::RegExp("abc".to_string(), "".to_string()));
+    }
+
+    #[test]
+    fn test_regexp_literal_with_flags() {
+        let mut lexer = Lexer::new("/pattern/gi");
+        let token = lexer.scan_regexp();
+        assert_eq!(token.kind, TokenKind::RegExp("pattern".to_string(), "gi".to_string()));
+    }
+
+    #[test]
+    fn test_regexp_literal_with_escapes() {
+        let mut lexer = Lexer::new(r"/\d+\.\d+/");
+        let token = lexer.scan_regexp();
+        assert_eq!(token.kind, TokenKind::RegExp(r"\d+\.\d+".to_string(), "".to_string()));
+    }
+
+    #[test]
+    fn test_regexp_literal_with_class() {
+        let mut lexer = Lexer::new("/[a-z]/i");
+        let token = lexer.scan_regexp();
+        assert_eq!(token.kind, TokenKind::RegExp("[a-z]".to_string(), "i".to_string()));
+    }
+
+    #[test]
+    fn test_regexp_literal_with_slash_in_class() {
+        // Forward slash inside character class doesn't end the regex
+        let mut lexer = Lexer::new("/[/]/");
+        let token = lexer.scan_regexp();
+        assert_eq!(token.kind, TokenKind::RegExp("[/]".to_string(), "".to_string()));
     }
 }

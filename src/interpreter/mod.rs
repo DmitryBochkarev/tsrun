@@ -896,9 +896,38 @@ impl Interpreter {
             LiteralValue::Boolean(b) => JsValue::Boolean(*b),
             LiteralValue::Number(n) => JsValue::Number(*n),
             LiteralValue::String(s) => JsValue::String(JsString::from(s.clone())),
-            LiteralValue::RegExp { .. } => {
-                // Would need RegExp object
-                JsValue::Object(create_object())
+            LiteralValue::RegExp { pattern, flags } => {
+                // Create RegExp object with proper prototype and properties
+                let regexp_obj = create_object();
+                {
+                    let mut obj = regexp_obj.borrow_mut();
+                    obj.exotic = ExoticObject::RegExp {
+                        pattern: pattern.clone(),
+                        flags: flags.clone(),
+                    };
+                    obj.prototype = Some(self.regexp_prototype.clone());
+                    obj.set_property(
+                        PropertyKey::from("source"),
+                        JsValue::String(JsString::from(pattern.clone())),
+                    );
+                    obj.set_property(
+                        PropertyKey::from("flags"),
+                        JsValue::String(JsString::from(flags.clone())),
+                    );
+                    obj.set_property(
+                        PropertyKey::from("global"),
+                        JsValue::Boolean(flags.contains('g')),
+                    );
+                    obj.set_property(
+                        PropertyKey::from("ignoreCase"),
+                        JsValue::Boolean(flags.contains('i')),
+                    );
+                    obj.set_property(
+                        PropertyKey::from("multiline"),
+                        JsValue::Boolean(flags.contains('m')),
+                    );
+                }
+                JsValue::Object(regexp_obj)
             }
         })
     }

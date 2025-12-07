@@ -1550,6 +1550,22 @@ impl<'a> Parser<'a> {
                 self.parse_template_literal(s, start)
             }
 
+            // RegExp literal - when we see `/` where an expression is expected
+            TokenKind::Slash | TokenKind::SlashEq => {
+                // The lexer scanned this as Slash or SlashEq, but we need a regexp.
+                // Rescan from the current token's position as a regexp.
+                let token = self.lexer.rescan_as_regexp(self.current.span);
+                if let TokenKind::RegExp(pattern, flags) = token.kind {
+                    self.current = self.lexer.next_token();
+                    Ok(Expression::Literal(Literal {
+                        value: LiteralValue::RegExp { pattern, flags },
+                        span: self.span_from(start),
+                    }))
+                } else {
+                    Err(self.unexpected_token("regexp literal"))
+                }
+            }
+
             _ => Err(self.unexpected_token("expression")),
         }
     }
@@ -3065,6 +3081,36 @@ mod tests {
     #[test]
     fn test_method_shorthand() {
         let prog = parse("const obj = { greet(): string { return 'hello'; } };");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_regexp_literal_basic() {
+        let prog = parse("const re: RegExp = /abc/;");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_regexp_literal_with_flags() {
+        let prog = parse("const re: RegExp = /pattern/gi;");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_regexp_literal_in_call() {
+        let prog = parse("/test/.test('testing');");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_regexp_literal_as_argument() {
+        let prog = parse("str.match(/\\d+/g);");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_regexp_literal_in_array() {
+        let prog = parse("const patterns: RegExp[] = [/a/, /b/, /c/];");
         assert_eq!(prog.body.len(), 1);
     }
 }

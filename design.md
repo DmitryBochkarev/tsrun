@@ -400,7 +400,7 @@
 - [ ] `Date.prototype.toTimeString()`
 
 #### RegExp
-- [ ] RegExp literals (`/pattern/flags`)
+- [x] RegExp literals (`/pattern/flags`)
 - [x] `new RegExp(pattern, flags?)`
 - [x] `RegExp.prototype.test(string)`
 - [x] `RegExp.prototype.exec(string)`
