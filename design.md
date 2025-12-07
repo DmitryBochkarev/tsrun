@@ -105,7 +105,7 @@
 - [x] Array literals
 - [x] Array element access
 - [x] Spread in arrays (`[...arr]`)
-- [ ] Array holes (`[1, , 3]`)
+- [x] Array holes (`[1, , 3]`)
 - [x] `length` property
 
 #### Destructuring

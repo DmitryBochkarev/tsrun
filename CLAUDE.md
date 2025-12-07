@@ -23,6 +23,7 @@ cargo test -- --nocapture      # Show test output
 - Prefer small, focused edits over large rewrites
 - **Always add TypeScript type annotations in test code** - even though types are stripped at runtime, tests should use proper TypeScript syntax
 - **Use TDD**: If a test fails because a feature is not implemented, implement the feature first rather than deleting or modifying the test to work around the limitation
+- **Never change failing test cases** - if a test fails because a syntax/feature is not yet supported, write additional simpler tests to verify the current implementation scope, but keep the original test as a goal to implement the missing feature
 
 ## Development Workflow
 

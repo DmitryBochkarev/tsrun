@@ -2098,9 +2098,21 @@ impl<'a> Parser<'a> {
                 }
                 // Fall back to parenthesized type
                 self.advance();
-                let ty = self.parse_type_annotation()?;
+                let inner_ty = self.parse_type_annotation()?;
                 self.expect(&TokenKind::RParen)?;
-                Ok(TypeAnnotation::Parenthesized(Box::new(ty)))
+                let mut ty = TypeAnnotation::Parenthesized(Box::new(inner_ty));
+
+                // Array shorthand: (number | undefined)[]
+                while self.check(&TokenKind::LBracket) {
+                    self.advance();
+                    self.expect(&TokenKind::RBracket)?;
+                    ty = TypeAnnotation::Array(ArrayType {
+                        element_type: Box::new(ty),
+                        span: self.span_from(start),
+                    });
+                }
+
+                Ok(ty)
             }
 
             // Literal types
@@ -3111,6 +3123,44 @@ mod tests {
     #[test]
     fn test_regexp_literal_in_array() {
         let prog = parse("const patterns: RegExp[] = [/a/, /b/, /c/];");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    // Array holes tests - basic syntax (without complex type annotations)
+    #[test]
+    fn test_array_holes_basic_untyped() {
+        let prog = parse("const arr = [1, , 3];");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_array_holes_multiple_untyped() {
+        let prog = parse("const arr = [, , 3, , 5, ,];");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    // Array holes tests with type annotations
+    #[test]
+    fn test_array_holes_basic() {
+        let prog = parse("const arr: (number | undefined)[] = [1, , 3];");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_array_holes_multiple() {
+        let prog = parse("const arr: (number | undefined)[] = [, , 3, , 5, ,];");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_array_holes_at_start() {
+        let prog = parse("const arr: (number | undefined)[] = [, 1, 2];");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_array_holes_at_end() {
+        let prog = parse("const arr: (number | undefined)[] = [1, 2, ];");
         assert_eq!(prog.body.len(), 1);
     }
 }

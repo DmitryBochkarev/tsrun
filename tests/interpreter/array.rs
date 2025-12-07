@@ -749,3 +749,59 @@ fn test_array_entries() {
         JsValue::Number(3.0)
     );
 }
+
+// Array holes tests
+#[test]
+fn test_array_holes_basic() {
+    // Holes should be undefined when accessed
+    assert_eq!(
+        eval("const arr: (number | undefined)[] = [1, , 3]; arr[1]"),
+        JsValue::Undefined
+    );
+}
+
+#[test]
+fn test_array_holes_length() {
+    // Holes count toward length
+    assert_eq!(
+        eval("const arr: (number | undefined)[] = [1, , 3]; arr.length"),
+        JsValue::Number(3.0)
+    );
+}
+
+#[test]
+fn test_array_holes_at_start() {
+    assert_eq!(
+        eval("const arr: (number | undefined)[] = [, 1, 2]; arr[0]"),
+        JsValue::Undefined
+    );
+    assert_eq!(
+        eval("const arr: (number | undefined)[] = [, 1, 2]; arr[1]"),
+        JsValue::Number(1.0)
+    );
+}
+
+#[test]
+fn test_array_holes_multiple() {
+    assert_eq!(
+        eval("const arr: (number | undefined)[] = [, , 3, , 5]; arr.length"),
+        JsValue::Number(5.0)
+    );
+    assert_eq!(
+        eval("const arr: (number | undefined)[] = [, , 3, , 5]; arr[2]"),
+        JsValue::Number(3.0)
+    );
+    assert_eq!(
+        eval("const arr: (number | undefined)[] = [, , 3, , 5]; arr[3]"),
+        JsValue::Undefined
+    );
+}
+
+#[test]
+fn test_array_holes_trailing_comma() {
+    // Trailing comma doesn't create a hole
+    assert_eq!(
+        eval("const arr: number[] = [1, 2, ]; arr.length"),
+        JsValue::Number(2.0)
+    );
+}
