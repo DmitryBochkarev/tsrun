@@ -433,6 +433,14 @@ impl Interpreter {
             }));
             proto.set_property(PropertyKey::from("lastIndexOf"), JsValue::Object(lastindexof_fn));
 
+            // String.prototype.at
+            let at_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "at".to_string(),
+                func: string_at,
+                arity: 1,
+            }));
+            proto.set_property(PropertyKey::from("at"), JsValue::Object(at_fn));
+
             // String.prototype.includes
             let includes_fn = create_function(JsFunction::Native(NativeFunction {
                 name: "includes".to_string(),
@@ -3406,6 +3414,29 @@ fn string_last_index_of(_interp: &mut Interpreter, this: JsValue, args: Vec<JsVa
     }
 }
 
+fn string_at(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let s = this.to_js_string();
+    let len = s.len() as isize;
+    let index = args.first().map(|v| v.to_number() as isize).unwrap_or(0);
+
+    // Handle negative indices
+    let actual_index = if index < 0 {
+        len + index
+    } else {
+        index
+    };
+
+    if actual_index < 0 || actual_index >= len {
+        return Ok(JsValue::Undefined);
+    }
+
+    let char_at = s.as_str().chars().nth(actual_index as usize);
+    match char_at {
+        Some(c) => Ok(JsValue::String(JsString::from(c.to_string()))),
+        None => Ok(JsValue::Undefined),
+    }
+}
+
 fn string_includes(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
     let s = this.to_js_string();
     let search = args.first().map(|v| v.to_js_string().to_string()).unwrap_or_default();
@@ -4826,5 +4857,15 @@ mod tests {
         assert_eq!(eval("'hello world'.lastIndexOf('x')"), JsValue::Number(-1.0));
         assert_eq!(eval("'hello world'.lastIndexOf('o', 5)"), JsValue::Number(4.0));
         assert_eq!(eval("'hello'.lastIndexOf('')"), JsValue::Number(5.0));
+    }
+
+    #[test]
+    fn test_string_at() {
+        assert_eq!(eval("'hello'.at(0)"), JsValue::String(JsString::from("h")));
+        assert_eq!(eval("'hello'.at(1)"), JsValue::String(JsString::from("e")));
+        assert_eq!(eval("'hello'.at(-1)"), JsValue::String(JsString::from("o")));
+        assert_eq!(eval("'hello'.at(-2)"), JsValue::String(JsString::from("l")));
+        assert_eq!(eval("'hello'.at(10)"), JsValue::Undefined);
+        assert_eq!(eval("'hello'.at(-10)"), JsValue::Undefined);
     }
 }

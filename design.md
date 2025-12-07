@@ -293,7 +293,7 @@
 - [ ] `String.prototype.match(regexp)`
 - [ ] `String.prototype.matchAll(regexp)`
 - [ ] `String.prototype.search(regexp)`
-- [ ] `String.prototype.at(index)`
+- [x] `String.prototype.at(index)`
 - [ ] `String.prototype.normalize(form?)`
 - [ ] `String.prototype.localeCompare(other)`
 
