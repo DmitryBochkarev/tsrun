@@ -1128,6 +1128,42 @@ impl Interpreter {
         }
         env.define("Number".to_string(), JsValue::Object(number_obj), false);
 
+        // Add Error constructors
+        let error_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "Error".to_string(),
+            func: error_constructor,
+            arity: 1,
+        }));
+        env.define("Error".to_string(), JsValue::Object(error_fn), false);
+
+        let type_error_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "TypeError".to_string(),
+            func: type_error_constructor,
+            arity: 1,
+        }));
+        env.define("TypeError".to_string(), JsValue::Object(type_error_fn), false);
+
+        let reference_error_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "ReferenceError".to_string(),
+            func: reference_error_constructor,
+            arity: 1,
+        }));
+        env.define("ReferenceError".to_string(), JsValue::Object(reference_error_fn), false);
+
+        let syntax_error_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "SyntaxError".to_string(),
+            func: syntax_error_constructor,
+            arity: 1,
+        }));
+        env.define("SyntaxError".to_string(), JsValue::Object(syntax_error_fn), false);
+
+        let range_error_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "RangeError".to_string(),
+            func: range_error_constructor,
+            arity: 1,
+        }));
+        env.define("RangeError".to_string(), JsValue::Object(range_error_fn), false);
+
         // Create Function.prototype with call, apply, bind
         let function_prototype = create_object();
         {
@@ -2639,6 +2675,43 @@ fn object_is_sealed(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue
     };
 
     Ok(JsValue::Boolean(is_sealed))
+}
+
+fn create_error_object(name: &str, message: JsValue) -> JsValue {
+    let msg_str = match message {
+        JsValue::Undefined => JsString::from(""),
+        other => other.to_js_string(),
+    };
+
+    let obj = create_object();
+    obj.borrow_mut().set_property(PropertyKey::from("name"), JsValue::String(JsString::from(name)));
+    obj.borrow_mut().set_property(PropertyKey::from("message"), JsValue::String(msg_str));
+    JsValue::Object(obj)
+}
+
+fn error_constructor(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let message = args.first().cloned().unwrap_or(JsValue::Undefined);
+    Ok(create_error_object("Error", message))
+}
+
+fn type_error_constructor(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let message = args.first().cloned().unwrap_or(JsValue::Undefined);
+    Ok(create_error_object("TypeError", message))
+}
+
+fn reference_error_constructor(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let message = args.first().cloned().unwrap_or(JsValue::Undefined);
+    Ok(create_error_object("ReferenceError", message))
+}
+
+fn syntax_error_constructor(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let message = args.first().cloned().unwrap_or(JsValue::Undefined);
+    Ok(create_error_object("SyntaxError", message))
+}
+
+fn range_error_constructor(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let message = args.first().cloned().unwrap_or(JsValue::Undefined);
+    Ok(create_error_object("RangeError", message))
 }
 
 fn array_constructor_fn(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
@@ -5981,6 +6054,14 @@ mod tests {
     fn test_object_tostring() {
         assert_eq!(eval("({}).toString()"), JsValue::String(JsString::from("[object Object]")));
         assert_eq!(eval("[1,2,3].toString()"), JsValue::String(JsString::from("1,2,3")));
+    }
+
+    #[test]
+    fn test_error_constructor() {
+        assert_eq!(eval("new Error('oops').message"), JsValue::from("oops"));
+        assert_eq!(eval("new Error('oops').name"), JsValue::from("Error"));
+        assert_eq!(eval("new TypeError('bad type').name"), JsValue::from("TypeError"));
+        assert_eq!(eval("new RangeError('out of range').name"), JsValue::from("RangeError"));
     }
 
     #[test]

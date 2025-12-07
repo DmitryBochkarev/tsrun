@@ -348,6 +348,15 @@
 - [x] `JSON.parse(text, reviver?)`
 - [x] `JSON.stringify(value, replacer?, space?)`
 
+#### Error
+- [x] `new Error(message?)`
+- [x] `new TypeError(message?)`
+- [x] `new ReferenceError(message?)`
+- [x] `new SyntaxError(message?)`
+- [x] `new RangeError(message?)`
+- [ ] `Error.prototype.stack`
+- [ ] `Error.prototype.toString()`
+
 #### Map
 - [ ] `new Map(iterable?)`
 - [ ] `Map.prototype.get(key)`
