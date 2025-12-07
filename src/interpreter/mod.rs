@@ -429,8 +429,29 @@ impl Interpreter {
     }
 
     fn create_class_constructor(&mut self, class: &ClassDeclaration) -> Result<JsObjectRef, JsError> {
+        // Handle extends - evaluate superclass first
+        let super_constructor: Option<JsObjectRef> = if let Some(super_class_expr) = &class.super_class {
+            let super_val = self.evaluate(super_class_expr)?;
+            if let JsValue::Object(sc) = super_val {
+                Some(sc)
+            } else {
+                return Err(JsError::type_error("Class extends value is not a constructor"));
+            }
+        } else {
+            None
+        };
+
         // Create prototype object
         let prototype = create_object();
+
+        // If we have a superclass, set up prototype chain
+        if let Some(ref super_ctor) = super_constructor {
+            let super_proto = super_ctor.borrow()
+                .get_property(&PropertyKey::from("prototype"));
+            if let Some(JsValue::Object(sp)) = super_proto {
+                prototype.borrow_mut().prototype = Some(sp);
+            }
+        }
 
         // Find constructor and collect methods/properties
         let mut constructor: Option<&ClassConstructor> = None;
@@ -487,6 +508,14 @@ impl Interpreter {
             };
 
             let func_obj = create_function(JsFunction::Interpreted(interpreted));
+
+            // If we have a superclass, store __super__ on the method so super.method() works
+            if let Some(ref super_ctor) = super_constructor {
+                func_obj.borrow_mut().set_property(
+                    PropertyKey::from("__super__"),
+                    JsValue::Object(super_ctor.clone()),
+                );
+            }
 
             // For now, treat all methods as regular methods
             // TODO: implement proper getter/setter support
@@ -575,6 +604,14 @@ impl Interpreter {
             constructor_fn.borrow_mut().set_property(
                 PropertyKey::from("__fields__"),
                 JsValue::Object(fields_array),
+            );
+        }
+
+        // Store super constructor if we have one
+        if let Some(ref super_ctor) = super_constructor {
+            constructor_fn.borrow_mut().set_property(
+                PropertyKey::from("__super__"),
+                JsValue::Object(super_ctor.clone()),
             );
         }
 
@@ -1125,8 +1162,18 @@ impl Interpreter {
                 Err(JsError::type_error("Async/generators not supported"))
             }
 
-            Expression::Super(_) | Expression::Class(_) => {
-                Err(JsError::type_error("Not implemented"))
+            Expression::Super(_) => {
+                // Return __super__ from environment so it can be called or have properties accessed
+                // super() calls the parent constructor with current this
+                // super.method() accesses parent prototype method
+                match self.env.get("__super__") {
+                    Some(val) => Ok(val),
+                    None => Err(JsError::reference_error("'super' keyword is not available in this context")),
+                }
+            }
+
+            Expression::Class(_) => {
+                Err(JsError::type_error("Class expressions not implemented"))
             }
 
             Expression::OptionalChain(chain) => {
@@ -1504,13 +1551,57 @@ impl Interpreter {
     }
 
     fn evaluate_call(&mut self, call: &CallExpression) -> Result<JsValue, JsError> {
-        let callee = self.evaluate(&call.callee)?;
-
         // Determine 'this' binding
-        let this_value = if let Expression::Member(member) = call.callee.as_ref() {
-            self.evaluate(&member.object)?
+        // For super() calls, use the current this value
+        // For super.method() calls, also use the current this value
+        let this_value = if let Expression::Super(_) = call.callee.as_ref() {
+            // super() - call parent constructor with current this
+            self.env.get("this").unwrap_or(JsValue::Undefined)
+        } else if let Expression::Member(member) = call.callee.as_ref() {
+            if let Expression::Super(_) = member.object.as_ref() {
+                // super.method() - call with current this
+                self.env.get("this").unwrap_or(JsValue::Undefined)
+            } else {
+                self.evaluate(&member.object)?
+            }
         } else {
             JsValue::Undefined
+        };
+
+        // For super.method(), we need to look up the method on the super prototype
+        let callee = if let Expression::Member(member) = call.callee.as_ref() {
+            if let Expression::Super(_) = member.object.as_ref() {
+                // Get super constructor
+                let super_ctor = self.env.get("__super__").ok_or_else(|| {
+                    JsError::reference_error("'super' keyword is not available in this context")
+                })?;
+                // Get super prototype
+                if let JsValue::Object(ctor) = super_ctor {
+                    let proto = ctor.borrow().get_property(&PropertyKey::from("prototype"));
+                    if let Some(JsValue::Object(proto_obj)) = proto {
+                        // Get the method from prototype
+                        let key = match &member.property {
+                            MemberProperty::Identifier(id) => PropertyKey::from(id.name.as_str()),
+                            MemberProperty::Expression(expr) => {
+                                let val = self.evaluate(expr)?;
+                                PropertyKey::from_value(&val)
+                            }
+                            MemberProperty::PrivateIdentifier(id) => {
+                                PropertyKey::from(format!("#{}", id.name))
+                            }
+                        };
+                        proto_obj.borrow().get_property(&key).unwrap_or(JsValue::Undefined)
+                    } else {
+                        return Err(JsError::type_error("Super has no prototype"));
+                    }
+                } else {
+                    return Err(JsError::type_error("Super is not an object"));
+                }
+            } else {
+                self.evaluate(&call.callee)?
+            }
+        } else {
+            self.evaluate(&call.callee)?
         };
 
         // Evaluate arguments
@@ -1639,6 +1730,12 @@ impl Interpreter {
                 // Create and bind 'arguments' object (array-like object with all args)
                 let arguments_obj = self.create_array(args.clone());
                 self.env.define("arguments".to_string(), JsValue::Object(arguments_obj), false);
+
+                // Check if function has __super__ (for class constructors/methods)
+                let super_ctor = obj.borrow().get_property(&PropertyKey::from("__super__"));
+                if let Some(super_val) = super_ctor {
+                    self.env.define("__super__".to_string(), super_val, false);
+                }
 
                 // Bind parameters
                 for (i, param) in interpreted.params.iter().enumerate() {

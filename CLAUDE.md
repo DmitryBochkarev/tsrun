@@ -38,13 +38,28 @@ Use TDD (Test-Driven Development) for new features:
 
 When implementing a new language feature (e.g., private fields, class methods, etc.):
 
-1. **Write a parser test first** in `src/parser.rs` tests section:
+1. **Write parser tests** in `src/parser.rs` tests section - include both JavaScript (no types) and TypeScript (with types) variants:
 ```rust
 #[test]
+fn test_parse_class_method() {
+    // JavaScript style (no types)
+    let source = "class Foo { bar() { return 1; } }";
+    parse(source).expect("should parse JS class");
+
+    // TypeScript style (with types)
+    let source_ts = "class Foo { bar(): number { return 1; } }";
+    parse(source_ts).expect("should parse TS class");
+}
+
+#[test]
 fn test_parse_private_field() {
+    // JavaScript style
     let source = "class Foo { #bar = 1; }";
-    let program = parse(source).expect("should parse");
-    // Assert on the AST structure
+    parse(source).expect("should parse JS private field");
+
+    // TypeScript style
+    let source_ts = "class Foo { #bar: number = 1; }";
+    parse(source_ts).expect("should parse TS private field");
 }
 ```
 
@@ -54,6 +69,8 @@ cargo test test_parse_private_field -- --nocapture
 ```
 
 3. **Only then** proceed to interpreter implementation and tests.
+
+**Note:** Always test BOTH JavaScript and TypeScript syntax variants. Types should be parsed but stripped at runtime.
 
 ### Implementing Built-in Methods
 

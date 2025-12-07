@@ -29,9 +29,109 @@ fn test_class_basic() {
     );
 }
 
+// Test static methods
+#[test]
+fn test_class_static_method() {
+    assert_eq!(
+        eval(r#"
+            class MathHelper {
+                static double(x: number): number {
+                    return x * 2;
+                }
+            }
+            MathHelper.double(5)
+        "#),
+        JsValue::Number(10.0)
+    );
+}
+
+// Test static fields
+#[test]
+fn test_class_static_field() {
+    assert_eq!(
+        eval(r#"
+            class Config {
+                static version: string = "1.0";
+            }
+            Config.version
+        "#),
+        JsValue::from("1.0")
+    );
+}
+
+// Test class inheritance
+#[test]
+fn test_class_extends() {
+    assert_eq!(
+        eval(r#"
+            class Animal {
+                name: string = "unknown";
+                speak(): string {
+                    return "...";
+                }
+            }
+            class Dog extends Animal {
+                speak(): string {
+                    return "woof";
+                }
+            }
+            const d: Dog = new Dog();
+            d.speak()
+        "#),
+        JsValue::from("woof")
+    );
+}
+
+// Test super() call in constructor
+#[test]
+fn test_class_super_call() {
+    assert_eq!(
+        eval(r#"
+            class Animal {
+                name: string;
+                constructor(name: string) {
+                    this.name = name;
+                }
+            }
+            class Dog extends Animal {
+                breed: string;
+                constructor(name: string, breed: string) {
+                    super(name);
+                    this.breed = breed;
+                }
+            }
+            const d: Dog = new Dog("Rex", "German Shepherd");
+            d.name + " is a " + d.breed
+        "#),
+        JsValue::from("Rex is a German Shepherd")
+    );
+}
+
+// Test super.method() call
+#[test]
+fn test_class_super_method() {
+    assert_eq!(
+        eval(r#"
+            class Animal {
+                speak(): string {
+                    return "generic sound";
+                }
+            }
+            class Dog extends Animal {
+                speak(): string {
+                    return super.speak() + " and woof";
+                }
+            }
+            const d: Dog = new Dog();
+            d.speak()
+        "#),
+        JsValue::from("generic sound and woof")
+    );
+}
+
 // Private field tests
 #[test]
-#[ignore] // TODO: Class declarations not implemented - execute_class_declaration is a stub
+#[ignore] // TODO: Private fields not implemented
 fn test_private_field_basic() {
     assert_eq!(
         eval(r#"

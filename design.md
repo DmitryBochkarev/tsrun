@@ -125,9 +125,9 @@
 - [x] Static methods
 - [x] Instance fields
 - [x] Static fields
-- [ ] `extends` (inheritance)
-- [ ] `super` calls
-- [ ] `super` property access
+- [x] `extends` (inheritance)
+- [x] `super` calls
+- [x] `super` property access
 - [ ] Private fields (`#field`) (parsing done)
 - [ ] Private methods (`#method()`)
 - [ ] Static initialization blocks
