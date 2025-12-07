@@ -275,7 +275,7 @@
 - [x] `String.prototype.startsWith(search, position?)`
 - [x] `String.prototype.endsWith(search, length?)`
 - [x] `String.prototype.indexOf(search, position?)`
-- [ ] `String.prototype.lastIndexOf(search, position?)`
+- [x] `String.prototype.lastIndexOf(search, position?)`
 - [x] `String.prototype.slice(start?, end?)`
 - [x] `String.prototype.substring(start, end?)`
 - [ ] `String.prototype.substr(start, length?)` (deprecated)

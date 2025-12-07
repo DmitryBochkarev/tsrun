@@ -425,6 +425,14 @@ impl Interpreter {
             }));
             proto.set_property(PropertyKey::from("indexOf"), JsValue::Object(indexof_fn));
 
+            // String.prototype.lastIndexOf
+            let lastindexof_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "lastIndexOf".to_string(),
+                func: string_last_index_of,
+                arity: 1,
+            }));
+            proto.set_property(PropertyKey::from("lastIndexOf"), JsValue::Object(lastindexof_fn));
+
             // String.prototype.includes
             let includes_fn = create_function(JsFunction::Native(NativeFunction {
                 name: "includes".to_string(),
@@ -3368,6 +3376,36 @@ fn string_index_of(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>)
     }
 }
 
+fn string_last_index_of(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let s = this.to_js_string();
+    let search = args.first().map(|v| v.to_js_string().to_string()).unwrap_or_default();
+    let len = s.len();
+
+    // Default from_index is length of string
+    let from_index = if args.len() > 1 {
+        let n = args[1].to_number();
+        if n.is_nan() {
+            len
+        } else {
+            (n as isize).max(0) as usize
+        }
+    } else {
+        len
+    };
+
+    // Empty search string returns from_index clamped to length
+    if search.is_empty() {
+        return Ok(JsValue::Number(from_index.min(len) as f64));
+    }
+
+    // Search backwards from from_index
+    let search_end = (from_index + search.len()).min(len);
+    match s.as_str()[..search_end].rfind(&search) {
+        Some(pos) => Ok(JsValue::Number(pos as f64)),
+        None => Ok(JsValue::Number(-1.0)),
+    }
+}
+
 fn string_includes(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
     let s = this.to_js_string();
     let search = args.first().map(|v| v.to_js_string().to_string()).unwrap_or_default();
@@ -4779,5 +4817,14 @@ mod tests {
     #[test]
     fn test_string_fromcharcode() {
         assert_eq!(eval("String.fromCharCode(104, 105)"), JsValue::String(JsString::from("hi")));
+    }
+
+    #[test]
+    fn test_string_lastindexof() {
+        assert_eq!(eval("'hello world'.lastIndexOf('o')"), JsValue::Number(7.0));
+        assert_eq!(eval("'hello world'.lastIndexOf('l')"), JsValue::Number(9.0));
+        assert_eq!(eval("'hello world'.lastIndexOf('x')"), JsValue::Number(-1.0));
+        assert_eq!(eval("'hello world'.lastIndexOf('o', 5)"), JsValue::Number(4.0));
+        assert_eq!(eval("'hello'.lastIndexOf('')"), JsValue::Number(5.0));
     }
 }
