@@ -401,6 +401,7 @@ pub enum Expression {
     ArrowFunction(ArrowFunctionExpression),
     Class(ClassExpression),
     Template(TemplateLiteral),
+    TaggedTemplate(TaggedTemplateExpression),
 
     // Identifiers
     Identifier(Identifier),
@@ -445,6 +446,7 @@ impl Expression {
             Expression::ArrowFunction(a) => a.span,
             Expression::Class(c) => c.span,
             Expression::Template(t) => t.span,
+            Expression::TaggedTemplate(t) => t.span,
             Expression::Identifier(i) => i.span,
             Expression::This(s) | Expression::Super(s) => *s,
             Expression::Unary(u) => u.span,
@@ -597,6 +599,13 @@ pub struct TemplateLiteral {
 pub struct TemplateElement {
     pub value: String,
     pub tail: bool,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct TaggedTemplateExpression {
+    pub tag: Box<Expression>,
+    pub quasi: TemplateLiteral,
     pub span: Span,
 }
 

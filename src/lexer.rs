@@ -852,6 +852,20 @@ impl<'a> Lexer<'a> {
         TokenKind::TemplateTail(value)
     }
 
+    /// Rescan template continuation from a given span position (the } token)
+    /// This resets the lexer position to after the } and scans the template continuation
+    pub fn rescan_template_continuation(&mut self, rbrace_span: Span) -> TokenKind {
+        // Reset position to after the } (rbrace_span.end is already past the })
+        self.current_pos = rbrace_span.end;
+        self.line = rbrace_span.line;
+        self.column = rbrace_span.column + 1;
+        // Reinitialize the chars iterator from the new position
+        self.chars = self.source[self.current_pos..].char_indices().peekable();
+
+        // Now scan the template continuation
+        self.scan_template_continuation()
+    }
+
     fn scan_number(&mut self, first: char) -> TokenKind {
         let mut num_str = String::new();
 

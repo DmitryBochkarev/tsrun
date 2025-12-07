@@ -866,6 +866,43 @@ impl Interpreter {
                 Ok(JsValue::String(JsString::from(result)))
             }
 
+            Expression::TaggedTemplate(tagged) => {
+                // Evaluate the tag function
+                let tag_fn = self.evaluate(&tagged.tag)?;
+
+                // Build the strings array (first argument)
+                let strings: Vec<JsValue> = tagged
+                    .quasi
+                    .quasis
+                    .iter()
+                    .map(|q| JsValue::String(JsString::from(q.value.clone())))
+                    .collect();
+                let strings_array = JsValue::Object(self.create_array(strings));
+
+                // Add 'raw' property to strings array (same as cooked for now)
+                // TODO: properly handle raw strings with escape sequences
+                if let JsValue::Object(ref arr) = strings_array {
+                    let raw: Vec<JsValue> = tagged
+                        .quasi
+                        .quasis
+                        .iter()
+                        .map(|q| JsValue::String(JsString::from(q.value.clone())))
+                        .collect();
+                    let raw_array = JsValue::Object(self.create_array(raw));
+                    arr.borrow_mut()
+                        .set_property(PropertyKey::from("raw"), raw_array);
+                }
+
+                // Evaluate all interpolated expressions (remaining arguments)
+                let mut args = vec![strings_array];
+                for expr in &tagged.quasi.expressions {
+                    args.push(self.evaluate(expr)?);
+                }
+
+                // Call the tag function
+                self.call_function(tag_fn, JsValue::Undefined, args)
+            }
+
             Expression::Parenthesized(inner, _) => self.evaluate(inner),
 
             // TypeScript expressions - evaluate the inner expression

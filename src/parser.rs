@@ -1381,6 +1381,37 @@ impl<'a> Parser<'a> {
                     computed: true,
                     span,
                 });
+            } else if let TokenKind::TemplateHead(s) = self.current.kind.clone() {
+                // Tagged template literal with substitutions: tag`...${...}...`
+                let template_start = self.current.span;
+                self.advance(); // consume TemplateHead
+                let template = self.parse_template_literal(s, template_start)?;
+                if let Expression::Template(quasi) = template {
+                    let span = self.span_from(start);
+                    expr = Expression::TaggedTemplate(TaggedTemplateExpression {
+                        tag: Box::new(expr),
+                        quasi,
+                        span,
+                    });
+                }
+            } else if let TokenKind::TemplateNoSub(s) = self.current.kind.clone() {
+                // Tagged template literal without substitutions: tag`...`
+                let template_start = self.current.span;
+                self.advance(); // consume TemplateNoSub
+                let span = self.span_from(start);
+                expr = Expression::TaggedTemplate(TaggedTemplateExpression {
+                    tag: Box::new(expr),
+                    quasi: TemplateLiteral {
+                        quasis: vec![TemplateElement {
+                            value: s,
+                            tail: true,
+                            span: template_start,
+                        }],
+                        expressions: vec![],
+                        span: template_start,
+                    },
+                    span,
+                });
             } else if self.match_token(&TokenKind::QuestionDot) {
                 // Optional chaining
                 if self.check(&TokenKind::LParen) {
@@ -1887,10 +1918,18 @@ impl<'a> Parser<'a> {
         loop {
             // Parse expression
             expressions.push(self.parse_expression()?);
-            self.expect(&TokenKind::RBrace)?;
+            // Check for closing brace but don't advance - let scan_template_continuation handle it
+            if !self.check(&TokenKind::RBrace) {
+                return Err(JsError::syntax_error(
+                    format!("Expected '}}' in template literal, found {:?}", self.current.kind),
+                    self.current.span.line,
+                    self.current.span.column,
+                ));
+            }
 
-            // Continue template
-            let cont = self.lexer.scan_template_continuation();
+            // Continue template - rescan from the RBrace position
+            // This resets the lexer position and scans the template continuation including }
+            let cont = self.lexer.rescan_template_continuation(self.current.span);
             match cont {
                 TokenKind::TemplateTail(s) => {
                     quasis.push(TemplateElement {
@@ -1906,10 +1945,16 @@ impl<'a> Parser<'a> {
                         tail: false,
                         span: self.current.span,
                     });
+                    // After TemplateMiddle, we need to parse another expression
+                    // The lexer is now positioned after ${, so get the next token
+                    self.current = self.lexer.next_token();
                 }
                 _ => break,
             }
         }
+
+        // After template literal parsing, advance to get the next token
+        self.current = self.lexer.next_token();
 
         let span = self.span_from(start);
         Ok(Expression::Template(TemplateLiteral { quasis, expressions, span }))
@@ -3188,6 +3233,25 @@ mod tests {
     #[test]
     fn test_bigint_in_array() {
         let prog = parse("const nums: bigint[] = [1n, 2n, 3n];");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    // Tagged template literal tests
+    #[test]
+    fn test_tagged_template_literal() {
+        let prog = parse("html`<div>${content}</div>`;");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_tagged_template_no_substitution() {
+        let prog = parse("String.raw`Hello\\nWorld`;");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_tagged_template_member_expression() {
+        let prog = parse("obj.method`template`;");
         assert_eq!(prog.body.len(), 1);
     }
 }
