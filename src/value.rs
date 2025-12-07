@@ -357,6 +357,22 @@ impl JsObject {
         None
     }
 
+    /// Get a property descriptor, searching the prototype chain
+    /// Returns (property, found_in_prototype)
+    pub fn get_property_descriptor(&self, key: &PropertyKey) -> Option<(Property, bool)> {
+        if let Some(prop) = self.properties.get(key) {
+            return Some((prop.clone(), false));
+        }
+
+        if let Some(ref proto) = self.prototype {
+            if let Some((prop, _)) = proto.borrow().get_property_descriptor(key) {
+                return Some((prop, true));
+            }
+        }
+
+        None
+    }
+
     /// Set a property
     pub fn set_property(&mut self, key: PropertyKey, value: JsValue) {
         // Frozen objects cannot be modified at all
@@ -370,15 +386,7 @@ impl JsObject {
             }
         } else if self.extensible && !self.sealed {
             // Sealed objects cannot have new properties added
-            self.properties.insert(
-                key,
-                Property {
-                    value,
-                    writable: true,
-                    enumerable: true,
-                    configurable: true,
-                },
-            );
+            self.properties.insert(key, Property::data(value));
         }
     }
 
@@ -476,6 +484,10 @@ pub struct Property {
     pub writable: bool,
     pub enumerable: bool,
     pub configurable: bool,
+    /// Getter function (for accessor properties)
+    pub getter: Option<JsObjectRef>,
+    /// Setter function (for accessor properties)
+    pub setter: Option<JsObjectRef>,
 }
 
 impl Property {
@@ -485,6 +497,8 @@ impl Property {
             writable: true,
             enumerable: true,
             configurable: true,
+            getter: None,
+            setter: None,
         }
     }
 
@@ -494,6 +508,37 @@ impl Property {
             writable: false,
             enumerable: true,
             configurable: true,
+            getter: None,
+            setter: None,
+        }
+    }
+
+    /// Create an accessor property with getter and/or setter
+    pub fn accessor(getter: Option<JsObjectRef>, setter: Option<JsObjectRef>) -> Self {
+        Self {
+            value: JsValue::Undefined,
+            writable: false,
+            enumerable: true,
+            configurable: true,
+            getter,
+            setter,
+        }
+    }
+
+    /// Check if this is an accessor property (has getter or setter)
+    pub fn is_accessor(&self) -> bool {
+        self.getter.is_some() || self.setter.is_some()
+    }
+
+    /// Create a property with custom attributes
+    pub fn with_attributes(value: JsValue, writable: bool, enumerable: bool, configurable: bool) -> Self {
+        Self {
+            value,
+            writable,
+            enumerable,
+            configurable,
+            getter: None,
+            setter: None,
         }
     }
 }
@@ -719,12 +764,7 @@ pub fn create_array(elements: Vec<JsValue>) -> JsObjectRef {
 
     obj.properties.insert(
         PropertyKey::from("length"),
-        Property {
-            value: JsValue::Number(len as f64),
-            writable: true,
-            enumerable: false,
-            configurable: false,
-        },
+        Property::with_attributes(JsValue::Number(len as f64), true, false, false),
     );
 
     Rc::new(RefCell::new(obj))
@@ -745,12 +785,7 @@ pub fn create_function(func: JsFunction) -> JsObjectRef {
     // Add length and name properties
     obj.properties.insert(
         PropertyKey::from("length"),
-        Property {
-            value: JsValue::Number(0.0),
-            writable: false,
-            enumerable: false,
-            configurable: true,
-        },
+        Property::with_attributes(JsValue::Number(0.0), false, false, true),
     );
 
     Rc::new(RefCell::new(obj))

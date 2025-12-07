@@ -11,14 +11,14 @@ use crate::ast::{
     BinaryOp, BlockStatement, CallExpression, ClassConstructor, ClassDeclaration, ClassMember,
     ClassMethod, ClassProperty, ConditionalExpression, EnumDeclaration, Expression, ForInOfLeft,
     ForInStatement, ForInit, ForOfStatement, ForStatement, FunctionDeclaration, LiteralValue,
-    LogicalExpression, LogicalOp, MemberExpression, MemberProperty, NewExpression,
+    LogicalExpression, LogicalOp, MemberExpression, MemberProperty, MethodKind, NewExpression,
     ObjectPatternProperty, ObjectProperty, ObjectPropertyKey, Pattern, Program, Statement,
     UnaryExpression, UnaryOp, UpdateExpression, UpdateOp, VariableDeclaration, VariableKind,
 };
 use crate::error::JsError;
 use crate::value::{
     create_array, create_function, create_object, Environment, ExoticObject, FunctionBody,
-    InterpretedFunction, JsFunction, JsObjectRef, JsString, JsValue, PropertyKey,
+    InterpretedFunction, JsFunction, JsObjectRef, JsString, JsValue, Property, PropertyKey,
 };
 
 /// Completion record for control flow
@@ -485,7 +485,11 @@ impl Interpreter {
             }
         }
 
-        // Add instance methods to prototype
+        // Collect getters, setters, and regular methods separately
+        // We need to combine getters and setters with the same name into one accessor property
+        let mut accessors: std::collections::HashMap<String, (Option<JsObjectRef>, Option<JsObjectRef>)> = std::collections::HashMap::new();
+        let mut regular_methods: Vec<(String, JsObjectRef)> = Vec::new();
+
         for method in &instance_methods {
             let method_name = match &method.key {
                 ObjectPropertyKey::Identifier(id) => id.name.clone(),
@@ -517,10 +521,33 @@ impl Interpreter {
                 );
             }
 
-            // For now, treat all methods as regular methods
-            // TODO: implement proper getter/setter support
+            match method.kind {
+                MethodKind::Get => {
+                    let entry = accessors.entry(method_name).or_insert((None, None));
+                    entry.0 = Some(func_obj);
+                }
+                MethodKind::Set => {
+                    let entry = accessors.entry(method_name).or_insert((None, None));
+                    entry.1 = Some(func_obj);
+                }
+                MethodKind::Method => {
+                    regular_methods.push((method_name, func_obj));
+                }
+            }
+        }
+
+        // Add accessor properties
+        for (name, (getter, setter)) in accessors {
+            prototype.borrow_mut().define_property(
+                PropertyKey::from(name),
+                Property::accessor(getter, setter),
+            );
+        }
+
+        // Add regular methods
+        for (name, func_obj) in regular_methods {
             prototype.borrow_mut().set_property(
-                PropertyKey::from(method_name),
+                PropertyKey::from(name),
                 JsValue::Object(func_obj),
             );
         }
@@ -616,7 +643,10 @@ impl Interpreter {
             );
         }
 
-        // Add static methods to constructor function
+        // Collect static getters, setters, and regular methods separately
+        let mut static_accessors: std::collections::HashMap<String, (Option<JsObjectRef>, Option<JsObjectRef>)> = std::collections::HashMap::new();
+        let mut static_regular_methods: Vec<(String, JsObjectRef)> = Vec::new();
+
         for method in &static_methods {
             let method_name = match &method.key {
                 ObjectPropertyKey::Identifier(id) => id.name.clone(),
@@ -626,7 +656,7 @@ impl Interpreter {
                     _ => continue,
                 },
                 ObjectPropertyKey::Computed(_) => continue,
-                ObjectPropertyKey::PrivateIdentifier(_) => continue,
+                ObjectPropertyKey::PrivateIdentifier(id) => format!("#{}", id.name),
             };
 
             let func = &method.value;
@@ -639,8 +669,34 @@ impl Interpreter {
             };
 
             let func_obj = create_function(JsFunction::Interpreted(interpreted));
+
+            match method.kind {
+                MethodKind::Get => {
+                    let entry = static_accessors.entry(method_name).or_insert((None, None));
+                    entry.0 = Some(func_obj);
+                }
+                MethodKind::Set => {
+                    let entry = static_accessors.entry(method_name).or_insert((None, None));
+                    entry.1 = Some(func_obj);
+                }
+                MethodKind::Method => {
+                    static_regular_methods.push((method_name, func_obj));
+                }
+            }
+        }
+
+        // Add static accessor properties
+        for (name, (getter, setter)) in static_accessors {
+            constructor_fn.borrow_mut().define_property(
+                PropertyKey::from(name),
+                Property::accessor(getter, setter),
+            );
+        }
+
+        // Add static regular methods
+        for (name, func_obj) in static_regular_methods {
             constructor_fn.borrow_mut().set_property(
-                PropertyKey::from(method_name),
+                PropertyKey::from(name),
                 JsValue::Object(func_obj),
             );
         }
@@ -1491,12 +1547,35 @@ impl Interpreter {
             }
         };
 
-        match object {
+        match object.clone() {
             JsValue::Object(obj) => {
-                // First, try own properties and prototype chain
-                if let Some(val) = obj.borrow().get_property(&key) {
-                    return Ok(val);
+                // First, try own properties and prototype chain with accessor support
+                // We need to drop the borrow before calling the getter
+                let property_result = {
+                    if let Some((prop, _)) = obj.borrow().get_property_descriptor(&key) {
+                        // If this is an accessor property with a getter, return the getter
+                        if let Some(ref getter) = prop.getter {
+                            Some((true, Some(getter.clone()), JsValue::Undefined))
+                        } else if prop.is_accessor() {
+                            // Getter-less accessor property returns undefined
+                            Some((false, None, JsValue::Undefined))
+                        } else {
+                            Some((false, None, prop.value.clone()))
+                        }
+                    } else {
+                        None
+                    }
+                };
+
+                if let Some((is_getter, getter, value)) = property_result {
+                    if is_getter {
+                        if let Some(getter_fn) = getter {
+                            return self.call_function(JsValue::Object(getter_fn), object, vec![]);
+                        }
+                    }
+                    return Ok(value);
                 }
+
                 // For functions, check Function.prototype
                 if obj.borrow().is_callable() {
                     if let Some(method) = self.function_prototype.borrow().get_property(&key) {
@@ -1554,8 +1633,32 @@ impl Interpreter {
             }
         };
 
-        match object {
+        match object.clone() {
             JsValue::Object(obj) => {
+                // Check if there's an accessor property with a setter
+                // We need to drop the borrow before calling the setter
+                let setter_fn = {
+                    if let Some((prop, _)) = obj.borrow().get_property_descriptor(&key) {
+                        if prop.is_accessor() {
+                            if let Some(ref setter) = prop.setter {
+                                Some(setter.clone())
+                            } else {
+                                // Accessor property without setter - silently ignore in non-strict mode
+                                return Ok(());
+                            }
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                };
+
+                if let Some(setter) = setter_fn {
+                    self.call_function(JsValue::Object(setter), object, vec![value])?;
+                    return Ok(());
+                }
+
                 obj.borrow_mut().set_property(key, value);
                 Ok(())
             }

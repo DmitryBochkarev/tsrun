@@ -350,12 +350,7 @@ pub fn array_push(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) 
 
     arr_ref.properties.insert(
         PropertyKey::from("length"),
-        Property {
-            value: JsValue::Number(current_length as f64),
-            writable: true,
-            enumerable: false,
-            configurable: false,
-        },
+        Property::with_attributes(JsValue::Number(current_length as f64), true, false, false),
     );
 
     Ok(JsValue::Number(current_length as f64))
@@ -391,12 +386,7 @@ pub fn array_pop(_interp: &mut Interpreter, this: JsValue, _args: Vec<JsValue>) 
 
     arr_ref.properties.insert(
         PropertyKey::from("length"),
-        Property {
-            value: JsValue::Number(new_length as f64),
-            writable: true,
-            enumerable: false,
-            configurable: false,
-        },
+        Property::with_attributes(JsValue::Number(new_length as f64), true, false, false),
     );
 
     Ok(value)

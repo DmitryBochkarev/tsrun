@@ -222,3 +222,74 @@ fn test_private_method() {
         JsValue::Number(10.0)
     );
 }
+
+// Test getter/setter in classes
+#[test]
+fn test_class_getter_setter() {
+    assert_eq!(
+        eval(r#"
+            class Circle {
+                #radius: number = 1;
+
+                get radius(): number {
+                    return this.#radius;
+                }
+
+                set radius(value: number) {
+                    this.#radius = value;
+                }
+
+                get diameter(): number {
+                    return this.#radius * 2;
+                }
+            }
+            const c = new Circle();
+            c.radius = 5;
+            c.diameter
+        "#),
+        JsValue::Number(10.0)
+    );
+}
+
+// Test getter-only property
+#[test]
+fn test_class_getter_only() {
+    assert_eq!(
+        eval(r#"
+            class Box {
+                #value: number = 42;
+
+                get value(): number {
+                    return this.#value;
+                }
+            }
+            const b = new Box();
+            b.value
+        "#),
+        JsValue::Number(42.0)
+    );
+}
+
+// Test static getter/setter
+#[test]
+fn test_class_static_getter_setter() {
+    // Simple test with public static field first
+    assert_eq!(
+        eval(r#"
+            class Config {
+                static _count: number = 0;
+
+                static get count(): number {
+                    return Config._count;
+                }
+
+                static set count(value: number) {
+                    Config._count = value;
+                }
+            }
+            Config.count = 5;
+            Config.count
+        "#),
+        JsValue::Number(5.0)
+    );
+}
