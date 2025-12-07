@@ -536,6 +536,21 @@ impl Interpreter {
         }
         env.define("Math".to_string(), JsValue::Object(math_object), false);
 
+        // Add global functions
+        let parseint_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "parseInt".to_string(),
+            func: global_parse_int,
+            arity: 2,
+        }));
+        env.define("parseInt".to_string(), JsValue::Object(parseint_fn), false);
+
+        let parsefloat_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "parseFloat".to_string(),
+            func: global_parse_float,
+            arity: 1,
+        }));
+        env.define("parseFloat".to_string(), JsValue::Object(parsefloat_fn), false);
+
         Self { global, env, array_prototype, string_prototype }
     }
 
@@ -2810,6 +2825,117 @@ fn math_tan(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Re
     Ok(JsValue::Number(n.tan()))
 }
 
+// Global functions
+
+fn global_parse_int(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let string = args.first().map(|v| v.to_js_string()).unwrap_or_else(|| JsString::from(""));
+    let string = string.as_str().to_string();
+    let radix = args.get(1).map(|v| v.to_number() as i32).unwrap_or(10);
+
+    // Trim whitespace
+    let s = string.trim();
+
+    if s.is_empty() {
+        return Ok(JsValue::Number(f64::NAN));
+    }
+
+    // Handle radix
+    let radix = if radix == 0 { 10 } else { radix };
+    if !(2..=36).contains(&radix) {
+        return Ok(JsValue::Number(f64::NAN));
+    }
+
+    // Handle sign
+    let (negative, s) = if let Some(rest) = s.strip_prefix('-') {
+        (true, rest)
+    } else if let Some(rest) = s.strip_prefix('+') {
+        (false, rest)
+    } else {
+        (false, s)
+    };
+
+    // Handle hex prefix for radix 16
+    let s = if radix == 16 {
+        s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")).unwrap_or(s)
+    } else {
+        s
+    };
+
+    // Parse digits until invalid character
+    let mut result: i64 = 0;
+    let mut found_digit = false;
+
+    for c in s.chars() {
+        let digit = match c.to_digit(radix as u32) {
+            Some(d) => d as i64,
+            None => break,
+        };
+        found_digit = true;
+        result = result * (radix as i64) + digit;
+    }
+
+    if !found_digit {
+        return Ok(JsValue::Number(f64::NAN));
+    }
+
+    let result = if negative { -result } else { result };
+    Ok(JsValue::Number(result as f64))
+}
+
+fn global_parse_float(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let string = args.first().map(|v| v.to_js_string()).unwrap_or_else(|| JsString::from(""));
+    let string = string.as_str().to_string();
+    let s = string.trim();
+
+    if s.is_empty() {
+        return Ok(JsValue::Number(f64::NAN));
+    }
+
+    // Find the longest valid float prefix
+    let mut end = 0;
+    let mut has_dot = false;
+    let mut has_exp = false;
+    let mut chars = s.chars().peekable();
+
+    // Handle sign
+    if matches!(chars.peek(), Some('-') | Some('+')) {
+        end += 1;
+        chars.next();
+    }
+
+    // Parse digits and decimal point
+    while let Some(&c) = chars.peek() {
+        match c {
+            '0'..='9' => {
+                end += 1;
+                chars.next();
+            }
+            '.' if !has_dot && !has_exp => {
+                has_dot = true;
+                end += 1;
+                chars.next();
+            }
+            'e' | 'E' if !has_exp => {
+                has_exp = true;
+                end += 1;
+                chars.next();
+                // Optional sign after exponent
+                if matches!(chars.peek(), Some('-') | Some('+')) {
+                    end += 1;
+                    chars.next();
+                }
+            }
+            _ => break,
+        }
+    }
+
+    let num_str = &s[..end];
+    match num_str.parse::<f64>() {
+        Ok(n) => Ok(JsValue::Number(n)),
+        Err(_) => Ok(JsValue::Number(f64::NAN)),
+    }
+}
+
 // JSON conversion helpers
 
 fn js_value_to_json(value: &JsValue) -> Result<serde_json::Value, JsError> {
@@ -3401,5 +3527,22 @@ mod tests {
     fn test_math_trig() {
         assert_eq!(eval("Math.sin(0)"), JsValue::Number(0.0));
         assert_eq!(eval("Math.cos(0)"), JsValue::Number(1.0));
+    }
+
+    // Global function tests
+    #[test]
+    fn test_parseint() {
+        assert_eq!(eval("parseInt('42')"), JsValue::Number(42.0));
+        assert_eq!(eval("parseInt('  42  ')"), JsValue::Number(42.0));
+        assert_eq!(eval("parseInt('42.5')"), JsValue::Number(42.0));
+        assert_eq!(eval("parseInt('ff', 16)"), JsValue::Number(255.0));
+        assert_eq!(eval("parseInt('101', 2)"), JsValue::Number(5.0));
+    }
+
+    #[test]
+    fn test_parsefloat() {
+        assert_eq!(eval("parseFloat('3.14')"), JsValue::Number(3.14));
+        assert_eq!(eval("parseFloat('  3.14  ')"), JsValue::Number(3.14));
+        assert_eq!(eval("parseFloat('3.14abc')"), JsValue::Number(3.14));
     }
 }

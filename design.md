@@ -192,8 +192,8 @@
 ### Built-in Objects & Methods
 
 #### Global Functions
-- [ ] `parseInt(string, radix?)`
-- [ ] `parseFloat(string)`
+- [x] `parseInt(string, radix?)`
+- [x] `parseFloat(string)`
 - [x] `isNaN(value)`
 - [x] `isFinite(value)`
 - [ ] `encodeURI(uri)`
