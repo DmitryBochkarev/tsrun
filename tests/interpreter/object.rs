@@ -6,18 +6,18 @@ use typescript_eval::JsValue;
 
 #[test]
 fn test_object() {
-    assert_eq!(eval("const obj = { a: 1 }; obj.a"), JsValue::Number(1.0));
+    assert_eq!(eval("const obj: { a: number } = { a: 1 }; obj.a"), JsValue::Number(1.0));
 }
 
 #[test]
 fn test_object_hasownproperty() {
-    assert_eq!(eval("({a: 1}).hasOwnProperty('a')"), JsValue::Boolean(true));
+    assert_eq!(eval("({a: 1} as { a: number }).hasOwnProperty('a')"), JsValue::Boolean(true));
     assert_eq!(
-        eval("({a: 1}).hasOwnProperty('b')"),
+        eval("({a: 1} as { a: number }).hasOwnProperty('b')"),
         JsValue::Boolean(false)
     );
     assert_eq!(
-        eval("let o = {x: 1}; o.hasOwnProperty('x')"),
+        eval("let o: { x: number } = {x: 1}; o.hasOwnProperty('x')"),
         JsValue::Boolean(true)
     );
 }
@@ -25,11 +25,11 @@ fn test_object_hasownproperty() {
 #[test]
 fn test_object_tostring() {
     assert_eq!(
-        eval("({}).toString()"),
+        eval("({} as object).toString()"),
         JsValue::String(JsString::from("[object Object]"))
     );
     assert_eq!(
-        eval("[1,2,3].toString()"),
+        eval("([1,2,3] as number[]).toString()"),
         JsValue::String(JsString::from("1,2,3"))
     );
 }
@@ -37,11 +37,11 @@ fn test_object_tostring() {
 #[test]
 fn test_object_fromentries() {
     assert_eq!(
-        eval("Object.fromEntries([['a', 1], ['b', 2]]).a"),
+        eval("const entries: Array<[string, number]> = [['a', 1], ['b', 2]]; Object.fromEntries(entries).a"),
         JsValue::Number(1.0)
     );
     assert_eq!(
-        eval("Object.fromEntries([['a', 1], ['b', 2]]).b"),
+        eval("const entries: Array<[string, number]> = [['a', 1], ['b', 2]]; Object.fromEntries(entries).b"),
         JsValue::Number(2.0)
     );
 }
@@ -49,11 +49,11 @@ fn test_object_fromentries() {
 #[test]
 fn test_object_hasown() {
     assert_eq!(
-        eval("Object.hasOwn({a: 1}, 'a')"),
+        eval("Object.hasOwn({a: 1} as { a: number }, 'a')"),
         JsValue::Boolean(true)
     );
     assert_eq!(
-        eval("Object.hasOwn({a: 1}, 'b')"),
+        eval("Object.hasOwn({a: 1} as { a: number }, 'b')"),
         JsValue::Boolean(false)
     );
 }
@@ -65,7 +65,7 @@ fn test_object_create() {
         JsValue::Undefined
     );
     assert_eq!(
-        eval("let proto = {x: 1}; let o = Object.create(proto); o.x"),
+        eval("let proto: { x: number } = {x: 1}; let o = Object.create(proto); o.x"),
         JsValue::Number(1.0)
     );
 }
@@ -73,11 +73,11 @@ fn test_object_create() {
 #[test]
 fn test_object_freeze() {
     assert_eq!(
-        eval("let o = {a: 1}; Object.freeze(o); o.a = 2; o.a"),
+        eval("let o: { a: number } = {a: 1}; Object.freeze(o); o.a = 2; o.a"),
         JsValue::Number(1.0)
     );
     assert_eq!(
-        eval("Object.isFrozen(Object.freeze({a: 1}))"),
+        eval("Object.isFrozen(Object.freeze({a: 1} as { a: number }))"),
         JsValue::Boolean(true)
     );
 }
@@ -85,7 +85,7 @@ fn test_object_freeze() {
 #[test]
 fn test_object_seal() {
     assert_eq!(
-        eval("Object.isSealed(Object.seal({a: 1}))"),
+        eval("Object.isSealed(Object.seal({a: 1} as { a: number }))"),
         JsValue::Boolean(true)
     );
 }
