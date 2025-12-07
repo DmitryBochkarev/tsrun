@@ -215,6 +215,8 @@ pub struct LexerCheckpoint {
 pub struct Lexer<'a> {
     source: &'a str,
     chars: Peekable<CharIndices<'a>>,
+    /// Base offset added to char_indices positions (needed when resetting chars from middle of source)
+    chars_base_offset: usize,
     current_pos: usize,
     line: u32,
     column: u32,
@@ -230,6 +232,7 @@ impl<'a> Lexer<'a> {
         Self {
             source,
             chars: source.char_indices().peekable(),
+            chars_base_offset: 0,
             current_pos: 0,
             line: 1,
             column: 1,
@@ -367,7 +370,8 @@ impl<'a> Lexer<'a> {
     fn advance(&mut self) -> Option<(usize, char)> {
         let result = self.chars.next();
         if let Some((pos, ch)) = result {
-            self.current_pos = pos + ch.len_utf8();
+            // Add base offset for absolute position (needed when chars is reset from middle of source)
+            self.current_pos = self.chars_base_offset + pos + ch.len_utf8();
             if ch == '\n' {
                 self.line += 1;
                 self.column = 1;
@@ -856,11 +860,13 @@ impl<'a> Lexer<'a> {
     /// This resets the lexer position to after the } and scans the template continuation
     pub fn rescan_template_continuation(&mut self, rbrace_span: Span) -> TokenKind {
         // Reset position to after the } (rbrace_span.end is already past the })
-        self.current_pos = rbrace_span.end;
+        let base_offset = rbrace_span.end;
+        self.current_pos = base_offset;
+        self.chars_base_offset = base_offset;
         self.line = rbrace_span.line;
         self.column = rbrace_span.column + 1;
         // Reinitialize the chars iterator from the new position
-        self.chars = self.source[self.current_pos..].char_indices().peekable();
+        self.chars = self.source[base_offset..].char_indices().peekable();
 
         // Now scan the template continuation
         self.scan_template_continuation()

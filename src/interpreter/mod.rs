@@ -1393,8 +1393,17 @@ impl Interpreter {
 
                 // Bind parameters
                 for (i, param) in interpreted.params.iter().enumerate() {
-                    let arg = args.get(i).cloned().unwrap_or(JsValue::Undefined);
-                    self.bind_pattern(&param.pattern, arg, true)?;
+                    // Check if this is a rest parameter
+                    if let Pattern::Rest(rest) = &param.pattern {
+                        // Collect remaining arguments into an array
+                        let rest_args: Vec<JsValue> = args[i..].to_vec();
+                        let rest_array = JsValue::Object(self.create_array(rest_args));
+                        self.bind_pattern(&rest.argument, rest_array, true)?;
+                        break; // Rest param must be last
+                    } else {
+                        let arg = args.get(i).cloned().unwrap_or(JsValue::Undefined);
+                        self.bind_pattern(&param.pattern, arg, true)?;
+                    }
                 }
 
                 // Execute body

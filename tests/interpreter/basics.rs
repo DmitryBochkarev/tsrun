@@ -95,7 +95,6 @@ fn test_bigint_variable() {
 
 // Tagged template literals
 #[test]
-#[ignore] // TODO: Fix - returns "Hello w!" instead of "Hello world!"
 fn test_tagged_template_basic() {
     // Tag function receives strings array and values
     assert_eq!(
@@ -125,7 +124,6 @@ fn test_tagged_template_no_substitution() {
 }
 
 #[test]
-#[ignore] // TODO: Fix - syntax error with multiple substitutions
 fn test_tagged_template_multiple_values() {
     // Tag function with multiple interpolated values
     assert_eq!(
@@ -235,5 +233,21 @@ fn test_tagged_template_value_passed() {
             tag`test${x}end`
         "#),
         JsValue::Number(42.0)
+    );
+}
+
+#[test]
+fn test_tagged_template_two_substitutions() {
+    // Test with two substitutions
+    assert_eq!(
+        eval(r#"
+            function tag(strings: any, a: any, b: any): string {
+                return strings[0] + a + strings[1] + b + strings[2];
+            }
+            const x: number = 1;
+            const y: number = 2;
+            tag`${x}+${y}`
+        "#),
+        JsValue::String("1+2".into())
     );
 }
