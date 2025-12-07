@@ -545,6 +545,14 @@ impl Interpreter {
             }));
             proto.set_property(PropertyKey::from("replace"), JsValue::Object(replace_fn));
 
+            // String.prototype.replaceAll
+            let replaceall_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "replaceAll".to_string(),
+                func: string_replace_all,
+                arity: 2,
+            }));
+            proto.set_property(PropertyKey::from("replaceAll"), JsValue::Object(replaceall_fn));
+
             // String.prototype.padStart
             let padstart_fn = create_function(JsFunction::Native(NativeFunction {
                 name: "padStart".to_string(),
@@ -3580,6 +3588,15 @@ fn string_replace(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) 
     Ok(JsValue::String(JsString::from(s.as_str().replacen(&search, &replacement, 1))))
 }
 
+fn string_replace_all(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let s = this.to_js_string();
+    let search = args.first().map(|v| v.to_js_string().to_string()).unwrap_or_default();
+    let replacement = args.get(1).map(|v| v.to_js_string().to_string()).unwrap_or_default();
+
+    // Replace all occurrences
+    Ok(JsValue::String(JsString::from(s.as_str().replace(&search, &replacement))))
+}
+
 fn string_pad_start(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
     let s = this.to_js_string();
     let target_length = args.first().map(|v| v.to_number() as usize).unwrap_or(0);
@@ -4867,5 +4884,14 @@ mod tests {
         assert_eq!(eval("'hello'.at(-2)"), JsValue::String(JsString::from("l")));
         assert_eq!(eval("'hello'.at(10)"), JsValue::Undefined);
         assert_eq!(eval("'hello'.at(-10)"), JsValue::Undefined);
+    }
+
+    #[test]
+    fn test_string_replaceall() {
+        assert_eq!(eval("'aabbcc'.replaceAll('b', 'x')"), JsValue::String(JsString::from("aaxxcc")));
+        assert_eq!(eval("'hello world'.replaceAll('o', '0')"), JsValue::String(JsString::from("hell0 w0rld")));
+        assert_eq!(eval("'aaa'.replaceAll('a', 'bb')"), JsValue::String(JsString::from("bbbbbb")));
+        assert_eq!(eval("'hello'.replaceAll('x', 'y')"), JsValue::String(JsString::from("hello")));
+        assert_eq!(eval("''.replaceAll('a', 'b')"), JsValue::String(JsString::from("")));
     }
 }

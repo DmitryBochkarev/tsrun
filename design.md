@@ -289,7 +289,7 @@
 - [x] `String.prototype.padEnd(length, padString?)`
 - [x] `String.prototype.repeat(count)`
 - [x] `String.prototype.replace(search, replacement)`
-- [ ] `String.prototype.replaceAll(search, replacement)`
+- [x] `String.prototype.replaceAll(search, replacement)`
 - [ ] `String.prototype.match(regexp)`
 - [ ] `String.prototype.matchAll(regexp)`
 - [ ] `String.prototype.search(regexp)`
