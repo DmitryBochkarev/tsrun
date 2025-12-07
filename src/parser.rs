@@ -1466,6 +1466,14 @@ impl<'a> Parser<'a> {
                     span: self.span_from(start),
                 }))
             }
+            TokenKind::BigInt(s) => {
+                let s = s.clone();
+                self.advance();
+                Ok(Expression::Literal(Literal {
+                    value: LiteralValue::BigInt(s),
+                    span: self.span_from(start),
+                }))
+            }
             TokenKind::True => {
                 self.advance();
                 Ok(Expression::Literal(Literal {
@@ -3161,6 +3169,25 @@ mod tests {
     #[test]
     fn test_array_holes_at_end() {
         let prog = parse("const arr: (number | undefined)[] = [1, 2, ];");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    // BigInt literal tests
+    #[test]
+    fn test_bigint_literal() {
+        let prog = parse("const n: bigint = 123n;");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_bigint_arithmetic() {
+        let prog = parse("const result: bigint = 100n + 200n;");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_bigint_in_array() {
+        let prog = parse("const nums: bigint[] = [1n, 2n, 3n];");
         assert_eq!(prog.body.len(), 1);
     }
 }

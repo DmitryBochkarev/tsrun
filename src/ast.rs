@@ -481,6 +481,7 @@ pub enum LiteralValue {
     Boolean(bool),
     Number(f64),
     String(String),
+    BigInt(String), // Store as string to preserve arbitrary precision
     RegExp { pattern: String, flags: String },
 }
 

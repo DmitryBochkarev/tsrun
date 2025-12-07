@@ -70,3 +70,25 @@ fn test_unsigned_right_shift_assignment() {
         JsValue::Number(4294967295.0)
     );
 }
+
+// BigInt literals (parsed and converted to Number for now)
+#[test]
+fn test_bigint_literal() {
+    // BigInt literals are currently converted to Number
+    assert_eq!(eval("123n"), JsValue::Number(123.0));
+    assert_eq!(eval("0n"), JsValue::Number(0.0));
+}
+
+#[test]
+fn test_bigint_arithmetic() {
+    // BigInt arithmetic works as Number arithmetic for now
+    assert_eq!(eval("(100n as number) + (200n as number)"), JsValue::Number(300.0));
+}
+
+#[test]
+fn test_bigint_variable() {
+    assert_eq!(
+        eval("const n: bigint = 42n; n"),
+        JsValue::Number(42.0)
+    );
+}

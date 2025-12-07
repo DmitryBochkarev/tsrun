@@ -38,7 +38,7 @@
 - [x] Template literals (backticks)
 - [x] Template literal interpolation (`${expr}`)
 - [ ] Tagged template literals
-- [ ] BigInt literals (`123n`)
+- [x] BigInt literals (`123n`) - parsed, converted to Number at runtime
 - [ ] Symbol
 
 #### Operators

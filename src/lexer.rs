@@ -32,6 +32,7 @@ pub enum TokenKind {
     // Literals
     Number(f64),
     String(String),
+    BigInt(String), // BigInt literal value as string (e.g., "123" for 123n)
     RegExp(String, String), // (pattern, flags)
     True,
     False,
@@ -869,6 +870,12 @@ impl<'a> Lexer<'a> {
                             break;
                         }
                     }
+                    // Check for BigInt suffix
+                    if self.peek() == Some('n') {
+                        self.advance();
+                        let value = i64::from_str_radix(&num_str, 16).unwrap_or(0);
+                        return TokenKind::BigInt(value.to_string());
+                    }
                     return TokenKind::Number(
                         i64::from_str_radix(&num_str, 16).unwrap_or(0) as f64
                     );
@@ -886,6 +893,12 @@ impl<'a> Lexer<'a> {
                             break;
                         }
                     }
+                    // Check for BigInt suffix
+                    if self.peek() == Some('n') {
+                        self.advance();
+                        let value = i64::from_str_radix(&num_str, 8).unwrap_or(0);
+                        return TokenKind::BigInt(value.to_string());
+                    }
                     return TokenKind::Number(
                         i64::from_str_radix(&num_str, 8).unwrap_or(0) as f64
                     );
@@ -902,6 +915,12 @@ impl<'a> Lexer<'a> {
                         } else {
                             break;
                         }
+                    }
+                    // Check for BigInt suffix
+                    if self.peek() == Some('n') {
+                        self.advance();
+                        let value = i64::from_str_radix(&num_str, 2).unwrap_or(0);
+                        return TokenKind::BigInt(value.to_string());
                     }
                     return TokenKind::Number(
                         i64::from_str_radix(&num_str, 2).unwrap_or(0) as f64
@@ -954,6 +973,13 @@ impl<'a> Lexer<'a> {
                     }
                 }
             }
+        }
+
+        // Check for BigInt suffix before decimal/exponent parts
+        // BigInt cannot have decimal or exponent parts
+        if self.peek() == Some('n') && !num_str.contains('.') {
+            self.advance();
+            return TokenKind::BigInt(num_str);
         }
 
         // Exponent part
@@ -1301,6 +1327,18 @@ mod tests {
     fn test_unsigned_right_shift() {
         assert_eq!(lex(">>>"), vec![TokenKind::GtGtGt]);
         assert_eq!(lex(">>>="), vec![TokenKind::GtGtGtEq]);
+    }
+
+    #[test]
+    fn test_bigint_literal() {
+        assert_eq!(lex("123n"), vec![TokenKind::BigInt("123".to_string())]);
+        assert_eq!(lex("0n"), vec![TokenKind::BigInt("0".to_string())]);
+        assert_eq!(lex("9007199254740991n"), vec![TokenKind::BigInt("9007199254740991".to_string())]);
+    }
+
+    #[test]
+    fn test_bigint_hex() {
+        assert_eq!(lex("0xFFn"), vec![TokenKind::BigInt("255".to_string())]);
     }
 
     #[test]

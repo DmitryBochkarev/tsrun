@@ -896,6 +896,11 @@ impl Interpreter {
             LiteralValue::Boolean(b) => JsValue::Boolean(*b),
             LiteralValue::Number(n) => JsValue::Number(*n),
             LiteralValue::String(s) => JsValue::String(JsString::from(s.clone())),
+            LiteralValue::BigInt(s) => {
+                // TODO: Implement proper BigInt type
+                // For now, convert to Number (loses precision for large values)
+                JsValue::Number(s.parse::<f64>().unwrap_or(f64::NAN))
+            }
             LiteralValue::RegExp { pattern, flags } => {
                 // Create RegExp object with proper prototype and properties
                 let regexp_obj = create_object();
