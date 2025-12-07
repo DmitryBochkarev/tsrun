@@ -225,8 +225,8 @@
 
 #### Array
 - [x] `Array.isArray(value)`
-- [ ] `Array.from(arrayLike, mapFn?)`
-- [ ] `Array.of(...items)`
+- [x] `Array.from(arrayLike, mapFn?)`
+- [x] `Array.of(...items)`
 - [x] `Array.prototype.push(...items)`
 - [x] `Array.prototype.pop()`
 - [x] `Array.prototype.shift()`
@@ -238,7 +238,7 @@
 - [x] `Array.prototype.reverse()`
 - [x] `Array.prototype.sort(compareFn?)`
 - [x] `Array.prototype.indexOf(item, fromIndex?)`
-- [ ] `Array.prototype.lastIndexOf(item, fromIndex?)`
+- [x] `Array.prototype.lastIndexOf(item, fromIndex?)`
 - [x] `Array.prototype.includes(item, fromIndex?)`
 - [x] `Array.prototype.find(predicate)`
 - [x] `Array.prototype.findIndex(predicate)`
@@ -248,17 +248,17 @@
 - [x] `Array.prototype.map(callback)`
 - [x] `Array.prototype.forEach(callback)`
 - [x] `Array.prototype.reduce(callback, initial?)`
-- [ ] `Array.prototype.reduceRight(callback, initial?)`
+- [x] `Array.prototype.reduceRight(callback, initial?)`
 - [x] `Array.prototype.every(predicate)`
 - [x] `Array.prototype.some(predicate)`
-- [ ] `Array.prototype.flat(depth?)`
-- [ ] `Array.prototype.flatMap(callback)`
+- [x] `Array.prototype.flat(depth?)`
+- [x] `Array.prototype.flatMap(callback)`
 - [x] `Array.prototype.fill(value, start?, end?)`
 - [x] `Array.prototype.copyWithin(target, start?, end?)`
 - [ ] `Array.prototype.entries()`
 - [ ] `Array.prototype.keys()`
 - [ ] `Array.prototype.values()`
-- [ ] `Array.prototype.at(index)`
+- [x] `Array.prototype.at(index)`
 - [ ] `Array.prototype.toReversed()`
 - [ ] `Array.prototype.toSorted(compareFn?)`
 - [ ] `Array.prototype.toSpliced(start, deleteCount?, ...items)`

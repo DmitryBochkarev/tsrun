@@ -299,6 +299,46 @@ impl Interpreter {
                 arity: 2,
             }));
             proto.set_property(PropertyKey::from("splice"), JsValue::Object(splice_fn));
+
+            // Array.prototype.at
+            let at_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "at".to_string(),
+                func: array_at,
+                arity: 1,
+            }));
+            proto.set_property(PropertyKey::from("at"), JsValue::Object(at_fn));
+
+            // Array.prototype.lastIndexOf
+            let lastindexof_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "lastIndexOf".to_string(),
+                func: array_last_index_of,
+                arity: 1,
+            }));
+            proto.set_property(PropertyKey::from("lastIndexOf"), JsValue::Object(lastindexof_fn));
+
+            // Array.prototype.reduceRight
+            let reduceright_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "reduceRight".to_string(),
+                func: array_reduce_right,
+                arity: 1,
+            }));
+            proto.set_property(PropertyKey::from("reduceRight"), JsValue::Object(reduceright_fn));
+
+            // Array.prototype.flat
+            let flat_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "flat".to_string(),
+                func: array_flat,
+                arity: 1,
+            }));
+            proto.set_property(PropertyKey::from("flat"), JsValue::Object(flat_fn));
+
+            // Array.prototype.flatMap
+            let flatmap_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "flatMap".to_string(),
+                func: array_flat_map,
+                arity: 1,
+            }));
+            proto.set_property(PropertyKey::from("flatMap"), JsValue::Object(flatmap_fn));
         }
 
         // Add Array global
@@ -316,6 +356,20 @@ impl Interpreter {
                 arity: 1,
             }));
             arr.set_property(PropertyKey::from("isArray"), JsValue::Object(is_array_fn));
+
+            let of_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "of".to_string(),
+                func: array_of,
+                arity: 0,
+            }));
+            arr.set_property(PropertyKey::from("of"), JsValue::Object(of_fn));
+
+            let from_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "from".to_string(),
+                func: array_from,
+                arity: 1,
+            }));
+            arr.set_property(PropertyKey::from("from"), JsValue::Object(from_fn));
 
             // Set Array.prototype
             arr.set_property(PropertyKey::from("prototype"), JsValue::Object(array_prototype.clone()));
@@ -2964,6 +3018,260 @@ fn array_splice(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> 
     Ok(JsValue::Object(interp.create_array(removed)))
 }
 
+// Array.of - create array from arguments
+fn array_of(interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    Ok(JsValue::Object(interp.create_array(args)))
+}
+
+// Array.from - create array from iterable or array-like
+fn array_from(interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let source = args.first().cloned().unwrap_or(JsValue::Undefined);
+    let map_fn = args.get(1).cloned();
+
+    let mut elements = Vec::new();
+
+    match source {
+        JsValue::Object(obj) => {
+            // Collect elements first to avoid borrow issues
+            let source_elements: Vec<JsValue> = {
+                let obj_ref = obj.borrow();
+                if let ExoticObject::Array { length } = obj_ref.exotic {
+                    (0..length)
+                        .map(|i| obj_ref.get_property(&PropertyKey::Index(i)).unwrap_or(JsValue::Undefined))
+                        .collect()
+                } else {
+                    vec![]
+                }
+            };
+
+            for (i, elem) in source_elements.into_iter().enumerate() {
+                let mapped = if let Some(ref map) = map_fn {
+                    if map.is_callable() {
+                        interp.call_function(map.clone(), JsValue::Undefined, vec![elem, JsValue::Number(i as f64)])?
+                    } else {
+                        elem
+                    }
+                } else {
+                    elem
+                };
+                elements.push(mapped);
+            }
+        }
+        JsValue::String(s) => {
+            for (i, ch) in s.as_str().chars().enumerate() {
+                let elem = JsValue::String(JsString::from(ch.to_string()));
+                let mapped = if let Some(ref map) = map_fn {
+                    if map.is_callable() {
+                        interp.call_function(map.clone(), JsValue::Undefined, vec![elem, JsValue::Number(i as f64)])?
+                    } else {
+                        elem
+                    }
+                } else {
+                    elem
+                };
+                elements.push(mapped);
+            }
+        }
+        _ => {}
+    }
+
+    Ok(JsValue::Object(interp.create_array(elements)))
+}
+
+// Array.prototype.at - access element with relative indexing
+fn array_at(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let JsValue::Object(arr) = this else {
+        return Err(JsError::type_error("Array.prototype.at called on non-object"));
+    };
+
+    let arr_ref = arr.borrow();
+    let length = match &arr_ref.exotic {
+        ExoticObject::Array { length } => *length as i64,
+        _ => return Err(JsError::type_error("Not an array")),
+    };
+
+    let index = args.first().map(|v| v.to_number() as i64).unwrap_or(0);
+
+    let actual_index = if index < 0 {
+        length + index
+    } else {
+        index
+    };
+
+    if actual_index < 0 || actual_index >= length {
+        return Ok(JsValue::Undefined);
+    }
+
+    Ok(arr_ref.get_property(&PropertyKey::Index(actual_index as u32)).unwrap_or(JsValue::Undefined))
+}
+
+// Array.prototype.lastIndexOf
+fn array_last_index_of(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let JsValue::Object(arr) = this else {
+        return Err(JsError::type_error("Array.prototype.lastIndexOf called on non-object"));
+    };
+
+    let search_elem = args.first().cloned().unwrap_or(JsValue::Undefined);
+
+    let arr_ref = arr.borrow();
+    let length = match &arr_ref.exotic {
+        ExoticObject::Array { length } => *length,
+        _ => return Err(JsError::type_error("Not an array")),
+    };
+
+    let from_index = args.get(1).map(|v| {
+        let n = v.to_number() as i64;
+        if n < 0 { (length as i64 + n).max(-1) } else { n.min(length as i64 - 1) }
+    }).unwrap_or(length as i64 - 1);
+
+    if from_index < 0 {
+        return Ok(JsValue::Number(-1.0));
+    }
+
+    for i in (0..=from_index as u32).rev() {
+        let elem = arr_ref.get_property(&PropertyKey::Index(i)).unwrap_or(JsValue::Undefined);
+        if elem.strict_equals(&search_elem) {
+            return Ok(JsValue::Number(i as f64));
+        }
+    }
+
+    Ok(JsValue::Number(-1.0))
+}
+
+// Array.prototype.reduceRight
+fn array_reduce_right(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let JsValue::Object(arr) = this.clone() else {
+        return Err(JsError::type_error("Array.prototype.reduceRight called on non-object"));
+    };
+
+    let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
+    if !callback.is_callable() {
+        return Err(JsError::type_error("Array.prototype.reduceRight callback is not a function"));
+    }
+
+    let length = {
+        let arr_ref = arr.borrow();
+        match &arr_ref.exotic {
+            ExoticObject::Array { length } => *length,
+            _ => return Err(JsError::type_error("Not an array")),
+        }
+    };
+
+    if length == 0 && args.get(1).is_none() {
+        return Err(JsError::type_error("Reduce of empty array with no initial value"));
+    }
+
+    let mut accumulator = args.get(1).cloned();
+    let start_index = if accumulator.is_some() {
+        length as i64 - 1
+    } else {
+        let elem = arr.borrow().get_property(&PropertyKey::Index(length - 1)).unwrap_or(JsValue::Undefined);
+        accumulator = Some(elem);
+        length as i64 - 2
+    };
+
+    for i in (0..=start_index).rev() {
+        let elem = arr.borrow().get_property(&PropertyKey::Index(i as u32)).unwrap_or(JsValue::Undefined);
+        let result = interp.call_function(
+            callback.clone(),
+            JsValue::Undefined,
+            vec![accumulator.clone().unwrap(), elem, JsValue::Number(i as f64), this.clone()],
+        )?;
+        accumulator = Some(result);
+    }
+
+    Ok(accumulator.unwrap_or(JsValue::Undefined))
+}
+
+// Array.prototype.flat - flatten nested arrays
+fn array_flat(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let JsValue::Object(arr) = this else {
+        return Err(JsError::type_error("Array.prototype.flat called on non-object"));
+    };
+
+    let depth = args.first().map(|v| v.to_number() as i32).unwrap_or(1);
+
+    fn flatten(arr: &JsObjectRef, depth: i32) -> Vec<JsValue> {
+        // First, collect all elements from the array
+        let elements: Vec<JsValue> = {
+            let arr_ref = arr.borrow();
+            let length = match &arr_ref.exotic {
+                ExoticObject::Array { length } => *length,
+                _ => return vec![],
+            };
+            (0..length)
+                .map(|i| arr_ref.get_property(&PropertyKey::Index(i)).unwrap_or(JsValue::Undefined))
+                .collect()
+        };
+
+        let mut result = Vec::new();
+        for elem in elements {
+            if depth > 0 {
+                if let JsValue::Object(ref inner) = elem {
+                    if matches!(inner.borrow().exotic, ExoticObject::Array { .. }) {
+                        result.extend(flatten(inner, depth - 1));
+                        continue;
+                    }
+                }
+            }
+            result.push(elem);
+        }
+        result
+    }
+
+    let elements = flatten(&arr, depth);
+    Ok(JsValue::Object(interp.create_array(elements)))
+}
+
+// Array.prototype.flatMap - map then flatten
+fn array_flat_map(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let JsValue::Object(arr) = this.clone() else {
+        return Err(JsError::type_error("Array.prototype.flatMap called on non-object"));
+    };
+
+    let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
+    if !callback.is_callable() {
+        return Err(JsError::type_error("Array.prototype.flatMap callback is not a function"));
+    }
+
+    let this_arg = args.get(1).cloned().unwrap_or(JsValue::Undefined);
+
+    let length = {
+        let arr_ref = arr.borrow();
+        match &arr_ref.exotic {
+            ExoticObject::Array { length } => *length,
+            _ => return Err(JsError::type_error("Not an array")),
+        }
+    };
+
+    let mut result = Vec::new();
+
+    for i in 0..length {
+        let elem = arr.borrow().get_property(&PropertyKey::Index(i)).unwrap_or(JsValue::Undefined);
+
+        let mapped = interp.call_function(
+            callback.clone(),
+            this_arg.clone(),
+            vec![elem, JsValue::Number(i as f64), this.clone()],
+        )?;
+
+        // Flatten one level
+        if let JsValue::Object(ref inner) = mapped {
+            let inner_ref = inner.borrow();
+            if let ExoticObject::Array { length: inner_len } = inner_ref.exotic {
+                for j in 0..inner_len {
+                    let inner_elem = inner_ref.get_property(&PropertyKey::Index(j)).unwrap_or(JsValue::Undefined);
+                    result.push(inner_elem);
+                }
+                continue;
+            }
+        }
+        result.push(mapped);
+    }
+
+    Ok(JsValue::Object(interp.create_array(result)))
+}
+
 // String methods
 
 fn string_char_at(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
@@ -4247,5 +4555,55 @@ mod tests {
         assert_eq!(eval("let a = [1, 2, 3]; a.splice(1, 1); a.length"), JsValue::Number(2.0));
         assert_eq!(eval("let a = [1, 2, 3]; a.splice(1, 1, 'a', 'b'); a.length"), JsValue::Number(4.0));
         assert_eq!(eval("let a = [1, 2, 3]; a.splice(1, 1, 'a', 'b'); a[1]"), JsValue::String(JsString::from("a")));
+    }
+
+    #[test]
+    fn test_array_of() {
+        assert_eq!(eval("Array.of(1, 2, 3).length"), JsValue::Number(3.0));
+        assert_eq!(eval("Array.of(1, 2, 3)[0]"), JsValue::Number(1.0));
+        assert_eq!(eval("Array.of(7).length"), JsValue::Number(1.0));
+        assert_eq!(eval("Array.of().length"), JsValue::Number(0.0));
+    }
+
+    #[test]
+    fn test_array_from() {
+        assert_eq!(eval("Array.from([1, 2, 3]).length"), JsValue::Number(3.0));
+        assert_eq!(eval("Array.from([1, 2, 3])[1]"), JsValue::Number(2.0));
+        // With map function
+        assert_eq!(eval("Array.from([1, 2, 3], x => x * 2)[1]"), JsValue::Number(4.0));
+    }
+
+    #[test]
+    fn test_array_at() {
+        assert_eq!(eval("[1, 2, 3].at(0)"), JsValue::Number(1.0));
+        assert_eq!(eval("[1, 2, 3].at(2)"), JsValue::Number(3.0));
+        assert_eq!(eval("[1, 2, 3].at(-1)"), JsValue::Number(3.0));
+        assert_eq!(eval("[1, 2, 3].at(-2)"), JsValue::Number(2.0));
+        assert_eq!(eval("[1, 2, 3].at(5)"), JsValue::Undefined);
+    }
+
+    #[test]
+    fn test_array_lastindexof() {
+        assert_eq!(eval("[1, 2, 3, 2, 1].lastIndexOf(2)"), JsValue::Number(3.0));
+        assert_eq!(eval("[1, 2, 3].lastIndexOf(4)"), JsValue::Number(-1.0));
+    }
+
+    #[test]
+    fn test_array_reduceright() {
+        assert_eq!(eval("[1, 2, 3].reduceRight((acc, x) => acc + x, 0)"), JsValue::Number(6.0));
+        assert_eq!(eval("['a', 'b', 'c'].reduceRight((acc, x) => acc + x, '')"), JsValue::String(JsString::from("cba")));
+    }
+
+    #[test]
+    fn test_array_flat() {
+        assert_eq!(eval("[[1, 2], [3, 4]].flat()[0]"), JsValue::Number(1.0));
+        assert_eq!(eval("[[1, 2], [3, 4]].flat().length"), JsValue::Number(4.0));
+        assert_eq!(eval("[1, [2, [3]]].flat(2).length"), JsValue::Number(3.0));
+    }
+
+    #[test]
+    fn test_array_flatmap() {
+        assert_eq!(eval("[1, 2, 3].flatMap(x => [x, x * 2]).length"), JsValue::Number(6.0));
+        assert_eq!(eval("[1, 2, 3].flatMap(x => [x, x * 2])[1]"), JsValue::Number(2.0));
     }
 }
