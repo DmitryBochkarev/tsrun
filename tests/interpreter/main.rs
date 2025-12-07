@@ -19,7 +19,7 @@ mod set;
 mod string;
 
 use typescript_eval::parser::Parser;
-use typescript_eval::{Interpreter, JsValue};
+use typescript_eval::{Interpreter, JsError, JsValue};
 
 /// Helper function to evaluate TypeScript source code
 pub fn eval(source: &str) -> JsValue {
@@ -27,4 +27,20 @@ pub fn eval(source: &str) -> JsValue {
     let program = parser.parse_program().unwrap();
     let mut interp = Interpreter::new();
     interp.execute(&program).unwrap()
+}
+
+/// Helper function to evaluate and return Result for error testing
+pub fn eval_result(source: &str) -> Result<JsValue, JsError> {
+    let mut parser = Parser::new(source);
+    let program = parser.parse_program().unwrap();
+    let mut interp = Interpreter::new();
+    interp.execute(&program)
+}
+
+/// Helper to check if evaluation throws an error containing a specific message
+pub fn throws_error(source: &str, error_contains: &str) -> bool {
+    match eval_result(source) {
+        Err(e) => format!("{:?}", e).contains(error_contains),
+        Ok(_) => false,
+    }
 }

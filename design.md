@@ -17,6 +17,38 @@
 
 ---
 
+## Next Implementation Priorities
+
+The following features should be implemented next, in priority order:
+
+### Priority 1: Core Language Features
+1. ~~**Temporal Dead Zone (TDZ)** - let/const access before declaration should throw ReferenceError~~ ✅
+2. **Symbol primitive** - Symbol() constructor, Symbol.for(), well-known symbols
+3. **Generator functions** - `function*`, `yield`, `yield*`
+
+### Priority 2: Built-in Methods
+4. **String.prototype.match/matchAll/search** - regex matching methods
+5. **String.fromCodePoint/codePointAt** - Unicode code point support
+6. **Object.defineProperties** - define multiple properties at once
+7. **Error.prototype.toString** - proper error string formatting
+8. **Date setter methods** - setFullYear, setMonth, setDate, etc.
+
+### Priority 3: Advanced Features
+9. **Error stack traces** - capture and format stack traces
+10. **namespace/module declarations** - TypeScript namespace support
+11. **RegExp flags** - dotAll, unicode, sticky flags
+12. **console.table/dir/time** - additional console methods
+
+### Priority 4: Module System (implement last, requires design clarification)
+13. **Module resolution** - via callback that returns source or AST (design TBD)
+14. **Module caching** - cache loaded modules to avoid re-execution
+15. **Circular dependency handling** - proper handling of circular imports
+16. **Dynamic import()** - synchronous dynamic imports
+
+**Note:** Module resolution should be implemented as a user-provided callback (e.g., `resolve_module(path: &str) -> Result<Source | AST>`). This allows embedding applications to control how modules are loaded (from filesystem, bundled, virtual, etc.). Design details to be clarified before implementation.
+
+---
+
 ## Feature Checklist
 
 ### JavaScript Language Features
@@ -26,7 +58,7 @@
 - [x] `const` declarations
 - [x] `var` declarations (function-scoped)
 - [x] Variable hoisting (var)
-- [ ] Temporal Dead Zone (let/const)
+- [x] Temporal Dead Zone (let/const)
 - [x] Multiple declarators (`let a = 1, b = 2`)
 
 #### Primitive Types & Literals
@@ -37,7 +69,7 @@
 - [x] String (single/double quotes)
 - [x] Template literals (backticks)
 - [x] Template literal interpolation (`${expr}`)
-- [ ] Tagged template literals
+- [x] Tagged template literals
 - [x] BigInt literals (`123n`) - parsed, converted to Number at runtime
 - [ ] Symbol
 

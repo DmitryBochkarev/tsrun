@@ -674,22 +674,61 @@ impl Environment {
         );
     }
 
-    /// Get a binding value
-    pub fn get(&self, name: &str) -> Option<JsValue> {
+    /// Define an uninitialized binding (for TDZ - let/const before declaration)
+    pub fn define_uninitialized(&mut self, name: String, mutable: bool) {
+        self.bindings.borrow_mut().insert(
+            name,
+            Binding {
+                value: JsValue::Undefined,
+                mutable,
+                initialized: false,
+            },
+        );
+    }
+
+    /// Initialize a previously uninitialized binding (for TDZ)
+    pub fn initialize(&self, name: &str, value: JsValue) -> Result<(), JsError> {
+        if let Some(binding) = self.bindings.borrow_mut().get_mut(name) {
+            binding.value = value;
+            binding.initialized = true;
+            return Ok(());
+        }
+
+        if let Some(ref outer) = self.outer {
+            return outer.initialize(name, value);
+        }
+
+        Err(JsError::reference_error(name))
+    }
+
+    /// Get a binding value (returns Err for uninitialized TDZ bindings)
+    pub fn get(&self, name: &str) -> Result<JsValue, JsError> {
         if let Some(binding) = self.bindings.borrow().get(name) {
-            return Some(binding.value.clone());
+            if !binding.initialized {
+                return Err(JsError::reference_error_with_message(
+                    name,
+                    "Cannot access before initialization",
+                ));
+            }
+            return Ok(binding.value.clone());
         }
 
         if let Some(ref outer) = self.outer {
             return outer.get(name);
         }
 
-        None
+        Err(JsError::reference_error(name))
     }
 
     /// Set a binding value
     pub fn set(&self, name: &str, value: JsValue) -> Result<(), JsError> {
         if let Some(binding) = self.bindings.borrow_mut().get_mut(name) {
+            if !binding.initialized {
+                return Err(JsError::reference_error_with_message(
+                    name,
+                    "Cannot access before initialization",
+                ));
+            }
             if !binding.mutable {
                 return Err(JsError::type_error(format!(
                     "Assignment to constant variable '{}'",
@@ -718,6 +757,11 @@ impl Environment {
         }
 
         false
+    }
+
+    /// Check if a binding exists in this exact scope (not outer)
+    pub fn has_own(&self, name: &str) -> bool {
+        self.bindings.borrow().contains_key(name)
     }
 }
 

@@ -114,6 +114,12 @@ impl JsError {
         JsError::ReferenceError { name: name.into() }
     }
 
+    pub fn reference_error_with_message(name: impl Into<String>, message: impl Into<String>) -> Self {
+        JsError::ReferenceError {
+            name: format!("'{}': {}", name.into(), message.into())
+        }
+    }
+
     pub fn range_error(message: impl Into<String>) -> Self {
         JsError::RangeError {
             message: message.into(),

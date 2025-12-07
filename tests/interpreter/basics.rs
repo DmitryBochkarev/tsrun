@@ -300,3 +300,79 @@ fn test_destructuring_assignment_object_rename() {
         JsValue::Number(20.0)
     );
 }
+
+// Temporal Dead Zone (TDZ) tests
+#[test]
+fn test_tdz_let_access_before_declaration() {
+    // Accessing let variable before declaration should throw ReferenceError
+    use super::throws_error;
+    assert!(throws_error(
+        r#"
+        {
+            console.log(x);
+            let x: number = 5;
+        }
+        "#,
+        "ReferenceError"
+    ));
+}
+
+#[test]
+fn test_tdz_const_access_before_declaration() {
+    // Accessing const variable before declaration should throw ReferenceError
+    use super::throws_error;
+    assert!(throws_error(
+        r#"
+        {
+            const y: number = x;
+            const x: number = 5;
+        }
+        "#,
+        "ReferenceError"
+    ));
+}
+
+#[test]
+fn test_tdz_var_hoisting_works() {
+    // var should be hoisted and accessible (as undefined) before declaration
+    assert_eq!(
+        eval(r#"
+            function test(): any {
+                const before: any = x;
+                var x: number = 5;
+                return before;
+            }
+            test()
+        "#),
+        JsValue::Undefined
+    );
+}
+
+#[test]
+fn test_tdz_let_after_declaration_works() {
+    // Accessing let after declaration should work
+    assert_eq!(
+        eval(r#"
+            {
+                let x: number = 10;
+                x
+            }
+        "#),
+        JsValue::Number(10.0)
+    );
+}
+
+#[test]
+fn test_tdz_function_can_reference_later_let() {
+    // Function defined before let can reference it if called after
+    assert_eq!(
+        eval(r#"
+            {
+                function getX(): number { return x; }
+                let x: number = 42;
+                getX()
+            }
+        "#),
+        JsValue::Number(42.0)
+    );
+}

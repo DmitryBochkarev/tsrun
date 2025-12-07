@@ -400,6 +400,125 @@ impl Interpreter {
         Ok(())
     }
 
+    /// Hoist var declarations to the current scope (function-scoped hoisting)
+    /// This defines all var-declared variables as undefined before execution
+    fn hoist_var_declarations(&mut self, statements: &[Statement]) {
+        for stmt in statements {
+            self.hoist_var_in_statement(stmt);
+        }
+    }
+
+    fn hoist_var_in_statement(&mut self, stmt: &Statement) {
+        match stmt {
+            Statement::VariableDeclaration(decl) if decl.kind == VariableKind::Var => {
+                for declarator in &decl.declarations {
+                    self.hoist_pattern_names(&declarator.id);
+                }
+            }
+            Statement::Block(block) => {
+                // Var declarations inside blocks are still hoisted to function scope
+                self.hoist_var_declarations(&block.body);
+            }
+            Statement::If(if_stmt) => {
+                self.hoist_var_in_statement(&if_stmt.consequent);
+                if let Some(alt) = &if_stmt.alternate {
+                    self.hoist_var_in_statement(alt);
+                }
+            }
+            Statement::For(for_stmt) => {
+                if let Some(ForInit::Variable(decl)) = &for_stmt.init {
+                    if decl.kind == VariableKind::Var {
+                        for declarator in &decl.declarations {
+                            self.hoist_pattern_names(&declarator.id);
+                        }
+                    }
+                }
+                self.hoist_var_in_statement(&for_stmt.body);
+            }
+            Statement::ForIn(for_in) => {
+                if let ForInOfLeft::Variable(decl) = &for_in.left {
+                    if decl.kind == VariableKind::Var {
+                        for declarator in &decl.declarations {
+                            self.hoist_pattern_names(&declarator.id);
+                        }
+                    }
+                }
+                self.hoist_var_in_statement(&for_in.body);
+            }
+            Statement::ForOf(for_of) => {
+                if let ForInOfLeft::Variable(decl) = &for_of.left {
+                    if decl.kind == VariableKind::Var {
+                        for declarator in &decl.declarations {
+                            self.hoist_pattern_names(&declarator.id);
+                        }
+                    }
+                }
+                self.hoist_var_in_statement(&for_of.body);
+            }
+            Statement::While(while_stmt) => {
+                self.hoist_var_in_statement(&while_stmt.body);
+            }
+            Statement::DoWhile(do_while) => {
+                self.hoist_var_in_statement(&do_while.body);
+            }
+            Statement::Try(try_stmt) => {
+                self.hoist_var_declarations(&try_stmt.block.body);
+                if let Some(catch) = &try_stmt.handler {
+                    self.hoist_var_declarations(&catch.body.body);
+                }
+                if let Some(finally) = &try_stmt.finalizer {
+                    self.hoist_var_declarations(&finally.body);
+                }
+            }
+            Statement::Switch(switch_stmt) => {
+                for case in &switch_stmt.cases {
+                    self.hoist_var_declarations(&case.consequent);
+                }
+            }
+            Statement::Labeled(labeled) => {
+                self.hoist_var_in_statement(&labeled.body);
+            }
+            _ => {}
+        }
+    }
+
+    /// Extract variable names from a pattern and define them as undefined (hoisted)
+    fn hoist_pattern_names(&mut self, pattern: &Pattern) {
+        match pattern {
+            Pattern::Identifier(id) => {
+                // Only hoist if not already defined in this scope
+                if !self.env.has_own(&id.name) {
+                    self.env.define(id.name.clone(), JsValue::Undefined, true);
+                }
+            }
+            Pattern::Object(obj_pat) => {
+                for prop in &obj_pat.properties {
+                    match prop {
+                        ObjectPatternProperty::KeyValue { value, .. } => {
+                            self.hoist_pattern_names(value);
+                        }
+                        ObjectPatternProperty::Rest(rest) => {
+                            self.hoist_pattern_names(&rest.argument);
+                        }
+                    }
+                }
+            }
+            Pattern::Array(arr_pat) => {
+                for elem in &arr_pat.elements {
+                    if let Some(pat) = elem {
+                        self.hoist_pattern_names(pat);
+                    }
+                }
+            }
+            Pattern::Rest(rest) => {
+                self.hoist_pattern_names(&rest.argument);
+            }
+            Pattern::Assignment(assign) => {
+                self.hoist_pattern_names(&assign.left);
+            }
+        }
+    }
+
     fn execute_function_declaration(&mut self, decl: &FunctionDeclaration) -> Result<(), JsError> {
         let func = InterpretedFunction {
             name: decl.id.as_ref().map(|id| id.name.clone()),
@@ -1064,14 +1183,12 @@ impl Interpreter {
             Expression::Literal(lit) => self.evaluate_literal(&lit.value),
 
             Expression::Identifier(id) => {
-                self.env
-                    .get(&id.name)
-                    .ok_or_else(|| JsError::reference_error(&id.name))
+                self.env.get(&id.name)
             }
 
             Expression::This(_) => {
                 // Look up 'this' from the environment
-                Ok(self.env.get("this").unwrap_or(JsValue::Undefined))
+                Ok(self.env.get("this").unwrap_or_else(|_| JsValue::Undefined))
             }
 
             Expression::Array(arr) => {
@@ -1237,10 +1354,9 @@ impl Interpreter {
                 // Return __super__ from environment so it can be called or have properties accessed
                 // super() calls the parent constructor with current this
                 // super.method() accesses parent prototype method
-                match self.env.get("__super__") {
-                    Some(val) => Ok(val),
-                    None => Err(JsError::reference_error("'super' keyword is not available in this context")),
-                }
+                self.env.get("__super__").map_err(|_| {
+                    JsError::reference_error("'super' keyword is not available in this context")
+                })
             }
 
             Expression::Class(class_expr) => {
@@ -1702,7 +1818,7 @@ impl Interpreter {
         let callee = if let Expression::Member(member) = call.callee.as_ref() {
             if let Expression::Super(_) = member.object.as_ref() {
                 // Get super constructor
-                let super_ctor = self.env.get("__super__").ok_or_else(|| {
+                let super_ctor = self.env.get("__super__").map_err(|_| {
                     JsError::reference_error("'super' keyword is not available in this context")
                 })?;
                 // Get super prototype
@@ -1865,6 +1981,11 @@ impl Interpreter {
                 let super_ctor = obj.borrow().get_property(&PropertyKey::from("__super__"));
                 if let Some(super_val) = super_ctor {
                     self.env.define("__super__".to_string(), super_val, false);
+                }
+
+                // Hoist var declarations before anything else
+                if let FunctionBody::Block(block) = &interpreted.body {
+                    self.hoist_var_declarations(&block.body);
                 }
 
                 // Bind parameters
