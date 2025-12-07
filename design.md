@@ -247,7 +247,7 @@
 - [x] `Array.prototype.filter(predicate)`
 - [x] `Array.prototype.map(callback)`
 - [x] `Array.prototype.forEach(callback)`
-- [ ] `Array.prototype.reduce(callback, initial?)`
+- [x] `Array.prototype.reduce(callback, initial?)`
 - [ ] `Array.prototype.reduceRight(callback, initial?)`
 - [ ] `Array.prototype.every(predicate)`
 - [ ] `Array.prototype.some(predicate)`

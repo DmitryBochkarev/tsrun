@@ -159,6 +159,14 @@ impl Interpreter {
                 arity: 1,
             }));
             proto.set_property(PropertyKey::from("forEach"), JsValue::Object(foreach_fn));
+
+            // Array.prototype.reduce
+            let reduce_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "reduce".to_string(),
+                func: array_reduce,
+                arity: 1,
+            }));
+            proto.set_property(PropertyKey::from("reduce"), JsValue::Object(reduce_fn));
         }
 
         // Add Array global
@@ -1709,6 +1717,57 @@ fn array_foreach(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) ->
     Ok(JsValue::Undefined)
 }
 
+fn array_reduce(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let JsValue::Object(arr) = this.clone() else {
+        return Err(JsError::type_error("Array.prototype.reduce called on non-object"));
+    };
+
+    let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
+    if !callback.is_callable() {
+        return Err(JsError::type_error("Array.prototype.reduce callback is not a function"));
+    }
+
+    // Get array length
+    let length = {
+        let arr_ref = arr.borrow();
+        match &arr_ref.exotic {
+            ExoticObject::Array { length } => *length,
+            _ => return Err(JsError::type_error("Not an array")),
+        }
+    };
+
+    // Determine initial value and starting index
+    let (mut accumulator, start_index) = if args.len() >= 2 {
+        (args[1].clone(), 0)
+    } else {
+        if length == 0 {
+            return Err(JsError::type_error("Reduce of empty array with no initial value"));
+        }
+        let first = arr
+            .borrow()
+            .get_property(&PropertyKey::Index(0))
+            .unwrap_or(JsValue::Undefined);
+        (first, 1)
+    };
+
+    // Reduce
+    for i in start_index..length {
+        let elem = arr
+            .borrow()
+            .get_property(&PropertyKey::Index(i))
+            .unwrap_or(JsValue::Undefined);
+
+        // Call callback(accumulator, element, index, array)
+        accumulator = interp.call_function(
+            callback.clone(),
+            JsValue::Undefined,
+            vec![accumulator, elem, JsValue::Number(i as f64), this.clone()],
+        )?;
+    }
+
+    Ok(accumulator)
+}
+
 // JSON conversion helpers
 
 fn js_value_to_json(value: &JsValue) -> Result<serde_json::Value, JsError> {
@@ -1958,5 +2017,33 @@ mod tests {
     #[test]
     fn test_array_foreach_with_index() {
         assert_eq!(eval("let result = 0; [10, 20, 30].forEach((x, i) => result += i); result"), JsValue::Number(3.0));
+    }
+
+    // Array.prototype.reduce tests
+    #[test]
+    fn test_array_reduce_sum() {
+        assert_eq!(eval("[1, 2, 3, 4].reduce((acc, x) => acc + x, 0)"), JsValue::Number(10.0));
+    }
+
+    #[test]
+    fn test_array_reduce_no_initial() {
+        // Without initial value, uses first element as initial
+        assert_eq!(eval("[1, 2, 3, 4].reduce((acc, x) => acc + x)"), JsValue::Number(10.0));
+    }
+
+    #[test]
+    fn test_array_reduce_multiply() {
+        assert_eq!(eval("[1, 2, 3, 4].reduce((acc, x) => acc * x, 1)"), JsValue::Number(24.0));
+    }
+
+    #[test]
+    fn test_array_reduce_with_index() {
+        // Sum of indices
+        assert_eq!(eval("[10, 20, 30].reduce((acc, x, i) => acc + i, 0)"), JsValue::Number(3.0));
+    }
+
+    #[test]
+    fn test_array_reduce_to_object() {
+        assert_eq!(eval("const obj = [['a', 1], ['b', 2]].reduce((acc, [k, v]) => { acc[k] = v; return acc; }, {}); obj.a"), JsValue::Number(1.0));
     }
 }
