@@ -119,7 +119,7 @@
 
 #### Classes
 - [x] Class declarations
-- [ ] Class expressions
+- [x] Class expressions
 - [x] Constructor
 - [x] Instance methods
 - [x] Static methods

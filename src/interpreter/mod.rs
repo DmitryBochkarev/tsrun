@@ -1173,8 +1173,20 @@ impl Interpreter {
                 }
             }
 
-            Expression::Class(_) => {
-                Err(JsError::type_error("Class expressions not implemented"))
+            Expression::Class(class_expr) => {
+                // Convert ClassExpression to ClassDeclaration-like structure and create constructor
+                let class_decl = ClassDeclaration {
+                    id: class_expr.id.clone(),
+                    type_parameters: class_expr.type_parameters.clone(),
+                    super_class: class_expr.super_class.clone(),
+                    implements: class_expr.implements.clone(),
+                    body: class_expr.body.clone(),
+                    decorators: class_expr.decorators.clone(),
+                    abstract_: false,
+                    span: class_expr.span,
+                };
+                let constructor_fn = self.create_class_constructor(&class_decl)?;
+                Ok(JsValue::Object(constructor_fn))
             }
 
             Expression::OptionalChain(chain) => {

@@ -129,6 +129,41 @@ fn test_class_super_method() {
     );
 }
 
+// Class expression tests
+#[test]
+fn test_class_expression() {
+    assert_eq!(
+        eval(r#"
+            const Foo = class {
+                value: number = 10;
+                getValue(): number {
+                    return this.value;
+                }
+            };
+            const f = new Foo();
+            f.getValue()
+        "#),
+        JsValue::Number(10.0)
+    );
+}
+
+#[test]
+fn test_class_expression_named() {
+    assert_eq!(
+        eval(r#"
+            const MyClass = class Named {
+                name: string = "test";
+                getName(): string {
+                    return this.name;
+                }
+            };
+            const m = new MyClass();
+            m.getName()
+        "#),
+        JsValue::from("test")
+    );
+}
+
 // Private field tests
 #[test]
 fn test_private_field_basic() {
