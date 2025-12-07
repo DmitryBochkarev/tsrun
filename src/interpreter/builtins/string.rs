@@ -2,7 +2,8 @@
 
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
-use crate::value::{create_function, create_object, JsFunction, JsObjectRef, JsString, JsValue, NativeFunction, PropertyKey};
+use crate::value::{create_function, create_object, ExoticObject, JsFunction, JsObjectRef, JsString, JsValue, NativeFunction, PropertyKey};
+use super::regexp::build_regex;
 
 /// Create String.prototype with all string methods
 pub fn create_string_prototype() -> JsObjectRef {
@@ -163,6 +164,27 @@ pub fn create_string_prototype() -> JsObjectRef {
             arity: 1,
         }));
         p.set_property(PropertyKey::from("charCodeAt"), JsValue::Object(charcodeat_fn));
+
+        let match_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "match".to_string(),
+            func: string_match,
+            arity: 1,
+        }));
+        p.set_property(PropertyKey::from("match"), JsValue::Object(match_fn));
+
+        let matchall_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "matchAll".to_string(),
+            func: string_match_all,
+            arity: 1,
+        }));
+        p.set_property(PropertyKey::from("matchAll"), JsValue::Object(matchall_fn));
+
+        let search_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "search".to_string(),
+            func: string_search,
+            arity: 1,
+        }));
+        p.set_property(PropertyKey::from("search"), JsValue::Object(search_fn));
     }
     proto
 }
@@ -484,4 +506,148 @@ pub fn string_from_char_code(_interp: &mut Interpreter, _this: JsValue, args: Ve
         })
         .collect();
     Ok(JsValue::String(JsString::from(chars)))
+}
+
+/// String.prototype.match(regexp)
+/// Returns an array of matches or null if no match
+pub fn string_match(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let s = this.to_js_string().to_string();
+
+    let regexp_arg = args.first().cloned().unwrap_or(JsValue::Undefined);
+
+    // Get pattern and flags from the regexp
+    let (pattern, flags) = match &regexp_arg {
+        JsValue::Object(obj) => {
+            let obj_ref = obj.borrow();
+            if let ExoticObject::RegExp { ref pattern, ref flags } = obj_ref.exotic {
+                (pattern.clone(), flags.clone())
+            } else {
+                // Convert to string and use as pattern
+                (regexp_arg.to_js_string().to_string(), String::new())
+            }
+        }
+        _ => {
+            // Convert to string and use as pattern
+            (regexp_arg.to_js_string().to_string(), String::new())
+        }
+    };
+
+    let re = build_regex(&pattern, &flags)?;
+
+    if flags.contains('g') {
+        // Global flag: return array of all matches
+        let matches: Vec<JsValue> = re.find_iter(&s)
+            .map(|m| JsValue::String(JsString::from(m.as_str())))
+            .collect();
+
+        if matches.is_empty() {
+            Ok(JsValue::Null)
+        } else {
+            Ok(JsValue::Object(interp.create_array(matches)))
+        }
+    } else {
+        // Non-global: return first match with groups (like exec)
+        match re.captures(&s) {
+            Some(caps) => {
+                let mut result = Vec::new();
+                for cap in caps.iter() {
+                    match cap {
+                        Some(m) => result.push(JsValue::String(JsString::from(m.as_str()))),
+                        None => result.push(JsValue::Undefined),
+                    }
+                }
+                let arr = interp.create_array(result);
+                // Add index property
+                if let Some(m) = caps.get(0) {
+                    arr.borrow_mut().set_property(PropertyKey::from("index"), JsValue::Number(m.start() as f64));
+                }
+                arr.borrow_mut().set_property(PropertyKey::from("input"), JsValue::String(JsString::from(s)));
+                Ok(JsValue::Object(arr))
+            }
+            None => Ok(JsValue::Null),
+        }
+    }
+}
+
+/// String.prototype.matchAll(regexp)
+/// Returns an iterator of all matches (we return an array for simplicity)
+pub fn string_match_all(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let s = this.to_js_string().to_string();
+
+    let regexp_arg = args.first().cloned().unwrap_or(JsValue::Undefined);
+
+    // Get pattern and flags from the regexp
+    let (pattern, flags) = match &regexp_arg {
+        JsValue::Object(obj) => {
+            let obj_ref = obj.borrow();
+            if let ExoticObject::RegExp { ref pattern, ref flags } = obj_ref.exotic {
+                (pattern.clone(), flags.clone())
+            } else {
+                return Err(JsError::type_error("matchAll requires a global RegExp"));
+            }
+        }
+        _ => {
+            return Err(JsError::type_error("matchAll requires a RegExp argument"));
+        }
+    };
+
+    // matchAll requires global flag
+    if !flags.contains('g') {
+        return Err(JsError::type_error("matchAll must be called with a global RegExp"));
+    }
+
+    let re = build_regex(&pattern, &flags)?;
+
+    // Collect all matches with their capture groups
+    let mut all_matches = Vec::new();
+    for caps in re.captures_iter(&s) {
+        let mut result = Vec::new();
+        for cap in caps.iter() {
+            match cap {
+                Some(m) => result.push(JsValue::String(JsString::from(m.as_str()))),
+                None => result.push(JsValue::Undefined),
+            }
+        }
+        let arr = interp.create_array(result);
+        // Add index property
+        if let Some(m) = caps.get(0) {
+            arr.borrow_mut().set_property(PropertyKey::from("index"), JsValue::Number(m.start() as f64));
+        }
+        arr.borrow_mut().set_property(PropertyKey::from("input"), JsValue::String(JsString::from(s.clone())));
+        all_matches.push(JsValue::Object(arr));
+    }
+
+    Ok(JsValue::Object(interp.create_array(all_matches)))
+}
+
+/// String.prototype.search(regexp)
+/// Returns the index of the first match, or -1 if not found
+pub fn string_search(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let s = this.to_js_string().to_string();
+
+    let regexp_arg = args.first().cloned().unwrap_or(JsValue::Undefined);
+
+    // Get pattern and flags from the regexp
+    let (pattern, flags) = match &regexp_arg {
+        JsValue::Object(obj) => {
+            let obj_ref = obj.borrow();
+            if let ExoticObject::RegExp { ref pattern, ref flags } = obj_ref.exotic {
+                (pattern.clone(), flags.clone())
+            } else {
+                // Convert to string and use as pattern
+                (regexp_arg.to_js_string().to_string(), String::new())
+            }
+        }
+        _ => {
+            // Convert to string and use as pattern
+            (regexp_arg.to_js_string().to_string(), String::new())
+        }
+    };
+
+    let re = build_regex(&pattern, &flags)?;
+
+    match re.find(&s) {
+        Some(m) => Ok(JsValue::Number(m.start() as f64)),
+        None => Ok(JsValue::Number(-1.0)),
+    }
 }

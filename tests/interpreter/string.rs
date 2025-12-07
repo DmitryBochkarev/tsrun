@@ -234,3 +234,97 @@ fn test_string_replaceall() {
         JsValue::String(JsString::from(""))
     );
 }
+
+// String.prototype.match tests
+#[test]
+fn test_string_match_basic() {
+    // match with string pattern returns first match
+    assert_eq!(
+        eval("'hello world'.match('world')[0]"),
+        JsValue::String(JsString::from("world"))
+    );
+}
+
+#[test]
+fn test_string_match_no_match() {
+    // No match returns null
+    assert_eq!(
+        eval("'hello'.match('xyz')"),
+        JsValue::Null
+    );
+}
+
+#[test]
+fn test_string_match_regexp() {
+    // match with RegExp (non-global)
+    assert_eq!(
+        eval("'hello world'.match(/o/)[0]"),
+        JsValue::String(JsString::from("o"))
+    );
+}
+
+#[test]
+fn test_string_match_global() {
+    // match with global flag returns array of all matches
+    assert_eq!(
+        eval("'hello world'.match(/o/g).length"),
+        JsValue::Number(2.0)
+    );
+}
+
+#[test]
+fn test_string_match_index() {
+    // Non-global match includes index property
+    assert_eq!(
+        eval("'hello world'.match('world').index"),
+        JsValue::Number(6.0)
+    );
+}
+
+// String.prototype.search tests
+#[test]
+fn test_string_search_basic() {
+    assert_eq!(
+        eval("'hello world'.search('world')"),
+        JsValue::Number(6.0)
+    );
+}
+
+#[test]
+fn test_string_search_not_found() {
+    assert_eq!(
+        eval("'hello'.search('xyz')"),
+        JsValue::Number(-1.0)
+    );
+}
+
+#[test]
+fn test_string_search_regexp() {
+    assert_eq!(
+        eval("'hello world'.search(/o/)"),
+        JsValue::Number(4.0)
+    );
+}
+
+// String.prototype.matchAll tests
+#[test]
+fn test_string_matchall_basic() {
+    // matchAll returns array of match results
+    assert_eq!(
+        eval("Array.from('hello world'.matchAll(/o/g)).length"),
+        JsValue::Number(2.0)
+    );
+}
+
+#[test]
+fn test_string_matchall_index() {
+    // Each result has index property
+    assert_eq!(
+        eval("Array.from('hello world'.matchAll(/o/g))[0].index"),
+        JsValue::Number(4.0)
+    );
+    assert_eq!(
+        eval("Array.from('hello world'.matchAll(/o/g))[1].index"),
+        JsValue::Number(7.0)
+    );
+}

@@ -27,7 +27,7 @@ The following features should be implemented next, in priority order:
 3. **Generator functions** - `function*`, `yield`, `yield*`
 
 ### Priority 2: Built-in Methods
-4. **String.prototype.match/matchAll/search** - regex matching methods
+4. ~~**String.prototype.match/matchAll/search** - regex matching methods~~ ✅
 5. **String.fromCodePoint/codePointAt** - Unicode code point support
 6. **Object.defineProperties** - define multiple properties at once
 7. **Error.prototype.toString** - proper error string formatting
@@ -355,9 +355,9 @@ To fully implement classes, the following components are needed:
 - [x] `String.prototype.repeat(count)`
 - [x] `String.prototype.replace(search, replacement)`
 - [x] `String.prototype.replaceAll(search, replacement)`
-- [ ] `String.prototype.match(regexp)`
-- [ ] `String.prototype.matchAll(regexp)`
-- [ ] `String.prototype.search(regexp)`
+- [x] `String.prototype.match(regexp)`
+- [x] `String.prototype.matchAll(regexp)`
+- [x] `String.prototype.search(regexp)`
 - [x] `String.prototype.at(index)`
 - [ ] `String.prototype.normalize(form?)`
 - [ ] `String.prototype.localeCompare(other)`

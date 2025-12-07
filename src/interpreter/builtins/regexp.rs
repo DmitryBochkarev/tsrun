@@ -61,7 +61,7 @@ pub fn regexp_constructor(interp: &mut Interpreter, _this: JsValue, args: Vec<Js
     Ok(JsValue::Object(regexp_obj))
 }
 
-fn get_regexp_data(this: &JsValue) -> Result<(String, String), JsError> {
+pub fn get_regexp_data(this: &JsValue) -> Result<(String, String), JsError> {
     let JsValue::Object(obj) = this else {
         return Err(JsError::type_error("this is not a RegExp"));
     };
@@ -73,7 +73,7 @@ fn get_regexp_data(this: &JsValue) -> Result<(String, String), JsError> {
     }
 }
 
-fn build_regex(pattern: &str, flags: &str) -> Result<regex::Regex, JsError> {
+pub fn build_regex(pattern: &str, flags: &str) -> Result<regex::Regex, JsError> {
     let mut regex_pattern = pattern.to_string();
 
     // Handle case-insensitive flag
