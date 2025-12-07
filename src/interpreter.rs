@@ -167,6 +167,22 @@ impl Interpreter {
                 arity: 1,
             }));
             proto.set_property(PropertyKey::from("reduce"), JsValue::Object(reduce_fn));
+
+            // Array.prototype.find
+            let find_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "find".to_string(),
+                func: array_find,
+                arity: 1,
+            }));
+            proto.set_property(PropertyKey::from("find"), JsValue::Object(find_fn));
+
+            // Array.prototype.findIndex
+            let findindex_fn = create_function(JsFunction::Native(NativeFunction {
+                name: "findIndex".to_string(),
+                func: array_find_index,
+                arity: 1,
+            }));
+            proto.set_property(PropertyKey::from("findIndex"), JsValue::Object(findindex_fn));
         }
 
         // Add Array global
@@ -1768,6 +1784,86 @@ fn array_reduce(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> 
     Ok(accumulator)
 }
 
+fn array_find(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let JsValue::Object(arr) = this.clone() else {
+        return Err(JsError::type_error("Array.prototype.find called on non-object"));
+    };
+
+    let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
+    if !callback.is_callable() {
+        return Err(JsError::type_error("Array.prototype.find callback is not a function"));
+    }
+
+    let this_arg = args.get(1).cloned().unwrap_or(JsValue::Undefined);
+
+    let length = {
+        let arr_ref = arr.borrow();
+        match &arr_ref.exotic {
+            ExoticObject::Array { length } => *length,
+            _ => return Err(JsError::type_error("Not an array")),
+        }
+    };
+
+    for i in 0..length {
+        let elem = arr
+            .borrow()
+            .get_property(&PropertyKey::Index(i))
+            .unwrap_or(JsValue::Undefined);
+
+        let result = interp.call_function(
+            callback.clone(),
+            this_arg.clone(),
+            vec![elem.clone(), JsValue::Number(i as f64), this.clone()],
+        )?;
+
+        if result.to_boolean() {
+            return Ok(elem);
+        }
+    }
+
+    Ok(JsValue::Undefined)
+}
+
+fn array_find_index(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let JsValue::Object(arr) = this.clone() else {
+        return Err(JsError::type_error("Array.prototype.findIndex called on non-object"));
+    };
+
+    let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
+    if !callback.is_callable() {
+        return Err(JsError::type_error("Array.prototype.findIndex callback is not a function"));
+    }
+
+    let this_arg = args.get(1).cloned().unwrap_or(JsValue::Undefined);
+
+    let length = {
+        let arr_ref = arr.borrow();
+        match &arr_ref.exotic {
+            ExoticObject::Array { length } => *length,
+            _ => return Err(JsError::type_error("Not an array")),
+        }
+    };
+
+    for i in 0..length {
+        let elem = arr
+            .borrow()
+            .get_property(&PropertyKey::Index(i))
+            .unwrap_or(JsValue::Undefined);
+
+        let result = interp.call_function(
+            callback.clone(),
+            this_arg.clone(),
+            vec![elem, JsValue::Number(i as f64), this.clone()],
+        )?;
+
+        if result.to_boolean() {
+            return Ok(JsValue::Number(i as f64));
+        }
+    }
+
+    Ok(JsValue::Number(-1.0))
+}
+
 // JSON conversion helpers
 
 fn js_value_to_json(value: &JsValue) -> Result<serde_json::Value, JsError> {
@@ -2045,5 +2141,37 @@ mod tests {
     #[test]
     fn test_array_reduce_to_object() {
         assert_eq!(eval("const obj = [['a', 1], ['b', 2]].reduce((acc, [k, v]) => { acc[k] = v; return acc; }, {}); obj.a"), JsValue::Number(1.0));
+    }
+
+    // Array.prototype.find tests
+    #[test]
+    fn test_array_find_found() {
+        assert_eq!(eval("[1, 2, 3, 4].find(x => x > 2)"), JsValue::Number(3.0));
+    }
+
+    #[test]
+    fn test_array_find_not_found() {
+        assert_eq!(eval("[1, 2, 3].find(x => x > 10)"), JsValue::Undefined);
+    }
+
+    #[test]
+    fn test_array_find_with_index() {
+        assert_eq!(eval("[10, 20, 30].find((x, i) => i === 1)"), JsValue::Number(20.0));
+    }
+
+    // Array.prototype.findIndex tests
+    #[test]
+    fn test_array_findindex_found() {
+        assert_eq!(eval("[1, 2, 3, 4].findIndex(x => x > 2)"), JsValue::Number(2.0));
+    }
+
+    #[test]
+    fn test_array_findindex_not_found() {
+        assert_eq!(eval("[1, 2, 3].findIndex(x => x > 10)"), JsValue::Number(-1.0));
+    }
+
+    #[test]
+    fn test_array_findindex_first() {
+        assert_eq!(eval("[5, 10, 15].findIndex(x => x >= 5)"), JsValue::Number(0.0));
     }
 }

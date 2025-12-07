@@ -240,8 +240,8 @@
 - [ ] `Array.prototype.indexOf(item, fromIndex?)`
 - [ ] `Array.prototype.lastIndexOf(item, fromIndex?)`
 - [ ] `Array.prototype.includes(item, fromIndex?)`
-- [ ] `Array.prototype.find(predicate)`
-- [ ] `Array.prototype.findIndex(predicate)`
+- [x] `Array.prototype.find(predicate)`
+- [x] `Array.prototype.findIndex(predicate)`
 - [ ] `Array.prototype.findLast(predicate)`
 - [ ] `Array.prototype.findLastIndex(predicate)`
 - [x] `Array.prototype.filter(predicate)`
