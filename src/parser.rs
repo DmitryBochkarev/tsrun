@@ -433,6 +433,13 @@ impl<'a> Parser<'a> {
         let start = self.current.span;
 
         let static_ = self.match_token(&TokenKind::Static);
+
+        // Check for static initialization block: static { ... }
+        if static_ && self.check(&TokenKind::LBrace) {
+            let block = self.parse_block_statement()?;
+            return Ok(ClassMember::StaticBlock(block));
+        }
+
         let accessibility = self.parse_accessibility();
         let readonly = self.match_token(&TokenKind::Readonly);
 
@@ -3126,6 +3133,17 @@ mod tests {
     fn test_static_method() {
         let prog = parse("class Counter { static count: number = 0; static increment(): void { Counter.count++; } }");
         assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_static_initialization_block() {
+        // JavaScript style
+        let prog = parse("class Config { static initialized = false; static { Config.initialized = true; } }");
+        assert_eq!(prog.body.len(), 1);
+
+        // TypeScript style with type annotations
+        let prog_ts = parse("class Config { static initialized: boolean = false; static { Config.initialized = true; } }");
+        assert_eq!(prog_ts.body.len(), 1);
     }
 
     #[test]

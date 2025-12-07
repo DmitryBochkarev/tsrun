@@ -130,7 +130,7 @@
 - [x] `super` property access
 - [x] Private fields (`#field`)
 - [x] Private methods (`#method()`)
-- [ ] Static initialization blocks
+- [x] Static initialization blocks
 
 **Classes Implementation Notes:**
 To fully implement classes, the following components are needed:

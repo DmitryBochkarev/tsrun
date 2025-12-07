@@ -293,3 +293,43 @@ fn test_class_static_getter_setter() {
         JsValue::Number(5.0)
     );
 }
+
+// Test static initialization block
+#[test]
+fn test_static_initialization_block() {
+    assert_eq!(
+        eval(r#"
+            class Config {
+                static initialized: boolean = false;
+                static value: number = 0;
+
+                static {
+                    Config.initialized = true;
+                    Config.value = 42;
+                }
+            }
+            Config.value
+        "#),
+        JsValue::Number(42.0)
+    );
+}
+
+// Test static block with complex initialization
+#[test]
+fn test_static_block_complex() {
+    assert_eq!(
+        eval(r#"
+            class Counter {
+                static count: number = 0;
+                static doubled: number = 0;
+
+                static {
+                    Counter.count = 5;
+                    Counter.doubled = Counter.count * 2;
+                }
+            }
+            Counter.doubled
+        "#),
+        JsValue::Number(10.0)
+    );
+}

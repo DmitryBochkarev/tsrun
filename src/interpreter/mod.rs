@@ -421,8 +421,22 @@ impl Interpreter {
     fn execute_class_declaration(&mut self, class: &ClassDeclaration) -> Result<(), JsError> {
         let constructor_fn = self.create_class_constructor(class)?;
 
+        // Bind the class name first (so static blocks can reference it)
         if let Some(id) = &class.id {
-            self.env.define(id.name.clone(), JsValue::Object(constructor_fn), false);
+            self.env.define(id.name.clone(), JsValue::Object(constructor_fn.clone()), false);
+        }
+
+        // Now execute static blocks - they can reference the class name
+        for member in &class.body.members {
+            if let ClassMember::StaticBlock(block) = member {
+                // Execute the static block's statements
+                for stmt in &block.body {
+                    if let Completion::Return(_) = self.execute_statement(stmt)? {
+                        // Static blocks shouldn't have returns, but handle it gracefully
+                        break;
+                    }
+                }
+            }
         }
 
         Ok(())
@@ -480,7 +494,7 @@ impl Interpreter {
                     }
                 }
                 ClassMember::StaticBlock(_) => {
-                    // TODO: implement static initialization blocks
+                    // Static blocks are collected and executed later
                 }
             }
         }
