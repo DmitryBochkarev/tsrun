@@ -17,6 +17,32 @@ cargo test parser              # Run only parser tests
 cargo test -- --nocapture      # Show test output
 ```
 
+### Running Specific Tests
+
+```bash
+# Run tests matching a pattern
+cargo test test_name           # Run tests containing "test_name"
+cargo test string_match        # Run all string_match* tests
+cargo test test_tdz            # Run all TDZ-related tests
+
+# Run tests in a specific module
+cargo test string::            # Run all tests in string module
+cargo test array::             # Run all tests in array module
+
+# Run a single specific test with output
+cargo test test_string_match_basic -- --nocapture
+
+# Run tests and show all output (including passing tests)
+cargo test -- --nocapture --show-output
+```
+
+### Test Organization
+
+Tests are located in:
+- `tests/interpreter/` - Integration tests organized by feature (array.rs, string.rs, etc.)
+- `src/parser.rs` (bottom) - Parser unit tests
+- `src/value.rs` (bottom) - Value type unit tests
+
 ## Important Rules
 
 - **Always use the proper Edit tool to modify files** - never use shell commands like `echo >>` to modify files
