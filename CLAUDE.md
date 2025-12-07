@@ -9,11 +9,12 @@ TypeScript interpreter written in Rust for synchronous config/manifest generatio
 ## Build and Test Commands
 
 ```bash
-cargo build           # Build the project
-cargo test            # Run all tests
-cargo test lexer      # Run only lexer tests
-cargo test parser     # Run only parser tests
-cargo test -- --nocapture  # Show test output
+cargo build                    # Build the project
+cargo test                     # Run all tests
+cargo test --test interpreter  # Run only interpreter integration tests
+cargo test lexer               # Run only lexer tests
+cargo test parser              # Run only parser tests
+cargo test -- --nocapture      # Show test output
 ```
 
 ## Development Workflow
@@ -28,7 +29,7 @@ Use TDD (Test-Driven Development) for new features:
 When adding new built-in methods (Array, String, Object, etc.), follow this pattern:
 
 #### 1. Write Tests First
-Add tests in `interpreter/mod.rs` in the `mod tests` section:
+Add tests in the appropriate file under `tests/interpreter/` (e.g., `tests/interpreter/array.rs`):
 ```rust
 #[test]
 fn test_array_mymethod() {
@@ -130,6 +131,7 @@ Source → Lexer → Parser → AST → Interpreter → JsValue
 - **interpreter/mod.rs**: Statement execution and expression evaluation
 - **interpreter/builtins/**: Built-in function implementations (split by type)
 - **error.rs**: Error types (`JsError`) with source locations
+- **tests/interpreter/**: Integration tests organized by feature
 
 ### Builtins Module Structure
 
@@ -151,6 +153,39 @@ Each builtin type has its own file in `interpreter/builtins/`:
 | `set.rs` | `create_set_prototype()`, `create_set_constructor()`, set methods |
 | `error.rs` | `create_error_constructors()`, Error/TypeError/etc. |
 | `global.rs` | `register_global_functions()`, parseInt/parseFloat/isNaN/etc. |
+
+### Test Structure
+
+Integration tests are located in `tests/interpreter/` and organized by feature:
+
+| File | Contents |
+|------|----------|
+| `main.rs` | Entry point, declares modules, shared `eval()` helper |
+| `array.rs` | Array method tests (push, pop, map, filter, etc.) |
+| `basics.rs` | Basic language features (arithmetic, variables, conditionals) |
+| `console.rs` | Console methods (log, error, warn, info, debug) |
+| `date.rs` | Date object tests |
+| `error.rs` | Error constructor tests |
+| `function.rs` | Function features (call, apply, bind, arrows) |
+| `global.rs` | Global functions (parseInt, parseFloat, isNaN, etc.) |
+| `map.rs` | Map object tests |
+| `math.rs` | Math object tests |
+| `number.rs` | Number object tests |
+| `object.rs` | Object method tests |
+| `regexp.rs` | RegExp tests |
+| `set.rs` | Set object tests |
+| `string.rs` | String method tests |
+
+Each test file uses a shared `eval()` helper from `main.rs`:
+```rust
+use super::eval;
+use typescript_eval::JsValue;
+
+#[test]
+fn test_example() {
+    assert_eq!(eval("1 + 2"), JsValue::Number(3.0));
+}
+```
 
 ### Key Types
 
