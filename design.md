@@ -248,8 +248,8 @@ To fully implement classes, the following components are needed:
 #### TypeScript-Specific
 - [x] `enum` declarations → compile to objects
 - [x] `const enum` → inline values
-- [ ] `namespace` / `module` declarations
-- [ ] Declaration merging
+- [x] `namespace` / `module` declarations
+- [x] Declaration merging (namespace)
 - [x] Accessibility modifiers (`public`, `private`, `protected`) - parsed, ignored
 - [x] `abstract` classes - parsed, ignored
 - [x] `implements` clause - parsed, ignored
@@ -419,7 +419,7 @@ To fully implement classes, the following components are needed:
 - [x] `new ReferenceError(message?)`
 - [x] `new SyntaxError(message?)`
 - [x] `new RangeError(message?)`
-- [ ] `Error.prototype.stack`
+- [x] `Error.prototype.stack`
 - [x] `Error.prototype.toString()`
 
 #### Map
@@ -479,16 +479,16 @@ To fully implement classes, the following components are needed:
 - [x] `RegExp.prototype.sticky`
 
 #### Error Types
-- [ ] `Error`
-- [ ] `TypeError`
-- [ ] `ReferenceError`
-- [ ] `SyntaxError`
-- [ ] `RangeError`
+- [x] `Error`
+- [x] `TypeError`
+- [x] `ReferenceError`
+- [x] `SyntaxError`
+- [x] `RangeError`
 - [ ] `URIError`
 - [ ] `EvalError`
-- [ ] `Error.prototype.name`
-- [ ] `Error.prototype.message`
-- [ ] `Error.prototype.stack`
+- [x] `Error.prototype.name`
+- [x] `Error.prototype.message`
+- [x] `Error.prototype.stack`
 
 #### Console
 - [x] `console.log(...args)`
