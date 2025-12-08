@@ -76,6 +76,13 @@ pub fn create_string_prototype() -> JsObjectRef {
         }));
         p.set_property(PropertyKey::from("substring"), JsValue::Object(substring_fn));
 
+        let substr_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "substr".to_string(),
+            func: string_substr,
+            arity: 2,
+        }));
+        p.set_property(PropertyKey::from("substr"), JsValue::Object(substr_fn));
+
         let tolower_fn = create_function(JsFunction::Native(NativeFunction {
             name: "toLowerCase".to_string(),
             func: string_to_lower_case,
@@ -387,6 +394,39 @@ pub fn string_substring(_interp: &mut Interpreter, this: JsValue, args: Vec<JsVa
 
     let chars: Vec<char> = s.as_str().chars().collect();
     let result: String = chars[start.min(chars.len())..end.min(chars.len())].iter().collect();
+    Ok(JsValue::String(JsString::from(result)))
+}
+
+/// String.prototype.substr(start, length?) - deprecated but still supported
+pub fn string_substr(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let s = this.to_js_string();
+    let chars: Vec<char> = s.as_str().chars().collect();
+    let len = chars.len() as i64;
+
+    // Get start index
+    let start_arg = args.first().map(|v| v.to_number()).unwrap_or(0.0);
+    let mut start = if start_arg.is_nan() { 0 } else { start_arg as i64 };
+
+    // Negative start counts from end
+    if start < 0 {
+        start = (len + start).max(0);
+    }
+
+    // If start is beyond string length, return empty string
+    if start >= len {
+        return Ok(JsValue::String(JsString::from("")));
+    }
+
+    // Get length (default: rest of string)
+    let length = args.get(1).map(|v| {
+        let n = v.to_number();
+        if n.is_nan() || n < 0.0 { 0 } else { n as usize }
+    }).unwrap_or((len - start) as usize);
+
+    let start_idx = start as usize;
+    let end_idx = (start_idx + length).min(chars.len());
+
+    let result: String = chars[start_idx..end_idx].iter().collect();
     Ok(JsValue::String(JsString::from(result)))
 }
 

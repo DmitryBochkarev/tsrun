@@ -343,7 +343,7 @@ To fully implement classes, the following components are needed:
 - [x] `String.prototype.lastIndexOf(search, position?)`
 - [x] `String.prototype.slice(start?, end?)`
 - [x] `String.prototype.substring(start, end?)`
-- [ ] `String.prototype.substr(start, length?)` (deprecated)
+- [x] `String.prototype.substr(start, length?)` (deprecated)
 - [x] `String.prototype.split(separator?, limit?)`
 - [x] `String.prototype.toLowerCase()`
 - [x] `String.prototype.toUpperCase()`

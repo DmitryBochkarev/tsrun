@@ -484,3 +484,49 @@ fn test_string_locale_compare_empty() {
         JsValue::Number(-1.0)
     );
 }
+
+// substr tests (deprecated but still needs support)
+#[test]
+fn test_string_substr_basic() {
+    // substr(start) - from start to end
+    assert_eq!(
+        eval("'hello world'.substr(6)"),
+        JsValue::String(JsString::from("world"))
+    );
+}
+
+#[test]
+fn test_string_substr_with_length() {
+    // substr(start, length) - from start for length characters
+    assert_eq!(
+        eval("'hello world'.substr(0, 5)"),
+        JsValue::String(JsString::from("hello"))
+    );
+}
+
+#[test]
+fn test_string_substr_negative_start() {
+    // Negative start counts from end
+    assert_eq!(
+        eval("'hello world'.substr(-5)"),
+        JsValue::String(JsString::from("world"))
+    );
+}
+
+#[test]
+fn test_string_substr_zero_length() {
+    // Zero length returns empty string
+    assert_eq!(
+        eval("'hello'.substr(0, 0)"),
+        JsValue::String(JsString::from(""))
+    );
+}
+
+#[test]
+fn test_string_substr_exceeds_length() {
+    // Length exceeding string bounds clips to end
+    assert_eq!(
+        eval("'hello'.substr(0, 100)"),
+        JsValue::String(JsString::from("hello"))
+    );
+}
