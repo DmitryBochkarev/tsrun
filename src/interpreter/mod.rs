@@ -126,6 +126,23 @@ pub struct Interpreter {
     completion_stack: Vec<eval_stack::CompletionValue>,
     /// Counter for generating unique slot IDs
     next_slot_id: u64,
+    /// Static imports collected from program, to be resolved before execution
+    static_imports: Vec<StaticImport>,
+    /// Index of next static import to process
+    static_import_index: usize,
+    /// Currently pending slot (if waiting for host)
+    pending_slot: Option<crate::PendingSlot>,
+    /// Program body saved for execution after imports resolved
+    pending_program_body: Option<Vec<Statement>>,
+}
+
+/// A static import declaration to be resolved
+#[derive(Debug, Clone)]
+pub struct StaticImport {
+    /// Module specifier (e.g., "./module" or "lodash")
+    pub specifier: String,
+    /// How to bind the imported values
+    pub bindings: eval_stack::ImportBindings,
 }
 
 impl Interpreter {
@@ -230,6 +247,10 @@ impl Interpreter {
             value_stack: Vec::new(),
             completion_stack: Vec::new(),
             next_slot_id: 0,
+            static_imports: Vec::new(),
+            static_import_index: 0,
+            pending_slot: None,
+            pending_program_body: None,
         }
     }
 
@@ -251,6 +272,21 @@ impl Interpreter {
         let arr = create_array(elements);
         arr.borrow_mut().prototype = Some(self.array_prototype.clone());
         arr
+    }
+
+    /// Create a module object with the given exports
+    ///
+    /// This is used to create module namespace objects for import resolution.
+    pub fn create_module_object(&self, exports: Vec<(String, JsValue)>) -> JsValue {
+        let obj = create_object();
+        {
+            let mut obj_ref = obj.borrow_mut();
+            obj_ref.prototype = Some(self.object_prototype.clone());
+            for (name, value) in exports {
+                obj_ref.set_property(PropertyKey::from(name), value);
+            }
+        }
+        JsValue::Object(obj)
     }
 
     /// Resume a generator, executing until the next yield or completion
@@ -456,27 +492,186 @@ impl Interpreter {
         // Hoist var declarations at global scope
         self.hoist_var_declarations(&program.body);
 
-        // Initialize the execution stack with the program
+        // Initialize the execution state
         self.eval_stack.clear();
         self.value_stack.clear();
         self.completion_stack.clear();
+        self.static_imports.clear();
+        self.static_import_index = 0;
+        self.pending_slot = None;
 
-        if !program.body.is_empty() {
-            self.eval_stack.push(eval_stack::EvalFrame::ExecuteProgram {
-                statements: program.body.clone(),
-                index: 0,
+        // Collect static imports from the program
+        self.collect_static_imports(&program.body);
+
+        // Save program body for execution after imports are resolved
+        // Filter out import statements (they're handled separately)
+        let non_import_stmts: Vec<Statement> = program
+            .body
+            .iter()
+            .filter(|s| !matches!(s, Statement::Import(_)))
+            .cloned()
+            .collect();
+        self.pending_program_body = Some(non_import_stmts);
+
+        // Process imports first (hoisted), then run program
+        self.process_next_import_or_execute()
+    }
+
+    /// Continue execution after a pending slot has been filled
+    pub fn continue_execution(&mut self) -> Result<crate::RuntimeResult, JsError> {
+        // Check if there's a pending slot and it's been filled
+        if let Some(slot) = self.pending_slot.take() {
+            match slot.take() {
+                Some(Ok(module_value)) => {
+                    // Bind the import
+                    let import = &self.static_imports[self.static_import_index - 1];
+                    self.bind_import(&import.bindings.clone(), module_value)?;
+                }
+                Some(Err(error)) => {
+                    // Error loading module - propagate it
+                    return Err(error);
+                }
+                None => {
+                    return Err(JsError::type_error(
+                        "continue_eval called but slot was not filled",
+                    ));
+                }
+            }
+        }
+
+        // Continue with next import or program execution
+        self.process_next_import_or_execute()
+    }
+
+    /// Collect static import declarations from statements
+    fn collect_static_imports(&mut self, statements: &[Statement]) {
+        use crate::ast::ImportSpecifier;
+
+        for stmt in statements {
+            if let Statement::Import(import_decl) = stmt {
+                // Skip type-only imports
+                if import_decl.type_only {
+                    continue;
+                }
+
+                let specifier = import_decl.source.value.clone();
+
+                // Convert import specifiers to bindings
+                let bindings = if import_decl.specifiers.is_empty() {
+                    // Side-effect only import: import './module'
+                    eval_stack::ImportBindings::SideEffect
+                } else {
+                    let mut named = Vec::new();
+                    let mut default_local = None;
+                    let mut namespace_local = None;
+
+                    for spec in &import_decl.specifiers {
+                        match spec {
+                            ImportSpecifier::Named { local, imported, .. } => {
+                                named.push((imported.name.clone(), local.name.clone()));
+                            }
+                            ImportSpecifier::Default { local, .. } => {
+                                default_local = Some(local.name.clone());
+                            }
+                            ImportSpecifier::Namespace { local, .. } => {
+                                namespace_local = Some(local.name.clone());
+                            }
+                        }
+                    }
+
+                    if let Some(local) = namespace_local {
+                        eval_stack::ImportBindings::Namespace(local)
+                    } else if let Some(local) = default_local {
+                        if named.is_empty() {
+                            eval_stack::ImportBindings::Default(local)
+                        } else {
+                            // Has both default and named - treat as named with "default" key
+                            named.insert(0, ("default".to_string(), local));
+                            eval_stack::ImportBindings::Named(named)
+                        }
+                    } else {
+                        eval_stack::ImportBindings::Named(named)
+                    }
+                };
+
+                self.static_imports.push(StaticImport { specifier, bindings });
+            }
+        }
+    }
+
+    /// Process the next import or start program execution
+    fn process_next_import_or_execute(&mut self) -> Result<crate::RuntimeResult, JsError> {
+        // Check if there are more imports to process
+        if self.static_import_index < self.static_imports.len() {
+            // Clone specifier before mutable borrow
+            let specifier = self.static_imports[self.static_import_index].specifier.clone();
+            let slot = crate::PendingSlot::new(self.generate_slot_id());
+
+            self.static_import_index += 1;
+            self.pending_slot = Some(slot.clone());
+
+            return Ok(crate::RuntimeResult::ImportAwaited {
+                slot,
+                specifier,
             });
+        }
+
+        // All imports resolved - start program execution
+        if let Some(stmts) = self.pending_program_body.take() {
+            if !stmts.is_empty() {
+                self.eval_stack.push(eval_stack::EvalFrame::ExecuteProgram {
+                    statements: stmts,
+                    index: 0,
+                });
+            }
         }
 
         // Run until completion or suspension
         self.run_stack()
     }
 
-    /// Continue execution after a pending slot has been filled
-    pub fn continue_execution(&mut self) -> Result<crate::RuntimeResult, JsError> {
-        // Check if there's a pending slot to resume from
-        // For now, just continue running the stack
-        self.run_stack()
+    /// Bind import values to the environment
+    fn bind_import(
+        &mut self,
+        bindings: &eval_stack::ImportBindings,
+        module_value: JsValue,
+    ) -> Result<(), JsError> {
+        match bindings {
+            eval_stack::ImportBindings::Named(pairs) => {
+                // module_value is an object with exports as properties
+                let JsValue::Object(module_obj) = &module_value else {
+                    return Err(JsError::type_error("Module is not an object"));
+                };
+
+                for (imported, local) in pairs {
+                    let value = module_obj
+                        .borrow()
+                        .get_property(&PropertyKey::from(imported.clone()))
+                        .unwrap_or(JsValue::Undefined);
+                    self.env.define(local.clone(), value, false);
+                }
+            }
+            eval_stack::ImportBindings::Default(local) => {
+                // Get 'default' export from module
+                let JsValue::Object(module_obj) = &module_value else {
+                    return Err(JsError::type_error("Module is not an object"));
+                };
+
+                let value = module_obj
+                    .borrow()
+                    .get_property(&PropertyKey::from("default"))
+                    .unwrap_or(JsValue::Undefined);
+                self.env.define(local.clone(), value, false);
+            }
+            eval_stack::ImportBindings::Namespace(local) => {
+                // Bind the entire module object
+                self.env.define(local.clone(), module_value, false);
+            }
+            eval_stack::ImportBindings::SideEffect => {
+                // No bindings needed, just executed for side effects
+            }
+        }
+        Ok(())
     }
 
     /// Main execution loop for stack-based evaluation

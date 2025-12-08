@@ -204,6 +204,26 @@ impl Runtime {
     pub fn get_exports(&self) -> &std::collections::HashMap<String, JsValue> {
         &self.interpreter.exports
     }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Value Creation Methods (for slot filling)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// Create a module object from a list of exports
+    ///
+    /// The module object will have the given exports as properties.
+    /// Use this when providing a module to fill an ImportAwaited slot.
+    pub fn create_module_object(&mut self, exports: Vec<(String, JsValue)>) -> JsValue {
+        self.interpreter.create_module_object(exports)
+    }
+
+    /// Create a JsValue from a JSON value
+    pub fn create_value_from_json(
+        &mut self,
+        json: &serde_json::Value,
+    ) -> Result<JsValue, JsError> {
+        interpreter::builtins::json_to_js_value(json)
+    }
 }
 
 impl Default for Runtime {
