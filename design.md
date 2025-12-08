@@ -28,7 +28,7 @@ The following features should be implemented next, in priority order:
 
 ### Priority 2: Built-in Methods
 4. ~~**String.prototype.match/matchAll/search** - regex matching methods~~ ✅
-5. **String.fromCodePoint/codePointAt** - Unicode code point support
+5. ~~**String.fromCodePoint/codePointAt** - Unicode code point support~~ ✅
 6. **Object.defineProperties** - define multiple properties at once
 7. **Error.prototype.toString** - proper error string formatting
 8. **Date setter methods** - setFullYear, setMonth, setDate, etc.
@@ -331,10 +331,10 @@ To fully implement classes, the following components are needed:
 
 #### String
 - [x] `String.fromCharCode(...codes)`
-- [ ] `String.fromCodePoint(...codePoints)`
+- [x] `String.fromCodePoint(...codePoints)`
 - [x] `String.prototype.charAt(index)`
 - [x] `String.prototype.charCodeAt(index)`
-- [ ] `String.prototype.codePointAt(index)`
+- [x] `String.prototype.codePointAt(index)`
 - [x] `String.prototype.concat(...strings)`
 - [x] `String.prototype.includes(search, position?)`
 - [x] `String.prototype.startsWith(search, position?)`

@@ -328,3 +328,81 @@ fn test_string_matchall_index() {
         JsValue::Number(7.0)
     );
 }
+
+// String.fromCodePoint tests
+#[test]
+fn test_string_from_code_point_basic() {
+    // Basic ASCII
+    assert_eq!(
+        eval("String.fromCodePoint(65)"),
+        JsValue::String(JsString::from("A"))
+    );
+}
+
+#[test]
+fn test_string_from_code_point_multiple() {
+    // Multiple code points
+    assert_eq!(
+        eval("String.fromCodePoint(72, 101, 108, 108, 111)"),
+        JsValue::String(JsString::from("Hello"))
+    );
+}
+
+#[test]
+fn test_string_from_code_point_emoji() {
+    // Emoji (supplementary character)
+    assert_eq!(
+        eval("String.fromCodePoint(0x1F600)"),
+        JsValue::String(JsString::from("😀"))
+    );
+}
+
+#[test]
+fn test_string_from_code_point_unicode() {
+    // Various Unicode characters
+    assert_eq!(
+        eval("String.fromCodePoint(0x2764)"),
+        JsValue::String(JsString::from("❤"))
+    );
+}
+
+// String.prototype.codePointAt tests
+#[test]
+fn test_string_code_point_at_basic() {
+    // Basic ASCII
+    assert_eq!(
+        eval("'ABC'.codePointAt(0)"),
+        JsValue::Number(65.0)
+    );
+    assert_eq!(
+        eval("'ABC'.codePointAt(1)"),
+        JsValue::Number(66.0)
+    );
+}
+
+#[test]
+fn test_string_code_point_at_emoji() {
+    // Emoji (surrogate pair in JS, but we handle as code point)
+    assert_eq!(
+        eval("'😀'.codePointAt(0)"),
+        JsValue::Number(128512.0)  // 0x1F600
+    );
+}
+
+#[test]
+fn test_string_code_point_at_out_of_range() {
+    // Out of range returns undefined
+    assert_eq!(
+        eval("'abc'.codePointAt(5)"),
+        JsValue::Undefined
+    );
+}
+
+#[test]
+fn test_string_code_point_at_negative() {
+    // Negative index returns undefined
+    assert_eq!(
+        eval("'abc'.codePointAt(-1)"),
+        JsValue::Undefined
+    );
+}

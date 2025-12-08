@@ -165,6 +165,13 @@ pub fn create_string_prototype() -> JsObjectRef {
         }));
         p.set_property(PropertyKey::from("charCodeAt"), JsValue::Object(charcodeat_fn));
 
+        let codepointat_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "codePointAt".to_string(),
+            func: string_code_point_at,
+            arity: 1,
+        }));
+        p.set_property(PropertyKey::from("codePointAt"), JsValue::Object(codepointat_fn));
+
         let match_fn = create_function(JsFunction::Native(NativeFunction {
             name: "match".to_string(),
             func: string_match,
@@ -189,7 +196,7 @@ pub fn create_string_prototype() -> JsObjectRef {
     proto
 }
 
-/// Create String constructor with static methods (fromCharCode)
+/// Create String constructor with static methods (fromCharCode, fromCodePoint)
 pub fn create_string_constructor(string_prototype: &JsObjectRef) -> JsObjectRef {
     let constructor = create_object();
     {
@@ -201,6 +208,13 @@ pub fn create_string_constructor(string_prototype: &JsObjectRef) -> JsObjectRef 
             arity: 1,
         }));
         str_obj.set_property(PropertyKey::from("fromCharCode"), JsValue::Object(fromcharcode_fn));
+
+        let fromcodepoint_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "fromCodePoint".to_string(),
+            func: string_from_code_point,
+            arity: 1,
+        }));
+        str_obj.set_property(PropertyKey::from("fromCodePoint"), JsValue::Object(fromcodepoint_fn));
 
         str_obj.set_property(PropertyKey::from("prototype"), JsValue::Object(string_prototype.clone()));
     }
@@ -506,6 +520,57 @@ pub fn string_from_char_code(_interp: &mut Interpreter, _this: JsValue, args: Ve
         })
         .collect();
     Ok(JsValue::String(JsString::from(chars)))
+}
+
+/// String.fromCodePoint(...codePoints)
+/// Creates a string from Unicode code points (supports full range including supplementary characters)
+pub fn string_from_code_point(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let mut result = String::new();
+    for arg in args {
+        let code_point = arg.to_number();
+
+        // Check if code point is valid
+        if code_point.is_nan() || code_point < 0.0 || code_point > 0x10FFFF as f64 || code_point.fract() != 0.0 {
+            return Err(JsError::range_error(&format!(
+                "Invalid code point {}",
+                code_point
+            )));
+        }
+
+        let code_point = code_point as u32;
+        match char::from_u32(code_point) {
+            Some(c) => result.push(c),
+            None => {
+                return Err(JsError::range_error(&format!(
+                    "Invalid code point {}",
+                    code_point
+                )));
+            }
+        }
+    }
+    Ok(JsValue::String(JsString::from(result)))
+}
+
+/// String.prototype.codePointAt(index)
+/// Returns the Unicode code point value at the given index
+pub fn string_code_point_at(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let s = this.to_js_string();
+    let index = args.first().map(|v| v.to_number()).unwrap_or(0.0);
+
+    // Check for negative or non-integer index
+    if index < 0.0 || index.fract() != 0.0 {
+        return Ok(JsValue::Undefined);
+    }
+
+    let index = index as usize;
+    let chars: Vec<char> = s.as_str().chars().collect();
+
+    if index >= chars.len() {
+        return Ok(JsValue::Undefined);
+    }
+
+    let code_point = chars[index] as u32;
+    Ok(JsValue::Number(code_point as f64))
 }
 
 /// String.prototype.match(regexp)
