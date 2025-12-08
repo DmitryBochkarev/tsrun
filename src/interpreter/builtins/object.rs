@@ -135,6 +135,13 @@ pub fn create_object_constructor() -> JsObjectRef {
         }));
         obj.set_property(PropertyKey::from("getOwnPropertyNames"), JsValue::Object(getownpropnames_fn));
 
+        let getownpropsyms_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "getOwnPropertySymbols".to_string(),
+            func: object_get_own_property_symbols,
+            arity: 1,
+        }));
+        obj.set_property(PropertyKey::from("getOwnPropertySymbols"), JsValue::Object(getownpropsyms_fn));
+
         let defineprop_fn = create_function(JsFunction::Native(NativeFunction {
             name: "defineProperty".to_string(),
             func: object_define_property,
@@ -485,14 +492,41 @@ pub fn object_get_own_property_names(_interp: &mut Interpreter, _this: JsValue, 
         return Err(JsError::type_error("Object.getOwnPropertyNames requires an object"));
     };
 
+    // Filter out symbol keys - getOwnPropertyNames only returns string keys
     let names: Vec<JsValue> = obj_ref
         .borrow()
         .properties
         .keys()
+        .filter(|key| !key.is_symbol())
         .map(|key| JsValue::String(JsString::from(key.to_string())))
         .collect();
 
     Ok(JsValue::Object(create_array(names)))
+}
+
+/// Object.getOwnPropertySymbols(obj)
+pub fn object_get_own_property_symbols(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
+
+    let JsValue::Object(obj_ref) = obj else {
+        return Err(JsError::type_error("Object.getOwnPropertySymbols requires an object"));
+    };
+
+    // Return only symbol keys
+    let symbols: Vec<JsValue> = obj_ref
+        .borrow()
+        .properties
+        .keys()
+        .filter_map(|key| {
+            if let PropertyKey::Symbol(s) = key {
+                Some(JsValue::Symbol(s.clone()))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    Ok(JsValue::Object(create_array(symbols)))
 }
 
 /// Object.defineProperty(obj, prop, descriptor)

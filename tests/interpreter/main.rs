@@ -19,6 +19,7 @@ mod object;
 mod regexp;
 mod set;
 mod string;
+mod symbol;
 
 use typescript_eval::parser::Parser;
 use typescript_eval::{Interpreter, JsError, JsValue};

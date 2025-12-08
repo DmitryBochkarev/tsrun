@@ -14,6 +14,7 @@ pub mod object;
 pub mod regexp;
 pub mod set;
 pub mod string;
+pub mod symbol;
 
 // Re-export all public functions
 pub use array::*;
@@ -30,3 +31,4 @@ pub use object::*;
 pub use regexp::*;
 pub use set::*;
 pub use string::*;
+pub use symbol::*;

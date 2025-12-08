@@ -19,6 +19,7 @@ pub enum JsValue {
     Boolean(bool),
     Number(f64),
     String(JsString),
+    Symbol(JsSymbol),
     Object(JsObjectRef),
 }
 
@@ -51,6 +52,7 @@ impl JsValue {
             JsValue::Boolean(_) => "boolean",
             JsValue::Number(_) => "number",
             JsValue::String(_) => "string",
+            JsValue::Symbol(_) => "symbol",
             JsValue::Object(obj) => {
                 if obj.borrow().is_callable() {
                     "function"
@@ -68,6 +70,7 @@ impl JsValue {
             JsValue::Boolean(b) => *b,
             JsValue::Number(n) => *n != 0.0 && !n.is_nan(),
             JsValue::String(s) => !s.is_empty(),
+            JsValue::Symbol(_) => true, // Symbols are always truthy
             JsValue::Object(_) => true,
         }
     }
@@ -81,6 +84,7 @@ impl JsValue {
             JsValue::Boolean(false) => 0.0,
             JsValue::Number(n) => *n,
             JsValue::String(s) => s.parse::<f64>().unwrap_or(f64::NAN),
+            JsValue::Symbol(_) => f64::NAN, // Cannot convert Symbol to number
             JsValue::Object(_) => {
                 // Would need ToPrimitive then ToNumber
                 f64::NAN
@@ -111,6 +115,13 @@ impl JsValue {
                 }
             }
             JsValue::String(s) => s.clone(),
+            JsValue::Symbol(s) => {
+                // Symbol.prototype.toString returns "Symbol(description)"
+                match &s.description {
+                    Some(desc) => JsString::from(format!("Symbol({})", desc)),
+                    None => JsString::from("Symbol()"),
+                }
+            }
             JsValue::Object(_) => JsString::from("[object Object]"),
         }
     }
@@ -130,6 +141,7 @@ impl JsValue {
                 }
             }
             (JsValue::String(a), JsValue::String(b)) => a == b,
+            (JsValue::Symbol(a), JsValue::Symbol(b)) => a == b, // Symbols compare by id
             (JsValue::Object(a), JsValue::Object(b)) => Rc::ptr_eq(a, b),
             _ => false,
         }
@@ -144,6 +156,10 @@ impl fmt::Debug for JsValue {
             JsValue::Boolean(b) => write!(f, "{}", b),
             JsValue::Number(n) => write!(f, "{}", n),
             JsValue::String(s) => write!(f, "\"{}\"", s.as_ref()),
+            JsValue::Symbol(s) => match &s.description {
+                Some(desc) => write!(f, "Symbol({})", desc),
+                None => write!(f, "Symbol()"),
+            },
             JsValue::Object(obj) => {
                 let obj = obj.borrow();
                 match &obj.exotic {
@@ -285,6 +301,42 @@ impl std::ops::Add<&JsString> for JsString {
     }
 }
 
+/// JavaScript Symbol primitive
+/// Symbols are unique identifiers, optionally with a description
+#[derive(Clone, Debug)]
+pub struct JsSymbol {
+    /// Unique identifier for this symbol
+    id: u64,
+    /// Optional description (from Symbol('description'))
+    pub description: Option<String>,
+}
+
+impl JsSymbol {
+    /// Create a new unique symbol with an optional description
+    pub fn new(id: u64, description: Option<String>) -> Self {
+        Self { id, description }
+    }
+
+    /// Get the symbol's unique ID
+    pub fn id(&self) -> u64 {
+        self.id
+    }
+}
+
+impl PartialEq for JsSymbol {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+impl Eq for JsSymbol {}
+
+impl std::hash::Hash for JsSymbol {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
+    }
+}
+
 /// Reference to a heap-allocated object
 pub type JsObjectRef = Rc<RefCell<JsObject>>;
 
@@ -412,11 +464,12 @@ impl Default for JsObject {
     }
 }
 
-/// Property key (string or symbol, but we only support strings for now)
+/// Property key (string, index, or symbol)
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum PropertyKey {
     String(JsString),
     Index(u32),
+    Symbol(JsSymbol),
 }
 
 impl PropertyKey {
@@ -439,8 +492,14 @@ impl PropertyKey {
                 }
                 PropertyKey::String(s.clone())
             }
+            JsValue::Symbol(s) => PropertyKey::Symbol(s.clone()),
             _ => PropertyKey::String(value.to_js_string()),
         }
+    }
+
+    /// Check if this is a symbol key
+    pub fn is_symbol(&self) -> bool {
+        matches!(self, PropertyKey::Symbol(_))
     }
 }
 
@@ -473,6 +532,10 @@ impl fmt::Display for PropertyKey {
         match self {
             PropertyKey::String(s) => write!(f, "{}", s),
             PropertyKey::Index(i) => write!(f, "{}", i),
+            PropertyKey::Symbol(s) => match &s.description {
+                Some(desc) => write!(f, "Symbol({})", desc),
+                None => write!(f, "Symbol()"),
+            },
         }
     }
 }

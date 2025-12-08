@@ -23,7 +23,7 @@ The following features should be implemented next, in priority order:
 
 ### Priority 1: Core Language Features
 1. ~~**Temporal Dead Zone (TDZ)** - let/const access before declaration should throw ReferenceError~~ ✅
-2. **Symbol primitive** - Symbol() constructor, Symbol.for(), well-known symbols
+2. ~~**Symbol primitive** - Symbol() constructor, Symbol.for(), well-known symbols~~ ✅
 3. **Generator functions** - `function*`, `yield`, `yield*`
 
 ### Priority 2: Built-in Methods
@@ -71,7 +71,7 @@ The following features should be implemented next, in priority order:
 - [x] Template literal interpolation (`${expr}`)
 - [x] Tagged template literals
 - [x] BigInt literals (`123n`) - parsed, converted to Number at runtime
-- [ ] Symbol
+- [x] Symbol
 
 #### Operators
 - [x] Arithmetic (`+`, `-`, `*`, `/`, `%`, `**`)

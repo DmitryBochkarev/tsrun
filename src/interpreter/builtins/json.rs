@@ -58,6 +58,7 @@ pub fn js_value_to_json(value: &JsValue) -> Result<serde_json::Value, JsError> {
             }
         }
         JsValue::String(s) => serde_json::Value::String(s.to_string()),
+        JsValue::Symbol(_) => serde_json::Value::Null, // Symbols are ignored in JSON
         JsValue::Object(obj) => {
             let obj_ref = obj.borrow();
             match &obj_ref.exotic {

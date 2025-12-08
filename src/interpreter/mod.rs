@@ -57,6 +57,8 @@ pub struct Interpreter {
     pub regexp_prototype: JsObjectRef,
     /// Error.prototype for error methods
     pub error_prototype: JsObjectRef,
+    /// Symbol.prototype for symbol methods
+    pub symbol_prototype: JsObjectRef,
     /// Stores thrown value during exception propagation
     thrown_value: Option<JsValue>,
     /// Exported values from the module
@@ -85,6 +87,7 @@ impl Interpreter {
         let date_prototype = create_date_prototype();
         let regexp_prototype = create_regexp_prototype();
         let error_prototype = create_error_prototype();
+        let symbol_prototype = create_symbol_prototype();
 
         // Create and register constructors
         let object_constructor = create_object_constructor();
@@ -132,6 +135,11 @@ impl Interpreter {
         env.define("SyntaxError".to_string(), JsValue::Object(syntax_error_fn), false);
         env.define("RangeError".to_string(), JsValue::Object(range_error_fn), false);
 
+        // Register Symbol constructor
+        let well_known_symbols = get_well_known_symbols();
+        let symbol_constructor = create_symbol_constructor(&symbol_prototype, &well_known_symbols);
+        env.define("Symbol".to_string(), JsValue::Object(symbol_constructor), false);
+
         Self {
             global,
             env,
@@ -145,6 +153,7 @@ impl Interpreter {
             date_prototype,
             regexp_prototype,
             error_prototype,
+            symbol_prototype,
             thrown_value: None,
             exports: std::collections::HashMap::new(),
         }
@@ -1195,7 +1204,7 @@ impl Interpreter {
                 obj.borrow()
                     .properties
                     .iter()
-                    .filter(|(_, prop)| prop.enumerable)
+                    .filter(|(key, prop)| prop.enumerable && !key.is_symbol())
                     .map(|(key, _)| key.to_string())
                     .collect::<Vec<_>>()
             }
@@ -2166,6 +2175,20 @@ impl Interpreter {
             JsValue::Number(_) => {
                 // Look up on Number.prototype
                 if let Some(method) = self.number_prototype.borrow().get_property(&key) {
+                    return Ok(method);
+                }
+                Ok(JsValue::Undefined)
+            }
+            JsValue::Symbol(ref s) => {
+                // Handle special symbol properties
+                if key.to_string() == "description" {
+                    return Ok(match &s.description {
+                        Some(desc) => JsValue::String(JsString::from(desc.as_str())),
+                        None => JsValue::Undefined,
+                    });
+                }
+                // Look up on Symbol.prototype
+                if let Some(method) = self.symbol_prototype.borrow().get_property(&key) {
                     return Ok(method);
                 }
                 Ok(JsValue::Undefined)
