@@ -76,6 +76,10 @@ pub enum JsError {
     /// Marker error indicating a value was thrown (actual value stored in interpreter)
     #[error("Thrown")]
     Thrown,
+
+    /// Internal marker for generator yield (not a real error)
+    #[error("GeneratorYield")]
+    GeneratorYield { value: crate::value::JsValue },
 }
 
 fn format_stack(stack: &[StackFrame]) -> String {

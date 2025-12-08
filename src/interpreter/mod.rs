@@ -19,8 +19,11 @@ use crate::ast::{
 use crate::error::JsError;
 use crate::value::{
     create_array, create_function, create_object, Environment, ExoticObject, FunctionBody,
-    InterpretedFunction, JsFunction, JsObjectRef, JsString, JsValue, Property, PropertyKey,
+    GeneratorState, GeneratorStatus, InterpretedFunction, JsFunction, JsObjectRef, JsString,
+    JsValue, Property, PropertyKey,
 };
+use std::cell::RefCell;
+use std::rc::Rc;
 
 /// Completion record for control flow
 #[derive(Debug)]
@@ -38,6 +41,27 @@ pub struct StackFrame {
     pub function_name: String,
     /// Source location if available
     pub location: Option<(u32, u32)>, // (line, column)
+}
+
+/// Context for generator execution
+#[derive(Debug, Clone)]
+pub struct GeneratorContext {
+    /// Which yield point to stop at (0 = first yield)
+    pub target_yield: usize,
+    /// Current yield counter during execution
+    pub current_yield: usize,
+    /// Value to inject for the current yield (from next(value))
+    pub sent_value: JsValue,
+    /// Whether to throw the sent_value as an exception
+    pub throw_value: bool,
+}
+
+/// Result of a yield point
+pub enum YieldResult {
+    /// Continue execution (skip this yield)
+    Continue,
+    /// Suspend at this yield with the given value
+    Suspend(JsValue),
 }
 
 /// The interpreter state
@@ -68,12 +92,16 @@ pub struct Interpreter {
     pub error_prototype: JsObjectRef,
     /// Symbol.prototype for symbol methods
     pub symbol_prototype: JsObjectRef,
+    /// Generator.prototype for generator methods
+    pub generator_prototype: JsObjectRef,
     /// Stores thrown value during exception propagation
     thrown_value: Option<JsValue>,
     /// Exported values from the module
     pub exports: std::collections::HashMap<String, JsValue>,
     /// Call stack for stack traces
     pub call_stack: Vec<StackFrame>,
+    /// Generator execution context (Some when executing inside a generator)
+    generator_context: Option<GeneratorContext>,
 }
 
 impl Interpreter {
@@ -99,6 +127,7 @@ impl Interpreter {
         let regexp_prototype = create_regexp_prototype();
         let error_prototype = create_error_prototype();
         let symbol_prototype = create_symbol_prototype();
+        let generator_prototype = create_generator_prototype();
 
         // Create and register constructors
         let object_constructor = create_object_constructor();
@@ -165,9 +194,11 @@ impl Interpreter {
             regexp_prototype,
             error_prototype,
             symbol_prototype,
+            generator_prototype,
             thrown_value: None,
             exports: std::collections::HashMap::new(),
             call_stack: Vec::new(),
+            generator_context: None,
         }
     }
 
@@ -189,6 +220,171 @@ impl Interpreter {
         let arr = create_array(elements);
         arr.borrow_mut().prototype = Some(self.array_prototype.clone());
         arr
+    }
+
+    /// Resume a generator, executing until the next yield or completion
+    pub fn resume_generator(
+        &mut self,
+        gen_state: &Rc<RefCell<GeneratorState>>,
+    ) -> Result<JsValue, JsError> {
+        let (body, closure, target_yield, sent_value, _status, params, args) = {
+            let state = gen_state.borrow();
+            if state.state == GeneratorStatus::Completed {
+                return Ok(create_generator_result(JsValue::Undefined, true));
+            }
+            (
+                state.body.clone(),
+                state.closure.clone(),
+                state.stmt_index,
+                state.sent_value.clone(),
+                state.state.clone(),
+                state.params.clone(),
+                state.args.clone(),
+            )
+        };
+
+        // Set up generator context
+        self.generator_context = Some(GeneratorContext {
+            target_yield,
+            current_yield: 0,
+            sent_value,
+            throw_value: false,
+        });
+
+        // Save current environment and set up generator environment
+        let saved_env = self.env.clone();
+        self.env = Environment::with_outer(closure);
+
+        // Bind parameters
+        for (i, param) in params.iter().enumerate() {
+            let arg = args.get(i).cloned().unwrap_or(JsValue::Undefined);
+            self.bind_pattern(&param.pattern, arg, true)?;
+        }
+
+        // Execute the generator body
+        let result = self.execute_generator_body(&body.body);
+
+        // Restore environment
+        self.env = saved_env;
+
+        // Get the final generator context state
+        let ctx = self.generator_context.take();
+
+        match result {
+            Ok(Completion::Normal(_)) => {
+                // Generator completed normally
+                gen_state.borrow_mut().state = GeneratorStatus::Completed;
+                Ok(create_generator_result(JsValue::Undefined, true))
+            }
+            Ok(Completion::Return(val)) => {
+                // Generator returned
+                gen_state.borrow_mut().state = GeneratorStatus::Completed;
+                Ok(create_generator_result(val, true))
+            }
+            Err(JsError::GeneratorYield { value }) => {
+                // Generator yielded - update state for next resume
+                if let Some(ctx) = ctx {
+                    gen_state.borrow_mut().stmt_index = ctx.current_yield;
+                }
+                Ok(create_generator_result(value, false))
+            }
+            Err(e) => {
+                // Generator threw an error
+                gen_state.borrow_mut().state = GeneratorStatus::Completed;
+                Err(e)
+            }
+            _ => {
+                gen_state.borrow_mut().state = GeneratorStatus::Completed;
+                Ok(create_generator_result(JsValue::Undefined, true))
+            }
+        }
+    }
+
+    /// Resume a generator with a thrown exception
+    pub fn resume_generator_with_throw(
+        &mut self,
+        gen_state: &Rc<RefCell<GeneratorState>>,
+    ) -> Result<JsValue, JsError> {
+        let (body, closure, target_yield, sent_value, params, args) = {
+            let state = gen_state.borrow();
+            if state.state == GeneratorStatus::Completed {
+                return Err(JsError::type_error("Generator is already completed"));
+            }
+            (
+                state.body.clone(),
+                state.closure.clone(),
+                state.stmt_index,
+                state.sent_value.clone(),
+                state.params.clone(),
+                state.args.clone(),
+            )
+        };
+
+        // Set up generator context with throw flag
+        self.generator_context = Some(GeneratorContext {
+            target_yield,
+            current_yield: 0,
+            sent_value,
+            throw_value: true,
+        });
+
+        // Save current environment and set up generator environment
+        let saved_env = self.env.clone();
+        self.env = Environment::with_outer(closure);
+
+        // Bind parameters
+        for (i, param) in params.iter().enumerate() {
+            let arg = args.get(i).cloned().unwrap_or(JsValue::Undefined);
+            self.bind_pattern(&param.pattern, arg, true)?;
+        }
+
+        // Execute the generator body
+        let result = self.execute_generator_body(&body.body);
+
+        // Restore environment
+        self.env = saved_env;
+
+        // Get the final generator context state
+        let ctx = self.generator_context.take();
+
+        match result {
+            Ok(Completion::Normal(_)) => {
+                gen_state.borrow_mut().state = GeneratorStatus::Completed;
+                Ok(create_generator_result(JsValue::Undefined, true))
+            }
+            Ok(Completion::Return(val)) => {
+                gen_state.borrow_mut().state = GeneratorStatus::Completed;
+                Ok(create_generator_result(val, true))
+            }
+            Err(JsError::GeneratorYield { value }) => {
+                if let Some(ctx) = ctx {
+                    gen_state.borrow_mut().stmt_index = ctx.current_yield;
+                }
+                Ok(create_generator_result(value, false))
+            }
+            Err(e) => {
+                gen_state.borrow_mut().state = GeneratorStatus::Completed;
+                Err(e)
+            }
+            _ => {
+                gen_state.borrow_mut().state = GeneratorStatus::Completed;
+                Ok(create_generator_result(JsValue::Undefined, true))
+            }
+        }
+    }
+
+    /// Execute generator body statements
+    fn execute_generator_body(&mut self, stmts: &[Statement]) -> Result<Completion, JsError> {
+        let mut result = Completion::Normal(JsValue::Undefined);
+        for stmt in stmts {
+            result = self.execute_statement(stmt)?;
+            match &result {
+                Completion::Return(_) => return Ok(result),
+                Completion::Break(_) | Completion::Continue(_) => return Ok(result),
+                _ => {}
+            }
+        }
+        Ok(result)
     }
 
     /// Execute a program
@@ -623,6 +819,7 @@ impl Interpreter {
             body: FunctionBody::Block(decl.body.clone()),
             closure: self.env.clone(),
             source_location: decl.span,
+            generator: decl.generator,
         };
 
         let func_obj = create_function(JsFunction::Interpreted(func));
@@ -739,6 +936,7 @@ impl Interpreter {
                 body: FunctionBody::Block(func.body.clone()),
                 closure: self.env.clone(),
                 source_location: func.span,
+                generator: func.generator,
             };
 
             let func_obj = create_function(JsFunction::Interpreted(interpreted));
@@ -821,6 +1019,7 @@ impl Interpreter {
             body: FunctionBody::Block(ctor_body),
             closure: self.env.clone(),
             source_location: class.span,
+            generator: false, // Constructors cannot be generators
         }));
 
         // Store field initializers as a property on the constructor
@@ -896,6 +1095,7 @@ impl Interpreter {
                 body: FunctionBody::Block(func.body.clone()),
                 closure: self.env.clone(),
                 source_location: func.span,
+                generator: func.generator,
             };
 
             let func_obj = create_function(JsFunction::Interpreted(interpreted));
@@ -1739,6 +1939,7 @@ impl Interpreter {
                     body: FunctionBody::Block(func.body.clone()),
                     closure: self.env.clone(),
                     source_location: func.span,
+                    generator: func.generator,
                 };
                 Ok(JsValue::Object(create_function(JsFunction::Interpreted(interpreted))))
             }
@@ -1750,6 +1951,7 @@ impl Interpreter {
                     body: arrow.body.clone().into(),
                     closure: self.env.clone(),
                     source_location: arrow.span,
+                    generator: false, // Arrow functions cannot be generators
                 };
                 Ok(JsValue::Object(create_function(JsFunction::Interpreted(interpreted))))
             }
@@ -1829,8 +2031,110 @@ impl Interpreter {
 
             Expression::Spread(spread) => self.evaluate(&spread.argument),
 
-            Expression::Await(_) | Expression::Yield(_) => {
-                Err(JsError::type_error("Async/generators not supported"))
+            Expression::Await(_) => {
+                Err(JsError::type_error("Async not supported"))
+            }
+
+            Expression::Yield(yield_expr) => {
+                // Check if we're in a generator context
+                let _ctx = self.generator_context.as_mut()
+                    .ok_or_else(|| JsError::syntax_error("yield outside of generator", 0, 0))?;
+
+                // Evaluate the yield argument
+                let value = if let Some(ref arg) = yield_expr.argument {
+                    // Handle yield* delegation
+                    if yield_expr.delegate {
+                        // yield* delegates to another iterable
+                        let iterable = self.evaluate(arg)?;
+                        // Simplified implementation: collect from array or generator
+                        if let JsValue::Object(obj) = iterable {
+                            // Check type and get info without holding the borrow
+                            let (is_array, length, gen_state) = {
+                                let obj_ref = obj.borrow();
+                                match &obj_ref.exotic {
+                                    ExoticObject::Array { length } => (true, *length, None),
+                                    ExoticObject::Generator(gen) => (false, 0, Some(gen.clone())),
+                                    _ => return Err(JsError::type_error("yield* on non-iterable")),
+                                }
+                            };
+
+                            if is_array {
+                                // Yield each array element
+                                for i in 0..length {
+                                    let elem = obj.borrow()
+                                        .get_property(&PropertyKey::Index(i))
+                                        .unwrap_or(JsValue::Undefined);
+
+                                    let ctx = self.generator_context.as_mut().unwrap();
+                                    if ctx.current_yield == ctx.target_yield {
+                                        ctx.current_yield += 1;
+                                        return Err(JsError::GeneratorYield { value: elem });
+                                    }
+                                    ctx.current_yield += 1;
+                                }
+                                return Ok(JsValue::Undefined);
+                            } else if let Some(gen) = gen_state {
+                                // Delegate to another generator
+                                loop {
+                                    let result = self.resume_generator(&gen)?;
+                                    let JsValue::Object(res_obj) = &result else {
+                                        return Ok(JsValue::Undefined);
+                                    };
+                                    let done = res_obj.borrow()
+                                        .get_property(&PropertyKey::from("done"))
+                                        .map(|v| v.to_boolean())
+                                        .unwrap_or(false);
+                                    let value = res_obj.borrow()
+                                        .get_property(&PropertyKey::from("value"))
+                                        .unwrap_or(JsValue::Undefined);
+
+                                    if done {
+                                        return Ok(value);
+                                    }
+
+                                    let ctx = self.generator_context.as_mut().unwrap();
+                                    if ctx.current_yield == ctx.target_yield {
+                                        ctx.current_yield += 1;
+                                        return Err(JsError::GeneratorYield { value });
+                                    }
+                                    ctx.current_yield += 1;
+                                }
+                            } else {
+                                return Err(JsError::type_error("yield* on non-iterable"));
+                            }
+                        } else {
+                            return Err(JsError::type_error("yield* on non-iterable"));
+                        }
+                    } else {
+                        self.evaluate(arg)?
+                    }
+                } else {
+                    JsValue::Undefined
+                };
+
+                // Re-get the mutable context after evaluation
+                let ctx = self.generator_context.as_mut()
+                    .ok_or_else(|| JsError::syntax_error("yield outside of generator", 0, 0))?;
+
+                // Check if we should throw
+                if ctx.throw_value && ctx.current_yield == ctx.target_yield {
+                    let exc = ctx.sent_value.clone();
+                    ctx.current_yield += 1;
+                    return Err(JsError::type_error(format!("Generator throw: {:?}", exc)));
+                }
+
+                // Check if this is the target yield point
+                if ctx.current_yield == ctx.target_yield {
+                    // Suspend here
+                    ctx.current_yield += 1;
+                    return Err(JsError::GeneratorYield { value });
+                }
+
+                // Not our target yet - skip this yield and return the sent value
+                ctx.current_yield += 1;
+
+                // Return the value that was sent via next(value) for this yield
+                Ok(ctx.sent_value.clone())
             }
 
             Expression::Super(_) => {
@@ -2494,6 +2798,30 @@ impl Interpreter {
 
         match func {
             JsFunction::Interpreted(interpreted) => {
+                // If this is a generator function, create a Generator object instead of executing
+                if interpreted.generator {
+                    let body = match &interpreted.body {
+                        FunctionBody::Block(block) => block.clone(),
+                        FunctionBody::Expression(_) => {
+                            return Err(JsError::type_error("Generator must have block body"));
+                        }
+                    };
+
+                    let gen_state = GeneratorState {
+                        body,
+                        params: interpreted.params.clone(),
+                        args,
+                        closure: interpreted.closure.clone(),
+                        state: GeneratorStatus::Suspended,
+                        stmt_index: 0,
+                        sent_value: JsValue::Undefined,
+                        name: interpreted.name.clone(),
+                    };
+
+                    let gen_obj = create_generator_object(self, gen_state);
+                    return Ok(JsValue::Object(gen_obj));
+                }
+
                 // Push stack frame
                 let func_name = interpreted.name.clone().unwrap_or_else(|| "<anonymous>".to_string());
                 let span = interpreted.source_location;

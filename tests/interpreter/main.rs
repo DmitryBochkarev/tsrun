@@ -11,6 +11,7 @@ mod date;
 mod error;
 mod exports;
 mod function;
+mod generator;
 mod global;
 mod map;
 mod math;

@@ -429,6 +429,9 @@ pub fn object_to_string(_interp: &mut Interpreter, this: JsValue, _args: Vec<JsV
                 ExoticObject::RegExp { .. } => {
                     Ok(JsValue::String(JsString::from("[object RegExp]")))
                 }
+                ExoticObject::Generator(_) => {
+                    Ok(JsValue::String(JsString::from("[object Generator]")))
+                }
             }
         }
         _ => Ok(JsValue::String(JsString::from("[object Object]"))),

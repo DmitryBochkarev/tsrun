@@ -112,8 +112,8 @@ The following features should be implemented next, in priority order:
 - [x] Closures
 - [x] `return` statement
 - [x] Implicit `undefined` return
-- [ ] Generator functions (`function*`)
-- [ ] `yield` / `yield*`
+- [x] Generator functions (`function*`)
+- [x] `yield` / `yield*`
 - [x] `this` binding
 - [x] `arguments` object
 - [x] `Function.prototype.call`

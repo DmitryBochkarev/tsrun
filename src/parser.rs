@@ -1226,6 +1226,11 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_assignment_expression(&mut self) -> Result<Expression, JsError> {
+        // Check for yield expression
+        if self.check(&TokenKind::Yield) {
+            return self.parse_yield_expression();
+        }
+
         let start = self.current.span;
         let expr = self.parse_conditional_expression()?;
 
@@ -1243,6 +1248,38 @@ impl<'a> Parser<'a> {
         }
 
         Ok(expr)
+    }
+
+    fn parse_yield_expression(&mut self) -> Result<Expression, JsError> {
+        let start = self.current.span;
+        self.expect(&TokenKind::Yield)?;
+
+        // Check for yield* (delegation)
+        let delegate = self.match_token(&TokenKind::Star);
+
+        // Check if there's an argument
+        // yield without argument is valid, but we need to check if the next token
+        // could be the start of an expression (not a statement terminator)
+        let argument = if !self.check(&TokenKind::Semicolon)
+            && !self.check(&TokenKind::RBrace)
+            && !self.check(&TokenKind::RParen)
+            && !self.check(&TokenKind::RBracket)
+            && !self.check(&TokenKind::Comma)
+            && !self.check(&TokenKind::Colon)
+            && !self.is_at_end()
+            && !self.lexer.had_newline_before()
+        {
+            Some(Box::new(self.parse_assignment_expression()?))
+        } else {
+            None
+        };
+
+        let span = self.span_from(start);
+        Ok(Expression::Yield(YieldExpression {
+            argument,
+            delegate,
+            span,
+        }))
     }
 
     fn parse_conditional_expression(&mut self) -> Result<Expression, JsError> {

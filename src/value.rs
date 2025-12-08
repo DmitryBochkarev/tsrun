@@ -173,6 +173,7 @@ impl fmt::Debug for JsValue {
                     ExoticObject::Set { entries } => write!(f, "Set({})", entries.len()),
                     ExoticObject::Date { timestamp } => write!(f, "Date({})", timestamp),
                     ExoticObject::RegExp { pattern, flags } => write!(f, "/{}/{}", pattern, flags),
+                    ExoticObject::Generator(_) => write!(f, "[object Generator]"),
                 }
             }
         }
@@ -623,6 +624,38 @@ pub enum ExoticObject {
     Date { timestamp: f64 },
     /// RegExp exotic object - stores pattern and flags
     RegExp { pattern: String, flags: String },
+    /// Generator exotic object - stores generator state
+    Generator(Rc<RefCell<GeneratorState>>),
+}
+
+/// Generator state for suspended generators
+#[derive(Debug, Clone)]
+pub struct GeneratorState {
+    /// The generator function's body
+    pub body: BlockStatement,
+    /// Parameters of the generator function
+    pub params: Vec<FunctionParam>,
+    /// Arguments passed to the generator
+    pub args: Vec<JsValue>,
+    /// The captured closure environment
+    pub closure: Environment,
+    /// Current execution state
+    pub state: GeneratorStatus,
+    /// Current statement index
+    pub stmt_index: usize,
+    /// Value passed in via next(value)
+    pub sent_value: JsValue,
+    /// Function name for debugging
+    pub name: Option<String>,
+}
+
+/// Status of generator execution
+#[derive(Debug, Clone, PartialEq)]
+pub enum GeneratorStatus {
+    /// Not yet started
+    Suspended,
+    /// Completed (returned or exhausted)
+    Completed,
 }
 
 /// Function representation
@@ -665,6 +698,8 @@ pub struct InterpretedFunction {
     pub body: FunctionBody,
     pub closure: Environment,
     pub source_location: Span,
+    /// Whether this is a generator function (function*)
+    pub generator: bool,
 }
 
 /// Function body (block or expression for arrow functions)
