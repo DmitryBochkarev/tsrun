@@ -9,11 +9,20 @@
 ### Requirements
 
 - Full TypeScript syntax support (types stripped, not checked at runtime)
-- ES Modules support
-- Synchronous execution only (no async/await)
+- ES Modules support with suspension-based loading
+- Async/await support via explicit evaluation stack
 - Full ES2022+ standard built-ins
 - Serde integration for Rust API
 - Production-quality implementation
+
+### Execution Model
+
+The interpreter uses an **explicit evaluation stack** that enables:
+- **Suspension at imports**: Host loads modules via any mechanism (sync/async)
+- **Suspension at await**: Host resolves promises via any mechanism
+- **True state capture**: Resume exactly where suspended, no re-execution
+
+See `state_machine.md` for full architecture documentation.
 
 ---
 
@@ -21,31 +30,57 @@
 
 The following features should be implemented next, in priority order:
 
-### Priority 1: Core Language Features
-1. ~~**Temporal Dead Zone (TDZ)** - let/const access before declaration should throw ReferenceError~~ ✅
-2. ~~**Symbol primitive** - Symbol() constructor, Symbol.for(), well-known symbols~~ ✅
-3. **Generator functions** - `function*`, `yield`, `yield*`
+### Priority 1: State Machine Refactor (CURRENT FOCUS)
 
-### Priority 2: Built-in Methods
-4. ~~**String.prototype.match/matchAll/search** - regex matching methods~~ ✅
-5. ~~**String.fromCodePoint/codePointAt** - Unicode code point support~~ ✅
-6. ~~**Object.defineProperties** - define multiple properties at once~~ ✅
-7. ~~**Error.prototype.toString** - proper error string formatting~~ ✅
-8. ~~**Date setter methods** - setFullYear, setMonth, setDate, etc.~~ ✅
+**See `state_machine.md` for full design documentation.**
 
-### Priority 3: Advanced Features
-9. ~~**Error stack traces** - capture and format stack traces~~ ✅
-10. **namespace/module declarations** - TypeScript namespace support
-11. ~~**RegExp flags** - dotAll, unicode, sticky flags~~ ✅
-12. ~~**console.table/dir/time** - additional console methods~~ ✅
+The interpreter needs to be refactored to use an explicit evaluation stack instead of Rust's call stack. This enables suspension at import/await points with true state capture.
 
-### Priority 4: Module System (implement last, requires design clarification)
-13. **Module resolution** - via callback that returns source or AST (design TBD)
-14. **Module caching** - cache loaded modules to avoid re-execution
-15. **Circular dependency handling** - proper handling of circular imports
-16. **Dynamic import()** - synchronous dynamic imports
+1. **Phase 1: Explicit Evaluation Stack** - Convert recursive interpreter to stack-based
+   - Define `EvalFrame` enum for all expression/statement types
+   - Add `eval_stack` and `value_stack` to Interpreter
+   - Implement main execution loop with `run()` method
+   - Convert expression evaluation to stack frames
+   - Convert statement execution to stack frames
+   - All existing tests must pass
 
-**Note:** Module resolution should be implemented as a user-provided callback (e.g., `resolve_module(path: &str) -> Result<Source | AST>`). This allows embedding applications to control how modules are loaded (from filesystem, bundled, virtual, etc.). Design details to be clarified before implementation.
+2. **Phase 2: Static Imports** - `import` declarations with hoisting
+   - Collect static imports during parsing
+   - Implement `RuntimeResult::ImportAwaited`
+   - Implement `PendingSlot` mechanism
+   - Add `Runtime::continue_eval()` API
+   - Host provides module objects via slot
+
+3. **Phase 3: Promise Implementation** - Full Promise support
+   - `Promise` constructor with executor
+   - `.then()`, `.catch()`, `.finally()` (simplified sync callbacks)
+   - `Promise.resolve()`, `Promise.reject()`
+   - `Promise.all()`, `Promise.race()`, `Promise.allSettled()`, `Promise.any()`
+
+4. **Phase 4: Async/Await** - Async functions
+   - Parse `async function` and `await` expressions
+   - Async functions return Promise
+   - `await` on fulfilled Promise continues synchronously
+   - `await` on pending Promise returns `RuntimeResult::AsyncAwaited`
+
+5. **Phase 5: Dynamic Import** - `import()` expressions
+   - Parse `import()` call expression
+   - Returns Promise with internal slot
+   - Integrates with await for suspension
+
+### Previous Priorities (Completed)
+- ~~**Temporal Dead Zone (TDZ)**~~ ✅
+- ~~**Symbol primitive**~~ ✅
+- ~~**Generator functions**~~ ✅
+- ~~**String.prototype.match/matchAll/search**~~ ✅
+- ~~**String.fromCodePoint/codePointAt**~~ ✅
+- ~~**Object.defineProperties**~~ ✅
+- ~~**Error.prototype.toString**~~ ✅
+- ~~**Date setter methods**~~ ✅
+- ~~**Error stack traces**~~ ✅
+- ~~**namespace/module declarations**~~ ✅
+- ~~**RegExp flags**~~ ✅
+- ~~**console.table/dir/time**~~ ✅
 
 ---
 
@@ -210,11 +245,17 @@ To fully implement classes, the following components are needed:
 - [x] Default imports/exports (parsing)
 - [x] Namespace imports (`import * as`) (parsing)
 - [x] Re-exports (`export { x } from`) (parsing)
-- [ ] Module resolution (relative paths)
-- [ ] Module resolution (node_modules)
-- [ ] Module caching
-- [ ] Circular dependency handling
-- [ ] Dynamic `import()` (returns value synchronously)
+- [ ] Static import resolution (via `RuntimeResult::ImportAwaited`)
+- [ ] Dynamic `import()` (returns Promise, suspends on await)
+- [ ] Module object creation (host provides, runtime binds)
+
+**Note:** Module caching and circular dependency handling are the host's responsibility. The runtime always asks for modules via `ImportAwaited` and the host decides whether to cache or handle cycles.
+
+#### Async/Await
+- [ ] `async function` declarations and expressions
+- [ ] `await` expression (suspends via `RuntimeResult::AsyncAwaited`)
+- [ ] Top-level await in modules
+- [ ] Async arrow functions
 
 ### TypeScript Features
 
@@ -489,6 +530,20 @@ To fully implement classes, the following components are needed:
 - [x] `Error.prototype.name`
 - [x] `Error.prototype.message`
 - [x] `Error.prototype.stack`
+
+#### Promise
+- [ ] `new Promise(executor)`
+- [ ] `Promise.prototype.then(onFulfilled, onRejected)`
+- [ ] `Promise.prototype.catch(onRejected)`
+- [ ] `Promise.prototype.finally(onFinally)`
+- [ ] `Promise.resolve(value)`
+- [ ] `Promise.reject(reason)`
+- [ ] `Promise.all(iterable)`
+- [ ] `Promise.race(iterable)`
+- [ ] `Promise.allSettled(iterable)`
+- [ ] `Promise.any(iterable)`
+
+**Note:** Promise uses simplified synchronous callback semantics (no microtask queue). When a promise resolves, `.then()` handlers run immediately.
 
 #### Console
 - [x] `console.log(...args)`
