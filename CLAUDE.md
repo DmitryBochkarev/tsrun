@@ -290,9 +290,12 @@ fn test_example() {
 - `Date`: now, UTC, parse, getTime, getFullYear, getMonth, getDate, getDay, getHours, getMinutes, getSeconds, getMilliseconds, toISOString, toJSON, valueOf
 - `RegExp`: test, exec, source, flags, global, ignoreCase, multiline
 - `Function`: call, apply, bind
-- `Error`: Error, TypeError, ReferenceError, SyntaxError, RangeError
+- `Error`: Error, TypeError, ReferenceError, SyntaxError, RangeError, URIError, EvalError
+- `Symbol`: Symbol(), Symbol.for(), Symbol.keyFor(), well-known symbols (iterator, toStringTag, hasInstance)
 - Global: parseInt, parseFloat, isNaN, isFinite, encodeURI, decodeURI, encodeURIComponent, decodeURIComponent, console.log/error/warn/info/debug
+- Generators: function*, yield, yield*
+- Namespace declarations with export and merging
 
-**Not yet implemented:** module resolution/loading, generators, Promise, WeakMap/WeakSet.
+**Not yet implemented:** module resolution/loading, Promise, WeakMap/WeakSet.
 
 See design.md for the complete feature checklist.
