@@ -52,7 +52,15 @@ impl<'a> Parser<'a> {
                 Ok(Statement::VariableDeclaration(self.parse_variable_declaration()?))
             }
             TokenKind::Function => {
-                Ok(Statement::FunctionDeclaration(self.parse_function_declaration()?))
+                Ok(Statement::FunctionDeclaration(self.parse_function_declaration(false)?))
+            }
+            TokenKind::Async => {
+                // async function declaration
+                self.advance(); // consume 'async'
+                self.expect(&TokenKind::Function)?;
+                let mut func = self.parse_function_declaration_inner()?;
+                func.async_ = true;
+                Ok(Statement::FunctionDeclaration(func))
             }
             TokenKind::Class => {
                 Ok(Statement::ClassDeclaration(self.parse_class_declaration()?))
@@ -291,9 +299,15 @@ impl<'a> Parser<'a> {
         Ok(Pattern::Array(ArrayPattern { elements, type_annotation, span }))
     }
 
-    fn parse_function_declaration(&mut self) -> Result<FunctionDeclaration, JsError> {
-        let start = self.current.span;
+    fn parse_function_declaration(&mut self, is_async: bool) -> Result<FunctionDeclaration, JsError> {
         self.expect(&TokenKind::Function)?;
+        let mut func = self.parse_function_declaration_inner()?;
+        func.async_ = is_async;
+        Ok(func)
+    }
+
+    fn parse_function_declaration_inner(&mut self) -> Result<FunctionDeclaration, JsError> {
+        let start = self.current.span;
 
         let generator = self.match_token(&TokenKind::Star);
         let id = if self.check_identifier() {
@@ -452,6 +466,9 @@ impl<'a> Parser<'a> {
         let accessibility = self.parse_accessibility();
         let readonly = self.match_token(&TokenKind::Readonly);
 
+        // Check for async method
+        let is_async = self.match_token(&TokenKind::Async);
+
         // Check for constructor
         if !static_ && self.check_keyword("constructor") {
             self.advance();
@@ -494,7 +511,7 @@ impl<'a> Parser<'a> {
                 type_parameters: type_params,
                 body,
                 generator: false,
-                async_: false,
+                async_: is_async,
                 span: self.span_from(start),
             };
 
@@ -1095,9 +1112,16 @@ impl<'a> Parser<'a> {
 
         // export default
         if self.match_token(&TokenKind::Default) {
-            let declaration = if self.check(&TokenKind::Function) {
+            let declaration = if self.check(&TokenKind::Async) {
+                // export default async function
+                self.advance(); // consume 'async'
+                self.expect(&TokenKind::Function)?;
+                let mut func = self.parse_function_declaration_inner()?;
+                func.async_ = true;
+                Some(Box::new(Statement::FunctionDeclaration(func)))
+            } else if self.check(&TokenKind::Function) {
                 Some(Box::new(Statement::FunctionDeclaration(
-                    self.parse_function_declaration()?,
+                    self.parse_function_declaration(false)?,
                 )))
             } else if self.check(&TokenKind::Class) {
                 Some(Box::new(Statement::ClassDeclaration(
@@ -1190,9 +1214,17 @@ impl<'a> Parser<'a> {
                     self.parse_variable_declaration()?,
                 )))
             }
+            TokenKind::Async => {
+                // export async function
+                self.advance(); // consume 'async'
+                self.expect(&TokenKind::Function)?;
+                let mut func = self.parse_function_declaration_inner()?;
+                func.async_ = true;
+                Some(Box::new(Statement::FunctionDeclaration(func)))
+            }
             TokenKind::Function => {
                 Some(Box::new(Statement::FunctionDeclaration(
-                    self.parse_function_declaration()?,
+                    self.parse_function_declaration(false)?,
                 )))
             }
             TokenKind::Class => {
@@ -1258,6 +1290,11 @@ impl<'a> Parser<'a> {
             return self.parse_yield_expression();
         }
 
+        // Check for await expression
+        if self.check(&TokenKind::Await) {
+            return self.parse_await_expression();
+        }
+
         let start = self.current.span;
         let expr = self.parse_conditional_expression()?;
 
@@ -1307,6 +1344,17 @@ impl<'a> Parser<'a> {
             delegate,
             span,
         }))
+    }
+
+    fn parse_await_expression(&mut self) -> Result<Expression, JsError> {
+        let start = self.current.span;
+        self.expect(&TokenKind::Await)?;
+
+        // await always requires an argument
+        let argument = Box::new(self.parse_unary_expression()?);
+
+        let span = self.span_from(start);
+        Ok(Expression::Await(AwaitExpression { argument, span }))
     }
 
     fn parse_conditional_expression(&mut self) -> Result<Expression, JsError> {
@@ -1714,8 +1762,11 @@ impl<'a> Parser<'a> {
             // Parenthesized expression or arrow function
             TokenKind::LParen => self.parse_parenthesized_or_arrow(),
 
+            // Async function or async arrow
+            TokenKind::Async => self.parse_async_expression(),
+
             // Function expression
-            TokenKind::Function => self.parse_function_expression(),
+            TokenKind::Function => self.parse_function_expression(false),
 
             // Class expression
             TokenKind::Class => self.parse_class_expression(),
@@ -1823,6 +1874,12 @@ impl<'a> Parser<'a> {
     fn parse_property(&mut self) -> Result<Property, JsError> {
         let start = self.current.span;
 
+        // Check for async method
+        let is_async = self.check(&TokenKind::Async) && self.peek_is_property_name();
+        if is_async {
+            self.advance(); // consume 'async'
+        }
+
         // Check for getter/setter
         let kind = if self.check_keyword("get") && self.peek_is_property_name() {
             self.advance();
@@ -1859,7 +1916,7 @@ impl<'a> Parser<'a> {
                 type_parameters: type_params,
                 body,
                 generator: false,
-                async_: false,
+                async_: is_async,
                 span: func_span,
             });
 
@@ -1996,6 +2053,15 @@ impl<'a> Parser<'a> {
         params: Vec<FunctionParam>,
         start: Span,
     ) -> Result<Expression, JsError> {
+        self.parse_arrow_function_from_params_async(params, start, false)
+    }
+
+    fn parse_arrow_function_from_params_async(
+        &mut self,
+        params: Vec<FunctionParam>,
+        start: Span,
+        is_async: bool,
+    ) -> Result<Expression, JsError> {
         let return_type = self.parse_optional_return_type()?;
         self.expect(&TokenKind::Arrow)?;
 
@@ -2011,12 +2077,94 @@ impl<'a> Parser<'a> {
             return_type,
             type_parameters: None,
             body,
-            async_: false,
+            async_: is_async,
             span,
         }))
     }
 
-    fn parse_function_expression(&mut self) -> Result<Expression, JsError> {
+    fn parse_async_expression(&mut self) -> Result<Expression, JsError> {
+        let start = self.current.span;
+        self.expect(&TokenKind::Async)?;
+
+        // async function - async function expression
+        if self.check(&TokenKind::Function) {
+            return self.parse_function_expression(true);
+        }
+
+        // async () => or async (params) =>
+        if self.check(&TokenKind::LParen) {
+            self.advance(); // consume '('
+            // Parse params and then arrow
+            let mut params = vec![];
+            while !self.check(&TokenKind::RParen) && !self.is_at_end() {
+                if self.match_token(&TokenKind::DotDotDot) {
+                    // Rest parameter
+                    let rest_start = self.current.span;
+                    let arg = self.parse_binding_pattern()?;
+                    let rest_span = self.span_from(rest_start);
+                    let rest_elem = RestElement {
+                        argument: Box::new(arg),
+                        type_annotation: None,
+                        span: rest_span,
+                    };
+                    params.push(FunctionParam {
+                        pattern: Pattern::Rest(rest_elem),
+                        type_annotation: None,
+                        optional: false,
+                        span: rest_span,
+                    });
+                    break;
+                }
+                let param = self.parse_function_param()?;
+                params.push(param);
+                if !self.check(&TokenKind::RParen) {
+                    self.expect(&TokenKind::Comma)?;
+                }
+            }
+            self.expect(&TokenKind::RParen)?;
+            return self.parse_arrow_function_from_params_async(params, start, true);
+        }
+
+        // async id => (single param)
+        if self.check_identifier() {
+            let id = self.parse_identifier()?;
+            let param_span = id.span;
+            let params = vec![FunctionParam {
+                pattern: Pattern::Identifier(id),
+                type_annotation: None,
+                optional: false,
+                span: param_span,
+            }];
+            return self.parse_arrow_function_from_params_async(params, start, true);
+        }
+
+        Err(self.unexpected_token("function, '(' or identifier after 'async'"))
+    }
+
+    fn parse_function_param(&mut self) -> Result<FunctionParam, JsError> {
+        let start = self.current.span;
+        let pattern = self.parse_binding_pattern()?;
+        let optional = self.match_token(&TokenKind::Question);
+        let type_annotation = if self.match_token(&TokenKind::Colon) {
+            Some(self.parse_type_annotation()?)
+        } else {
+            None
+        };
+        // Handle default value
+        if self.match_token(&TokenKind::Eq) {
+            // For now, skip the default value expression by parsing and ignoring it
+            let _default = self.parse_assignment_expression()?;
+        }
+        let span = self.span_from(start);
+        Ok(FunctionParam {
+            pattern,
+            type_annotation,
+            optional,
+            span,
+        })
+    }
+
+    fn parse_function_expression(&mut self, is_async: bool) -> Result<Expression, JsError> {
         let start = self.current.span;
         self.expect(&TokenKind::Function)?;
 
@@ -2040,7 +2188,7 @@ impl<'a> Parser<'a> {
             type_parameters,
             body,
             generator,
-            async_: false,
+            async_: is_async,
             span,
         }))
     }

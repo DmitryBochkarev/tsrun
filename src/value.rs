@@ -749,6 +749,8 @@ pub struct InterpretedFunction {
     pub source_location: Span,
     /// Whether this is a generator function (function*)
     pub generator: bool,
+    /// Whether this is an async function
+    pub async_: bool,
 }
 
 /// Function body (block or expression for arrow functions)

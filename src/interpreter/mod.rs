@@ -24,7 +24,7 @@ use crate::error::JsError;
 use crate::value::{
     create_array, create_function, create_object, Environment, ExoticObject, FunctionBody,
     GeneratorState, GeneratorStatus, InterpretedFunction, JsFunction, JsObjectRef, JsString,
-    JsValue, Property, PropertyKey,
+    JsValue, PromiseStatus, Property, PropertyKey,
 };
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -925,10 +925,12 @@ impl Interpreter {
                     Err(err) => {
                         if let Some(handler) = &try_stmt.handler {
                             // Get the error value - either from thrown_value or create from error
-                            let error_value = if matches!(err, JsError::Thrown) {
-                                self.thrown_value.take().unwrap_or(JsValue::Undefined)
-                            } else {
-                                JsValue::from(err.to_string())
+                            let error_value = match &err {
+                                JsError::Thrown => {
+                                    self.thrown_value.take().unwrap_or(JsValue::Undefined)
+                                }
+                                JsError::ThrownValue { value } => value.clone(),
+                                _ => JsValue::from(err.to_string()),
                             };
 
                             // Bind catch parameter
@@ -950,8 +952,8 @@ impl Interpreter {
                         } else if let Some(finalizer) = &try_stmt.finalizer {
                             self.execute_block(finalizer)?;
                             // Re-throw if not caught
-                            if matches!(err, JsError::Thrown) {
-                                Err(JsError::Thrown)
+                            if matches!(err, JsError::Thrown | JsError::ThrownValue { .. }) {
+                                Err(err)
                             } else {
                                 Err(err)
                             }
@@ -1229,6 +1231,7 @@ impl Interpreter {
             closure: self.env.clone(),
             source_location: decl.span,
             generator: decl.generator,
+            async_: decl.async_,
         };
 
         let func_obj = create_function(JsFunction::Interpreted(func));
@@ -1346,6 +1349,7 @@ impl Interpreter {
                 closure: self.env.clone(),
                 source_location: func.span,
                 generator: func.generator,
+                async_: func.async_,
             };
 
             let func_obj = create_function(JsFunction::Interpreted(interpreted));
@@ -1429,6 +1433,7 @@ impl Interpreter {
             closure: self.env.clone(),
             source_location: class.span,
             generator: false, // Constructors cannot be generators
+            async_: false,    // Constructors cannot be async
         }));
 
         // Store field initializers as a property on the constructor
@@ -1505,6 +1510,7 @@ impl Interpreter {
                 closure: self.env.clone(),
                 source_location: func.span,
                 generator: func.generator,
+                async_: func.async_,
             };
 
             let func_obj = create_function(JsFunction::Interpreted(interpreted));
@@ -2477,6 +2483,7 @@ impl Interpreter {
                     closure: self.env.clone(),
                     source_location: func.span,
                     generator: func.generator,
+                    async_: func.async_,
                 };
                 Ok(JsValue::Object(create_function(JsFunction::Interpreted(interpreted))))
             }
@@ -2489,6 +2496,7 @@ impl Interpreter {
                     closure: self.env.clone(),
                     source_location: arrow.span,
                     generator: false, // Arrow functions cannot be generators
+                    async_: arrow.async_,
                 };
                 Ok(JsValue::Object(create_function(JsFunction::Interpreted(interpreted))))
             }
@@ -2568,8 +2576,34 @@ impl Interpreter {
 
             Expression::Spread(spread) => self.evaluate(&spread.argument),
 
-            Expression::Await(_) => {
-                Err(JsError::type_error("Async not supported"))
+            Expression::Await(await_expr) => {
+                // Evaluate the awaited expression
+                let value = self.evaluate(&await_expr.argument)?;
+
+                // If it's a promise, unwrap its value synchronously
+                if let JsValue::Object(obj) = &value {
+                    let obj_ref = obj.borrow();
+                    if let ExoticObject::Promise(state) = &obj_ref.exotic {
+                        let state_ref = state.borrow();
+                        match state_ref.status {
+                            PromiseStatus::Fulfilled => {
+                                return Ok(state_ref.result.clone().unwrap_or(JsValue::Undefined));
+                            }
+                            PromiseStatus::Rejected => {
+                                let reason = state_ref.result.clone().unwrap_or(JsValue::Undefined);
+                                return Err(JsError::thrown(reason));
+                            }
+                            PromiseStatus::Pending => {
+                                // For synchronous execution, pending promises just resolve to undefined
+                                // In a real async runtime, we would suspend here
+                                return Ok(JsValue::Undefined);
+                            }
+                        }
+                    }
+                }
+
+                // If not a promise, just return the value as-is
+                Ok(value)
             }
 
             Expression::Yield(yield_expr) => {
@@ -3315,6 +3349,79 @@ impl Interpreter {
         }
     }
 
+    /// Execute an async function and return a Promise
+    fn execute_async_function(
+        &mut self,
+        interpreted: InterpretedFunction,
+        this_value: JsValue,
+        args: Vec<JsValue>,
+    ) -> Result<JsValue, JsError> {
+        // Create a promise to return
+        let promise = builtins::promise::create_promise(self);
+
+        // Push stack frame
+        let func_name = interpreted.name.clone().unwrap_or_else(|| "<anonymous>".to_string());
+        let span = interpreted.source_location;
+        let location = Some((span.line, span.column));
+        self.call_stack.push(StackFrame { function_name: func_name, location });
+
+        let prev_env = self.env.clone();
+        self.env = Environment::with_outer(interpreted.closure.clone());
+
+        // Bind 'this' value
+        self.env.define("this".to_string(), this_value, false);
+
+        // Create and bind 'arguments' object
+        let arguments_obj = self.create_array(args.clone());
+        self.env.define("arguments".to_string(), JsValue::Object(arguments_obj), false);
+
+        // Hoist var declarations
+        if let FunctionBody::Block(block) = &interpreted.body {
+            self.hoist_var_declarations(&block.body);
+        }
+
+        // Bind parameters
+        for (i, param) in interpreted.params.iter().enumerate() {
+            if let Pattern::Rest(rest) = &param.pattern {
+                let rest_args: Vec<JsValue> = args[i..].to_vec();
+                let rest_array = JsValue::Object(self.create_array(rest_args));
+                self.bind_pattern(&rest.argument, rest_array, true)?;
+                break;
+            } else {
+                let arg = args.get(i).cloned().unwrap_or(JsValue::Undefined);
+                self.bind_pattern(&param.pattern, arg, true)?;
+            }
+        }
+
+        // Execute body and resolve/reject the promise
+        let execution_result = match &interpreted.body {
+            FunctionBody::Block(block) => self.execute_block(block),
+            FunctionBody::Expression(expr) => {
+                self.evaluate(expr).map(Completion::Normal)
+            }
+        };
+
+        self.env = prev_env;
+        self.call_stack.pop();
+
+        match execution_result {
+            Ok(completion) => {
+                let value = match completion {
+                    Completion::Return(val) => val,
+                    Completion::Normal(val) => val,
+                    _ => JsValue::Undefined,
+                };
+                builtins::promise::resolve_promise_value(self, &promise, value)?;
+            }
+            Err(e) => {
+                let error_value = e.to_value();
+                builtins::promise::reject_promise_value(self, &promise, error_value)?;
+            }
+        }
+
+        Ok(JsValue::Object(promise))
+    }
+
     pub fn call_function(
         &mut self,
         callee: JsValue,
@@ -3357,6 +3464,11 @@ impl Interpreter {
 
                     let gen_obj = create_generator_object(self, gen_state);
                     return Ok(JsValue::Object(gen_obj));
+                }
+
+                // If this is an async function, execute it and wrap result in a Promise
+                if interpreted.async_ {
+                    return self.execute_async_function(interpreted, this_value, args);
                 }
 
                 // Push stack frame

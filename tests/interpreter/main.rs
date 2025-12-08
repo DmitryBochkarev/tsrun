@@ -3,6 +3,7 @@
 //! These tests exercise the interpreter through the public API.
 
 mod array;
+mod async_await;
 mod basics;
 mod class;
 mod control_flow;

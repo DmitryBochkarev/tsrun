@@ -79,6 +79,7 @@ pub enum TokenKind {
     Delete,
     Yield,
     Await,
+    Async,
     Debugger,
 
     // TypeScript Keywords (parsed but ignored at runtime)
@@ -1082,6 +1083,7 @@ impl<'a> Lexer<'a> {
             "delete" => TokenKind::Delete,
             "yield" => TokenKind::Yield,
             "await" => TokenKind::Await,
+            "async" => TokenKind::Async,
             "debugger" => TokenKind::Debugger,
 
             // TypeScript keywords

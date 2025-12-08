@@ -124,6 +124,11 @@ pub fn create_promise_object(prototype: &JsObjectRef) -> JsObjectRef {
     }))
 }
 
+/// Create a pending promise using the interpreter's prototype
+pub fn create_promise(interp: &super::super::Interpreter) -> JsObjectRef {
+    create_promise_object(&interp.promise_prototype)
+}
+
 /// Create a fulfilled promise
 pub fn create_fulfilled_promise(prototype: &JsObjectRef, value: JsValue) -> JsObjectRef {
     let state = Rc::new(RefCell::new(PromiseState {
