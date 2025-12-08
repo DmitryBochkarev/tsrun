@@ -30,7 +30,7 @@ The following features should be implemented next, in priority order:
 4. ~~**String.prototype.match/matchAll/search** - regex matching methods~~ ✅
 5. ~~**String.fromCodePoint/codePointAt** - Unicode code point support~~ ✅
 6. ~~**Object.defineProperties** - define multiple properties at once~~ ✅
-7. **Error.prototype.toString** - proper error string formatting
+7. ~~**Error.prototype.toString** - proper error string formatting~~ ✅
 8. **Date setter methods** - setFullYear, setMonth, setDate, etc.
 
 ### Priority 3: Advanced Features
@@ -420,7 +420,7 @@ To fully implement classes, the following components are needed:
 - [x] `new SyntaxError(message?)`
 - [x] `new RangeError(message?)`
 - [ ] `Error.prototype.stack`
-- [ ] `Error.prototype.toString()`
+- [x] `Error.prototype.toString()`
 
 #### Map
 - [x] `new Map(iterable?)`

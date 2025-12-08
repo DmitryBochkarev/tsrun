@@ -55,6 +55,8 @@ pub struct Interpreter {
     pub date_prototype: JsObjectRef,
     /// RegExp.prototype for regex methods
     pub regexp_prototype: JsObjectRef,
+    /// Error.prototype for error methods
+    pub error_prototype: JsObjectRef,
     /// Stores thrown value during exception propagation
     thrown_value: Option<JsValue>,
     /// Exported values from the module
@@ -82,6 +84,7 @@ impl Interpreter {
         let set_prototype = create_set_prototype();
         let date_prototype = create_date_prototype();
         let regexp_prototype = create_regexp_prototype();
+        let error_prototype = create_error_prototype();
 
         // Create and register constructors
         let object_constructor = create_object_constructor();
@@ -122,7 +125,7 @@ impl Interpreter {
         register_global_functions(&mut env);
 
         // Register error constructors
-        let (error_fn, type_error_fn, reference_error_fn, syntax_error_fn, range_error_fn) = create_error_constructors();
+        let (error_fn, type_error_fn, reference_error_fn, syntax_error_fn, range_error_fn) = create_error_constructors(&error_prototype);
         env.define("Error".to_string(), JsValue::Object(error_fn), false);
         env.define("TypeError".to_string(), JsValue::Object(type_error_fn), false);
         env.define("ReferenceError".to_string(), JsValue::Object(reference_error_fn), false);
@@ -141,6 +144,7 @@ impl Interpreter {
             set_prototype,
             date_prototype,
             regexp_prototype,
+            error_prototype,
             thrown_value: None,
             exports: std::collections::HashMap::new(),
         }
