@@ -162,3 +162,66 @@ fn test_object_get_own_property_names() {
         JsValue::Number(2.0)
     );
 }
+
+#[test]
+fn test_object_define_properties_basic() {
+    // Define multiple properties at once
+    assert_eq!(
+        eval(r#"
+            const obj: any = {};
+            Object.defineProperties(obj, {
+                x: { value: 10, writable: true },
+                y: { value: 20, writable: true }
+            });
+            obj.x + obj.y
+        "#),
+        JsValue::Number(30.0)
+    );
+}
+
+#[test]
+fn test_object_define_properties_returns_object() {
+    // Should return the object
+    assert_eq!(
+        eval(r#"
+            const obj: any = {};
+            const result = Object.defineProperties(obj, {
+                x: { value: 10 }
+            });
+            result === obj
+        "#),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_object_define_properties_attributes() {
+    // Test non-writable property
+    assert_eq!(
+        eval(r#"
+            const obj: any = {};
+            Object.defineProperties(obj, {
+                x: { value: 10, writable: false }
+            });
+            obj.x = 20;
+            obj.x
+        "#),
+        JsValue::Number(10.0)
+    );
+}
+
+#[test]
+fn test_object_define_properties_enumerable() {
+    // Test enumerable property
+    assert_eq!(
+        eval(r#"
+            const obj: any = {};
+            Object.defineProperties(obj, {
+                a: { value: 1, enumerable: true },
+                b: { value: 2, enumerable: false }
+            });
+            Object.keys(obj).length
+        "#),
+        JsValue::Number(1.0)
+    );
+}

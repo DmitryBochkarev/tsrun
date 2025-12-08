@@ -29,7 +29,7 @@ The following features should be implemented next, in priority order:
 ### Priority 2: Built-in Methods
 4. ~~**String.prototype.match/matchAll/search** - regex matching methods~~ ✅
 5. ~~**String.fromCodePoint/codePointAt** - Unicode code point support~~ ✅
-6. **Object.defineProperties** - define multiple properties at once
+6. ~~**Object.defineProperties** - define multiple properties at once~~ ✅
 7. **Error.prototype.toString** - proper error string formatting
 8. **Date setter methods** - setFullYear, setMonth, setDate, etc.
 
@@ -278,7 +278,7 @@ To fully implement classes, the following components are needed:
 - [x] `Object.getOwnPropertyNames(obj)`
 - [x] `Object.getOwnPropertyDescriptor(obj, prop)`
 - [x] `Object.defineProperty(obj, prop, descriptor)`
-- [ ] `Object.defineProperties(obj, props)`
+- [x] `Object.defineProperties(obj, props)`
 - [x] `Object.getPrototypeOf(obj)`
 - [x] `Object.setPrototypeOf(obj, proto)`
 - [x] `Object.create(proto, props?)`

@@ -142,6 +142,13 @@ pub fn create_object_constructor() -> JsObjectRef {
         }));
         obj.set_property(PropertyKey::from("defineProperty"), JsValue::Object(defineprop_fn));
 
+        let defineprops_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "defineProperties".to_string(),
+            func: object_define_properties,
+            arity: 2,
+        }));
+        obj.set_property(PropertyKey::from("defineProperties"), JsValue::Object(defineprops_fn));
+
         let getprotoof_fn = create_function(JsFunction::Native(NativeFunction {
             name: "getPrototypeOf".to_string(),
             func: object_get_prototype_of,
@@ -542,6 +549,80 @@ pub fn object_define_property(_interp: &mut Interpreter, _this: JsValue, args: V
         // Data descriptor
         let prop = Property::with_attributes(value, writable, enumerable, configurable);
         obj_ref.borrow_mut().define_property(key, prop);
+    }
+
+    Ok(obj)
+}
+
+/// Object.defineProperties(obj, props)
+/// Define multiple properties at once
+pub fn object_define_properties(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
+    let props = args.get(1).cloned().unwrap_or(JsValue::Undefined);
+
+    let JsValue::Object(obj_ref) = obj.clone() else {
+        return Err(JsError::type_error("Object.defineProperties requires an object"));
+    };
+
+    let JsValue::Object(props_ref) = props else {
+        return Err(JsError::type_error("Property descriptors must be an object"));
+    };
+
+    // Iterate over all properties in the descriptor object
+    let prop_keys: Vec<PropertyKey> = {
+        let props_borrowed = props_ref.borrow();
+        props_borrowed.properties.keys().cloned().collect()
+    };
+
+    for key in prop_keys {
+        let descriptor = {
+            let props_borrowed = props_ref.borrow();
+            props_borrowed.get_property(&key).unwrap_or(JsValue::Undefined)
+        };
+
+        let JsValue::Object(desc_ref) = descriptor else {
+            continue; // Skip non-object descriptors
+        };
+
+        // Get descriptor properties
+        let desc_borrowed = desc_ref.borrow();
+        let value = desc_borrowed.get_property(&PropertyKey::from("value")).unwrap_or(JsValue::Undefined);
+        let writable = desc_borrowed.get_property(&PropertyKey::from("writable"))
+            .map(|v| v.to_boolean())
+            .unwrap_or(false);
+        let enumerable = desc_borrowed.get_property(&PropertyKey::from("enumerable"))
+            .map(|v| v.to_boolean())
+            .unwrap_or(false);
+        let configurable = desc_borrowed.get_property(&PropertyKey::from("configurable"))
+            .map(|v| v.to_boolean())
+            .unwrap_or(false);
+
+        // Check for getter/setter
+        let getter = desc_borrowed.get_property(&PropertyKey::from("get"));
+        let setter = desc_borrowed.get_property(&PropertyKey::from("set"));
+        drop(desc_borrowed);
+
+        let is_accessor = getter.is_some() || setter.is_some();
+
+        if is_accessor {
+            // Accessor descriptor
+            let getter_ref = match getter {
+                Some(JsValue::Object(g)) => Some(g),
+                _ => None,
+            };
+            let setter_ref = match setter {
+                Some(JsValue::Object(s)) => Some(s),
+                _ => None,
+            };
+            let mut prop = Property::accessor(getter_ref, setter_ref);
+            prop.enumerable = enumerable;
+            prop.configurable = configurable;
+            obj_ref.borrow_mut().define_property(key, prop);
+        } else {
+            // Data descriptor
+            let prop = Property::with_attributes(value, writable, enumerable, configurable);
+            obj_ref.borrow_mut().define_property(key, prop);
+        }
     }
 
     Ok(obj)
