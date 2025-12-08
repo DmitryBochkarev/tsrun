@@ -9,6 +9,7 @@ mod control_flow;
 mod console;
 mod date;
 mod error;
+mod exports;
 mod function;
 mod global;
 mod map;

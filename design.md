@@ -205,11 +205,11 @@ To fully implement classes, the following components are needed:
 
 #### Modules (ES Modules)
 - [x] `import` declarations (parsing)
-- [x] `export` declarations (parsing)
-- [x] Named imports/exports
-- [x] Default imports/exports
-- [x] Namespace imports (`import * as`)
-- [x] Re-exports (`export { x } from`)
+- [x] `export` declarations (parsing + runtime tracking)
+- [x] Named imports/exports (parsing)
+- [x] Default imports/exports (parsing)
+- [x] Namespace imports (`import * as`) (parsing)
+- [x] Re-exports (`export { x } from`) (parsing)
 - [ ] Module resolution (relative paths)
 - [ ] Module resolution (node_modules)
 - [ ] Module caching
@@ -512,11 +512,11 @@ To fully implement classes, the following components are needed:
 - [ ] Preserve object key order
 
 #### Public API
-- [ ] `Runtime::new()` - Create runtime instance
-- [ ] `Runtime::eval(source)` - Evaluate source string
+- [x] `Runtime::new()` - Create runtime instance
+- [x] `Runtime::eval(source)` - Evaluate source string
 - [ ] `Runtime::load_module(path)` - Load and cache module
-- [ ] `Runtime::call_function<T, R>(name, args)` - Call exported function
-- [ ] `Runtime::get_export<T>(name)` - Get exported value
+- [x] `Runtime::call_function(name, args)` - Call exported function with JSON args
+- [x] `Runtime::get_exports()` - Get all exported values
 - [ ] Error type conversion to Rust errors
 
 #### Configuration

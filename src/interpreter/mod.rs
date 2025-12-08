@@ -10,11 +10,11 @@ use crate::ast::{
     Argument, ArrayElement, AssignmentExpression, AssignmentOp, AssignmentTarget, BinaryExpression,
     BinaryOp, BlockStatement, CallExpression, ClassConstructor, ClassDeclaration, ClassMember,
     ClassMethod, ClassProperty, ConditionalExpression, DoWhileStatement, EnumDeclaration,
-    Expression, ForInOfLeft, ForInStatement, ForInit, ForOfStatement, ForStatement,
-    FunctionDeclaration, LiteralValue, LogicalExpression, LogicalOp, MemberExpression,
-    MemberProperty, MethodKind, NewExpression, ObjectPatternProperty, ObjectProperty,
-    ObjectPropertyKey, Pattern, Program, Statement, UnaryExpression, UnaryOp, UpdateExpression,
-    UpdateOp, VariableDeclaration, VariableKind, WhileStatement,
+    ExportDeclaration, Expression, ForInOfLeft, ForInStatement, ForInit, ForOfStatement,
+    ForStatement, FunctionDeclaration, LiteralValue, LogicalExpression, LogicalOp,
+    MemberExpression, MemberProperty, MethodKind, NewExpression, ObjectPatternProperty,
+    ObjectProperty, ObjectPropertyKey, Pattern, Program, Statement, UnaryExpression, UnaryOp,
+    UpdateExpression, UpdateOp, VariableDeclaration, VariableKind, WhileStatement,
 };
 use crate::error::JsError;
 use crate::value::{
@@ -57,6 +57,8 @@ pub struct Interpreter {
     pub regexp_prototype: JsObjectRef,
     /// Stores thrown value during exception propagation
     thrown_value: Option<JsValue>,
+    /// Exported values from the module
+    pub exports: std::collections::HashMap<String, JsValue>,
 }
 
 impl Interpreter {
@@ -140,6 +142,7 @@ impl Interpreter {
             date_prototype,
             regexp_prototype,
             thrown_value: None,
+            exports: std::collections::HashMap::new(),
         }
     }
 
@@ -386,8 +389,13 @@ impl Interpreter {
                 Ok(Completion::Normal(JsValue::Undefined))
             }
 
-            Statement::Import(_) | Statement::Export(_) => {
-                // Module handling would go here
+            Statement::Import(_) => {
+                // Import handling would require module resolution
+                Ok(Completion::Normal(JsValue::Undefined))
+            }
+
+            Statement::Export(export_decl) => {
+                self.execute_export(export_decl)?;
                 Ok(Completion::Normal(JsValue::Undefined))
             }
 
@@ -945,6 +953,73 @@ impl Interpreter {
 
         self.env.define(enum_decl.id.name.clone(), JsValue::Object(obj), false);
         Ok(())
+    }
+
+    fn execute_export(&mut self, export_decl: &ExportDeclaration) -> Result<(), JsError> {
+        // Handle export with declaration: export function foo() {}, export const x = 1
+        if let Some(declaration) = &export_decl.declaration {
+            match declaration.as_ref() {
+                Statement::FunctionDeclaration(func_decl) => {
+                    self.execute_function_declaration(func_decl)?;
+                    if let Some(id) = &func_decl.id {
+                        let name = id.name.clone();
+                        if let Ok(value) = self.env.get(&name) {
+                            self.exports.insert(name, value);
+                        }
+                    }
+                }
+                Statement::VariableDeclaration(var_decl) => {
+                    self.execute_variable_declaration(var_decl)?;
+                    // Export each declared variable
+                    for declarator in &var_decl.declarations {
+                        let names = self.get_pattern_names(&declarator.id);
+                        for name in names {
+                            if let Ok(value) = self.env.get(&name) {
+                                self.exports.insert(name, value);
+                            }
+                        }
+                    }
+                }
+                Statement::ClassDeclaration(class_decl) => {
+                    self.execute_class_declaration(class_decl)?;
+                    if let Some(id) = &class_decl.id {
+                        let name = id.name.clone();
+                        if let Ok(value) = self.env.get(&name) {
+                            self.exports.insert(name, value);
+                        }
+                    }
+                }
+                Statement::TypeAlias(_) | Statement::InterfaceDeclaration(_) => {
+                    // Type-only exports - no runtime effect
+                }
+                _ => {
+                    // Other declarations that we may not support yet
+                }
+            }
+        }
+
+        // Handle export specifiers: export { foo, bar }
+        for spec in &export_decl.specifiers {
+            let local_name = &spec.local.name;
+            let exported_name = &spec.exported.name;
+            if let Ok(value) = self.env.get(local_name) {
+                self.exports.insert(exported_name.clone(), value);
+            }
+        }
+
+        // Handle export default
+        if export_decl.default {
+            // TODO: Handle export default expression
+        }
+
+        Ok(())
+    }
+
+    /// Get variable names from a pattern for export tracking
+    fn get_pattern_names(&self, pattern: &Pattern) -> Vec<String> {
+        let mut names = Vec::new();
+        self.collect_pattern_names(pattern, &mut names);
+        names
     }
 
     fn execute_block(&mut self, block: &BlockStatement) -> Result<Completion, JsError> {
