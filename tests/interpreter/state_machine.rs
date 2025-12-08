@@ -1,4 +1,5 @@
 // Tests for state machine execution model
+#![allow(unused_imports)]
 use typescript_eval::{JsValue, Runtime, RuntimeResult};
 
 #[test]

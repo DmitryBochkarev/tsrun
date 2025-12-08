@@ -142,9 +142,9 @@ impl Runtime {
     /// }
     /// ```
     pub fn eval_resumable(&mut self, source: &str) -> Result<RuntimeResult, JsError> {
-        // For now, wrap the existing eval() - will be replaced with stack-based execution
-        let value = self.eval(source)?;
-        Ok(RuntimeResult::Complete(value))
+        let mut parser = parser::Parser::new(source);
+        let program = parser.parse_program()?;
+        self.interpreter.execute_resumable(&program)
     }
 
     /// Continue execution after filling a pending slot
@@ -152,8 +152,7 @@ impl Runtime {
     /// Call this after receiving `ImportAwaited` or `AsyncAwaited` and
     /// filling the slot with `set_success()` or `set_error()`.
     pub fn continue_eval(&mut self) -> Result<RuntimeResult, JsError> {
-        // TODO: Implement stack-based resumption
-        Err(JsError::type_error("continue_eval not yet implemented"))
+        self.interpreter.continue_execution()
     }
 
     /// Call an exported function by name with the given arguments

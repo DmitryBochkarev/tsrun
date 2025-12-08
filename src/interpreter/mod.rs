@@ -68,6 +68,14 @@ pub enum YieldResult {
     Suspend(JsValue),
 }
 
+/// Result of processing a single evaluation frame
+enum FrameResult {
+    /// Continue processing more frames
+    Continue,
+    /// Suspend execution and return to host
+    Suspend(crate::RuntimeResult),
+}
+
 /// The interpreter state
 pub struct Interpreter {
     /// Global object
@@ -431,6 +439,176 @@ impl Interpreter {
         }
 
         Ok(result)
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Stack-based execution (for suspendable evaluation)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// Execute a program using the stack-based execution model
+    ///
+    /// This method supports suspension at import/await points by returning
+    /// RuntimeResult::ImportAwaited or RuntimeResult::AsyncAwaited.
+    pub fn execute_resumable(
+        &mut self,
+        program: &Program,
+    ) -> Result<crate::RuntimeResult, JsError> {
+        // Hoist var declarations at global scope
+        self.hoist_var_declarations(&program.body);
+
+        // Initialize the execution stack with the program
+        self.eval_stack.clear();
+        self.value_stack.clear();
+        self.completion_stack.clear();
+
+        if !program.body.is_empty() {
+            self.eval_stack.push(eval_stack::EvalFrame::ExecuteProgram {
+                statements: program.body.clone(),
+                index: 0,
+            });
+        }
+
+        // Run until completion or suspension
+        self.run_stack()
+    }
+
+    /// Continue execution after a pending slot has been filled
+    pub fn continue_execution(&mut self) -> Result<crate::RuntimeResult, JsError> {
+        // Check if there's a pending slot to resume from
+        // For now, just continue running the stack
+        self.run_stack()
+    }
+
+    /// Main execution loop for stack-based evaluation
+    ///
+    /// Processes frames from eval_stack until:
+    /// - Stack is empty (returns Complete)
+    /// - Suspension point reached (returns ImportAwaited/AsyncAwaited)
+    /// - Error occurs
+    fn run_stack(&mut self) -> Result<crate::RuntimeResult, JsError> {
+        while let Some(frame) = self.eval_stack.pop() {
+            match self.process_frame(frame)? {
+                FrameResult::Continue => continue,
+                FrameResult::Suspend(result) => return Ok(result),
+            }
+        }
+
+        // Stack is empty - execution complete
+        let result = self.value_stack.pop().unwrap_or(JsValue::Undefined);
+        Ok(crate::RuntimeResult::Complete(result))
+    }
+
+    /// Process a single evaluation frame
+    fn process_frame(&mut self, frame: eval_stack::EvalFrame) -> Result<FrameResult, JsError> {
+        use eval_stack::EvalFrame;
+
+        match frame {
+            EvalFrame::ExecuteProgram { statements, index } => {
+                self.process_execute_program(statements, index)
+            }
+
+            EvalFrame::ExecuteStmt(stmt) => {
+                self.process_execute_stmt(*stmt)
+            }
+
+            EvalFrame::EvaluateExpr(expr) => {
+                self.process_evaluate_expr(*expr)
+            }
+
+            // For frames not yet converted, use existing recursive methods
+            // These will be implemented as we convert more expression/statement types
+            _ => {
+                // This is a fallback for frames not yet implemented
+                // Should not reach here in normal operation with current hybrid approach
+                Err(JsError::type_error(&format!(
+                    "Unhandled frame type in stack execution: {:?}",
+                    std::mem::discriminant(&frame)
+                )))
+            }
+        }
+    }
+
+    /// Process ExecuteProgram frame
+    fn process_execute_program(
+        &mut self,
+        statements: Vec<Statement>,
+        index: usize,
+    ) -> Result<FrameResult, JsError> {
+        if index >= statements.len() {
+            // All statements executed - result is on value_stack or Undefined
+            if self.value_stack.is_empty() {
+                self.value_stack.push(JsValue::Undefined);
+            }
+            return Ok(FrameResult::Continue);
+        }
+
+        // Push frame for remaining statements
+        if index + 1 < statements.len() {
+            self.eval_stack.push(eval_stack::EvalFrame::ExecuteProgram {
+                statements: statements.clone(),
+                index: index + 1,
+            });
+        }
+
+        // Execute current statement using existing method (hybrid approach)
+        let stmt = &statements[index];
+        match self.execute_statement(stmt)? {
+            Completion::Normal(val) => {
+                // Replace top of value stack with new value
+                self.value_stack.clear();
+                self.value_stack.push(val);
+            }
+            Completion::Return(val) => {
+                // Clear remaining program execution and return
+                self.eval_stack.retain(|f| {
+                    !matches!(f, eval_stack::EvalFrame::ExecuteProgram { .. })
+                });
+                self.value_stack.clear();
+                self.value_stack.push(val);
+            }
+            Completion::Break(_) => {
+                return Err(JsError::syntax_error("Illegal break statement", 0, 0));
+            }
+            Completion::Continue(_) => {
+                return Err(JsError::syntax_error("Illegal continue statement", 0, 0));
+            }
+        }
+
+        Ok(FrameResult::Continue)
+    }
+
+    /// Process ExecuteStmt frame
+    fn process_execute_stmt(&mut self, stmt: Statement) -> Result<FrameResult, JsError> {
+        // Use existing execute_statement method (hybrid approach)
+        match self.execute_statement(&stmt)? {
+            Completion::Normal(val) => {
+                self.value_stack.push(val);
+            }
+            Completion::Return(val) => {
+                // TODO: Handle return properly in stack context
+                self.value_stack.push(val);
+            }
+            Completion::Break(_) | Completion::Continue(_) => {
+                // TODO: Handle break/continue in stack context
+            }
+        }
+        Ok(FrameResult::Continue)
+    }
+
+    /// Process EvaluateExpr frame
+    fn process_evaluate_expr(&mut self, expr: Expression) -> Result<FrameResult, JsError> {
+        // For now, delegate all expressions to existing evaluate method (hybrid approach)
+        // This will be gradually converted to pure stack-based execution
+        let value = self.evaluate(&expr)?;
+        self.value_stack.push(value);
+        Ok(FrameResult::Continue)
+    }
+
+    /// Generate a unique slot ID
+    pub fn generate_slot_id(&mut self) -> u64 {
+        let id = self.next_slot_id;
+        self.next_slot_id += 1;
+        id
     }
 
     /// Execute a statement
