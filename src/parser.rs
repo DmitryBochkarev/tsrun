@@ -41,6 +41,12 @@ impl<'a> Parser<'a> {
     // ============ STATEMENTS ============
 
     fn parse_statement(&mut self) -> Result<Statement, JsError> {
+        // Check for labeled statement first (identifier followed by colon)
+        // Must be done before match due to borrow checker
+        if self.check_identifier() && self.peek_is(&TokenKind::Colon) {
+            return self.parse_labeled_statement();
+        }
+
         match &self.current.kind {
             TokenKind::Let | TokenKind::Const | TokenKind::Var => {
                 Ok(Statement::VariableDeclaration(self.parse_variable_declaration()?))
@@ -620,6 +626,13 @@ impl<'a> Parser<'a> {
             let decl_start = self.current.span;
             let id = self.parse_binding_pattern()?;
 
+            // Parse optional type annotation (for TypeScript)
+            let type_ann = if self.match_token(&TokenKind::Colon) {
+                Some(self.parse_type_annotation()?)
+            } else {
+                None
+            };
+
             // Check for for-in or for-of
             if self.check(&TokenKind::In) || self.check(&TokenKind::Of) {
                 let is_of = self.check(&TokenKind::Of);
@@ -634,7 +647,7 @@ impl<'a> Parser<'a> {
                     kind,
                     declarations: vec![VariableDeclarator {
                         id,
-                        type_annotation: None,
+                        type_annotation: type_ann,
                         init: None,
                         span: self.span_from(decl_start),
                     }],
@@ -648,12 +661,7 @@ impl<'a> Parser<'a> {
                 };
             }
 
-            // Regular for loop
-            let type_ann = if self.match_token(&TokenKind::Colon) {
-                Some(self.parse_type_annotation()?)
-            } else {
-                None
-            };
+            // Regular for loop - type_ann already parsed above
 
             let init_val = if self.match_token(&TokenKind::Eq) {
                 Some(self.parse_assignment_expression()?)
@@ -800,6 +808,10 @@ impl<'a> Parser<'a> {
             let catch_start = self.current.span;
             let param = if self.match_token(&TokenKind::LParen) {
                 let p = self.parse_binding_pattern()?;
+                // Parse optional type annotation (TypeScript) - discarded at runtime
+                if self.match_token(&TokenKind::Colon) {
+                    let _ = self.parse_type_annotation()?;
+                }
                 self.expect(&TokenKind::RParen)?;
                 Some(p)
             } else {
@@ -896,6 +908,16 @@ impl<'a> Parser<'a> {
 
         let span = self.span_from(start);
         Ok(Statement::Throw(ThrowStatement { argument, span }))
+    }
+
+    fn parse_labeled_statement(&mut self) -> Result<Statement, JsError> {
+        let start = self.current.span;
+        let label = self.parse_identifier()?;
+        self.expect(&TokenKind::Colon)?;
+        let body = Box::new(self.parse_statement()?);
+
+        let span = self.span_from(start);
+        Ok(Statement::Labeled(LabeledStatement { label, body, span }))
     }
 
     // TypeScript declarations (stubs for now)
@@ -1258,6 +1280,8 @@ impl<'a> Parser<'a> {
                 break;
             }
 
+            // Save the operator token kind before advancing (needed for logical op detection)
+            let op_token_kind = self.current.kind.clone();
             self.advance();
 
             // Right associativity for ** operator
@@ -1267,8 +1291,8 @@ impl<'a> Parser<'a> {
             let span = self.span_from(start);
             left = if is_logical {
                 let logical_op = match op {
-                    BinaryOp::BitAnd if self.previous.kind == TokenKind::AmpAmp => LogicalOp::And,
-                    BinaryOp::BitOr if self.previous.kind == TokenKind::PipePipe => LogicalOp::Or,
+                    BinaryOp::BitAnd if op_token_kind == TokenKind::AmpAmp => LogicalOp::And,
+                    BinaryOp::BitOr if op_token_kind == TokenKind::PipePipe => LogicalOp::Or,
                     _ => {
                         // Nullish coalescing
                         LogicalOp::NullishCoalescing
@@ -2055,38 +2079,88 @@ impl<'a> Parser<'a> {
             // Type keywords
             TokenKind::Any => {
                 self.advance();
-                Ok(TypeAnnotation::Keyword(TypeKeyword {
+                let mut ty = TypeAnnotation::Keyword(TypeKeyword {
                     keyword: TypeKeywordKind::Any,
                     span: self.span_from(start),
-                }))
+                });
+                // Array shorthand: any[]
+                while self.check(&TokenKind::LBracket) {
+                    self.advance();
+                    self.expect(&TokenKind::RBracket)?;
+                    ty = TypeAnnotation::Array(ArrayType {
+                        element_type: Box::new(ty),
+                        span: self.span_from(start),
+                    });
+                }
+                Ok(ty)
             }
             TokenKind::Unknown => {
                 self.advance();
-                Ok(TypeAnnotation::Keyword(TypeKeyword {
+                let mut ty = TypeAnnotation::Keyword(TypeKeyword {
                     keyword: TypeKeywordKind::Unknown,
                     span: self.span_from(start),
-                }))
+                });
+                // Array shorthand: unknown[]
+                while self.check(&TokenKind::LBracket) {
+                    self.advance();
+                    self.expect(&TokenKind::RBracket)?;
+                    ty = TypeAnnotation::Array(ArrayType {
+                        element_type: Box::new(ty),
+                        span: self.span_from(start),
+                    });
+                }
+                Ok(ty)
             }
             TokenKind::Never => {
                 self.advance();
-                Ok(TypeAnnotation::Keyword(TypeKeyword {
+                let mut ty = TypeAnnotation::Keyword(TypeKeyword {
                     keyword: TypeKeywordKind::Never,
                     span: self.span_from(start),
-                }))
+                });
+                // Array shorthand: never[]
+                while self.check(&TokenKind::LBracket) {
+                    self.advance();
+                    self.expect(&TokenKind::RBracket)?;
+                    ty = TypeAnnotation::Array(ArrayType {
+                        element_type: Box::new(ty),
+                        span: self.span_from(start),
+                    });
+                }
+                Ok(ty)
             }
             TokenKind::Void => {
                 self.advance();
-                Ok(TypeAnnotation::Keyword(TypeKeyword {
+                let mut ty = TypeAnnotation::Keyword(TypeKeyword {
                     keyword: TypeKeywordKind::Void,
                     span: self.span_from(start),
-                }))
+                });
+                // Array shorthand: void[]
+                while self.check(&TokenKind::LBracket) {
+                    self.advance();
+                    self.expect(&TokenKind::RBracket)?;
+                    ty = TypeAnnotation::Array(ArrayType {
+                        element_type: Box::new(ty),
+                        span: self.span_from(start),
+                    });
+                }
+                Ok(ty)
             }
             TokenKind::Null => {
                 self.advance();
-                Ok(TypeAnnotation::Keyword(TypeKeyword {
+                let mut ty = TypeAnnotation::Keyword(TypeKeyword {
                     keyword: TypeKeywordKind::Null,
                     span: self.span_from(start),
-                }))
+                });
+                // Array shorthand: null[]
+                while self.check(&TokenKind::LBracket) {
+                    self.advance();
+                    self.expect(&TokenKind::RBracket)?;
+                    ty = TypeAnnotation::Array(ArrayType {
+                        element_type: Box::new(ty),
+                        span: self.span_from(start),
+                    });
+                }
+                Ok(ty)
             }
 
             // Identifier (type reference or built-in type name)
@@ -2568,6 +2642,14 @@ impl<'a> Parser<'a> {
 
     fn check(&self, kind: &TokenKind) -> bool {
         std::mem::discriminant(&self.current.kind) == std::mem::discriminant(kind)
+    }
+
+    /// Check if the next token (after current) is of the given kind
+    fn peek_is(&mut self, kind: &TokenKind) -> bool {
+        let checkpoint = self.lexer.checkpoint();
+        let next = self.lexer.next_token();
+        self.lexer.restore(checkpoint);
+        std::mem::discriminant(&next.kind) == std::mem::discriminant(kind)
     }
 
     fn check_identifier(&self) -> bool {
@@ -3301,5 +3383,117 @@ mod tests {
     fn test_tagged_template_member_expression() {
         let prog = parse("obj.method`template`;");
         assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_arrow_function_in_method_call() {
+        // Arrow function as argument to method call
+        let prog = parse("arr.push(() => 1);");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_arrow_function_in_method_call_with_closure() {
+        // Arrow function capturing variable
+        let prog = parse("let i = 0; arr.push(() => i);");
+        assert_eq!(prog.body.len(), 2);
+    }
+
+    #[test]
+    fn test_arrow_function_in_array_literal() {
+        // Arrow function inside array literal
+        let prog = parse("let funcs = [() => 1, () => 2];");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_arrow_function_push_with_typed_array() {
+        // Arrow function in push with TypeScript typed array
+        let prog = parse("let funcs: any[] = []; funcs.push(() => 1);");
+        assert_eq!(prog.body.len(), 2);
+    }
+
+    #[test]
+    fn test_catch_with_type_annotation() {
+        // TypeScript catch parameter with type annotation
+        let prog = parse("try { } catch (e: any) { }");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_catch_without_type_annotation() {
+        // JavaScript catch parameter without type annotation
+        let prog = parse("try { } catch (e) { }");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_catch_with_unknown_type() {
+        // TypeScript catch with unknown type
+        let prog = parse("try { throw 1; } catch (e: unknown) { console.log(e); }");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_logical_and() {
+        // Test that && is parsed as LogicalExpression, not BinaryExpression
+        use crate::ast::{Expression, LogicalOp};
+
+        let prog = parse("true && false");
+        assert_eq!(prog.body.len(), 1);
+
+        // Check the expression is a LogicalExpression with And operator
+        if let Statement::Expression(stmt) = &prog.body[0] {
+            if let Expression::Logical(logical) = &stmt.expression {
+                assert!(matches!(logical.operator, LogicalOp::And));
+            } else {
+                panic!("Expected LogicalExpression, got {:?}", stmt.expression);
+            }
+        } else {
+            panic!("Expected ExpressionStatement");
+        }
+    }
+
+    #[test]
+    fn test_parse_logical_or() {
+        // Test that || is parsed as LogicalExpression, not BinaryExpression
+        use crate::ast::{Expression, LogicalOp};
+
+        let prog = parse("false || true");
+        assert_eq!(prog.body.len(), 1);
+
+        if let Statement::Expression(stmt) = &prog.body[0] {
+            if let Expression::Logical(logical) = &stmt.expression {
+                assert!(matches!(logical.operator, LogicalOp::Or));
+            } else {
+                panic!("Expected LogicalExpression, got {:?}", stmt.expression);
+            }
+        } else {
+            panic!("Expected ExpressionStatement");
+        }
+    }
+
+    #[test]
+    fn test_parse_logical_and_complex_expression() {
+        // Test && with complex expressions (this caught a bug where self.previous
+        // was checked after parsing the right side)
+        use crate::ast::{Expression, LogicalOp};
+
+        let prog = parse("x < 10 && !done");
+        assert_eq!(prog.body.len(), 1);
+
+        if let Statement::Expression(stmt) = &prog.body[0] {
+            if let Expression::Logical(logical) = &stmt.expression {
+                assert!(matches!(logical.operator, LogicalOp::And));
+                // Left should be a binary comparison
+                assert!(matches!(&*logical.left, Expression::Binary(_)));
+                // Right should be a unary NOT
+                assert!(matches!(&*logical.right, Expression::Unary(_)));
+            } else {
+                panic!("Expected LogicalExpression, got {:?}", stmt.expression);
+            }
+        } else {
+            panic!("Expected ExpressionStatement");
+        }
     }
 }

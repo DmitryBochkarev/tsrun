@@ -9,11 +9,12 @@ use builtins::*;
 use crate::ast::{
     Argument, ArrayElement, AssignmentExpression, AssignmentOp, AssignmentTarget, BinaryExpression,
     BinaryOp, BlockStatement, CallExpression, ClassConstructor, ClassDeclaration, ClassMember,
-    ClassMethod, ClassProperty, ConditionalExpression, EnumDeclaration, Expression, ForInOfLeft,
-    ForInStatement, ForInit, ForOfStatement, ForStatement, FunctionDeclaration, LiteralValue,
-    LogicalExpression, LogicalOp, MemberExpression, MemberProperty, MethodKind, NewExpression,
-    ObjectPatternProperty, ObjectProperty, ObjectPropertyKey, Pattern, Program, Statement,
-    UnaryExpression, UnaryOp, UpdateExpression, UpdateOp, VariableDeclaration, VariableKind,
+    ClassMethod, ClassProperty, ConditionalExpression, DoWhileStatement, EnumDeclaration,
+    Expression, ForInOfLeft, ForInStatement, ForInit, ForOfStatement, ForStatement,
+    FunctionDeclaration, LiteralValue, LogicalExpression, LogicalOp, MemberExpression,
+    MemberProperty, MethodKind, NewExpression, ObjectPatternProperty, ObjectProperty,
+    ObjectPropertyKey, Pattern, Program, Statement, UnaryExpression, UnaryOp, UpdateExpression,
+    UpdateOp, VariableDeclaration, VariableKind, WhileStatement,
 };
 use crate::error::JsError;
 use crate::value::{
@@ -54,6 +55,8 @@ pub struct Interpreter {
     pub date_prototype: JsObjectRef,
     /// RegExp.prototype for regex methods
     pub regexp_prototype: JsObjectRef,
+    /// Stores thrown value during exception propagation
+    thrown_value: Option<JsValue>,
 }
 
 impl Interpreter {
@@ -136,6 +139,7 @@ impl Interpreter {
             set_prototype,
             date_prototype,
             regexp_prototype,
+            thrown_value: None,
         }
     }
 
@@ -148,6 +152,9 @@ impl Interpreter {
 
     /// Execute a program
     pub fn execute(&mut self, program: &Program) -> Result<JsValue, JsError> {
+        // Hoist var declarations at global scope
+        self.hoist_var_declarations(&program.body);
+
         let mut result = JsValue::Undefined;
 
         for stmt in &program.body {
@@ -205,8 +212,10 @@ impl Interpreter {
                     }
 
                     match self.execute_statement(&while_stmt.body)? {
-                        Completion::Break(_) => break,
-                        Completion::Continue(_) => continue,
+                        Completion::Break(None) => break,
+                        Completion::Break(label) => return Ok(Completion::Break(label)),
+                        Completion::Continue(None) => continue,
+                        Completion::Continue(label) => return Ok(Completion::Continue(label)),
                         Completion::Return(val) => return Ok(Completion::Return(val)),
                         Completion::Normal(_) => {}
                     }
@@ -217,8 +226,10 @@ impl Interpreter {
             Statement::DoWhile(do_while) => {
                 loop {
                     match self.execute_statement(&do_while.body)? {
-                        Completion::Break(_) => break,
-                        Completion::Continue(_) => {}
+                        Completion::Break(None) => break,
+                        Completion::Break(label) => return Ok(Completion::Break(label)),
+                        Completion::Continue(None) => {}
+                        Completion::Continue(label) => return Ok(Completion::Continue(label)),
                         Completion::Return(val) => return Ok(Completion::Return(val)),
                         Completion::Normal(_) => {}
                     }
@@ -256,11 +267,8 @@ impl Interpreter {
 
             Statement::Throw(throw) => {
                 let value = self.evaluate(&throw.argument)?;
-                Err(JsError::RuntimeError {
-                    kind: "Error".to_string(),
-                    message: value.to_js_string().to_string(),
-                    stack: vec![],
-                })
+                self.thrown_value = Some(value);
+                Err(JsError::Thrown)
             }
 
             Statement::Try(try_stmt) => {
@@ -275,8 +283,12 @@ impl Interpreter {
                     }
                     Err(err) => {
                         if let Some(handler) = &try_stmt.handler {
-                            // Create error value
-                            let error_value = JsValue::from(err.to_string());
+                            // Get the error value - either from thrown_value or create from error
+                            let error_value = if matches!(err, JsError::Thrown) {
+                                self.thrown_value.take().unwrap_or(JsValue::Undefined)
+                            } else {
+                                JsValue::from(err.to_string())
+                            };
 
                             // Bind catch parameter
                             let prev_env = self.env.clone();
@@ -296,7 +308,12 @@ impl Interpreter {
                             result
                         } else if let Some(finalizer) = &try_stmt.finalizer {
                             self.execute_block(finalizer)?;
-                            Err(err)
+                            // Re-throw if not caught
+                            if matches!(err, JsError::Thrown) {
+                                Err(JsError::Thrown)
+                            } else {
+                                Err(err)
+                            }
                         } else {
                             Err(err)
                         }
@@ -379,13 +396,41 @@ impl Interpreter {
             }
 
             Statement::Labeled(labeled) => {
-                self.execute_statement(&labeled.body)
+                let label_name = labeled.label.name.clone();
+                // Execute loop statements with the label so they can handle labeled break/continue
+                match labeled.body.as_ref() {
+                    Statement::For(for_stmt) => {
+                        self.execute_for_labeled(for_stmt, Some(&label_name))
+                    }
+                    Statement::ForIn(for_in) => {
+                        self.execute_for_in_labeled(for_in, Some(&label_name))
+                    }
+                    Statement::ForOf(for_of) => {
+                        self.execute_for_of_labeled(for_of, Some(&label_name))
+                    }
+                    Statement::While(while_stmt) => {
+                        self.execute_while_labeled(while_stmt, Some(&label_name))
+                    }
+                    Statement::DoWhile(do_while) => {
+                        self.execute_do_while_labeled(do_while, Some(&label_name))
+                    }
+                    _ => {
+                        // Non-loop statements - just handle break with matching label
+                        match self.execute_statement(&labeled.body)? {
+                            Completion::Break(Some(ref l)) if l == &label_name => {
+                                Ok(Completion::Normal(JsValue::Undefined))
+                            }
+                            other => Ok(other)
+                        }
+                    }
+                }
             }
         }
     }
 
     fn execute_variable_declaration(&mut self, decl: &VariableDeclaration) -> Result<(), JsError> {
         let mutable = decl.kind != VariableKind::Const;
+        let is_var = decl.kind == VariableKind::Var;
 
         for declarator in &decl.declarations {
             let value = if let Some(init) = &declarator.init {
@@ -394,7 +439,13 @@ impl Interpreter {
                 JsValue::Undefined
             };
 
-            self.bind_pattern(&declarator.id, value, mutable)?;
+            if is_var {
+                // For var, use set to update the hoisted binding in outer scope
+                self.bind_pattern_var(&declarator.id, value)?;
+            } else {
+                // For let/const, define in current scope
+                self.bind_pattern(&declarator.id, value, mutable)?;
+            }
         }
 
         Ok(())
@@ -915,13 +966,31 @@ impl Interpreter {
     }
 
     fn execute_for(&mut self, for_stmt: &ForStatement) -> Result<Completion, JsError> {
+        self.execute_for_labeled(for_stmt, None)
+    }
+
+    fn execute_for_labeled(&mut self, for_stmt: &ForStatement, label: Option<&str>) -> Result<Completion, JsError> {
         let prev_env = self.env.clone();
         self.env = Environment::with_outer(self.env.clone());
+
+        // Track let-declared loop variables for per-iteration binding
+        let mut let_var_names: Vec<String> = Vec::new();
+        let is_let_loop = if let Some(ForInit::Variable(decl)) = &for_stmt.init {
+            decl.kind == VariableKind::Let || decl.kind == VariableKind::Const
+        } else {
+            false
+        };
 
         // Init
         if let Some(init) = &for_stmt.init {
             match init {
                 ForInit::Variable(decl) => {
+                    // Collect let/const variable names for per-iteration binding
+                    if is_let_loop {
+                        for declarator in &decl.declarations {
+                            self.collect_pattern_names(&declarator.id, &mut let_var_names);
+                        }
+                    }
                     self.execute_variable_declaration(decl)?;
                 }
                 ForInit::Expression(expr) => {
@@ -929,6 +998,8 @@ impl Interpreter {
                 }
             }
         }
+
+        let loop_env = self.env.clone();
 
         // Loop
         loop {
@@ -940,10 +1011,40 @@ impl Interpreter {
                 }
             }
 
+            // For let/const loops, create per-iteration scope
+            if is_let_loop && !let_var_names.is_empty() {
+                let mut iter_env = Environment::with_outer(loop_env.clone());
+                // Copy current values into the per-iteration scope
+                for name in &let_var_names {
+                    if let Ok(val) = self.env.get(name) {
+                        iter_env.define(name.clone(), val, true);
+                    }
+                }
+                self.env = iter_env;
+            }
+
             // Body
             match self.execute_statement(&for_stmt.body)? {
-                Completion::Break(_) => break,
-                Completion::Continue(_) => {}
+                Completion::Break(None) => {
+                    self.env = loop_env.clone();
+                    break;
+                }
+                Completion::Break(Some(ref l)) if label == Some(l.as_str()) => {
+                    self.env = prev_env;
+                    return Ok(Completion::Normal(JsValue::Undefined));
+                }
+                Completion::Break(lbl) => {
+                    self.env = prev_env;
+                    return Ok(Completion::Break(lbl));
+                }
+                Completion::Continue(None) => {}
+                Completion::Continue(Some(ref l)) if label == Some(l.as_str()) => {
+                    // Continue with matching label - continue this loop
+                }
+                Completion::Continue(lbl) => {
+                    self.env = prev_env;
+                    return Ok(Completion::Continue(lbl));
+                }
                 Completion::Return(val) => {
                     self.env = prev_env;
                     return Ok(Completion::Return(val));
@@ -951,7 +1052,17 @@ impl Interpreter {
                 Completion::Normal(_) => {}
             }
 
-            // Update
+            // Update - copy values back to loop env, update, then continue
+            if is_let_loop && !let_var_names.is_empty() {
+                // Copy updated values back to loop env before update
+                for name in &let_var_names {
+                    if let Ok(val) = self.env.get(name) {
+                        let _ = loop_env.set(name, val);
+                    }
+                }
+                self.env = loop_env.clone();
+            }
+
             if let Some(update) = &for_stmt.update {
                 self.evaluate(update)?;
             }
@@ -961,7 +1072,43 @@ impl Interpreter {
         Ok(Completion::Normal(JsValue::Undefined))
     }
 
+    /// Collect all variable names from a pattern
+    fn collect_pattern_names(&self, pattern: &Pattern, names: &mut Vec<String>) {
+        match pattern {
+            Pattern::Identifier(id) => names.push(id.name.clone()),
+            Pattern::Object(obj) => {
+                for prop in &obj.properties {
+                    match prop {
+                        ObjectPatternProperty::KeyValue { value, .. } => {
+                            self.collect_pattern_names(value, names);
+                        }
+                        ObjectPatternProperty::Rest(rest) => {
+                            self.collect_pattern_names(&rest.argument, names);
+                        }
+                    }
+                }
+            }
+            Pattern::Array(arr) => {
+                for elem in &arr.elements {
+                    if let Some(p) = elem {
+                        self.collect_pattern_names(p, names);
+                    }
+                }
+            }
+            Pattern::Assignment(assign) => {
+                self.collect_pattern_names(&assign.left, names);
+            }
+            Pattern::Rest(rest) => {
+                self.collect_pattern_names(&rest.argument, names);
+            }
+        }
+    }
+
     fn execute_for_in(&mut self, for_in: &ForInStatement) -> Result<Completion, JsError> {
+        self.execute_for_in_labeled(for_in, None)
+    }
+
+    fn execute_for_in_labeled(&mut self, for_in: &ForInStatement, label: Option<&str>) -> Result<Completion, JsError> {
         let right = self.evaluate(&for_in.right)?;
 
         let keys = match &right {
@@ -996,8 +1143,24 @@ impl Interpreter {
             }
 
             match self.execute_statement(&for_in.body)? {
-                Completion::Break(_) => break,
-                Completion::Continue(_) => continue,
+                Completion::Break(None) => break,
+                Completion::Break(Some(ref l)) if label == Some(l.as_str()) => {
+                    self.env = prev_env;
+                    return Ok(Completion::Normal(JsValue::Undefined));
+                }
+                Completion::Break(lbl) => {
+                    self.env = prev_env;
+                    return Ok(Completion::Break(lbl));
+                }
+                Completion::Continue(None) => continue,
+                Completion::Continue(Some(ref l)) if label == Some(l.as_str()) => {
+                    // Continue with matching label - continue this loop
+                    continue;
+                }
+                Completion::Continue(lbl) => {
+                    self.env = prev_env;
+                    return Ok(Completion::Continue(lbl));
+                }
                 Completion::Return(val) => {
                     self.env = prev_env;
                     return Ok(Completion::Return(val));
@@ -1011,6 +1174,10 @@ impl Interpreter {
     }
 
     fn execute_for_of(&mut self, for_of: &ForOfStatement) -> Result<Completion, JsError> {
+        self.execute_for_of_labeled(for_of, None)
+    }
+
+    fn execute_for_of_labeled(&mut self, for_of: &ForOfStatement, label: Option<&str>) -> Result<Completion, JsError> {
         let right = self.evaluate(&for_of.right)?;
 
         let items = match &right {
@@ -1055,8 +1222,24 @@ impl Interpreter {
             }
 
             match self.execute_statement(&for_of.body)? {
-                Completion::Break(_) => break,
-                Completion::Continue(_) => continue,
+                Completion::Break(None) => break,
+                Completion::Break(Some(ref l)) if label == Some(l.as_str()) => {
+                    self.env = prev_env;
+                    return Ok(Completion::Normal(JsValue::Undefined));
+                }
+                Completion::Break(lbl) => {
+                    self.env = prev_env;
+                    return Ok(Completion::Break(lbl));
+                }
+                Completion::Continue(None) => continue,
+                Completion::Continue(Some(ref l)) if label == Some(l.as_str()) => {
+                    // Continue with matching label - continue this loop
+                    continue;
+                }
+                Completion::Continue(lbl) => {
+                    self.env = prev_env;
+                    return Ok(Completion::Continue(lbl));
+                }
                 Completion::Return(val) => {
                     self.env = prev_env;
                     return Ok(Completion::Return(val));
@@ -1066,6 +1249,57 @@ impl Interpreter {
         }
 
         self.env = prev_env;
+        Ok(Completion::Normal(JsValue::Undefined))
+    }
+
+    fn execute_while_labeled(&mut self, while_stmt: &WhileStatement, label: Option<&str>) -> Result<Completion, JsError> {
+        loop {
+            let test = self.evaluate(&while_stmt.test)?;
+            if !test.to_boolean() {
+                break;
+            }
+
+            match self.execute_statement(&while_stmt.body)? {
+                Completion::Break(None) => break,
+                Completion::Break(Some(ref l)) if label == Some(l.as_str()) => {
+                    return Ok(Completion::Normal(JsValue::Undefined));
+                }
+                Completion::Break(lbl) => return Ok(Completion::Break(lbl)),
+                Completion::Continue(None) => continue,
+                Completion::Continue(Some(ref l)) if label == Some(l.as_str()) => {
+                    // Continue with matching label - continue this loop
+                    continue;
+                }
+                Completion::Continue(lbl) => return Ok(Completion::Continue(lbl)),
+                Completion::Return(val) => return Ok(Completion::Return(val)),
+                Completion::Normal(_) => {}
+            }
+        }
+        Ok(Completion::Normal(JsValue::Undefined))
+    }
+
+    fn execute_do_while_labeled(&mut self, do_while: &DoWhileStatement, label: Option<&str>) -> Result<Completion, JsError> {
+        loop {
+            match self.execute_statement(&do_while.body)? {
+                Completion::Break(None) => break,
+                Completion::Break(Some(ref l)) if label == Some(l.as_str()) => {
+                    return Ok(Completion::Normal(JsValue::Undefined));
+                }
+                Completion::Break(lbl) => return Ok(Completion::Break(lbl)),
+                Completion::Continue(None) => {}
+                Completion::Continue(Some(ref l)) if label == Some(l.as_str()) => {
+                    // Continue with matching label - skip to test
+                }
+                Completion::Continue(lbl) => return Ok(Completion::Continue(lbl)),
+                Completion::Return(val) => return Ok(Completion::Return(val)),
+                Completion::Normal(_) => {}
+            }
+
+            let test = self.evaluate(&do_while.test)?;
+            if !test.to_boolean() {
+                break;
+            }
+        }
         Ok(Completion::Normal(JsValue::Undefined))
     }
 
@@ -1173,6 +1407,119 @@ impl Interpreter {
 
             Pattern::Rest(rest) => {
                 self.bind_pattern(&rest.argument, value, mutable)
+            }
+        }
+    }
+
+    /// Bind a pattern using var semantics (set existing hoisted binding)
+    fn bind_pattern_var(&mut self, pattern: &Pattern, value: JsValue) -> Result<(), JsError> {
+        match pattern {
+            Pattern::Identifier(id) => {
+                // For var, the binding was hoisted, so we need to set it
+                // Try to set in existing scope chain; if not found, define in current
+                if self.env.has(&id.name) {
+                    self.env.set(&id.name, value)?;
+                } else {
+                    // Fallback: define if somehow not hoisted
+                    self.env.define(id.name.clone(), value, true);
+                }
+                Ok(())
+            }
+
+            Pattern::Object(obj_pattern) => {
+                let obj = match &value {
+                    JsValue::Object(o) => o.clone(),
+                    _ => return Err(JsError::type_error("Cannot destructure non-object")),
+                };
+
+                for prop in &obj_pattern.properties {
+                    match prop {
+                        ObjectPatternProperty::KeyValue { key, value: pattern, .. } => {
+                            let key_str = match key {
+                                ObjectPropertyKey::Identifier(id) => id.name.clone(),
+                                ObjectPropertyKey::String(s) => s.value.clone(),
+                                ObjectPropertyKey::Number(l) => {
+                                    if let LiteralValue::Number(n) = &l.value {
+                                        n.to_string()
+                                    } else {
+                                        continue;
+                                    }
+                                }
+                                ObjectPropertyKey::Computed(_) => continue,
+                                ObjectPropertyKey::PrivateIdentifier(id) => format!("#{}", id.name),
+                            };
+
+                            let prop_value = obj
+                                .borrow()
+                                .get_property(&PropertyKey::from(key_str.as_str()))
+                                .unwrap_or(JsValue::Undefined);
+
+                            self.bind_pattern_var(pattern, prop_value)?;
+                        }
+                        ObjectPatternProperty::Rest(rest) => {
+                            let rest_obj = create_object();
+                            self.bind_pattern_var(&rest.argument, JsValue::Object(rest_obj))?;
+                        }
+                    }
+                }
+
+                Ok(())
+            }
+
+            Pattern::Array(arr_pattern) => {
+                let items: Vec<JsValue> = match &value {
+                    JsValue::Object(obj) => {
+                        let obj_ref = obj.borrow();
+                        if let ExoticObject::Array { length } = &obj_ref.exotic {
+                            let mut items = Vec::with_capacity(*length as usize);
+                            for i in 0..*length {
+                                items.push(
+                                    obj_ref
+                                        .get_property(&PropertyKey::Index(i))
+                                        .unwrap_or(JsValue::Undefined),
+                                );
+                            }
+                            items
+                        } else {
+                            vec![]
+                        }
+                    }
+                    _ => vec![],
+                };
+
+                for (i, elem) in arr_pattern.elements.iter().enumerate() {
+                    if let Some(pattern) = elem {
+                        match pattern {
+                            Pattern::Rest(rest) => {
+                                let remaining: Vec<JsValue> = items.iter().skip(i).cloned().collect();
+                                self.bind_pattern_var(
+                                    &rest.argument,
+                                    JsValue::Object(create_array(remaining)),
+                                )?;
+                                break;
+                            }
+                            _ => {
+                                let val = items.get(i).cloned().unwrap_or(JsValue::Undefined);
+                                self.bind_pattern_var(pattern, val)?;
+                            }
+                        }
+                    }
+                }
+
+                Ok(())
+            }
+
+            Pattern::Assignment(assign) => {
+                let val = if value == JsValue::Undefined {
+                    self.evaluate(&assign.right)?
+                } else {
+                    value
+                };
+                self.bind_pattern_var(&assign.left, val)
+            }
+
+            Pattern::Rest(rest) => {
+                self.bind_pattern_var(&rest.argument, value)
             }
         }
     }

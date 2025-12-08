@@ -72,6 +72,10 @@ pub enum JsError {
 
     #[error("Internal error: {0}")]
     Internal(String),
+
+    /// Marker error indicating a value was thrown (actual value stored in interpreter)
+    #[error("Thrown")]
+    Thrown,
 }
 
 fn format_stack(stack: &[StackFrame]) -> String {

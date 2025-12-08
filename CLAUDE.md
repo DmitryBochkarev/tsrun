@@ -48,6 +48,7 @@ Tests are located in:
 - **Always use the proper Edit tool to modify files** - never use shell commands like `echo >>` to modify files
 - Prefer small, focused edits over large rewrites
 - **Always add TypeScript type annotations in test code** - even though types are stripped at runtime, tests should use proper TypeScript syntax
+- **No tech debt**: Fix failing tests immediately before moving on. Do not leave TODO/FIXME comments for known bugs - implement the fix or ask for clarification
 - **Use TDD**: If a test fails because a feature is not implemented, implement the feature first rather than deleting or modifying the test to work around the limitation
 - **Never change failing test cases** - if a test fails because a syntax/feature is not yet supported, write additional simpler tests to verify the current implementation scope, but keep the original test as a goal to implement the missing feature
 - **Debugging tests** - write debug tests in test files and run with `cargo test test_name -- --nocapture` to see output. Do not use heredoc/echo commands in bash to run code.

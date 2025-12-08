@@ -5,6 +5,7 @@
 mod array;
 mod basics;
 mod class;
+mod control_flow;
 mod console;
 mod date;
 mod error;
