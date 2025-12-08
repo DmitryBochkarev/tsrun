@@ -113,3 +113,35 @@ fn test_error_stack_in_function() {
         JsValue::Boolean(true)
     );
 }
+
+#[test]
+fn test_urierror() {
+    assert_eq!(
+        eval("new URIError('invalid URI').name"),
+        JsValue::from("URIError")
+    );
+    assert_eq!(
+        eval("new URIError('invalid URI').message"),
+        JsValue::from("invalid URI")
+    );
+    assert_eq!(
+        eval("new URIError('malformed').toString()"),
+        JsValue::from("URIError: malformed")
+    );
+}
+
+#[test]
+fn test_evalerror() {
+    assert_eq!(
+        eval("new EvalError('eval failed').name"),
+        JsValue::from("EvalError")
+    );
+    assert_eq!(
+        eval("new EvalError('eval failed').message"),
+        JsValue::from("eval failed")
+    );
+    assert_eq!(
+        eval("new EvalError('bad eval').toString()"),
+        JsValue::from("EvalError: bad eval")
+    );
+}

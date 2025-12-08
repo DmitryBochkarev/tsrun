@@ -484,8 +484,8 @@ To fully implement classes, the following components are needed:
 - [x] `ReferenceError`
 - [x] `SyntaxError`
 - [x] `RangeError`
-- [ ] `URIError`
-- [ ] `EvalError`
+- [x] `URIError`
+- [x] `EvalError`
 - [x] `Error.prototype.name`
 - [x] `Error.prototype.message`
 - [x] `Error.prototype.stack`

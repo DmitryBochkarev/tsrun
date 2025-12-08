@@ -24,8 +24,19 @@ pub fn create_error_prototype() -> JsObjectRef {
     proto
 }
 
-/// Returns (Error, TypeError, ReferenceError, SyntaxError, RangeError) constructors and the Error.prototype
-pub fn create_error_constructors(error_prototype: &JsObjectRef) -> (JsObjectRef, JsObjectRef, JsObjectRef, JsObjectRef, JsObjectRef) {
+/// Error constructors tuple type
+pub struct ErrorConstructors {
+    pub error: JsObjectRef,
+    pub type_error: JsObjectRef,
+    pub reference_error: JsObjectRef,
+    pub syntax_error: JsObjectRef,
+    pub range_error: JsObjectRef,
+    pub uri_error: JsObjectRef,
+    pub eval_error: JsObjectRef,
+}
+
+/// Returns error constructors and the Error.prototype
+pub fn create_error_constructors(error_prototype: &JsObjectRef) -> ErrorConstructors {
     let error_fn = create_function(JsFunction::Native(NativeFunction {
         name: "Error".to_string(),
         func: error_constructor,
@@ -57,7 +68,27 @@ pub fn create_error_constructors(error_prototype: &JsObjectRef) -> (JsObjectRef,
         arity: 1,
     }));
 
-    (error_fn, type_error_fn, reference_error_fn, syntax_error_fn, range_error_fn)
+    let uri_error_fn = create_function(JsFunction::Native(NativeFunction {
+        name: "URIError".to_string(),
+        func: uri_error_constructor,
+        arity: 1,
+    }));
+
+    let eval_error_fn = create_function(JsFunction::Native(NativeFunction {
+        name: "EvalError".to_string(),
+        func: eval_error_constructor,
+        arity: 1,
+    }));
+
+    ErrorConstructors {
+        error: error_fn,
+        type_error: type_error_fn,
+        reference_error: reference_error_fn,
+        syntax_error: syntax_error_fn,
+        range_error: range_error_fn,
+        uri_error: uri_error_fn,
+        eval_error: eval_error_fn,
+    }
 }
 
 /// Error.prototype.toString()
@@ -136,4 +167,14 @@ pub fn syntax_error_constructor(interp: &mut Interpreter, _this: JsValue, args: 
 pub fn range_error_constructor(interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
     let message = args.first().cloned().unwrap_or(JsValue::Undefined);
     Ok(create_error_object_with_stack(interp, "RangeError", message, Some(interp.error_prototype.clone())))
+}
+
+pub fn uri_error_constructor(interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let message = args.first().cloned().unwrap_or(JsValue::Undefined);
+    Ok(create_error_object_with_stack(interp, "URIError", message, Some(interp.error_prototype.clone())))
+}
+
+pub fn eval_error_constructor(interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let message = args.first().cloned().unwrap_or(JsValue::Undefined);
+    Ok(create_error_object_with_stack(interp, "EvalError", message, Some(interp.error_prototype.clone())))
 }

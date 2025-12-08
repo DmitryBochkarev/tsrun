@@ -169,12 +169,14 @@ impl Interpreter {
         register_global_functions(&mut env);
 
         // Register error constructors
-        let (error_fn, type_error_fn, reference_error_fn, syntax_error_fn, range_error_fn) = create_error_constructors(&error_prototype);
-        env.define("Error".to_string(), JsValue::Object(error_fn), false);
-        env.define("TypeError".to_string(), JsValue::Object(type_error_fn), false);
-        env.define("ReferenceError".to_string(), JsValue::Object(reference_error_fn), false);
-        env.define("SyntaxError".to_string(), JsValue::Object(syntax_error_fn), false);
-        env.define("RangeError".to_string(), JsValue::Object(range_error_fn), false);
+        let error_ctors = create_error_constructors(&error_prototype);
+        env.define("Error".to_string(), JsValue::Object(error_ctors.error), false);
+        env.define("TypeError".to_string(), JsValue::Object(error_ctors.type_error), false);
+        env.define("ReferenceError".to_string(), JsValue::Object(error_ctors.reference_error), false);
+        env.define("SyntaxError".to_string(), JsValue::Object(error_ctors.syntax_error), false);
+        env.define("RangeError".to_string(), JsValue::Object(error_ctors.range_error), false);
+        env.define("URIError".to_string(), JsValue::Object(error_ctors.uri_error), false);
+        env.define("EvalError".to_string(), JsValue::Object(error_ctors.eval_error), false);
 
         // Register Symbol constructor
         let well_known_symbols = get_well_known_symbols();
