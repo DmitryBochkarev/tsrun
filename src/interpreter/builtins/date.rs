@@ -95,6 +95,63 @@ pub fn create_date_prototype() -> JsObjectRef {
             arity: 0,
         }));
         p.set_property(PropertyKey::from("valueOf"), JsValue::Object(value_of_fn));
+
+        // Setter methods
+        let set_time_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "setTime".to_string(),
+            func: date_set_time,
+            arity: 1,
+        }));
+        p.set_property(PropertyKey::from("setTime"), JsValue::Object(set_time_fn));
+
+        let set_full_year_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "setFullYear".to_string(),
+            func: date_set_full_year,
+            arity: 3,
+        }));
+        p.set_property(PropertyKey::from("setFullYear"), JsValue::Object(set_full_year_fn));
+
+        let set_month_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "setMonth".to_string(),
+            func: date_set_month,
+            arity: 2,
+        }));
+        p.set_property(PropertyKey::from("setMonth"), JsValue::Object(set_month_fn));
+
+        let set_date_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "setDate".to_string(),
+            func: date_set_date,
+            arity: 1,
+        }));
+        p.set_property(PropertyKey::from("setDate"), JsValue::Object(set_date_fn));
+
+        let set_hours_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "setHours".to_string(),
+            func: date_set_hours,
+            arity: 4,
+        }));
+        p.set_property(PropertyKey::from("setHours"), JsValue::Object(set_hours_fn));
+
+        let set_minutes_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "setMinutes".to_string(),
+            func: date_set_minutes,
+            arity: 3,
+        }));
+        p.set_property(PropertyKey::from("setMinutes"), JsValue::Object(set_minutes_fn));
+
+        let set_seconds_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "setSeconds".to_string(),
+            func: date_set_seconds,
+            arity: 2,
+        }));
+        p.set_property(PropertyKey::from("setSeconds"), JsValue::Object(set_seconds_fn));
+
+        let set_milliseconds_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "setMilliseconds".to_string(),
+            func: date_set_milliseconds,
+            arity: 1,
+        }));
+        p.set_property(PropertyKey::from("setMilliseconds"), JsValue::Object(set_milliseconds_fn));
     }
     proto
 }
@@ -312,4 +369,170 @@ pub fn date_to_iso_string(_interp: &mut Interpreter, this: JsValue, _args: Vec<J
     let dt = chrono::DateTime::from_timestamp_millis(ts as i64)
         .unwrap_or(chrono::DateTime::UNIX_EPOCH);
     Ok(JsValue::String(JsString::from(dt.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string())))
+}
+
+// Setter methods - they modify the date and return the new timestamp
+
+fn set_date_timestamp(this: &JsValue, new_ts: f64) -> Result<f64, JsError> {
+    let JsValue::Object(obj) = this else {
+        return Err(JsError::type_error("this is not a Date"));
+    };
+    let mut obj_ref = obj.borrow_mut();
+    if let ExoticObject::Date { ref mut timestamp } = obj_ref.exotic {
+        *timestamp = new_ts;
+        Ok(new_ts)
+    } else {
+        Err(JsError::type_error("this is not a Date"))
+    }
+}
+
+pub fn date_set_time(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let new_time = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
+    let ts = set_date_timestamp(&this, new_time)?;
+    Ok(JsValue::Number(ts))
+}
+
+pub fn date_set_full_year(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let current_ts = get_date_timestamp(&this)?;
+    if current_ts.is_nan() {
+        return Ok(JsValue::Number(f64::NAN));
+    }
+
+    let dt = chrono::DateTime::from_timestamp_millis(current_ts as i64)
+        .unwrap_or(chrono::DateTime::UNIX_EPOCH);
+
+    let new_year = args.first().map(|v| v.to_number() as i32).unwrap_or(dt.year());
+    let new_month = args.get(1).map(|v| v.to_number() as u32 + 1).unwrap_or(dt.month());
+    let new_day = args.get(2).map(|v| v.to_number() as u32).unwrap_or(dt.day());
+
+    let new_dt = Utc.with_ymd_and_hms(new_year, new_month, new_day, dt.hour(), dt.minute(), dt.second())
+        .single()
+        .map(|d| d.timestamp_millis() as f64 + (current_ts as i64 % 1000) as f64)
+        .unwrap_or(f64::NAN);
+
+    let ts = set_date_timestamp(&this, new_dt)?;
+    Ok(JsValue::Number(ts))
+}
+
+pub fn date_set_month(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let current_ts = get_date_timestamp(&this)?;
+    if current_ts.is_nan() {
+        return Ok(JsValue::Number(f64::NAN));
+    }
+
+    let dt = chrono::DateTime::from_timestamp_millis(current_ts as i64)
+        .unwrap_or(chrono::DateTime::UNIX_EPOCH);
+
+    let new_month = args.first().map(|v| v.to_number() as u32 + 1).unwrap_or(dt.month());
+    let new_day = args.get(1).map(|v| v.to_number() as u32).unwrap_or(dt.day());
+
+    let new_dt = Utc.with_ymd_and_hms(dt.year(), new_month, new_day, dt.hour(), dt.minute(), dt.second())
+        .single()
+        .map(|d| d.timestamp_millis() as f64 + (current_ts as i64 % 1000) as f64)
+        .unwrap_or(f64::NAN);
+
+    let ts = set_date_timestamp(&this, new_dt)?;
+    Ok(JsValue::Number(ts))
+}
+
+pub fn date_set_date(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let current_ts = get_date_timestamp(&this)?;
+    if current_ts.is_nan() {
+        return Ok(JsValue::Number(f64::NAN));
+    }
+
+    let dt = chrono::DateTime::from_timestamp_millis(current_ts as i64)
+        .unwrap_or(chrono::DateTime::UNIX_EPOCH);
+
+    let new_day = args.first().map(|v| v.to_number() as u32).unwrap_or(dt.day());
+
+    let new_dt = Utc.with_ymd_and_hms(dt.year(), dt.month(), new_day, dt.hour(), dt.minute(), dt.second())
+        .single()
+        .map(|d| d.timestamp_millis() as f64 + (current_ts as i64 % 1000) as f64)
+        .unwrap_or(f64::NAN);
+
+    let ts = set_date_timestamp(&this, new_dt)?;
+    Ok(JsValue::Number(ts))
+}
+
+pub fn date_set_hours(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let current_ts = get_date_timestamp(&this)?;
+    if current_ts.is_nan() {
+        return Ok(JsValue::Number(f64::NAN));
+    }
+
+    let dt = chrono::DateTime::from_timestamp_millis(current_ts as i64)
+        .unwrap_or(chrono::DateTime::UNIX_EPOCH);
+
+    let new_hour = args.first().map(|v| v.to_number() as u32).unwrap_or(dt.hour());
+    let new_min = args.get(1).map(|v| v.to_number() as u32).unwrap_or(dt.minute());
+    let new_sec = args.get(2).map(|v| v.to_number() as u32).unwrap_or(dt.second());
+    let new_ms = args.get(3).map(|v| v.to_number() as i64).unwrap_or((current_ts as i64) % 1000);
+
+    let new_dt = Utc.with_ymd_and_hms(dt.year(), dt.month(), dt.day(), new_hour, new_min, new_sec)
+        .single()
+        .map(|d| d.timestamp_millis() as f64 + new_ms as f64)
+        .unwrap_or(f64::NAN);
+
+    let ts = set_date_timestamp(&this, new_dt)?;
+    Ok(JsValue::Number(ts))
+}
+
+pub fn date_set_minutes(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let current_ts = get_date_timestamp(&this)?;
+    if current_ts.is_nan() {
+        return Ok(JsValue::Number(f64::NAN));
+    }
+
+    let dt = chrono::DateTime::from_timestamp_millis(current_ts as i64)
+        .unwrap_or(chrono::DateTime::UNIX_EPOCH);
+
+    let new_min = args.first().map(|v| v.to_number() as u32).unwrap_or(dt.minute());
+    let new_sec = args.get(1).map(|v| v.to_number() as u32).unwrap_or(dt.second());
+    let new_ms = args.get(2).map(|v| v.to_number() as i64).unwrap_or((current_ts as i64) % 1000);
+
+    let new_dt = Utc.with_ymd_and_hms(dt.year(), dt.month(), dt.day(), dt.hour(), new_min, new_sec)
+        .single()
+        .map(|d| d.timestamp_millis() as f64 + new_ms as f64)
+        .unwrap_or(f64::NAN);
+
+    let ts = set_date_timestamp(&this, new_dt)?;
+    Ok(JsValue::Number(ts))
+}
+
+pub fn date_set_seconds(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let current_ts = get_date_timestamp(&this)?;
+    if current_ts.is_nan() {
+        return Ok(JsValue::Number(f64::NAN));
+    }
+
+    let dt = chrono::DateTime::from_timestamp_millis(current_ts as i64)
+        .unwrap_or(chrono::DateTime::UNIX_EPOCH);
+
+    let new_sec = args.first().map(|v| v.to_number() as u32).unwrap_or(dt.second());
+    let new_ms = args.get(1).map(|v| v.to_number() as i64).unwrap_or((current_ts as i64) % 1000);
+
+    let new_dt = Utc.with_ymd_and_hms(dt.year(), dt.month(), dt.day(), dt.hour(), dt.minute(), new_sec)
+        .single()
+        .map(|d| d.timestamp_millis() as f64 + new_ms as f64)
+        .unwrap_or(f64::NAN);
+
+    let ts = set_date_timestamp(&this, new_dt)?;
+    Ok(JsValue::Number(ts))
+}
+
+pub fn date_set_milliseconds(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let current_ts = get_date_timestamp(&this)?;
+    if current_ts.is_nan() {
+        return Ok(JsValue::Number(f64::NAN));
+    }
+
+    let new_ms = args.first().map(|v| v.to_number() as i64).unwrap_or((current_ts as i64) % 1000);
+
+    // Keep the same time, just change milliseconds
+    let base_ts = (current_ts as i64 / 1000) * 1000; // Round down to seconds
+    let new_ts = base_ts as f64 + new_ms as f64;
+
+    let ts = set_date_timestamp(&this, new_ts)?;
+    Ok(JsValue::Number(ts))
 }

@@ -31,7 +31,7 @@ The following features should be implemented next, in priority order:
 5. ~~**String.fromCodePoint/codePointAt** - Unicode code point support~~ ✅
 6. ~~**Object.defineProperties** - define multiple properties at once~~ ✅
 7. ~~**Error.prototype.toString** - proper error string formatting~~ ✅
-8. **Date setter methods** - setFullYear, setMonth, setDate, etc.
+8. ~~**Date setter methods** - setFullYear, setMonth, setDate, etc.~~ ✅
 
 ### Priority 3: Advanced Features
 9. **Error stack traces** - capture and format stack traces
@@ -457,7 +457,7 @@ To fully implement classes, the following components are needed:
 - [x] `Date.UTC(year, month, day?, ...)`
 - [x] `Date.prototype.getTime()`
 - [x] `Date.prototype.getFullYear()`, `getMonth()`, `getDate()`, etc.
-- [ ] `Date.prototype.setFullYear()`, `setMonth()`, `setDate()`, etc.
+- [x] `Date.prototype.setFullYear()`, `setMonth()`, `setDate()`, etc.
 - [x] `Date.prototype.toISOString()`
 - [x] `Date.prototype.toJSON()`
 - [ ] `Date.prototype.toString()`
