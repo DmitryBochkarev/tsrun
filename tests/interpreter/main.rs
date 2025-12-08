@@ -9,6 +9,7 @@ mod class;
 mod control_flow;
 mod console;
 mod date;
+mod dynamic_import;
 mod error;
 mod exports;
 mod function;

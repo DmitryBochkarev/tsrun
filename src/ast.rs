@@ -439,6 +439,7 @@ pub enum Expression {
     Spread(SpreadElement),
     Yield(YieldExpression),
     Await(AwaitExpression),
+    Import(ImportExpression),
 
     // Parenthesized (for preserving source structure)
     Parenthesized(Box<Expression>, Span),
@@ -473,6 +474,7 @@ impl Expression {
             Expression::Spread(s) => s.span,
             Expression::Yield(y) => y.span,
             Expression::Await(a) => a.span,
+            Expression::Import(i) => i.span,
             Expression::Parenthesized(_, s) => *s,
         }
     }
@@ -816,6 +818,13 @@ pub struct YieldExpression {
 #[derive(Debug, Clone)]
 pub struct AwaitExpression {
     pub argument: Box<Expression>,
+    pub span: Span,
+}
+
+/// Dynamic import() expression
+#[derive(Debug, Clone)]
+pub struct ImportExpression {
+    pub source: Box<Expression>,
     pub span: Span,
 }
 

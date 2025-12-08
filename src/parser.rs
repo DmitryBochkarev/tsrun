@@ -1765,6 +1765,9 @@ impl<'a> Parser<'a> {
             // Async function or async arrow
             TokenKind::Async => self.parse_async_expression(),
 
+            // Dynamic import() expression
+            TokenKind::Import => self.parse_import_expression(),
+
             // Function expression
             TokenKind::Function => self.parse_function_expression(false),
 
@@ -2080,6 +2083,16 @@ impl<'a> Parser<'a> {
             async_: is_async,
             span,
         }))
+    }
+
+    fn parse_import_expression(&mut self) -> Result<Expression, JsError> {
+        let start = self.current.span;
+        self.expect(&TokenKind::Import)?;
+        self.expect(&TokenKind::LParen)?;
+        let source = Box::new(self.parse_assignment_expression()?);
+        self.expect(&TokenKind::RParen)?;
+        let span = self.span_from(start);
+        Ok(Expression::Import(ImportExpression { source, span }))
     }
 
     fn parse_async_expression(&mut self) -> Result<Expression, JsError> {

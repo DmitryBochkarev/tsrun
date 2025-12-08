@@ -2606,6 +2606,24 @@ impl Interpreter {
                 Ok(value)
             }
 
+            Expression::Import(import_expr) => {
+                // Dynamic import() - evaluate the source expression and return a Promise
+                // In our sync model, we create a pending promise. In a real async runtime,
+                // this would suspend and return RuntimeResult::ImportAwaited
+                let source_value = self.evaluate(&import_expr.source)?;
+                let _specifier = source_value.to_js_string().to_string();
+
+                // For now, create a pending promise that will need to be resolved by the host
+                // In a full implementation, this would interact with the module loader
+                let promise = builtins::promise::create_promise(self);
+
+                // Store the specifier so the host can know what module to load
+                // For now, we'll just return a pending promise
+                // The host would need to call continue_eval with the module
+
+                Ok(JsValue::Object(promise))
+            }
+
             Expression::Yield(yield_expr) => {
                 // Check if we're in a generator context
                 let _ctx = self.generator_context.as_mut()
