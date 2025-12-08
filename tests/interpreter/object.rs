@@ -225,3 +225,58 @@ fn test_object_define_properties_enumerable() {
         JsValue::Number(1.0)
     );
 }
+
+// __proto__ tests
+#[test]
+fn test_proto_get() {
+    // __proto__ should return the prototype
+    assert_eq!(
+        eval(r#"
+            const parent: { x: number } = { x: 42 };
+            const child: any = Object.create(parent);
+            child.__proto__.x
+        "#),
+        JsValue::Number(42.0)
+    );
+}
+
+#[test]
+fn test_proto_set() {
+    // Setting __proto__ should change the prototype
+    assert_eq!(
+        eval(r#"
+            const parent: { x: number } = { x: 42 };
+            const child: { x?: number } = {};
+            child.__proto__ = parent;
+            child.x
+        "#),
+        JsValue::Number(42.0)
+    );
+}
+
+#[test]
+fn test_proto_null() {
+    // Setting __proto__ to null should work
+    // After setting __proto__ to null, accessing it returns null
+    assert_eq!(
+        eval(r#"
+            const obj: any = {};
+            obj.__proto__ = null;
+            obj.__proto__
+        "#),
+        JsValue::Null
+    );
+}
+
+#[test]
+fn test_proto_in_literal() {
+    // __proto__ in object literal should set prototype
+    assert_eq!(
+        eval(r#"
+            const parent: { x: number } = { x: 42 };
+            const child: any = { __proto__: parent, y: 1 };
+            child.x
+        "#),
+        JsValue::Number(42.0)
+    );
+}

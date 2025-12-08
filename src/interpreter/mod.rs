@@ -1656,10 +1656,33 @@ impl Interpreter {
 
             Expression::Object(obj) => {
                 let result = create_object();
+                // Set prototype first if __proto__ is specified
+                for prop in &obj.properties {
+                    if let ObjectProperty::Property(p) = prop {
+                        let key_str = match &p.key {
+                            ObjectPropertyKey::Identifier(id) => Some(id.name.as_str()),
+                            ObjectPropertyKey::String(s) => Some(s.value.as_str()),
+                            _ => None,
+                        };
+                        if key_str == Some("__proto__") {
+                            let proto_value = self.evaluate(&p.value)?;
+                            if let JsValue::Object(proto) = proto_value {
+                                result.borrow_mut().prototype = Some(proto);
+                            } else if matches!(proto_value, JsValue::Null) {
+                                result.borrow_mut().prototype = None;
+                            }
+                        }
+                    }
+                }
+                // Then set other properties
                 for prop in &obj.properties {
                     match prop {
                         ObjectProperty::Property(p) => {
                             let key = self.evaluate_property_key(&p.key)?;
+                            // Skip __proto__ since we handled it above
+                            if key.to_string() == "__proto__" {
+                                continue;
+                            }
                             let value = if p.method {
                                 // Method shorthand - would need to handle this specially
                                 self.evaluate(&p.value)?
@@ -2126,6 +2149,13 @@ impl Interpreter {
 
         match object.clone() {
             JsValue::Object(obj) => {
+                // Handle __proto__ special property
+                if key.to_string() == "__proto__" {
+                    return Ok(obj.borrow().prototype.as_ref()
+                        .map(|p| JsValue::Object(p.clone()))
+                        .unwrap_or(JsValue::Null));
+                }
+
                 // First, try own properties and prototype chain with accessor support
                 // We need to drop the borrow before calling the getter
                 let property_result = {
@@ -2226,6 +2256,17 @@ impl Interpreter {
 
         match object.clone() {
             JsValue::Object(obj) => {
+                // Handle __proto__ special property
+                if key.to_string() == "__proto__" {
+                    let new_proto = match value {
+                        JsValue::Null => None,
+                        JsValue::Object(proto) => Some(proto),
+                        _ => return Ok(()), // Ignore non-object/null values
+                    };
+                    obj.borrow_mut().prototype = new_proto;
+                    return Ok(());
+                }
+
                 // Check if there's an accessor property with a setter
                 // We need to drop the borrow before calling the setter
                 let setter_fn = {

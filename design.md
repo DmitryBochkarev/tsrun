@@ -130,7 +130,7 @@ The following features should be implemented next, in priority order:
 - [x] Property access (bracket notation)
 - [x] Optional chaining (`?.`)
 - [x] Spread in object literals (`{ ...obj }`)
-- [ ] `__proto__` property
+- [x] `__proto__` property
 - [x] Prototype chain lookup
 
 #### Arrays
