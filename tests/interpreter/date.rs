@@ -153,3 +153,37 @@ fn test_date_setfullyear_returns_timestamp() {
         JsValue::Number(_)
     ));
 }
+
+// Date toString method tests
+#[test]
+fn test_date_tostring() {
+    // toString returns a string representation of the date
+    let result = eval("new Date(0).toString()");
+    assert!(matches!(result, JsValue::String(_)));
+    // Check that it contains the year
+    if let JsValue::String(s) = result {
+        assert!(s.to_string().contains("1970"));
+    }
+}
+
+#[test]
+fn test_date_todatestring() {
+    // toDateString returns just the date part
+    let result = eval("new Date(0).toDateString()");
+    assert!(matches!(result, JsValue::String(_)));
+    if let JsValue::String(s) = result {
+        let s_str = s.to_string();
+        assert!(s_str.contains("1970"));
+        assert!(s_str.contains("Jan"));
+    }
+}
+
+#[test]
+fn test_date_totimestring() {
+    // toTimeString returns just the time part
+    let result = eval("new Date(0).toTimeString()");
+    assert!(matches!(result, JsValue::String(_)));
+    if let JsValue::String(s) = result {
+        assert!(s.to_string().contains("00:00:00"));
+    }
+}

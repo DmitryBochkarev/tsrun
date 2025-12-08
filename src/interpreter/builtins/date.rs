@@ -152,6 +152,28 @@ pub fn create_date_prototype() -> JsObjectRef {
             arity: 1,
         }));
         p.set_property(PropertyKey::from("setMilliseconds"), JsValue::Object(set_milliseconds_fn));
+
+        // toString methods
+        let to_string_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "toString".to_string(),
+            func: date_to_string,
+            arity: 0,
+        }));
+        p.set_property(PropertyKey::from("toString"), JsValue::Object(to_string_fn));
+
+        let to_date_string_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "toDateString".to_string(),
+            func: date_to_date_string,
+            arity: 0,
+        }));
+        p.set_property(PropertyKey::from("toDateString"), JsValue::Object(to_date_string_fn));
+
+        let to_time_string_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "toTimeString".to_string(),
+            func: date_to_time_string,
+            arity: 0,
+        }));
+        p.set_property(PropertyKey::from("toTimeString"), JsValue::Object(to_time_string_fn));
     }
     proto
 }
@@ -535,4 +557,46 @@ pub fn date_set_milliseconds(_interp: &mut Interpreter, this: JsValue, args: Vec
 
     let ts = set_date_timestamp(&this, new_ts)?;
     Ok(JsValue::Number(ts))
+}
+
+/// Date.prototype.toString()
+/// Returns a string like "Thu Jan 01 1970 00:00:00 GMT+0000 (UTC)"
+pub fn date_to_string(_interp: &mut Interpreter, this: JsValue, _args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let ts = get_date_timestamp(&this)?;
+    if ts.is_nan() {
+        return Ok(JsValue::String(JsString::from("Invalid Date")));
+    }
+    let dt = chrono::DateTime::from_timestamp_millis(ts as i64)
+        .unwrap_or(chrono::DateTime::UNIX_EPOCH);
+    // Format like "Thu Jan 01 1970 00:00:00 GMT+0000 (UTC)"
+    let formatted = dt.format("%a %b %d %Y %H:%M:%S GMT+0000 (UTC)").to_string();
+    Ok(JsValue::String(JsString::from(formatted)))
+}
+
+/// Date.prototype.toDateString()
+/// Returns the date part like "Thu Jan 01 1970"
+pub fn date_to_date_string(_interp: &mut Interpreter, this: JsValue, _args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let ts = get_date_timestamp(&this)?;
+    if ts.is_nan() {
+        return Ok(JsValue::String(JsString::from("Invalid Date")));
+    }
+    let dt = chrono::DateTime::from_timestamp_millis(ts as i64)
+        .unwrap_or(chrono::DateTime::UNIX_EPOCH);
+    // Format like "Thu Jan 01 1970"
+    let formatted = dt.format("%a %b %d %Y").to_string();
+    Ok(JsValue::String(JsString::from(formatted)))
+}
+
+/// Date.prototype.toTimeString()
+/// Returns the time part like "00:00:00 GMT+0000 (UTC)"
+pub fn date_to_time_string(_interp: &mut Interpreter, this: JsValue, _args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let ts = get_date_timestamp(&this)?;
+    if ts.is_nan() {
+        return Ok(JsValue::String(JsString::from("Invalid Date")));
+    }
+    let dt = chrono::DateTime::from_timestamp_millis(ts as i64)
+        .unwrap_or(chrono::DateTime::UNIX_EPOCH);
+    // Format like "00:00:00 GMT+0000 (UTC)"
+    let formatted = dt.format("%H:%M:%S GMT+0000 (UTC)").to_string();
+    Ok(JsValue::String(JsString::from(formatted)))
 }

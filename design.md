@@ -460,9 +460,9 @@ To fully implement classes, the following components are needed:
 - [x] `Date.prototype.setFullYear()`, `setMonth()`, `setDate()`, etc.
 - [x] `Date.prototype.toISOString()`
 - [x] `Date.prototype.toJSON()`
-- [ ] `Date.prototype.toString()`
-- [ ] `Date.prototype.toDateString()`
-- [ ] `Date.prototype.toTimeString()`
+- [x] `Date.prototype.toString()`
+- [x] `Date.prototype.toDateString()`
+- [x] `Date.prototype.toTimeString()`
 
 #### RegExp
 - [x] RegExp literals (`/pattern/flags`)
