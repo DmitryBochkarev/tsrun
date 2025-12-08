@@ -21,6 +21,78 @@ pub use error::JsError;
 pub use interpreter::Interpreter;
 pub use value::JsValue;
 
+use std::cell::RefCell;
+use std::rc::Rc;
+
+/// Result of evaluating TypeScript code with suspension support
+#[derive(Debug)]
+pub enum RuntimeResult {
+    /// Execution completed with a final value
+    Complete(JsValue),
+
+    /// Execution suspended waiting for a module to be loaded
+    ImportAwaited {
+        /// Slot to fill with the loaded module
+        slot: PendingSlot,
+        /// Module specifier (e.g., "./utils" or "lodash")
+        specifier: String,
+    },
+
+    /// Execution suspended waiting for a promise to resolve
+    AsyncAwaited {
+        /// Slot to fill with the resolved value
+        slot: PendingSlot,
+        /// The promise being awaited (for debugging/inspection)
+        promise: JsValue,
+    },
+}
+
+/// A slot that can be filled with a value or error
+///
+/// IMPORTANT: Values assigned to slots MUST be created via Runtime methods
+/// (create_module_from_source, create_value_from_json, etc.) to ensure
+/// proper prototype chains and internal state.
+#[derive(Debug, Clone)]
+pub struct PendingSlot {
+    id: u64,
+    value: Rc<RefCell<Option<Result<JsValue, JsError>>>>,
+}
+
+impl PendingSlot {
+    /// Create a new pending slot
+    pub fn new(id: u64) -> Self {
+        PendingSlot {
+            id,
+            value: Rc::new(RefCell::new(None)),
+        }
+    }
+
+    /// Fill the slot with a successful value
+    pub fn set_success(&self, value: JsValue) {
+        *self.value.borrow_mut() = Some(Ok(value));
+    }
+
+    /// Fill the slot with an error (will be thrown at resume point)
+    pub fn set_error(&self, error: JsError) {
+        *self.value.borrow_mut() = Some(Err(error));
+    }
+
+    /// Check if the slot has been filled
+    pub fn is_filled(&self) -> bool {
+        self.value.borrow().is_some()
+    }
+
+    /// Take the value out of the slot (used internally)
+    pub(crate) fn take(&self) -> Option<Result<JsValue, JsError>> {
+        self.value.borrow_mut().take()
+    }
+
+    /// Get the slot's unique ID
+    pub fn id(&self) -> u64 {
+        self.id
+    }
+}
+
 /// The main runtime for executing TypeScript code
 pub struct Runtime {
     interpreter: Interpreter,
@@ -39,6 +111,49 @@ impl Runtime {
         let mut parser = parser::Parser::new(source);
         let program = parser.parse_program()?;
         self.interpreter.execute(&program)
+    }
+
+    /// Evaluate TypeScript source code with suspension support
+    ///
+    /// Returns `RuntimeResult::Complete` if execution finishes,
+    /// or `RuntimeResult::ImportAwaited`/`AsyncAwaited` if suspended.
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let mut runtime = Runtime::new();
+    /// let mut result = runtime.eval_resumable(source)?;
+    ///
+    /// loop {
+    ///     match result {
+    ///         RuntimeResult::Complete(value) => {
+    ///             println!("Result: {:?}", value);
+    ///             break;
+    ///         }
+    ///         RuntimeResult::ImportAwaited { slot, specifier } => {
+    ///             let module = runtime.create_module_from_source(&load_source(&specifier)?)?;
+    ///             slot.set_success(module);
+    ///         }
+    ///         RuntimeResult::AsyncAwaited { slot, .. } => {
+    ///             let value = resolve_async()?;
+    ///             slot.set_success(value);
+    ///         }
+    ///     }
+    ///     result = runtime.continue_eval()?;
+    /// }
+    /// ```
+    pub fn eval_resumable(&mut self, source: &str) -> Result<RuntimeResult, JsError> {
+        // For now, wrap the existing eval() - will be replaced with stack-based execution
+        let value = self.eval(source)?;
+        Ok(RuntimeResult::Complete(value))
+    }
+
+    /// Continue execution after filling a pending slot
+    ///
+    /// Call this after receiving `ImportAwaited` or `AsyncAwaited` and
+    /// filling the slot with `set_success()` or `set_error()`.
+    pub fn continue_eval(&mut self) -> Result<RuntimeResult, JsError> {
+        // TODO: Implement stack-based resumption
+        Err(JsError::type_error("continue_eval not yet implemented"))
     }
 
     /// Call an exported function by name with the given arguments

@@ -20,6 +20,7 @@ mod number;
 mod object;
 mod regexp;
 mod set;
+mod state_machine;
 mod string;
 mod symbol;
 
