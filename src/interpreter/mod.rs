@@ -3,6 +3,9 @@
 // Builtin function implementations (split into separate files)
 pub mod builtins;
 
+// Evaluation stack for suspendable execution
+pub mod eval_stack;
+
 // Import all builtin functions
 use builtins::*;
 
@@ -103,6 +106,18 @@ pub struct Interpreter {
     pub call_stack: Vec<StackFrame>,
     /// Generator execution context (Some when executing inside a generator)
     generator_context: Option<GeneratorContext>,
+
+    // ═══════════════════════════════════════════════════════════════
+    // State machine execution (for suspendable evaluation)
+    // ═══════════════════════════════════════════════════════════════
+    /// Explicit evaluation stack (replaces Rust call stack for suspendable execution)
+    eval_stack: Vec<eval_stack::EvalFrame>,
+    /// Value stack for intermediate results during stack-based evaluation
+    value_stack: Vec<JsValue>,
+    /// Completion stack for tracking control flow during stack-based evaluation
+    completion_stack: Vec<eval_stack::CompletionValue>,
+    /// Counter for generating unique slot IDs
+    next_slot_id: u64,
 }
 
 impl Interpreter {
@@ -202,6 +217,11 @@ impl Interpreter {
             exports: std::collections::HashMap::new(),
             call_stack: Vec::new(),
             generator_context: None,
+            // State machine execution
+            eval_stack: Vec::new(),
+            value_stack: Vec::new(),
+            completion_stack: Vec::new(),
+            next_slot_id: 0,
         }
     }
 
