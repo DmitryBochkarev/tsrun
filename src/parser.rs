@@ -2664,7 +2664,19 @@ impl<'a> Parser<'a> {
                 Ok(Identifier { name, span })
             }
             // Allow contextual keywords as identifiers
-            TokenKind::Type | TokenKind::From | TokenKind::As | TokenKind::Of => {
+            TokenKind::Type
+            | TokenKind::From
+            | TokenKind::As
+            | TokenKind::Of
+            // TypeScript type keywords (valid as property names)
+            | TokenKind::Any
+            | TokenKind::Unknown
+            | TokenKind::Never
+            | TokenKind::Keyof
+            | TokenKind::Infer
+            | TokenKind::Is
+            | TokenKind::Asserts
+            | TokenKind::Readonly => {
                 let name = self.keyword_to_string();
                 let span = self.current.span;
                 self.advance();
@@ -2849,6 +2861,14 @@ impl<'a> Parser<'a> {
             TokenKind::Enum => "enum".to_string(),
             TokenKind::Of => "of".to_string(),
             TokenKind::In => "in".to_string(),
+            TokenKind::Any => "any".to_string(),
+            TokenKind::Unknown => "unknown".to_string(),
+            TokenKind::Never => "never".to_string(),
+            TokenKind::Keyof => "keyof".to_string(),
+            TokenKind::Infer => "infer".to_string(),
+            TokenKind::Is => "is".to_string(),
+            TokenKind::Asserts => "asserts".to_string(),
+            TokenKind::Readonly => "readonly".to_string(),
             _ => String::new(),
         }
     }

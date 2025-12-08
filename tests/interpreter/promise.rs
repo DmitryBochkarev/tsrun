@@ -356,22 +356,21 @@ fn test_promise_allsettled() {
     assert_eq!(result, JsValue::Number(2.0));
 }
 
-// Note: Promise.any test is disabled because 'any' is parsed as a keyword
-// #[test]
-// fn test_promise_any_first_success() {
-//     // Promise.any should resolve with first fulfilled value
-//     let result = eval(
-//         r#"
-//         let value = 0;
-//         Promise.any([
-//             Promise.reject("err1"),
-//             Promise.resolve(42),
-//             Promise.reject("err2")
-//         ]).then(function(x) {
-//             value = x;
-//         });
-//         value
-//     "#,
-//     );
-//     assert_eq!(result, JsValue::Number(42.0));
-// }
+#[test]
+fn test_promise_any_first_success() {
+    // Promise.any should resolve with first fulfilled value
+    let result = eval(
+        r#"
+        let value = 0;
+        Promise.any([
+            Promise.reject("err1"),
+            Promise.resolve(42),
+            Promise.reject("err2")
+        ]).then(function(x) {
+            value = x;
+        });
+        value
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(42.0));
+}
