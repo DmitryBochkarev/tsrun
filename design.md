@@ -37,7 +37,7 @@ The following features should be implemented next, in priority order:
 9. **Error stack traces** - capture and format stack traces
 10. **namespace/module declarations** - TypeScript namespace support
 11. **RegExp flags** - dotAll, unicode, sticky flags
-12. **console.table/dir/time** - additional console methods
+12. ~~**console.table/dir/time** - additional console methods~~ ✅
 
 ### Priority 4: Module System (implement last, requires design clarification)
 13. **Module resolution** - via callback that returns source or AST (design TBD)
@@ -496,10 +496,15 @@ To fully implement classes, the following components are needed:
 - [x] `console.warn(...args)`
 - [x] `console.info(...args)`
 - [x] `console.debug(...args)`
-- [ ] `console.table(data)`
-- [ ] `console.dir(obj)`
-- [ ] `console.time(label)`
-- [ ] `console.timeEnd(label)`
+- [x] `console.table(data)`
+- [x] `console.dir(obj)`
+- [x] `console.time(label)`
+- [x] `console.timeEnd(label)`
+- [x] `console.count(label)`
+- [x] `console.countReset(label)`
+- [x] `console.clear()`
+- [x] `console.group(label)`
+- [x] `console.groupEnd()`
 
 ### Rust Integration
 
