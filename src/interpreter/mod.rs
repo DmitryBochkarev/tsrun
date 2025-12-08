@@ -31,6 +31,15 @@ pub enum Completion {
     Continue(Option<String>),
 }
 
+/// A stack frame for tracking call stack
+#[derive(Debug, Clone)]
+pub struct StackFrame {
+    /// Function name (or "<anonymous>" for anonymous functions)
+    pub function_name: String,
+    /// Source location if available
+    pub location: Option<(u32, u32)>, // (line, column)
+}
+
 /// The interpreter state
 pub struct Interpreter {
     /// Global object
@@ -63,6 +72,8 @@ pub struct Interpreter {
     thrown_value: Option<JsValue>,
     /// Exported values from the module
     pub exports: std::collections::HashMap<String, JsValue>,
+    /// Call stack for stack traces
+    pub call_stack: Vec<StackFrame>,
 }
 
 impl Interpreter {
@@ -156,7 +167,21 @@ impl Interpreter {
             symbol_prototype,
             thrown_value: None,
             exports: std::collections::HashMap::new(),
+            call_stack: Vec::new(),
         }
+    }
+
+    /// Get the current stack trace as a formatted string
+    pub fn format_stack_trace(&self, error_name: &str, message: &str) -> String {
+        let mut trace = format!("{}: {}", error_name, message);
+        for frame in self.call_stack.iter().rev() {
+            if let Some((line, col)) = frame.location {
+                trace.push_str(&format!("\n    at {} (line {}:{})", frame.function_name, line, col));
+            } else {
+                trace.push_str(&format!("\n    at {}", frame.function_name));
+            }
+        }
+        trace
     }
 
     /// Create an array with the proper prototype
@@ -2469,6 +2494,12 @@ impl Interpreter {
 
         match func {
             JsFunction::Interpreted(interpreted) => {
+                // Push stack frame
+                let func_name = interpreted.name.clone().unwrap_or_else(|| "<anonymous>".to_string());
+                let span = interpreted.source_location;
+                let location = Some((span.line, span.column));
+                self.call_stack.push(StackFrame { function_name: func_name, location });
+
                 let prev_env = self.env.clone();
                 self.env = Environment::with_outer(interpreted.closure.clone());
 
@@ -2518,11 +2549,20 @@ impl Interpreter {
                 };
 
                 self.env = prev_env;
+                // Pop stack frame
+                self.call_stack.pop();
                 Ok(result)
             }
 
             JsFunction::Native(native) => {
-                (native.func)(self, this_value, args)
+                // Push stack frame for native functions too
+                self.call_stack.push(StackFrame {
+                    function_name: native.name.clone(),
+                    location: None
+                });
+                let result = (native.func)(self, this_value, args);
+                self.call_stack.pop();
+                result
             }
 
             JsFunction::Bound(bound_data) => {

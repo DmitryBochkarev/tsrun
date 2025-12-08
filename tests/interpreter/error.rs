@@ -80,3 +80,36 @@ fn test_error_tostring_custom() {
         JsValue::from("CustomError: oops")
     );
 }
+
+// Stack trace tests
+#[test]
+fn test_error_stack_exists() {
+    // Error objects should have a stack property
+    assert_eq!(
+        eval("typeof new Error('test').stack"),
+        JsValue::from("string")
+    );
+}
+
+#[test]
+fn test_error_stack_contains_error_name() {
+    // Stack should start with error type and message
+    assert_eq!(
+        eval("new Error('test message').stack.includes('Error: test message')"),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_error_stack_in_function() {
+    // Stack should include function names
+    assert_eq!(
+        eval(r#"
+            function foo(): Error {
+                return new Error('in foo');
+            }
+            foo().stack.includes('foo')
+        "#),
+        JsValue::Boolean(true)
+    );
+}

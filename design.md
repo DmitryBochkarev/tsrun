@@ -34,7 +34,7 @@ The following features should be implemented next, in priority order:
 8. ~~**Date setter methods** - setFullYear, setMonth, setDate, etc.~~ ✅
 
 ### Priority 3: Advanced Features
-9. **Error stack traces** - capture and format stack traces
+9. ~~**Error stack traces** - capture and format stack traces~~ ✅
 10. **namespace/module declarations** - TypeScript namespace support
 11. ~~**RegExp flags** - dotAll, unicode, sticky flags~~ ✅
 12. ~~**console.table/dir/time** - additional console methods~~ ✅

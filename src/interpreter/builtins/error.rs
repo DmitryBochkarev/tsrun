@@ -86,17 +86,26 @@ pub fn error_to_string(_interp: &mut Interpreter, this: JsValue, _args: Vec<JsVa
     }
 }
 
-fn create_error_object_with_prototype(name: &str, message: JsValue, prototype: Option<JsObjectRef>) -> JsValue {
-    let msg_str = match message {
+fn create_error_object_with_stack(
+    interp: &Interpreter,
+    name: &str,
+    message: JsValue,
+    prototype: Option<JsObjectRef>,
+) -> JsValue {
+    let msg_str = match &message {
         JsValue::Undefined => JsString::from(""),
         other => other.to_js_string(),
     };
+
+    // Capture stack trace
+    let stack_trace = interp.format_stack_trace(name, &msg_str.to_string());
 
     let obj = create_object();
     {
         let mut obj_ref = obj.borrow_mut();
         obj_ref.set_property(PropertyKey::from("name"), JsValue::String(JsString::from(name)));
         obj_ref.set_property(PropertyKey::from("message"), JsValue::String(msg_str));
+        obj_ref.set_property(PropertyKey::from("stack"), JsValue::String(JsString::from(stack_trace)));
         if let Some(proto) = prototype {
             obj_ref.prototype = Some(proto);
         }
@@ -106,25 +115,25 @@ fn create_error_object_with_prototype(name: &str, message: JsValue, prototype: O
 
 pub fn error_constructor(interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
     let message = args.first().cloned().unwrap_or(JsValue::Undefined);
-    Ok(create_error_object_with_prototype("Error", message, Some(interp.error_prototype.clone())))
+    Ok(create_error_object_with_stack(interp, "Error", message, Some(interp.error_prototype.clone())))
 }
 
 pub fn type_error_constructor(interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
     let message = args.first().cloned().unwrap_or(JsValue::Undefined);
-    Ok(create_error_object_with_prototype("TypeError", message, Some(interp.error_prototype.clone())))
+    Ok(create_error_object_with_stack(interp, "TypeError", message, Some(interp.error_prototype.clone())))
 }
 
 pub fn reference_error_constructor(interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
     let message = args.first().cloned().unwrap_or(JsValue::Undefined);
-    Ok(create_error_object_with_prototype("ReferenceError", message, Some(interp.error_prototype.clone())))
+    Ok(create_error_object_with_stack(interp, "ReferenceError", message, Some(interp.error_prototype.clone())))
 }
 
 pub fn syntax_error_constructor(interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
     let message = args.first().cloned().unwrap_or(JsValue::Undefined);
-    Ok(create_error_object_with_prototype("SyntaxError", message, Some(interp.error_prototype.clone())))
+    Ok(create_error_object_with_stack(interp, "SyntaxError", message, Some(interp.error_prototype.clone())))
 }
 
 pub fn range_error_constructor(interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
     let message = args.first().cloned().unwrap_or(JsValue::Undefined);
-    Ok(create_error_object_with_prototype("RangeError", message, Some(interp.error_prototype.clone())))
+    Ok(create_error_object_with_stack(interp, "RangeError", message, Some(interp.error_prototype.clone())))
 }
