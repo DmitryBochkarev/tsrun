@@ -398,11 +398,12 @@ fn test_example() {
 - Global: parseInt, parseFloat, isNaN, isFinite, encodeURI, decodeURI, encodeURIComponent, decodeURIComponent, console.log/error/warn/info/debug
 - Generators: function*, yield, yield*
 - Namespace declarations with export and merging
+- `Promise`: new, resolve, reject, then, catch, finally, all, race, allSettled, any
+- Async/await: async functions, async arrow functions, await expressions
+- Dynamic `import()`: import() expression returning Promise
 
 **Not yet implemented:**
-- ES Modules (import/export resolution) - *in progress via state machine refactor*
-- Promise - *in progress via state machine refactor*
-- Async/await - *in progress via state machine refactor*
+- ES Modules (import/export resolution - parsing only)
 - WeakMap/WeakSet
 
 See design.md for the complete feature checklist and state_machine.md for the import/async architecture.

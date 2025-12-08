@@ -246,16 +246,16 @@ To fully implement classes, the following components are needed:
 - [x] Namespace imports (`import * as`) (parsing)
 - [x] Re-exports (`export { x } from`) (parsing)
 - [ ] Static import resolution (via `RuntimeResult::ImportAwaited`)
-- [ ] Dynamic `import()` (returns Promise, suspends on await)
+- [x] Dynamic `import()` (returns Promise)
 - [ ] Module object creation (host provides, runtime binds)
 
 **Note:** Module caching and circular dependency handling are the host's responsibility. The runtime always asks for modules via `ImportAwaited` and the host decides whether to cache or handle cycles.
 
 #### Async/Await
-- [ ] `async function` declarations and expressions
-- [ ] `await` expression (suspends via `RuntimeResult::AsyncAwaited`)
+- [x] `async function` declarations and expressions
+- [x] `await` expression (synchronous Promise resolution)
 - [ ] Top-level await in modules
-- [ ] Async arrow functions
+- [x] Async arrow functions
 
 ### TypeScript Features
 
@@ -532,16 +532,16 @@ To fully implement classes, the following components are needed:
 - [x] `Error.prototype.stack`
 
 #### Promise
-- [ ] `new Promise(executor)`
-- [ ] `Promise.prototype.then(onFulfilled, onRejected)`
-- [ ] `Promise.prototype.catch(onRejected)`
-- [ ] `Promise.prototype.finally(onFinally)`
-- [ ] `Promise.resolve(value)`
-- [ ] `Promise.reject(reason)`
-- [ ] `Promise.all(iterable)`
-- [ ] `Promise.race(iterable)`
-- [ ] `Promise.allSettled(iterable)`
-- [ ] `Promise.any(iterable)`
+- [x] `new Promise(executor)`
+- [x] `Promise.prototype.then(onFulfilled, onRejected)`
+- [x] `Promise.prototype.catch(onRejected)`
+- [x] `Promise.prototype.finally(onFinally)`
+- [x] `Promise.resolve(value)`
+- [x] `Promise.reject(reason)`
+- [x] `Promise.all(iterable)`
+- [x] `Promise.race(iterable)`
+- [x] `Promise.allSettled(iterable)`
+- [x] `Promise.any(iterable)`
 
 **Note:** Promise uses simplified synchronous callback semantics (no microtask queue). When a promise resolves, `.then()` handlers run immediately.
 
