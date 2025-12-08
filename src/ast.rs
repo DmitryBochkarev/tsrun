@@ -28,6 +28,7 @@ pub enum Statement {
     TypeAlias(TypeAliasDeclaration),
     InterfaceDeclaration(InterfaceDeclaration),
     EnumDeclaration(EnumDeclaration),
+    NamespaceDeclaration(NamespaceDeclaration),
 
     // Control Flow
     Block(BlockStatement),
@@ -342,6 +343,13 @@ pub struct EnumDeclaration {
 pub struct EnumMember {
     pub id: Identifier,
     pub initializer: Option<Expression>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct NamespaceDeclaration {
+    pub id: Identifier,
+    pub body: Vec<Statement>,
     pub span: Span,
 }
 

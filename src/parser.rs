@@ -96,6 +96,9 @@ impl<'a> Parser<'a> {
             TokenKind::Export => {
                 Ok(Statement::Export(self.parse_export()?))
             }
+            TokenKind::Namespace | TokenKind::Module => {
+                Ok(Statement::NamespaceDeclaration(self.parse_namespace()?))
+            }
             _ => {
                 // Expression statement
                 let expr = self.parse_expression()?;
@@ -989,6 +992,25 @@ impl<'a> Parser<'a> {
         Ok(EnumDeclaration { id, members, const_, span })
     }
 
+    fn parse_namespace(&mut self) -> Result<NamespaceDeclaration, JsError> {
+        let start = self.current.span;
+        // Skip 'namespace' or 'module' keyword
+        self.advance();
+
+        let id = self.parse_identifier()?;
+        self.expect(&TokenKind::LBrace)?;
+
+        let mut body = vec![];
+        while !self.check(&TokenKind::RBrace) && !self.is_at_end() {
+            body.push(self.parse_statement()?);
+        }
+
+        self.expect(&TokenKind::RBrace)?;
+
+        let span = self.span_from(start);
+        Ok(NamespaceDeclaration { id, body, span })
+    }
+
     // Module declarations (stubs)
 
     fn parse_import(&mut self) -> Result<ImportDeclaration, JsError> {
@@ -1188,6 +1210,11 @@ impl<'a> Parser<'a> {
             }
             TokenKind::Enum => {
                 Some(Box::new(Statement::EnumDeclaration(self.parse_enum()?)))
+            }
+            TokenKind::Namespace | TokenKind::Module => {
+                Some(Box::new(Statement::NamespaceDeclaration(
+                    self.parse_namespace()?,
+                )))
             }
             _ => return Err(self.unexpected_token("export declaration")),
         };
@@ -1557,7 +1584,47 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_member_expression(&mut self) -> Result<Expression, JsError> {
-        self.parse_primary_expression()
+        let start = self.current.span;
+        let mut expr = self.parse_primary_expression()?;
+
+        // Handle member access chain (.prop, [expr])
+        loop {
+            if self.match_token(&TokenKind::Dot) {
+                if self.match_token(&TokenKind::Hash) {
+                    let name = self.parse_identifier()?;
+                    let span = self.span_from(start);
+                    expr = Expression::Member(MemberExpression {
+                        object: Box::new(expr),
+                        property: MemberProperty::PrivateIdentifier(name),
+                        computed: false,
+                        span,
+                    });
+                } else {
+                    let property = self.parse_identifier()?;
+                    let span = self.span_from(start);
+                    expr = Expression::Member(MemberExpression {
+                        object: Box::new(expr),
+                        property: MemberProperty::Identifier(property),
+                        computed: false,
+                        span,
+                    });
+                }
+            } else if self.match_token(&TokenKind::LBracket) {
+                let property = self.parse_expression()?;
+                self.expect(&TokenKind::RBracket)?;
+                let span = self.span_from(start);
+                expr = Expression::Member(MemberExpression {
+                    object: Box::new(expr),
+                    property: MemberProperty::Expression(Box::new(property)),
+                    computed: true,
+                    span,
+                });
+            } else {
+                break;
+            }
+        }
+
+        Ok(expr)
     }
 
     fn parse_primary_expression(&mut self) -> Result<Expression, JsError> {

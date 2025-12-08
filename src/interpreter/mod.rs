@@ -12,9 +12,10 @@ use crate::ast::{
     ClassMethod, ClassProperty, ConditionalExpression, DoWhileStatement, EnumDeclaration,
     ExportDeclaration, Expression, ForInOfLeft, ForInStatement, ForInit, ForOfStatement,
     ForStatement, FunctionDeclaration, LiteralValue, LogicalExpression, LogicalOp,
-    MemberExpression, MemberProperty, MethodKind, NewExpression, ObjectPatternProperty,
-    ObjectProperty, ObjectPropertyKey, Pattern, Program, Statement, UnaryExpression, UnaryOp,
-    UpdateExpression, UpdateOp, VariableDeclaration, VariableKind, WhileStatement,
+    MemberExpression, MemberProperty, MethodKind, NamespaceDeclaration, NewExpression,
+    ObjectPatternProperty, ObjectProperty, ObjectPropertyKey, Pattern, Program, Statement,
+    UnaryExpression, UnaryOp, UpdateExpression, UpdateOp, VariableDeclaration, VariableKind,
+    WhileStatement,
 };
 use crate::error::JsError;
 use crate::value::{
@@ -633,6 +634,11 @@ impl Interpreter {
                 Ok(Completion::Normal(JsValue::Undefined))
             }
 
+            Statement::NamespaceDeclaration(ns) => {
+                self.execute_namespace(ns)?;
+                Ok(Completion::Normal(JsValue::Undefined))
+            }
+
             Statement::Empty | Statement::Debugger => {
                 Ok(Completion::Normal(JsValue::Undefined))
             }
@@ -1190,6 +1196,134 @@ impl Interpreter {
         }
 
         self.env.define(enum_decl.id.name.clone(), JsValue::Object(obj), false);
+        Ok(())
+    }
+
+    fn execute_namespace(&mut self, ns: &NamespaceDeclaration) -> Result<(), JsError> {
+        let name = ns.id.name.clone();
+
+        // Check if namespace already exists (for merging)
+        let ns_obj = if let Ok(existing) = self.env.get(&name) {
+            if let JsValue::Object(obj) = existing {
+                obj
+            } else {
+                create_object()
+            }
+        } else {
+            create_object()
+        };
+
+        // Save current exports and create new scope for namespace
+        let saved_exports = std::mem::take(&mut self.exports);
+        let saved_env = self.env.clone();
+        self.env = Environment::with_outer(self.env.clone());
+
+        // Execute statements in namespace body
+        for stmt in &ns.body {
+            // Handle export statements specially
+            if let Statement::Export(export_decl) = stmt {
+                self.execute_namespace_export(export_decl, &ns_obj)?;
+            } else {
+                self.execute_statement(stmt)?;
+            }
+        }
+
+        // Restore environment and exports
+        self.env = saved_env;
+        self.exports = saved_exports;
+
+        // Define the namespace in the current environment
+        self.env.define(name, JsValue::Object(ns_obj), false);
+        Ok(())
+    }
+
+    fn execute_namespace_export(
+        &mut self,
+        export_decl: &ExportDeclaration,
+        ns_obj: &JsObjectRef,
+    ) -> Result<(), JsError> {
+        if let Some(declaration) = &export_decl.declaration {
+            match declaration.as_ref() {
+                Statement::FunctionDeclaration(func_decl) => {
+                    self.execute_function_declaration(func_decl)?;
+                    if let Some(id) = &func_decl.id {
+                        let value = self.env.get(&id.name)?;
+                        ns_obj.borrow_mut().set_property(
+                            PropertyKey::from(id.name.as_str()),
+                            value,
+                        );
+                    }
+                }
+                Statement::VariableDeclaration(var_decl) => {
+                    self.execute_variable_declaration(var_decl)?;
+                    // Extract names from declarations
+                    for decl in &var_decl.declarations {
+                        self.export_pattern_to_namespace(&decl.id, ns_obj)?;
+                    }
+                }
+                Statement::ClassDeclaration(class_decl) => {
+                    self.execute_class_declaration(class_decl)?;
+                    if let Some(id) = &class_decl.id {
+                        let value = self.env.get(&id.name)?;
+                        ns_obj.borrow_mut().set_property(
+                            PropertyKey::from(id.name.as_str()),
+                            value,
+                        );
+                    }
+                }
+                Statement::NamespaceDeclaration(inner_ns) => {
+                    self.execute_namespace(inner_ns)?;
+                    let value = self.env.get(&inner_ns.id.name)?;
+                    ns_obj.borrow_mut().set_property(
+                        PropertyKey::from(inner_ns.id.name.as_str()),
+                        value,
+                    );
+                }
+                _ => {
+                    self.execute_statement(declaration)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn export_pattern_to_namespace(
+        &self,
+        pattern: &Pattern,
+        ns_obj: &JsObjectRef,
+    ) -> Result<(), JsError> {
+        match pattern {
+            Pattern::Identifier(id) => {
+                let value = self.env.get(&id.name)?;
+                ns_obj.borrow_mut().set_property(
+                    PropertyKey::from(id.name.as_str()),
+                    value,
+                );
+            }
+            Pattern::Object(obj_pat) => {
+                for prop in &obj_pat.properties {
+                    match prop {
+                        ObjectPatternProperty::KeyValue { value, .. } => {
+                            self.export_pattern_to_namespace(value, ns_obj)?;
+                        }
+                        ObjectPatternProperty::Rest(rest) => {
+                            self.export_pattern_to_namespace(&rest.argument, ns_obj)?;
+                        }
+                    }
+                }
+            }
+            Pattern::Array(arr_pat) => {
+                for elem in arr_pat.elements.iter().flatten() {
+                    self.export_pattern_to_namespace(elem, ns_obj)?;
+                }
+            }
+            Pattern::Rest(rest) => {
+                self.export_pattern_to_namespace(&rest.argument, ns_obj)?;
+            }
+            Pattern::Assignment(assign_pat) => {
+                self.export_pattern_to_namespace(&assign_pat.left, ns_obj)?;
+            }
+        }
         Ok(())
     }
 

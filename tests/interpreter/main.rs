@@ -15,6 +15,7 @@ mod generator;
 mod global;
 mod map;
 mod math;
+mod namespace;
 mod number;
 mod object;
 mod regexp;
