@@ -90,3 +90,43 @@ fn test_regexp_literal_with_escapes() {
     assert_eq!(eval(r"/\d+/.test('123')"), JsValue::Boolean(true));
     assert_eq!(eval(r"/\d+/.test('abc')"), JsValue::Boolean(false));
 }
+
+// Tests for dotAll flag (s)
+#[test]
+fn test_regexp_dotall_flag() {
+    // Without dotAll, . doesn't match newlines
+    assert_eq!(eval(r"/a.b/.test('a\nb')"), JsValue::Boolean(false));
+    // With dotAll, . matches newlines
+    assert_eq!(eval(r"/a.b/s.test('a\nb')"), JsValue::Boolean(true));
+}
+
+#[test]
+fn test_regexp_dotall_property() {
+    assert_eq!(eval("/abc/s.dotAll"), JsValue::Boolean(true));
+    assert_eq!(eval("/abc/.dotAll"), JsValue::Boolean(false));
+}
+
+// Tests for unicode flag (u)
+#[test]
+fn test_regexp_unicode_flag() {
+    assert_eq!(eval("/abc/u.unicode"), JsValue::Boolean(true));
+    assert_eq!(eval("/abc/.unicode"), JsValue::Boolean(false));
+}
+
+// Tests for sticky flag (y)
+#[test]
+fn test_regexp_sticky_flag() {
+    assert_eq!(eval("/abc/y.sticky"), JsValue::Boolean(true));
+    assert_eq!(eval("/abc/.sticky"), JsValue::Boolean(false));
+}
+
+#[test]
+fn test_regexp_combined_flags() {
+    // All flags at once
+    assert_eq!(eval("/abc/gimsuy.global"), JsValue::Boolean(true));
+    assert_eq!(eval("/abc/gimsuy.ignoreCase"), JsValue::Boolean(true));
+    assert_eq!(eval("/abc/gimsuy.multiline"), JsValue::Boolean(true));
+    assert_eq!(eval("/abc/gimsuy.dotAll"), JsValue::Boolean(true));
+    assert_eq!(eval("/abc/gimsuy.unicode"), JsValue::Boolean(true));
+    assert_eq!(eval("/abc/gimsuy.sticky"), JsValue::Boolean(true));
+}

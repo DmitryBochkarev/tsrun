@@ -36,7 +36,7 @@ The following features should be implemented next, in priority order:
 ### Priority 3: Advanced Features
 9. **Error stack traces** - capture and format stack traces
 10. **namespace/module declarations** - TypeScript namespace support
-11. **RegExp flags** - dotAll, unicode, sticky flags
+11. ~~**RegExp flags** - dotAll, unicode, sticky flags~~ ✅
 12. ~~**console.table/dir/time** - additional console methods~~ ✅
 
 ### Priority 4: Module System (implement last, requires design clarification)
@@ -474,9 +474,9 @@ To fully implement classes, the following components are needed:
 - [x] `RegExp.prototype.global`
 - [x] `RegExp.prototype.ignoreCase`
 - [x] `RegExp.prototype.multiline`
-- [ ] `RegExp.prototype.dotAll`
-- [ ] `RegExp.prototype.unicode`
-- [ ] `RegExp.prototype.sticky`
+- [x] `RegExp.prototype.dotAll`
+- [x] `RegExp.prototype.unicode`
+- [x] `RegExp.prototype.sticky`
 
 #### Error Types
 - [ ] `Error`

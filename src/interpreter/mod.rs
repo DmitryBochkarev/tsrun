@@ -1859,6 +1859,18 @@ impl Interpreter {
                         PropertyKey::from("multiline"),
                         JsValue::Boolean(flags.contains('m')),
                     );
+                    obj.set_property(
+                        PropertyKey::from("dotAll"),
+                        JsValue::Boolean(flags.contains('s')),
+                    );
+                    obj.set_property(
+                        PropertyKey::from("unicode"),
+                        JsValue::Boolean(flags.contains('u')),
+                    );
+                    obj.set_property(
+                        PropertyKey::from("sticky"),
+                        JsValue::Boolean(flags.contains('y')),
+                    );
                 }
                 JsValue::Object(regexp_obj)
             }

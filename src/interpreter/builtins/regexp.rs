@@ -57,6 +57,9 @@ pub fn regexp_constructor(interp: &mut Interpreter, _this: JsValue, args: Vec<Js
         obj.set_property(PropertyKey::from("global"), JsValue::Boolean(flags.contains('g')));
         obj.set_property(PropertyKey::from("ignoreCase"), JsValue::Boolean(flags.contains('i')));
         obj.set_property(PropertyKey::from("multiline"), JsValue::Boolean(flags.contains('m')));
+        obj.set_property(PropertyKey::from("dotAll"), JsValue::Boolean(flags.contains('s')));
+        obj.set_property(PropertyKey::from("unicode"), JsValue::Boolean(flags.contains('u')));
+        obj.set_property(PropertyKey::from("sticky"), JsValue::Boolean(flags.contains('y')));
     }
     Ok(JsValue::Object(regexp_obj))
 }
@@ -76,14 +79,26 @@ pub fn get_regexp_data(this: &JsValue) -> Result<(String, String), JsError> {
 pub fn build_regex(pattern: &str, flags: &str) -> Result<regex::Regex, JsError> {
     let mut regex_pattern = pattern.to_string();
 
-    // Handle case-insensitive flag
+    // Build flags prefix
+    let mut prefix = String::new();
+
+    // Handle case-insensitive flag (i)
     if flags.contains('i') {
-        regex_pattern = format!("(?i){}", regex_pattern);
+        prefix.push('i');
     }
 
-    // Handle multiline flag
+    // Handle multiline flag (m)
     if flags.contains('m') {
-        regex_pattern = format!("(?m){}", regex_pattern);
+        prefix.push('m');
+    }
+
+    // Handle dotAll flag (s) - makes . match newlines
+    if flags.contains('s') {
+        prefix.push('s');
+    }
+
+    if !prefix.is_empty() {
+        regex_pattern = format!("(?{}){}", prefix, regex_pattern);
     }
 
     regex::Regex::new(&regex_pattern)
