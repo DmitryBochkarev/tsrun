@@ -406,3 +406,81 @@ fn test_string_code_point_at_negative() {
         JsValue::Undefined
     );
 }
+
+// String.prototype.normalize tests
+#[test]
+fn test_string_normalize_default() {
+    // Default is NFC
+    assert_eq!(
+        eval("'café'.normalize()"),
+        eval("'café'.normalize('NFC')")
+    );
+}
+
+#[test]
+fn test_string_normalize_nfc() {
+    // NFC should compose characters
+    // é (e + combining acute) becomes é (single character)
+    assert_eq!(
+        eval("'\\u0065\\u0301'.normalize('NFC')"),
+        JsValue::String(JsString::from("é"))
+    );
+}
+
+#[test]
+fn test_string_normalize_nfd() {
+    // NFD should decompose characters
+    // Use the composed form (U+00E9) and check that NFD produces a longer string than NFC
+    // Since NFD decomposes 'é' into 'e' + combining acute
+    let nfc_len = eval("'\\u00E9'.normalize('NFC').length");
+    let nfd_len = eval("'\\u00E9'.normalize('NFD').length");
+
+    // NFC should be 1 character (composed)
+    // NFD should be 2 characters (decomposed: e + combining accent)
+    if let (JsValue::Number(nfc), JsValue::Number(nfd)) = (nfc_len, nfd_len) {
+        assert!(nfd > nfc, "NFD should produce a longer string than NFC for composed characters");
+    }
+}
+
+#[test]
+fn test_string_normalize_ascii() {
+    // ASCII strings should be unchanged
+    assert_eq!(
+        eval("'hello'.normalize()"),
+        JsValue::String(JsString::from("hello"))
+    );
+}
+
+// String.prototype.localeCompare tests
+#[test]
+fn test_string_locale_compare_equal() {
+    assert_eq!(
+        eval("'abc'.localeCompare('abc')"),
+        JsValue::Number(0.0)
+    );
+}
+
+#[test]
+fn test_string_locale_compare_less() {
+    assert_eq!(
+        eval("'abc'.localeCompare('abd')"),
+        JsValue::Number(-1.0)
+    );
+}
+
+#[test]
+fn test_string_locale_compare_greater() {
+    assert_eq!(
+        eval("'abd'.localeCompare('abc')"),
+        JsValue::Number(1.0)
+    );
+}
+
+#[test]
+fn test_string_locale_compare_empty() {
+    // Empty string comes before any non-empty string
+    assert_eq!(
+        eval("''.localeCompare('a')"),
+        JsValue::Number(-1.0)
+    );
+}

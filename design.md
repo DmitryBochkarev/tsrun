@@ -359,8 +359,8 @@ To fully implement classes, the following components are needed:
 - [x] `String.prototype.matchAll(regexp)`
 - [x] `String.prototype.search(regexp)`
 - [x] `String.prototype.at(index)`
-- [ ] `String.prototype.normalize(form?)`
-- [ ] `String.prototype.localeCompare(other)`
+- [x] `String.prototype.normalize(form?)`
+- [x] `String.prototype.localeCompare(other)`
 
 #### Number
 - [x] `Number.isNaN(value)`

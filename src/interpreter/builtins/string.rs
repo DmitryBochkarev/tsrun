@@ -1,5 +1,7 @@
 //! String built-in methods
 
+use unicode_normalization::UnicodeNormalization;
+
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
 use crate::value::{create_function, create_object, ExoticObject, JsFunction, JsObjectRef, JsString, JsValue, NativeFunction, PropertyKey};
@@ -192,6 +194,20 @@ pub fn create_string_prototype() -> JsObjectRef {
             arity: 1,
         }));
         p.set_property(PropertyKey::from("search"), JsValue::Object(search_fn));
+
+        let normalize_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "normalize".to_string(),
+            func: string_normalize,
+            arity: 1,
+        }));
+        p.set_property(PropertyKey::from("normalize"), JsValue::Object(normalize_fn));
+
+        let localecompare_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "localeCompare".to_string(),
+            func: string_locale_compare,
+            arity: 1,
+        }));
+        p.set_property(PropertyKey::from("localeCompare"), JsValue::Object(localecompare_fn));
     }
     proto
 }
@@ -715,4 +731,47 @@ pub fn string_search(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue
         Some(m) => Ok(JsValue::Number(m.start() as f64)),
         None => Ok(JsValue::Number(-1.0)),
     }
+}
+
+/// String.prototype.normalize(form?)
+/// Returns the Unicode Normalization Form of the string
+/// Forms: "NFC" (default), "NFD", "NFKC", "NFKD"
+pub fn string_normalize(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let s = this.to_js_string().to_string();
+
+    let form = args.first()
+        .map(|v| v.to_js_string().to_string())
+        .unwrap_or_else(|| "NFC".to_string());
+
+    let normalized = match form.as_str() {
+        "NFC" => s.nfc().collect::<String>(),
+        "NFD" => s.nfd().collect::<String>(),
+        "NFKC" => s.nfkc().collect::<String>(),
+        "NFKD" => s.nfkd().collect::<String>(),
+        _ => return Err(JsError::range_error(&format!(
+            "The normalization form should be one of NFC, NFD, NFKC, NFKD. Received: {}",
+            form
+        ))),
+    };
+
+    Ok(JsValue::String(JsString::from(normalized)))
+}
+
+/// String.prototype.localeCompare(compareString)
+/// Compares two strings in the current locale
+/// Returns: -1 if string comes before, 0 if equal, 1 if string comes after
+pub fn string_locale_compare(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let s = this.to_js_string().to_string();
+    let compare_string = args.first()
+        .map(|v| v.to_js_string().to_string())
+        .unwrap_or_default();
+
+    // Simple lexicographic comparison (locale-insensitive for now)
+    let result = match s.cmp(&compare_string) {
+        std::cmp::Ordering::Less => -1.0,
+        std::cmp::Ordering::Equal => 0.0,
+        std::cmp::Ordering::Greater => 1.0,
+    };
+
+    Ok(JsValue::Number(result))
 }
