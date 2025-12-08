@@ -2,13 +2,12 @@
 //!
 //! # Example
 //!
-//! ```ignore
-//! use typescript_eval::Runtime;
-//! use serde_json::json;
+//! ```
+//! use typescript_eval::{Runtime, JsValue};
 //!
 //! let mut runtime = Runtime::new();
-//! runtime.load_module("config.ts")?;
-//! let result: serde_json::Value = runtime.call_function("generateConfig", &json!({"env": "prod"}))?;
+//! let result = runtime.eval("1 + 2 * 3").unwrap();
+//! assert_eq!(result, JsValue::Number(7.0));
 //! ```
 
 pub mod ast;
@@ -49,10 +48,14 @@ impl Runtime {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```
+    /// use typescript_eval::{Runtime, JsValue};
+    /// use serde_json::json;
+    ///
     /// let mut runtime = Runtime::new();
-    /// runtime.eval("export function add(a, b) { return a + b; }")?;
-    /// let result = runtime.call_function("add", &json!([1, 2]))?;
+    /// runtime.eval("export function add(a: number, b: number): number { return a + b; }").unwrap();
+    /// let result = runtime.call_function("add", &json!([1, 2])).unwrap();
+    /// assert_eq!(result, JsValue::Number(3.0));
     /// ```
     pub fn call_function(
         &mut self,
