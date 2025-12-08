@@ -200,8 +200,8 @@ To fully implement classes, the following components are needed:
 #### Error Handling
 - [x] `try` / `catch` / `finally`
 - [x] `throw` statement
-- [ ] Error stack traces
-- [ ] Custom error types
+- [x] Error stack traces
+- [x] Custom error types (Error, TypeError, ReferenceError, SyntaxError, RangeError)
 
 #### Modules (ES Modules)
 - [x] `import` declarations (parsing)
