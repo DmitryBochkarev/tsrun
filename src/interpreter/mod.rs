@@ -106,6 +106,8 @@ pub struct Interpreter {
     pub symbol_prototype: JsObjectRef,
     /// Generator.prototype for generator methods
     pub generator_prototype: JsObjectRef,
+    /// Promise.prototype for promise methods
+    pub promise_prototype: JsObjectRef,
     /// Stores thrown value during exception propagation
     thrown_value: Option<JsValue>,
     /// Exported values from the module
@@ -169,6 +171,7 @@ impl Interpreter {
         let error_prototype = create_error_prototype();
         let symbol_prototype = create_symbol_prototype();
         let generator_prototype = create_generator_prototype();
+        let promise_prototype = create_promise_prototype();
 
         // Create and register constructors
         let object_constructor = create_object_constructor();
@@ -223,6 +226,10 @@ impl Interpreter {
         let symbol_constructor = create_symbol_constructor(&symbol_prototype, &well_known_symbols);
         env.define("Symbol".to_string(), JsValue::Object(symbol_constructor), false);
 
+        // Register Promise constructor
+        let promise_constructor = create_promise_constructor(&promise_prototype);
+        env.define("Promise".to_string(), JsValue::Object(promise_constructor), false);
+
         Self {
             global,
             env,
@@ -238,6 +245,7 @@ impl Interpreter {
             error_prototype,
             symbol_prototype,
             generator_prototype,
+            promise_prototype,
             thrown_value: None,
             exports: std::collections::HashMap::new(),
             call_stack: Vec::new(),
@@ -3436,6 +3444,18 @@ impl Interpreter {
                     bound_this,
                     full_args,
                 )
+            }
+
+            JsFunction::PromiseResolve(promise) => {
+                let value = args.first().cloned().unwrap_or(JsValue::Undefined);
+                builtins::promise::resolve_promise_value(self, &promise, value)?;
+                Ok(JsValue::Undefined)
+            }
+
+            JsFunction::PromiseReject(promise) => {
+                let reason = args.first().cloned().unwrap_or(JsValue::Undefined);
+                builtins::promise::reject_promise_value(self, &promise, reason)?;
+                Ok(JsValue::Undefined)
             }
         }
     }

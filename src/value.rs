@@ -174,6 +174,14 @@ impl fmt::Debug for JsValue {
                     ExoticObject::Date { timestamp } => write!(f, "Date({})", timestamp),
                     ExoticObject::RegExp { pattern, flags } => write!(f, "/{}/{}", pattern, flags),
                     ExoticObject::Generator(_) => write!(f, "[object Generator]"),
+                    ExoticObject::Promise(state) => {
+                        let status = match state.borrow().status {
+                            PromiseStatus::Pending => "pending",
+                            PromiseStatus::Fulfilled => "fulfilled",
+                            PromiseStatus::Rejected => "rejected",
+                        };
+                        write!(f, "Promise {{{}}}", status)
+                    }
                 }
             }
         }
@@ -626,6 +634,41 @@ pub enum ExoticObject {
     RegExp { pattern: String, flags: String },
     /// Generator exotic object - stores generator state
     Generator(Rc<RefCell<GeneratorState>>),
+    /// Promise exotic object - stores promise state
+    Promise(Rc<RefCell<PromiseState>>),
+}
+
+/// Promise internal state
+#[derive(Debug, Clone)]
+pub struct PromiseState {
+    /// Current state of the promise
+    pub status: PromiseStatus,
+    /// Resolved value or rejection reason
+    pub result: Option<JsValue>,
+    /// Handlers to call when promise settles
+    pub handlers: Vec<PromiseHandler>,
+}
+
+/// Promise status
+#[derive(Debug, Clone, PartialEq)]
+pub enum PromiseStatus {
+    /// Promise is pending
+    Pending,
+    /// Promise is fulfilled
+    Fulfilled,
+    /// Promise is rejected
+    Rejected,
+}
+
+/// Handler attached via .then()/.catch()
+#[derive(Debug, Clone)]
+pub struct PromiseHandler {
+    /// Callback for fulfilled state
+    pub on_fulfilled: Option<JsValue>,
+    /// Callback for rejected state
+    pub on_rejected: Option<JsValue>,
+    /// The promise returned by .then()/.catch()
+    pub result_promise: JsObjectRef,
 }
 
 /// Generator state for suspended generators
@@ -667,6 +710,10 @@ pub enum JsFunction {
     Native(NativeFunction),
     /// Bound function (created by Function.prototype.bind)
     Bound(Box<BoundFunctionData>),
+    /// Promise resolve function (has internal [[Promise]] slot)
+    PromiseResolve(JsObjectRef),
+    /// Promise reject function (has internal [[Promise]] slot)
+    PromiseReject(JsObjectRef),
 }
 
 /// Data for a bound function
@@ -686,6 +733,8 @@ impl JsFunction {
             JsFunction::Interpreted(f) => f.name.as_deref(),
             JsFunction::Native(f) => Some(&f.name),
             JsFunction::Bound(_) => Some("bound"),
+            JsFunction::PromiseResolve(_) => Some("resolve"),
+            JsFunction::PromiseReject(_) => Some("reject"),
         }
     }
 }

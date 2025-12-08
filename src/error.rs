@@ -77,6 +77,10 @@ pub enum JsError {
     #[error("Thrown")]
     Thrown,
 
+    /// Error thrown with a JsValue (used for Promise rejection handling)
+    #[error("ThrownValue")]
+    ThrownValue { value: crate::value::JsValue },
+
     /// Internal marker for generator yield (not a real error)
     #[error("GeneratorYield")]
     GeneratorYield { value: crate::value::JsValue },
@@ -137,6 +141,62 @@ impl JsError {
     pub fn module_error(message: impl Into<String>) -> Self {
         JsError::ModuleError {
             message: message.into(),
+        }
+    }
+
+    /// Create an error that wraps a thrown JsValue
+    pub fn thrown(value: crate::value::JsValue) -> Self {
+        JsError::ThrownValue { value }
+    }
+
+    /// Extract the JsValue from this error (for Promise rejection handling)
+    pub fn to_value(&self) -> crate::value::JsValue {
+        match self {
+            JsError::ThrownValue { value } => value.clone(),
+            JsError::GeneratorYield { value } => value.clone(),
+            JsError::TypeError { message } => {
+                crate::value::JsValue::String(crate::value::JsString::from(format!(
+                    "TypeError: {}",
+                    message
+                )))
+            }
+            JsError::ReferenceError { name } => {
+                crate::value::JsValue::String(crate::value::JsString::from(format!(
+                    "ReferenceError: {} is not defined",
+                    name
+                )))
+            }
+            JsError::RangeError { message } => {
+                crate::value::JsValue::String(crate::value::JsString::from(format!(
+                    "RangeError: {}",
+                    message
+                )))
+            }
+            JsError::SyntaxError { message, .. } => {
+                crate::value::JsValue::String(crate::value::JsString::from(format!(
+                    "SyntaxError: {}",
+                    message
+                )))
+            }
+            JsError::RuntimeError { kind, message, .. } => {
+                crate::value::JsValue::String(crate::value::JsString::from(format!(
+                    "{}: {}",
+                    kind, message
+                )))
+            }
+            JsError::ModuleError { message } => {
+                crate::value::JsValue::String(crate::value::JsString::from(format!(
+                    "ModuleError: {}",
+                    message
+                )))
+            }
+            JsError::Internal(msg) => {
+                crate::value::JsValue::String(crate::value::JsString::from(format!(
+                    "InternalError: {}",
+                    msg
+                )))
+            }
+            JsError::Thrown => crate::value::JsValue::Undefined,
         }
     }
 }

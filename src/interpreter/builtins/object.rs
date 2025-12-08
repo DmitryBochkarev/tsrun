@@ -432,6 +432,9 @@ pub fn object_to_string(_interp: &mut Interpreter, this: JsValue, _args: Vec<JsV
                 ExoticObject::Generator(_) => {
                     Ok(JsValue::String(JsString::from("[object Generator]")))
                 }
+                ExoticObject::Promise(_) => {
+                    Ok(JsValue::String(JsString::from("[object Promise]")))
+                }
             }
         }
         _ => Ok(JsValue::String(JsString::from("[object Object]"))),
