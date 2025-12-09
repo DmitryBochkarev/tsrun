@@ -1283,7 +1283,7 @@ pub fn array_fill(
                 n.min(length)
             }
         })
-        .unwrap_or(length as i64) as u32;
+        .unwrap_or(length) as u32;
 
     for i in start..end {
         arr_ref.set_property(PropertyKey::Index(i), value.clone());
@@ -1344,7 +1344,7 @@ pub fn array_copy_within(
                 n.min(length)
             }
         })
-        .unwrap_or(length as i64) as u32;
+        .unwrap_or(length) as u32;
 
     let elements: Vec<JsValue> = (start..end)
         .map(|i| {
@@ -1413,7 +1413,7 @@ pub fn array_splice(
     let insert_items: Vec<JsValue> = args.into_iter().skip(2).collect();
     let insert_count = insert_items.len() as u32;
 
-    let new_length = (length as u32 - delete_count + insert_count) as u32;
+    let new_length = length as u32 - delete_count + insert_count;
 
     if insert_count > delete_count {
         let shift = insert_count - delete_count;

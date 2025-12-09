@@ -69,6 +69,7 @@ pub enum YieldResult {
 }
 
 /// Result of processing a single evaluation frame
+#[allow(dead_code)]
 enum FrameResult {
     /// Continue processing more frames
     Continue,
@@ -766,7 +767,7 @@ impl Interpreter {
             _ => {
                 // This is a fallback for frames not yet implemented
                 // Should not reach here in normal operation with current hybrid approach
-                Err(JsError::type_error(&format!(
+                Err(JsError::type_error(format!(
                     "Unhandled frame type in stack execution: {:?}",
                     std::mem::discriminant(&frame)
                 )))
@@ -993,12 +994,8 @@ impl Interpreter {
                             result
                         } else if let Some(finalizer) = &try_stmt.finalizer {
                             self.execute_block(finalizer)?;
-                            // Re-throw if not caught
-                            if matches!(err, JsError::Thrown | JsError::ThrownValue { .. }) {
-                                Err(err)
-                            } else {
-                                Err(err)
-                            }
+                            // Re-throw
+                            Err(err)
                         } else {
                             Err(err)
                         }
@@ -1256,10 +1253,8 @@ impl Interpreter {
                 }
             }
             Pattern::Array(arr_pat) => {
-                for elem in &arr_pat.elements {
-                    if let Some(pat) = elem {
-                        self.hoist_pattern_names(pat);
-                    }
+                for pat in arr_pat.elements.iter().flatten() {
+                    self.hoist_pattern_names(pat);
                 }
             }
             Pattern::Rest(rest) => {
@@ -1675,12 +1670,8 @@ impl Interpreter {
         let name = ns.id.name.clone();
 
         // Check if namespace already exists (for merging)
-        let ns_obj = if let Ok(existing) = self.env.get(&name) {
-            if let JsValue::Object(obj) = existing {
-                obj
-            } else {
-                create_object()
-            }
+        let ns_obj = if let Ok(JsValue::Object(obj)) = self.env.get(&name) {
+            obj
         } else {
             create_object()
         };
@@ -2028,6 +2019,7 @@ impl Interpreter {
     }
 
     /// Collect all variable names from a pattern
+    #[allow(clippy::only_used_in_recursion)]
     fn collect_pattern_names(&self, pattern: &Pattern, names: &mut Vec<String>) {
         match pattern {
             Pattern::Identifier(id) => names.push(id.name.clone()),
@@ -2044,10 +2036,8 @@ impl Interpreter {
                 }
             }
             Pattern::Array(arr) => {
-                for elem in &arr.elements {
-                    if let Some(p) = elem {
-                        self.collect_pattern_names(p, names);
-                    }
+                for p in arr.elements.iter().flatten() {
+                    self.collect_pattern_names(p, names);
                 }
             }
             Pattern::Assignment(assign) => {
@@ -2518,7 +2508,7 @@ impl Interpreter {
 
             Expression::This(_) => {
                 // Look up 'this' from the environment
-                Ok(self.env.get("this").unwrap_or_else(|_| JsValue::Undefined))
+                Ok(self.env.get("this").unwrap_or(JsValue::Undefined))
             }
 
             Expression::Array(arr) => {
@@ -2660,7 +2650,7 @@ impl Interpreter {
                     result.push_str(&quasi.value);
                     if i < template.expressions.len() {
                         let val = self.evaluate(&template.expressions[i])?;
-                        result.push_str(&val.to_js_string().to_string());
+                        result.push_str(val.to_js_string().as_ref());
                     }
                 }
                 Ok(JsValue::String(JsString::from(result)))

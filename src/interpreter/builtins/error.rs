@@ -150,7 +150,7 @@ fn create_error_object_with_stack(
     };
 
     // Capture stack trace
-    let stack_trace = interp.format_stack_trace(name, &msg_str.to_string());
+    let stack_trace = interp.format_stack_trace(name, msg_str.as_ref());
 
     let obj = create_object();
     {

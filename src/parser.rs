@@ -1520,12 +1520,7 @@ impl<'a> Parser<'a> {
         let start = self.current.span;
         let mut left = self.parse_unary_expression()?;
 
-        loop {
-            let (op, prec, is_logical) = match self.current_binary_op() {
-                Some(info) => info,
-                None => break,
-            };
-
+        while let Some((op, prec, is_logical)) = self.current_binary_op() {
             if prec < min_prec {
                 break;
             }
@@ -3304,6 +3299,7 @@ impl<'a> Parser<'a> {
         }
     }
 
+    #[allow(clippy::only_used_in_recursion)]
     fn expression_to_pattern(&self, expr: &Expression) -> Result<Pattern, JsError> {
         match expr {
             Expression::Identifier(id) => Ok(Pattern::Identifier(id.clone())),

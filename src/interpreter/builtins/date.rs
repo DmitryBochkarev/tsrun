@@ -266,7 +266,7 @@ pub fn date_constructor(
             JsValue::Number(n) => *n,
             JsValue::String(s) => {
                 // Parse date string
-                chrono::DateTime::parse_from_rfc3339(&s.to_string())
+                chrono::DateTime::parse_from_rfc3339(s.as_ref())
                     .map(|dt| dt.timestamp_millis() as f64)
                     .unwrap_or(f64::NAN)
             }

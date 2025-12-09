@@ -237,7 +237,7 @@ pub fn console_dir(
             let o_ref = o.borrow();
             println!("Object {{");
             for (key, prop) in o_ref.properties.iter() {
-                println!("  {}: {:?}", key.to_string(), prop.value);
+                println!("  {}: {:?}", key, prop.value);
             }
             println!("}}");
         }

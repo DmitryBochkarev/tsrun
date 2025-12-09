@@ -2266,6 +2266,7 @@ fn test_full_module_loading_workflow() {
     use std::collections::HashMap;
 
     // Simulated file system
+    // Note: Keys must match the import specifiers exactly (without .ts extension)
     let files: HashMap<&str, &str> = HashMap::from([
         (
             "./app.ts",
@@ -2276,7 +2277,7 @@ fn test_full_module_loading_workflow() {
         "#,
         ),
         (
-            "./greeter.ts",
+            "./greeter",
             r#"
             export function greet(name: string): string {
                 return "Hello, " + name + "!";
@@ -2284,7 +2285,7 @@ fn test_full_module_loading_workflow() {
         "#,
         ),
         (
-            "./config.ts",
+            "./config",
             r#"
             export const config = { name: "World", version: "1.0" };
         "#,
@@ -2307,7 +2308,7 @@ fn test_full_module_loading_workflow() {
         }
 
         // Load file content
-        let source = files.get(specifier).expect("File not found");
+        let source = files.get(specifier).unwrap_or_else(|| panic!("File not found: {}", specifier));
 
         // Create a new runtime for this module
         let mut module_runtime = Runtime::new();

@@ -778,7 +778,7 @@ pub fn string_concat(
 ) -> Result<JsValue, JsError> {
     let mut result = this.to_js_string().to_string();
     for arg in args {
-        result.push_str(&arg.to_js_string().to_string());
+        result.push_str(arg.to_js_string().as_ref());
     }
     Ok(JsValue::String(JsString::from(result)))
 }
@@ -830,7 +830,7 @@ pub fn string_from_code_point(
             || code_point > 0x10FFFF as f64
             || code_point.fract() != 0.0
         {
-            return Err(JsError::range_error(&format!(
+            return Err(JsError::range_error(format!(
                 "Invalid code point {}",
                 code_point
             )));
@@ -840,7 +840,7 @@ pub fn string_from_code_point(
         match char::from_u32(code_point) {
             Some(c) => result.push(c),
             None => {
-                return Err(JsError::range_error(&format!(
+                return Err(JsError::range_error(format!(
                     "Invalid code point {}",
                     code_point
                 )));
@@ -1080,7 +1080,7 @@ pub fn string_normalize(
         "NFKC" => s.nfkc().collect::<String>(),
         "NFKD" => s.nfkd().collect::<String>(),
         _ => {
-            return Err(JsError::range_error(&format!(
+            return Err(JsError::range_error(format!(
                 "The normalization form should be one of NFC, NFD, NFKC, NFKD. Received: {}",
                 form
             )))

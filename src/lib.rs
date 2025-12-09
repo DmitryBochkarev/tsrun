@@ -159,7 +159,7 @@ impl Runtime {
     pub fn eval_simple(&mut self, source: &str) -> Result<JsValue, JsError> {
         match self.eval(source)? {
             RuntimeResult::Complete(value) => Ok(value),
-            RuntimeResult::ImportAwaited { specifier, .. } => Err(JsError::type_error(&format!(
+            RuntimeResult::ImportAwaited { specifier, .. } => Err(JsError::type_error(format!(
                 "Execution suspended for import '{}' - use eval() for code with imports",
                 specifier
             ))),
@@ -196,7 +196,7 @@ impl Runtime {
             .exports
             .get(name)
             .cloned()
-            .ok_or_else(|| JsError::reference_error(&format!("{} is not exported", name)))?;
+            .ok_or_else(|| JsError::reference_error(format!("{} is not exported", name)))?;
 
         // Convert JSON args to JsValue
         let js_args = if let serde_json::Value::Array(arr) = args {

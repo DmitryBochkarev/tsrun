@@ -151,7 +151,7 @@ pub fn build_regex(pattern: &str, flags: &str) -> Result<regex::Regex, JsError> 
     }
 
     regex::Regex::new(&regex_pattern)
-        .map_err(|e| JsError::syntax_error(&format!("Invalid regular expression: {}", e), 0, 0))
+        .map_err(|e| JsError::syntax_error(format!("Invalid regular expression: {}", e), 0, 0))
 }
 
 pub fn regexp_test(

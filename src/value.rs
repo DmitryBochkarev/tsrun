@@ -38,8 +38,9 @@ pub trait CheapClone: Clone {
 impl<T: ?Sized> CheapClone for Rc<T> {}
 
 /// A JavaScript value
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub enum JsValue {
+    #[default]
     Undefined,
     Null,
     Boolean(bool),
@@ -217,12 +218,6 @@ impl fmt::Debug for JsValue {
 impl PartialEq for JsValue {
     fn eq(&self, other: &Self) -> bool {
         self.strict_equals(other)
-    }
-}
-
-impl Default for JsValue {
-    fn default() -> Self {
-        JsValue::Undefined
     }
 }
 

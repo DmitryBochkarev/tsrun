@@ -18,6 +18,7 @@ pub enum SourceType {
 // ============ STATEMENTS ============
 
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
 pub enum Statement {
     // Declarations
     VariableDeclaration(VariableDeclaration),
@@ -224,6 +225,7 @@ pub struct ForStatement {
 }
 
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
 pub enum ForInit {
     Variable(VariableDeclaration),
     Expression(Expression),
@@ -516,6 +518,7 @@ pub struct ArrayExpression {
 }
 
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
 pub enum ArrayElement {
     Expression(Expression),
     Spread(SpreadElement),
@@ -528,6 +531,7 @@ pub struct ObjectExpression {
 }
 
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
 pub enum ObjectProperty {
     Property(Property),
     Spread(SpreadElement),
@@ -789,6 +793,7 @@ pub struct CallExpression {
 }
 
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
 pub enum Argument {
     Expression(Expression),
     Spread(SpreadElement),

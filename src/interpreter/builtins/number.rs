@@ -207,7 +207,7 @@ pub fn number_to_fixed(
     let n = this.to_number();
     let digits = args.first().map(|v| v.to_number() as i32).unwrap_or(0);
 
-    if digits < 0 || digits > 100 {
+    if !(0..=100).contains(&digits) {
         return Err(JsError::range_error(
             "toFixed() digits argument must be between 0 and 100",
         ));
@@ -226,7 +226,7 @@ pub fn number_to_string(
     let n = this.to_number();
     let radix = args.first().map(|v| v.to_number() as i32).unwrap_or(10);
 
-    if radix < 2 || radix > 36 {
+    if !(2..=36).contains(&radix) {
         return Err(JsError::range_error(
             "toString() radix must be between 2 and 36",
         ));
@@ -285,7 +285,7 @@ pub fn number_to_precision(
 
     let precision = args.first().map(|v| v.to_number() as i32).unwrap_or(1);
 
-    if precision < 1 || precision > 100 {
+    if !(1..=100).contains(&precision) {
         return Err(JsError::range_error(
             "toPrecision() argument must be between 1 and 100",
         ));
@@ -312,10 +312,10 @@ pub fn number_to_precision(
                     prec = decimals as usize
                 ))));
             }
-        } else if exp < 0 && exp >= -(4) {
+        } else if (-4..0).contains(&exp) {
             // For small numbers, use fixed notation
-            let decimals = precision as i32 - 1 - exp;
-            if decimals >= 0 && decimals <= 100 {
+            let decimals = precision - 1 - exp;
+            if (0..=100).contains(&decimals) {
                 return Ok(JsValue::String(JsString::from(format!(
                     "{:.prec$}",
                     n,
@@ -349,7 +349,7 @@ pub fn number_to_exponential(
 
     let digits = args.first().map(|v| v.to_number() as i32).unwrap_or(6);
 
-    if digits < 0 || digits > 100 {
+    if !(0..=100).contains(&digits) {
         return Err(JsError::range_error(
             "toExponential() argument must be between 0 and 100",
         ));

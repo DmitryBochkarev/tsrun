@@ -339,7 +339,7 @@ pub fn promise_constructor(
         .ok_or_else(|| JsError::type_error("Promise resolver undefined is not a function"))?;
 
     if !executor.is_callable() {
-        return Err(JsError::type_error(&format!(
+        return Err(JsError::type_error(format!(
             "Promise resolver {} is not a function",
             executor.type_of()
         )));
