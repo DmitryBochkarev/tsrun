@@ -3461,7 +3461,34 @@ impl Interpreter {
                 }
             }
             BinaryOp::Instanceof => {
-                // Simplified
+                // Check if left is an instance of right (constructor)
+                let JsValue::Object(constructor) = &right else {
+                    return Err(JsError::type_error(
+                        "Right-hand side of 'instanceof' is not an object",
+                    ));
+                };
+
+                // Get the prototype property of the constructor
+                let proto_val = constructor
+                    .borrow()
+                    .get_property(&PropertyKey::from("prototype"));
+                let Some(JsValue::Object(constructor_proto)) = proto_val else {
+                    return Ok(JsValue::Boolean(false));
+                };
+
+                // Check if left is an object
+                let JsValue::Object(instance) = &left else {
+                    return Ok(JsValue::Boolean(false));
+                };
+
+                // Walk the prototype chain of the instance
+                let mut current_proto = instance.borrow().prototype.clone();
+                while let Some(proto) = current_proto {
+                    if Rc::ptr_eq(&proto, &constructor_proto) {
+                        return Ok(JsValue::Boolean(true));
+                    }
+                    current_proto = proto.borrow().prototype.clone();
+                }
                 JsValue::Boolean(false)
             }
         })
