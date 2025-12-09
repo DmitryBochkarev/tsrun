@@ -106,13 +106,6 @@ impl Runtime {
         }
     }
 
-    /// Evaluate TypeScript source code and return the result
-    pub fn eval(&mut self, source: &str) -> Result<JsValue, JsError> {
-        let mut parser = parser::Parser::new(source);
-        let program = parser.parse_program()?;
-        self.interpreter.execute(&program)
-    }
-
     /// Evaluate TypeScript source code with suspension support
     ///
     /// Returns `RuntimeResult::Complete` if execution finishes,

@@ -462,33 +462,6 @@ impl Interpreter {
         Ok(result)
     }
 
-    /// Execute a program
-    pub fn execute(&mut self, program: &Program) -> Result<JsValue, JsError> {
-        // Hoist var declarations at global scope
-        self.hoist_var_declarations(&program.body);
-
-        let mut result = JsValue::Undefined;
-
-        for stmt in &program.body {
-            match self.execute_statement(stmt)? {
-                Completion::Normal(val) => result = val,
-                Completion::Return(val) => return Ok(val),
-                Completion::Break(_) => {
-                    return Err(JsError::syntax_error("Illegal break statement", 0, 0));
-                }
-                Completion::Continue(_) => {
-                    return Err(JsError::syntax_error("Illegal continue statement", 0, 0));
-                }
-            }
-        }
-
-        Ok(result)
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // Stack-based execution (for suspendable evaluation)
-    // ═══════════════════════════════════════════════════════════════════════════
-
     /// Execute a program using the stack-based execution model
     ///
     /// This method supports suspension at import/await points by returning
