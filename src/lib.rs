@@ -6,7 +6,7 @@
 //! use typescript_eval::{Runtime, JsValue};
 //!
 //! let mut runtime = Runtime::new();
-//! let result = runtime.eval("1 + 2 * 3").unwrap();
+//! let result = runtime.eval_simple("1 + 2 * 3").unwrap();
 //! assert_eq!(result, JsValue::Number(7.0));
 //! ```
 
@@ -184,7 +184,7 @@ impl Runtime {
     /// use serde_json::json;
     ///
     /// let mut runtime = Runtime::new();
-    /// runtime.eval("export function add(a: number, b: number): number { return a + b; }").unwrap();
+    /// runtime.eval_simple("export function add(a: number, b: number): number { return a + b; }").unwrap();
     /// let result = runtime.call_function("add", &json!([1, 2])).unwrap();
     /// assert_eq!(result, JsValue::Number(3.0));
     /// ```
@@ -256,7 +256,7 @@ mod tests {
     #[test]
     fn test_basic_arithmetic() {
         let mut runtime = Runtime::new();
-        let result = runtime.eval("1 + 2 * 3").unwrap();
+        let result = runtime.eval_simple("1 + 2 * 3").unwrap();
         assert_eq!(result, JsValue::Number(7.0));
     }
 
