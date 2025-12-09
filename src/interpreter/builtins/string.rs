@@ -255,9 +255,28 @@ pub fn create_string_prototype() -> JsObjectRef {
     proto
 }
 
+/// String constructor function - String(value) converts value to string
+pub fn string_constructor_fn(
+    _interp: &mut Interpreter,
+    _this: JsValue,
+    args: &[JsValue],
+) -> Result<JsValue, JsError> {
+    // String() with no arguments returns ""
+    if args.is_empty() {
+        return Ok(JsValue::String(JsString::from("")));
+    }
+    // String(value) converts value to string
+    let value = args.first().cloned().unwrap_or(JsValue::Undefined);
+    Ok(JsValue::String(value.to_js_string()))
+}
+
 /// Create String constructor with static methods (fromCharCode, fromCodePoint)
 pub fn create_string_constructor(string_prototype: &JsObjectRef) -> JsObjectRef {
-    let constructor = create_object();
+    let constructor = create_function(JsFunction::Native(NativeFunction {
+        name: "String".to_string(),
+        func: string_constructor_fn,
+        arity: 1,
+    }));
     {
         let mut str_obj = constructor.borrow_mut();
 

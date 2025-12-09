@@ -58,3 +58,50 @@ fn test_json_round_trip() {
         JsValue::String(r#"{"a":1,"b":"hello"}"#.into())
     );
 }
+
+#[test]
+fn test_json_stringify_with_async_result() {
+    // JSON.stringify on async function result
+    let result = eval(
+        r#"
+        async function getData(): Promise<{ count: number }> {
+            return { count: 42 };
+        }
+
+        const data = await getData();
+        JSON.stringify(data)
+    "#,
+    );
+    assert_eq!(result, JsValue::String(r#"{"count":42}"#.into()));
+}
+
+#[test]
+fn test_json_stringify_async_nested_object() {
+    // More complex async result with nested object
+    let result = eval(
+        r#"
+        async function fetchData(): Promise<{ user: { name: string }; items: number[] }> {
+            return {
+                user: { name: "Alice" },
+                items: [1, 2, 3]
+            };
+        }
+
+        const result = await fetchData();
+        JSON.stringify(result)
+    "#,
+    );
+    // Object property order may vary, so check content rather than exact string
+    if let JsValue::String(s) = result {
+        assert!(
+            s.as_str().contains(r#""name":"Alice""#),
+            "Should contain name"
+        );
+        assert!(
+            s.as_str().contains(r#""items":[1,2,3]"#),
+            "Should contain items"
+        );
+    } else {
+        panic!("Expected String, got {:?}", result);
+    }
+}

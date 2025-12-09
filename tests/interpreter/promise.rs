@@ -357,6 +357,182 @@ fn test_promise_allsettled() {
 }
 
 #[test]
+fn test_promise_allsettled_reason_property() {
+    // Test that result.reason is accessible for rejected promises
+    // First test: check if results array has correct length
+    let result = eval(
+        r#"
+        let len = 0;
+        Promise.allSettled([
+            Promise.resolve(1),
+            Promise.reject("error1"),
+            Promise.reject(new Error("error2"))
+        ]).then(function(results) {
+            len = results.length;
+        });
+        len
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(3.0));
+}
+
+#[test]
+fn test_promise_allsettled_reason_status() {
+    // Check status values
+    let result = eval(
+        r#"
+        let statuses: string[] = [];
+        Promise.allSettled([
+            Promise.resolve(1),
+            Promise.reject("error")
+        ]).then(function(results) {
+            for (const r of results) {
+                statuses.push(r.status);
+            }
+        });
+        statuses.join(",")
+    "#,
+    );
+    assert_eq!(result, JsValue::String("fulfilled,rejected".into()));
+}
+
+#[test]
+fn test_promise_allsettled_reason_access() {
+    // Access reason directly
+    let result = eval(
+        r#"
+        let hasReason = false;
+        Promise.allSettled([
+            Promise.reject("test-error")
+        ]).then(function(results) {
+            const r = results[0];
+            hasReason = "reason" in r;
+        });
+        hasReason
+    "#,
+    );
+    assert_eq!(result, JsValue::Boolean(true));
+}
+
+#[test]
+fn test_promise_allsettled_reason_value() {
+    // Get reason value
+    let result = eval(
+        r#"
+        let reason = "none";
+        Promise.allSettled([
+            Promise.reject("test-error")
+        ]).then(function(results) {
+            const r = results[0];
+            reason = r.reason;
+        });
+        reason
+    "#,
+    );
+    assert_eq!(result, JsValue::String("test-error".into()));
+}
+
+#[test]
+fn test_promise_allsettled_with_async_map() {
+    // Promise.allSettled with map over array of async functions
+    let result = eval(
+        r#"
+        async function fetchUser(id: number): Promise<{ id: number; name: string } | null> {
+            const users = [
+                { id: 1, name: "Alice" },
+                { id: 2, name: "Bob" },
+            ];
+            return users.find(u => u.id === id) || null;
+        }
+
+        async function processUsers(): Promise<{ fulfilled: number; rejected: number }> {
+            const userIds = [1, 2, 99];
+
+            const results = await Promise.allSettled(
+                userIds.map(async (id: number) => {
+                    const user = await fetchUser(id);
+                    if (!user) {
+                        throw new Error("User not found");
+                    }
+                    return user;
+                })
+            );
+
+            let fulfilled = 0;
+            let rejected = 0;
+            for (const result of results) {
+                if (result.status === "fulfilled") {
+                    fulfilled++;
+                } else {
+                    rejected++;
+                }
+            }
+
+            return { fulfilled, rejected };
+        }
+
+        const result = await processUsers();
+        result.fulfilled + result.rejected
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(3.0));
+}
+
+#[test]
+fn test_promise_allsettled_reason_in_async_function() {
+    // Test accessing result.reason inside an async function
+    let result = eval(
+        r#"
+        async function process(): Promise<string[]> {
+            const results = await Promise.allSettled([
+                Promise.resolve(1),
+                Promise.reject("error-msg"),
+                Promise.resolve(3)
+            ]);
+
+            const reasons: string[] = [];
+            for (const r of results) {
+                if (r.status === "rejected") {
+                    reasons.push(r.reason);
+                }
+            }
+            return reasons;
+        }
+
+        const arr = await process();
+        arr.join(",")
+    "#,
+    );
+    assert_eq!(result, JsValue::String("error-msg".into()));
+}
+
+#[test]
+fn test_promise_allsettled_reason_with_string_conversion() {
+    // Test converting reason to string
+    let result = eval(
+        r#"
+        async function process(): Promise<string[]> {
+            const results = await Promise.allSettled([
+                Promise.reject("test-error")
+            ]);
+
+            const reasons: string[] = [];
+            for (const r of results) {
+                if (r.status === "rejected") {
+                    reasons.push(String(r.reason));
+                }
+            }
+            return reasons;
+        }
+
+        const arr = await process();
+        arr[0]
+    "#,
+    );
+    assert_eq!(result, JsValue::String("test-error".into()));
+}
+
+#[test]
 fn test_promise_any_first_success() {
     // Promise.any should resolve with first fulfilled value
     let result = eval(

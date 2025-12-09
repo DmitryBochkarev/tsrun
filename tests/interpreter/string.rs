@@ -482,3 +482,59 @@ fn test_string_substr_exceeds_length() {
         JsValue::String(JsString::from("hello"))
     );
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// String constructor function
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_string_constructor_with_number() {
+    // String(42) should return "42"
+    assert_eq!(eval("String(42)"), JsValue::String(JsString::from("42")));
+}
+
+#[test]
+fn test_string_constructor_with_boolean() {
+    // String(true) should return "true"
+    assert_eq!(
+        eval("String(true)"),
+        JsValue::String(JsString::from("true"))
+    );
+    assert_eq!(
+        eval("String(false)"),
+        JsValue::String(JsString::from("false"))
+    );
+}
+
+#[test]
+fn test_string_constructor_with_null() {
+    // String(null) should return "null"
+    assert_eq!(
+        eval("String(null)"),
+        JsValue::String(JsString::from("null"))
+    );
+}
+
+#[test]
+fn test_string_constructor_with_undefined() {
+    // String(undefined) should return "undefined"
+    assert_eq!(
+        eval("String(undefined)"),
+        JsValue::String(JsString::from("undefined"))
+    );
+}
+
+#[test]
+fn test_string_constructor_with_string() {
+    // String("hello") should return "hello"
+    assert_eq!(
+        eval(r#"String("hello")"#),
+        JsValue::String(JsString::from("hello"))
+    );
+}
+
+#[test]
+fn test_string_constructor_no_args() {
+    // String() with no args should return ""
+    assert_eq!(eval("String()"), JsValue::String(JsString::from("")));
+}
