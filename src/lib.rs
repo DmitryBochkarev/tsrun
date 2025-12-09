@@ -155,6 +155,23 @@ impl Runtime {
         self.interpreter.continue_execution()
     }
 
+    /// Evaluate TypeScript source code, expecting immediate completion.
+    ///
+    /// This is a convenience method for code that doesn't use imports or async.
+    /// Returns an error if execution suspends (ImportAwaited/AsyncAwaited).
+    pub fn eval_simple(&mut self, source: &str) -> Result<JsValue, JsError> {
+        match self.eval_resumable(source)? {
+            RuntimeResult::Complete(value) => Ok(value),
+            RuntimeResult::ImportAwaited { specifier, .. } => Err(JsError::type_error(&format!(
+                "Execution suspended for import '{}' - use eval_resumable() for code with imports",
+                specifier
+            ))),
+            RuntimeResult::AsyncAwaited { .. } => Err(JsError::type_error(
+                "Execution suspended for async - use eval_resumable() for async code",
+            )),
+        }
+    }
+
     /// Call an exported function by name with the given arguments
     ///
     /// If `args` is a JSON array, the elements are spread as individual arguments.
@@ -241,5 +258,21 @@ mod tests {
         let mut runtime = Runtime::new();
         let result = runtime.eval("1 + 2 * 3").unwrap();
         assert_eq!(result, JsValue::Number(7.0));
+    }
+
+    #[test]
+    fn test_eval_simple() {
+        let mut runtime = Runtime::new();
+        let result = runtime.eval_simple("1 + 2").unwrap();
+        assert_eq!(result, JsValue::Number(3.0));
+    }
+
+    #[test]
+    fn test_eval_simple_with_import_returns_error() {
+        let mut runtime = Runtime::new();
+        let result = runtime.eval_simple("import { x } from './mod'; x");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(format!("{:?}", err).contains("suspended for import"));
     }
 }
