@@ -21,6 +21,8 @@ pub use error::JsError;
 pub use interpreter::Interpreter;
 pub use interpreter::SavedExecutionState;
 pub use value::CheapClone;
+pub use value::EnvId;
+pub use value::EnvironmentArena;
 pub use value::JsString;
 pub use value::JsValue;
 

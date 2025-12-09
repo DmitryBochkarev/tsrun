@@ -11,6 +11,255 @@ use crate::ast::{ArrowFunctionBody, BlockStatement, FunctionParam};
 use crate::error::JsError;
 use crate::lexer::Span;
 
+/// Environment identifier - an index into the environment arena.
+///
+/// Using indices instead of Rc<Environment> prevents reference cycles between
+/// closures and their captured environments.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct EnvId(pub usize);
+
+impl EnvId {
+    /// The global environment ID (always 0)
+    pub const GLOBAL: EnvId = EnvId(0);
+}
+
+/// Arena for storing environments.
+///
+/// All environments are owned by this arena, and referenced by `EnvId` indices.
+/// This prevents reference cycles that would occur with `Rc<Environment>`.
+#[derive(Debug)]
+pub struct EnvironmentArena {
+    /// All environments, indexed by EnvId
+    envs: Vec<Environment>,
+    /// Free list of reusable environment slots (indices of cleared environments)
+    free_list: Vec<usize>,
+}
+
+impl EnvironmentArena {
+    /// Create a new arena with a global environment
+    pub fn new() -> Self {
+        let global = Environment::new();
+        Self {
+            envs: vec![global],
+            free_list: Vec::new(),
+        }
+    }
+
+    /// Get the global environment ID
+    pub fn global_id(&self) -> EnvId {
+        EnvId::GLOBAL
+    }
+
+    /// Allocate a new environment with the given outer environment
+    pub fn alloc(&mut self, outer: Option<EnvId>) -> EnvId {
+        let env = Environment::with_outer(outer);
+        if let Some(id) = self.free_list.pop() {
+            if let Some(slot) = self.envs.get_mut(id) {
+                *slot = env;
+            }
+            EnvId(id)
+        } else {
+            let id = self.envs.len();
+            self.envs.push(env);
+            EnvId(id)
+        }
+    }
+
+    /// Get an environment by ID
+    pub fn get(&self, id: EnvId) -> Option<&Environment> {
+        self.envs.get(id.0)
+    }
+
+    /// Get a mutable environment by ID
+    pub fn get_mut(&mut self, id: EnvId) -> Option<&mut Environment> {
+        self.envs.get_mut(id.0)
+    }
+
+    /// Mark an environment as free for reuse.
+    /// This clears the environment's bindings and adds it to the free list.
+    pub fn free(&mut self, id: EnvId) {
+        // Never free the global environment
+        if id == EnvId::GLOBAL {
+            return;
+        }
+        if let Some(env) = self.envs.get_mut(id.0) {
+            env.bindings.clear();
+            env.outer = None;
+            self.free_list.push(id.0);
+        }
+    }
+
+    /// Define a binding in the specified environment
+    pub fn define(&mut self, id: EnvId, name: impl Into<JsString>, value: JsValue, mutable: bool) {
+        if let Some(env) = self.get_mut(id) {
+            env.bindings.insert(
+                name.into(),
+                Binding {
+                    value,
+                    mutable,
+                    initialized: true,
+                },
+            );
+        }
+    }
+
+    /// Define an uninitialized binding (for TDZ)
+    pub fn define_uninitialized(&mut self, id: EnvId, name: impl Into<JsString>, mutable: bool) {
+        if let Some(env) = self.get_mut(id) {
+            env.bindings.insert(
+                name.into(),
+                Binding {
+                    value: JsValue::Undefined,
+                    mutable,
+                    initialized: false,
+                },
+            );
+        }
+    }
+
+    /// Get a binding value, walking the outer chain
+    pub fn get_binding(&self, id: EnvId, name: &JsString) -> Result<JsValue, JsError> {
+        let mut current = Some(id);
+        while let Some(env_id) = current {
+            if let Some(env) = self.get(env_id) {
+                if let Some(binding) = env.bindings.get(name) {
+                    if !binding.initialized {
+                        return Err(JsError::reference_error_with_message(
+                            name.as_str(),
+                            "Cannot access before initialization",
+                        ));
+                    }
+                    return Ok(binding.value.clone());
+                }
+                current = env.outer;
+            } else {
+                break;
+            }
+        }
+        Err(JsError::reference_error(name.as_str()))
+    }
+
+    /// Set a binding value, walking the outer chain
+    pub fn set_binding(
+        &mut self,
+        id: EnvId,
+        name: &JsString,
+        value: JsValue,
+    ) -> Result<(), JsError> {
+        let mut current = Some(id);
+        while let Some(env_id) = current {
+            if let Some(env) = self.get_mut(env_id) {
+                if let Some(binding) = env.bindings.get_mut(name) {
+                    if !binding.initialized {
+                        return Err(JsError::reference_error_with_message(
+                            name.as_str(),
+                            "Cannot access before initialization",
+                        ));
+                    }
+                    if !binding.mutable {
+                        return Err(JsError::type_error(format!(
+                            "Assignment to constant variable '{}'",
+                            name
+                        )));
+                    }
+                    binding.value = value;
+                    return Ok(());
+                }
+                current = env.outer;
+            } else {
+                break;
+            }
+        }
+        Err(JsError::reference_error(name.as_str()))
+    }
+
+    /// Initialize a previously uninitialized binding (for TDZ)
+    pub fn initialize(
+        &mut self,
+        id: EnvId,
+        name: &JsString,
+        value: JsValue,
+    ) -> Result<(), JsError> {
+        let mut current = Some(id);
+        while let Some(env_id) = current {
+            if let Some(env) = self.get_mut(env_id) {
+                if let Some(binding) = env.bindings.get_mut(name) {
+                    binding.value = value;
+                    binding.initialized = true;
+                    return Ok(());
+                }
+                current = env.outer;
+            } else {
+                break;
+            }
+        }
+        Err(JsError::reference_error(name.as_str()))
+    }
+
+    /// Check if a binding exists, walking the outer chain
+    pub fn has_binding(&self, id: EnvId, name: &JsString) -> bool {
+        let mut current = Some(id);
+        while let Some(env_id) = current {
+            if let Some(env) = self.get(env_id) {
+                if env.bindings.contains_key(name) {
+                    return true;
+                }
+                current = env.outer;
+            } else {
+                break;
+            }
+        }
+        false
+    }
+
+    /// Check if a binding exists in this exact environment (not outer)
+    pub fn has_own_binding(&self, id: EnvId, name: &JsString) -> bool {
+        self.get(id)
+            .map(|env| env.bindings.contains_key(name))
+            .unwrap_or(false)
+    }
+
+    /// Mark an environment (and its ancestor chain) as captured by a closure.
+    /// Captured environments cannot be freed until the interpreter is dropped.
+    pub fn mark_captured(&mut self, id: EnvId) {
+        let mut current = Some(id);
+        while let Some(env_id) = current {
+            if let Some(env) = self.get_mut(env_id) {
+                if env.captured {
+                    break; // Already captured, ancestors must be too
+                }
+                env.captured = true;
+                current = env.outer;
+            } else {
+                break;
+            }
+        }
+    }
+
+    /// Try to free an environment. Only succeeds if not captured by a closure.
+    /// Returns true if the environment was freed.
+    pub fn try_free(&mut self, id: EnvId) -> bool {
+        if id == EnvId::GLOBAL {
+            return false;
+        }
+        if let Some(env) = self.get(id) {
+            if env.captured {
+                return false; // Can't free, it's captured by a closure
+            }
+        } else {
+            return false;
+        }
+        self.free(id);
+        true
+    }
+}
+
+impl Default for EnvironmentArena {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Trait for types that have cheap (O(1), reference-counted) clones.
 ///
 /// This trait makes it explicit when a clone is cheap (just incrementing a reference count)
@@ -743,8 +992,8 @@ pub struct GeneratorState {
     pub params: Rc<[FunctionParam]>,
     /// Arguments passed to the generator
     pub args: Vec<JsValue>,
-    /// The captured closure environment (Rc for cheap cloning)
-    pub closure: Rc<Environment>,
+    /// The captured closure environment ID
+    pub closure: EnvId,
     /// Current execution state
     pub state: GeneratorStatus,
     /// Current statement index
@@ -810,17 +1059,14 @@ pub struct InterpretedFunction {
     pub params: Rc<[FunctionParam]>,
     /// Function body wrapped in Rc for cheap cloning
     pub body: Rc<FunctionBody>,
-    /// The captured closure environment (Rc for cheap cloning)
-    pub closure: Rc<Environment>,
+    /// The captured closure environment ID
+    pub closure: EnvId,
     pub source_location: Span,
     /// Whether this is a generator function (function*)
     pub generator: bool,
     /// Whether this is an async function
     pub async_: bool,
 }
-
-// InterpretedFunction with Rc-wrapped params and body is cheap to clone
-impl CheapClone for InterpretedFunction {}
 
 /// Function body (block or expression for arrow functions)
 #[derive(Debug, Clone)]
@@ -859,140 +1105,38 @@ impl fmt::Debug for NativeFunction {
     }
 }
 
-/// Execution environment for variable bindings
+/// Execution environment for variable bindings.
+///
+/// Environments are stored in an `EnvironmentArena` and referenced by `EnvId`.
+/// This avoids reference cycles that would occur with `Rc<Environment>`.
 #[derive(Debug, Clone)]
 pub struct Environment {
-    pub bindings: Rc<RefCell<HashMap<JsString, Binding>>>,
-    pub outer: Option<Rc<Environment>>,
+    /// Variable bindings in this scope
+    pub bindings: HashMap<JsString, Binding>,
+    /// Parent environment (if any)
+    pub outer: Option<EnvId>,
+    /// Whether this environment is captured by a closure.
+    /// Captured environments cannot be freed until the interpreter drops.
+    pub captured: bool,
 }
 
-// Environment with Rc<Environment> outer is cheap to clone - just Rc increments
-impl CheapClone for Environment {}
-
 impl Environment {
+    /// Create a new global environment (no outer scope)
     pub fn new() -> Self {
         Self {
-            bindings: Rc::new(RefCell::new(HashMap::new())),
+            bindings: HashMap::new(),
             outer: None,
+            captured: false,
         }
     }
 
     /// Create a new environment with the given outer environment as parent
-    pub fn with_outer(outer: Rc<Environment>) -> Self {
+    pub fn with_outer(outer: Option<EnvId>) -> Self {
         Self {
-            bindings: Rc::new(RefCell::new(HashMap::new())),
-            outer: Some(outer),
+            bindings: HashMap::new(),
+            outer,
+            captured: false,
         }
-    }
-
-    /// Create a child environment from self wrapped in Rc (convenience method)
-    pub fn child(self_rc: &Rc<Environment>) -> Self {
-        Self {
-            bindings: Rc::new(RefCell::new(HashMap::new())),
-            outer: Some(self_rc.cheap_clone()),
-        }
-    }
-
-    /// Define a new binding
-    pub fn define(&self, name: impl Into<JsString>, value: JsValue, mutable: bool) {
-        self.bindings.borrow_mut().insert(
-            name.into(),
-            Binding {
-                value,
-                mutable,
-                initialized: true,
-            },
-        );
-    }
-
-    /// Define an uninitialized binding (for TDZ - let/const before declaration)
-    pub fn define_uninitialized(&self, name: impl Into<JsString>, mutable: bool) {
-        self.bindings.borrow_mut().insert(
-            name.into(),
-            Binding {
-                value: JsValue::Undefined,
-                mutable,
-                initialized: false,
-            },
-        );
-    }
-
-    /// Initialize a previously uninitialized binding (for TDZ)
-    pub fn initialize(&self, name: &JsString, value: JsValue) -> Result<(), JsError> {
-        if let Some(binding) = self.bindings.borrow_mut().get_mut(name) {
-            binding.value = value;
-            binding.initialized = true;
-            return Ok(());
-        }
-
-        if let Some(ref outer) = self.outer {
-            return outer.initialize(name, value);
-        }
-
-        Err(JsError::reference_error(name.as_str()))
-    }
-
-    /// Get a binding value (returns Err for uninitialized TDZ bindings)
-    pub fn get(&self, name: &JsString) -> Result<JsValue, JsError> {
-        if let Some(binding) = self.bindings.borrow().get(name) {
-            if !binding.initialized {
-                return Err(JsError::reference_error_with_message(
-                    name.as_str(),
-                    "Cannot access before initialization",
-                ));
-            }
-            return Ok(binding.value.clone());
-        }
-
-        if let Some(ref outer) = self.outer {
-            return outer.get(name);
-        }
-
-        Err(JsError::reference_error(name.as_str()))
-    }
-
-    /// Set a binding value
-    pub fn set(&self, name: &JsString, value: JsValue) -> Result<(), JsError> {
-        if let Some(binding) = self.bindings.borrow_mut().get_mut(name) {
-            if !binding.initialized {
-                return Err(JsError::reference_error_with_message(
-                    name.as_str(),
-                    "Cannot access before initialization",
-                ));
-            }
-            if !binding.mutable {
-                return Err(JsError::type_error(format!(
-                    "Assignment to constant variable '{}'",
-                    name
-                )));
-            }
-            binding.value = value;
-            return Ok(());
-        }
-
-        if let Some(ref outer) = self.outer {
-            return outer.set(name, value);
-        }
-
-        Err(JsError::reference_error(name.as_str()))
-    }
-
-    /// Check if a binding exists
-    pub fn has(&self, name: &JsString) -> bool {
-        if self.bindings.borrow().contains_key(name) {
-            return true;
-        }
-
-        if let Some(ref outer) = self.outer {
-            return outer.has(name);
-        }
-
-        false
-    }
-
-    /// Check if a binding exists in this exact scope (not outer)
-    pub fn has_own(&self, name: &JsString) -> bool {
-        self.bindings.borrow().contains_key(name)
     }
 }
 
