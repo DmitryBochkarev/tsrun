@@ -86,7 +86,7 @@ pub fn register_global_functions(env: &mut Environment) {
 pub fn global_parse_int(
     _interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let string = args
         .first()
@@ -150,7 +150,7 @@ pub fn global_parse_int(
 pub fn global_parse_float(
     _interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let string = args
         .first()
@@ -212,7 +212,7 @@ pub fn global_parse_float(
 pub fn global_is_nan(
     _interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let n = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
     Ok(JsValue::Boolean(n.is_nan()))
@@ -222,7 +222,7 @@ pub fn global_is_nan(
 pub fn global_is_finite(
     _interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let n = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
     Ok(JsValue::Boolean(n.is_finite()))
@@ -236,7 +236,7 @@ const URI_RESERVED: &str = ";/?:@&=+$,#";
 pub fn global_encode_uri(
     _interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let s = args
         .first()
@@ -260,7 +260,7 @@ pub fn global_encode_uri(
 pub fn global_decode_uri(
     _interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let s = args
         .first()
@@ -273,7 +273,7 @@ pub fn global_decode_uri(
 pub fn global_encode_uri_component(
     _interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let s = args
         .first()
@@ -297,7 +297,7 @@ pub fn global_encode_uri_component(
 pub fn global_decode_uri_component(
     _interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let s = args
         .first()

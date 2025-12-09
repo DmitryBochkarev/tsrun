@@ -206,7 +206,7 @@ pub fn create_object_constructor() -> JsObjectRef {
 pub fn object_constructor(
     _interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let value = args.first().cloned().unwrap_or(JsValue::Undefined);
     match value {
@@ -219,7 +219,7 @@ pub fn object_constructor(
 pub fn object_keys(
     _interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
     let JsValue::Object(obj_ref) = obj else {
@@ -240,7 +240,7 @@ pub fn object_keys(
 pub fn object_values(
     _interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
     let JsValue::Object(obj_ref) = obj else {
@@ -261,7 +261,7 @@ pub fn object_values(
 pub fn object_entries(
     _interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
     let JsValue::Object(obj_ref) = obj else {
@@ -287,7 +287,7 @@ pub fn object_entries(
 pub fn object_assign(
     _interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let target = args.first().cloned().unwrap_or(JsValue::Undefined);
     let JsValue::Object(target_ref) = target.clone() else {
@@ -315,7 +315,7 @@ pub fn object_assign(
 pub fn object_from_entries(
     _interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let iterable = args.first().cloned().unwrap_or(JsValue::Undefined);
 
@@ -368,7 +368,7 @@ pub fn object_from_entries(
 pub fn object_has_own(
     _interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
     let key = args.get(1).cloned().unwrap_or(JsValue::Undefined);
@@ -388,7 +388,7 @@ pub fn object_has_own(
 pub fn object_create(
     _interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let proto = args.first().cloned().unwrap_or(JsValue::Undefined);
 
@@ -418,7 +418,7 @@ pub fn object_create(
 pub fn object_freeze(
     _interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
 
@@ -438,7 +438,7 @@ pub fn object_freeze(
 pub fn object_is_frozen(
     _interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
 
@@ -453,7 +453,7 @@ pub fn object_is_frozen(
 pub fn object_seal(
     _interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
 
@@ -472,7 +472,7 @@ pub fn object_seal(
 pub fn object_is_sealed(
     _interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
 
@@ -489,7 +489,7 @@ pub fn object_is_sealed(
 pub fn object_has_own_property(
     _interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let JsValue::Object(obj) = this else {
         return Ok(JsValue::Boolean(false));
@@ -508,7 +508,7 @@ pub fn object_has_own_property(
 pub fn object_to_string(
     _interp: &mut Interpreter,
     this: JsValue,
-    _args: Vec<JsValue>,
+    _args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     match this {
         JsValue::Object(obj) => {
@@ -549,7 +549,7 @@ pub fn object_to_string(
 pub fn object_value_of(
     _interp: &mut Interpreter,
     this: JsValue,
-    _args: Vec<JsValue>,
+    _args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     Ok(this)
 }
@@ -558,7 +558,7 @@ pub fn object_value_of(
 pub fn object_get_own_property_descriptor(
     _interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
     let prop = args.get(1).cloned().unwrap_or(JsValue::Undefined);
@@ -620,7 +620,7 @@ pub fn object_get_own_property_descriptor(
 pub fn object_get_own_property_names(
     _interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
 
@@ -646,7 +646,7 @@ pub fn object_get_own_property_names(
 pub fn object_get_own_property_symbols(
     _interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
 
@@ -677,7 +677,7 @@ pub fn object_get_own_property_symbols(
 pub fn object_define_property(
     _interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
     let prop = args.get(1).cloned().unwrap_or(JsValue::Undefined);
@@ -748,7 +748,7 @@ pub fn object_define_property(
 pub fn object_define_properties(
     _interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
     let props = args.get(1).cloned().unwrap_or(JsValue::Undefined);
@@ -836,7 +836,7 @@ pub fn object_define_properties(
 pub fn object_get_prototype_of(
     _interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
 
@@ -857,7 +857,7 @@ pub fn object_get_prototype_of(
 pub fn object_set_prototype_of(
     _interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
     let proto = args.get(1).cloned().unwrap_or(JsValue::Undefined);

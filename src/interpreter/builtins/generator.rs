@@ -64,7 +64,7 @@ pub fn create_generator_result(value: JsValue, done: bool) -> JsValue {
 pub fn generator_next(
     interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let JsValue::Object(obj) = this else {
         return Err(JsError::type_error(
@@ -99,7 +99,7 @@ pub fn generator_next(
 pub fn generator_return(
     _interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let JsValue::Object(obj) = this else {
         return Err(JsError::type_error(
@@ -134,7 +134,7 @@ pub fn generator_return(
 pub fn generator_throw(
     interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let JsValue::Object(obj) = this else {
         return Err(JsError::type_error(

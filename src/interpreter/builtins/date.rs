@@ -256,7 +256,7 @@ pub fn create_date_constructor(date_prototype: &JsObjectRef) -> JsObjectRef {
 pub fn date_constructor(
     interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let timestamp = if args.is_empty() {
         // new Date() - current time
@@ -307,7 +307,7 @@ pub fn date_constructor(
 pub fn date_now(
     _interp: &mut Interpreter,
     _this: JsValue,
-    _args: Vec<JsValue>,
+    _args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     Ok(JsValue::Number(Utc::now().timestamp_millis() as f64))
 }
@@ -315,7 +315,7 @@ pub fn date_now(
 pub fn date_utc(
     _interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let year = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN) as i32;
     let month = args.get(1).map(|v| v.to_number()).unwrap_or(0.0) as u32;
@@ -344,7 +344,7 @@ pub fn date_utc(
 pub fn date_parse(
     _interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let s = args
         .first()
@@ -373,7 +373,7 @@ fn get_date_timestamp(this: &JsValue) -> Result<f64, JsError> {
 pub fn date_get_time(
     _interp: &mut Interpreter,
     this: JsValue,
-    _args: Vec<JsValue>,
+    _args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     Ok(JsValue::Number(get_date_timestamp(&this)?))
 }
@@ -381,7 +381,7 @@ pub fn date_get_time(
 pub fn date_get_full_year(
     _interp: &mut Interpreter,
     this: JsValue,
-    _args: Vec<JsValue>,
+    _args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let ts = get_date_timestamp(&this)?;
     if ts.is_nan() {
@@ -395,7 +395,7 @@ pub fn date_get_full_year(
 pub fn date_get_month(
     _interp: &mut Interpreter,
     this: JsValue,
-    _args: Vec<JsValue>,
+    _args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let ts = get_date_timestamp(&this)?;
     if ts.is_nan() {
@@ -409,7 +409,7 @@ pub fn date_get_month(
 pub fn date_get_date(
     _interp: &mut Interpreter,
     this: JsValue,
-    _args: Vec<JsValue>,
+    _args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let ts = get_date_timestamp(&this)?;
     if ts.is_nan() {
@@ -423,7 +423,7 @@ pub fn date_get_date(
 pub fn date_get_day(
     _interp: &mut Interpreter,
     this: JsValue,
-    _args: Vec<JsValue>,
+    _args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let ts = get_date_timestamp(&this)?;
     if ts.is_nan() {
@@ -437,7 +437,7 @@ pub fn date_get_day(
 pub fn date_get_hours(
     _interp: &mut Interpreter,
     this: JsValue,
-    _args: Vec<JsValue>,
+    _args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let ts = get_date_timestamp(&this)?;
     if ts.is_nan() {
@@ -451,7 +451,7 @@ pub fn date_get_hours(
 pub fn date_get_minutes(
     _interp: &mut Interpreter,
     this: JsValue,
-    _args: Vec<JsValue>,
+    _args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let ts = get_date_timestamp(&this)?;
     if ts.is_nan() {
@@ -465,7 +465,7 @@ pub fn date_get_minutes(
 pub fn date_get_seconds(
     _interp: &mut Interpreter,
     this: JsValue,
-    _args: Vec<JsValue>,
+    _args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let ts = get_date_timestamp(&this)?;
     if ts.is_nan() {
@@ -479,7 +479,7 @@ pub fn date_get_seconds(
 pub fn date_get_milliseconds(
     _interp: &mut Interpreter,
     this: JsValue,
-    _args: Vec<JsValue>,
+    _args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let ts = get_date_timestamp(&this)?;
     if ts.is_nan() {
@@ -491,7 +491,7 @@ pub fn date_get_milliseconds(
 pub fn date_to_iso_string(
     _interp: &mut Interpreter,
     this: JsValue,
-    _args: Vec<JsValue>,
+    _args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let ts = get_date_timestamp(&this)?;
     if ts.is_nan() {
@@ -522,7 +522,7 @@ fn set_date_timestamp(this: &JsValue, new_ts: f64) -> Result<f64, JsError> {
 pub fn date_set_time(
     _interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let new_time = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
     let ts = set_date_timestamp(&this, new_time)?;
@@ -532,7 +532,7 @@ pub fn date_set_time(
 pub fn date_set_full_year(
     _interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let current_ts = get_date_timestamp(&this)?;
     if current_ts.is_nan() {
@@ -575,7 +575,7 @@ pub fn date_set_full_year(
 pub fn date_set_month(
     _interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let current_ts = get_date_timestamp(&this)?;
     if current_ts.is_nan() {
@@ -614,7 +614,7 @@ pub fn date_set_month(
 pub fn date_set_date(
     _interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let current_ts = get_date_timestamp(&this)?;
     if current_ts.is_nan() {
@@ -649,7 +649,7 @@ pub fn date_set_date(
 pub fn date_set_hours(
     _interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let current_ts = get_date_timestamp(&this)?;
     if current_ts.is_nan() {
@@ -689,7 +689,7 @@ pub fn date_set_hours(
 pub fn date_set_minutes(
     _interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let current_ts = get_date_timestamp(&this)?;
     if current_ts.is_nan() {
@@ -725,7 +725,7 @@ pub fn date_set_minutes(
 pub fn date_set_seconds(
     _interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let current_ts = get_date_timestamp(&this)?;
     if current_ts.is_nan() {
@@ -764,7 +764,7 @@ pub fn date_set_seconds(
 pub fn date_set_milliseconds(
     _interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let current_ts = get_date_timestamp(&this)?;
     if current_ts.is_nan() {
@@ -789,7 +789,7 @@ pub fn date_set_milliseconds(
 pub fn date_to_string(
     _interp: &mut Interpreter,
     this: JsValue,
-    _args: Vec<JsValue>,
+    _args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let ts = get_date_timestamp(&this)?;
     if ts.is_nan() {
@@ -807,7 +807,7 @@ pub fn date_to_string(
 pub fn date_to_date_string(
     _interp: &mut Interpreter,
     this: JsValue,
-    _args: Vec<JsValue>,
+    _args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let ts = get_date_timestamp(&this)?;
     if ts.is_nan() {
@@ -825,7 +825,7 @@ pub fn date_to_date_string(
 pub fn date_to_time_string(
     _interp: &mut Interpreter,
     this: JsValue,
-    _args: Vec<JsValue>,
+    _args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let ts = get_date_timestamp(&this)?;
     if ts.is_nan() {

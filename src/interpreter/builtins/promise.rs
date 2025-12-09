@@ -303,7 +303,7 @@ fn trigger_handler(
     match callback {
         Some(cb) => {
             // Call the callback and resolve result_promise with the return value
-            match interp.call_function(cb, JsValue::Undefined, vec![value.clone()]) {
+            match interp.call_function(cb, JsValue::Undefined, std::slice::from_ref(value)) {
                 Ok(result) => {
                     resolve_promise(interp, &handler.result_promise, result)?;
                 }
@@ -331,7 +331,7 @@ fn trigger_handler(
 pub fn promise_constructor(
     interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let executor = args
         .first()
@@ -357,7 +357,7 @@ pub fn promise_constructor(
     match interp.call_function(
         executor,
         JsValue::Undefined,
-        vec![JsValue::Object(resolve_fn), JsValue::Object(reject_fn)],
+        &[JsValue::Object(resolve_fn), JsValue::Object(reject_fn)],
     ) {
         Ok(_) => {}
         Err(e) => {
@@ -374,7 +374,7 @@ pub fn promise_constructor(
 pub fn promise_then(
     interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let JsValue::Object(promise) = this else {
         return Err(JsError::type_error(
@@ -443,18 +443,18 @@ pub fn promise_then(
 pub fn promise_catch(
     interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     // catch(onRejected) is equivalent to then(undefined, onRejected)
     let on_rejected = args.first().cloned().unwrap_or(JsValue::Undefined);
-    promise_then(interp, this, vec![JsValue::Undefined, on_rejected])
+    promise_then(interp, this, &[JsValue::Undefined, on_rejected])
 }
 
 /// Promise.prototype.finally(onFinally)
 pub fn promise_finally(
     interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let JsValue::Object(promise) = this.clone() else {
         return Err(JsError::type_error(
@@ -502,14 +502,14 @@ pub fn promise_finally(
                 PromiseStatus::Fulfilled => {
                     let value = result.unwrap_or(JsValue::Undefined);
                     // Call the finally callback
-                    let _ = interp.call_function(callback, JsValue::Undefined, vec![]);
+                    let _ = interp.call_function(callback, JsValue::Undefined, &[]);
                     // Fulfill result promise with original value
                     fulfill_promise(interp, &result_promise, value)?;
                 }
                 PromiseStatus::Rejected => {
                     let reason = result.unwrap_or(JsValue::Undefined);
                     // Call the finally callback
-                    let _ = interp.call_function(callback, JsValue::Undefined, vec![]);
+                    let _ = interp.call_function(callback, JsValue::Undefined, &[]);
                     // Reject result promise with original reason
                     reject_promise(interp, &result_promise, reason)?;
                 }
@@ -519,7 +519,7 @@ pub fn promise_finally(
         }
         None => {
             // No callback - just return a then with no handlers
-            promise_then(interp, this, vec![JsValue::Undefined, JsValue::Undefined])
+            promise_then(interp, this, &[JsValue::Undefined, JsValue::Undefined])
         }
     }
 }
@@ -528,7 +528,7 @@ pub fn promise_finally(
 pub fn promise_resolve_static(
     interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let value = args.first().cloned().unwrap_or(JsValue::Undefined);
 
@@ -549,7 +549,7 @@ pub fn promise_resolve_static(
 pub fn promise_reject_static(
     interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let reason = args.first().cloned().unwrap_or(JsValue::Undefined);
     Ok(JsValue::Object(create_rejected_promise(
@@ -562,7 +562,7 @@ pub fn promise_reject_static(
 pub fn promise_all(
     interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let iterable = args.first().cloned().unwrap_or(JsValue::Undefined);
 
@@ -627,7 +627,7 @@ pub fn promise_all(
 pub fn promise_race(
     interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let iterable = args.first().cloned().unwrap_or(JsValue::Undefined);
     let promises = extract_iterable(&iterable)?;
@@ -678,7 +678,7 @@ pub fn promise_race(
 pub fn promise_allsettled(
     interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let iterable = args.first().cloned().unwrap_or(JsValue::Undefined);
     let promises = extract_iterable(&iterable)?;
@@ -759,7 +759,7 @@ pub fn promise_allsettled(
 pub fn promise_any(
     interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let iterable = args.first().cloned().unwrap_or(JsValue::Undefined);
     let promises = extract_iterable(&iterable)?;

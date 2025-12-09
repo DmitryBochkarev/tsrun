@@ -130,7 +130,7 @@ pub fn create_console_object() -> JsObjectRef {
 pub fn console_log(
     _interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let output: Vec<String> = args.iter().map(|v| format!("{:?}", v)).collect();
     println!("{}", output.join(" "));
@@ -140,7 +140,7 @@ pub fn console_log(
 pub fn console_error(
     _interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let output: Vec<String> = args.iter().map(|v| format!("{:?}", v)).collect();
     eprintln!("{}", output.join(" "));
@@ -150,7 +150,7 @@ pub fn console_error(
 pub fn console_warn(
     _interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let output: Vec<String> = args.iter().map(|v| format!("{:?}", v)).collect();
     eprintln!("{}", output.join(" "));
@@ -160,7 +160,7 @@ pub fn console_warn(
 pub fn console_info(
     _interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let output: Vec<String> = args.iter().map(|v| format!("{:?}", v)).collect();
     println!("{}", output.join(" "));
@@ -170,7 +170,7 @@ pub fn console_info(
 pub fn console_debug(
     _interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let output: Vec<String> = args.iter().map(|v| format!("{:?}", v)).collect();
     println!("{}", output.join(" "));
@@ -182,7 +182,7 @@ pub fn console_debug(
 pub fn console_table(
     _interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let data = args.first().cloned().unwrap_or(JsValue::Undefined);
 
@@ -228,7 +228,7 @@ pub fn console_table(
 pub fn console_dir(
     _interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
 
@@ -251,7 +251,7 @@ pub fn console_dir(
 pub fn console_time(
     _interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let label = args
         .first()
@@ -269,7 +269,7 @@ pub fn console_time(
 pub fn console_time_end(
     _interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let label = args
         .first()
@@ -292,7 +292,7 @@ pub fn console_time_end(
 pub fn console_count(
     _interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let label = args
         .first()
@@ -312,7 +312,7 @@ pub fn console_count(
 pub fn console_count_reset(
     _interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let label = args
         .first()
@@ -330,7 +330,7 @@ pub fn console_count_reset(
 pub fn console_clear(
     _interp: &mut Interpreter,
     _this: JsValue,
-    _args: Vec<JsValue>,
+    _args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     // In a real terminal, we'd clear the screen
     // For now, just print some newlines
@@ -343,7 +343,7 @@ pub fn console_clear(
 pub fn console_group(
     _interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let label = args
         .first()
@@ -363,7 +363,7 @@ pub fn console_group(
 pub fn console_group_end(
     _interp: &mut Interpreter,
     _this: JsValue,
-    _args: Vec<JsValue>,
+    _args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     // In a real implementation, this would decrease indentation
     Ok(JsValue::Undefined)

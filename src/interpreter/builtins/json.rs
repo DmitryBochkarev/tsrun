@@ -36,7 +36,7 @@ pub fn create_json_object() -> JsObjectRef {
 pub fn json_stringify(
     _interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let value = args.first().cloned().unwrap_or(JsValue::Undefined);
     let json = js_value_to_json(&value)?;
@@ -46,7 +46,7 @@ pub fn json_stringify(
 pub fn json_parse(
     _interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let text = args.first().cloned().unwrap_or(JsValue::Undefined);
     let text_str = text.to_js_string();

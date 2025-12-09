@@ -331,7 +331,7 @@ pub fn create_array_constructor(array_prototype: &JsObjectRef) -> JsObjectRef {
 pub fn array_constructor_fn(
     _interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     if args.len() == 1 {
         if let Some(JsValue::Number(n)) = args.first() {
@@ -343,13 +343,13 @@ pub fn array_constructor_fn(
             return Ok(JsValue::Object(create_array(elements)));
         }
     }
-    Ok(JsValue::Object(create_array(args)))
+    Ok(JsValue::Object(create_array(args.to_vec())))
 }
 
 pub fn array_is_array(
     _interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let value = args.first().cloned().unwrap_or(JsValue::Undefined);
     let is_array = match value {
@@ -362,7 +362,7 @@ pub fn array_is_array(
 pub fn array_push(
     _interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this else {
         return Err(JsError::type_error(
@@ -382,9 +382,10 @@ pub fn array_push(
     };
 
     for arg in args {
-        arr_ref
-            .properties
-            .insert(PropertyKey::Index(current_length), Property::data(arg));
+        arr_ref.properties.insert(
+            PropertyKey::Index(current_length),
+            Property::data(arg.clone()),
+        );
         current_length += 1;
     }
 
@@ -403,7 +404,7 @@ pub fn array_push(
 pub fn array_pop(
     _interp: &mut Interpreter,
     this: JsValue,
-    _args: Vec<JsValue>,
+    _args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this else {
         return Err(JsError::type_error(
@@ -449,7 +450,7 @@ pub fn array_pop(
 pub fn array_map(
     interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this.clone() else {
         return Err(JsError::type_error(
@@ -484,7 +485,7 @@ pub fn array_map(
         let mapped = interp.call_function(
             callback.clone(),
             this_arg.clone(),
-            vec![elem, JsValue::Number(i as f64), this.clone()],
+            &[elem, JsValue::Number(i as f64), this.clone()],
         )?;
 
         result.push(mapped);
@@ -496,7 +497,7 @@ pub fn array_map(
 pub fn array_filter(
     interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this.clone() else {
         return Err(JsError::type_error(
@@ -531,7 +532,7 @@ pub fn array_filter(
         let keep = interp.call_function(
             callback.clone(),
             this_arg.clone(),
-            vec![elem.clone(), JsValue::Number(i as f64), this.clone()],
+            &[elem.clone(), JsValue::Number(i as f64), this.clone()],
         )?;
 
         if keep.to_boolean() {
@@ -545,7 +546,7 @@ pub fn array_filter(
 pub fn array_foreach(
     interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this.clone() else {
         return Err(JsError::type_error(
@@ -579,7 +580,7 @@ pub fn array_foreach(
         interp.call_function(
             callback.clone(),
             this_arg.clone(),
-            vec![elem, JsValue::Number(i as f64), this.clone()],
+            &[elem, JsValue::Number(i as f64), this.clone()],
         )?;
     }
 
@@ -589,7 +590,7 @@ pub fn array_foreach(
 pub fn array_reduce(
     interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this.clone() else {
         return Err(JsError::type_error(
@@ -636,7 +637,7 @@ pub fn array_reduce(
         accumulator = interp.call_function(
             callback.clone(),
             JsValue::Undefined,
-            vec![accumulator, elem, JsValue::Number(i as f64), this.clone()],
+            &[accumulator, elem, JsValue::Number(i as f64), this.clone()],
         )?;
     }
 
@@ -646,7 +647,7 @@ pub fn array_reduce(
 pub fn array_find(
     interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this.clone() else {
         return Err(JsError::type_error(
@@ -680,7 +681,7 @@ pub fn array_find(
         let result = interp.call_function(
             callback.clone(),
             this_arg.clone(),
-            vec![elem.clone(), JsValue::Number(i as f64), this.clone()],
+            &[elem.clone(), JsValue::Number(i as f64), this.clone()],
         )?;
 
         if result.to_boolean() {
@@ -694,7 +695,7 @@ pub fn array_find(
 pub fn array_find_index(
     interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this.clone() else {
         return Err(JsError::type_error(
@@ -728,7 +729,7 @@ pub fn array_find_index(
         let result = interp.call_function(
             callback.clone(),
             this_arg.clone(),
-            vec![elem, JsValue::Number(i as f64), this.clone()],
+            &[elem, JsValue::Number(i as f64), this.clone()],
         )?;
 
         if result.to_boolean() {
@@ -742,7 +743,7 @@ pub fn array_find_index(
 pub fn array_index_of(
     _interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this else {
         return Err(JsError::type_error(
@@ -784,7 +785,7 @@ pub fn array_index_of(
 pub fn array_includes(
     _interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this else {
         return Err(JsError::type_error(
@@ -831,7 +832,7 @@ pub fn array_includes(
 pub fn array_slice(
     interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this else {
         return Err(JsError::type_error(
@@ -877,7 +878,7 @@ pub fn array_slice(
 pub fn array_concat(
     interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let mut result = Vec::new();
 
@@ -903,7 +904,7 @@ pub fn array_concat(
     add_elements(&mut result, this);
 
     for arg in args {
-        add_elements(&mut result, arg);
+        add_elements(&mut result, arg.clone());
     }
 
     Ok(JsValue::Object(interp.create_array(result)))
@@ -912,7 +913,7 @@ pub fn array_concat(
 pub fn array_join(
     _interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this else {
         return Err(JsError::type_error(
@@ -959,7 +960,7 @@ pub fn array_join(
 pub fn array_every(
     interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this.clone() else {
         return Err(JsError::type_error(
@@ -993,7 +994,7 @@ pub fn array_every(
         let result = interp.call_function(
             callback.clone(),
             this_arg.clone(),
-            vec![elem, JsValue::Number(i as f64), this.clone()],
+            &[elem, JsValue::Number(i as f64), this.clone()],
         )?;
 
         if !result.to_boolean() {
@@ -1007,7 +1008,7 @@ pub fn array_every(
 pub fn array_some(
     interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this.clone() else {
         return Err(JsError::type_error(
@@ -1041,7 +1042,7 @@ pub fn array_some(
         let result = interp.call_function(
             callback.clone(),
             this_arg.clone(),
-            vec![elem, JsValue::Number(i as f64), this.clone()],
+            &[elem, JsValue::Number(i as f64), this.clone()],
         )?;
 
         if result.to_boolean() {
@@ -1055,7 +1056,7 @@ pub fn array_some(
 pub fn array_shift(
     _interp: &mut Interpreter,
     this: JsValue,
-    _args: Vec<JsValue>,
+    _args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this else {
         return Err(JsError::type_error(
@@ -1097,7 +1098,7 @@ pub fn array_shift(
 pub fn array_unshift(
     _interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this else {
         return Err(JsError::type_error(
@@ -1123,8 +1124,8 @@ pub fn array_unshift(
         arr_ref.set_property(PropertyKey::Index(i + arg_count), val);
     }
 
-    for (i, val) in args.into_iter().enumerate() {
-        arr_ref.set_property(PropertyKey::Index(i as u32), val);
+    for (i, val) in args.iter().enumerate() {
+        arr_ref.set_property(PropertyKey::Index(i as u32), val.clone());
     }
 
     let new_length = current_length + arg_count;
@@ -1142,7 +1143,7 @@ pub fn array_unshift(
 pub fn array_reverse(
     _interp: &mut Interpreter,
     this: JsValue,
-    _args: Vec<JsValue>,
+    _args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this.clone() else {
         return Err(JsError::type_error(
@@ -1180,7 +1181,7 @@ pub fn array_reverse(
 pub fn array_sort(
     interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this.clone() else {
         return Err(JsError::type_error(
@@ -1220,7 +1221,7 @@ pub fn array_sort(
                         _ => continue,
                     };
                     let result =
-                        interp.call_function(cmp.clone(), JsValue::Undefined, vec![left, right])?;
+                        interp.call_function(cmp.clone(), JsValue::Undefined, &[left, right])?;
                     if result.to_number() > 0.0 {
                         elements.swap(j, j + 1);
                     }
@@ -1248,7 +1249,7 @@ pub fn array_sort(
 pub fn array_fill(
     _interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this.clone() else {
         return Err(JsError::type_error(
@@ -1299,7 +1300,7 @@ pub fn array_fill(
 pub fn array_copy_within(
     _interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this.clone() else {
         return Err(JsError::type_error(
@@ -1371,7 +1372,7 @@ pub fn array_copy_within(
 pub fn array_splice(
     interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this else {
         return Err(JsError::type_error(
@@ -1413,7 +1414,7 @@ pub fn array_splice(
         })
         .collect();
 
-    let insert_items: Vec<JsValue> = args.into_iter().skip(2).collect();
+    let insert_items: Vec<JsValue> = args.iter().skip(2).cloned().collect();
     let insert_count = insert_items.len() as u32;
 
     let new_length = length as u32 - delete_count + insert_count;
@@ -1458,15 +1459,15 @@ pub fn array_splice(
 pub fn array_of(
     interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
-    Ok(JsValue::Object(interp.create_array(args)))
+    Ok(JsValue::Object(interp.create_array(args.to_vec())))
 }
 
 pub fn array_from(
     interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let source = args.first().cloned().unwrap_or(JsValue::Undefined);
     let map_fn = args.get(1).cloned();
@@ -1496,7 +1497,7 @@ pub fn array_from(
                         interp.call_function(
                             map.clone(),
                             JsValue::Undefined,
-                            vec![elem, JsValue::Number(i as f64)],
+                            &[elem, JsValue::Number(i as f64)],
                         )?
                     } else {
                         elem
@@ -1515,7 +1516,7 @@ pub fn array_from(
                         interp.call_function(
                             map.clone(),
                             JsValue::Undefined,
-                            vec![elem, JsValue::Number(i as f64)],
+                            &[elem, JsValue::Number(i as f64)],
                         )?
                     } else {
                         elem
@@ -1535,7 +1536,7 @@ pub fn array_from(
 pub fn array_at(
     _interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this else {
         return Err(JsError::type_error(
@@ -1565,7 +1566,7 @@ pub fn array_at(
 pub fn array_last_index_of(
     _interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this else {
         return Err(JsError::type_error(
@@ -1612,7 +1613,7 @@ pub fn array_last_index_of(
 pub fn array_reduce_right(
     interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this.clone() else {
         return Err(JsError::type_error(
@@ -1659,7 +1660,7 @@ pub fn array_reduce_right(
         let result = interp.call_function(
             callback.clone(),
             JsValue::Undefined,
-            vec![
+            &[
                 accumulator.clone(),
                 elem,
                 JsValue::Number(i as f64),
@@ -1675,7 +1676,7 @@ pub fn array_reduce_right(
 pub fn array_flat(
     interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this else {
         return Err(JsError::type_error(
@@ -1723,7 +1724,7 @@ pub fn array_flat(
 pub fn array_flat_map(
     interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this.clone() else {
         return Err(JsError::type_error(
@@ -1759,7 +1760,7 @@ pub fn array_flat_map(
         let mapped = interp.call_function(
             callback.clone(),
             this_arg.clone(),
-            vec![elem, JsValue::Number(i as f64), this.clone()],
+            &[elem, JsValue::Number(i as f64), this.clone()],
         )?;
 
         if let JsValue::Object(ref inner) = mapped {
@@ -1783,7 +1784,7 @@ pub fn array_flat_map(
 pub fn array_find_last(
     interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this.clone() else {
         return Err(JsError::type_error(
@@ -1817,7 +1818,7 @@ pub fn array_find_last(
         let result = interp.call_function(
             callback.clone(),
             this_arg.clone(),
-            vec![elem.clone(), JsValue::Number(i as f64), this.clone()],
+            &[elem.clone(), JsValue::Number(i as f64), this.clone()],
         )?;
 
         if result.to_boolean() {
@@ -1831,7 +1832,7 @@ pub fn array_find_last(
 pub fn array_find_last_index(
     interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this.clone() else {
         return Err(JsError::type_error(
@@ -1865,7 +1866,7 @@ pub fn array_find_last_index(
         let result = interp.call_function(
             callback.clone(),
             this_arg.clone(),
-            vec![elem, JsValue::Number(i as f64), this.clone()],
+            &[elem, JsValue::Number(i as f64), this.clone()],
         )?;
 
         if result.to_boolean() {
@@ -1879,7 +1880,7 @@ pub fn array_find_last_index(
 pub fn array_to_reversed(
     interp: &mut Interpreter,
     this: JsValue,
-    _args: Vec<JsValue>,
+    _args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this else {
         return Err(JsError::type_error(
@@ -1910,7 +1911,7 @@ pub fn array_to_reversed(
 pub fn array_to_sorted(
     interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this.clone() else {
         return Err(JsError::type_error(
@@ -1948,11 +1949,8 @@ pub fn array_to_sorted(
                         (Some(l), Some(r)) => (l.clone(), r.clone()),
                         _ => break,
                     };
-                    let cmp_result = interp.call_function(
-                        cmp_fn.clone(),
-                        JsValue::Undefined,
-                        vec![left, right],
-                    )?;
+                    let cmp_result =
+                        interp.call_function(cmp_fn.clone(), JsValue::Undefined, &[left, right])?;
                     let cmp = cmp_result.to_number();
                     if cmp > 0.0 {
                         elements.swap(j - 1, j);
@@ -1978,7 +1976,7 @@ pub fn array_to_sorted(
 pub fn array_to_spliced(
     interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this else {
         return Err(JsError::type_error(
@@ -2033,7 +2031,7 @@ pub fn array_to_spliced(
 pub fn array_with(
     interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this else {
         return Err(JsError::type_error(
@@ -2080,7 +2078,7 @@ pub fn array_with(
 pub fn array_keys(
     interp: &mut Interpreter,
     this: JsValue,
-    _args: Vec<JsValue>,
+    _args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this else {
         return Err(JsError::type_error(
@@ -2103,7 +2101,7 @@ pub fn array_keys(
 pub fn array_values(
     interp: &mut Interpreter,
     this: JsValue,
-    _args: Vec<JsValue>,
+    _args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this else {
         return Err(JsError::type_error(
@@ -2132,7 +2130,7 @@ pub fn array_values(
 pub fn array_entries(
     interp: &mut Interpreter,
     this: JsValue,
-    _args: Vec<JsValue>,
+    _args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this else {
         return Err(JsError::type_error(

@@ -373,8 +373,8 @@ impl Interpreter {
             }
             // Clone Rc refs and values to release borrow before execution
             (
-                state.body.cheap_clone(),     // Rc clone - cheap
-                state.closure.cheap_clone(),  // Rc clone - cheap
+                state.body.cheap_clone(),    // Rc clone - cheap
+                state.closure.cheap_clone(), // Rc clone - cheap
                 state.stmt_index,
                 state.sent_value.clone(), // JsValue clone - may contain Rc types
                 state.state.clone(),      // enum Copy
@@ -452,8 +452,8 @@ impl Interpreter {
             }
             // Clone Rc refs and values to release borrow before execution
             (
-                state.body.cheap_clone(),     // Rc clone - cheap
-                state.closure.cheap_clone(),  // Rc clone - cheap
+                state.body.cheap_clone(),    // Rc clone - cheap
+                state.closure.cheap_clone(), // Rc clone - cheap
                 state.stmt_index,
                 state.sent_value.clone(), // JsValue clone - may contain Rc types
                 state.params.cheap_clone(), // Rc clone - cheap
@@ -2310,7 +2310,9 @@ impl Interpreter {
                                     }
                                 }
                                 ObjectPropertyKey::Computed(_) => continue,
-                                ObjectPropertyKey::PrivateIdentifier(id) => format!("#{}", id.name).into(),
+                                ObjectPropertyKey::PrivateIdentifier(id) => {
+                                    format!("#{}", id.name).into()
+                                }
                             };
 
                             let prop_value = obj
@@ -2430,7 +2432,9 @@ impl Interpreter {
                                     }
                                 }
                                 ObjectPropertyKey::Computed(_) => continue,
-                                ObjectPropertyKey::PrivateIdentifier(id) => format!("#{}", id.name).into(),
+                                ObjectPropertyKey::PrivateIdentifier(id) => {
+                                    format!("#{}", id.name).into()
+                                }
                             };
 
                             let prop_value = obj
@@ -2516,7 +2520,10 @@ impl Interpreter {
 
             Expression::This(_) => {
                 // Look up 'this' from the environment
-                Ok(self.env.get(&JsString::from("this")).unwrap_or(JsValue::Undefined))
+                Ok(self
+                    .env
+                    .get(&JsString::from("this"))
+                    .unwrap_or(JsValue::Undefined))
             }
 
             Expression::Array(arr) => {
@@ -2623,7 +2630,7 @@ impl Interpreter {
                 let interpreted = InterpretedFunction {
                     name: None,
                     params: Rc::from(arrow.params.as_slice()), // Rc wrap for cheap cloning
-                    body: Rc::new(arrow.body.clone().into()), // Rc wrap for cheap cloning
+                    body: Rc::new(arrow.body.clone().into()),  // Rc wrap for cheap cloning
                     closure: self.env.cheap_clone(),
                     source_location: arrow.span,
                     generator: false, // Arrow functions cannot be generators
@@ -2698,7 +2705,7 @@ impl Interpreter {
                 }
 
                 // Call the tag function
-                self.call_function(tag_fn, JsValue::Undefined, args)
+                self.call_function(tag_fn, JsValue::Undefined, &args)
             }
 
             Expression::Parenthesized(inner, _) => self.evaluate(inner),
@@ -3287,7 +3294,7 @@ impl Interpreter {
                 if let Some((is_getter, getter, value)) = property_result {
                     if is_getter {
                         if let Some(getter_fn) = getter {
-                            return self.call_function(JsValue::Object(getter_fn), object, vec![]);
+                            return self.call_function(JsValue::Object(getter_fn), object, &[]);
                         }
                     }
                     return Ok(value);
@@ -3397,7 +3404,7 @@ impl Interpreter {
                 };
 
                 if let Some(setter) = setter_fn {
-                    self.call_function(JsValue::Object(setter), object, vec![value])?;
+                    self.call_function(JsValue::Object(setter), object, &[value])?;
                     return Ok(());
                 }
 
@@ -3414,11 +3421,15 @@ impl Interpreter {
         // For super.method() calls, also use the current this value
         let this_value = if let Expression::Super(_) = call.callee.as_ref() {
             // super() - call parent constructor with current this
-            self.env.get(&JsString::from("this")).unwrap_or(JsValue::Undefined)
+            self.env
+                .get(&JsString::from("this"))
+                .unwrap_or(JsValue::Undefined)
         } else if let Expression::Member(member) = call.callee.as_ref() {
             if let Expression::Super(_) = member.object.as_ref() {
                 // super.method() - call with current this
-                self.env.get(&JsString::from("this")).unwrap_or(JsValue::Undefined)
+                self.env
+                    .get(&JsString::from("this"))
+                    .unwrap_or(JsValue::Undefined)
             } else {
                 self.evaluate(&member.object)?
             }
@@ -3488,7 +3499,7 @@ impl Interpreter {
             }
         }
 
-        self.call_function(callee, this_value, args)
+        self.call_function(callee, this_value, &args)
     }
 
     fn evaluate_new(&mut self, new_expr: &NewExpression) -> Result<JsValue, JsError> {
@@ -3561,7 +3572,7 @@ impl Interpreter {
         }
 
         // Call constructor
-        let result = self.call_function(callee, JsValue::Object(new_obj.cheap_clone()), args)?;
+        let result = self.call_function(callee, JsValue::Object(new_obj.cheap_clone()), &args)?;
 
         // Return result if it's an object, otherwise return new_obj
         match result {
@@ -3656,7 +3667,7 @@ impl Interpreter {
         &mut self,
         callee: JsValue,
         this_value: JsValue,
-        args: Vec<JsValue>,
+        args: &[JsValue],
     ) -> Result<JsValue, JsError> {
         let JsValue::Object(obj) = callee else {
             return Err(JsError::type_error("Not a function"));
@@ -3685,7 +3696,7 @@ impl Interpreter {
                     let gen_state = GeneratorState {
                         body,
                         params: interpreted.params.cheap_clone(), // Rc clone - cheap
-                        args,
+                        args: args.to_vec(),
                         closure: interpreted.closure.cheap_clone(),
                         state: GeneratorStatus::Suspended,
                         stmt_index: 0,
@@ -3699,7 +3710,7 @@ impl Interpreter {
 
                 // If this is an async function, execute it and wrap result in a Promise
                 if interpreted.async_ {
-                    return self.execute_async_function(interpreted, this_value, args);
+                    return self.execute_async_function(interpreted, this_value, args.to_vec());
                 }
 
                 // Push stack frame
@@ -3723,7 +3734,7 @@ impl Interpreter {
                     .define("this".to_string(), this_value.clone(), false);
 
                 // Create and bind 'arguments' object (array-like object with all args)
-                let arguments_obj = self.create_array(args.clone());
+                let arguments_obj = self.create_array(args.to_vec());
                 self.env.define(
                     "arguments".to_string(),
                     JsValue::Object(arguments_obj),
@@ -3791,13 +3802,13 @@ impl Interpreter {
                 let bound_this = bound_data.this_arg.clone();
                 // Vec<JsValue> clone - needed to prepend to args
                 let mut full_args = bound_data.bound_args.clone();
-                full_args.extend(args);
+                full_args.extend_from_slice(args);
 
                 // Call the target function with bound this and combined args
                 self.call_function(
                     JsValue::Object(bound_data.target.cheap_clone()),
                     bound_this,
-                    full_args,
+                    &full_args,
                 )
             }
 

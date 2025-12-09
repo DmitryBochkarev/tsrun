@@ -212,7 +212,7 @@ impl Runtime {
 
         // Call the function
         self.interpreter
-            .call_function(func, JsValue::Undefined, js_args)
+            .call_function(func, JsValue::Undefined, &js_args)
     }
 
     /// Get a reference to all exported values

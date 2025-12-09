@@ -50,7 +50,7 @@ pub fn create_regexp_constructor(regexp_prototype: &JsObjectRef) -> JsObjectRef 
 pub fn regexp_constructor(
     interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let pattern = args
         .first()
@@ -157,7 +157,7 @@ pub fn build_regex(pattern: &str, flags: &str) -> Result<regex::Regex, JsError> 
 pub fn regexp_test(
     _interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let (pattern, flags) = get_regexp_data(&this)?;
     let input = args
@@ -174,7 +174,7 @@ pub fn regexp_test(
 pub fn regexp_exec(
     interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let (pattern, flags) = get_regexp_data(&this)?;
     let input = args

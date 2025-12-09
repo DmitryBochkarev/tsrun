@@ -108,7 +108,7 @@ pub fn create_error_constructors(error_prototype: &JsObjectRef) -> ErrorConstruc
 pub fn error_to_string(
     _interp: &mut Interpreter,
     this: JsValue,
-    _args: Vec<JsValue>,
+    _args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let JsValue::Object(obj) = this else {
         return Ok(JsValue::String(JsString::from("Error")));
@@ -174,7 +174,7 @@ fn create_error_object_with_stack(
 pub fn error_constructor(
     interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let message = args.first().cloned().unwrap_or(JsValue::Undefined);
     Ok(create_error_object_with_stack(
@@ -188,7 +188,7 @@ pub fn error_constructor(
 pub fn type_error_constructor(
     interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let message = args.first().cloned().unwrap_or(JsValue::Undefined);
     Ok(create_error_object_with_stack(
@@ -202,7 +202,7 @@ pub fn type_error_constructor(
 pub fn reference_error_constructor(
     interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let message = args.first().cloned().unwrap_or(JsValue::Undefined);
     Ok(create_error_object_with_stack(
@@ -216,7 +216,7 @@ pub fn reference_error_constructor(
 pub fn syntax_error_constructor(
     interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let message = args.first().cloned().unwrap_or(JsValue::Undefined);
     Ok(create_error_object_with_stack(
@@ -230,7 +230,7 @@ pub fn syntax_error_constructor(
 pub fn range_error_constructor(
     interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let message = args.first().cloned().unwrap_or(JsValue::Undefined);
     Ok(create_error_object_with_stack(
@@ -244,7 +244,7 @@ pub fn range_error_constructor(
 pub fn uri_error_constructor(
     interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let message = args.first().cloned().unwrap_or(JsValue::Undefined);
     Ok(create_error_object_with_stack(
@@ -258,7 +258,7 @@ pub fn uri_error_constructor(
 pub fn eval_error_constructor(
     interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let message = args.first().cloned().unwrap_or(JsValue::Undefined);
     Ok(create_error_object_with_stack(

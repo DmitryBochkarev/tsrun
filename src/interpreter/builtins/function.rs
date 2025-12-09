@@ -41,21 +41,21 @@ pub fn create_function_prototype() -> JsObjectRef {
 pub fn function_call(
     interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     // `this` is the function to call
     // args[0] is the thisArg for the call
     // args[1..] are the arguments
     let this_arg = args.first().cloned().unwrap_or(JsValue::Undefined);
     let call_args: Vec<JsValue> = args.iter().skip(1).cloned().collect();
-    interp.call_function(this, this_arg, call_args)
+    interp.call_function(this, this_arg, &call_args)
 }
 
 // Function.prototype.apply - call function with specified this value and array of arguments
 pub fn function_apply(
     interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     // `this` is the function to call
     // args[0] is the thisArg for the call
@@ -82,14 +82,14 @@ pub fn function_apply(
         }
     };
 
-    interp.call_function(this, this_arg, call_args)
+    interp.call_function(this, this_arg, &call_args)
 }
 
 // Function.prototype.bind - create a new function with bound this value and pre-filled arguments
 pub fn function_bind(
     _interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     // `this` is the function to bind
     // args[0] is the thisArg to bind

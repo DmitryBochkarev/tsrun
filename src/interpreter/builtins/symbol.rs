@@ -229,7 +229,7 @@ pub fn create_symbol_prototype() -> JsObjectRef {
 fn symbol_call(
     _interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let description = match args.first() {
         None | Some(JsValue::Undefined) => None,
@@ -244,7 +244,7 @@ fn symbol_call(
 fn symbol_for(
     _interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let key = args
         .first()
@@ -268,7 +268,7 @@ fn symbol_for(
 fn symbol_key_for(
     _interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let sym = match args.first() {
         Some(JsValue::Symbol(s)) => s,
@@ -294,7 +294,7 @@ fn symbol_key_for(
 fn symbol_to_string(
     _interp: &mut Interpreter,
     this: JsValue,
-    _args: Vec<JsValue>,
+    _args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     match this {
         JsValue::Symbol(s) => {
@@ -314,7 +314,7 @@ fn symbol_to_string(
 fn symbol_value_of(
     _interp: &mut Interpreter,
     this: JsValue,
-    _args: Vec<JsValue>,
+    _args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     match this {
         JsValue::Symbol(_) => Ok(this),

@@ -840,7 +840,7 @@ impl From<ArrowFunctionBody> for FunctionBody {
 
 /// Native function signature
 pub type NativeFn =
-    fn(&mut crate::interpreter::Interpreter, JsValue, Vec<JsValue>) -> Result<JsValue, JsError>;
+    fn(&mut crate::interpreter::Interpreter, JsValue, &[JsValue]) -> Result<JsValue, JsError>;
 
 /// Native function wrapper
 #[derive(Clone)]

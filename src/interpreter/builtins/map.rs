@@ -110,7 +110,7 @@ pub fn same_value_zero(a: &JsValue, b: &JsValue) -> bool {
 pub fn map_constructor(
     interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let map_obj = create_object();
     {
@@ -177,7 +177,7 @@ pub fn map_constructor(
 pub fn map_get(
     _interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let JsValue::Object(map_obj) = this else {
         return Err(JsError::type_error(
@@ -202,7 +202,7 @@ pub fn map_get(
 pub fn map_set(
     _interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let JsValue::Object(map_obj) = this.clone() else {
         return Err(JsError::type_error(
@@ -237,7 +237,7 @@ pub fn map_set(
 pub fn map_has(
     _interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let JsValue::Object(map_obj) = this else {
         return Err(JsError::type_error(
@@ -262,7 +262,7 @@ pub fn map_has(
 pub fn map_delete(
     _interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let JsValue::Object(map_obj) = this else {
         return Err(JsError::type_error(
@@ -288,7 +288,7 @@ pub fn map_delete(
 pub fn map_clear(
     _interp: &mut Interpreter,
     this: JsValue,
-    _args: Vec<JsValue>,
+    _args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let JsValue::Object(map_obj) = this else {
         return Err(JsError::type_error(
@@ -309,7 +309,7 @@ pub fn map_clear(
 pub fn map_foreach(
     interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let JsValue::Object(map_obj) = this.clone() else {
         return Err(JsError::type_error(
@@ -337,7 +337,7 @@ pub fn map_foreach(
         interp.call_function(
             callback.clone(),
             this_arg.clone(),
-            vec![value, key, this.clone()],
+            &[value, key, this.clone()],
         )?;
     }
 
@@ -347,7 +347,7 @@ pub fn map_foreach(
 pub fn map_keys(
     interp: &mut Interpreter,
     this: JsValue,
-    _args: Vec<JsValue>,
+    _args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let JsValue::Object(map_obj) = this else {
         return Err(JsError::type_error(
@@ -371,7 +371,7 @@ pub fn map_keys(
 pub fn map_values(
     interp: &mut Interpreter,
     this: JsValue,
-    _args: Vec<JsValue>,
+    _args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let JsValue::Object(map_obj) = this else {
         return Err(JsError::type_error(
@@ -397,7 +397,7 @@ pub fn map_values(
 pub fn map_entries(
     interp: &mut Interpreter,
     this: JsValue,
-    _args: Vec<JsValue>,
+    _args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let JsValue::Object(map_obj) = this else {
         return Err(JsError::type_error(

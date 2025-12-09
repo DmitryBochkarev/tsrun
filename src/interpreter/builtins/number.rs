@@ -147,7 +147,7 @@ pub fn create_number_constructor(number_prototype: &JsObjectRef) -> JsObjectRef 
 pub fn number_is_nan(
     _interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     match args.first() {
         Some(JsValue::Number(n)) => Ok(JsValue::Boolean(n.is_nan())),
@@ -159,7 +159,7 @@ pub fn number_is_nan(
 pub fn number_is_finite(
     _interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     match args.first() {
         Some(JsValue::Number(n)) => Ok(JsValue::Boolean(n.is_finite())),
@@ -171,7 +171,7 @@ pub fn number_is_finite(
 pub fn number_is_integer(
     _interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     match args.first() {
         Some(JsValue::Number(n)) => {
@@ -186,7 +186,7 @@ pub fn number_is_integer(
 pub fn number_is_safe_integer(
     _interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     const MAX_SAFE: f64 = 9007199254740991.0;
     match args.first() {
@@ -202,7 +202,7 @@ pub fn number_is_safe_integer(
 pub fn number_to_fixed(
     _interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let n = this.to_number();
     let digits = args.first().map(|v| v.to_number() as i32).unwrap_or(0);
@@ -221,7 +221,7 @@ pub fn number_to_fixed(
 pub fn number_to_string(
     _interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let n = this.to_number();
     let radix = args.first().map(|v| v.to_number() as i32).unwrap_or(10);
@@ -279,7 +279,7 @@ pub fn number_to_string(
 pub fn number_to_precision(
     _interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let n = this.to_number();
 
@@ -343,7 +343,7 @@ pub fn number_to_precision(
 pub fn number_to_exponential(
     _interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let n = this.to_number();
 

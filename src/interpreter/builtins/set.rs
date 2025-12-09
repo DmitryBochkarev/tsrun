@@ -85,7 +85,7 @@ pub fn create_set_constructor() -> JsObjectRef {
 pub fn set_constructor(
     interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let set_obj = create_object();
     {
@@ -130,7 +130,7 @@ pub fn set_constructor(
 pub fn set_add(
     _interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let JsValue::Object(set_obj) = this.clone() else {
         return Err(JsError::type_error(
@@ -158,7 +158,7 @@ pub fn set_add(
 pub fn set_has(
     _interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let JsValue::Object(set_obj) = this else {
         return Err(JsError::type_error(
@@ -183,7 +183,7 @@ pub fn set_has(
 pub fn set_delete(
     _interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let JsValue::Object(set_obj) = this else {
         return Err(JsError::type_error(
@@ -209,7 +209,7 @@ pub fn set_delete(
 pub fn set_clear(
     _interp: &mut Interpreter,
     this: JsValue,
-    _args: Vec<JsValue>,
+    _args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let JsValue::Object(set_obj) = this else {
         return Err(JsError::type_error(
@@ -230,7 +230,7 @@ pub fn set_clear(
 pub fn set_foreach(
     interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let JsValue::Object(set_obj) = this.clone() else {
         return Err(JsError::type_error(
@@ -259,7 +259,7 @@ pub fn set_foreach(
         interp.call_function(
             callback.clone(),
             this_arg.clone(),
-            vec![value.clone(), value, this.clone()],
+            &[value.clone(), value, this.clone()],
         )?;
     }
 
@@ -269,7 +269,7 @@ pub fn set_foreach(
 pub fn set_keys(
     interp: &mut Interpreter,
     this: JsValue,
-    _args: Vec<JsValue>,
+    _args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     // For Set, keys() returns the same as values()
     set_values(interp, this, _args)
@@ -278,7 +278,7 @@ pub fn set_keys(
 pub fn set_values(
     interp: &mut Interpreter,
     this: JsValue,
-    _args: Vec<JsValue>,
+    _args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let JsValue::Object(set_obj) = this else {
         return Err(JsError::type_error(
@@ -304,7 +304,7 @@ pub fn set_values(
 pub fn set_entries(
     interp: &mut Interpreter,
     this: JsValue,
-    _args: Vec<JsValue>,
+    _args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let JsValue::Object(set_obj) = this else {
         return Err(JsError::type_error(

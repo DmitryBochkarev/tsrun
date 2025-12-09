@@ -292,7 +292,7 @@ pub fn create_string_constructor(string_prototype: &JsObjectRef) -> JsObjectRef 
 pub fn string_char_at(
     _interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let s = this.to_js_string();
     let index = args.first().map(|v| v.to_number() as usize).unwrap_or(0);
@@ -307,7 +307,7 @@ pub fn string_char_at(
 pub fn string_index_of(
     _interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let s = this.to_js_string();
     let search = args
@@ -334,7 +334,7 @@ pub fn string_index_of(
 pub fn string_last_index_of(
     _interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let s = this.to_js_string();
     let search = args
@@ -375,7 +375,7 @@ pub fn string_last_index_of(
 pub fn string_at(
     _interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let s = this.to_js_string();
     let len = s.len() as isize;
@@ -398,7 +398,7 @@ pub fn string_at(
 pub fn string_includes(
     _interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let s = this.to_js_string();
     let search = args
@@ -422,7 +422,7 @@ pub fn string_includes(
 pub fn string_starts_with(
     _interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let s = this.to_js_string();
     let search = args
@@ -446,7 +446,7 @@ pub fn string_starts_with(
 pub fn string_ends_with(
     _interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let s = this.to_js_string();
     let search = args
@@ -470,7 +470,7 @@ pub fn string_ends_with(
 pub fn string_slice(
     _interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let s = this.to_js_string();
     let len = s.len() as i64;
@@ -507,7 +507,7 @@ pub fn string_slice(
 pub fn string_substring(
     _interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let s = this.to_js_string();
     let len = s.len();
@@ -556,7 +556,7 @@ pub fn string_substring(
 pub fn string_substr(
     _interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let s = this.to_js_string();
     let chars: Vec<char> = s.as_str().chars().collect();
@@ -606,7 +606,7 @@ pub fn string_substr(
 pub fn string_to_lower_case(
     _interp: &mut Interpreter,
     this: JsValue,
-    _args: Vec<JsValue>,
+    _args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let s = this.to_js_string();
     Ok(JsValue::String(JsString::from(s.as_str().to_lowercase())))
@@ -615,7 +615,7 @@ pub fn string_to_lower_case(
 pub fn string_to_upper_case(
     _interp: &mut Interpreter,
     this: JsValue,
-    _args: Vec<JsValue>,
+    _args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let s = this.to_js_string();
     Ok(JsValue::String(JsString::from(s.as_str().to_uppercase())))
@@ -624,7 +624,7 @@ pub fn string_to_upper_case(
 pub fn string_trim(
     _interp: &mut Interpreter,
     this: JsValue,
-    _args: Vec<JsValue>,
+    _args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let s = this.to_js_string();
     Ok(JsValue::String(JsString::from(s.as_str().trim())))
@@ -633,7 +633,7 @@ pub fn string_trim(
 pub fn string_trim_start(
     _interp: &mut Interpreter,
     this: JsValue,
-    _args: Vec<JsValue>,
+    _args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let s = this.to_js_string();
     Ok(JsValue::String(JsString::from(s.as_str().trim_start())))
@@ -642,7 +642,7 @@ pub fn string_trim_start(
 pub fn string_trim_end(
     _interp: &mut Interpreter,
     this: JsValue,
-    _args: Vec<JsValue>,
+    _args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let s = this.to_js_string();
     Ok(JsValue::String(JsString::from(s.as_str().trim_end())))
@@ -651,7 +651,7 @@ pub fn string_trim_end(
 pub fn string_split(
     interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let s = this.to_js_string();
     let separator = args.first().map(|v| v.to_js_string().to_string());
@@ -689,7 +689,7 @@ pub fn string_split(
 pub fn string_repeat(
     _interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let s = this.to_js_string();
     let count = args.first().map(|v| v.to_number() as usize).unwrap_or(0);
@@ -699,7 +699,7 @@ pub fn string_repeat(
 pub fn string_replace(
     _interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let s = this.to_js_string();
     let search = args
@@ -722,7 +722,7 @@ pub fn string_replace(
 pub fn string_replace_all(
     _interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let s = this.to_js_string();
     let search = args
@@ -743,7 +743,7 @@ pub fn string_replace_all(
 pub fn string_pad_start(
     _interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let s = this.to_js_string();
     let target_length = args.first().map(|v| v.to_number() as usize).unwrap_or(0);
@@ -774,7 +774,7 @@ pub fn string_pad_start(
 pub fn string_pad_end(
     _interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let s = this.to_js_string();
     let target_length = args.first().map(|v| v.to_number() as usize).unwrap_or(0);
@@ -805,7 +805,7 @@ pub fn string_pad_end(
 pub fn string_concat(
     _interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let mut result = this.to_js_string().to_string();
     for arg in args {
@@ -817,7 +817,7 @@ pub fn string_concat(
 pub fn string_char_code_at(
     _interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let s = this.to_js_string();
     let index = args.first().map(|v| v.to_number() as usize).unwrap_or(0);
@@ -832,7 +832,7 @@ pub fn string_char_code_at(
 pub fn string_from_char_code(
     _interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let chars: String = args
         .iter()
@@ -849,7 +849,7 @@ pub fn string_from_char_code(
 pub fn string_from_code_point(
     _interp: &mut Interpreter,
     _this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let mut result = String::new();
     for arg in args {
@@ -886,7 +886,7 @@ pub fn string_from_code_point(
 pub fn string_code_point_at(
     _interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let s = this.to_js_string();
     let index = args.first().map(|v| v.to_number()).unwrap_or(0.0);
@@ -910,7 +910,7 @@ pub fn string_code_point_at(
 pub fn string_match(
     interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let s = this.to_js_string().to_string();
 
@@ -986,7 +986,7 @@ pub fn string_match(
 pub fn string_match_all(
     interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let s = this.to_js_string().to_string();
 
@@ -1053,7 +1053,7 @@ pub fn string_match_all(
 pub fn string_search(
     _interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let s = this.to_js_string().to_string();
 
@@ -1094,7 +1094,7 @@ pub fn string_search(
 pub fn string_normalize(
     _interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let s = this.to_js_string().to_string();
 
@@ -1125,7 +1125,7 @@ pub fn string_normalize(
 pub fn string_locale_compare(
     _interp: &mut Interpreter,
     this: JsValue,
-    args: Vec<JsValue>,
+    args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let s = this.to_js_string().to_string();
     let compare_string = args
