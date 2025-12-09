@@ -18,6 +18,11 @@ lazy_static = "1.4"
 
 [dev-dependencies]
 pretty_assertions = "1.4"
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "clone_benchmarks"
+harness = false
 
 [lints.clippy]
 unwrap_used = "deny"
