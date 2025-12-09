@@ -60,6 +60,11 @@ Use TDD (Test-Driven Development) for new features:
 2. Write a failing interpreter test that demonstrates the desired behavior
 3. Implement the minimal code to make the test pass
 4. Refactor if needed while keeping tests green
+5. **Run quality checks** - After implementing each feature, run:
+   ```bash
+   cargo test && cargo fmt && cargo clippy
+   ```
+   Fix any test failures, formatting issues, or clippy warnings before committing.
 
 ### Parser Testing Before Implementation
 
