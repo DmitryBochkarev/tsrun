@@ -1,5 +1,6 @@
 //! Tests for export handling and call_function API
 
+use super::eval;
 use typescript_eval::value::PropertyKey;
 use typescript_eval::{JsValue, Runtime, RuntimeResult};
 
@@ -988,6 +989,70 @@ fn test_export_type_alias_ignored_at_runtime() {
     // Type alias should NOT be in exports
     // Only defaultId should be exported
     assert!(exports.contains_key("defaultId"));
+}
+
+#[test]
+fn test_enum_computed_value_references_prior_member() {
+    // Enum with computed values referencing prior enum members
+    // FileAccess.ReadWrite = Read | Write should work
+    assert_eq!(
+        eval(
+            r#"
+            enum FileAccess {
+                None = 0,
+                Read = 1,
+                Write = 2,
+                ReadWrite = Read | Write
+            }
+            FileAccess.ReadWrite
+        "#
+        ),
+        JsValue::Number(3.0)
+    );
+}
+
+#[test]
+fn test_enum_computed_value_all_flags() {
+    // More complex bitwise combination
+    assert_eq!(
+        eval(
+            r#"
+            enum FileAccess {
+                None = 0,
+                Read = 1,
+                Write = 2,
+                Execute = 4,
+                All = Read | Write | Execute
+            }
+            FileAccess.All
+        "#
+        ),
+        JsValue::Number(7.0)
+    );
+}
+
+#[test]
+fn test_enum_member_not_leaked_to_outer_scope() {
+    // Enum members should not be visible outside the enum
+    // Use try-catch since typeof on undefined variable throws ReferenceError
+    assert_eq!(
+        eval(
+            r#"
+            enum MyEnum {
+                A = 1,
+                B = 2
+            }
+            let result: string;
+            try {
+                result = typeof A;
+            } catch (e) {
+                result = "not defined";
+            }
+            result
+        "#
+        ),
+        JsValue::from("not defined")
+    );
 }
 
 #[test]

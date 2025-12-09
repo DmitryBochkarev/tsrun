@@ -138,6 +138,13 @@ impl EnvironmentArena {
         }
     }
 
+    /// Delete a binding from the specified environment (does not walk outer chain)
+    pub fn delete(&mut self, id: EnvId, name: &JsString) {
+        if let Some(env) = self.get_mut(id) {
+            env.bindings.remove(name);
+        }
+    }
+
     /// Get a binding value, walking the outer chain
     pub fn get_binding(&self, id: EnvId, name: &JsString) -> Result<JsValue, JsError> {
         let mut current = Some(id);

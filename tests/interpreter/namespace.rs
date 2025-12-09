@@ -344,3 +344,35 @@ fn test_namespace_merged() {
         JsValue::Number(3.0)
     );
 }
+
+#[test]
+fn test_namespace_exported_const() {
+    // Test that exported const in namespace is accessible
+    assert_eq!(
+        eval(
+            r#"
+            namespace Geometry {
+                export const PI: number = 3.14159;
+            }
+            Geometry.PI
+        "#
+        ),
+        JsValue::Number(3.14159)
+    );
+}
+
+#[test]
+fn test_export_namespace_const() {
+    // Test that export namespace makes the namespace object exportable
+    assert_eq!(
+        eval(
+            r#"
+            export namespace Geometry {
+                export const PI: number = 3.14159;
+            }
+            Geometry.PI
+        "#
+        ),
+        JsValue::Number(3.14159)
+    );
+}

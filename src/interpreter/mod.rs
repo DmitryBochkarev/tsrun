@@ -1805,6 +1805,9 @@ impl Interpreter {
         let obj = create_object();
         let mut next_value = 0i32;
 
+        // Collect member names for cleanup after enum processing
+        let mut member_names: Vec<JsString> = Vec::new();
+
         for member in &enum_decl.members {
             let value = if let Some(init) = &member.initializer {
                 let val = self.evaluate(init)?;
@@ -1829,6 +1832,17 @@ impl Interpreter {
                     JsValue::String(member.id.name.clone()),
                 );
             }
+
+            // Define each member in current scope so later members can reference it
+            // (e.g., ReadWrite = Read | Write)
+            self.env_arena
+                .define(self.env, member.id.name.clone(), value, false);
+            member_names.push(member.id.name.clone());
+        }
+
+        // Remove temporary member bindings from scope
+        for name in member_names {
+            self.env_arena.delete(self.env, &name);
         }
 
         self.env_arena.define(
@@ -2002,6 +2016,13 @@ impl Interpreter {
                 Statement::EnumDeclaration(enum_decl) => {
                     self.execute_enum(enum_decl)?;
                     let name = enum_decl.id.name.clone();
+                    if let Ok(value) = self.env_arena.get_binding(self.env, &name) {
+                        self.exports.insert(name, value);
+                    }
+                }
+                Statement::NamespaceDeclaration(ns_decl) => {
+                    self.execute_namespace(ns_decl)?;
+                    let name = ns_decl.id.name.clone();
                     if let Ok(value) = self.env_arena.get_binding(self.env, &name) {
                         self.exports.insert(name, value);
                     }
