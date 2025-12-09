@@ -276,6 +276,8 @@ impl<'a> Lexer<'a> {
         self.start_line = checkpoint.start_line;
         self.start_column = checkpoint.start_column;
         self.saw_newline = checkpoint.saw_newline;
+        // Reset base offset since we're iterating from the beginning of source
+        self.chars_base_offset = 0;
         // Recreate the chars iterator from the beginning and skip to checkpoint position
         self.chars = self.source.char_indices().peekable();
         // Skip characters until we reach the checkpoint position
@@ -298,6 +300,8 @@ impl<'a> Lexer<'a> {
         self.start_line = span.line;
         self.start_column = span.column;
 
+        // Reset base offset since we're iterating from the beginning of source
+        self.chars_base_offset = 0;
         // Recreate the chars iterator and skip to the correct position
         self.chars = self.source.char_indices().peekable();
         while let Some((pos, _)) = self.chars.peek() {

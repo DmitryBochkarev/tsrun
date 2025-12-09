@@ -672,31 +672,54 @@ pub fn string_split(
     this: JsValue,
     args: &[JsValue],
 ) -> Result<JsValue, JsError> {
+    use crate::interpreter::builtins::regexp::{build_regex, get_regexp_data};
+
     let s = this.to_js_string();
-    let separator = args.first().map(|v| v.to_js_string().to_string());
+    let separator_arg = args.first().cloned();
     let limit = args.get(1).map(|v| v.to_number() as usize);
 
-    let parts: Vec<JsValue> = match separator {
-        Some(sep) if !sep.is_empty() => {
-            let split: Vec<&str> = match limit {
-                Some(l) => s.as_str().splitn(l, &sep).collect(),
-                None => s.as_str().split(&sep).collect(),
-            };
-            split
-                .into_iter()
-                .map(|p| JsValue::String(JsString::from(p)))
-                .collect()
-        }
-        Some(_) => {
-            // Empty separator - split into characters
-            let chars: Vec<JsValue> = s
-                .as_str()
-                .chars()
-                .map(|c| JsValue::String(JsString::from(c.to_string())))
-                .collect();
-            match limit {
-                Some(l) => chars.into_iter().take(l).collect(),
-                None => chars,
+    let parts: Vec<JsValue> = match separator_arg {
+        Some(sep) => {
+            // Check if separator is a RegExp
+            if let Ok((pattern, flags)) = get_regexp_data(&sep) {
+                // Split using RegExp
+                let re = build_regex(&pattern, &flags)?;
+                let split: Vec<&str> = re.split(s.as_str()).collect();
+                let result: Vec<JsValue> = split
+                    .into_iter()
+                    .map(|p| JsValue::String(JsString::from(p)))
+                    .collect();
+                // Apply limit after collecting all parts
+                match limit {
+                    Some(l) => result.into_iter().take(l).collect(),
+                    None => result,
+                }
+            } else {
+                // String separator
+                let sep_str = sep.to_js_string().to_string();
+                if sep_str.is_empty() {
+                    // Empty separator - split into characters
+                    let chars: Vec<JsValue> = s
+                        .as_str()
+                        .chars()
+                        .map(|c| JsValue::String(JsString::from(c.to_string())))
+                        .collect();
+                    match limit {
+                        Some(l) => chars.into_iter().take(l).collect(),
+                        None => chars,
+                    }
+                } else {
+                    let split: Vec<&str> = s.as_str().split(&sep_str).collect();
+                    let result: Vec<JsValue> = split
+                        .into_iter()
+                        .map(|p| JsValue::String(JsString::from(p)))
+                        .collect();
+                    // Apply limit after collecting all parts
+                    match limit {
+                        Some(l) => result.into_iter().take(l).collect(),
+                        None => result,
+                    }
+                }
             }
         }
         None => vec![JsValue::String(JsString::from(s.to_string()))],
@@ -716,26 +739,132 @@ pub fn string_repeat(
 }
 
 pub fn string_replace(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
 ) -> Result<JsValue, JsError> {
-    let s = this.to_js_string();
-    let search = args
-        .first()
-        .map(|v| v.to_js_string().to_string())
-        .unwrap_or_default();
-    let replacement = args
-        .get(1)
-        .map(|v| v.to_js_string().to_string())
-        .unwrap_or_default();
+    use crate::interpreter::builtins::regexp::{build_regex, get_regexp_data};
 
-    // Only replace first occurrence (like JS)
-    Ok(JsValue::String(JsString::from(s.as_str().replacen(
-        &search,
-        &replacement,
-        1,
-    ))))
+    let s = this.to_js_string();
+    let search_arg = args.first().cloned().unwrap_or(JsValue::Undefined);
+    let replacement_arg = args.get(1).cloned().unwrap_or(JsValue::Undefined);
+
+    // Check if search is a RegExp
+    if let Ok((pattern, flags)) = get_regexp_data(&search_arg) {
+        let is_global = flags.contains('g');
+        let re = build_regex(&pattern, &flags)?;
+
+        // Check if replacement is a function (callable)
+        if replacement_arg.is_callable() {
+            // Replace with callback function
+            let mut result = String::new();
+            let mut last_end = 0;
+
+            // Helper to build callback args: (match, p1, p2, ..., offset, string)
+            let build_callback_args = |caps: &regex::Captures, s: &str| -> Vec<JsValue> {
+                let mut args = Vec::new();
+
+                // First arg is the full match
+                if let Some(m) = caps.get(0) {
+                    args.push(JsValue::String(JsString::from(m.as_str())));
+
+                    // Add capture groups (p1, p2, ...)
+                    for i in 1..caps.len() {
+                        match caps.get(i) {
+                            Some(g) => args.push(JsValue::String(JsString::from(g.as_str()))),
+                            None => args.push(JsValue::Undefined),
+                        }
+                    }
+
+                    // offset
+                    args.push(JsValue::Number(m.start() as f64));
+                    // original string
+                    args.push(JsValue::String(JsString::from(s)));
+                }
+
+                args
+            };
+
+            if is_global {
+                // Global: replace all matches
+                for caps in re.captures_iter(s.as_str()) {
+                    let m = caps
+                        .get(0)
+                        .ok_or_else(|| JsError::internal_error("regex match failed"))?;
+
+                    // Add text before match
+                    result.push_str(s.as_str().get(last_end..m.start()).unwrap_or(""));
+
+                    // Call the replacement function with (match, p1, p2, ..., offset, string)
+                    let call_args = build_callback_args(&caps, s.as_str());
+
+                    let replaced = interp.call_function(
+                        replacement_arg.clone(),
+                        JsValue::Undefined,
+                        &call_args,
+                    )?;
+                    result.push_str(replaced.to_js_string().as_ref());
+
+                    last_end = m.end();
+                }
+                // Add remaining text
+                result.push_str(s.as_str().get(last_end..).unwrap_or(""));
+            } else {
+                // Non-global: replace first match only
+                if let Some(caps) = re.captures(s.as_str()) {
+                    let m = caps
+                        .get(0)
+                        .ok_or_else(|| JsError::internal_error("regex match failed"))?;
+
+                    // Text before match
+                    result.push_str(s.as_str().get(..m.start()).unwrap_or(""));
+
+                    // Call callback with (match, p1, p2, ..., offset, string)
+                    let call_args = build_callback_args(&caps, s.as_str());
+
+                    let replaced = interp.call_function(
+                        replacement_arg.clone(),
+                        JsValue::Undefined,
+                        &call_args,
+                    )?;
+                    result.push_str(replaced.to_js_string().as_ref());
+
+                    // Text after match
+                    result.push_str(s.as_str().get(m.end()..).unwrap_or(""));
+                } else {
+                    // No match, return original string
+                    return Ok(JsValue::String(s));
+                }
+            }
+
+            Ok(JsValue::String(JsString::from(result)))
+        } else {
+            // Replace with string
+            let replacement = replacement_arg.to_js_string().to_string();
+
+            if is_global {
+                // Global: replace all matches
+                Ok(JsValue::String(JsString::from(
+                    re.replace_all(s.as_str(), replacement.as_str()).to_string(),
+                )))
+            } else {
+                // Non-global: replace first match only
+                Ok(JsValue::String(JsString::from(
+                    re.replace(s.as_str(), replacement.as_str()).to_string(),
+                )))
+            }
+        }
+    } else {
+        // String search - only replace first occurrence
+        let search = search_arg.to_js_string().to_string();
+        let replacement = replacement_arg.to_js_string().to_string();
+
+        Ok(JsValue::String(JsString::from(s.as_str().replacen(
+            &search,
+            &replacement,
+            1,
+        ))))
+    }
 }
 
 pub fn string_replace_all(

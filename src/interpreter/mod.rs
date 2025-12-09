@@ -3325,6 +3325,8 @@ impl Interpreter {
                         PropertyKey::from("sticky"),
                         JsValue::Boolean(flags.contains('y')),
                     );
+                    // Initialize lastIndex to 0
+                    obj.set_property(PropertyKey::from("lastIndex"), JsValue::Number(0.0));
                 }
                 JsValue::Object(regexp_obj)
             }

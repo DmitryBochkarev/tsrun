@@ -1999,3 +1999,19 @@ fn test_sieve_of_eratosthenes() {
     );
     assert_eq!(result, JsValue::String("2,3,5,7,11,13,17,19".into()));
 }
+
+#[test]
+fn test_for_of_with_template_literal() {
+    // Test for...of loop with template literal in body
+    let result = eval(
+        r#"
+        const urls: string[] = ["a", "b", "c"];
+        let output: string = "";
+        for (const url of urls) {
+            output = output + `${url}! `;
+        }
+        output
+    "#,
+    );
+    assert_eq!(result, JsValue::String("a! b! c! ".into()));
+}

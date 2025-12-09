@@ -538,3 +538,98 @@ fn test_string_constructor_no_args() {
     // String() with no args should return ""
     assert_eq!(eval("String()"), JsValue::String(JsString::from("")));
 }
+
+// === Split tests ===
+
+#[test]
+fn test_string_split_basic() {
+    // Split with string separator
+    assert_eq!(
+        eval(r#"JSON.stringify("a,b,c".split(","))"#),
+        JsValue::String(JsString::from(r#"["a","b","c"]"#))
+    );
+}
+
+#[test]
+fn test_string_split_with_limit() {
+    // Split with limit
+    assert_eq!(
+        eval(r#"JSON.stringify("a,b,c,d".split(",", 2))"#),
+        JsValue::String(JsString::from(r#"["a","b"]"#))
+    );
+}
+
+#[test]
+fn test_string_split_regexp() {
+    // Split with RegExp separator
+    assert_eq!(
+        eval(r#"JSON.stringify("apple,banana;cherry orange".split(/[,;\s]+/))"#),
+        JsValue::String(JsString::from(r#"["apple","banana","cherry","orange"]"#))
+    );
+}
+
+#[test]
+fn test_string_split_regexp_simple() {
+    // Split with simple RegExp
+    assert_eq!(
+        eval(r#"JSON.stringify("a1b2c3".split(/\d/))"#),
+        JsValue::String(JsString::from(r#"["a","b","c",""]"#))
+    );
+}
+
+// === Replace tests ===
+
+#[test]
+fn test_string_replace_basic() {
+    // Replace with string
+    assert_eq!(
+        eval(r#""hello world".replace("world", "there")"#),
+        JsValue::String(JsString::from("hello there"))
+    );
+}
+
+#[test]
+fn test_string_replace_first_only() {
+    // Replace only first occurrence
+    assert_eq!(
+        eval(r#""foo foo foo".replace("foo", "bar")"#),
+        JsValue::String(JsString::from("bar foo foo"))
+    );
+}
+
+#[test]
+fn test_string_replace_regexp() {
+    // Replace with RegExp (first match only without global flag)
+    assert_eq!(
+        eval(r#""hello 123 world".replace(/\d+/, "XXX")"#),
+        JsValue::String(JsString::from("hello XXX world"))
+    );
+}
+
+#[test]
+fn test_string_replace_regexp_global() {
+    // Replace all matches with global flag
+    assert_eq!(
+        eval(r#""a1b2c3".replace(/\d/g, "X")"#),
+        JsValue::String(JsString::from("aXbXcX"))
+    );
+}
+
+#[test]
+fn test_string_replace_callback() {
+    // Replace with callback function
+    assert_eq!(
+        eval(r#""foo bar baz".replace(/\b\w/g, (c) => c.toUpperCase())"#),
+        JsValue::String(JsString::from("Foo Bar Baz"))
+    );
+}
+
+#[test]
+fn test_string_replace_callback_with_capture_group() {
+    // Replace with callback that receives capture group
+    // In JS: callback receives (match, p1, p2, ..., offset, string)
+    assert_eq!(
+        eval(r#""my-variable-name".replace(/-([a-z])/g, (_, letter) => letter.toUpperCase())"#),
+        JsValue::String(JsString::from("myVariableName"))
+    );
+}

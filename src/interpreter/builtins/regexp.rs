@@ -105,6 +105,8 @@ pub fn regexp_constructor(
             PropertyKey::from("sticky"),
             JsValue::Boolean(flags.contains('y')),
         );
+        // Initialize lastIndex to 0
+        obj.set_property(PropertyKey::from("lastIndex"), JsValue::Number(0.0));
     }
     Ok(JsValue::Object(regexp_obj))
 }
@@ -176,6 +178,10 @@ pub fn regexp_exec(
     this: JsValue,
     args: &[JsValue],
 ) -> Result<JsValue, JsError> {
+    let JsValue::Object(ref obj) = this else {
+        return Err(JsError::type_error("this is not a RegExp"));
+    };
+
     let (pattern, flags) = get_regexp_data(&this)?;
     let input = args
         .first()
@@ -184,9 +190,45 @@ pub fn regexp_exec(
         .to_js_string()
         .to_string();
 
+    let is_global = flags.contains('g');
+    let is_sticky = flags.contains('y');
+
+    // Get lastIndex for global/sticky regexes
+    let last_index = if is_global || is_sticky {
+        let li = obj
+            .borrow()
+            .get_property(&PropertyKey::from("lastIndex"))
+            .unwrap_or(JsValue::Number(0.0));
+        match li {
+            JsValue::Number(n) => n as usize,
+            _ => 0,
+        }
+    } else {
+        0
+    };
+
     let re = build_regex(&pattern, &flags)?;
 
-    match re.captures(&input) {
+    // For global/sticky, we need to search starting from lastIndex
+    let search_str = if last_index > 0 && last_index <= input.len() {
+        // Get substring starting from lastIndex (handle UTF-8 properly)
+        input
+            .char_indices()
+            .nth(last_index)
+            .and_then(|(byte_idx, _)| input.get(byte_idx..))
+            .unwrap_or("")
+    } else if last_index > input.len() {
+        // lastIndex past end of string - no match
+        if is_global || is_sticky {
+            obj.borrow_mut()
+                .set_property(PropertyKey::from("lastIndex"), JsValue::Number(0.0));
+        }
+        return Ok(JsValue::Null);
+    } else {
+        input.as_str()
+    };
+
+    match re.captures(search_str) {
         Some(caps) => {
             let mut result = Vec::new();
             for cap in caps.iter() {
@@ -196,19 +238,39 @@ pub fn regexp_exec(
                 }
             }
             let arr = interp.create_array(result);
-            // Add index property
-            if let Some(m) = caps.get(0) {
-                arr.borrow_mut().set_property(
-                    PropertyKey::from("index"),
-                    JsValue::Number(m.start() as f64),
-                );
-            }
+
+            // Calculate actual index in original string
+            let match_start = caps.get(0).map(|m| m.start()).unwrap_or(0);
+            let actual_index = last_index + match_start;
+
+            arr.borrow_mut().set_property(
+                PropertyKey::from("index"),
+                JsValue::Number(actual_index as f64),
+            );
             arr.borrow_mut().set_property(
                 PropertyKey::from("input"),
-                JsValue::String(JsString::from(input)),
+                JsValue::String(JsString::from(input.clone())),
             );
+
+            // Update lastIndex for global/sticky regexes
+            if is_global || is_sticky {
+                let match_end = caps.get(0).map(|m| m.end()).unwrap_or(0);
+                let new_last_index = last_index + match_end;
+                obj.borrow_mut().set_property(
+                    PropertyKey::from("lastIndex"),
+                    JsValue::Number(new_last_index as f64),
+                );
+            }
+
             Ok(JsValue::Object(arr))
         }
-        None => Ok(JsValue::Null),
+        None => {
+            // Reset lastIndex to 0 on no match for global/sticky
+            if is_global || is_sticky {
+                obj.borrow_mut()
+                    .set_property(PropertyKey::from("lastIndex"), JsValue::Number(0.0));
+            }
+            Ok(JsValue::Null)
+        }
     }
 }

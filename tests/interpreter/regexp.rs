@@ -139,3 +139,21 @@ fn test_regexp_combined_flags() {
     assert_eq!(eval("/abc/gimsuy.unicode"), JsValue::Boolean(true));
     assert_eq!(eval("/abc/gimsuy.sticky"), JsValue::Boolean(true));
 }
+
+#[test]
+fn test_regexp_while_exec_loop() {
+    // Test while loop with exec() - similar to the text-processing example
+    let result = eval(
+        r#"
+        const text: string = "a1b23c456";
+        const pattern = /(\d+)/g;
+        const results: string[] = [];
+        let match: RegExpExecArray | null;
+        while ((match = pattern.exec(text)) !== null) {
+            results.push(match[0]);
+        }
+        results.join(",")
+        "#,
+    );
+    assert_eq!(result, JsValue::String("1,23,456".into()));
+}
