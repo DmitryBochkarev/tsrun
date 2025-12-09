@@ -9,6 +9,72 @@ use crate::value::{
     JsValue, NativeFunction, PropertyKey,
 };
 
+/// Create a date from components, handling JavaScript-style overflow
+/// (e.g., month 12 becomes January of next year, day 0 becomes last day of previous month)
+fn make_date_from_components(
+    year: i32,
+    month: i32,
+    day: i32,
+    hours: u32,
+    minutes: u32,
+    seconds: u32,
+    ms: u32,
+) -> f64 {
+    use chrono::Duration;
+
+    // Handle 2-digit years (0-99 map to 1900-1999)
+    let year = if (0..100).contains(&year) {
+        year + 1900
+    } else {
+        year
+    };
+
+    // Normalize month (0-indexed, can overflow)
+    let total_months = year * 12 + month;
+    let norm_year = total_months.div_euclid(12);
+    let norm_month = (total_months.rem_euclid(12) + 1) as u32; // 1-indexed for chrono
+
+    // Create base date with day=1, then add (day-1) days to handle day overflow
+    let Some(base_date) = Utc
+        .with_ymd_and_hms(norm_year, norm_month, 1, hours, minutes, seconds)
+        .single()
+    else {
+        return f64::NAN;
+    };
+
+    // Add (day - 1) days to handle overflow
+    let adjusted_date = base_date + Duration::days((day - 1) as i64);
+    adjusted_date.timestamp_millis() as f64 + ms as f64
+}
+
+/// Parse a date string in various formats, returning timestamp in milliseconds
+fn parse_date_string(s: &str) -> f64 {
+    // Try RFC3339 format (with timezone, e.g., "2024-12-25T10:30:00Z")
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
+        return dt.timestamp_millis() as f64;
+    }
+
+    // Try ISO 8601 without timezone (e.g., "2024-12-25T10:30:00") - treat as UTC
+    if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S") {
+        return dt.and_utc().timestamp_millis() as f64;
+    }
+
+    // Try ISO 8601 with milliseconds but no timezone (e.g., "2024-12-25T10:30:00.000")
+    if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%.f") {
+        return dt.and_utc().timestamp_millis() as f64;
+    }
+
+    // Try date-only format (e.g., "2024-12-25") - treat as midnight UTC
+    if let Ok(dt) = chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d") {
+        return dt
+            .and_hms_opt(0, 0, 0)
+            .map(|d| d.and_utc().timestamp_millis() as f64)
+            .unwrap_or(f64::NAN);
+    }
+
+    f64::NAN
+}
+
 /// Create Date.prototype with getTime, getFullYear, getMonth, etc.
 pub fn create_date_prototype() -> JsObjectRef {
     let proto = create_object();
@@ -88,6 +154,87 @@ pub fn create_date_prototype() -> JsObjectRef {
         p.set_property(
             PropertyKey::from("getMilliseconds"),
             JsValue::Object(get_milliseconds_fn),
+        );
+
+        // UTC getter methods (same as regular getters since we store UTC internally)
+        let get_utc_full_year_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "getUTCFullYear".to_string(),
+            func: date_get_full_year,
+            arity: 0,
+        }));
+        p.set_property(
+            PropertyKey::from("getUTCFullYear"),
+            JsValue::Object(get_utc_full_year_fn),
+        );
+
+        let get_utc_month_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "getUTCMonth".to_string(),
+            func: date_get_month,
+            arity: 0,
+        }));
+        p.set_property(
+            PropertyKey::from("getUTCMonth"),
+            JsValue::Object(get_utc_month_fn),
+        );
+
+        let get_utc_date_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "getUTCDate".to_string(),
+            func: date_get_date,
+            arity: 0,
+        }));
+        p.set_property(
+            PropertyKey::from("getUTCDate"),
+            JsValue::Object(get_utc_date_fn),
+        );
+
+        let get_utc_day_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "getUTCDay".to_string(),
+            func: date_get_day,
+            arity: 0,
+        }));
+        p.set_property(
+            PropertyKey::from("getUTCDay"),
+            JsValue::Object(get_utc_day_fn),
+        );
+
+        let get_utc_hours_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "getUTCHours".to_string(),
+            func: date_get_hours,
+            arity: 0,
+        }));
+        p.set_property(
+            PropertyKey::from("getUTCHours"),
+            JsValue::Object(get_utc_hours_fn),
+        );
+
+        let get_utc_minutes_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "getUTCMinutes".to_string(),
+            func: date_get_minutes,
+            arity: 0,
+        }));
+        p.set_property(
+            PropertyKey::from("getUTCMinutes"),
+            JsValue::Object(get_utc_minutes_fn),
+        );
+
+        let get_utc_seconds_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "getUTCSeconds".to_string(),
+            func: date_get_seconds,
+            arity: 0,
+        }));
+        p.set_property(
+            PropertyKey::from("getUTCSeconds"),
+            JsValue::Object(get_utc_seconds_fn),
+        );
+
+        let get_utc_milliseconds_fn = create_function(JsFunction::Native(NativeFunction {
+            name: "getUTCMilliseconds".to_string(),
+            func: date_get_milliseconds,
+            arity: 0,
+        }));
+        p.set_property(
+            PropertyKey::from("getUTCMilliseconds"),
+            JsValue::Object(get_utc_milliseconds_fn),
         );
 
         let to_iso_string_fn = create_function(JsFunction::Native(NativeFunction {
@@ -265,34 +412,22 @@ pub fn date_constructor(
         match args.first() {
             Some(JsValue::Number(n)) => *n,
             Some(JsValue::String(s)) => {
-                // Parse date string
-                chrono::DateTime::parse_from_rfc3339(s.as_ref())
-                    .map(|dt| dt.timestamp_millis() as f64)
-                    .unwrap_or(f64::NAN)
+                // Parse date string - try multiple formats
+                parse_date_string(s.as_ref())
             }
             _ => f64::NAN,
         }
     } else {
         // new Date(year, month, day?, hours?, minutes?, seconds?, ms?)
         let year = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN) as i32;
-        let month = args.get(1).map(|v| v.to_number()).unwrap_or(0.0) as u32;
-        let day = args.get(2).map(|v| v.to_number()).unwrap_or(1.0) as u32;
+        let month = args.get(1).map(|v| v.to_number()).unwrap_or(0.0) as i32;
+        let day = args.get(2).map(|v| v.to_number()).unwrap_or(1.0) as i32;
         let hours = args.get(3).map(|v| v.to_number()).unwrap_or(0.0) as u32;
         let minutes = args.get(4).map(|v| v.to_number()).unwrap_or(0.0) as u32;
         let seconds = args.get(5).map(|v| v.to_number()).unwrap_or(0.0) as u32;
         let ms = args.get(6).map(|v| v.to_number()).unwrap_or(0.0) as u32;
 
-        // Handle 2-digit years (0-99 map to 1900-1999)
-        let year = if (0..100).contains(&year) {
-            year + 1900
-        } else {
-            year
-        };
-
-        Utc.with_ymd_and_hms(year, month + 1, day, hours, minutes, seconds)
-            .single()
-            .map(|dt| dt.timestamp_millis() as f64 + ms as f64)
-            .unwrap_or(f64::NAN)
+        make_date_from_components(year, month, day, hours, minutes, seconds, ms)
     };
 
     let date_obj = create_object();
@@ -318,26 +453,14 @@ pub fn date_utc(
     args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let year = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN) as i32;
-    let month = args.get(1).map(|v| v.to_number()).unwrap_or(0.0) as u32;
-    let day = args.get(2).map(|v| v.to_number()).unwrap_or(1.0) as u32;
+    let month = args.get(1).map(|v| v.to_number()).unwrap_or(0.0) as i32;
+    let day = args.get(2).map(|v| v.to_number()).unwrap_or(1.0) as i32;
     let hours = args.get(3).map(|v| v.to_number()).unwrap_or(0.0) as u32;
     let minutes = args.get(4).map(|v| v.to_number()).unwrap_or(0.0) as u32;
     let seconds = args.get(5).map(|v| v.to_number()).unwrap_or(0.0) as u32;
     let ms = args.get(6).map(|v| v.to_number()).unwrap_or(0.0) as u32;
 
-    // Handle 2-digit years (0-99 map to 1900-1999)
-    let year = if (0..100).contains(&year) {
-        year + 1900
-    } else {
-        year
-    };
-
-    let timestamp = Utc
-        .with_ymd_and_hms(year, month + 1, day, hours, minutes, seconds)
-        .single()
-        .map(|dt| dt.timestamp_millis() as f64 + ms as f64)
-        .unwrap_or(f64::NAN);
-
+    let timestamp = make_date_from_components(year, month, day, hours, minutes, seconds, ms);
     Ok(JsValue::Number(timestamp))
 }
 
@@ -352,9 +475,7 @@ pub fn date_parse(
         .unwrap_or(JsValue::Undefined)
         .to_js_string()
         .to_string();
-    let timestamp = chrono::DateTime::parse_from_rfc3339(&s)
-        .map(|dt| dt.timestamp_millis() as f64)
-        .unwrap_or(f64::NAN);
+    let timestamp = parse_date_string(&s);
     Ok(JsValue::Number(timestamp))
 }
 
