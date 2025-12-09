@@ -371,14 +371,14 @@ impl Interpreter {
             if state.state == GeneratorStatus::Completed {
                 return Ok(create_generator_result(JsValue::Undefined, true));
             }
-            // Clone AST and environment to release borrow before execution
+            // Clone Rc refs and values to release borrow before execution
             (
-                state.body.clone(),           // AST clone - needed to release borrow
+                state.body.cheap_clone(),     // Rc clone - cheap
                 state.closure.cheap_clone(),  // Rc clone - cheap
                 state.stmt_index,
                 state.sent_value.clone(), // JsValue clone - may contain Rc types
                 state.state.clone(),      // enum Copy
-                state.params.clone(),     // AST clone - needed for parameter binding
+                state.params.cheap_clone(), // Rc clone - cheap
                 state.args.clone(),       // Vec<JsValue> clone - needed for parameter values
             )
         };
@@ -450,13 +450,13 @@ impl Interpreter {
             if state.state == GeneratorStatus::Completed {
                 return Err(JsError::type_error("Generator is already completed"));
             }
-            // Clone AST and environment to release borrow before execution
+            // Clone Rc refs and values to release borrow before execution
             (
-                state.body.clone(),           // AST clone - needed to release borrow
+                state.body.cheap_clone(),     // Rc clone - cheap
                 state.closure.cheap_clone(),  // Rc clone - cheap
                 state.stmt_index,
                 state.sent_value.clone(), // JsValue clone - may contain Rc types
-                state.params.clone(),     // AST clone - needed for parameter binding
+                state.params.cheap_clone(), // Rc clone - cheap
                 state.args.clone(),       // Vec<JsValue> clone - needed for parameter values
             )
         };
@@ -1272,8 +1272,8 @@ impl Interpreter {
     fn execute_function_declaration(&mut self, decl: &FunctionDeclaration) -> Result<(), JsError> {
         let func = InterpretedFunction {
             name: decl.id.as_ref().map(|id| id.name.clone()),
-            params: decl.params.clone(), // AST clone - needed for function params
-            body: FunctionBody::Block(decl.body.clone()), // AST clone - needed for function body
+            params: Rc::from(decl.params.as_slice()), // Rc wrap for cheap cloning
+            body: Rc::new(FunctionBody::Block(decl.body.clone())), // Rc wrap for cheap cloning
             closure: self.env.cheap_clone(),
             source_location: decl.span,
             generator: decl.generator,
@@ -1405,8 +1405,8 @@ impl Interpreter {
             let func = &method.value;
             let interpreted = InterpretedFunction {
                 name: Some(method_name.clone()),
-                params: func.params.clone(), // AST clone - needed for function params
-                body: FunctionBody::Block(func.body.clone()), // AST clone - needed for function body
+                params: Rc::from(func.params.as_slice()), // Rc wrap for cheap cloning
+                body: Rc::new(FunctionBody::Block(func.body.clone())), // Rc wrap for cheap cloning
                 closure: self.env.cheap_clone(),
                 source_location: func.span,
                 generator: func.generator,
@@ -1487,8 +1487,8 @@ impl Interpreter {
         // Store field initializers in a special property so evaluate_new can access them
         let constructor_fn = create_function(JsFunction::Interpreted(InterpretedFunction {
             name: class.id.as_ref().map(|id| id.name.clone()),
-            params: ctor_params, // AST clone - already consumed above
-            body: FunctionBody::Block(ctor_body), // AST clone - already consumed above
+            params: Rc::from(ctor_params), // Rc wrap for cheap cloning
+            body: Rc::new(FunctionBody::Block(ctor_body)), // Rc wrap for cheap cloning
             closure: self.env.cheap_clone(),
             source_location: class.span,
             generator: false, // Constructors cannot be generators
@@ -1567,8 +1567,8 @@ impl Interpreter {
             let func = &method.value;
             let interpreted = InterpretedFunction {
                 name: Some(method_name.clone()),
-                params: func.params.clone(), // AST clone - needed for function params
-                body: FunctionBody::Block(func.body.clone()), // AST clone - needed for function body
+                params: Rc::from(func.params.as_slice()), // Rc wrap for cheap cloning
+                body: Rc::new(FunctionBody::Block(func.body.clone())), // Rc wrap for cheap cloning
                 closure: self.env.cheap_clone(),
                 source_location: func.span,
                 generator: func.generator,
@@ -2602,8 +2602,8 @@ impl Interpreter {
             Expression::Function(func) => {
                 let interpreted = InterpretedFunction {
                     name: func.id.as_ref().map(|id| id.name.clone()),
-                    params: func.params.clone(), // AST clone - needed for function params
-                    body: FunctionBody::Block(func.body.clone()), // AST clone - needed for function body
+                    params: Rc::from(func.params.as_slice()), // Rc wrap for cheap cloning
+                    body: Rc::new(FunctionBody::Block(func.body.clone())), // Rc wrap for cheap cloning
                     closure: self.env.cheap_clone(),
                     source_location: func.span,
                     generator: func.generator,
@@ -2617,8 +2617,8 @@ impl Interpreter {
             Expression::ArrowFunction(arrow) => {
                 let interpreted = InterpretedFunction {
                     name: None,
-                    params: arrow.params.clone(), // AST clone - needed for function params
-                    body: arrow.body.clone().into(), // AST clone - needed for function body
+                    params: Rc::from(arrow.params.as_slice()), // Rc wrap for cheap cloning
+                    body: Rc::new(arrow.body.clone().into()), // Rc wrap for cheap cloning
                     closure: self.env.cheap_clone(),
                     source_location: arrow.span,
                     generator: false, // Arrow functions cannot be generators
@@ -3602,7 +3602,7 @@ impl Interpreter {
         );
 
         // Hoist var declarations
-        if let FunctionBody::Block(block) = &interpreted.body {
+        if let FunctionBody::Block(block) = interpreted.body.as_ref() {
             self.hoist_var_declarations(&block.body);
         }
 
@@ -3620,7 +3620,7 @@ impl Interpreter {
         }
 
         // Execute body and resolve/reject the promise
-        let execution_result = match &interpreted.body {
+        let execution_result = match interpreted.body.as_ref() {
             FunctionBody::Block(block) => self.execute_block(block),
             FunctionBody::Expression(expr) => self.evaluate(expr).map(Completion::Normal),
         };
@@ -3669,8 +3669,8 @@ impl Interpreter {
             JsFunction::Interpreted(interpreted) => {
                 // If this is a generator function, create a Generator object instead of executing
                 if interpreted.generator {
-                    let body = match &interpreted.body {
-                        FunctionBody::Block(block) => block.clone(),
+                    let body = match interpreted.body.as_ref() {
+                        FunctionBody::Block(block) => Rc::new(block.clone()),
                         FunctionBody::Expression(_) => {
                             return Err(JsError::type_error("Generator must have block body"));
                         }
@@ -3678,7 +3678,7 @@ impl Interpreter {
 
                     let gen_state = GeneratorState {
                         body,
-                        params: interpreted.params.clone(), // AST clone - needed for generator params
+                        params: interpreted.params.cheap_clone(), // Rc clone - cheap
                         args,
                         closure: interpreted.closure.cheap_clone(),
                         state: GeneratorStatus::Suspended,
@@ -3730,7 +3730,7 @@ impl Interpreter {
                 }
 
                 // Hoist var declarations before anything else
-                if let FunctionBody::Block(block) = &interpreted.body {
+                if let FunctionBody::Block(block) = interpreted.body.as_ref() {
                     self.hoist_var_declarations(&block.body);
                 }
 
@@ -3750,7 +3750,7 @@ impl Interpreter {
                 }
 
                 // Execute body
-                let result = match &interpreted.body {
+                let result = match interpreted.body.as_ref() {
                     FunctionBody::Block(block) => match self.execute_block(block)? {
                         Completion::Return(val) => val,
                         Completion::Normal(val) => val,

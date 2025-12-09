@@ -707,10 +707,10 @@ pub struct PromiseHandler {
 /// Generator state for suspended generators
 #[derive(Debug, Clone)]
 pub struct GeneratorState {
-    /// The generator function's body
-    pub body: BlockStatement,
-    /// Parameters of the generator function
-    pub params: Vec<FunctionParam>,
+    /// The generator function's body (Rc for cheap cloning)
+    pub body: Rc<BlockStatement>,
+    /// Parameters of the generator function (Rc for cheap cloning)
+    pub params: Rc<[FunctionParam]>,
     /// Arguments passed to the generator
     pub args: Vec<JsValue>,
     /// The captured closure environment (Rc for cheap cloning)
@@ -776,8 +776,10 @@ impl JsFunction {
 #[derive(Debug, Clone)]
 pub struct InterpretedFunction {
     pub name: Option<String>,
-    pub params: Vec<FunctionParam>,
-    pub body: FunctionBody,
+    /// Function parameters wrapped in Rc for cheap cloning
+    pub params: Rc<[FunctionParam]>,
+    /// Function body wrapped in Rc for cheap cloning
+    pub body: Rc<FunctionBody>,
     /// The captured closure environment (Rc for cheap cloning)
     pub closure: Rc<Environment>,
     pub source_location: Span,
@@ -786,6 +788,9 @@ pub struct InterpretedFunction {
     /// Whether this is an async function
     pub async_: bool,
 }
+
+// InterpretedFunction with Rc-wrapped params and body is cheap to clone
+impl CheapClone for InterpretedFunction {}
 
 /// Function body (block or expression for arrow functions)
 #[derive(Debug, Clone)]
