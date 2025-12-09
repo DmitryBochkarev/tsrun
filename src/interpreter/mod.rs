@@ -466,7 +466,7 @@ impl Interpreter {
     ///
     /// This method supports suspension at import/await points by returning
     /// RuntimeResult::ImportAwaited or RuntimeResult::AsyncAwaited.
-    pub fn execute_resumable(
+    pub fn execute(
         &mut self,
         program: &Program,
     ) -> Result<crate::RuntimeResult, JsError> {

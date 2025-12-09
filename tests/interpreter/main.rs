@@ -32,7 +32,7 @@ use typescript_eval::{JsError, JsValue, Runtime, RuntimeResult};
 /// Helper function to evaluate TypeScript source code
 pub fn eval(source: &str) -> JsValue {
     let mut runtime = Runtime::new();
-    match runtime.eval_resumable(source).unwrap() {
+    match runtime.eval(source).unwrap() {
         RuntimeResult::Complete(value) => value,
         other => panic!("Expected Complete, got {:?}", other),
     }
@@ -41,7 +41,7 @@ pub fn eval(source: &str) -> JsValue {
 /// Helper function to evaluate and return Result for error testing
 pub fn eval_result(source: &str) -> Result<JsValue, JsError> {
     let mut runtime = Runtime::new();
-    match runtime.eval_resumable(source)? {
+    match runtime.eval(source)? {
         RuntimeResult::Complete(value) => Ok(value),
         other => panic!("Expected Complete, got {:?}", other),
     }

@@ -114,7 +114,7 @@ impl Runtime {
     /// # Example
     /// ```rust,ignore
     /// let mut runtime = Runtime::new();
-    /// let mut result = runtime.eval_resumable(source)?;
+    /// let mut result = runtime.eval(source)?;
     ///
     /// loop {
     ///     match result {
@@ -134,10 +134,10 @@ impl Runtime {
     ///     result = runtime.continue_eval()?;
     /// }
     /// ```
-    pub fn eval_resumable(&mut self, source: &str) -> Result<RuntimeResult, JsError> {
+    pub fn eval(&mut self, source: &str) -> Result<RuntimeResult, JsError> {
         let mut parser = parser::Parser::new(source);
         let program = parser.parse_program()?;
-        self.interpreter.execute_resumable(&program)
+        self.interpreter.execute(&program)
     }
 
     /// Continue execution after filling a pending slot
@@ -153,14 +153,14 @@ impl Runtime {
     /// This is a convenience method for code that doesn't use imports or async.
     /// Returns an error if execution suspends (ImportAwaited/AsyncAwaited).
     pub fn eval_simple(&mut self, source: &str) -> Result<JsValue, JsError> {
-        match self.eval_resumable(source)? {
+        match self.eval(source)? {
             RuntimeResult::Complete(value) => Ok(value),
             RuntimeResult::ImportAwaited { specifier, .. } => Err(JsError::type_error(&format!(
-                "Execution suspended for import '{}' - use eval_resumable() for code with imports",
+                "Execution suspended for import '{}' - use eval() for code with imports",
                 specifier
             ))),
             RuntimeResult::AsyncAwaited { .. } => Err(JsError::type_error(
-                "Execution suspended for async - use eval_resumable() for async code",
+                "Execution suspended for async - use eval() for async code",
             )),
         }
     }

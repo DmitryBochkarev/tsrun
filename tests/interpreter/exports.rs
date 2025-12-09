@@ -3,9 +3,9 @@
 use typescript_eval::value::PropertyKey;
 use typescript_eval::{JsValue, Runtime, RuntimeResult};
 
-/// Helper to run eval_resumable and expect Complete
+/// Helper to run eval and expect Complete
 fn run_eval(runtime: &mut Runtime, source: &str) {
-    match runtime.eval_resumable(source).unwrap() {
+    match runtime.eval(source).unwrap() {
         RuntimeResult::Complete(_) => {}
         other => panic!("Expected Complete, got {:?}", other),
     }

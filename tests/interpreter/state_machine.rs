@@ -6,7 +6,7 @@ use typescript_eval::{JsValue, PendingSlot, Runtime, RuntimeResult};
 fn test_runtime_result_complete_simple() {
     // Simple expressions should return Complete immediately
     let mut runtime = Runtime::new();
-    let result = runtime.eval_resumable("1 + 2").unwrap();
+    let result = runtime.eval("1 + 2").unwrap();
 
     match result {
         RuntimeResult::Complete(value) => {
@@ -20,7 +20,7 @@ fn test_runtime_result_complete_simple() {
 fn test_runtime_result_complete_with_variables() {
     let mut runtime = Runtime::new();
     let result = runtime
-        .eval_resumable(
+        .eval(
             r#"
         const x: number = 10;
         const y: number = 20;
@@ -41,7 +41,7 @@ fn test_runtime_result_complete_with_variables() {
 fn test_runtime_result_complete_with_function() {
     let mut runtime = Runtime::new();
     let result = runtime
-        .eval_resumable(
+        .eval(
             r#"
         function add(a: number, b: number): number {
             return a + b;
@@ -68,7 +68,7 @@ fn test_import_awaited_simple() {
     // An import statement should suspend and return ImportAwaited
     let mut runtime = Runtime::new();
     let result = runtime
-        .eval_resumable(
+        .eval(
             r#"
         import { foo } from './module';
         foo
@@ -103,7 +103,7 @@ fn test_import_awaited_multiple() {
     // Multiple imports should be processed in order
     let mut runtime = Runtime::new();
     let result = runtime
-        .eval_resumable(
+        .eval(
             r#"
         import { a } from './mod_a';
         import { b } from './mod_b';
@@ -148,7 +148,7 @@ fn test_import_error_propagation() {
     // If host sets error on slot, it should throw at import point
     let mut runtime = Runtime::new();
     let result = runtime
-        .eval_resumable(
+        .eval(
             r#"
         import { foo } from './nonexistent';
         foo
