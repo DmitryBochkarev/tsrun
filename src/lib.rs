@@ -20,6 +20,7 @@ pub mod value;
 pub use error::JsError;
 pub use interpreter::Interpreter;
 pub use value::CheapClone;
+pub use value::JsString;
 pub use value::JsValue;
 
 use std::cell::RefCell;
@@ -215,7 +216,7 @@ impl Runtime {
     }
 
     /// Get a reference to all exported values
-    pub fn get_exports(&self) -> &std::collections::HashMap<String, JsValue> {
+    pub fn get_exports(&self) -> &std::collections::HashMap<JsString, JsValue> {
         &self.interpreter.exports
     }
 

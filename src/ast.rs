@@ -1,6 +1,7 @@
 //! Abstract Syntax Tree types for TypeScript
 
 use crate::lexer::Span;
+use crate::value::JsString;
 
 /// A complete program (script or module)
 #[derive(Debug, Clone)]
@@ -494,20 +495,20 @@ pub enum LiteralValue {
     Undefined,
     Boolean(bool),
     Number(f64),
-    String(String),
+    String(JsString),
     BigInt(String), // Store as string to preserve arbitrary precision
     RegExp { pattern: String, flags: String },
 }
 
 #[derive(Debug, Clone)]
 pub struct StringLiteral {
-    pub value: String,
+    pub value: JsString,
     pub span: Span,
 }
 
 #[derive(Debug, Clone)]
 pub struct Identifier {
-    pub name: String,
+    pub name: JsString,
     pub span: Span,
 }
 
@@ -612,7 +613,7 @@ pub struct TemplateLiteral {
 
 #[derive(Debug, Clone)]
 pub struct TemplateElement {
-    pub value: String,
+    pub value: JsString,
     pub tail: bool,
     pub span: Span,
 }

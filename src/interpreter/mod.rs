@@ -34,8 +34,8 @@ use std::rc::Rc;
 pub enum Completion {
     Normal(JsValue),
     Return(JsValue),
-    Break(Option<String>),
-    Continue(Option<String>),
+    Break(Option<JsString>),
+    Continue(Option<JsString>),
 }
 
 /// A stack frame for tracking call stack
@@ -112,7 +112,7 @@ pub struct Interpreter {
     /// Stores thrown value during exception propagation
     thrown_value: Option<JsValue>,
     /// Exported values from the module
-    pub exports: std::collections::HashMap<String, JsValue>,
+    pub exports: std::collections::HashMap<JsString, JsValue>,
     /// Call stack for stack traces
     pub call_stack: Vec<StackFrame>,
     /// Generator execution context (Some when executing inside a generator)
@@ -637,7 +637,7 @@ impl Interpreter {
                             eval_stack::ImportBindings::Default(local)
                         } else {
                             // Has both default and named - treat as named with "default" key
-                            named.insert(0, ("default".to_string(), local));
+                            named.insert(0, (JsString::from("default"), local));
                             eval_stack::ImportBindings::Named(named)
                         }
                     } else {
@@ -646,7 +646,7 @@ impl Interpreter {
                 };
 
                 self.static_imports.push(StaticImport {
-                    specifier,
+                    specifier: specifier.to_string(),
                     bindings,
                 });
             }
@@ -1385,21 +1385,21 @@ impl Interpreter {
         // Collect getters, setters, and regular methods separately
         // We need to combine getters and setters with the same name into one accessor property
         let mut accessors: std::collections::HashMap<
-            String,
+            JsString,
             (Option<JsObjectRef>, Option<JsObjectRef>),
         > = std::collections::HashMap::new();
-        let mut regular_methods: Vec<(String, JsObjectRef)> = Vec::new();
+        let mut regular_methods: Vec<(JsString, JsObjectRef)> = Vec::new();
 
         for method in &instance_methods {
-            let method_name = match &method.key {
+            let method_name: JsString = match &method.key {
                 ObjectPropertyKey::Identifier(id) => id.name.clone(),
                 ObjectPropertyKey::String(s) => s.value.clone(),
                 ObjectPropertyKey::Number(lit) => match &lit.value {
-                    LiteralValue::Number(n) => n.to_string(),
+                    LiteralValue::Number(n) => JsString::from(n.to_string()),
                     _ => continue,
                 },
                 ObjectPropertyKey::Computed(_) => continue, // Skip computed for now
-                ObjectPropertyKey::PrivateIdentifier(id) => format!("#{}", id.name),
+                ObjectPropertyKey::PrivateIdentifier(id) => JsString::from(format!("#{}", id.name)),
             };
 
             let func = &method.value;
@@ -1454,13 +1454,15 @@ impl Interpreter {
 
         // Build constructor body that initializes instance fields then runs user constructor
         // We store instance fields info in the constructor function
-        let field_initializers: Vec<(String, Option<Expression>)> = instance_fields
+        let field_initializers: Vec<(JsString, Option<Expression>)> = instance_fields
             .iter()
             .filter_map(|prop| {
-                let name = match &prop.key {
+                let name: JsString = match &prop.key {
                     ObjectPropertyKey::Identifier(id) => id.name.clone(),
                     ObjectPropertyKey::String(s) => s.value.clone(),
-                    ObjectPropertyKey::PrivateIdentifier(id) => format!("#{}", id.name),
+                    ObjectPropertyKey::PrivateIdentifier(id) => {
+                        JsString::from(format!("#{}", id.name))
+                    }
                     _ => return None,
                 };
                 Some((name, prop.value.clone()))
@@ -1513,7 +1515,7 @@ impl Interpreter {
         // For now, let's store the field expressions in a special way
         if !field_initializers.is_empty() {
             // First, evaluate all field values
-            let mut field_values: Vec<(String, JsValue)> = Vec::new();
+            let mut field_values: Vec<(JsString, JsValue)> = Vec::new();
             for (name, value_expr) in field_initializers {
                 let value = if let Some(expr) = value_expr {
                     self.evaluate(&expr).unwrap_or(JsValue::Undefined)
@@ -1526,7 +1528,7 @@ impl Interpreter {
             // Then create the fields array
             let mut field_pairs: Vec<JsValue> = Vec::new();
             for (name, value) in field_values {
-                let pair = self.create_array(vec![JsValue::String(JsString::from(name)), value]);
+                let pair = self.create_array(vec![JsValue::String(name), value]);
                 field_pairs.push(JsValue::Object(pair));
             }
 
@@ -1547,21 +1549,21 @@ impl Interpreter {
 
         // Collect static getters, setters, and regular methods separately
         let mut static_accessors: std::collections::HashMap<
-            String,
+            JsString,
             (Option<JsObjectRef>, Option<JsObjectRef>),
         > = std::collections::HashMap::new();
-        let mut static_regular_methods: Vec<(String, JsObjectRef)> = Vec::new();
+        let mut static_regular_methods: Vec<(JsString, JsObjectRef)> = Vec::new();
 
         for method in &static_methods {
-            let method_name = match &method.key {
+            let method_name: JsString = match &method.key {
                 ObjectPropertyKey::Identifier(id) => id.name.clone(),
                 ObjectPropertyKey::String(s) => s.value.clone(),
                 ObjectPropertyKey::Number(lit) => match &lit.value {
-                    LiteralValue::Number(n) => n.to_string(),
+                    LiteralValue::Number(n) => JsString::from(n.to_string()),
                     _ => continue,
                 },
                 ObjectPropertyKey::Computed(_) => continue,
-                ObjectPropertyKey::PrivateIdentifier(id) => format!("#{}", id.name),
+                ObjectPropertyKey::PrivateIdentifier(id) => JsString::from(format!("#{}", id.name)),
             };
 
             let func = &method.value;
@@ -1659,7 +1661,7 @@ impl Interpreter {
             if let JsValue::Number(n) = &value {
                 obj.borrow_mut().set_property(
                     PropertyKey::from(n.to_string()),
-                    JsValue::String(JsString::from(member.id.name.clone())),
+                    JsValue::String(member.id.name.clone()),
                 );
             }
         }
@@ -1808,8 +1810,9 @@ impl Interpreter {
                     for declarator in &var_decl.declarations {
                         let names = self.get_pattern_names(&declarator.id);
                         for name in names {
-                            if let Ok(value) = self.env.get(&name) {
-                                self.exports.insert(name, value);
+                            let js_name: JsString = name.into();
+                            if let Ok(value) = self.env.get(&js_name) {
+                                self.exports.insert(js_name, value);
                             }
                         }
                     }
@@ -1857,7 +1860,7 @@ impl Interpreter {
                         self.execute_function_declaration(func_decl)?;
                         if let Some(id) = &func_decl.id {
                             if let Ok(value) = self.env.get(&id.name) {
-                                self.exports.insert("default".to_string(), value);
+                                self.exports.insert(JsString::from("default"), value);
                             }
                         }
                     }
@@ -1866,14 +1869,14 @@ impl Interpreter {
                         self.execute_class_declaration(class_decl)?;
                         if let Some(id) = &class_decl.id {
                             if let Ok(value) = self.env.get(&id.name) {
-                                self.exports.insert("default".to_string(), value);
+                                self.exports.insert(JsString::from("default"), value);
                             }
                         }
                     }
                     // export default expression (handled via Expression statement)
                     Statement::Expression(expr_stmt) => {
                         let value = self.evaluate(&expr_stmt.expression)?;
-                        self.exports.insert("default".to_string(), value);
+                        self.exports.insert(JsString::from("default"), value);
                     }
                     _ => {
                         // Other default exports not yet supported
@@ -1917,7 +1920,7 @@ impl Interpreter {
     fn execute_for_labeled(
         &mut self,
         for_stmt: &ForStatement,
-        label: Option<&str>,
+        label: Option<&JsString>,
     ) -> Result<Completion, JsError> {
         let prev_env = self.env.cheap_clone();
         self.env = Rc::new(Environment::child(&self.env));
@@ -1965,8 +1968,9 @@ impl Interpreter {
                 let iter_env = Environment::with_outer(loop_env.cheap_clone());
                 // Copy current values into the per-iteration scope
                 for name in &let_var_names {
-                    if let Ok(val) = self.env.get(name) {
-                        iter_env.define(name.clone(), val, true);
+                    let js_name: JsString = name.clone().into();
+                    if let Ok(val) = self.env.get(&js_name) {
+                        iter_env.define(js_name, val, true);
                     }
                 }
                 self.env = Rc::new(iter_env);
@@ -1978,7 +1982,7 @@ impl Interpreter {
                     self.env = loop_env.cheap_clone();
                     break;
                 }
-                Completion::Break(Some(ref l)) if label == Some(l.as_str()) => {
+                Completion::Break(Some(ref l)) if label == Some(l) => {
                     self.env = prev_env;
                     return Ok(Completion::Normal(JsValue::Undefined));
                 }
@@ -1987,7 +1991,7 @@ impl Interpreter {
                     return Ok(Completion::Break(lbl));
                 }
                 Completion::Continue(None) => {}
-                Completion::Continue(Some(ref l)) if label == Some(l.as_str()) => {
+                Completion::Continue(Some(ref l)) if label == Some(l) => {
                     // Continue with matching label - continue this loop
                 }
                 Completion::Continue(lbl) => {
@@ -2005,8 +2009,9 @@ impl Interpreter {
             if is_let_loop && !let_var_names.is_empty() {
                 // Copy updated values back to loop env before update
                 for name in &let_var_names {
-                    if let Ok(val) = self.env.get(name) {
-                        let _ = loop_env.set(name, val);
+                    let js_name: JsString = name.clone().into();
+                    if let Ok(val) = self.env.get(&js_name) {
+                        let _ = loop_env.set(&js_name, val);
                     }
                 }
                 self.env = loop_env.clone();
@@ -2025,7 +2030,7 @@ impl Interpreter {
     #[allow(clippy::only_used_in_recursion)]
     fn collect_pattern_names(&self, pattern: &Pattern, names: &mut Vec<String>) {
         match pattern {
-            Pattern::Identifier(id) => names.push(id.name.clone()),
+            Pattern::Identifier(id) => names.push(id.name.to_string()),
             Pattern::Object(obj) => {
                 for prop in &obj.properties {
                     match prop {
@@ -2059,7 +2064,7 @@ impl Interpreter {
     fn execute_for_in_labeled(
         &mut self,
         for_in: &ForInStatement,
-        label: Option<&str>,
+        label: Option<&JsString>,
     ) -> Result<Completion, JsError> {
         let right = self.evaluate(&for_in.right)?;
 
@@ -2095,7 +2100,7 @@ impl Interpreter {
 
             match self.execute_statement(&for_in.body)? {
                 Completion::Break(None) => break,
-                Completion::Break(Some(ref l)) if label == Some(l.as_str()) => {
+                Completion::Break(Some(ref l)) if label == Some(l) => {
                     self.env = prev_env;
                     return Ok(Completion::Normal(JsValue::Undefined));
                 }
@@ -2104,7 +2109,7 @@ impl Interpreter {
                     return Ok(Completion::Break(lbl));
                 }
                 Completion::Continue(None) => continue,
-                Completion::Continue(Some(ref l)) if label == Some(l.as_str()) => {
+                Completion::Continue(Some(ref l)) if label == Some(l) => {
                     // Continue with matching label - continue this loop
                     continue;
                 }
@@ -2131,7 +2136,7 @@ impl Interpreter {
     fn execute_for_of_labeled(
         &mut self,
         for_of: &ForOfStatement,
-        label: Option<&str>,
+        label: Option<&JsString>,
     ) -> Result<Completion, JsError> {
         let right = self.evaluate(&for_of.right)?;
 
@@ -2180,7 +2185,7 @@ impl Interpreter {
 
             match self.execute_statement(&for_of.body)? {
                 Completion::Break(None) => break,
-                Completion::Break(Some(ref l)) if label == Some(l.as_str()) => {
+                Completion::Break(Some(ref l)) if label == Some(l) => {
                     self.env = prev_env;
                     return Ok(Completion::Normal(JsValue::Undefined));
                 }
@@ -2189,7 +2194,7 @@ impl Interpreter {
                     return Ok(Completion::Break(lbl));
                 }
                 Completion::Continue(None) => continue,
-                Completion::Continue(Some(ref l)) if label == Some(l.as_str()) => {
+                Completion::Continue(Some(ref l)) if label == Some(l) => {
                     // Continue with matching label - continue this loop
                     continue;
                 }
@@ -2212,7 +2217,7 @@ impl Interpreter {
     fn execute_while_labeled(
         &mut self,
         while_stmt: &WhileStatement,
-        label: Option<&str>,
+        label: Option<&JsString>,
     ) -> Result<Completion, JsError> {
         loop {
             let test = self.evaluate(&while_stmt.test)?;
@@ -2222,12 +2227,12 @@ impl Interpreter {
 
             match self.execute_statement(&while_stmt.body)? {
                 Completion::Break(None) => break,
-                Completion::Break(Some(ref l)) if label == Some(l.as_str()) => {
+                Completion::Break(Some(ref l)) if label == Some(l) => {
                     return Ok(Completion::Normal(JsValue::Undefined));
                 }
                 Completion::Break(lbl) => return Ok(Completion::Break(lbl)),
                 Completion::Continue(None) => continue,
-                Completion::Continue(Some(ref l)) if label == Some(l.as_str()) => {
+                Completion::Continue(Some(ref l)) if label == Some(l) => {
                     // Continue with matching label - continue this loop
                     continue;
                 }
@@ -2242,17 +2247,17 @@ impl Interpreter {
     fn execute_do_while_labeled(
         &mut self,
         do_while: &DoWhileStatement,
-        label: Option<&str>,
+        label: Option<&JsString>,
     ) -> Result<Completion, JsError> {
         loop {
             match self.execute_statement(&do_while.body)? {
                 Completion::Break(None) => break,
-                Completion::Break(Some(ref l)) if label == Some(l.as_str()) => {
+                Completion::Break(Some(ref l)) if label == Some(l) => {
                     return Ok(Completion::Normal(JsValue::Undefined));
                 }
                 Completion::Break(lbl) => return Ok(Completion::Break(lbl)),
                 Completion::Continue(None) => {}
-                Completion::Continue(Some(ref l)) if label == Some(l.as_str()) => {
+                Completion::Continue(Some(ref l)) if label == Some(l) => {
                     // Continue with matching label - skip to test
                 }
                 Completion::Continue(lbl) => return Ok(Completion::Continue(lbl)),
@@ -2294,18 +2299,18 @@ impl Interpreter {
                             value: pattern,
                             ..
                         } => {
-                            let key_str = match key {
-                                ObjectPropertyKey::Identifier(id) => id.name.clone(),
-                                ObjectPropertyKey::String(s) => s.value.clone(),
+                            let key_str: JsString = match key {
+                                ObjectPropertyKey::Identifier(id) => id.name.cheap_clone(),
+                                ObjectPropertyKey::String(s) => s.value.cheap_clone(),
                                 ObjectPropertyKey::Number(l) => {
                                     if let LiteralValue::Number(n) = &l.value {
-                                        n.to_string()
+                                        n.to_string().into()
                                     } else {
                                         continue;
                                     }
                                 }
                                 ObjectPropertyKey::Computed(_) => continue,
-                                ObjectPropertyKey::PrivateIdentifier(id) => format!("#{}", id.name),
+                                ObjectPropertyKey::PrivateIdentifier(id) => format!("#{}", id.name).into(),
                             };
 
                             let prop_value = obj
@@ -2414,18 +2419,18 @@ impl Interpreter {
                             value: pattern,
                             ..
                         } => {
-                            let key_str = match key {
-                                ObjectPropertyKey::Identifier(id) => id.name.clone(),
-                                ObjectPropertyKey::String(s) => s.value.clone(),
+                            let key_str: JsString = match key {
+                                ObjectPropertyKey::Identifier(id) => id.name.cheap_clone(),
+                                ObjectPropertyKey::String(s) => s.value.cheap_clone(),
                                 ObjectPropertyKey::Number(l) => {
                                     if let LiteralValue::Number(n) = &l.value {
-                                        n.to_string()
+                                        n.to_string().into()
                                     } else {
                                         continue;
                                     }
                                 }
                                 ObjectPropertyKey::Computed(_) => continue,
-                                ObjectPropertyKey::PrivateIdentifier(id) => format!("#{}", id.name),
+                                ObjectPropertyKey::PrivateIdentifier(id) => format!("#{}", id.name).into(),
                             };
 
                             let prop_value = obj
@@ -2511,7 +2516,7 @@ impl Interpreter {
 
             Expression::This(_) => {
                 // Look up 'this' from the environment
-                Ok(self.env.get("this").unwrap_or(JsValue::Undefined))
+                Ok(self.env.get(&JsString::from("this")).unwrap_or(JsValue::Undefined))
             }
 
             Expression::Array(arr) => {
@@ -2650,7 +2655,7 @@ impl Interpreter {
             Expression::Template(template) => {
                 let mut result = String::new();
                 for (i, quasi) in template.quasis.iter().enumerate() {
-                    result.push_str(&quasi.value);
+                    result.push_str(quasi.value.as_ref());
                     if let Some(expr) = template.expressions.get(i) {
                         let val = self.evaluate(expr)?;
                         result.push_str(val.to_js_string().as_ref());
@@ -2668,7 +2673,7 @@ impl Interpreter {
                     .quasi
                     .quasis
                     .iter()
-                    .map(|q| JsValue::String(JsString::from(q.value.clone())))
+                    .map(|q| JsValue::String(q.value.clone()))
                     .collect();
                 let strings_array = JsValue::Object(self.create_array(strings));
 
@@ -2679,7 +2684,7 @@ impl Interpreter {
                         .quasi
                         .quasis
                         .iter()
-                        .map(|q| JsValue::String(JsString::from(q.value.clone())))
+                        .map(|q| JsValue::String(q.value.clone()))
                         .collect();
                     let raw_array = JsValue::Object(self.create_array(raw));
                     arr.borrow_mut()
@@ -2871,7 +2876,7 @@ impl Interpreter {
                 // Return __super__ from environment so it can be called or have properties accessed
                 // super() calls the parent constructor with current this
                 // super.method() accesses parent prototype method
-                self.env.get("__super__").map_err(|_| {
+                self.env.get(&JsString::from("__super__")).map_err(|_| {
                     JsError::reference_error("'super' keyword is not available in this context")
                 })
             }
@@ -2905,7 +2910,7 @@ impl Interpreter {
             LiteralValue::Undefined => JsValue::Undefined,
             LiteralValue::Boolean(b) => JsValue::Boolean(*b),
             LiteralValue::Number(n) => JsValue::Number(*n),
-            LiteralValue::String(s) => JsValue::String(JsString::from(s.clone())),
+            LiteralValue::String(s) => JsValue::String(s.clone()),
             LiteralValue::BigInt(s) => {
                 // TODO: Implement proper BigInt type
                 // For now, convert to Number (loses precision for large values)
@@ -3409,11 +3414,11 @@ impl Interpreter {
         // For super.method() calls, also use the current this value
         let this_value = if let Expression::Super(_) = call.callee.as_ref() {
             // super() - call parent constructor with current this
-            self.env.get("this").unwrap_or(JsValue::Undefined)
+            self.env.get(&JsString::from("this")).unwrap_or(JsValue::Undefined)
         } else if let Expression::Member(member) = call.callee.as_ref() {
             if let Expression::Super(_) = member.object.as_ref() {
                 // super.method() - call with current this
-                self.env.get("this").unwrap_or(JsValue::Undefined)
+                self.env.get(&JsString::from("this")).unwrap_or(JsValue::Undefined)
             } else {
                 self.evaluate(&member.object)?
             }
@@ -3425,7 +3430,7 @@ impl Interpreter {
         let callee = if let Expression::Member(member) = call.callee.as_ref() {
             if let Expression::Super(_) = member.object.as_ref() {
                 // Get super constructor
-                let super_ctor = self.env.get("__super__").map_err(|_| {
+                let super_ctor = self.env.get(&JsString::from("__super__")).map_err(|_| {
                     JsError::reference_error("'super' keyword is not available in this context")
                 })?;
                 // Get super prototype
@@ -3578,7 +3583,8 @@ impl Interpreter {
         // Push stack frame
         let func_name = interpreted
             .name
-            .clone()
+            .as_ref()
+            .map(|s| s.to_string())
             .unwrap_or_else(|| "<anonymous>".to_string());
         let span = interpreted.source_location;
         let location = Some((span.line, span.column));
@@ -3699,7 +3705,8 @@ impl Interpreter {
                 // Push stack frame
                 let func_name = interpreted
                     .name
-                    .clone()
+                    .as_ref()
+                    .map(|s| s.to_string())
                     .unwrap_or_else(|| "<anonymous>".to_string());
                 let span = interpreted.source_location;
                 let location = Some((span.line, span.column));

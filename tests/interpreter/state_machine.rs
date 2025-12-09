@@ -2339,7 +2339,7 @@ fn test_full_module_loading_workflow() {
         let exports = module_runtime.get_exports();
         let mut export_pairs: Vec<(String, JsValue)> = Vec::new();
         for (name, value) in exports {
-            export_pairs.push((name.clone(), value.clone()));
+            export_pairs.push((name.to_string(), value.clone()));
         }
         let module = parent_runtime.create_module_object(export_pairs);
 

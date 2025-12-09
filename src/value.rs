@@ -290,6 +290,24 @@ impl AsRef<str> for JsString {
     }
 }
 
+impl std::borrow::Borrow<str> for JsString {
+    fn borrow(&self) -> &str {
+        &self.0
+    }
+}
+
+impl PartialEq<str> for JsString {
+    fn eq(&self, other: &str) -> bool {
+        self.0.as_ref() == other
+    }
+}
+
+impl PartialEq<&str> for JsString {
+    fn eq(&self, other: &&str) -> bool {
+        self.0.as_ref() == *other
+    }
+}
+
 impl From<&str> for JsString {
     fn from(s: &str) -> Self {
         JsString(s.into())
@@ -558,6 +576,18 @@ impl From<String> for PropertyKey {
     }
 }
 
+impl From<JsString> for PropertyKey {
+    fn from(s: JsString) -> Self {
+        // Check if it's a valid array index
+        if let Ok(idx) = s.parse::<u32>() {
+            if idx.to_string() == s.as_str() {
+                return PropertyKey::Index(idx);
+            }
+        }
+        PropertyKey::String(s)
+    }
+}
+
 impl From<u32> for PropertyKey {
     fn from(idx: u32) -> Self {
         PropertyKey::Index(idx)
@@ -722,7 +752,7 @@ pub struct GeneratorState {
     /// Value passed in via next(value)
     pub sent_value: JsValue,
     /// Function name for debugging
-    pub name: Option<String>,
+    pub name: Option<JsString>,
 }
 
 /// Status of generator execution
@@ -763,7 +793,7 @@ pub struct BoundFunctionData {
 impl JsFunction {
     pub fn name(&self) -> Option<&str> {
         match self {
-            JsFunction::Interpreted(f) => f.name.as_deref(),
+            JsFunction::Interpreted(f) => f.name.as_ref().map(|s| s.as_str()),
             JsFunction::Native(f) => Some(&f.name),
             JsFunction::Bound(_) => Some("bound"),
             JsFunction::PromiseResolve(_) => Some("resolve"),
@@ -775,7 +805,7 @@ impl JsFunction {
 /// User-defined function
 #[derive(Debug, Clone)]
 pub struct InterpretedFunction {
-    pub name: Option<String>,
+    pub name: Option<JsString>,
     /// Function parameters wrapped in Rc for cheap cloning
     pub params: Rc<[FunctionParam]>,
     /// Function body wrapped in Rc for cheap cloning
@@ -832,7 +862,7 @@ impl fmt::Debug for NativeFunction {
 /// Execution environment for variable bindings
 #[derive(Debug, Clone)]
 pub struct Environment {
-    pub bindings: Rc<RefCell<HashMap<String, Binding>>>,
+    pub bindings: Rc<RefCell<HashMap<JsString, Binding>>>,
     pub outer: Option<Rc<Environment>>,
 }
 
@@ -864,9 +894,9 @@ impl Environment {
     }
 
     /// Define a new binding
-    pub fn define(&self, name: String, value: JsValue, mutable: bool) {
+    pub fn define(&self, name: impl Into<JsString>, value: JsValue, mutable: bool) {
         self.bindings.borrow_mut().insert(
-            name,
+            name.into(),
             Binding {
                 value,
                 mutable,
@@ -876,9 +906,9 @@ impl Environment {
     }
 
     /// Define an uninitialized binding (for TDZ - let/const before declaration)
-    pub fn define_uninitialized(&self, name: String, mutable: bool) {
+    pub fn define_uninitialized(&self, name: impl Into<JsString>, mutable: bool) {
         self.bindings.borrow_mut().insert(
-            name,
+            name.into(),
             Binding {
                 value: JsValue::Undefined,
                 mutable,
@@ -888,7 +918,7 @@ impl Environment {
     }
 
     /// Initialize a previously uninitialized binding (for TDZ)
-    pub fn initialize(&self, name: &str, value: JsValue) -> Result<(), JsError> {
+    pub fn initialize(&self, name: &JsString, value: JsValue) -> Result<(), JsError> {
         if let Some(binding) = self.bindings.borrow_mut().get_mut(name) {
             binding.value = value;
             binding.initialized = true;
@@ -899,15 +929,15 @@ impl Environment {
             return outer.initialize(name, value);
         }
 
-        Err(JsError::reference_error(name))
+        Err(JsError::reference_error(name.as_str()))
     }
 
     /// Get a binding value (returns Err for uninitialized TDZ bindings)
-    pub fn get(&self, name: &str) -> Result<JsValue, JsError> {
+    pub fn get(&self, name: &JsString) -> Result<JsValue, JsError> {
         if let Some(binding) = self.bindings.borrow().get(name) {
             if !binding.initialized {
                 return Err(JsError::reference_error_with_message(
-                    name,
+                    name.as_str(),
                     "Cannot access before initialization",
                 ));
             }
@@ -918,15 +948,15 @@ impl Environment {
             return outer.get(name);
         }
 
-        Err(JsError::reference_error(name))
+        Err(JsError::reference_error(name.as_str()))
     }
 
     /// Set a binding value
-    pub fn set(&self, name: &str, value: JsValue) -> Result<(), JsError> {
+    pub fn set(&self, name: &JsString, value: JsValue) -> Result<(), JsError> {
         if let Some(binding) = self.bindings.borrow_mut().get_mut(name) {
             if !binding.initialized {
                 return Err(JsError::reference_error_with_message(
-                    name,
+                    name.as_str(),
                     "Cannot access before initialization",
                 ));
             }
@@ -944,11 +974,11 @@ impl Environment {
             return outer.set(name, value);
         }
 
-        Err(JsError::reference_error(name))
+        Err(JsError::reference_error(name.as_str()))
     }
 
     /// Check if a binding exists
-    pub fn has(&self, name: &str) -> bool {
+    pub fn has(&self, name: &JsString) -> bool {
         if self.bindings.borrow().contains_key(name) {
             return true;
         }
@@ -961,7 +991,7 @@ impl Environment {
     }
 
     /// Check if a binding exists in this exact scope (not outer)
-    pub fn has_own(&self, name: &str) -> bool {
+    pub fn has_own(&self, name: &JsString) -> bool {
         self.bindings.borrow().contains_key(name)
     }
 }

@@ -5,6 +5,7 @@
 use crate::ast::*;
 use crate::error::JsError;
 use crate::lexer::{Lexer, Span, Token, TokenKind};
+use crate::value::JsString;
 
 /// Parser for TypeScript source code
 pub struct Parser<'a> {
@@ -1141,7 +1142,7 @@ impl<'a> Parser<'a> {
         // import "module"
         if let TokenKind::String(s) = &self.current.kind {
             let source = StringLiteral {
-                value: s.clone(),
+                value: s.clone().into(),
                 span: self.current.span,
             };
             self.advance();
@@ -1682,7 +1683,7 @@ impl<'a> Parser<'a> {
                 // Tagged template literal with substitutions: tag`...${...}...`
                 let template_start = self.current.span;
                 self.advance(); // consume TemplateHead
-                let template = self.parse_template_literal(s, template_start)?;
+                let template = self.parse_template_literal(JsString::from(s), template_start)?;
                 if let Expression::Template(quasi) = template {
                     let span = self.span_from(start);
                     expr = Expression::TaggedTemplate(TaggedTemplateExpression {
@@ -1700,7 +1701,7 @@ impl<'a> Parser<'a> {
                     tag: Box::new(expr),
                     quasi: TemplateLiteral {
                         quasis: vec![TemplateElement {
-                            value: s,
+                            value: JsString::from(s),
                             tail: true,
                             span: template_start,
                         }],
@@ -1827,7 +1828,7 @@ impl<'a> Parser<'a> {
                 }))
             }
             TokenKind::String(s) => {
-                let s = s.clone();
+                let s = JsString::from(s.as_str());
                 self.advance();
                 Ok(Expression::Literal(Literal {
                     value: LiteralValue::String(s),
@@ -1914,7 +1915,7 @@ impl<'a> Parser<'a> {
 
             // Template literal
             TokenKind::TemplateNoSub(s) => {
-                let s = s.clone();
+                let s = JsString::from(s.as_str());
                 self.advance();
                 Ok(Expression::Template(TemplateLiteral {
                     quasis: vec![TemplateElement {
@@ -1927,7 +1928,7 @@ impl<'a> Parser<'a> {
                 }))
             }
             TokenKind::TemplateHead(s) => {
-                let s = s.clone();
+                let s = JsString::from(s.as_str());
                 self.advance();
                 self.parse_template_literal(s, start)
             }
@@ -2360,7 +2361,7 @@ impl<'a> Parser<'a> {
 
     fn parse_template_literal(
         &mut self,
-        first: String,
+        first: JsString,
         start: Span,
     ) -> Result<Expression, JsError> {
         let mut quasis = vec![TemplateElement {
@@ -2391,7 +2392,7 @@ impl<'a> Parser<'a> {
             match cont {
                 TokenKind::TemplateTail(s) => {
                     quasis.push(TemplateElement {
-                        value: s,
+                        value: JsString::from(s),
                         tail: true,
                         span: self.current.span,
                     });
@@ -2399,7 +2400,7 @@ impl<'a> Parser<'a> {
                 }
                 TokenKind::TemplateMiddle(s) => {
                     quasis.push(TemplateElement {
-                        value: s,
+                        value: JsString::from(s),
                         tail: false,
                         span: self.current.span,
                     });
@@ -2684,7 +2685,7 @@ impl<'a> Parser<'a> {
 
             // Literal types
             TokenKind::String(s) => {
-                let s = s.clone();
+                let s = JsString::from(s.as_str());
                 self.advance();
                 Ok(TypeAnnotation::Literal(TypeLiteral {
                     value: LiteralValue::String(s),
@@ -2802,7 +2803,7 @@ impl<'a> Parser<'a> {
             let pattern = if is_rest {
                 Pattern::Rest(RestElement {
                     argument: Box::new(Pattern::Identifier(Identifier {
-                        name: name.clone(),
+                        name: name.clone().into(),
                         span: self.span_from(param_start),
                     })),
                     type_annotation: None,
@@ -2810,7 +2811,7 @@ impl<'a> Parser<'a> {
                 })
             } else {
                 Pattern::Identifier(Identifier {
-                    name: name.clone(),
+                    name: name.clone().into(),
                     span: self.span_from(param_start),
                 })
             };
@@ -2985,7 +2986,7 @@ impl<'a> Parser<'a> {
     fn parse_identifier(&mut self) -> Result<Identifier, JsError> {
         match &self.current.kind {
             TokenKind::Identifier(name) => {
-                let name = name.clone();
+                let name = JsString::from(name.as_str());
                 let span = self.current.span;
                 self.advance();
                 Ok(Identifier { name, span })
@@ -3004,7 +3005,7 @@ impl<'a> Parser<'a> {
             | TokenKind::Is
             | TokenKind::Asserts
             | TokenKind::Readonly => {
-                let name = self.keyword_to_string();
+                let name = self.keyword_to_js_string();
                 let span = self.current.span;
                 self.advance();
                 Ok(Identifier { name, span })
@@ -3020,10 +3021,10 @@ impl<'a> Parser<'a> {
                 Ok(ObjectPropertyKey::Identifier(id))
             }
             TokenKind::String(s) => {
-                let s = s.clone();
+                let value = JsString::from(s.as_str());
                 let span = self.current.span;
                 self.advance();
-                Ok(ObjectPropertyKey::String(StringLiteral { value: s, span }))
+                Ok(ObjectPropertyKey::String(StringLiteral { value, span }))
             }
             TokenKind::Number(n) => {
                 let n = *n;
@@ -3036,7 +3037,7 @@ impl<'a> Parser<'a> {
             }
             // Handle keywords as property names
             _ if self.is_keyword() => {
-                let name = self.keyword_to_string();
+                let name = self.keyword_to_js_string();
                 let span = self.current.span;
                 self.advance();
                 Ok(ObjectPropertyKey::Identifier(Identifier { name, span }))
@@ -3048,7 +3049,7 @@ impl<'a> Parser<'a> {
     fn parse_string_literal(&mut self) -> Result<StringLiteral, JsError> {
         match &self.current.kind {
             TokenKind::String(s) => {
-                let value = s.clone();
+                let value = JsString::from(s.as_str());
                 let span = self.current.span;
                 self.advance();
                 Ok(StringLiteral { value, span })
@@ -3153,51 +3154,51 @@ impl<'a> Parser<'a> {
         )
     }
 
-    fn keyword_to_string(&self) -> String {
-        match &self.current.kind {
-            TokenKind::Let => "let".to_string(),
-            TokenKind::Const => "const".to_string(),
-            TokenKind::Var => "var".to_string(),
-            TokenKind::Function => "function".to_string(),
-            TokenKind::Return => "return".to_string(),
-            TokenKind::If => "if".to_string(),
-            TokenKind::Else => "else".to_string(),
-            TokenKind::For => "for".to_string(),
-            TokenKind::While => "while".to_string(),
-            TokenKind::Do => "do".to_string(),
-            TokenKind::Break => "break".to_string(),
-            TokenKind::Continue => "continue".to_string(),
-            TokenKind::Switch => "switch".to_string(),
-            TokenKind::Case => "case".to_string(),
-            TokenKind::Default => "default".to_string(),
-            TokenKind::Try => "try".to_string(),
-            TokenKind::Catch => "catch".to_string(),
-            TokenKind::Finally => "finally".to_string(),
-            TokenKind::Throw => "throw".to_string(),
-            TokenKind::New => "new".to_string(),
-            TokenKind::This => "this".to_string(),
-            TokenKind::Class => "class".to_string(),
-            TokenKind::Extends => "extends".to_string(),
-            TokenKind::Static => "static".to_string(),
-            TokenKind::Import => "import".to_string(),
-            TokenKind::Export => "export".to_string(),
-            TokenKind::From => "from".to_string(),
-            TokenKind::As => "as".to_string(),
-            TokenKind::Type => "type".to_string(),
-            TokenKind::Interface => "interface".to_string(),
-            TokenKind::Enum => "enum".to_string(),
-            TokenKind::Of => "of".to_string(),
-            TokenKind::In => "in".to_string(),
-            TokenKind::Any => "any".to_string(),
-            TokenKind::Unknown => "unknown".to_string(),
-            TokenKind::Never => "never".to_string(),
-            TokenKind::Keyof => "keyof".to_string(),
-            TokenKind::Infer => "infer".to_string(),
-            TokenKind::Is => "is".to_string(),
-            TokenKind::Asserts => "asserts".to_string(),
-            TokenKind::Readonly => "readonly".to_string(),
-            _ => String::new(),
-        }
+    fn keyword_to_js_string(&self) -> JsString {
+        JsString::from(match &self.current.kind {
+            TokenKind::Let => "let",
+            TokenKind::Const => "const",
+            TokenKind::Var => "var",
+            TokenKind::Function => "function",
+            TokenKind::Return => "return",
+            TokenKind::If => "if",
+            TokenKind::Else => "else",
+            TokenKind::For => "for",
+            TokenKind::While => "while",
+            TokenKind::Do => "do",
+            TokenKind::Break => "break",
+            TokenKind::Continue => "continue",
+            TokenKind::Switch => "switch",
+            TokenKind::Case => "case",
+            TokenKind::Default => "default",
+            TokenKind::Try => "try",
+            TokenKind::Catch => "catch",
+            TokenKind::Finally => "finally",
+            TokenKind::Throw => "throw",
+            TokenKind::New => "new",
+            TokenKind::This => "this",
+            TokenKind::Class => "class",
+            TokenKind::Extends => "extends",
+            TokenKind::Static => "static",
+            TokenKind::Import => "import",
+            TokenKind::Export => "export",
+            TokenKind::From => "from",
+            TokenKind::As => "as",
+            TokenKind::Type => "type",
+            TokenKind::Interface => "interface",
+            TokenKind::Enum => "enum",
+            TokenKind::Of => "of",
+            TokenKind::In => "in",
+            TokenKind::Any => "any",
+            TokenKind::Unknown => "unknown",
+            TokenKind::Never => "never",
+            TokenKind::Keyof => "keyof",
+            TokenKind::Infer => "infer",
+            TokenKind::Is => "is",
+            TokenKind::Asserts => "asserts",
+            TokenKind::Readonly => "readonly",
+            _ => "",
+        })
     }
 
     fn peek_is_property_name(&self) -> bool {

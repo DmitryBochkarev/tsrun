@@ -7,7 +7,7 @@ use crate::ast::{
     AssignmentOp, AssignmentTarget, BinaryOp, BlockStatement, Expression, LogicalOp, Pattern,
     Statement, UnaryOp, VariableKind,
 };
-use crate::value::{Environment, JsValue, PropertyKey};
+use crate::value::{Environment, JsString, JsValue, PropertyKey};
 
 /// A frame on the evaluation stack
 ///
@@ -253,11 +253,11 @@ pub enum CompletionValue {
 #[derive(Debug, Clone)]
 pub enum ImportBindings {
     /// import { a, b as c } from "mod"
-    Named(Vec<(String, String)>), // (imported, local)
+    Named(Vec<(JsString, JsString)>), // (imported, local)
     /// import def from "mod"
-    Default(String),
+    Default(JsString),
     /// import * as ns from "mod"
-    Namespace(String),
+    Namespace(JsString),
     /// import "mod" (side-effect only)
     SideEffect,
 }
