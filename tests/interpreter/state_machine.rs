@@ -1,6 +1,6 @@
 // Tests for state machine execution model
 #![allow(unused_imports)]
-use typescript_eval::{JsValue, PendingSlot, Runtime, RuntimeResult};
+use typescript_eval::{JsError, JsValue, PendingSlot, Runtime, RuntimeResult};
 
 #[test]
 fn test_runtime_result_complete_simple() {
@@ -969,6 +969,699 @@ fn test_async_class_with_imports() {
     match result {
         RuntimeResult::Complete(value) => {
             assert_eq!(value, JsValue::Number(5000.0));
+        }
+        _ => panic!("Expected Complete"),
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Nested Import Tests - Simulating module dependencies
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Test scenario: Main imports A, A imports B
+/// The host receives ImportAwaited for each module in order
+#[test]
+fn test_nested_imports_two_levels() {
+    let mut runtime = Runtime::new();
+
+    // Main module imports from moduleA
+    // moduleA itself would import from moduleB (simulated by host)
+    let result = runtime
+        .eval(
+            r#"
+        import { valueFromA } from './moduleA';
+        valueFromA
+    "#,
+        )
+        .unwrap();
+
+    // First: host is asked for moduleA
+    match result {
+        RuntimeResult::ImportAwaited { slot, specifier } => {
+            assert_eq!(specifier, "./moduleA");
+            // Host simulates moduleA which has a value that came from moduleB
+            // In real scenario, host would have already loaded moduleB
+            let module_a = runtime.create_module_object(vec![
+                ("valueFromA".to_string(), JsValue::Number(100.0)),
+            ]);
+            slot.set_success(module_a);
+        }
+        _ => panic!("Expected ImportAwaited for moduleA"),
+    }
+
+    let result = runtime.continue_eval().unwrap();
+    match result {
+        RuntimeResult::Complete(value) => {
+            assert_eq!(value, JsValue::Number(100.0));
+        }
+        _ => panic!("Expected Complete"),
+    }
+}
+
+/// Test scenario: Main imports A and B separately, both from same "package"
+#[test]
+fn test_parallel_imports_same_package() {
+    let mut runtime = Runtime::new();
+
+    let result = runtime
+        .eval(
+            r#"
+        import { utilA } from './utils/a';
+        import { utilB } from './utils/b';
+        utilA + utilB
+    "#,
+        )
+        .unwrap();
+
+    // First import
+    match result {
+        RuntimeResult::ImportAwaited { slot, specifier } => {
+            assert_eq!(specifier, "./utils/a");
+            let module = runtime.create_module_object(vec![
+                ("utilA".to_string(), JsValue::Number(10.0)),
+            ]);
+            slot.set_success(module);
+        }
+        _ => panic!("Expected ImportAwaited for utils/a"),
+    }
+
+    // Second import
+    let result = runtime.continue_eval().unwrap();
+    match result {
+        RuntimeResult::ImportAwaited { slot, specifier } => {
+            assert_eq!(specifier, "./utils/b");
+            let module = runtime.create_module_object(vec![
+                ("utilB".to_string(), JsValue::Number(20.0)),
+            ]);
+            slot.set_success(module);
+        }
+        _ => panic!("Expected ImportAwaited for utils/b"),
+    }
+
+    // Complete
+    let result = runtime.continue_eval().unwrap();
+    match result {
+        RuntimeResult::Complete(value) => {
+            assert_eq!(value, JsValue::Number(30.0));
+        }
+        _ => panic!("Expected Complete"),
+    }
+}
+
+/// Test scenario: Import chain where values are composed
+/// Main imports calculator, calculator uses config values
+#[test]
+fn test_import_chain_with_composition() {
+    let mut runtime = Runtime::new();
+
+    let result = runtime
+        .eval(
+            r#"
+        import { MULTIPLIER } from './config';
+        import { calculate } from './calculator';
+
+        // Use both imports together
+        const baseValue = 5;
+        const result = baseValue * MULTIPLIER;
+        result
+    "#,
+        )
+        .unwrap();
+
+    // First: config
+    match result {
+        RuntimeResult::ImportAwaited { slot, specifier } => {
+            assert_eq!(specifier, "./config");
+            let module = runtime.create_module_object(vec![
+                ("MULTIPLIER".to_string(), JsValue::Number(3.0)),
+            ]);
+            slot.set_success(module);
+        }
+        _ => panic!("Expected ImportAwaited for config"),
+    }
+
+    // Second: calculator
+    let result = runtime.continue_eval().unwrap();
+    match result {
+        RuntimeResult::ImportAwaited { slot, specifier } => {
+            assert_eq!(specifier, "./calculator");
+            // Calculator module - we don't actually use calculate in this test
+            let module = runtime.create_module_object(vec![
+                ("calculate".to_string(), JsValue::Undefined),
+            ]);
+            slot.set_success(module);
+        }
+        _ => panic!("Expected ImportAwaited for calculator"),
+    }
+
+    // Complete
+    let result = runtime.continue_eval().unwrap();
+    match result {
+        RuntimeResult::Complete(value) => {
+            assert_eq!(value, JsValue::Number(15.0)); // 5 * 3
+        }
+        _ => panic!("Expected Complete"),
+    }
+}
+
+/// Test: Multiple imports from the same module specifier
+/// In real ES modules, this would be the same module - host should cache
+#[test]
+fn test_multiple_imports_same_specifier() {
+    let mut runtime = Runtime::new();
+
+    let result = runtime
+        .eval(
+            r#"
+        import { x } from './shared';
+        import { y } from './shared';
+        x + y
+    "#,
+        )
+        .unwrap();
+
+    // First import from ./shared
+    match result {
+        RuntimeResult::ImportAwaited { slot, specifier } => {
+            assert_eq!(specifier, "./shared");
+            let module = runtime.create_module_object(vec![
+                ("x".to_string(), JsValue::Number(1.0)),
+                ("y".to_string(), JsValue::Number(2.0)),
+            ]);
+            slot.set_success(module);
+        }
+        _ => panic!("Expected ImportAwaited for first ./shared"),
+    }
+
+    // Second import from ./shared - runtime requests it again
+    // Host would typically return cached module
+    let result = runtime.continue_eval().unwrap();
+    match result {
+        RuntimeResult::ImportAwaited { slot, specifier } => {
+            assert_eq!(specifier, "./shared");
+            // Host returns same (or cached) module
+            let module = runtime.create_module_object(vec![
+                ("x".to_string(), JsValue::Number(1.0)),
+                ("y".to_string(), JsValue::Number(2.0)),
+            ]);
+            slot.set_success(module);
+        }
+        _ => panic!("Expected ImportAwaited for second ./shared"),
+    }
+
+    let result = runtime.continue_eval().unwrap();
+    match result {
+        RuntimeResult::Complete(value) => {
+            assert_eq!(value, JsValue::Number(3.0));
+        }
+        _ => panic!("Expected Complete"),
+    }
+}
+
+/// Test: Import then re-export pattern simulation
+/// This simulates a barrel file pattern
+#[test]
+fn test_barrel_file_pattern() {
+    let mut runtime = Runtime::new();
+
+    // Simulating: import from index which re-exports from sub-modules
+    let result = runtime
+        .eval(
+            r#"
+        import { feature1, feature2, feature3 } from './features';
+
+        const total = feature1 + feature2 + feature3;
+        total
+    "#,
+        )
+        .unwrap();
+
+    match result {
+        RuntimeResult::ImportAwaited { slot, specifier } => {
+            assert_eq!(specifier, "./features");
+            // Host provides all re-exported features from barrel
+            let module = runtime.create_module_object(vec![
+                ("feature1".to_string(), JsValue::Number(10.0)),
+                ("feature2".to_string(), JsValue::Number(20.0)),
+                ("feature3".to_string(), JsValue::Number(30.0)),
+            ]);
+            slot.set_success(module);
+        }
+        _ => panic!("Expected ImportAwaited"),
+    }
+
+    let result = runtime.continue_eval().unwrap();
+    match result {
+        RuntimeResult::Complete(value) => {
+            assert_eq!(value, JsValue::Number(60.0));
+        }
+        _ => panic!("Expected Complete"),
+    }
+}
+
+/// Test: Deep import path
+#[test]
+fn test_deep_import_path() {
+    let mut runtime = Runtime::new();
+
+    let result = runtime
+        .eval(
+            r#"
+        import { deepValue } from './packages/core/utils/helpers/deep';
+        deepValue * 2
+    "#,
+        )
+        .unwrap();
+
+    match result {
+        RuntimeResult::ImportAwaited { slot, specifier } => {
+            assert_eq!(specifier, "./packages/core/utils/helpers/deep");
+            let module = runtime.create_module_object(vec![
+                ("deepValue".to_string(), JsValue::Number(21.0)),
+            ]);
+            slot.set_success(module);
+        }
+        _ => panic!("Expected ImportAwaited"),
+    }
+
+    let result = runtime.continue_eval().unwrap();
+    match result {
+        RuntimeResult::Complete(value) => {
+            assert_eq!(value, JsValue::Number(42.0));
+        }
+        _ => panic!("Expected Complete"),
+    }
+}
+
+/// Test: Import with relative parent path
+#[test]
+fn test_import_parent_path() {
+    let mut runtime = Runtime::new();
+
+    let result = runtime
+        .eval(
+            r#"
+        import { parentValue } from '../parent/module';
+        import { siblingValue } from '../sibling';
+        parentValue + siblingValue
+    "#,
+        )
+        .unwrap();
+
+    // First import
+    match result {
+        RuntimeResult::ImportAwaited { slot, specifier } => {
+            assert_eq!(specifier, "../parent/module");
+            let module = runtime.create_module_object(vec![
+                ("parentValue".to_string(), JsValue::Number(100.0)),
+            ]);
+            slot.set_success(module);
+        }
+        _ => panic!("Expected ImportAwaited for parent"),
+    }
+
+    // Second import
+    let result = runtime.continue_eval().unwrap();
+    match result {
+        RuntimeResult::ImportAwaited { slot, specifier } => {
+            assert_eq!(specifier, "../sibling");
+            let module = runtime.create_module_object(vec![
+                ("siblingValue".to_string(), JsValue::Number(50.0)),
+            ]);
+            slot.set_success(module);
+        }
+        _ => panic!("Expected ImportAwaited for sibling"),
+    }
+
+    let result = runtime.continue_eval().unwrap();
+    match result {
+        RuntimeResult::Complete(value) => {
+            assert_eq!(value, JsValue::Number(150.0));
+        }
+        _ => panic!("Expected Complete"),
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Import Error Handling Tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Test: Import failure propagates error
+#[test]
+fn test_import_failure_error() {
+    let mut runtime = Runtime::new();
+
+    let result = runtime
+        .eval(
+            r#"
+        import { missing } from './nonexistent';
+        missing
+    "#,
+        )
+        .unwrap();
+
+    match result {
+        RuntimeResult::ImportAwaited { slot, specifier } => {
+            assert_eq!(specifier, "./nonexistent");
+            // Host signals failure
+            slot.set_error(JsError::type_error("Module not found: ./nonexistent"));
+        }
+        _ => panic!("Expected ImportAwaited"),
+    }
+
+    // Continue should result in error
+    let result = runtime.continue_eval();
+    assert!(result.is_err());
+}
+
+/// Test: Partial import success (first succeeds, second fails)
+#[test]
+fn test_partial_import_failure() {
+    let mut runtime = Runtime::new();
+
+    let result = runtime
+        .eval(
+            r#"
+        import { good } from './good-module';
+        import { bad } from './bad-module';
+        good + bad
+    "#,
+        )
+        .unwrap();
+
+    // First import succeeds
+    match result {
+        RuntimeResult::ImportAwaited { slot, specifier } => {
+            assert_eq!(specifier, "./good-module");
+            let module = runtime.create_module_object(vec![
+                ("good".to_string(), JsValue::Number(1.0)),
+            ]);
+            slot.set_success(module);
+        }
+        _ => panic!("Expected ImportAwaited for good-module"),
+    }
+
+    // Second import fails
+    let result = runtime.continue_eval().unwrap();
+    match result {
+        RuntimeResult::ImportAwaited { slot, specifier } => {
+            assert_eq!(specifier, "./bad-module");
+            slot.set_error(JsError::type_error("Module load error"));
+        }
+        _ => panic!("Expected ImportAwaited for bad-module"),
+    }
+
+    // Should error
+    let result = runtime.continue_eval();
+    assert!(result.is_err());
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Mixed Import Styles Tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Test: Default import with named imports from same module
+#[test]
+fn test_default_and_named_imports() {
+    let mut runtime = Runtime::new();
+
+    let result = runtime
+        .eval(
+            r#"
+        import defaultExport, { namedA, namedB } from './mixed-module';
+        defaultExport.value + namedA + namedB
+    "#,
+        )
+        .unwrap();
+
+    match result {
+        RuntimeResult::ImportAwaited { slot, specifier } => {
+            assert_eq!(specifier, "./mixed-module");
+            // Create module with default and named exports
+            let default_obj = runtime.create_module_object(vec![
+                ("value".to_string(), JsValue::Number(100.0)),
+            ]);
+            let module = runtime.create_module_object(vec![
+                ("default".to_string(), default_obj), // default_obj is already JsValue
+                ("namedA".to_string(), JsValue::Number(10.0)),
+                ("namedB".to_string(), JsValue::Number(20.0)),
+            ]);
+            slot.set_success(module);
+        }
+        _ => panic!("Expected ImportAwaited"),
+    }
+
+    let result = runtime.continue_eval().unwrap();
+    match result {
+        RuntimeResult::Complete(value) => {
+            assert_eq!(value, JsValue::Number(130.0)); // 100 + 10 + 20
+        }
+        _ => panic!("Expected Complete"),
+    }
+}
+
+/// Test: Namespace import combined with specific imports
+#[test]
+fn test_namespace_and_named_imports() {
+    let mut runtime = Runtime::new();
+
+    let result = runtime
+        .eval(
+            r#"
+        import * as utils from './utils';
+        import { specific } from './specific';
+        utils.helper + specific
+    "#,
+        )
+        .unwrap();
+
+    // First: namespace import
+    match result {
+        RuntimeResult::ImportAwaited { slot, specifier } => {
+            assert_eq!(specifier, "./utils");
+            let module = runtime.create_module_object(vec![
+                ("helper".to_string(), JsValue::Number(5.0)),
+                ("other".to_string(), JsValue::Number(10.0)),
+            ]);
+            slot.set_success(module);
+        }
+        _ => panic!("Expected ImportAwaited for utils"),
+    }
+
+    // Second: named import
+    let result = runtime.continue_eval().unwrap();
+    match result {
+        RuntimeResult::ImportAwaited { slot, specifier } => {
+            assert_eq!(specifier, "./specific");
+            let module = runtime.create_module_object(vec![
+                ("specific".to_string(), JsValue::Number(7.0)),
+            ]);
+            slot.set_success(module);
+        }
+        _ => panic!("Expected ImportAwaited for specific"),
+    }
+
+    let result = runtime.continue_eval().unwrap();
+    match result {
+        RuntimeResult::Complete(value) => {
+            assert_eq!(value, JsValue::Number(12.0)); // 5 + 7
+        }
+        _ => panic!("Expected Complete"),
+    }
+}
+
+/// Test: Aliased imports
+#[test]
+fn test_aliased_imports() {
+    let mut runtime = Runtime::new();
+
+    let result = runtime
+        .eval(
+            r#"
+        import { originalName as alias } from './module';
+        import { foo as bar, baz as qux } from './other';
+        alias + bar + qux
+    "#,
+        )
+        .unwrap();
+
+    // First module
+    match result {
+        RuntimeResult::ImportAwaited { slot, specifier } => {
+            assert_eq!(specifier, "./module");
+            let module = runtime.create_module_object(vec![
+                ("originalName".to_string(), JsValue::Number(1.0)),
+            ]);
+            slot.set_success(module);
+        }
+        _ => panic!("Expected ImportAwaited for module"),
+    }
+
+    // Second module
+    let result = runtime.continue_eval().unwrap();
+    match result {
+        RuntimeResult::ImportAwaited { slot, specifier } => {
+            assert_eq!(specifier, "./other");
+            let module = runtime.create_module_object(vec![
+                ("foo".to_string(), JsValue::Number(2.0)),
+                ("baz".to_string(), JsValue::Number(3.0)),
+            ]);
+            slot.set_success(module);
+        }
+        _ => panic!("Expected ImportAwaited for other"),
+    }
+
+    let result = runtime.continue_eval().unwrap();
+    match result {
+        RuntimeResult::Complete(value) => {
+            assert_eq!(value, JsValue::Number(6.0)); // 1 + 2 + 3
+        }
+        _ => panic!("Expected Complete"),
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Circular Import Simulation Tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Test: Host can handle circular imports by providing partial modules
+/// Simulates: A imports B, B imports A (circular)
+/// Host's responsibility to handle this - runtime just requests modules
+#[test]
+fn test_circular_import_host_handling() {
+    let mut runtime = Runtime::new();
+
+    // Main imports moduleA which might have circular dependency
+    let result = runtime
+        .eval(
+            r#"
+        import { valueA } from './moduleA';
+        valueA
+    "#,
+        )
+        .unwrap();
+
+    match result {
+        RuntimeResult::ImportAwaited { slot, specifier } => {
+            assert_eq!(specifier, "./moduleA");
+            // Host has resolved the circular dependency and provides moduleA
+            // The circular reference has already been handled by the host
+            let module = runtime.create_module_object(vec![
+                ("valueA".to_string(), JsValue::Number(42.0)),
+            ]);
+            slot.set_success(module);
+        }
+        _ => panic!("Expected ImportAwaited"),
+    }
+
+    let result = runtime.continue_eval().unwrap();
+    match result {
+        RuntimeResult::Complete(value) => {
+            assert_eq!(value, JsValue::Number(42.0));
+        }
+        _ => panic!("Expected Complete"),
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Import with Execution Order Tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Test: Imports are processed before module body executes
+#[test]
+fn test_import_before_execution() {
+    let mut runtime = Runtime::new();
+
+    let result = runtime
+        .eval(
+            r#"
+        // This should work because imports are hoisted
+        const result = importedValue * 2;
+
+        import { importedValue } from './values';
+
+        result
+    "#,
+        )
+        .unwrap();
+
+    match result {
+        RuntimeResult::ImportAwaited { slot, specifier } => {
+            assert_eq!(specifier, "./values");
+            let module = runtime.create_module_object(vec![
+                ("importedValue".to_string(), JsValue::Number(21.0)),
+            ]);
+            slot.set_success(module);
+        }
+        _ => panic!("Expected ImportAwaited"),
+    }
+
+    let result = runtime.continue_eval().unwrap();
+    match result {
+        RuntimeResult::Complete(value) => {
+            assert_eq!(value, JsValue::Number(42.0));
+        }
+        _ => panic!("Expected Complete"),
+    }
+}
+
+/// Test: Side-effect only import (import for side effects)
+#[test]
+fn test_side_effect_import() {
+    let mut runtime = Runtime::new();
+
+    let result = runtime
+        .eval(
+            r#"
+        import './polyfill';
+        import './setup';
+
+        // After side-effect imports, use regular import
+        import { value } from './data';
+        value
+    "#,
+        )
+        .unwrap();
+
+    // First: polyfill (side-effect only)
+    match result {
+        RuntimeResult::ImportAwaited { slot, specifier } => {
+            assert_eq!(specifier, "./polyfill");
+            // Side-effect module - empty exports
+            let module = runtime.create_module_object(vec![]);
+            slot.set_success(module);
+        }
+        _ => panic!("Expected ImportAwaited for polyfill"),
+    }
+
+    // Second: setup (side-effect only)
+    let result = runtime.continue_eval().unwrap();
+    match result {
+        RuntimeResult::ImportAwaited { slot, specifier } => {
+            assert_eq!(specifier, "./setup");
+            let module = runtime.create_module_object(vec![]);
+            slot.set_success(module);
+        }
+        _ => panic!("Expected ImportAwaited for setup"),
+    }
+
+    // Third: data with value
+    let result = runtime.continue_eval().unwrap();
+    match result {
+        RuntimeResult::ImportAwaited { slot, specifier } => {
+            assert_eq!(specifier, "./data");
+            let module = runtime.create_module_object(vec![
+                ("value".to_string(), JsValue::Number(999.0)),
+            ]);
+            slot.set_success(module);
+        }
+        _ => panic!("Expected ImportAwaited for data"),
+    }
+
+    let result = runtime.continue_eval().unwrap();
+    match result {
+        RuntimeResult::Complete(value) => {
+            assert_eq!(value, JsValue::Number(999.0));
         }
         _ => panic!("Expected Complete"),
     }
