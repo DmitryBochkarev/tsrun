@@ -4255,4 +4255,27 @@ mod tests {
         let prog = parse("function foo(): Promise<Result<number>> { return null as any; }");
         assert_eq!(prog.body.len(), 1);
     }
+
+    #[test]
+    fn test_parse_export_generator_function() {
+        // Test export function* syntax
+        let prog = parse("export function* gen(): Generator<number> { yield 1; }");
+        assert_eq!(prog.body.len(), 1);
+
+        // Check it's an export with a generator function
+        if let Statement::Export(export) = &prog.body[0] {
+            if let Some(decl) = &export.declaration {
+                if let Statement::FunctionDeclaration(func) = decl.as_ref() {
+                    assert!(func.generator, "Function should be a generator");
+                    assert_eq!(func.id.as_ref().map(|id| id.name.as_str()), Some("gen"));
+                } else {
+                    panic!("Expected FunctionDeclaration, got {:?}", decl);
+                }
+            } else {
+                panic!("Expected export.declaration to exist");
+            }
+        } else {
+            panic!("Expected Export statement");
+        }
+    }
 }

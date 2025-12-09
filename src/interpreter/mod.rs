@@ -398,7 +398,10 @@ impl Interpreter {
             )
         };
 
-        // Set up generator context
+        // Save the outer generator context (for yield* delegation support)
+        let saved_generator_context = self.generator_context.take();
+
+        // Set up generator context for this generator
         self.generator_context = Some(GeneratorContext {
             target_yield,
             current_yield: 0,
@@ -422,8 +425,9 @@ impl Interpreter {
         // Restore environment
         self.env = saved_env;
 
-        // Get the final generator context state
+        // Get the final generator context state and restore outer context
         let ctx = self.generator_context.take();
+        self.generator_context = saved_generator_context;
 
         match result {
             Ok(Completion::Normal(_)) => {
@@ -476,6 +480,9 @@ impl Interpreter {
             )
         };
 
+        // Save the outer generator context (for yield* delegation support)
+        let saved_generator_context = self.generator_context.take();
+
         // Set up generator context with throw flag
         self.generator_context = Some(GeneratorContext {
             target_yield,
@@ -500,8 +507,9 @@ impl Interpreter {
         // Restore environment
         self.env = saved_env;
 
-        // Get the final generator context state
+        // Get the final generator context state and restore outer context
         let ctx = self.generator_context.take();
+        self.generator_context = saved_generator_context;
 
         match result {
             Ok(Completion::Normal(_)) => {
@@ -2187,6 +2195,15 @@ impl Interpreter {
     ) -> Result<Completion, JsError> {
         let right = self.evaluate(&for_of.right)?;
 
+        // Check if it's a generator - handle differently since we iterate by calling .next()
+        if let JsValue::Object(ref obj) = right {
+            let is_generator = matches!(obj.borrow().exotic, ExoticObject::Generator(_));
+            if is_generator {
+                return self.execute_for_of_generator(for_of, label, obj.cheap_clone());
+            }
+        }
+
+        // For non-generators, collect items upfront
         let items = match &right {
             JsValue::Object(obj) => {
                 let obj_ref = obj.borrow();
@@ -2243,6 +2260,85 @@ impl Interpreter {
                 Completion::Continue(None) => continue,
                 Completion::Continue(Some(ref l)) if label == Some(l) => {
                     // Continue with matching label - continue this loop
+                    continue;
+                }
+                Completion::Continue(lbl) => {
+                    self.env = prev_env;
+                    return Ok(Completion::Continue(lbl));
+                }
+                Completion::Return(val) => {
+                    self.env = prev_env;
+                    return Ok(Completion::Return(val));
+                }
+                Completion::Normal(_) => {}
+            }
+        }
+
+        self.env = prev_env;
+        Ok(Completion::Normal(JsValue::Undefined))
+    }
+
+    /// Execute for...of over a generator object by calling .next() repeatedly
+    fn execute_for_of_generator(
+        &mut self,
+        for_of: &ForOfStatement,
+        label: Option<&JsString>,
+        gen_obj: JsObjectRef,
+    ) -> Result<Completion, JsError> {
+        let prev_env = self.env.cheap_clone();
+
+        loop {
+            // Call generator.next()
+            let next_result =
+                builtins::generator::generator_next(self, JsValue::Object(gen_obj.cheap_clone()), &[])?;
+
+            // Get 'done' and 'value' from the result
+            let (done, value) = if let JsValue::Object(result_obj) = next_result {
+                let result_ref = result_obj.borrow();
+                let done = result_ref
+                    .get_property(&PropertyKey::from("done"))
+                    .unwrap_or(JsValue::Boolean(false));
+                let value = result_ref
+                    .get_property(&PropertyKey::from("value"))
+                    .unwrap_or(JsValue::Undefined);
+                (done.to_boolean(), value)
+            } else {
+                (true, JsValue::Undefined)
+            };
+
+            // If done, exit the loop
+            if done {
+                break;
+            }
+
+            // Bind the value to the loop variable
+            self.env = Rc::new(Environment::with_outer(prev_env.cheap_clone()));
+
+            match &for_of.left {
+                ForInOfLeft::Variable(decl) => {
+                    let mutable = decl.kind != VariableKind::Const;
+                    if let Some(declarator) = decl.declarations.first() {
+                        self.bind_pattern(&declarator.id, value, mutable)?;
+                    }
+                }
+                ForInOfLeft::Pattern(pattern) => {
+                    self.bind_pattern(pattern, value, true)?;
+                }
+            }
+
+            // Execute the loop body
+            match self.execute_statement(&for_of.body)? {
+                Completion::Break(None) => break,
+                Completion::Break(Some(ref l)) if label == Some(l) => {
+                    self.env = prev_env;
+                    return Ok(Completion::Normal(JsValue::Undefined));
+                }
+                Completion::Break(lbl) => {
+                    self.env = prev_env;
+                    return Ok(Completion::Break(lbl));
+                }
+                Completion::Continue(None) => continue,
+                Completion::Continue(Some(ref l)) if label == Some(l) => {
                     continue;
                 }
                 Completion::Continue(lbl) => {
