@@ -320,7 +320,12 @@ pub fn string_index_of(
         return Ok(JsValue::Number(-1.0));
     }
 
-    match s.as_str()[from_index..].find(&search) {
+    // Use get() for safe slicing - from_index is validated above to be < len
+    match s
+        .as_str()
+        .get(from_index..)
+        .and_then(|slice| slice.find(&search))
+    {
         Some(pos) => Ok(JsValue::Number((from_index + pos) as f64)),
         None => Ok(JsValue::Number(-1.0)),
     }
@@ -339,8 +344,8 @@ pub fn string_last_index_of(
     let len = s.len();
 
     // Default from_index is length of string
-    let from_index = if args.len() > 1 {
-        let n = args[1].to_number();
+    let from_index = if let Some(arg) = args.get(1) {
+        let n = arg.to_number();
         if n.is_nan() {
             len
         } else {
@@ -357,7 +362,11 @@ pub fn string_last_index_of(
 
     // Search backwards from from_index
     let search_end = (from_index + search.len()).min(len);
-    match s.as_str()[..search_end].rfind(&search) {
+    match s
+        .as_str()
+        .get(..search_end)
+        .and_then(|slice| slice.rfind(&search))
+    {
         Some(pos) => Ok(JsValue::Number(pos as f64)),
         None => Ok(JsValue::Number(-1.0)),
     }
@@ -402,7 +411,12 @@ pub fn string_includes(
         return Ok(JsValue::Boolean(search.is_empty()));
     }
 
-    Ok(JsValue::Boolean(s.as_str()[from_index..].contains(&search)))
+    Ok(JsValue::Boolean(
+        s.as_str()
+            .get(from_index..)
+            .map(|slice| slice.contains(&search))
+            .unwrap_or(false),
+    ))
 }
 
 pub fn string_starts_with(
@@ -422,7 +436,10 @@ pub fn string_starts_with(
     }
 
     Ok(JsValue::Boolean(
-        s.as_str()[position..].starts_with(&search),
+        s.as_str()
+            .get(position..)
+            .map(|slice| slice.starts_with(&search))
+            .unwrap_or(false),
     ))
 }
 
@@ -442,7 +459,12 @@ pub fn string_ends_with(
         .unwrap_or(s.len());
 
     let end = end_position.min(s.len());
-    Ok(JsValue::Boolean(s.as_str()[..end].ends_with(&search)))
+    Ok(JsValue::Boolean(
+        s.as_str()
+            .get(..end)
+            .map(|slice| slice.ends_with(&search))
+            .unwrap_or(false),
+    ))
 }
 
 pub fn string_slice(
@@ -473,9 +495,12 @@ pub fn string_slice(
 
     // Need to handle UTF-8 properly - slice by characters, not bytes
     let chars: Vec<char> = s.as_str().chars().collect();
-    let result: String = chars[start.min(chars.len())..end.min(chars.len())]
-        .iter()
-        .collect();
+    let start_clamped = start.min(chars.len());
+    let end_clamped = end.min(chars.len());
+    let result: String = chars
+        .get(start_clamped..end_clamped)
+        .map(|slice| slice.iter().collect())
+        .unwrap_or_default();
     Ok(JsValue::String(JsString::from(result)))
 }
 
@@ -518,9 +543,12 @@ pub fn string_substring(
     };
 
     let chars: Vec<char> = s.as_str().chars().collect();
-    let result: String = chars[start.min(chars.len())..end.min(chars.len())]
-        .iter()
-        .collect();
+    let start_clamped = start.min(chars.len());
+    let end_clamped = end.min(chars.len());
+    let result: String = chars
+        .get(start_clamped..end_clamped)
+        .map(|slice| slice.iter().collect())
+        .unwrap_or_default();
     Ok(JsValue::String(JsString::from(result)))
 }
 
@@ -568,7 +596,10 @@ pub fn string_substr(
     let start_idx = start as usize;
     let end_idx = (start_idx + length).min(chars.len());
 
-    let result: String = chars[start_idx..end_idx].iter().collect();
+    let result: String = chars
+        .get(start_idx..end_idx)
+        .map(|slice| slice.iter().collect())
+        .unwrap_or_default();
     Ok(JsValue::String(JsString::from(result)))
 }
 
@@ -868,12 +899,10 @@ pub fn string_code_point_at(
     let index = index as usize;
     let chars: Vec<char> = s.as_str().chars().collect();
 
-    if index >= chars.len() {
-        return Ok(JsValue::Undefined);
+    match chars.get(index) {
+        Some(&ch) => Ok(JsValue::Number(ch as u32 as f64)),
+        None => Ok(JsValue::Undefined),
     }
-
-    let code_point = chars[index] as u32;
-    Ok(JsValue::Number(code_point as f64))
 }
 
 /// String.prototype.match(regexp)

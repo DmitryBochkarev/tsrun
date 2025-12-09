@@ -334,7 +334,7 @@ pub fn array_constructor_fn(
     args: Vec<JsValue>,
 ) -> Result<JsValue, JsError> {
     if args.len() == 1 {
-        if let JsValue::Number(n) = &args[0] {
+        if let Some(JsValue::Number(n)) = args.first() {
             let len = *n as u32;
             let mut elements = Vec::with_capacity(len as usize);
             for _ in 0..len {
@@ -612,8 +612,8 @@ pub fn array_reduce(
         }
     };
 
-    let (mut accumulator, start_index) = if args.len() >= 2 {
-        (args[1].clone(), 0)
+    let (mut accumulator, start_index) = if let Some(initial) = args.get(1) {
+        (initial.clone(), 0)
     } else {
         if length == 0 {
             return Err(JsError::type_error(
@@ -1212,12 +1212,15 @@ pub fn array_sort(
     if let Some(cmp) = compare_fn {
         if cmp.is_callable() {
             for i in 0..elements.len() {
-                for j in 0..elements.len() - 1 - i {
-                    let result = interp.call_function(
-                        cmp.clone(),
-                        JsValue::Undefined,
-                        vec![elements[j].clone(), elements[j + 1].clone()],
-                    )?;
+                let limit = elements.len().saturating_sub(1 + i);
+                for j in 0..limit {
+                    // j and j+1 are guaranteed in bounds due to limit calculation
+                    let (left, right) = match (elements.get(j), elements.get(j + 1)) {
+                        (Some(l), Some(r)) => (l.clone(), r.clone()),
+                        _ => continue,
+                    };
+                    let result =
+                        interp.call_function(cmp.clone(), JsValue::Undefined, vec![left, right])?;
                     if result.to_number() > 0.0 {
                         elements.swap(j, j + 1);
                     }
@@ -1638,16 +1641,14 @@ pub fn array_reduce_right(
         ));
     }
 
-    let mut accumulator = args.get(1).cloned();
-    let start_index = if accumulator.is_some() {
-        length as i64 - 1
+    let (mut accumulator, start_index) = if let Some(initial) = args.get(1) {
+        (initial.clone(), length as i64 - 1)
     } else {
         let elem = arr
             .borrow()
             .get_property(&PropertyKey::Index(length - 1))
             .unwrap_or(JsValue::Undefined);
-        accumulator = Some(elem);
-        length as i64 - 2
+        (elem, length as i64 - 2)
     };
 
     for i in (0..=start_index).rev() {
@@ -1659,16 +1660,16 @@ pub fn array_reduce_right(
             callback.clone(),
             JsValue::Undefined,
             vec![
-                accumulator.clone().unwrap(),
+                accumulator.clone(),
                 elem,
                 JsValue::Number(i as f64),
                 this.clone(),
             ],
         )?;
-        accumulator = Some(result);
+        accumulator = result;
     }
 
-    Ok(accumulator.unwrap_or(JsValue::Undefined))
+    Ok(accumulator)
 }
 
 pub fn array_flat(
@@ -1942,10 +1943,15 @@ pub fn array_to_sorted(
             while i < elements.len() {
                 let mut j = i;
                 while j > 0 {
+                    // j > 0 guarantees j-1 is valid, and j < elements.len() from outer loop
+                    let (left, right) = match (elements.get(j - 1), elements.get(j)) {
+                        (Some(l), Some(r)) => (l.clone(), r.clone()),
+                        _ => break,
+                    };
                     let cmp_result = interp.call_function(
                         cmp_fn.clone(),
                         JsValue::Undefined,
-                        vec![elements[j - 1].clone(), elements[j].clone()],
+                        vec![left, right],
                     )?;
                     let cmp = cmp_result.to_number();
                     if cmp > 0.0 {

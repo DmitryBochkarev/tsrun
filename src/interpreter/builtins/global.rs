@@ -164,44 +164,44 @@ pub fn global_parse_float(
     }
 
     // Find the longest valid float prefix
-    let mut end = 0;
+    let mut num_str = String::new();
     let mut has_dot = false;
     let mut has_exp = false;
     let mut chars = s.chars().peekable();
 
     // Handle sign
     if matches!(chars.peek(), Some('-') | Some('+')) {
-        end += 1;
-        chars.next();
+        if let Some(c) = chars.next() {
+            num_str.push(c);
+        }
     }
 
     // Parse digits and decimal point
     while let Some(&c) = chars.peek() {
         match c {
             '0'..='9' => {
-                end += 1;
+                num_str.push(c);
                 chars.next();
             }
             '.' if !has_dot && !has_exp => {
                 has_dot = true;
-                end += 1;
+                num_str.push(c);
                 chars.next();
             }
             'e' | 'E' if !has_exp => {
                 has_exp = true;
-                end += 1;
+                num_str.push(c);
                 chars.next();
                 // Optional sign after exponent
                 if matches!(chars.peek(), Some('-') | Some('+')) {
-                    end += 1;
-                    chars.next();
+                    if let Some(sign) = chars.next() {
+                        num_str.push(sign);
+                    }
                 }
             }
             _ => break,
         }
     }
-
-    let num_str = &s[..end];
     match num_str.parse::<f64>() {
         Ok(n) => Ok(JsValue::Number(n)),
         Err(_) => Ok(JsValue::Number(f64::NAN)),

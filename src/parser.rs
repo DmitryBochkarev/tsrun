@@ -666,7 +666,7 @@ impl<'a> Parser<'a> {
                 TokenKind::Let => VariableKind::Let,
                 TokenKind::Const => VariableKind::Const,
                 TokenKind::Var => VariableKind::Var,
-                _ => unreachable!(),
+                _ => return Err(self.error("expected let, const, or var")),
             };
             self.advance();
 
@@ -2454,37 +2454,39 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_union_type(&mut self) -> Result<TypeAnnotation, JsError> {
-        let mut types = vec![self.parse_intersection_type()?];
+        let first = self.parse_intersection_type()?;
 
+        if !self.check(&TokenKind::Pipe) {
+            return Ok(first);
+        }
+
+        let mut types = vec![first];
         while self.match_token(&TokenKind::Pipe) {
             types.push(self.parse_intersection_type()?);
         }
 
-        if types.len() == 1 {
-            Ok(types.pop().unwrap())
-        } else {
-            Ok(TypeAnnotation::Union(UnionType {
-                types,
-                span: Span::default(),
-            }))
-        }
+        Ok(TypeAnnotation::Union(UnionType {
+            types,
+            span: Span::default(),
+        }))
     }
 
     fn parse_intersection_type(&mut self) -> Result<TypeAnnotation, JsError> {
-        let mut types = vec![self.parse_primary_type()?];
+        let first = self.parse_primary_type()?;
 
+        if !self.check(&TokenKind::Amp) {
+            return Ok(first);
+        }
+
+        let mut types = vec![first];
         while self.match_token(&TokenKind::Amp) {
             types.push(self.parse_primary_type()?);
         }
 
-        if types.len() == 1 {
-            Ok(types.pop().unwrap())
-        } else {
-            Ok(TypeAnnotation::Intersection(IntersectionType {
-                types,
-                span: Span::default(),
-            }))
-        }
+        Ok(TypeAnnotation::Intersection(IntersectionType {
+            types,
+            span: Span::default(),
+        }))
     }
 
     fn parse_primary_type(&mut self) -> Result<TypeAnnotation, JsError> {

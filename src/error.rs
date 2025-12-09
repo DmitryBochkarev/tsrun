@@ -158,6 +158,14 @@ impl JsError {
         }
     }
 
+    /// Create an internal error for unexpected interpreter states
+    /// These should never happen in correctly-written code
+    pub fn internal_error(message: impl Into<String>) -> Self {
+        JsError::TypeError {
+            message: format!("Internal error: {}", message.into()),
+        }
+    }
+
     /// Create an error that wraps a thrown JsValue
     pub fn thrown(value: crate::value::JsValue) -> Self {
         JsError::ThrownValue { value }

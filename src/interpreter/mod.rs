@@ -570,7 +570,10 @@ impl Interpreter {
             match slot.take() {
                 Some(Ok(module_value)) => {
                     // Bind the import
-                    let import = &self.static_imports[self.static_import_index - 1];
+                    let import = self
+                        .static_imports
+                        .get(self.static_import_index.saturating_sub(1))
+                        .ok_or_else(|| JsError::internal_error("import index out of bounds"))?;
                     // ImportBindings clone - enum with String fields
                     self.bind_import(&import.bindings.clone(), module_value)?;
                 }
@@ -655,11 +658,9 @@ impl Interpreter {
     /// Process the next import or start program execution
     fn process_next_import_or_execute(&mut self) -> Result<crate::RuntimeResult, JsError> {
         // Check if there are more imports to process
-        if self.static_import_index < self.static_imports.len() {
+        if let Some(import) = self.static_imports.get(self.static_import_index) {
             // String clone - specifier needed for both self and return value
-            let specifier = self.static_imports[self.static_import_index]
-                .specifier
-                .clone();
+            let specifier = import.specifier.clone();
             let slot = crate::PendingSlot::new(self.generate_slot_id());
 
             self.static_import_index += 1;
@@ -798,7 +799,9 @@ impl Interpreter {
         }
 
         // Execute current statement using existing method (hybrid approach)
-        let stmt = &statements[index];
+        let stmt = statements
+            .get(index)
+            .ok_or_else(|| JsError::internal_error("statement index out of bounds"))?;
         match self.execute_statement(stmt)? {
             Completion::Normal(val) => {
                 // Replace top of value stack with new value
@@ -1016,9 +1019,11 @@ impl Interpreter {
                     }
 
                     if !matched {
-                        let test = self.evaluate(case.test.as_ref().unwrap())?;
-                        if discriminant.strict_equals(&test) {
-                            matched = true;
+                        if let Some(test_expr) = &case.test {
+                            let test = self.evaluate(test_expr)?;
+                            if discriminant.strict_equals(&test) {
+                                matched = true;
+                            }
                         }
                     }
 
@@ -2648,8 +2653,8 @@ impl Interpreter {
                 let mut result = String::new();
                 for (i, quasi) in template.quasis.iter().enumerate() {
                     result.push_str(&quasi.value);
-                    if i < template.expressions.len() {
-                        let val = self.evaluate(&template.expressions[i])?;
+                    if let Some(expr) = template.expressions.get(i) {
+                        let val = self.evaluate(expr)?;
                         result.push_str(val.to_js_string().as_ref());
                     }
                 }
@@ -2784,7 +2789,9 @@ impl Interpreter {
                                         .get_property(&PropertyKey::Index(i))
                                         .unwrap_or(JsValue::Undefined);
 
-                                    let ctx = self.generator_context.as_mut().unwrap();
+                                    let ctx = self.generator_context.as_mut().ok_or_else(|| {
+                                        JsError::internal_error("generator context missing")
+                                    })?;
                                     if ctx.current_yield == ctx.target_yield {
                                         ctx.current_yield += 1;
                                         return Err(JsError::GeneratorYield { value: elem });
@@ -2813,7 +2820,9 @@ impl Interpreter {
                                         return Ok(value);
                                     }
 
-                                    let ctx = self.generator_context.as_mut().unwrap();
+                                    let ctx = self.generator_context.as_mut().ok_or_else(|| {
+                                        JsError::internal_error("generator context missing")
+                                    })?;
                                     if ctx.current_yield == ctx.target_yield {
                                         ctx.current_yield += 1;
                                         return Err(JsError::GeneratorYield { value });
@@ -3173,7 +3182,11 @@ impl Interpreter {
                         left
                     }
                 }
-                AssignmentOp::Assign => unreachable!(),
+                AssignmentOp::Assign => {
+                    return Err(JsError::internal_error(
+                        "Assign should be handled separately",
+                    ))
+                }
             }
         } else {
             right
@@ -3598,7 +3611,7 @@ impl Interpreter {
         // Bind parameters
         for (i, param) in interpreted.params.iter().enumerate() {
             if let Pattern::Rest(rest) = &param.pattern {
-                let rest_args: Vec<JsValue> = args[i..].to_vec();
+                let rest_args: Vec<JsValue> = args.get(i..).unwrap_or_default().to_vec();
                 let rest_array = JsValue::Object(self.create_array(rest_args));
                 self.bind_pattern(&rest.argument, rest_array, true)?;
                 break;
@@ -3728,7 +3741,7 @@ impl Interpreter {
                     // Check if this is a rest parameter
                     if let Pattern::Rest(rest) = &param.pattern {
                         // Collect remaining arguments into an array
-                        let rest_args: Vec<JsValue> = args[i..].to_vec();
+                        let rest_args: Vec<JsValue> = args.get(i..).unwrap_or_default().to_vec();
                         let rest_array = JsValue::Object(self.create_array(rest_args));
                         self.bind_pattern(&rest.argument, rest_array, true)?;
                         break; // Rest param must be last

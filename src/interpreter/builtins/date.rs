@@ -262,9 +262,9 @@ pub fn date_constructor(
         // new Date() - current time
         Utc::now().timestamp_millis() as f64
     } else if args.len() == 1 {
-        match &args[0] {
-            JsValue::Number(n) => *n,
-            JsValue::String(s) => {
+        match args.first() {
+            Some(JsValue::Number(n)) => *n,
+            Some(JsValue::String(s)) => {
                 // Parse date string
                 chrono::DateTime::parse_from_rfc3339(s.as_ref())
                     .map(|dt| dt.timestamp_millis() as f64)

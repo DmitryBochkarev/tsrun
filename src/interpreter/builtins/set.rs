@@ -195,13 +195,11 @@ pub fn set_delete(
     let mut set = set_obj.borrow_mut();
 
     if let ExoticObject::Set { ref mut entries } = set.exotic {
-        for i in 0..entries.len() {
-            if same_value_zero(&entries[i], &value) {
-                entries.remove(i);
-                let len = entries.len();
-                set.set_property(PropertyKey::from("size"), JsValue::Number(len as f64));
-                return Ok(JsValue::Boolean(true));
-            }
+        if let Some(i) = entries.iter().position(|v| same_value_zero(v, &value)) {
+            entries.remove(i);
+            let len = entries.len();
+            set.set_property(PropertyKey::from("size"), JsValue::Number(len as f64));
+            return Ok(JsValue::Boolean(true));
         }
     }
 

@@ -422,8 +422,8 @@ pub fn math_random(
     // Simple pseudo-random using system time (not cryptographically secure)
     let seed = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .subsec_nanos() as f64;
+        .map(|d| d.subsec_nanos() as f64)
+        .unwrap_or(0.0);
     let random = (seed / 1_000_000_000.0) % 1.0;
     Ok(JsValue::Number(random))
 }

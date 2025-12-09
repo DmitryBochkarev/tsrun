@@ -231,13 +231,9 @@ fn symbol_call(
     _this: JsValue,
     args: Vec<JsValue>,
 ) -> Result<JsValue, JsError> {
-    let description = if args.is_empty() {
-        None
-    } else {
-        match &args[0] {
-            JsValue::Undefined => None,
-            other => Some(other.to_js_string().to_string()),
-        }
+    let description = match args.first() {
+        None | Some(JsValue::Undefined) => None,
+        Some(other) => Some(other.to_js_string().to_string()),
     };
 
     let id = next_symbol_id();
@@ -250,11 +246,10 @@ fn symbol_for(
     _this: JsValue,
     args: Vec<JsValue>,
 ) -> Result<JsValue, JsError> {
-    let key = if args.is_empty() {
-        "undefined".to_string()
-    } else {
-        args[0].to_js_string().to_string()
-    };
+    let key = args
+        .first()
+        .map(|v| v.to_js_string().to_string())
+        .unwrap_or_else(|| "undefined".to_string());
 
     SYMBOL_REGISTRY.with(|registry| {
         let mut registry = registry.borrow_mut();

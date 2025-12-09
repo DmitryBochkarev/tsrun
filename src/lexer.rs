@@ -398,7 +398,8 @@ impl<'a> Lexer<'a> {
     }
 
     fn peek_next(&self) -> Option<char> {
-        let mut iter = self.source[self.current_pos..].char_indices();
+        let slice = self.source.get(self.current_pos..)?;
+        let mut iter = slice.char_indices();
         iter.next();
         iter.next().map(|(_, ch)| ch)
     }
@@ -880,7 +881,12 @@ impl<'a> Lexer<'a> {
         self.line = rbrace_span.line;
         self.column = rbrace_span.column + 1;
         // Reinitialize the chars iterator from the new position
-        self.chars = self.source[base_offset..].char_indices().peekable();
+        self.chars = self
+            .source
+            .get(base_offset..)
+            .unwrap_or("")
+            .char_indices()
+            .peekable();
 
         // Now scan the template continuation
         self.scan_template_continuation()
@@ -1015,7 +1021,9 @@ impl<'a> Lexer<'a> {
             num_str.push('e');
             self.advance();
             if matches!(self.peek(), Some('+' | '-')) {
-                num_str.push(self.advance().unwrap().1);
+                if let Some((_, ch)) = self.advance() {
+                    num_str.push(ch);
+                }
             }
             while let Some(ch) = self.peek() {
                 if ch.is_ascii_digit() || ch == '_' {

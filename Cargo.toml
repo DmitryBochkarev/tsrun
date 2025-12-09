@@ -18,3 +18,13 @@ lazy_static = "1.4"
 
 [dev-dependencies]
 pretty_assertions = "1.4"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+indexing_slicing = "deny"
+panic = "deny"
+unreachable = "deny"
+todo = "deny"
+unimplemented = "deny"
+string_slice = "deny"

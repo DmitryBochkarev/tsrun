@@ -274,13 +274,11 @@ pub fn map_delete(
     let mut map = map_obj.borrow_mut();
 
     if let ExoticObject::Map { ref mut entries } = map.exotic {
-        for i in 0..entries.len() {
-            if same_value_zero(&entries[i].0, &key) {
-                entries.remove(i);
-                let len = entries.len();
-                map.set_property(PropertyKey::from("size"), JsValue::Number(len as f64));
-                return Ok(JsValue::Boolean(true));
-            }
+        if let Some(i) = entries.iter().position(|(k, _)| same_value_zero(k, &key)) {
+            entries.remove(i);
+            let len = entries.len();
+            map.set_property(PropertyKey::from("size"), JsValue::Number(len as f64));
+            return Ok(JsValue::Boolean(true));
         }
     }
 

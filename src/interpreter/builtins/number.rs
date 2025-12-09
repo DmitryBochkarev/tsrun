@@ -248,11 +248,15 @@ pub fn number_to_string(
         16 => format!("{:x}", int_val.abs()),
         _ => {
             // Generic radix conversion
-            let chars: Vec<char> = "0123456789abcdefghijklmnopqrstuvwxyz".chars().collect();
+            const DIGITS: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyz";
             let mut num = int_val.abs();
             let mut result = String::new();
             while num > 0 {
-                result.insert(0, chars[(num % radix as i64) as usize]);
+                let digit_idx = (num % radix as i64) as usize;
+                // radix is validated to be 2-36, so digit_idx is always 0-35
+                if let Some(&ch) = DIGITS.get(digit_idx) {
+                    result.insert(0, ch as char);
+                }
                 num /= radix as i64;
             }
             if result.is_empty() {
@@ -298,9 +302,9 @@ pub fn number_to_precision(
     let result = format!("{:.prec$e}", n, prec = (precision - 1) as usize);
     // Parse and reformat to match JS behavior
     let parts: Vec<&str> = result.split('e').collect();
-    if parts.len() == 2 {
-        let mantissa = parts[0].parse::<f64>().unwrap_or(0.0);
-        let exp: i32 = parts[1].parse().unwrap_or(0);
+    if let [mantissa_str, exp_str] = parts.as_slice() {
+        let mantissa = mantissa_str.parse::<f64>().unwrap_or(0.0);
+        let exp: i32 = exp_str.parse().unwrap_or(0);
 
         // If exponent is small enough, use fixed notation
         if exp >= 0 && exp < precision {
