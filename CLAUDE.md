@@ -6,8 +6,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 TypeScript interpreter written in Rust for config/manifest generation with support for ES modules and async/await. Types are parsed but stripped at runtime (not type-checked). The interpreter uses an explicit evaluation stack for true state capture, enabling suspension at import/await points.
 
-**Next Major Feature:** State machine refactor for import/async support (see `state_machine.md`).
-
 ## Build and Test Commands
 
 ```bash
@@ -152,65 +150,6 @@ fn name(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<J
 - `this`: The receiver object (e.g., the array for array methods)
 - `args`: Function arguments as a vector
 
-### State Machine Implementation Guide
-
-When implementing the explicit evaluation stack (see `state_machine.md`), follow this pattern:
-
-#### Converting Recursive Evaluation to Stack Frames
-
-**Before (recursive):**
-```rust
-fn evaluate_binary(&mut self, expr: &BinaryExpression) -> Result<JsValue, JsError> {
-    let left = self.evaluate(&expr.left)?;    // Rust stack frame
-    let right = self.evaluate(&expr.right)?;  // Rust stack frame
-    self.apply_binary_op(expr.op, left, right)
-}
-```
-
-**After (explicit stack):**
-```rust
-// Setup: push frames for right-to-left evaluation
-fn setup_binary(&mut self, expr: BinaryExpression) {
-    self.eval_stack.push(EvalFrame::BinaryComplete { op: expr.op });
-    self.eval_stack.push(EvalFrame::EvaluateExpr(*expr.right));
-    self.eval_stack.push(EvalFrame::BinaryRight { op: expr.op, right: expr.right });
-    self.eval_stack.push(EvalFrame::EvaluateExpr(*expr.left));
-}
-
-// Process BinaryComplete: both values on value_stack
-fn process_binary_complete(&mut self, op: BinaryOp) -> Result<(), JsError> {
-    let right = self.value_stack.pop().unwrap();
-    let left = self.value_stack.pop().unwrap();
-    let result = self.apply_binary_op(op, left, right)?;
-    self.value_stack.push(result);
-    Ok(())
-}
-```
-
-#### Suspension Points
-
-When hitting an await or import that needs external resolution:
-```rust
-// Create slot for host to fill
-let slot = self.create_pending_slot();
-
-// Push resume frame (will be processed after continue_eval)
-self.eval_stack.push(EvalFrame::AwaitResume { slot_id: slot.id() });
-
-// Return suspension result to host
-return Err(JsError::Suspend(RuntimeResult::AsyncAwaited { slot, promise }));
-```
-
-#### Implementation Order
-
-1. **Phase 1**: Convert expressions to stack frames (start with simple ones: literals, binary, unary)
-2. **Phase 2**: Convert statements (variable decl, if, loops)
-3. **Phase 3**: Add import collection and ImportAwaited
-4. **Phase 4**: Add Promise implementation
-5. **Phase 5**: Add async/await with AsyncAwaited
-
-Each phase should maintain passing tests before proceeding.
-
 ### Prototype Chain
 - Objects fall back to `object_prototype` for methods like `hasOwnProperty`, `toString`
 - Arrays have `array_prototype` with all array methods
@@ -269,7 +208,7 @@ The interpreter uses an **explicit evaluation stack** instead of Rust's call sta
 - **Suspension at imports**: Return to host to load modules
 - **Suspension at await**: Return to host to resolve promises
 
-See `state_machine.md` for the full design.
+The stack-based execution model is now fully implemented.
 
 **Key Types:**
 ```rust
@@ -406,4 +345,4 @@ fn test_example() {
 - ES Modules (import/export resolution - parsing only)
 - WeakMap/WeakSet
 
-See design.md for the complete feature checklist and state_machine.md for the import/async architecture.
+See design.md for the complete feature checklist.
