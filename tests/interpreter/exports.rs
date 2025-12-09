@@ -777,11 +777,7 @@ fn test_export_after_import() {
     assert_eq!(calc_result, JsValue::Number(142.0)); // 100 + 42
 }
 
-// Note: export default is parsed but not currently tracked in the exports map.
-// These tests document expected behavior once implemented.
-
 #[test]
-#[ignore] // TODO: Implement export default tracking
 fn test_export_default_function() {
     let source = r#"
         export default function greet(name: string): string {
@@ -797,7 +793,6 @@ fn test_export_default_function() {
 }
 
 #[test]
-#[ignore] // TODO: Implement export default tracking
 fn test_export_default_expression() {
     let source = r#"
         const config = {
@@ -995,7 +990,6 @@ fn test_export_type_alias_ignored_at_runtime() {
 }
 
 #[test]
-#[ignore] // TODO: Implement export enum tracking
 fn test_export_enum() {
     // Enums are compiled to objects at runtime
     let source = r#"

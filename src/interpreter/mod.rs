@@ -1746,6 +1746,13 @@ impl Interpreter {
                 Statement::TypeAlias(_) | Statement::InterfaceDeclaration(_) => {
                     // Type-only exports - no runtime effect
                 }
+                Statement::EnumDeclaration(enum_decl) => {
+                    self.execute_enum(enum_decl)?;
+                    let name = enum_decl.id.name.clone();
+                    if let Ok(value) = self.env.get(&name) {
+                        self.exports.insert(name, value);
+                    }
+                }
                 _ => {
                     // Other declarations that we may not support yet
                 }
@@ -1763,7 +1770,36 @@ impl Interpreter {
 
         // Handle export default
         if export_decl.default {
-            // TODO: Handle export default expression
+            if let Some(declaration) = &export_decl.declaration {
+                match declaration.as_ref() {
+                    // export default function foo() {} - named function
+                    Statement::FunctionDeclaration(func_decl) => {
+                        self.execute_function_declaration(func_decl)?;
+                        if let Some(id) = &func_decl.id {
+                            if let Ok(value) = self.env.get(&id.name) {
+                                self.exports.insert("default".to_string(), value);
+                            }
+                        }
+                    }
+                    // export default class Foo {}
+                    Statement::ClassDeclaration(class_decl) => {
+                        self.execute_class_declaration(class_decl)?;
+                        if let Some(id) = &class_decl.id {
+                            if let Ok(value) = self.env.get(&id.name) {
+                                self.exports.insert("default".to_string(), value);
+                            }
+                        }
+                    }
+                    // export default expression (handled via Expression statement)
+                    Statement::Expression(expr_stmt) => {
+                        let value = self.evaluate(&expr_stmt.expression)?;
+                        self.exports.insert("default".to_string(), value);
+                    }
+                    _ => {
+                        // Other default exports not yet supported
+                    }
+                }
+            }
         }
 
         Ok(())
