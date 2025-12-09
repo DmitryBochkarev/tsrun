@@ -46,6 +46,15 @@ fn test_map_delete() {
 }
 
 #[test]
+fn test_map_delete_dot_notation() {
+    // In JavaScript, reserved words can be used as property names with dot notation
+    assert_eq!(
+        eval("let m = new Map(); m.set('a', 1); m.delete('a'); m.has('a')"),
+        JsValue::Boolean(false)
+    );
+}
+
+#[test]
 fn test_map_clear() {
     assert_eq!(
         eval("let m = new Map(); m.set('a', 1); m.set('b', 2); m.clear(); m.size"),
@@ -107,5 +116,54 @@ fn test_map_entries() {
     assert_eq!(
         eval("let m = new Map([['a', 1], ['b', 2]]); let result = []; for (let e of m.entries()) { result.push(e[0] + ':' + e[1]); } result.join(',')"),
         JsValue::from("a:1,b:2")
+    );
+}
+
+#[test]
+fn test_map_get_non_null_assertion_method_call() {
+    // Non-null assertion followed by method call: m.get(key)!.push(...)
+    assert_eq!(
+        eval(
+            r#"
+            let m = new Map();
+            m.set('arr', []);
+            m.get('arr')!.push(1);
+            m.get('arr')!.push(2);
+            m.get('arr')!.length
+        "#
+        ),
+        JsValue::Number(2.0)
+    );
+}
+
+#[test]
+fn test_from_as_parameter_name() {
+    // 'from' is a contextual keyword (used in imports) but valid as parameter name
+    assert_eq!(
+        eval(
+            r#"
+            function addEdge(from, to) {
+                return from + "->" + to;
+            }
+            addEdge("A", "B")
+        "#
+        ),
+        JsValue::from("A->B")
+    );
+}
+
+#[test]
+fn test_union_type_with_generic_and_undefined() {
+    // Union type: Set<T> | undefined should parse correctly
+    assert_eq!(
+        eval(
+            r#"
+            function test(): Set<string> | undefined {
+                return new Set(["a", "b"]);
+            }
+            test().size
+        "#
+        ),
+        JsValue::Number(2.0)
     );
 }

@@ -166,6 +166,22 @@ impl<'a> Parser<'a> {
                 let id = self.parse_identifier()?;
                 Ok(Pattern::Identifier(id))
             }
+            // Allow contextual keywords as binding identifiers (e.g., function param names)
+            TokenKind::Type
+            | TokenKind::From
+            | TokenKind::As
+            | TokenKind::Of
+            | TokenKind::Any
+            | TokenKind::Unknown
+            | TokenKind::Never
+            | TokenKind::Keyof
+            | TokenKind::Infer
+            | TokenKind::Is
+            | TokenKind::Asserts
+            | TokenKind::Readonly => {
+                let id = self.parse_identifier()?;
+                Ok(Pattern::Identifier(id))
+            }
             TokenKind::LBrace => self.parse_object_pattern(),
             TokenKind::LBracket => self.parse_array_pattern(),
             _ => Err(self.unexpected_token("binding pattern")),
@@ -1660,7 +1676,8 @@ impl<'a> Parser<'a> {
                         span,
                     });
                 } else {
-                    let property = self.parse_identifier()?;
+                    // After a dot, any identifier or keyword can be used as a property name
+                    let property = self.parse_identifier_name()?;
                     let span = self.span_from(start);
                     expr = Expression::Member(MemberExpression {
                         object: Box::new(expr),
@@ -1733,7 +1750,8 @@ impl<'a> Parser<'a> {
                         span,
                     });
                 } else {
-                    let property = self.parse_identifier()?;
+                    // After ?. any identifier or keyword can be used as a property name
+                    let property = self.parse_identifier_name()?;
                     let span = self.span_from(start);
                     expr = Expression::Member(MemberExpression {
                         object: Box::new(expr),
@@ -1742,18 +1760,19 @@ impl<'a> Parser<'a> {
                         span,
                     });
                 }
+            } else if self.check(&TokenKind::Bang) && !self.lexer.had_newline_before() {
+                // TypeScript non-null assertion (!)
+                // The lexer tokenizes != and !== as single tokens (BangEq, BangEqEq)
+                // so if we see Bang, it's a standalone !
+                self.advance(); // consume !
+                let span = self.span_from(start);
+                expr = Expression::NonNull(NonNullExpression {
+                    expression: Box::new(expr),
+                    span,
+                });
             } else {
                 break;
             }
-        }
-
-        // TypeScript non-null assertion
-        if self.match_token(&TokenKind::Bang) {
-            let span = self.span_from(start);
-            expr = Expression::NonNull(NonNullExpression {
-                expression: Box::new(expr),
-                span,
-            });
         }
 
         // TypeScript type assertion (as)
@@ -1787,7 +1806,8 @@ impl<'a> Parser<'a> {
                         span,
                     });
                 } else {
-                    let property = self.parse_identifier()?;
+                    // After a dot, any identifier or keyword can be used as a property name
+                    let property = self.parse_identifier_name()?;
                     let span = self.span_from(start);
                     expr = Expression::Member(MemberExpression {
                         object: Box::new(expr),
@@ -1864,7 +1884,20 @@ impl<'a> Parser<'a> {
                     span: self.span_from(start),
                 }))
             }
-            TokenKind::Identifier(_) => {
+            TokenKind::Identifier(_)
+            // Contextual keywords can also be used as identifiers in expressions
+            | TokenKind::Type
+            | TokenKind::From
+            | TokenKind::As
+            | TokenKind::Of
+            | TokenKind::Any
+            | TokenKind::Unknown
+            | TokenKind::Never
+            | TokenKind::Keyof
+            | TokenKind::Infer
+            | TokenKind::Is
+            | TokenKind::Asserts
+            | TokenKind::Readonly => {
                 // Could be identifier or arrow function
                 let id = self.parse_identifier()?;
 
@@ -2762,10 +2795,20 @@ impl<'a> Parser<'a> {
                     }
                 }
                 self.require_token(&TokenKind::RBracket)?;
-                Ok(TypeAnnotation::Tuple(TupleType {
+                let mut ty = TypeAnnotation::Tuple(TupleType {
                     element_types: types,
                     span: self.span_from(start),
-                }))
+                });
+                // Array shorthand: [string, number][]
+                while self.check(&TokenKind::LBracket) {
+                    self.advance();
+                    self.require_token(&TokenKind::RBracket)?;
+                    ty = TypeAnnotation::Array(ArrayType {
+                        element_type: Box::new(ty),
+                        span: self.span_from(start),
+                    });
+                }
+                Ok(ty)
             }
 
             // Parenthesized type or function type expression
@@ -3150,6 +3193,71 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Parse identifier or keyword as a property name (after a dot).
+    /// In JavaScript, reserved words can be used as property names.
+    fn parse_identifier_name(&mut self) -> Result<Identifier, JsError> {
+        // First try as normal identifier
+        if let TokenKind::Identifier(name) = &self.current.kind {
+            let name = JsString::from(name.as_str());
+            let span = self.current.span;
+            self.advance();
+            return Ok(Identifier { name, span });
+        }
+        // Check for contextual keywords (same as in parse_identifier)
+        if matches!(
+            self.current.kind,
+            TokenKind::Type
+                | TokenKind::From
+                | TokenKind::As
+                | TokenKind::Of
+                | TokenKind::Any
+                | TokenKind::Unknown
+                | TokenKind::Never
+                | TokenKind::Keyof
+                | TokenKind::Infer
+                | TokenKind::Is
+                | TokenKind::Asserts
+                | TokenKind::Readonly
+        ) {
+            let name = self.keyword_to_js_string();
+            let span = self.current.span;
+            self.advance();
+            return Ok(Identifier { name, span });
+        }
+        // Otherwise try as keyword (reserved words are valid as property names)
+        if self.is_keyword() || self.is_reserved_word() {
+            let name = self.keyword_to_js_string();
+            let span = self.current.span;
+            self.advance();
+            return Ok(Identifier { name, span });
+        }
+        Err(self.unexpected_token("identifier"))
+    }
+
+    /// Check if current token is a reserved word (stricter keywords that can only be used as property names)
+    fn is_reserved_word(&self) -> bool {
+        matches!(
+            self.current.kind,
+            TokenKind::Delete
+                | TokenKind::Typeof
+                | TokenKind::Void
+                | TokenKind::Instanceof
+                | TokenKind::True
+                | TokenKind::False
+                | TokenKind::Null
+                | TokenKind::Yield
+                | TokenKind::Await
+                | TokenKind::Super
+                | TokenKind::Async
+                | TokenKind::Namespace
+                | TokenKind::Private
+                | TokenKind::Public
+                | TokenKind::Protected
+                | TokenKind::Declare
+                | TokenKind::Implements
+        )
+    }
+
     fn parse_property_name(&mut self) -> Result<ObjectPropertyKey, JsError> {
         match &self.current.kind {
             TokenKind::Identifier(_) => {
@@ -3392,6 +3500,24 @@ impl<'a> Parser<'a> {
             TokenKind::Is => "is",
             TokenKind::Asserts => "asserts",
             TokenKind::Readonly => "readonly",
+            // Reserved words that can be used as property names
+            TokenKind::Delete => "delete",
+            TokenKind::Typeof => "typeof",
+            TokenKind::Void => "void",
+            TokenKind::Instanceof => "instanceof",
+            TokenKind::True => "true",
+            TokenKind::False => "false",
+            TokenKind::Null => "null",
+            TokenKind::Yield => "yield",
+            TokenKind::Await => "await",
+            TokenKind::Super => "super",
+            TokenKind::Async => "async",
+            TokenKind::Namespace => "namespace",
+            TokenKind::Private => "private",
+            TokenKind::Public => "public",
+            TokenKind::Protected => "protected",
+            TokenKind::Declare => "declare",
+            TokenKind::Implements => "implements",
             _ => "",
         })
     }
@@ -4304,6 +4430,58 @@ mod tests {
         // Test union type with null like RegExpExecArray | null
         let prog = parse("let match: RegExpExecArray | null;");
         assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_union_type_generic_and_undefined() {
+        // Test union type: Set<T> | undefined in variable declaration
+        let prog = parse("const neighbors: Set<T> | undefined = graph.nodes.get(from);");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_graph_hasedge_function() {
+        // Test parsing function with generic, union type, and 'from' parameter
+        let source = r#"
+export function hasEdge<T>(graph: Graph<T>, from: T, to: T): boolean {
+    const neighbors: Set<T> | undefined = graph.nodes.get(from);
+    return neighbors !== undefined && neighbors.has(to);
+}
+"#;
+        let prog = parse(source);
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_graph_file() {
+        // Test parsing the entire graph.ts file content
+        let source = include_str!("../examples/collections/graph.ts");
+        parse(source); // Should not panic
+    }
+
+    #[test]
+    fn test_parse_tuple_array_return_type() {
+        // Test parsing function with tuple array return type [string, number][]
+        let source = r#"
+function getMostFrequent(): [string, number][] {
+    return [["a", 1], ["b", 2]];
+}
+"#;
+        parse(source); // Should not panic
+    }
+
+    #[test]
+    fn test_parse_counter_file() {
+        // Test parsing the counter.ts file content
+        let source = include_str!("../examples/collections/counter.ts");
+        parse(source); // Should not panic
+    }
+
+    #[test]
+    fn test_parse_collections_main_file() {
+        // Test parsing the collections main.ts file content
+        let source = include_str!("../examples/collections/main.ts");
+        parse(source); // Should not panic
     }
 
     #[test]
