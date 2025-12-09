@@ -713,8 +713,8 @@ pub struct GeneratorState {
     pub params: Vec<FunctionParam>,
     /// Arguments passed to the generator
     pub args: Vec<JsValue>,
-    /// The captured closure environment
-    pub closure: Environment,
+    /// The captured closure environment (Rc for cheap cloning)
+    pub closure: Rc<Environment>,
     /// Current execution state
     pub state: GeneratorStatus,
     /// Current statement index
@@ -778,7 +778,8 @@ pub struct InterpretedFunction {
     pub name: Option<String>,
     pub params: Vec<FunctionParam>,
     pub body: FunctionBody,
-    pub closure: Environment,
+    /// The captured closure environment (Rc for cheap cloning)
+    pub closure: Rc<Environment>,
     pub source_location: Span,
     /// Whether this is a generator function (function*)
     pub generator: bool,
@@ -827,8 +828,11 @@ impl fmt::Debug for NativeFunction {
 #[derive(Debug, Clone)]
 pub struct Environment {
     pub bindings: Rc<RefCell<HashMap<String, Binding>>>,
-    pub outer: Option<Box<Environment>>,
+    pub outer: Option<Rc<Environment>>,
 }
+
+// Environment with Rc<Environment> outer is cheap to clone - just Rc increments
+impl CheapClone for Environment {}
 
 impl Environment {
     pub fn new() -> Self {
@@ -838,15 +842,24 @@ impl Environment {
         }
     }
 
-    pub fn with_outer(outer: Environment) -> Self {
+    /// Create a new environment with the given outer environment as parent
+    pub fn with_outer(outer: Rc<Environment>) -> Self {
         Self {
             bindings: Rc::new(RefCell::new(HashMap::new())),
-            outer: Some(Box::new(outer)),
+            outer: Some(outer),
+        }
+    }
+
+    /// Create a child environment from self wrapped in Rc (convenience method)
+    pub fn child(self_rc: &Rc<Environment>) -> Self {
+        Self {
+            bindings: Rc::new(RefCell::new(HashMap::new())),
+            outer: Some(self_rc.cheap_clone()),
         }
     }
 
     /// Define a new binding
-    pub fn define(&mut self, name: String, value: JsValue, mutable: bool) {
+    pub fn define(&self, name: String, value: JsValue, mutable: bool) {
         self.bindings.borrow_mut().insert(
             name,
             Binding {
@@ -858,7 +871,7 @@ impl Environment {
     }
 
     /// Define an uninitialized binding (for TDZ - let/const before declaration)
-    pub fn define_uninitialized(&mut self, name: String, mutable: bool) {
+    pub fn define_uninitialized(&self, name: String, mutable: bool) {
         self.bindings.borrow_mut().insert(
             name,
             Binding {

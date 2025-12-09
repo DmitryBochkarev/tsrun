@@ -81,8 +81,8 @@ enum FrameResult {
 pub struct Interpreter {
     /// Global object
     pub global: JsObjectRef,
-    /// Current environment
-    pub env: Environment,
+    /// Current environment (Rc for cheap cloning and sharing)
+    pub env: Rc<Environment>,
     /// Object.prototype for all objects
     pub object_prototype: JsObjectRef,
     /// Array.prototype for all array instances
@@ -293,7 +293,7 @@ impl Interpreter {
 
         Self {
             global,
-            env,
+            env: Rc::new(env),
             object_prototype,
             array_prototype,
             string_prototype,
@@ -373,8 +373,8 @@ impl Interpreter {
             }
             // Clone AST and environment to release borrow before execution
             (
-                state.body.clone(),    // AST clone - needed to release borrow
-                state.closure.clone(), // Environment clone - needed for execution context
+                state.body.clone(),           // AST clone - needed to release borrow
+                state.closure.cheap_clone(),  // Rc clone - cheap
                 state.stmt_index,
                 state.sent_value.clone(), // JsValue clone - may contain Rc types
                 state.state.clone(),      // enum Copy
@@ -392,9 +392,8 @@ impl Interpreter {
         });
 
         // Save current environment and set up generator environment
-        // Environment clone - needed to restore after generator execution
-        let saved_env = self.env.clone();
-        self.env = Environment::with_outer(closure);
+        let saved_env = self.env.cheap_clone();
+        self.env = Rc::new(Environment::with_outer(closure));
 
         // Bind parameters
         for (i, param) in params.iter().enumerate() {
@@ -453,8 +452,8 @@ impl Interpreter {
             }
             // Clone AST and environment to release borrow before execution
             (
-                state.body.clone(),    // AST clone - needed to release borrow
-                state.closure.clone(), // Environment clone - needed for execution context
+                state.body.clone(),           // AST clone - needed to release borrow
+                state.closure.cheap_clone(),  // Rc clone - cheap
                 state.stmt_index,
                 state.sent_value.clone(), // JsValue clone - may contain Rc types
                 state.params.clone(),     // AST clone - needed for parameter binding
@@ -471,9 +470,8 @@ impl Interpreter {
         });
 
         // Save current environment and set up generator environment
-        // Environment clone - needed to restore after generator execution
-        let saved_env = self.env.clone();
-        self.env = Environment::with_outer(closure);
+        let saved_env = self.env.cheap_clone();
+        self.env = Rc::new(Environment::with_outer(closure));
 
         // Bind parameters
         for (i, param) in params.iter().enumerate() {
@@ -980,8 +978,8 @@ impl Interpreter {
                             };
 
                             // Bind catch parameter
-                            let prev_env = self.env.clone();
-                            self.env = Environment::with_outer(self.env.clone());
+                            let prev_env = self.env.cheap_clone();
+                            self.env = Rc::new(Environment::child(&self.env));
 
                             if let Some(param) = &handler.param {
                                 self.bind_pattern(param, error_value, true)?;
@@ -1274,9 +1272,9 @@ impl Interpreter {
     fn execute_function_declaration(&mut self, decl: &FunctionDeclaration) -> Result<(), JsError> {
         let func = InterpretedFunction {
             name: decl.id.as_ref().map(|id| id.name.clone()),
-            params: decl.params.clone(),
-            body: FunctionBody::Block(decl.body.clone()),
-            closure: self.env.clone(),
+            params: decl.params.clone(), // AST clone - needed for function params
+            body: FunctionBody::Block(decl.body.clone()), // AST clone - needed for function body
+            closure: self.env.cheap_clone(),
             source_location: decl.span,
             generator: decl.generator,
             async_: decl.async_,
@@ -1407,9 +1405,9 @@ impl Interpreter {
             let func = &method.value;
             let interpreted = InterpretedFunction {
                 name: Some(method_name.clone()),
-                params: func.params.clone(),
-                body: FunctionBody::Block(func.body.clone()),
-                closure: self.env.clone(),
+                params: func.params.clone(), // AST clone - needed for function params
+                body: FunctionBody::Block(func.body.clone()), // AST clone - needed for function body
+                closure: self.env.cheap_clone(),
                 source_location: func.span,
                 generator: func.generator,
                 async_: func.async_,
@@ -1489,9 +1487,9 @@ impl Interpreter {
         // Store field initializers in a special property so evaluate_new can access them
         let constructor_fn = create_function(JsFunction::Interpreted(InterpretedFunction {
             name: class.id.as_ref().map(|id| id.name.clone()),
-            params: ctor_params,
-            body: FunctionBody::Block(ctor_body),
-            closure: self.env.clone(),
+            params: ctor_params, // AST clone - already consumed above
+            body: FunctionBody::Block(ctor_body), // AST clone - already consumed above
+            closure: self.env.cheap_clone(),
             source_location: class.span,
             generator: false, // Constructors cannot be generators
             async_: false,    // Constructors cannot be async
@@ -1569,9 +1567,9 @@ impl Interpreter {
             let func = &method.value;
             let interpreted = InterpretedFunction {
                 name: Some(method_name.clone()),
-                params: func.params.clone(),
-                body: FunctionBody::Block(func.body.clone()),
-                closure: self.env.clone(),
+                params: func.params.clone(), // AST clone - needed for function params
+                body: FunctionBody::Block(func.body.clone()), // AST clone - needed for function body
+                closure: self.env.cheap_clone(),
                 source_location: func.span,
                 generator: func.generator,
                 async_: func.async_,
@@ -1683,8 +1681,8 @@ impl Interpreter {
 
         // Save current exports and create new scope for namespace
         let saved_exports = std::mem::take(&mut self.exports);
-        let saved_env = self.env.clone();
-        self.env = Environment::with_outer(self.env.clone());
+        let saved_env = self.env.cheap_clone();
+        self.env = Rc::new(Environment::child(&self.env));
 
         // Execute statements in namespace body
         for stmt in &ns.body {
@@ -1895,8 +1893,8 @@ impl Interpreter {
     }
 
     fn execute_block(&mut self, block: &BlockStatement) -> Result<Completion, JsError> {
-        let prev_env = self.env.clone();
-        self.env = Environment::with_outer(self.env.clone());
+        let prev_env = self.env.cheap_clone();
+        self.env = Rc::new(Environment::child(&self.env));
 
         let mut result = Completion::Normal(JsValue::Undefined);
 
@@ -1921,8 +1919,8 @@ impl Interpreter {
         for_stmt: &ForStatement,
         label: Option<&str>,
     ) -> Result<Completion, JsError> {
-        let prev_env = self.env.clone();
-        self.env = Environment::with_outer(self.env.clone());
+        let prev_env = self.env.cheap_clone();
+        self.env = Rc::new(Environment::child(&self.env));
 
         // Track let-declared loop variables for per-iteration binding
         let mut let_var_names: Vec<String> = Vec::new();
@@ -1950,7 +1948,7 @@ impl Interpreter {
             }
         }
 
-        let loop_env = self.env.clone();
+        let loop_env = self.env.cheap_clone();
 
         // Loop
         loop {
@@ -1964,20 +1962,20 @@ impl Interpreter {
 
             // For let/const loops, create per-iteration scope
             if is_let_loop && !let_var_names.is_empty() {
-                let mut iter_env = Environment::with_outer(loop_env.clone());
+                let iter_env = Environment::with_outer(loop_env.cheap_clone());
                 // Copy current values into the per-iteration scope
                 for name in &let_var_names {
                     if let Ok(val) = self.env.get(name) {
                         iter_env.define(name.clone(), val, true);
                     }
                 }
-                self.env = iter_env;
+                self.env = Rc::new(iter_env);
             }
 
             // Body
             match self.execute_statement(&for_stmt.body)? {
                 Completion::Break(None) => {
-                    self.env = loop_env.clone();
+                    self.env = loop_env.cheap_clone();
                     break;
                 }
                 Completion::Break(Some(ref l)) if label == Some(l.as_str()) => {
@@ -2076,10 +2074,10 @@ impl Interpreter {
             _ => vec![],
         };
 
-        let prev_env = self.env.clone();
+        let prev_env = self.env.cheap_clone();
 
         for key in keys {
-            self.env = Environment::with_outer(prev_env.clone());
+            self.env = Rc::new(Environment::with_outer(prev_env.cheap_clone()));
 
             let key_value = JsValue::String(JsString::from(key));
 
@@ -2163,10 +2161,10 @@ impl Interpreter {
             _ => vec![],
         };
 
-        let prev_env = self.env.clone();
+        let prev_env = self.env.cheap_clone();
 
         for item in items {
-            self.env = Environment::with_outer(prev_env.clone());
+            self.env = Rc::new(Environment::with_outer(prev_env.cheap_clone()));
 
             match &for_of.left {
                 ForInOfLeft::Variable(decl) => {
@@ -2604,9 +2602,9 @@ impl Interpreter {
             Expression::Function(func) => {
                 let interpreted = InterpretedFunction {
                     name: func.id.as_ref().map(|id| id.name.clone()),
-                    params: func.params.clone(),
-                    body: FunctionBody::Block(func.body.clone()),
-                    closure: self.env.clone(),
+                    params: func.params.clone(), // AST clone - needed for function params
+                    body: FunctionBody::Block(func.body.clone()), // AST clone - needed for function body
+                    closure: self.env.cheap_clone(),
                     source_location: func.span,
                     generator: func.generator,
                     async_: func.async_,
@@ -2619,9 +2617,9 @@ impl Interpreter {
             Expression::ArrowFunction(arrow) => {
                 let interpreted = InterpretedFunction {
                     name: None,
-                    params: arrow.params.clone(),
-                    body: arrow.body.clone().into(),
-                    closure: self.env.clone(),
+                    params: arrow.params.clone(), // AST clone - needed for function params
+                    body: arrow.body.clone().into(), // AST clone - needed for function body
+                    closure: self.env.cheap_clone(),
                     source_location: arrow.span,
                     generator: false, // Arrow functions cannot be generators
                     async_: arrow.async_,
@@ -3589,8 +3587,8 @@ impl Interpreter {
             location,
         });
 
-        let prev_env = self.env.clone();
-        self.env = Environment::with_outer(interpreted.closure.clone());
+        let prev_env = self.env.cheap_clone();
+        self.env = Rc::new(Environment::with_outer(interpreted.closure.cheap_clone()));
 
         // Bind 'this' value
         self.env.define("this".to_string(), this_value, false);
@@ -3680,9 +3678,9 @@ impl Interpreter {
 
                     let gen_state = GeneratorState {
                         body,
-                        params: interpreted.params.clone(),
+                        params: interpreted.params.clone(), // AST clone - needed for generator params
                         args,
-                        closure: interpreted.closure.clone(),
+                        closure: interpreted.closure.cheap_clone(),
                         state: GeneratorStatus::Suspended,
                         stmt_index: 0,
                         sent_value: JsValue::Undefined,
@@ -3710,8 +3708,8 @@ impl Interpreter {
                     location,
                 });
 
-                let prev_env = self.env.clone();
-                self.env = Environment::with_outer(interpreted.closure.clone());
+                let prev_env = self.env.cheap_clone();
+                self.env = Rc::new(Environment::with_outer(interpreted.closure.cheap_clone()));
 
                 // Bind 'this' value
                 self.env
