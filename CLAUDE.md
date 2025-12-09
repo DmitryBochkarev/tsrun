@@ -53,6 +53,76 @@ Tests are located in:
 - **Never change failing test cases** - if a test fails because a syntax/feature is not yet supported, write additional simpler tests to verify the current implementation scope, but keep the original test as a goal to implement the missing feature
 - **Debugging tests** - write debug tests in test files and run with `cargo test test_name -- --nocapture` to see output. Do not use heredoc/echo commands in bash to run code.
 
+## Zero-Panic Policy
+
+This codebase enforces a **zero-panic policy** via Clippy lints. The following patterns are **denied** in production code:
+
+| Pattern | Alternative |
+|---------|-------------|
+| `.unwrap()` | Use `.ok_or_else()`, `if let`, or `match` |
+| `.expect()` | Use `.ok_or_else()` with descriptive error |
+| `[index]` | Use `.get(index)` with error handling |
+| `panic!()` | Return `Err(JsError::...)` |
+| `unreachable!()` | Return `Err(JsError::internal_error(...))` |
+| `todo!()` | Implement the feature or return error |
+| `unimplemented!()` | Return `Err(JsError::type_error(...))` |
+| `&str[start..end]` | Use `.get(start..end)` for safe slicing |
+
+### Clippy Configuration
+
+The lints are configured in `Cargo.toml`:
+```toml
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+indexing_slicing = "deny"
+panic = "deny"
+unreachable = "deny"
+todo = "deny"
+unimplemented = "deny"
+string_slice = "deny"
+```
+
+Test code is exempt via `clippy.toml`:
+```toml
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-indexing-slicing-in-tests = true
+allow-panic-in-tests = true
+```
+
+### Safe Access Patterns
+
+**For function arguments:**
+```rust
+// Instead of: args[0]
+let first = args.first().cloned().unwrap_or(JsValue::Undefined);
+
+// Instead of: args[1]
+let second = args.get(1).cloned().unwrap_or(JsValue::Undefined);
+```
+
+**For array/vector access:**
+```rust
+// Instead of: elements[i]
+let elem = elements.get(i).ok_or_else(|| JsError::internal_error("index out of bounds"))?;
+
+// For slicing: args[i..]
+let rest = args.get(i..).unwrap_or_default().to_vec();
+```
+
+**For string slicing:**
+```rust
+// Instead of: s[start..end]
+let slice = s.get(start..end).unwrap_or("");
+```
+
+**For Option unwrapping:**
+```rust
+// Instead of: opt.unwrap()
+let value = opt.ok_or_else(|| JsError::internal_error("expected value"))?;
+```
+
 ## Development Workflow
 
 Use TDD (Test-Driven Development) for new features:

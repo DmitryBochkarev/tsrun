@@ -4,7 +4,7 @@
 
 **Project:** `typescript-eval`
 **Purpose:** Execute TypeScript for config/manifest generation from Rust
-**Status:** Milestone 7 Complete (ES Modules, Async/Await, 626+ tests passing)
+**Status:** Milestone 7 Complete (ES Modules, Async/Await, Zero-Panic Policy, 627+ tests passing)
 
 ### Requirements
 
@@ -14,6 +14,7 @@
 - Full ES2022+ standard built-ins
 - Serde integration for Rust API
 - Production-quality implementation
+- **Zero-panic policy** - no runtime panics in production code
 
 ### Execution Model
 
@@ -65,6 +66,7 @@ The following features should be implemented next, in priority order:
 - ~~**namespace/module declarations**~~ ✅
 - ~~**RegExp flags**~~ ✅
 - ~~**console.table/dir/time**~~ ✅
+- ~~**Zero-Panic Policy**~~ ✅ (Clippy lints enforced)
 
 ---
 
@@ -1035,6 +1037,56 @@ pub struct StackFrame {
     pub column: u32,
 }
 ```
+
+---
+
+## Zero-Panic Policy
+
+The codebase enforces a strict **zero-panic policy** to ensure production reliability. All panic-prone patterns are denied via Clippy lints.
+
+### Enforced Lints
+
+Configured in `Cargo.toml`:
+```toml
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+indexing_slicing = "deny"
+panic = "deny"
+unreachable = "deny"
+todo = "deny"
+unimplemented = "deny"
+string_slice = "deny"
+```
+
+### Test Exemptions
+
+Test code is exempt via `clippy.toml`:
+```toml
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-indexing-slicing-in-tests = true
+allow-panic-in-tests = true
+```
+
+### Safe Alternatives
+
+| Panic Pattern | Safe Alternative |
+|---------------|------------------|
+| `vec[i]` | `vec.get(i).ok_or_else(\|\| JsError::...)` |
+| `opt.unwrap()` | `opt.ok_or_else(\|\| JsError::...)` |
+| `str[start..end]` | `str.get(start..end).unwrap_or("")` |
+| `args[0]` | `args.first().cloned().unwrap_or(JsValue::Undefined)` |
+| `unreachable!()` | `return Err(JsError::internal_error(...))` |
+
+### Internal Errors
+
+For unexpected interpreter states (invariant violations), use:
+```rust
+JsError::internal_error("description of what went wrong")
+```
+
+This wraps the error as a `TypeError` with "Internal error: " prefix, making it clear that the error represents a bug in the interpreter rather than user code.
 
 ---
 
