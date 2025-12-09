@@ -27,6 +27,7 @@ mod set;
 mod state_machine;
 mod string;
 mod symbol;
+mod timeout;
 
 use typescript_eval::{JsError, JsValue, Runtime, RuntimeResult};
 

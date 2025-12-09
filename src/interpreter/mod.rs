@@ -139,6 +139,14 @@ pub struct Interpreter {
     pending_slot: Option<crate::PendingSlot>,
     /// Program body saved for execution after imports resolved
     pending_program_body: Option<Vec<Statement>>,
+
+    // ═══════════════════════════════════════════════════════════════
+    // Timeout tracking
+    // ═══════════════════════════════════════════════════════════════
+    /// Execution start time (set when execution begins)
+    execution_start: Option<std::time::Instant>,
+    /// Maximum execution time in milliseconds (default: 3000ms)
+    timeout_ms: u64,
 }
 
 /// A static import declaration to be resolved
@@ -369,6 +377,9 @@ impl Interpreter {
             static_import_index: 0,
             pending_slot: None,
             pending_program_body: None,
+            // Timeout tracking (default: 3 seconds)
+            execution_start: None,
+            timeout_ms: 3000,
         }
     }
 
@@ -408,6 +419,18 @@ impl Interpreter {
             }
         }
         JsValue::Object(obj)
+    }
+
+    /// Set the execution timeout in milliseconds
+    ///
+    /// Default is 3000ms (3 seconds). Set to 0 to disable timeout.
+    pub fn set_timeout_ms(&mut self, timeout_ms: u64) {
+        self.timeout_ms = timeout_ms;
+    }
+
+    /// Get the current execution timeout in milliseconds
+    pub fn timeout_ms(&self) -> u64 {
+        self.timeout_ms
     }
 
     /// Resume a generator, executing until the next yield or completion
@@ -594,6 +617,9 @@ impl Interpreter {
     /// This method supports suspension at import/await points by returning
     /// RuntimeResult::ImportAwaited or RuntimeResult::AsyncAwaited.
     pub fn execute(&mut self, program: &Program) -> Result<crate::RuntimeResult, JsError> {
+        // Start the execution timer
+        self.execution_start = Some(std::time::Instant::now());
+
         // Hoist var declarations at global scope
         self.hoist_var_declarations(&program.body);
 
@@ -821,14 +847,41 @@ impl Interpreter {
         Ok(())
     }
 
+    /// Check if execution has exceeded the timeout
+    ///
+    /// Returns an error if the timeout has been exceeded, otherwise Ok(()).
+    /// If timeout_ms is 0, the timeout is disabled.
+    fn check_timeout(&self) -> Result<(), JsError> {
+        // Skip check if timeout is disabled
+        if self.timeout_ms == 0 {
+            return Ok(());
+        }
+
+        if let Some(start) = self.execution_start {
+            let elapsed = start.elapsed();
+            let elapsed_ms = elapsed.as_millis() as u64;
+            if elapsed_ms > self.timeout_ms {
+                return Err(JsError::Timeout {
+                    timeout_ms: self.timeout_ms,
+                    elapsed_ms,
+                });
+            }
+        }
+        Ok(())
+    }
+
     /// Main execution loop for stack-based evaluation
     ///
     /// Processes frames from eval_stack until:
     /// - Stack is empty (returns Complete)
     /// - Suspension point reached (returns ImportAwaited/AsyncAwaited)
+    /// - Timeout exceeded (returns error)
     /// - Error occurs
     fn run_stack(&mut self) -> Result<crate::RuntimeResult, JsError> {
         while let Some(frame) = self.eval_stack.pop() {
+            // Check for timeout before processing each frame
+            self.check_timeout()?;
+
             match self.process_frame(frame)? {
                 FrameResult::Continue => continue,
                 FrameResult::Suspend(result) => return Ok(result),
@@ -983,6 +1036,9 @@ impl Interpreter {
 
             Statement::While(while_stmt) => {
                 loop {
+                    // Check for timeout at each iteration
+                    self.check_timeout()?;
+
                     let test = self.evaluate(&while_stmt.test)?;
                     if !test.to_boolean() {
                         break;
@@ -1002,6 +1058,9 @@ impl Interpreter {
 
             Statement::DoWhile(do_while) => {
                 loop {
+                    // Check for timeout at each iteration
+                    self.check_timeout()?;
+
                     match self.execute_statement(&do_while.body)? {
                         Completion::Break(None) => break,
                         Completion::Break(label) => return Ok(Completion::Break(label)),
@@ -2068,6 +2127,9 @@ impl Interpreter {
 
         // Loop
         loop {
+            // Check for timeout at each iteration
+            self.check_timeout()?;
+
             // Test
             if let Some(test) = &for_stmt.test {
                 let test_val = self.evaluate(test)?;
@@ -2222,6 +2284,9 @@ impl Interpreter {
         let prev_env = self.env;
 
         for key in keys {
+            // Check for timeout at each iteration
+            self.check_timeout()?;
+
             let iter_env = self.env_arena.alloc(Some(prev_env));
             self.env = iter_env;
 
@@ -2332,6 +2397,9 @@ impl Interpreter {
         let prev_env = self.env;
 
         for item in items {
+            // Check for timeout at each iteration
+            self.check_timeout()?;
+
             let iter_env = self.env_arena.alloc(Some(prev_env));
             self.env = iter_env;
 
@@ -2401,6 +2469,9 @@ impl Interpreter {
         let prev_env = self.env;
 
         loop {
+            // Check for timeout at each iteration
+            self.check_timeout()?;
+
             // Call generator.next()
             let next_result = builtins::generator::generator_next(
                 self,
@@ -2493,6 +2564,9 @@ impl Interpreter {
         label: Option<&JsString>,
     ) -> Result<Completion, JsError> {
         loop {
+            // Check for timeout at each iteration
+            self.check_timeout()?;
+
             let test = self.evaluate(&while_stmt.test)?;
             if !test.to_boolean() {
                 break;
@@ -2523,6 +2597,9 @@ impl Interpreter {
         label: Option<&JsString>,
     ) -> Result<Completion, JsError> {
         loop {
+            // Check for timeout at each iteration
+            self.check_timeout()?;
+
             match self.execute_statement(&do_while.body)? {
                 Completion::Break(None) => break,
                 Completion::Break(Some(ref l)) if label == Some(l) => {

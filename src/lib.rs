@@ -279,6 +279,29 @@ impl Default for Runtime {
     }
 }
 
+impl Runtime {
+    /// Set the execution timeout in milliseconds
+    ///
+    /// Default is 3000ms (3 seconds). Set to 0 to disable timeout.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use typescript_eval::Runtime;
+    ///
+    /// let mut runtime = Runtime::new();
+    /// runtime.set_timeout_ms(5000); // 5 second timeout
+    /// ```
+    pub fn set_timeout_ms(&mut self, timeout_ms: u64) {
+        self.interpreter.set_timeout_ms(timeout_ms);
+    }
+
+    /// Get the current execution timeout in milliseconds
+    pub fn timeout_ms(&self) -> u64 {
+        self.interpreter.timeout_ms()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

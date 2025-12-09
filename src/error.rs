@@ -91,6 +91,10 @@ pub enum JsError {
     /// Internal marker for generator yield (not a real error)
     #[error("GeneratorYield")]
     GeneratorYield { value: crate::value::JsValue },
+
+    /// Execution exceeded the time limit
+    #[error("TimeoutError: execution exceeded {elapsed_ms}ms timeout (limit: {timeout_ms}ms)")]
+    Timeout { timeout_ms: u64, elapsed_ms: u64 },
 }
 
 fn format_stack(stack: &[StackFrame]) -> String {
@@ -198,6 +202,13 @@ impl JsError {
                 format!("InternalError: {}", msg),
             )),
             JsError::Thrown => crate::value::JsValue::Undefined,
+            JsError::Timeout {
+                timeout_ms,
+                elapsed_ms,
+            } => crate::value::JsValue::String(crate::value::JsString::from(format!(
+                "TimeoutError: execution exceeded {}ms timeout (limit: {}ms)",
+                elapsed_ms, timeout_ms
+            ))),
         }
     }
 }
