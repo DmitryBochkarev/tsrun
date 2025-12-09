@@ -230,9 +230,7 @@ fn value_to_json(value: &JsValue) -> Result<serde_json::Value, &'static str> {
         JsValue::Null => Ok(serde_json::Value::Null),
         JsValue::Boolean(b) => Ok(serde_json::Value::Bool(*b)),
         JsValue::Number(n) => {
-            if n.is_nan() {
-                Ok(serde_json::Value::Null)
-            } else if n.is_infinite() {
+            if n.is_nan() || n.is_infinite() {
                 Ok(serde_json::Value::Null)
             } else {
                 Ok(serde_json::json!(*n))

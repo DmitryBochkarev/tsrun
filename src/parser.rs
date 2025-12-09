@@ -2099,6 +2099,12 @@ impl<'a> Parser<'a> {
 
     fn parse_parenthesized_or_arrow(&mut self) -> Result<Expression, JsError> {
         let start = self.current.span;
+
+        // Save state for potential rollback
+        let lexer_checkpoint = self.lexer.checkpoint();
+        let saved_current = self.current.clone();
+        let saved_previous = self.previous.clone();
+
         self.require_token(&TokenKind::LParen)?;
 
         // Empty parens -> arrow function
@@ -2106,15 +2112,36 @@ impl<'a> Parser<'a> {
             return self.parse_arrow_function_from_params(vec![], start);
         }
 
-        // Try to parse as parameter list for arrow function
-        // This is a simplified approach - full implementation would need lookahead
+        // Try to parse as arrow function params (with type annotations)
+        if let Ok(params) = self.try_parse_arrow_params() {
+            // Check for return type annotation or arrow
+            if self.check(&TokenKind::Colon) || self.check(&TokenKind::Arrow) {
+                return self.parse_arrow_function_from_params(params, start);
+            }
+
+            // If we have type annotations in params, it must be an arrow function
+            let has_type_annotations = params.iter().any(|p| p.type_annotation.is_some());
+            if has_type_annotations {
+                return Err(self.unexpected_token("'=>'"));
+            }
+
+            // No arrow - might be parenthesized expression, rollback and re-parse
+            self.lexer.restore(lexer_checkpoint);
+            self.current = saved_current;
+            self.previous = saved_previous;
+        } else {
+            // Failed to parse as params, rollback
+            self.lexer.restore(lexer_checkpoint);
+            self.current = saved_current;
+            self.previous = saved_previous;
+        }
+
+        // Parse as parenthesized expression
+        self.require_token(&TokenKind::LParen)?;
         let first = self.parse_assignment_expression()?;
 
-        // Check for rest parameter (definitely arrow function)
-        // Or comma (likely arrow function or sequence expression)
-
         if self.match_token(&TokenKind::RParen) {
-            // Check for arrow
+            // Check for arrow (simple identifier case)
             if self.check(&TokenKind::Arrow) {
                 let param = self.expression_to_param(&first)?;
                 return self.parse_arrow_function_from_params(vec![param], start);
@@ -2189,6 +2216,65 @@ impl<'a> Parser<'a> {
         }
 
         Err(self.unexpected_token("')' or ','"))
+    }
+
+    /// Try to parse arrow function parameters (with optional type annotations)
+    /// Returns Ok with params if successful, Err otherwise
+    fn try_parse_arrow_params(&mut self) -> Result<Vec<FunctionParam>, JsError> {
+        let mut params = vec![];
+
+        while !self.check(&TokenKind::RParen) && !self.is_at_end() {
+            let param_start = self.current.span;
+
+            // Check for rest parameter
+            let pattern = if self.match_token(&TokenKind::DotDotDot) {
+                let arg = self.parse_binding_pattern()?;
+                let span = self.span_from(param_start);
+                Pattern::Rest(RestElement {
+                    argument: Box::new(arg),
+                    type_annotation: None,
+                    span,
+                })
+            } else {
+                self.parse_binding_pattern()?
+            };
+
+            let optional = self.match_token(&TokenKind::Question);
+
+            let type_annotation = if self.match_token(&TokenKind::Colon) {
+                Some(self.parse_type_annotation()?)
+            } else {
+                None
+            };
+
+            // Default value becomes AssignmentPattern
+            let pattern = if self.match_token(&TokenKind::Eq) {
+                let right = Box::new(self.parse_assignment_expression()?);
+                let span = self.span_from(param_start);
+                Pattern::Assignment(AssignmentPattern {
+                    left: Box::new(pattern),
+                    right,
+                    span,
+                })
+            } else {
+                pattern
+            };
+
+            let span = self.span_from(param_start);
+            params.push(FunctionParam {
+                pattern,
+                type_annotation,
+                optional,
+                span,
+            });
+
+            if !self.match_token(&TokenKind::Comma) {
+                break;
+            }
+        }
+
+        self.require_token(&TokenKind::RParen)?;
+        Ok(params)
     }
 
     fn parse_arrow_function_from_params(
@@ -2616,14 +2702,26 @@ impl<'a> Parser<'a> {
                     let ty = self.parse_type_reference()?;
                     let mut ty = TypeAnnotation::Reference(ty);
 
-                    // Array shorthand
+                    // Array shorthand or indexed access type
                     while self.check(&TokenKind::LBracket) {
                         self.advance();
-                        self.require_token(&TokenKind::RBracket)?;
-                        ty = TypeAnnotation::Array(ArrayType {
-                            element_type: Box::new(ty),
-                            span: self.span_from(start),
-                        });
+                        if self.check(&TokenKind::RBracket) {
+                            // Array type: T[]
+                            self.advance();
+                            ty = TypeAnnotation::Array(ArrayType {
+                                element_type: Box::new(ty),
+                                span: self.span_from(start),
+                            });
+                        } else {
+                            // Indexed access type: T["key"] or T[K]
+                            let index_type = self.parse_type_annotation()?;
+                            self.require_token(&TokenKind::RBracket)?;
+                            ty = TypeAnnotation::Indexed(IndexedAccessType {
+                                object_type: Box::new(ty),
+                                index_type: Box::new(index_type),
+                                span: self.span_from(start),
+                            });
+                        }
                     }
 
                     Ok(ty)
@@ -2635,10 +2733,22 @@ impl<'a> Parser<'a> {
                 self.advance();
                 let members = self.parse_type_members()?;
                 self.require_token(&TokenKind::RBrace)?;
-                Ok(TypeAnnotation::Object(ObjectType {
+                let mut ty = TypeAnnotation::Object(ObjectType {
                     members,
                     span: self.span_from(start),
-                }))
+                });
+
+                // Array shorthand: { a: number }[]
+                while self.check(&TokenKind::LBracket) {
+                    self.advance();
+                    self.require_token(&TokenKind::RBracket)?;
+                    ty = TypeAnnotation::Array(ArrayType {
+                        element_type: Box::new(ty),
+                        span: self.span_from(start),
+                    });
+                }
+
+                Ok(ty)
             }
 
             // Tuple or parenthesized
@@ -4080,6 +4190,55 @@ mod tests {
     fn test_index_signature_with_properties() {
         // Test index signatures mixed with regular properties
         let prog = parse("interface Foo { name: string; [key: string]: any; }");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_inline_object_type_array() {
+        // Test inline object type as array element type
+        let prog = parse("const x: { a: number; b: string }[] = [];");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_inline_object_type_in_interface() {
+        // Test inline object type inside interface
+        let prog = parse("interface Foo { items: { id: number; name: string }[]; }");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_arrow_function_with_return_type() {
+        // Test arrow function with return type annotation
+        let prog = parse("const fn = (x: number): number => x * 2;");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_arrow_function_with_array_return_type() {
+        // Test arrow function with array return type
+        let prog = parse("const fn = (arr: number[]): number[] => arr.map(x => x * 2);");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_arrow_function_with_generic_return_type() {
+        // Test arrow function with generic return type
+        let prog = parse("const fn = (arr: Product[], cat: string): Product[] => arr.filter(p => p.category === cat);");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_indexed_access_type() {
+        // Test indexed access type like Order["status"]
+        let prog = parse("const x: Order[\"status\"] = \"pending\";");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_indexed_access_type_in_param() {
+        // Test indexed access type in function parameter
+        let prog = parse("function foo(status: Order[\"status\"]): void {}");
         assert_eq!(prog.body.len(), 1);
     }
 

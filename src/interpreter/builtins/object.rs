@@ -217,7 +217,7 @@ pub fn object_constructor(
 }
 
 pub fn object_keys(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
 ) -> Result<JsValue, JsError> {
@@ -234,11 +234,11 @@ pub fn object_keys(
         .map(|(key, _)| JsValue::String(JsString::from(key.to_string())))
         .collect();
 
-    Ok(JsValue::Object(create_array(keys)))
+    Ok(JsValue::Object(interp.create_array(keys)))
 }
 
 pub fn object_values(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
 ) -> Result<JsValue, JsError> {
@@ -255,11 +255,11 @@ pub fn object_values(
         .map(|(_, prop)| prop.value.clone())
         .collect();
 
-    Ok(JsValue::Object(create_array(values)))
+    Ok(JsValue::Object(interp.create_array(values)))
 }
 
 pub fn object_entries(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
 ) -> Result<JsValue, JsError> {
@@ -268,20 +268,24 @@ pub fn object_entries(
         return Err(JsError::type_error("Object.entries requires an object"));
     };
 
-    let entries: Vec<JsValue> = obj_ref
+    // Collect key-value pairs first to release the borrow
+    let pairs: Vec<(String, JsValue)> = obj_ref
         .borrow()
         .properties
         .iter()
         .filter(|(_, prop)| prop.enumerable)
-        .map(|(key, prop)| {
-            JsValue::Object(create_array(vec![
-                JsValue::String(JsString::from(key.to_string())),
-                prop.value.clone(),
-            ]))
+        .map(|(key, prop)| (key.to_string(), prop.value.clone()))
+        .collect();
+
+    // Create entry arrays with proper prototype
+    let entries: Vec<JsValue> = pairs
+        .into_iter()
+        .map(|(key, value)| {
+            JsValue::Object(interp.create_array(vec![JsValue::String(JsString::from(key)), value]))
         })
         .collect();
 
-    Ok(JsValue::Object(create_array(entries)))
+    Ok(JsValue::Object(interp.create_array(entries)))
 }
 
 pub fn object_assign(
