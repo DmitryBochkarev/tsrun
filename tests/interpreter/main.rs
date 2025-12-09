@@ -27,23 +27,24 @@ mod state_machine;
 mod string;
 mod symbol;
 
-use typescript_eval::parser::Parser;
-use typescript_eval::{Interpreter, JsError, JsValue};
+use typescript_eval::{JsError, JsValue, Runtime, RuntimeResult};
 
 /// Helper function to evaluate TypeScript source code
 pub fn eval(source: &str) -> JsValue {
-    let mut parser = Parser::new(source);
-    let program = parser.parse_program().unwrap();
-    let mut interp = Interpreter::new();
-    interp.execute(&program).unwrap()
+    let mut runtime = Runtime::new();
+    match runtime.eval_resumable(source).unwrap() {
+        RuntimeResult::Complete(value) => value,
+        other => panic!("Expected Complete, got {:?}", other),
+    }
 }
 
 /// Helper function to evaluate and return Result for error testing
 pub fn eval_result(source: &str) -> Result<JsValue, JsError> {
-    let mut parser = Parser::new(source);
-    let program = parser.parse_program().unwrap();
-    let mut interp = Interpreter::new();
-    interp.execute(&program)
+    let mut runtime = Runtime::new();
+    match runtime.eval_resumable(source)? {
+        RuntimeResult::Complete(value) => Ok(value),
+        other => panic!("Expected Complete, got {:?}", other),
+    }
 }
 
 /// Helper to check if evaluation throws an error containing a specific message
