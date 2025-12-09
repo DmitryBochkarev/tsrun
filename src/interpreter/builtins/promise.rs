@@ -6,8 +6,8 @@ use std::rc::Rc;
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
 use crate::value::{
-    create_function, create_object, ExoticObject, JsFunction, JsObject, JsObjectRef, JsValue,
-    NativeFunction, PromiseHandler, PromiseState, PromiseStatus, PropertyKey,
+    create_function, create_object, CheapClone, ExoticObject, JsFunction, JsObject, JsObjectRef,
+    JsValue, NativeFunction, PromiseHandler, PromiseState, PromiseStatus, PropertyKey,
 };
 
 /// Create Promise.prototype with then, catch, finally methods
@@ -52,7 +52,7 @@ pub fn create_promise_constructor(promise_prototype: &JsObjectRef) -> JsObjectRe
         let mut c = ctor.borrow_mut();
         c.set_property(
             PropertyKey::from("prototype"),
-            JsValue::Object(promise_prototype.clone()),
+            JsValue::Object(promise_prototype.cheap_clone()),
         );
 
         // Static methods
@@ -114,7 +114,7 @@ pub fn create_promise_object(prototype: &JsObjectRef) -> JsObjectRef {
     }));
 
     Rc::new(RefCell::new(JsObject {
-        prototype: Some(prototype.clone()),
+        prototype: Some(prototype.cheap_clone()),
         extensible: true,
         frozen: false,
         sealed: false,
@@ -138,7 +138,7 @@ pub fn create_fulfilled_promise(prototype: &JsObjectRef, value: JsValue) -> JsOb
     }));
 
     Rc::new(RefCell::new(JsObject {
-        prototype: Some(prototype.clone()),
+        prototype: Some(prototype.cheap_clone()),
         extensible: true,
         frozen: false,
         sealed: false,
@@ -157,7 +157,7 @@ pub fn create_rejected_promise(prototype: &JsObjectRef, reason: JsValue) -> JsOb
     }));
 
     Rc::new(RefCell::new(JsObject {
-        prototype: Some(prototype.clone()),
+        prototype: Some(prototype.cheap_clone()),
         extensible: true,
         frozen: false,
         sealed: false,
@@ -200,7 +200,7 @@ fn resolve_promise(
                 PromiseStatus::Pending => {
                     // Chain this promise to the other
                     drop(state_ref);
-                    let promise_clone = promise.clone();
+                    let promise_clone = promise.cheap_clone();
                     let mut state_mut = state.borrow_mut();
                     state_mut.handlers.push(PromiseHandler {
                         on_fulfilled: None,
@@ -348,10 +348,10 @@ pub fn promise_constructor(
     let promise = create_promise_object(&interp.promise_prototype);
 
     // Create resolve function using the new PromiseResolve variant
-    let resolve_fn = create_function(JsFunction::PromiseResolve(promise.clone()));
+    let resolve_fn = create_function(JsFunction::PromiseResolve(promise.cheap_clone()));
 
     // Create reject function using the new PromiseReject variant
-    let reject_fn = create_function(JsFunction::PromiseReject(promise.clone()));
+    let reject_fn = create_function(JsFunction::PromiseReject(promise.cheap_clone()));
 
     // Call executor(resolve, reject)
     match interp.call_function(
@@ -411,7 +411,7 @@ pub fn promise_then(
             state.borrow_mut().handlers.push(PromiseHandler {
                 on_fulfilled,
                 on_rejected,
-                result_promise: result_promise.clone(),
+                result_promise: result_promise.cheap_clone(),
             });
         }
         PromiseStatus::Fulfilled => {
@@ -420,7 +420,7 @@ pub fn promise_then(
             let handler = PromiseHandler {
                 on_fulfilled,
                 on_rejected,
-                result_promise: result_promise.clone(),
+                result_promise: result_promise.cheap_clone(),
             };
             trigger_handler(interp, handler, &value, true)?;
         }
@@ -430,7 +430,7 @@ pub fn promise_then(
             let handler = PromiseHandler {
                 on_fulfilled,
                 on_rejected,
-                result_promise: result_promise.clone(),
+                result_promise: result_promise.cheap_clone(),
             };
             trigger_handler(interp, handler, &reason, false)?;
         }
@@ -491,10 +491,11 @@ pub fn promise_finally(
                         return Err(JsError::type_error("Not a promise"));
                     };
                     // Store callback in both slots - we'll call it regardless
+                    // JsValue clone for callback - may be cheap or expensive
                     state.borrow_mut().handlers.push(PromiseHandler {
                         on_fulfilled: Some(callback.clone()),
                         on_rejected: Some(callback),
-                        result_promise: result_promise.clone(),
+                        result_promise: result_promise.cheap_clone(),
                     });
                     // Mark this as a finally handler somehow... for now, use a simpler approach
                 }
@@ -578,7 +579,7 @@ pub fn promise_all(
     // For Promise.all, we need to track all results.
     // Since we process synchronously, we can collect results directly.
     let mut results: Vec<JsValue> = Vec::with_capacity(promises.len());
-    let proto = interp.promise_prototype.clone();
+    let proto = interp.promise_prototype.cheap_clone();
 
     for promise_value in promises {
         // Convert to promise if not already
@@ -630,10 +631,11 @@ pub fn promise_race(
 ) -> Result<JsValue, JsError> {
     let iterable = args.first().cloned().unwrap_or(JsValue::Undefined);
     let promises = extract_iterable(&iterable)?;
-    let proto = interp.promise_prototype.clone();
+    let proto = interp.promise_prototype.cheap_clone();
 
     // Race returns the first settled promise
     for promise_value in promises {
+        // JsValue clones - needed for conversion to promise
         let promise = if let JsValue::Object(obj) = &promise_value {
             if matches!(obj.borrow().exotic, ExoticObject::Promise(_)) {
                 promise_value.clone()

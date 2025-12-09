@@ -22,9 +22,9 @@ use crate::ast::{
 };
 use crate::error::JsError;
 use crate::value::{
-    create_array, create_function, create_object, Environment, ExoticObject, FunctionBody,
-    GeneratorState, GeneratorStatus, InterpretedFunction, JsFunction, JsObjectRef, JsString,
-    JsValue, PromiseStatus, Property, PropertyKey,
+    create_array, create_function, create_object, CheapClone, Environment, ExoticObject,
+    FunctionBody, GeneratorState, GeneratorStatus, InterpretedFunction, JsFunction, JsObjectRef,
+    JsString, JsValue, PromiseStatus, Property, PropertyKey,
 };
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -278,7 +278,7 @@ impl Interpreter {
     /// Create an array with the proper prototype
     pub fn create_array(&self, elements: Vec<JsValue>) -> JsObjectRef {
         let arr = create_array(elements);
-        arr.borrow_mut().prototype = Some(self.array_prototype.clone());
+        arr.borrow_mut().prototype = Some(self.array_prototype.cheap_clone());
         arr
     }
 
@@ -289,7 +289,7 @@ impl Interpreter {
         let obj = create_object();
         {
             let mut obj_ref = obj.borrow_mut();
-            obj_ref.prototype = Some(self.object_prototype.clone());
+            obj_ref.prototype = Some(self.object_prototype.cheap_clone());
             for (name, value) in exports {
                 obj_ref.set_property(PropertyKey::from(name), value);
             }
@@ -307,14 +307,15 @@ impl Interpreter {
             if state.state == GeneratorStatus::Completed {
                 return Ok(create_generator_result(JsValue::Undefined, true));
             }
+            // Clone AST and environment to release borrow before execution
             (
-                state.body.clone(),
-                state.closure.clone(),
+                state.body.clone(),    // AST clone - needed to release borrow
+                state.closure.clone(), // Environment clone - needed for execution context
                 state.stmt_index,
-                state.sent_value.clone(),
-                state.state.clone(),
-                state.params.clone(),
-                state.args.clone(),
+                state.sent_value.clone(), // JsValue clone - may contain Rc types
+                state.state.clone(),      // enum Copy
+                state.params.clone(),     // AST clone - needed for parameter binding
+                state.args.clone(),       // Vec<JsValue> clone - needed for parameter values
             )
         };
 
@@ -327,6 +328,7 @@ impl Interpreter {
         });
 
         // Save current environment and set up generator environment
+        // Environment clone - needed to restore after generator execution
         let saved_env = self.env.clone();
         self.env = Environment::with_outer(closure);
 
@@ -385,13 +387,14 @@ impl Interpreter {
             if state.state == GeneratorStatus::Completed {
                 return Err(JsError::type_error("Generator is already completed"));
             }
+            // Clone AST and environment to release borrow before execution
             (
-                state.body.clone(),
-                state.closure.clone(),
+                state.body.clone(),       // AST clone - needed to release borrow
+                state.closure.clone(),    // Environment clone - needed for execution context
                 state.stmt_index,
-                state.sent_value.clone(),
-                state.params.clone(),
-                state.args.clone(),
+                state.sent_value.clone(), // JsValue clone - may contain Rc types
+                state.params.clone(),     // AST clone - needed for parameter binding
+                state.args.clone(),       // Vec<JsValue> clone - needed for parameter values
             )
         };
 
@@ -404,6 +407,7 @@ impl Interpreter {
         });
 
         // Save current environment and set up generator environment
+        // Environment clone - needed to restore after generator execution
         let saved_env = self.env.clone();
         self.env = Environment::with_outer(closure);
 
@@ -506,6 +510,7 @@ impl Interpreter {
                 Some(Ok(module_value)) => {
                     // Bind the import
                     let import = &self.static_imports[self.static_import_index - 1];
+                    // ImportBindings clone - enum with String fields
                     self.bind_import(&import.bindings.clone(), module_value)?;
                 }
                 Some(Err(error)) => {
@@ -549,13 +554,14 @@ impl Interpreter {
                     for spec in &import_decl.specifiers {
                         match spec {
                             ImportSpecifier::Named { local, imported, .. } => {
+                                // String clones - needed to store in ImportBindings
                                 named.push((imported.name.clone(), local.name.clone()));
                             }
                             ImportSpecifier::Default { local, .. } => {
-                                default_local = Some(local.name.clone());
+                                default_local = Some(local.name.clone()); // String clone
                             }
                             ImportSpecifier::Namespace { local, .. } => {
-                                namespace_local = Some(local.name.clone());
+                                namespace_local = Some(local.name.clone()); // String clone
                             }
                         }
                     }
@@ -584,12 +590,12 @@ impl Interpreter {
     fn process_next_import_or_execute(&mut self) -> Result<crate::RuntimeResult, JsError> {
         // Check if there are more imports to process
         if self.static_import_index < self.static_imports.len() {
-            // Clone specifier before mutable borrow
+            // String clone - specifier needed for both self and return value
             let specifier = self.static_imports[self.static_import_index].specifier.clone();
             let slot = crate::PendingSlot::new(self.generate_slot_id());
 
             self.static_import_index += 1;
-            self.pending_slot = Some(slot.clone());
+            self.pending_slot = Some(slot.cheap_clone());
 
             return Ok(crate::RuntimeResult::ImportAwaited {
                 slot,
@@ -625,10 +631,12 @@ impl Interpreter {
                 };
 
                 for (imported, local) in pairs {
+                    // String clone - PropertyKey::from takes ownership
                     let value = module_obj
                         .borrow()
                         .get_property(&PropertyKey::from(imported.clone()))
                         .unwrap_or(JsValue::Undefined);
+                    // String clone - env.define takes ownership
                     self.env.define(local.clone(), value, false);
                 }
             }
@@ -642,9 +650,11 @@ impl Interpreter {
                     .borrow()
                     .get_property(&PropertyKey::from("default"))
                     .unwrap_or(JsValue::Undefined);
+                // String clone - env.define takes ownership
                 self.env.define(local.clone(), value, false);
             }
             eval_stack::ImportBindings::Namespace(local) => {
+                // String clone - env.define takes ownership
                 // Bind the entire module object
                 self.env.define(local.clone(), module_value, false);
             }
@@ -1331,7 +1341,7 @@ impl Interpreter {
             if let Some(ref super_ctor) = super_constructor {
                 func_obj.borrow_mut().set_property(
                     PropertyKey::from("__super__"),
-                    JsValue::Object(super_ctor.clone()),
+                    JsValue::Object(super_ctor.cheap_clone()),
                 );
             }
 
@@ -1413,7 +1423,7 @@ impl Interpreter {
         // We'll use a special internal format
         {
             let mut ctor = constructor_fn.borrow_mut();
-            ctor.set_property(PropertyKey::from("prototype"), JsValue::Object(prototype.clone()));
+            ctor.set_property(PropertyKey::from("prototype"), JsValue::Object(prototype.cheap_clone()));
 
             // Store field initializers as internal data
             // For now, we'll evaluate them at class definition time and store as default values
@@ -1455,7 +1465,7 @@ impl Interpreter {
         if let Some(ref super_ctor) = super_constructor {
             constructor_fn.borrow_mut().set_property(
                 PropertyKey::from("__super__"),
-                JsValue::Object(super_ctor.clone()),
+                JsValue::Object(super_ctor.cheap_clone()),
             );
         }
 
@@ -1539,7 +1549,7 @@ impl Interpreter {
         // Set prototype.constructor = constructor
         prototype.borrow_mut().set_property(
             PropertyKey::from("constructor"),
-            JsValue::Object(constructor_fn.clone()),
+            JsValue::Object(constructor_fn.cheap_clone()),
         );
 
         Ok(constructor_fn)
@@ -2171,13 +2181,14 @@ impl Interpreter {
     fn bind_pattern(&mut self, pattern: &Pattern, value: JsValue, mutable: bool) -> Result<(), JsError> {
         match pattern {
             Pattern::Identifier(id) => {
+                // String clone - env.define takes ownership
                 self.env.define(id.name.clone(), value, mutable);
                 Ok(())
             }
 
             Pattern::Object(obj_pattern) => {
                 let obj = match &value {
-                    JsValue::Object(o) => o.clone(),
+                    JsValue::Object(o) => o.cheap_clone(),
                     _ => return Err(JsError::type_error("Cannot destructure non-object")),
                 };
 
@@ -2286,6 +2297,7 @@ impl Interpreter {
                     self.env.set(&id.name, value)?;
                 } else {
                     // Fallback: define if somehow not hoisted
+                    // String clone - env.define takes ownership
                     self.env.define(id.name.clone(), value, true);
                 }
                 Ok(())
@@ -2293,7 +2305,7 @@ impl Interpreter {
 
             Pattern::Object(obj_pattern) => {
                 let obj = match &value {
-                    JsValue::Object(o) => o.clone(),
+                    JsValue::Object(o) => o.cheap_clone(),
                     _ => return Err(JsError::type_error("Cannot destructure non-object")),
                 };
 
@@ -2651,7 +2663,7 @@ impl Interpreter {
                                 let obj_ref = obj.borrow();
                                 match &obj_ref.exotic {
                                     ExoticObject::Array { length } => (true, *length, None),
-                                    ExoticObject::Generator(gen) => (false, 0, Some(gen.clone())),
+                                    ExoticObject::Generator(gen) => (false, 0, Some(gen.cheap_clone())),
                                     _ => return Err(JsError::type_error("yield* on non-iterable")),
                                 }
                             };
@@ -2784,11 +2796,13 @@ impl Interpreter {
                 let regexp_obj = create_object();
                 {
                     let mut obj = regexp_obj.borrow_mut();
+                    // String clones - needed for ExoticObject storage
                     obj.exotic = ExoticObject::RegExp {
                         pattern: pattern.clone(),
                         flags: flags.clone(),
                     };
-                    obj.prototype = Some(self.regexp_prototype.clone());
+                    obj.prototype = Some(self.regexp_prototype.cheap_clone());
+                    // String clones - needed for property storage (creates JsString via Rc)
                     obj.set_property(
                         PropertyKey::from("source"),
                         JsValue::String(JsString::from(pattern.clone())),
@@ -3074,12 +3088,13 @@ impl Interpreter {
             }
         };
 
+        // JsValue clone - needed because we match on it but also use object later for getters
         match object.clone() {
             JsValue::Object(obj) => {
                 // Handle __proto__ special property
                 if key.to_string() == "__proto__" {
                     return Ok(obj.borrow().prototype.as_ref()
-                        .map(|p| JsValue::Object(p.clone()))
+                        .map(|p| JsValue::Object(p.cheap_clone()))
                         .unwrap_or(JsValue::Null));
                 }
 
@@ -3089,11 +3104,12 @@ impl Interpreter {
                     if let Some((prop, _)) = obj.borrow().get_property_descriptor(&key) {
                         // If this is an accessor property with a getter, return the getter
                         if let Some(ref getter) = prop.getter {
-                            Some((true, Some(getter.clone()), JsValue::Undefined))
+                            Some((true, Some(getter.cheap_clone()), JsValue::Undefined))
                         } else if prop.is_accessor() {
                             // Getter-less accessor property returns undefined
                             Some((false, None, JsValue::Undefined))
                         } else {
+                            // JsValue clone - may be cheap or expensive depending on variant
                             Some((false, None, prop.value.clone()))
                         }
                     } else {
@@ -3200,7 +3216,7 @@ impl Interpreter {
                     if let Some((prop, _)) = obj.borrow().get_property_descriptor(&key) {
                         if prop.is_accessor() {
                             if let Some(ref setter) = prop.setter {
-                                Some(setter.clone())
+                                Some(setter.cheap_clone())
                             } else {
                                 // Accessor property without setter - silently ignore in non-strict mode
                                 return Ok(());
@@ -3367,7 +3383,7 @@ impl Interpreter {
         }
 
         // Call constructor
-        let result = self.call_function(callee, JsValue::Object(new_obj.clone()), args)?;
+        let result = self.call_function(callee, JsValue::Object(new_obj.cheap_clone()), args)?;
 
         // Return result if it's an object, otherwise return new_obj
         match result {
@@ -3462,6 +3478,7 @@ impl Interpreter {
         let func = {
             let obj_ref = obj.borrow();
             match &obj_ref.exotic {
+                // JsFunction clone - expensive for Interpreted (contains AST), cheap for Native/Bound
                 ExoticObject::Function(f) => f.clone(),
                 _ => return Err(JsError::type_error("Not a function")),
             }
@@ -3573,13 +3590,15 @@ impl Interpreter {
                 // For bound functions:
                 // - Use the bound this value (ignore the passed this_value)
                 // - Prepend bound args to the call args
+                // JsValue clone - may be cheap or expensive depending on variant
                 let bound_this = bound_data.this_arg.clone();
+                // Vec<JsValue> clone - needed to prepend to args
                 let mut full_args = bound_data.bound_args.clone();
                 full_args.extend(args);
 
                 // Call the target function with bound this and combined args
                 self.call_function(
-                    JsValue::Object(bound_data.target.clone()),
+                    JsValue::Object(bound_data.target.cheap_clone()),
                     bound_this,
                     full_args,
                 )

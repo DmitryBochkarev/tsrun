@@ -307,8 +307,53 @@ fn test_example() {
 ### Key Types
 
 - `JsValue`: Enum with `Undefined`, `Null`, `Boolean(bool)`, `Number(f64)`, `String(JsString)`, `Object(JsObjectRef)`
-- `JsObjectRef`: `Rc<RefCell<JsObject>>` - shared mutable reference to objects
+- `JsObjectRef`: `Rc<RefCell<JsObject>>` - shared mutable reference to objects (cheap clone)
+- `JsString`: `Rc<str>` - reference-counted string (cheap clone)
+- `PendingSlot`: Slot for async/import resolution (cheap clone)
 - `Completion`: Control flow enum (`Normal`, `Return`, `Break`, `Continue`)
+
+### Clone Conventions (CheapClone Trait)
+
+The codebase distinguishes between cheap (O(1), reference-counted) and expensive clones using the `CheapClone` trait.
+
+**Cheap clones - use `.cheap_clone()`:**
+```rust
+// JsObjectRef (Rc<RefCell<JsObject>>)
+arr.borrow_mut().prototype = Some(self.array_prototype.cheap_clone());
+
+// JsString (Rc<str>)
+let s = js_string.cheap_clone();
+
+// PendingSlot (contains Rc)
+self.pending_slot = Some(slot.cheap_clone());
+```
+
+**Expensive clones - add comment explaining why:**
+```rust
+// AST clone - needed to release borrow before execution
+state.body.clone(),
+
+// Environment clone - needed to restore after execution
+let saved_env = self.env.clone();
+
+// Vec<JsValue> clone - needed for bound function args
+let mut full_args = bound_data.bound_args.clone();
+
+// String clone - env.define takes ownership
+self.env.define(id.name.clone(), value, mutable);
+```
+
+**Type classification:**
+| Type | Clone Cost | Notes |
+|------|-----------|-------|
+| `JsObjectRef` | Cheap | Use `.cheap_clone()` |
+| `JsString` | Cheap | Use `.cheap_clone()` |
+| `PendingSlot` | Cheap | Use `.cheap_clone()` |
+| `Rc<T>` | Cheap | Use `.cheap_clone()` |
+| `JsValue` | Varies | May contain Rc types or expensive variants |
+| `Environment` | Expensive | Contains `Box<Environment>` chain |
+| `String`, `Vec<T>` | Expensive | Heap allocations |
+| AST types | Expensive | Deep structure clones |
 
 ### TypeScript Handling
 

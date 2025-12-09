@@ -4,7 +4,7 @@ use chrono::{Datelike, Timelike, TimeZone, Utc};
 
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
-use crate::value::{create_function, create_object, ExoticObject, JsFunction, JsObjectRef, JsString, JsValue, NativeFunction, PropertyKey};
+use crate::value::{create_function, create_object, CheapClone, ExoticObject, JsFunction, JsObjectRef, JsString, JsValue, NativeFunction, PropertyKey};
 
 /// Create Date.prototype with getTime, getFullYear, getMonth, etc.
 pub fn create_date_prototype() -> JsObjectRef {
@@ -209,7 +209,7 @@ pub fn create_date_constructor(date_prototype: &JsObjectRef) -> JsObjectRef {
         }));
         date.set_property(PropertyKey::from("parse"), JsValue::Object(parse_fn));
 
-        date.set_property(PropertyKey::from("prototype"), JsValue::Object(date_prototype.clone()));
+        date.set_property(PropertyKey::from("prototype"), JsValue::Object(date_prototype.cheap_clone()));
     }
     constructor
 }
@@ -252,7 +252,7 @@ pub fn date_constructor(interp: &mut Interpreter, _this: JsValue, args: Vec<JsVa
     {
         let mut obj = date_obj.borrow_mut();
         obj.exotic = ExoticObject::Date { timestamp };
-        obj.prototype = Some(interp.date_prototype.clone());
+        obj.prototype = Some(interp.date_prototype.cheap_clone());
     }
     Ok(JsValue::Object(date_obj))
 }

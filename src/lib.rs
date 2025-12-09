@@ -19,6 +19,7 @@ pub mod value;
 
 pub use error::JsError;
 pub use interpreter::Interpreter;
+pub use value::CheapClone;
 pub use value::JsValue;
 
 use std::cell::RefCell;
@@ -57,6 +58,9 @@ pub struct PendingSlot {
     id: u64,
     value: Rc<RefCell<Option<Result<JsValue, JsError>>>>,
 }
+
+// PendingSlot is cheap to clone - just u64 + Rc increment
+impl CheapClone for PendingSlot {}
 
 impl PendingSlot {
     /// Create a new pending slot

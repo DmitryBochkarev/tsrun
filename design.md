@@ -4,7 +4,7 @@
 
 **Project:** `typescript-eval`
 **Purpose:** Execute TypeScript for config/manifest generation from Rust
-**Status:** Milestone 1 Complete (Basic Expressions)
+**Status:** Milestone 7 Complete (ES Modules, Async/Await, 626+ tests passing)
 
 ### Requirements
 
@@ -30,45 +30,29 @@ See `state_machine.md` for full architecture documentation.
 
 The following features should be implemented next, in priority order:
 
-### Priority 1: State Machine Refactor (CURRENT FOCUS)
+### Priority 1: Serde Integration & Public API Polish
 
-**See `state_machine.md` for full design documentation.**
+1. **Serde Bridge Completion**
+   - `JsValue` ↔ `serde_json::Value` conversion
+   - Direct struct serialization/deserialization
+   - Handle `undefined` vs `null` properly
 
-The interpreter needs to be refactored to use an explicit evaluation stack instead of Rust's call stack. This enables suspension at import/await points with true state capture.
+2. **Public API Improvements**
+   - Custom module resolver interface
+   - Global value injection
+   - Execution timeout/limits
 
-1. **Phase 1: Explicit Evaluation Stack** - Convert recursive interpreter to stack-based
-   - Define `EvalFrame` enum for all expression/statement types
-   - Add `eval_stack` and `value_stack` to Interpreter
-   - Implement main execution loop with `run()` method
-   - Convert expression evaluation to stack frames
-   - Convert statement execution to stack frames
-   - All existing tests must pass
+### Priority 2: WeakMap/WeakSet
 
-2. **Phase 2: Static Imports** - `import` declarations with hoisting
-   - Collect static imports during parsing
-   - Implement `RuntimeResult::ImportAwaited`
-   - Implement `PendingSlot` mechanism
-   - Add `Runtime::continue_eval()` API
-   - Host provides module objects via slot
+- `WeakMap` with proper weak reference semantics
+- `WeakSet` with proper weak reference semantics
 
-3. **Phase 3: Promise Implementation** - Full Promise support
-   - `Promise` constructor with executor
-   - `.then()`, `.catch()`, `.finally()` (simplified sync callbacks)
-   - `Promise.resolve()`, `Promise.reject()`
-   - `Promise.all()`, `Promise.race()`, `Promise.allSettled()`, `Promise.any()`
-
-4. **Phase 4: Async/Await** - Async functions
-   - Parse `async function` and `await` expressions
-   - Async functions return Promise
-   - `await` on fulfilled Promise continues synchronously
-   - `await` on pending Promise returns `RuntimeResult::AsyncAwaited`
-
-5. **Phase 5: Dynamic Import** - `import()` expressions
-   - Parse `import()` call expression
-   - Returns Promise with internal slot
-   - Integrates with await for suspension
-
-### Previous Priorities (Completed)
+### Completed Priorities
+- ~~**State Machine Refactor**~~ ✅ (explicit evaluation stack)
+- ~~**Static Imports**~~ ✅ (via `RuntimeResult::ImportAwaited`)
+- ~~**Promise Implementation**~~ ✅ (full Promise API)
+- ~~**Async/Await**~~ ✅ (async functions, await expressions)
+- ~~**Dynamic Import**~~ ✅ (`import()` returning Promise)
 - ~~**Temporal Dead Zone (TDZ)**~~ ✅
 - ~~**Symbol primitive**~~ ✅
 - ~~**Generator functions**~~ ✅
@@ -883,12 +867,36 @@ pub enum JsValue {
     Null,
     Boolean(bool),
     Number(f64),
-    String(JsString),
-    Object(JsObjectRef),
+    String(JsString),  // Rc<str> - cheap clone
+    Object(JsObjectRef), // Rc<RefCell<JsObject>> - cheap clone
 }
 
 pub type JsObjectRef = Rc<RefCell<JsObject>>;
 ```
+
+#### CheapClone Trait
+
+The codebase uses a `CheapClone` trait to distinguish O(1) reference-counted clones from expensive deep clones:
+
+```rust
+/// Trait for types with cheap (O(1), reference-counted) clones.
+pub trait CheapClone: Clone {
+    fn cheap_clone(&self) -> Self {
+        self.clone()
+    }
+}
+
+// Implemented for:
+impl<T: ?Sized> CheapClone for Rc<T> {}
+impl CheapClone for JsString {}  // wraps Rc<str>
+impl CheapClone for PendingSlot {}  // contains Rc
+```
+
+**Usage:**
+- Use `.cheap_clone()` for `JsObjectRef`, `JsString`, `PendingSlot`, and any `Rc<T>`
+- Use `.clone()` with a comment for expensive types (AST nodes, `Environment`, `String`, `Vec<T>`)
+
+This makes clone costs explicit and self-documenting in the codebase.
 
 #### Object Model
 

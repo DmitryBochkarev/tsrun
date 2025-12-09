@@ -2,7 +2,7 @@
 
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
-use crate::value::{create_array, create_function, create_object, ExoticObject, JsFunction, JsObjectRef, JsString, JsValue, NativeFunction, Property, PropertyKey};
+use crate::value::{create_array, create_function, create_object, CheapClone, ExoticObject, JsFunction, JsObjectRef, JsString, JsValue, NativeFunction, Property, PropertyKey};
 
 /// Create Array.prototype with all array methods
 pub fn create_array_prototype() -> JsObjectRef {
@@ -296,7 +296,7 @@ pub fn create_array_constructor(array_prototype: &JsObjectRef) -> JsObjectRef {
         }));
         arr.set_property(PropertyKey::from("from"), JsValue::Object(from_fn));
 
-        arr.set_property(PropertyKey::from("prototype"), JsValue::Object(array_prototype.clone()));
+        arr.set_property(PropertyKey::from("prototype"), JsValue::Object(array_prototype.cheap_clone()));
     }
     constructor
 }

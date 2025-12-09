@@ -11,6 +11,32 @@ use crate::ast::{ArrowFunctionBody, BlockStatement, FunctionParam};
 use crate::error::JsError;
 use crate::lexer::Span;
 
+/// Trait for types that have cheap (O(1), reference-counted) clones.
+///
+/// This trait makes it explicit when a clone is cheap (just incrementing a reference count)
+/// vs when it might be expensive (copying data). Types implementing this trait should have
+/// O(1) clone operations, typically because they use `Rc` or similar reference counting.
+///
+/// # Examples
+/// - `JsObjectRef` (Rc<RefCell<JsObject>>) - cheap clone
+/// - `JsString` (Rc<str>) - cheap clone
+/// - `Environment` (contains Rc) - cheap clone
+///
+/// Regular `.clone()` should still work but requires a comment explaining why the clone
+/// is necessary when the type doesn't implement `CheapClone`.
+pub trait CheapClone: Clone {
+    /// Create a cheap (reference-counted) clone of this value.
+    ///
+    /// This is semantically identical to `clone()` but makes it explicit that
+    /// the operation is O(1) and only increments a reference count.
+    fn cheap_clone(&self) -> Self {
+        self.clone()
+    }
+}
+
+// Implement CheapClone for Rc-based types (Rc<RefCell<T>> is covered by this)
+impl<T: ?Sized> CheapClone for Rc<T> {}
+
 /// A JavaScript value
 #[derive(Clone)]
 pub enum JsValue {
@@ -242,6 +268,9 @@ impl From<JsString> for JsValue {
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct JsString(Rc<str>);
 
+// JsString wraps Rc<str>, so clone is cheap (just reference count increment)
+impl CheapClone for JsString {}
+
 impl JsString {
     pub fn as_str(&self) -> &str {
         &self.0
@@ -347,7 +376,11 @@ impl std::hash::Hash for JsSymbol {
 }
 
 /// Reference to a heap-allocated object
+/// Clone is cheap - just increments reference count (Rc)
 pub type JsObjectRef = Rc<RefCell<JsObject>>;
+
+// Note: JsObjectRef is Rc<RefCell<JsObject>>, which already implements CheapClone
+// via the blanket impl above
 
 /// A JavaScript object
 #[derive(Debug)]
