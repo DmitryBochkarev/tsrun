@@ -2861,40 +2861,60 @@ impl<'a> Parser<'a> {
             let start = self.current.span;
             let readonly = self.match_token(&TokenKind::Readonly);
 
-            let key = self.parse_property_name()?;
-            let optional = self.match_token(&TokenKind::Question);
-
-            if self.check(&TokenKind::LParen) || self.check(&TokenKind::Lt) {
-                // Method signature
-                let type_parameters = self.parse_optional_type_parameters()?;
-                let params = self.parse_function_params()?;
-                let return_type = self.parse_optional_return_type()?;
-
-                let span = self.span_from(start);
-                members.push(TypeMember::Method(MethodSignature {
-                    key,
-                    params,
-                    return_type,
-                    type_parameters,
-                    optional,
-                    span,
-                }));
-            } else {
-                // Property signature
-                let type_annotation = if self.match_token(&TokenKind::Colon) {
-                    Some(self.parse_type_annotation()?)
-                } else {
-                    None
-                };
+            // Check for index signature: [key: type]: valueType
+            if self.check(&TokenKind::LBracket) {
+                self.advance(); // consume [
+                let key = self.parse_identifier()?;
+                self.require_token(&TokenKind::Colon)?;
+                let key_type = self.parse_type_annotation()?;
+                self.require_token(&TokenKind::RBracket)?;
+                self.require_token(&TokenKind::Colon)?;
+                let value_type = self.parse_type_annotation()?;
 
                 let span = self.span_from(start);
-                members.push(TypeMember::Property(PropertySignature {
+                members.push(TypeMember::Index(IndexSignature {
                     key,
-                    type_annotation,
-                    optional,
+                    key_type,
+                    value_type,
                     readonly,
                     span,
                 }));
+            } else {
+                let key = self.parse_property_name()?;
+                let optional = self.match_token(&TokenKind::Question);
+
+                if self.check(&TokenKind::LParen) || self.check(&TokenKind::Lt) {
+                    // Method signature
+                    let type_parameters = self.parse_optional_type_parameters()?;
+                    let params = self.parse_function_params()?;
+                    let return_type = self.parse_optional_return_type()?;
+
+                    let span = self.span_from(start);
+                    members.push(TypeMember::Method(MethodSignature {
+                        key,
+                        params,
+                        return_type,
+                        type_parameters,
+                        optional,
+                        span,
+                    }));
+                } else {
+                    // Property signature
+                    let type_annotation = if self.match_token(&TokenKind::Colon) {
+                        Some(self.parse_type_annotation()?)
+                    } else {
+                        None
+                    };
+
+                    let span = self.span_from(start);
+                    members.push(TypeMember::Property(PropertySignature {
+                        key,
+                        type_annotation,
+                        optional,
+                        readonly,
+                        span,
+                    }));
+                }
             }
 
             // Optional semicolon or comma
@@ -2960,14 +2980,20 @@ impl<'a> Parser<'a> {
 
         let mut params = vec![];
 
-        while !self.check(&TokenKind::Gt) && !self.is_at_end() {
+        // Check for >, >>, or >>> (nested generics may produce >> or >>>)
+        while !self.check(&TokenKind::Gt)
+            && !self.check(&TokenKind::GtGt)
+            && !self.check(&TokenKind::GtGtGt)
+            && !self.is_at_end()
+        {
             params.push(self.parse_type_annotation()?);
             if !self.match_token(&TokenKind::Comma) {
                 break;
             }
         }
 
-        self.require_token(&TokenKind::Gt)?;
+        // Use the special method that can split >> and >>> tokens
+        self.consume_gt_in_type_context()?;
 
         let span = self.span_from(start);
         Ok(Some(TypeArguments { params, span }))
@@ -3068,6 +3094,65 @@ impl<'a> Parser<'a> {
             Ok(())
         } else {
             Err(self.unexpected_token(&format!("{:?}", kind)))
+        }
+    }
+
+    /// Consume a `>` token in type context, splitting `>>` and `>>>` if needed.
+    /// This handles the ambiguity between right shift operators and nested generic closers.
+    fn consume_gt_in_type_context(&mut self) -> Result<(), JsError> {
+        match &self.current.kind {
+            TokenKind::Gt => {
+                self.advance();
+                Ok(())
+            }
+            TokenKind::GtGt => {
+                // Split >> into > and >
+                // Update previous to be a synthetic > token
+                self.previous = Token {
+                    kind: TokenKind::Gt,
+                    span: Span {
+                        start: self.current.span.start,
+                        end: self.current.span.start + 1,
+                        line: self.current.span.line,
+                        column: self.current.span.column,
+                    },
+                };
+                // Update current to be the remaining >
+                self.current = Token {
+                    kind: TokenKind::Gt,
+                    span: Span {
+                        start: self.current.span.start + 1,
+                        end: self.current.span.end,
+                        line: self.current.span.line,
+                        column: self.current.span.column + 1,
+                    },
+                };
+                Ok(())
+            }
+            TokenKind::GtGtGt => {
+                // Split >>> into > and >>
+                self.previous = Token {
+                    kind: TokenKind::Gt,
+                    span: Span {
+                        start: self.current.span.start,
+                        end: self.current.span.start + 1,
+                        line: self.current.span.line,
+                        column: self.current.span.column,
+                    },
+                };
+                // Update current to be the remaining >>
+                self.current = Token {
+                    kind: TokenKind::GtGt,
+                    span: Span {
+                        start: self.current.span.start + 1,
+                        end: self.current.span.end,
+                        line: self.current.span.line,
+                        column: self.current.span.column + 1,
+                    },
+                };
+                Ok(())
+            }
+            _ => Err(self.unexpected_token("Gt")),
         }
     }
 
@@ -3967,5 +4052,48 @@ mod tests {
         } else {
             panic!("Expected ExpressionStatement");
         }
+    }
+
+    #[test]
+    fn test_nested_generic_types() {
+        // Test nested generic types like Record<string, Partial<AppConfig>>
+        // The >> should be parsed as two > closing the nested generics
+        let prog = parse("const x: Record<string, Partial<AppConfig>> = {};");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_index_signature_in_interface() {
+        // Test index signatures like [key: string]: boolean
+        let prog = parse("interface Foo { [key: string]: boolean; }");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_index_signature_with_number_key() {
+        // Test index signatures with number key
+        let prog = parse("interface Foo { [idx: number]: string; }");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_index_signature_with_properties() {
+        // Test index signatures mixed with regular properties
+        let prog = parse("interface Foo { name: string; [key: string]: any; }");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_deeply_nested_generic_types() {
+        // Test deeply nested generics with >>>
+        let prog = parse("const x: Map<string, Map<string, Array<number>>> = new Map();");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_nested_generic_in_function_return() {
+        // Test nested generics in function return type
+        let prog = parse("function foo(): Promise<Result<number>> { return null as any; }");
+        assert_eq!(prog.body.len(), 1);
     }
 }

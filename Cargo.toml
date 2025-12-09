@@ -5,6 +5,10 @@ edition = "2021"
 description = "A TypeScript interpreter in Rust for config/manifest generation"
 license = "MIT"
 
+[[bin]]
+name = "typescript-eval-runner"
+path = "src/bin/typescript-eval-runner.rs"
+
 [dependencies]
 thiserror = "1.0"
 serde = { version = "1.0", features = ["derive"] }

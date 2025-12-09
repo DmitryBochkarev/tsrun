@@ -39,8 +39,66 @@ pub fn json_stringify(
     args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let value = args.first().cloned().unwrap_or(JsValue::Undefined);
+    // Second argument is replacer (not implemented, ignored)
+    // Third argument is space/indent
+    let indent = args.get(2).cloned().unwrap_or(JsValue::Undefined);
+
     let json = js_value_to_json(&value)?;
-    Ok(JsValue::String(JsString::from(json.to_string())))
+
+    let output = match indent {
+        JsValue::Number(n) if n > 0.0 => {
+            // Use pretty printing with indentation
+            let indent_size = n.min(10.0) as usize;
+            serde_json::to_string_pretty(&json)
+                .map(|s| {
+                    // serde_json uses 2 spaces by default, adjust if needed
+                    if indent_size == 2 {
+                        s
+                    } else {
+                        // Re-indent with the requested size
+                        let indent_str = " ".repeat(indent_size);
+                        s.lines()
+                            .map(|line| {
+                                let stripped = line.trim_start();
+                                let leading_spaces = line.len() - stripped.len();
+                                let indent_level = leading_spaces / 2;
+                                format!("{}{}", indent_str.repeat(indent_level), stripped)
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    }
+                })
+                .unwrap_or_else(|_| json.to_string())
+        }
+        JsValue::String(s) if !s.is_empty() => {
+            // Use string as indent
+            let indent_str = s.as_str();
+            serde_json::to_string_pretty(&json)
+                .map(|s| {
+                    s.lines()
+                        .map(|line| {
+                            let stripped = line.trim_start();
+                            let leading_spaces = line.len() - stripped.len();
+                            let indent_level = leading_spaces / 2;
+                            format!(
+                                "{}{}",
+                                indent_str
+                                    .chars()
+                                    .take(10)
+                                    .collect::<String>()
+                                    .repeat(indent_level),
+                                stripped
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                })
+                .unwrap_or_else(|_| json.to_string())
+        }
+        _ => json.to_string(),
+    };
+
+    Ok(JsValue::String(JsString::from(output)))
 }
 
 pub fn json_parse(
@@ -64,9 +122,14 @@ pub fn js_value_to_json(value: &JsValue) -> Result<serde_json::Value, JsError> {
         JsValue::Boolean(b) => serde_json::Value::Bool(*b),
         JsValue::Number(n) => {
             if n.is_finite() {
-                serde_json::Value::Number(
-                    serde_json::Number::from_f64(*n).unwrap_or(serde_json::Number::from(0)),
-                )
+                // Check if the number is a whole integer that fits in i64
+                if n.fract() == 0.0 && *n >= i64::MIN as f64 && *n <= i64::MAX as f64 {
+                    serde_json::Value::Number(serde_json::Number::from(*n as i64))
+                } else {
+                    serde_json::Value::Number(
+                        serde_json::Number::from_f64(*n).unwrap_or(serde_json::Number::from(0)),
+                    )
+                }
             } else {
                 serde_json::Value::Null
             }

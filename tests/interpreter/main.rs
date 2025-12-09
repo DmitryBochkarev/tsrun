@@ -15,6 +15,7 @@ mod exports;
 mod function;
 mod generator;
 mod global;
+mod json;
 mod map;
 mod math;
 mod namespace;
