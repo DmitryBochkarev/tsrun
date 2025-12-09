@@ -18,7 +18,11 @@ pub fn register_global_functions(env: &mut Environment) {
         func: global_parse_float,
         arity: 1,
     }));
-    env.define("parseFloat".to_string(), JsValue::Object(parsefloat_fn), false);
+    env.define(
+        "parseFloat".to_string(),
+        JsValue::Object(parsefloat_fn),
+        false,
+    );
 
     let isnan_fn = create_function(JsFunction::Native(NativeFunction {
         name: "isNaN".to_string(),
@@ -39,32 +43,55 @@ pub fn register_global_functions(env: &mut Environment) {
         func: global_encode_uri,
         arity: 1,
     }));
-    env.define("encodeURI".to_string(), JsValue::Object(encodeuri_fn), false);
+    env.define(
+        "encodeURI".to_string(),
+        JsValue::Object(encodeuri_fn),
+        false,
+    );
 
     let decodeuri_fn = create_function(JsFunction::Native(NativeFunction {
         name: "decodeURI".to_string(),
         func: global_decode_uri,
         arity: 1,
     }));
-    env.define("decodeURI".to_string(), JsValue::Object(decodeuri_fn), false);
+    env.define(
+        "decodeURI".to_string(),
+        JsValue::Object(decodeuri_fn),
+        false,
+    );
 
     let encodeuricomponent_fn = create_function(JsFunction::Native(NativeFunction {
         name: "encodeURIComponent".to_string(),
         func: global_encode_uri_component,
         arity: 1,
     }));
-    env.define("encodeURIComponent".to_string(), JsValue::Object(encodeuricomponent_fn), false);
+    env.define(
+        "encodeURIComponent".to_string(),
+        JsValue::Object(encodeuricomponent_fn),
+        false,
+    );
 
     let decodeuricomponent_fn = create_function(JsFunction::Native(NativeFunction {
         name: "decodeURIComponent".to_string(),
         func: global_decode_uri_component,
         arity: 1,
     }));
-    env.define("decodeURIComponent".to_string(), JsValue::Object(decodeuricomponent_fn), false);
+    env.define(
+        "decodeURIComponent".to_string(),
+        JsValue::Object(decodeuricomponent_fn),
+        false,
+    );
 }
 
-pub fn global_parse_int(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
-    let string = args.first().map(|v| v.to_js_string()).unwrap_or_else(|| JsString::from(""));
+pub fn global_parse_int(
+    _interp: &mut Interpreter,
+    _this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
+    let string = args
+        .first()
+        .map(|v| v.to_js_string())
+        .unwrap_or_else(|| JsString::from(""));
     let string = string.as_str().to_string();
     let radix = args.get(1).map(|v| v.to_number() as i32).unwrap_or(10);
 
@@ -92,7 +119,9 @@ pub fn global_parse_int(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsV
 
     // Handle hex prefix for radix 16
     let s = if radix == 16 {
-        s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")).unwrap_or(s)
+        s.strip_prefix("0x")
+            .or_else(|| s.strip_prefix("0X"))
+            .unwrap_or(s)
     } else {
         s
     };
@@ -118,8 +147,15 @@ pub fn global_parse_int(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsV
     Ok(JsValue::Number(result as f64))
 }
 
-pub fn global_parse_float(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
-    let string = args.first().map(|v| v.to_js_string()).unwrap_or_else(|| JsString::from(""));
+pub fn global_parse_float(
+    _interp: &mut Interpreter,
+    _this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
+    let string = args
+        .first()
+        .map(|v| v.to_js_string())
+        .unwrap_or_else(|| JsString::from(""));
     let string = string.as_str().to_string();
     let s = string.trim();
 
@@ -173,23 +209,39 @@ pub fn global_parse_float(_interp: &mut Interpreter, _this: JsValue, args: Vec<J
 }
 
 // Global isNaN - converts argument to number first
-pub fn global_is_nan(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn global_is_nan(
+    _interp: &mut Interpreter,
+    _this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let n = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
     Ok(JsValue::Boolean(n.is_nan()))
 }
 
 // Global isFinite - converts argument to number first
-pub fn global_is_finite(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn global_is_finite(
+    _interp: &mut Interpreter,
+    _this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let n = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
     Ok(JsValue::Boolean(n.is_finite()))
 }
 
 // Characters that encodeURI should NOT encode (RFC 3986 + extra URI chars)
-const URI_UNESCAPED: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.!~*'()";
+const URI_UNESCAPED: &str =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.!~*'()";
 const URI_RESERVED: &str = ";/?:@&=+$,#";
 
-pub fn global_encode_uri(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
-    let s = args.first().map(|v| v.to_js_string()).unwrap_or_else(|| JsString::from(""));
+pub fn global_encode_uri(
+    _interp: &mut Interpreter,
+    _this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
+    let s = args
+        .first()
+        .map(|v| v.to_js_string())
+        .unwrap_or_else(|| JsString::from(""));
     let allowed: Vec<char> = URI_UNESCAPED.chars().chain(URI_RESERVED.chars()).collect();
     let mut result = String::new();
     for c in s.as_str().chars() {
@@ -205,14 +257,28 @@ pub fn global_encode_uri(_interp: &mut Interpreter, _this: JsValue, args: Vec<Js
     Ok(JsValue::String(JsString::from(result)))
 }
 
-pub fn global_decode_uri(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
-    let s = args.first().map(|v| v.to_js_string()).unwrap_or_else(|| JsString::from(""));
+pub fn global_decode_uri(
+    _interp: &mut Interpreter,
+    _this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
+    let s = args
+        .first()
+        .map(|v| v.to_js_string())
+        .unwrap_or_else(|| JsString::from(""));
     let result = percent_decode(s.as_str(), true);
     Ok(JsValue::String(JsString::from(result)))
 }
 
-pub fn global_encode_uri_component(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
-    let s = args.first().map(|v| v.to_js_string()).unwrap_or_else(|| JsString::from(""));
+pub fn global_encode_uri_component(
+    _interp: &mut Interpreter,
+    _this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
+    let s = args
+        .first()
+        .map(|v| v.to_js_string())
+        .unwrap_or_else(|| JsString::from(""));
     let allowed: Vec<char> = URI_UNESCAPED.chars().collect();
     let mut result = String::new();
     for c in s.as_str().chars() {
@@ -228,8 +294,15 @@ pub fn global_encode_uri_component(_interp: &mut Interpreter, _this: JsValue, ar
     Ok(JsValue::String(JsString::from(result)))
 }
 
-pub fn global_decode_uri_component(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
-    let s = args.first().map(|v| v.to_js_string()).unwrap_or_else(|| JsString::from(""));
+pub fn global_decode_uri_component(
+    _interp: &mut Interpreter,
+    _this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
+    let s = args
+        .first()
+        .map(|v| v.to_js_string())
+        .unwrap_or_else(|| JsString::from(""));
     let result = percent_decode(s.as_str(), false);
     Ok(JsValue::String(JsString::from(result)))
 }

@@ -16,13 +16,23 @@ pub struct Span {
 
 impl Span {
     pub fn new(start: usize, end: usize, line: u32, column: u32) -> Self {
-        Self { start, end, line, column }
+        Self {
+            start,
+            end,
+            line,
+            column,
+        }
     }
 }
 
 impl Default for Span {
     fn default() -> Self {
-        Self { start: 0, end: 0, line: 1, column: 1 }
+        Self {
+            start: 0,
+            end: 0,
+            line: 1,
+            column: 1,
+        }
     }
 }
 
@@ -32,7 +42,7 @@ pub enum TokenKind {
     // Literals
     Number(f64),
     String(String),
-    BigInt(String), // BigInt literal value as string (e.g., "123" for 123n)
+    BigInt(String),         // BigInt literal value as string (e.g., "123" for 123n)
     RegExp(String, String), // (pattern, flags)
     True,
     False,
@@ -104,79 +114,79 @@ pub enum TokenKind {
     Asserts,
 
     // Operators
-    Plus,           // +
-    Minus,          // -
-    Star,           // *
-    Slash,          // /
-    Percent,        // %
-    StarStar,       // **
-    PlusPlus,       // ++
-    MinusMinus,     // --
-    Eq,             // =
-    EqEq,           // ==
-    EqEqEq,         // ===
-    BangEq,         // !=
-    BangEqEq,       // !==
-    Lt,             // <
-    LtEq,           // <=
-    Gt,             // >
-    GtEq,           // >=
-    LtLt,           // <<
-    GtGt,           // >>
-    GtGtGt,         // >>>
-    Amp,            // &
-    AmpAmp,         // &&
-    Pipe,           // |
-    PipePipe,       // ||
-    Caret,          // ^
-    Tilde,          // ~
-    Bang,           // !
-    Question,       // ?
-    QuestionQuestion,   // ??
-    QuestionDot,    // ?.
+    Plus,             // +
+    Minus,            // -
+    Star,             // *
+    Slash,            // /
+    Percent,          // %
+    StarStar,         // **
+    PlusPlus,         // ++
+    MinusMinus,       // --
+    Eq,               // =
+    EqEq,             // ==
+    EqEqEq,           // ===
+    BangEq,           // !=
+    BangEqEq,         // !==
+    Lt,               // <
+    LtEq,             // <=
+    Gt,               // >
+    GtEq,             // >=
+    LtLt,             // <<
+    GtGt,             // >>
+    GtGtGt,           // >>>
+    Amp,              // &
+    AmpAmp,           // &&
+    Pipe,             // |
+    PipePipe,         // ||
+    Caret,            // ^
+    Tilde,            // ~
+    Bang,             // !
+    Question,         // ?
+    QuestionQuestion, // ??
+    QuestionDot,      // ?.
 
     // Assignment Operators
-    PlusEq,         // +=
-    MinusEq,        // -=
-    StarEq,         // *=
-    SlashEq,        // /=
-    PercentEq,      // %=
-    StarStarEq,     // **=
-    AmpEq,          // &=
-    PipeEq,         // |=
-    CaretEq,        // ^=
-    LtLtEq,         // <<=
-    GtGtEq,         // >>=
-    GtGtGtEq,       // >>>=
-    AmpAmpEq,       // &&=
-    PipePipeEq,     // ||=
+    PlusEq,             // +=
+    MinusEq,            // -=
+    StarEq,             // *=
+    SlashEq,            // /=
+    PercentEq,          // %=
+    StarStarEq,         // **=
+    AmpEq,              // &=
+    PipeEq,             // |=
+    CaretEq,            // ^=
+    LtLtEq,             // <<=
+    GtGtEq,             // >>=
+    GtGtGtEq,           // >>>=
+    AmpAmpEq,           // &&=
+    PipePipeEq,         // ||=
     QuestionQuestionEq, // ??=
 
     // Punctuation
-    LParen,         // (
-    RParen,         // )
-    LBrace,         // {
-    RBrace,         // }
-    LBracket,       // [
-    RBracket,       // ]
-    Dot,            // .
-    DotDotDot,      // ...
-    Comma,          // ,
-    Colon,          // :
-    Semicolon,      // ;
-    Arrow,          // =>
-    At,             // @
-    Hash,           // #
+    LParen,    // (
+    RParen,    // )
+    LBrace,    // {
+    RBrace,    // }
+    LBracket,  // [
+    RBracket,  // ]
+    Dot,       // .
+    DotDotDot, // ...
+    Comma,     // ,
+    Colon,     // :
+    Semicolon, // ;
+    Arrow,     // =>
+    At,        // @
+    Hash,      // #
 
     // Template literals
-    TemplateHead(String),    // `...${
-    TemplateMiddle(String),  // }...${
-    TemplateTail(String),    // }...`
-    TemplateNoSub(String),   // `...` (no substitutions)
+    TemplateHead(String),   // `...${
+    TemplateMiddle(String), // }...${
+    TemplateTail(String),   // }...`
+    TemplateNoSub(String),  // `...` (no substitutions)
 
     // Special
     Eof,
-    Newline,        // For ASI
+    Newline, // For ASI
     Invalid(char),
 }
 
@@ -403,7 +413,12 @@ impl<'a> Lexer<'a> {
     }
 
     fn make_span(&self) -> Span {
-        Span::new(self.start_pos, self.current_pos, self.start_line, self.start_column)
+        Span::new(
+            self.start_pos,
+            self.current_pos,
+            self.start_line,
+            self.start_column,
+        )
     }
 
     fn skip_whitespace_and_comments(&mut self) {
@@ -837,18 +852,16 @@ impl<'a> Lexer<'a> {
                     self.advance();
                     return TokenKind::TemplateMiddle(value);
                 }
-                Some((_, '\\')) => {
-                    match self.advance() {
-                        Some((_, 'n')) => value.push('\n'),
-                        Some((_, 'r')) => value.push('\r'),
-                        Some((_, 't')) => value.push('\t'),
-                        Some((_, '\\')) => value.push('\\'),
-                        Some((_, '`')) => value.push('`'),
-                        Some((_, '$')) => value.push('$'),
-                        Some((_, c)) => value.push(c),
-                        None => break,
-                    }
-                }
+                Some((_, '\\')) => match self.advance() {
+                    Some((_, 'n')) => value.push('\n'),
+                    Some((_, 'r')) => value.push('\r'),
+                    Some((_, 't')) => value.push('\t'),
+                    Some((_, '\\')) => value.push('\\'),
+                    Some((_, '`')) => value.push('`'),
+                    Some((_, '$')) => value.push('$'),
+                    Some((_, c)) => value.push(c),
+                    None => break,
+                },
                 Some((_, c)) => value.push(c),
                 None => break,
             }
@@ -897,9 +910,7 @@ impl<'a> Lexer<'a> {
                         let value = i64::from_str_radix(&num_str, 16).unwrap_or(0);
                         return TokenKind::BigInt(value.to_string());
                     }
-                    return TokenKind::Number(
-                        i64::from_str_radix(&num_str, 16).unwrap_or(0) as f64
-                    );
+                    return TokenKind::Number(i64::from_str_radix(&num_str, 16).unwrap_or(0) as f64);
                 }
                 Some('o' | 'O') => {
                     // Octal
@@ -920,9 +931,7 @@ impl<'a> Lexer<'a> {
                         let value = i64::from_str_radix(&num_str, 8).unwrap_or(0);
                         return TokenKind::BigInt(value.to_string());
                     }
-                    return TokenKind::Number(
-                        i64::from_str_radix(&num_str, 8).unwrap_or(0) as f64
-                    );
+                    return TokenKind::Number(i64::from_str_radix(&num_str, 8).unwrap_or(0) as f64);
                 }
                 Some('b' | 'B') => {
                     // Binary
@@ -943,9 +952,7 @@ impl<'a> Lexer<'a> {
                         let value = i64::from_str_radix(&num_str, 2).unwrap_or(0);
                         return TokenKind::BigInt(value.to_string());
                     }
-                    return TokenKind::Number(
-                        i64::from_str_radix(&num_str, 2).unwrap_or(0) as f64
-                    );
+                    return TokenKind::Number(i64::from_str_radix(&num_str, 2).unwrap_or(0) as f64);
                 }
                 _ => num_str.push(first),
             }
@@ -1152,102 +1159,164 @@ mod tests {
 
     #[test]
     fn test_strings() {
-        assert_eq!(lex(r#""hello""#), vec![TokenKind::String("hello".to_string())]);
-        assert_eq!(lex(r#"'world'"#), vec![TokenKind::String("world".to_string())]);
-        assert_eq!(lex(r#""line\nbreak""#), vec![TokenKind::String("line\nbreak".to_string())]);
+        assert_eq!(
+            lex(r#""hello""#),
+            vec![TokenKind::String("hello".to_string())]
+        );
+        assert_eq!(
+            lex(r#"'world'"#),
+            vec![TokenKind::String("world".to_string())]
+        );
+        assert_eq!(
+            lex(r#""line\nbreak""#),
+            vec![TokenKind::String("line\nbreak".to_string())]
+        );
     }
 
     #[test]
     fn test_operators() {
-        assert_eq!(lex("+ - * /"), vec![
-            TokenKind::Plus, TokenKind::Minus, TokenKind::Star, TokenKind::Slash
-        ]);
-        assert_eq!(lex("=== !== "), vec![TokenKind::EqEqEq, TokenKind::BangEqEq]);
+        assert_eq!(
+            lex("+ - * /"),
+            vec![
+                TokenKind::Plus,
+                TokenKind::Minus,
+                TokenKind::Star,
+                TokenKind::Slash
+            ]
+        );
+        assert_eq!(
+            lex("=== !== "),
+            vec![TokenKind::EqEqEq, TokenKind::BangEqEq]
+        );
         assert_eq!(lex("&&="), vec![TokenKind::AmpAmpEq]);
         assert_eq!(lex("??="), vec![TokenKind::QuestionQuestionEq]);
     }
 
     #[test]
     fn test_keywords() {
-        assert_eq!(lex("let const var"), vec![
-            TokenKind::Let, TokenKind::Const, TokenKind::Var
-        ]);
-        assert_eq!(lex("function return"), vec![
-            TokenKind::Function, TokenKind::Return
-        ]);
+        assert_eq!(
+            lex("let const var"),
+            vec![TokenKind::Let, TokenKind::Const, TokenKind::Var]
+        );
+        assert_eq!(
+            lex("function return"),
+            vec![TokenKind::Function, TokenKind::Return]
+        );
     }
 
     #[test]
     fn test_identifiers() {
-        assert_eq!(lex("foo bar_baz $test"), vec![
-            TokenKind::Identifier("foo".to_string()),
-            TokenKind::Identifier("bar_baz".to_string()),
-            TokenKind::Identifier("$test".to_string()),
-        ]);
+        assert_eq!(
+            lex("foo bar_baz $test"),
+            vec![
+                TokenKind::Identifier("foo".to_string()),
+                TokenKind::Identifier("bar_baz".to_string()),
+                TokenKind::Identifier("$test".to_string()),
+            ]
+        );
     }
 
     #[test]
     fn test_comments() {
-        assert_eq!(lex("1 // comment\n2"), vec![
-            TokenKind::Number(1.0), TokenKind::Number(2.0)
-        ]);
-        assert_eq!(lex("1 /* comment */ 2"), vec![
-            TokenKind::Number(1.0), TokenKind::Number(2.0)
-        ]);
+        assert_eq!(
+            lex("1 // comment\n2"),
+            vec![TokenKind::Number(1.0), TokenKind::Number(2.0)]
+        );
+        assert_eq!(
+            lex("1 /* comment */ 2"),
+            vec![TokenKind::Number(1.0), TokenKind::Number(2.0)]
+        );
     }
 
     // Additional lexer tests for comprehensive coverage
 
     #[test]
     fn test_comparison_operators() {
-        assert_eq!(lex("< > <= >= == !="), vec![
-            TokenKind::Lt, TokenKind::Gt, TokenKind::LtEq, TokenKind::GtEq,
-            TokenKind::EqEq, TokenKind::BangEq
-        ]);
+        assert_eq!(
+            lex("< > <= >= == !="),
+            vec![
+                TokenKind::Lt,
+                TokenKind::Gt,
+                TokenKind::LtEq,
+                TokenKind::GtEq,
+                TokenKind::EqEq,
+                TokenKind::BangEq
+            ]
+        );
     }
 
     #[test]
     fn test_logical_operators() {
-        assert_eq!(lex("&& || !"), vec![
-            TokenKind::AmpAmp, TokenKind::PipePipe, TokenKind::Bang
-        ]);
+        assert_eq!(
+            lex("&& || !"),
+            vec![TokenKind::AmpAmp, TokenKind::PipePipe, TokenKind::Bang]
+        );
     }
 
     #[test]
     fn test_bitwise_operators() {
-        assert_eq!(lex("& | ^ ~ << >>"), vec![
-            TokenKind::Amp, TokenKind::Pipe, TokenKind::Caret, TokenKind::Tilde,
-            TokenKind::LtLt, TokenKind::GtGt
-        ]);
+        assert_eq!(
+            lex("& | ^ ~ << >>"),
+            vec![
+                TokenKind::Amp,
+                TokenKind::Pipe,
+                TokenKind::Caret,
+                TokenKind::Tilde,
+                TokenKind::LtLt,
+                TokenKind::GtGt
+            ]
+        );
     }
 
     #[test]
     fn test_assignment_operators() {
-        assert_eq!(lex("= += -= *= /= %="), vec![
-            TokenKind::Eq, TokenKind::PlusEq, TokenKind::MinusEq,
-            TokenKind::StarEq, TokenKind::SlashEq, TokenKind::PercentEq
-        ]);
+        assert_eq!(
+            lex("= += -= *= /= %="),
+            vec![
+                TokenKind::Eq,
+                TokenKind::PlusEq,
+                TokenKind::MinusEq,
+                TokenKind::StarEq,
+                TokenKind::SlashEq,
+                TokenKind::PercentEq
+            ]
+        );
     }
 
     #[test]
     fn test_increment_decrement() {
-        assert_eq!(lex("++ --"), vec![TokenKind::PlusPlus, TokenKind::MinusMinus]);
+        assert_eq!(
+            lex("++ --"),
+            vec![TokenKind::PlusPlus, TokenKind::MinusMinus]
+        );
     }
 
     #[test]
     fn test_delimiters() {
-        assert_eq!(lex("( ) [ ] { }"), vec![
-            TokenKind::LParen, TokenKind::RParen,
-            TokenKind::LBracket, TokenKind::RBracket,
-            TokenKind::LBrace, TokenKind::RBrace
-        ]);
+        assert_eq!(
+            lex("( ) [ ] { }"),
+            vec![
+                TokenKind::LParen,
+                TokenKind::RParen,
+                TokenKind::LBracket,
+                TokenKind::RBracket,
+                TokenKind::LBrace,
+                TokenKind::RBrace
+            ]
+        );
     }
 
     #[test]
     fn test_punctuation() {
-        assert_eq!(lex(", ; : ."), vec![
-            TokenKind::Comma, TokenKind::Semicolon, TokenKind::Colon, TokenKind::Dot
-        ]);
+        assert_eq!(
+            lex(", ; : ."),
+            vec![
+                TokenKind::Comma,
+                TokenKind::Semicolon,
+                TokenKind::Colon,
+                TokenKind::Dot
+            ]
+        );
     }
 
     #[test]
@@ -1257,54 +1326,89 @@ mod tests {
 
     #[test]
     fn test_optional_and_nullish() {
-        assert_eq!(lex("?. ?? ?"), vec![
-            TokenKind::QuestionDot, TokenKind::QuestionQuestion, TokenKind::Question
-        ]);
+        assert_eq!(
+            lex("?. ?? ?"),
+            vec![
+                TokenKind::QuestionDot,
+                TokenKind::QuestionQuestion,
+                TokenKind::Question
+            ]
+        );
     }
 
     #[test]
     fn test_control_keywords() {
-        assert_eq!(lex("if else switch case default"), vec![
-            TokenKind::If, TokenKind::Else, TokenKind::Switch,
-            TokenKind::Case, TokenKind::Default
-        ]);
+        assert_eq!(
+            lex("if else switch case default"),
+            vec![
+                TokenKind::If,
+                TokenKind::Else,
+                TokenKind::Switch,
+                TokenKind::Case,
+                TokenKind::Default
+            ]
+        );
     }
 
     #[test]
     fn test_loop_keywords() {
-        assert_eq!(lex("for while do break continue"), vec![
-            TokenKind::For, TokenKind::While, TokenKind::Do,
-            TokenKind::Break, TokenKind::Continue
-        ]);
+        assert_eq!(
+            lex("for while do break continue"),
+            vec![
+                TokenKind::For,
+                TokenKind::While,
+                TokenKind::Do,
+                TokenKind::Break,
+                TokenKind::Continue
+            ]
+        );
     }
 
     #[test]
     fn test_class_keywords() {
-        assert_eq!(lex("class extends new this super"), vec![
-            TokenKind::Class, TokenKind::Extends, TokenKind::New,
-            TokenKind::This, TokenKind::Super
-        ]);
+        assert_eq!(
+            lex("class extends new this super"),
+            vec![
+                TokenKind::Class,
+                TokenKind::Extends,
+                TokenKind::New,
+                TokenKind::This,
+                TokenKind::Super
+            ]
+        );
     }
 
     #[test]
     fn test_typescript_keywords() {
-        assert_eq!(lex("interface type implements"), vec![
-            TokenKind::Interface, TokenKind::Type, TokenKind::Implements
-        ]);
+        assert_eq!(
+            lex("interface type implements"),
+            vec![TokenKind::Interface, TokenKind::Type, TokenKind::Implements]
+        );
     }
 
     #[test]
     fn test_error_handling_keywords() {
-        assert_eq!(lex("try catch finally throw"), vec![
-            TokenKind::Try, TokenKind::Catch, TokenKind::Finally, TokenKind::Throw
-        ]);
+        assert_eq!(
+            lex("try catch finally throw"),
+            vec![
+                TokenKind::Try,
+                TokenKind::Catch,
+                TokenKind::Finally,
+                TokenKind::Throw
+            ]
+        );
     }
 
     #[test]
     fn test_type_keywords() {
-        assert_eq!(lex("void null undefined"), vec![
-            TokenKind::Void, TokenKind::Null, TokenKind::Identifier("undefined".to_string())
-        ]);
+        assert_eq!(
+            lex("void null undefined"),
+            vec![
+                TokenKind::Void,
+                TokenKind::Null,
+                TokenKind::Identifier("undefined".to_string())
+            ]
+        );
     }
 
     #[test]
@@ -1315,16 +1419,26 @@ mod tests {
     #[test]
     fn test_template_literal_basic() {
         // Simple template without interpolation becomes TemplateNoSub
-        assert_eq!(lex("`hello`"), vec![
-            TokenKind::TemplateNoSub("hello".to_string())
-        ]);
+        assert_eq!(
+            lex("`hello`"),
+            vec![TokenKind::TemplateNoSub("hello".to_string())]
+        );
     }
 
     #[test]
     fn test_string_escape_sequences() {
-        assert_eq!(lex(r#""hello\tworld""#), vec![TokenKind::String("hello\tworld".to_string())]);
-        assert_eq!(lex(r#""line\\break""#), vec![TokenKind::String("line\\break".to_string())]);
-        assert_eq!(lex(r#""quote\"test""#), vec![TokenKind::String("quote\"test".to_string())]);
+        assert_eq!(
+            lex(r#""hello\tworld""#),
+            vec![TokenKind::String("hello\tworld".to_string())]
+        );
+        assert_eq!(
+            lex(r#""line\\break""#),
+            vec![TokenKind::String("line\\break".to_string())]
+        );
+        assert_eq!(
+            lex(r#""quote\"test""#),
+            vec![TokenKind::String("quote\"test".to_string())]
+        );
     }
 
     #[test]
@@ -1335,9 +1449,10 @@ mod tests {
 
     #[test]
     fn test_in_instanceof_operators() {
-        assert_eq!(lex("in instanceof"), vec![
-            TokenKind::In, TokenKind::Instanceof
-        ]);
+        assert_eq!(
+            lex("in instanceof"),
+            vec![TokenKind::In, TokenKind::Instanceof]
+        );
     }
 
     #[test]
@@ -1355,7 +1470,10 @@ mod tests {
     fn test_bigint_literal() {
         assert_eq!(lex("123n"), vec![TokenKind::BigInt("123".to_string())]);
         assert_eq!(lex("0n"), vec![TokenKind::BigInt("0".to_string())]);
-        assert_eq!(lex("9007199254740991n"), vec![TokenKind::BigInt("9007199254740991".to_string())]);
+        assert_eq!(
+            lex("9007199254740991n"),
+            vec![TokenKind::BigInt("9007199254740991".to_string())]
+        );
     }
 
     #[test]
@@ -1368,28 +1486,40 @@ mod tests {
         // Test the explicit regex scanning method
         let mut lexer = Lexer::new("/abc/");
         let token = lexer.scan_regexp();
-        assert_eq!(token.kind, TokenKind::RegExp("abc".to_string(), "".to_string()));
+        assert_eq!(
+            token.kind,
+            TokenKind::RegExp("abc".to_string(), "".to_string())
+        );
     }
 
     #[test]
     fn test_regexp_literal_with_flags() {
         let mut lexer = Lexer::new("/pattern/gi");
         let token = lexer.scan_regexp();
-        assert_eq!(token.kind, TokenKind::RegExp("pattern".to_string(), "gi".to_string()));
+        assert_eq!(
+            token.kind,
+            TokenKind::RegExp("pattern".to_string(), "gi".to_string())
+        );
     }
 
     #[test]
     fn test_regexp_literal_with_escapes() {
         let mut lexer = Lexer::new(r"/\d+\.\d+/");
         let token = lexer.scan_regexp();
-        assert_eq!(token.kind, TokenKind::RegExp(r"\d+\.\d+".to_string(), "".to_string()));
+        assert_eq!(
+            token.kind,
+            TokenKind::RegExp(r"\d+\.\d+".to_string(), "".to_string())
+        );
     }
 
     #[test]
     fn test_regexp_literal_with_class() {
         let mut lexer = Lexer::new("/[a-z]/i");
         let token = lexer.scan_regexp();
-        assert_eq!(token.kind, TokenKind::RegExp("[a-z]".to_string(), "i".to_string()));
+        assert_eq!(
+            token.kind,
+            TokenKind::RegExp("[a-z]".to_string(), "i".to_string())
+        );
     }
 
     #[test]
@@ -1397,6 +1527,9 @@ mod tests {
         // Forward slash inside character class doesn't end the regex
         let mut lexer = Lexer::new("/[/]/");
         let token = lexer.scan_regexp();
-        assert_eq!(token.kind, TokenKind::RegExp("[/]".to_string(), "".to_string()));
+        assert_eq!(
+            token.kind,
+            TokenKind::RegExp("[/]".to_string(), "".to_string())
+        );
     }
 }

@@ -191,22 +191,10 @@ fn test_string_lastindexof() {
 
 #[test]
 fn test_string_at() {
-    assert_eq!(
-        eval("'hello'.at(0)"),
-        JsValue::String(JsString::from("h"))
-    );
-    assert_eq!(
-        eval("'hello'.at(1)"),
-        JsValue::String(JsString::from("e"))
-    );
-    assert_eq!(
-        eval("'hello'.at(-1)"),
-        JsValue::String(JsString::from("o"))
-    );
-    assert_eq!(
-        eval("'hello'.at(-2)"),
-        JsValue::String(JsString::from("l"))
-    );
+    assert_eq!(eval("'hello'.at(0)"), JsValue::String(JsString::from("h")));
+    assert_eq!(eval("'hello'.at(1)"), JsValue::String(JsString::from("e")));
+    assert_eq!(eval("'hello'.at(-1)"), JsValue::String(JsString::from("o")));
+    assert_eq!(eval("'hello'.at(-2)"), JsValue::String(JsString::from("l")));
     assert_eq!(eval("'hello'.at(10)"), JsValue::Undefined);
     assert_eq!(eval("'hello'.at(-10)"), JsValue::Undefined);
 }
@@ -248,10 +236,7 @@ fn test_string_match_basic() {
 #[test]
 fn test_string_match_no_match() {
     // No match returns null
-    assert_eq!(
-        eval("'hello'.match('xyz')"),
-        JsValue::Null
-    );
+    assert_eq!(eval("'hello'.match('xyz')"), JsValue::Null);
 }
 
 #[test]
@@ -284,26 +269,17 @@ fn test_string_match_index() {
 // String.prototype.search tests
 #[test]
 fn test_string_search_basic() {
-    assert_eq!(
-        eval("'hello world'.search('world')"),
-        JsValue::Number(6.0)
-    );
+    assert_eq!(eval("'hello world'.search('world')"), JsValue::Number(6.0));
 }
 
 #[test]
 fn test_string_search_not_found() {
-    assert_eq!(
-        eval("'hello'.search('xyz')"),
-        JsValue::Number(-1.0)
-    );
+    assert_eq!(eval("'hello'.search('xyz')"), JsValue::Number(-1.0));
 }
 
 #[test]
 fn test_string_search_regexp() {
-    assert_eq!(
-        eval("'hello world'.search(/o/)"),
-        JsValue::Number(4.0)
-    );
+    assert_eq!(eval("'hello world'.search(/o/)"), JsValue::Number(4.0));
 }
 
 // String.prototype.matchAll tests
@@ -370,14 +346,8 @@ fn test_string_from_code_point_unicode() {
 #[test]
 fn test_string_code_point_at_basic() {
     // Basic ASCII
-    assert_eq!(
-        eval("'ABC'.codePointAt(0)"),
-        JsValue::Number(65.0)
-    );
-    assert_eq!(
-        eval("'ABC'.codePointAt(1)"),
-        JsValue::Number(66.0)
-    );
+    assert_eq!(eval("'ABC'.codePointAt(0)"), JsValue::Number(65.0));
+    assert_eq!(eval("'ABC'.codePointAt(1)"), JsValue::Number(66.0));
 }
 
 #[test]
@@ -385,36 +355,27 @@ fn test_string_code_point_at_emoji() {
     // Emoji (surrogate pair in JS, but we handle as code point)
     assert_eq!(
         eval("'😀'.codePointAt(0)"),
-        JsValue::Number(128512.0)  // 0x1F600
+        JsValue::Number(128512.0) // 0x1F600
     );
 }
 
 #[test]
 fn test_string_code_point_at_out_of_range() {
     // Out of range returns undefined
-    assert_eq!(
-        eval("'abc'.codePointAt(5)"),
-        JsValue::Undefined
-    );
+    assert_eq!(eval("'abc'.codePointAt(5)"), JsValue::Undefined);
 }
 
 #[test]
 fn test_string_code_point_at_negative() {
     // Negative index returns undefined
-    assert_eq!(
-        eval("'abc'.codePointAt(-1)"),
-        JsValue::Undefined
-    );
+    assert_eq!(eval("'abc'.codePointAt(-1)"), JsValue::Undefined);
 }
 
 // String.prototype.normalize tests
 #[test]
 fn test_string_normalize_default() {
     // Default is NFC
-    assert_eq!(
-        eval("'café'.normalize()"),
-        eval("'café'.normalize('NFC')")
-    );
+    assert_eq!(eval("'café'.normalize()"), eval("'café'.normalize('NFC')"));
 }
 
 #[test]
@@ -438,7 +399,10 @@ fn test_string_normalize_nfd() {
     // NFC should be 1 character (composed)
     // NFD should be 2 characters (decomposed: e + combining accent)
     if let (JsValue::Number(nfc), JsValue::Number(nfd)) = (nfc_len, nfd_len) {
-        assert!(nfd > nfc, "NFD should produce a longer string than NFC for composed characters");
+        assert!(
+            nfd > nfc,
+            "NFD should produce a longer string than NFC for composed characters"
+        );
     }
 }
 
@@ -454,35 +418,23 @@ fn test_string_normalize_ascii() {
 // String.prototype.localeCompare tests
 #[test]
 fn test_string_locale_compare_equal() {
-    assert_eq!(
-        eval("'abc'.localeCompare('abc')"),
-        JsValue::Number(0.0)
-    );
+    assert_eq!(eval("'abc'.localeCompare('abc')"), JsValue::Number(0.0));
 }
 
 #[test]
 fn test_string_locale_compare_less() {
-    assert_eq!(
-        eval("'abc'.localeCompare('abd')"),
-        JsValue::Number(-1.0)
-    );
+    assert_eq!(eval("'abc'.localeCompare('abd')"), JsValue::Number(-1.0));
 }
 
 #[test]
 fn test_string_locale_compare_greater() {
-    assert_eq!(
-        eval("'abd'.localeCompare('abc')"),
-        JsValue::Number(1.0)
-    );
+    assert_eq!(eval("'abd'.localeCompare('abc')"), JsValue::Number(1.0));
 }
 
 #[test]
 fn test_string_locale_compare_empty() {
     // Empty string comes before any non-empty string
-    assert_eq!(
-        eval("''.localeCompare('a')"),
-        JsValue::Number(-1.0)
-    );
+    assert_eq!(eval("''.localeCompare('a')"), JsValue::Number(-1.0));
 }
 
 // substr tests (deprecated but still needs support)

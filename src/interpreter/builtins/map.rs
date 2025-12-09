@@ -2,7 +2,10 @@
 
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
-use crate::value::{create_function, create_object, ExoticObject, JsFunction, JsObjectRef, JsValue, NativeFunction, PropertyKey};
+use crate::value::{
+    create_function, create_object, ExoticObject, JsFunction, JsObjectRef, JsValue, NativeFunction,
+    PropertyKey,
+};
 
 /// Create Map.prototype with get, set, has, delete, clear, forEach methods
 pub fn create_map_prototype() -> JsObjectRef {
@@ -104,11 +107,17 @@ pub fn same_value_zero(a: &JsValue, b: &JsValue) -> bool {
     }
 }
 
-pub fn map_constructor(interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn map_constructor(
+    interp: &mut Interpreter,
+    _this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let map_obj = create_object();
     {
         let mut obj = map_obj.borrow_mut();
-        obj.exotic = ExoticObject::Map { entries: Vec::new() };
+        obj.exotic = ExoticObject::Map {
+            entries: Vec::new(),
+        };
         obj.prototype = Some(interp.map_prototype.clone());
         obj.set_property(PropertyKey::from("size"), JsValue::Number(0.0));
     }
@@ -121,11 +130,17 @@ pub fn map_constructor(interp: &mut Interpreter, _this: JsValue, args: Vec<JsVal
             let mut result = Vec::new();
             if let ExoticObject::Array { length } = arr_ref.exotic {
                 for i in 0..length {
-                    if let Some(JsValue::Object(pair_arr)) = arr_ref.get_property(&PropertyKey::Index(i)) {
+                    if let Some(JsValue::Object(pair_arr)) =
+                        arr_ref.get_property(&PropertyKey::Index(i))
+                    {
                         let pair_ref = pair_arr.borrow();
                         if let ExoticObject::Array { .. } = pair_ref.exotic {
-                            let key = pair_ref.get_property(&PropertyKey::Index(0)).unwrap_or(JsValue::Undefined);
-                            let value = pair_ref.get_property(&PropertyKey::Index(1)).unwrap_or(JsValue::Undefined);
+                            let key = pair_ref
+                                .get_property(&PropertyKey::Index(0))
+                                .unwrap_or(JsValue::Undefined);
+                            let value = pair_ref
+                                .get_property(&PropertyKey::Index(1))
+                                .unwrap_or(JsValue::Undefined);
                             result.push((key, value));
                         }
                     }
@@ -159,9 +174,15 @@ pub fn map_constructor(interp: &mut Interpreter, _this: JsValue, args: Vec<JsVal
     Ok(JsValue::Object(map_obj))
 }
 
-pub fn map_get(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn map_get(
+    _interp: &mut Interpreter,
+    this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let JsValue::Object(map_obj) = this else {
-        return Err(JsError::type_error("Map.prototype.get called on non-object"));
+        return Err(JsError::type_error(
+            "Map.prototype.get called on non-object",
+        ));
     };
 
     let key = args.first().cloned().unwrap_or(JsValue::Undefined);
@@ -178,9 +199,15 @@ pub fn map_get(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> 
     Ok(JsValue::Undefined)
 }
 
-pub fn map_set(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn map_set(
+    _interp: &mut Interpreter,
+    this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let JsValue::Object(map_obj) = this.clone() else {
-        return Err(JsError::type_error("Map.prototype.set called on non-object"));
+        return Err(JsError::type_error(
+            "Map.prototype.set called on non-object",
+        ));
     };
 
     let key = args.first().cloned().unwrap_or(JsValue::Undefined);
@@ -207,9 +234,15 @@ pub fn map_set(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> 
     Ok(this) // Return the map for chaining
 }
 
-pub fn map_has(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn map_has(
+    _interp: &mut Interpreter,
+    this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let JsValue::Object(map_obj) = this else {
-        return Err(JsError::type_error("Map.prototype.has called on non-object"));
+        return Err(JsError::type_error(
+            "Map.prototype.has called on non-object",
+        ));
     };
 
     let key = args.first().cloned().unwrap_or(JsValue::Undefined);
@@ -226,9 +259,15 @@ pub fn map_has(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> 
     Ok(JsValue::Boolean(false))
 }
 
-pub fn map_delete(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn map_delete(
+    _interp: &mut Interpreter,
+    this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let JsValue::Object(map_obj) = this else {
-        return Err(JsError::type_error("Map.prototype.delete called on non-object"));
+        return Err(JsError::type_error(
+            "Map.prototype.delete called on non-object",
+        ));
     };
 
     let key = args.first().cloned().unwrap_or(JsValue::Undefined);
@@ -248,9 +287,15 @@ pub fn map_delete(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) 
     Ok(JsValue::Boolean(false))
 }
 
-pub fn map_clear(_interp: &mut Interpreter, this: JsValue, _args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn map_clear(
+    _interp: &mut Interpreter,
+    this: JsValue,
+    _args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let JsValue::Object(map_obj) = this else {
-        return Err(JsError::type_error("Map.prototype.clear called on non-object"));
+        return Err(JsError::type_error(
+            "Map.prototype.clear called on non-object",
+        ));
     };
 
     let mut map = map_obj.borrow_mut();
@@ -263,9 +308,15 @@ pub fn map_clear(_interp: &mut Interpreter, this: JsValue, _args: Vec<JsValue>) 
     Ok(JsValue::Undefined)
 }
 
-pub fn map_foreach(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn map_foreach(
+    interp: &mut Interpreter,
+    this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let JsValue::Object(map_obj) = this.clone() else {
-        return Err(JsError::type_error("Map.prototype.forEach called on non-object"));
+        return Err(JsError::type_error(
+            "Map.prototype.forEach called on non-object",
+        ));
     };
 
     let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
@@ -278,20 +329,32 @@ pub fn map_foreach(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) 
         if let ExoticObject::Map { entries: ref e } = map.exotic {
             entries = e.clone();
         } else {
-            return Err(JsError::type_error("Map.prototype.forEach called on non-Map"));
+            return Err(JsError::type_error(
+                "Map.prototype.forEach called on non-Map",
+            ));
         }
     }
 
     for (key, value) in entries {
-        interp.call_function(callback.clone(), this_arg.clone(), vec![value, key, this.clone()])?;
+        interp.call_function(
+            callback.clone(),
+            this_arg.clone(),
+            vec![value, key, this.clone()],
+        )?;
     }
 
     Ok(JsValue::Undefined)
 }
 
-pub fn map_keys(interp: &mut Interpreter, this: JsValue, _args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn map_keys(
+    interp: &mut Interpreter,
+    this: JsValue,
+    _args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let JsValue::Object(map_obj) = this else {
-        return Err(JsError::type_error("Map.prototype.keys called on non-object"));
+        return Err(JsError::type_error(
+            "Map.prototype.keys called on non-object",
+        ));
     };
 
     let keys: Vec<JsValue>;
@@ -307,9 +370,15 @@ pub fn map_keys(interp: &mut Interpreter, this: JsValue, _args: Vec<JsValue>) ->
     Ok(JsValue::Object(interp.create_array(keys)))
 }
 
-pub fn map_values(interp: &mut Interpreter, this: JsValue, _args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn map_values(
+    interp: &mut Interpreter,
+    this: JsValue,
+    _args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let JsValue::Object(map_obj) = this else {
-        return Err(JsError::type_error("Map.prototype.values called on non-object"));
+        return Err(JsError::type_error(
+            "Map.prototype.values called on non-object",
+        ));
     };
 
     let values: Vec<JsValue>;
@@ -318,16 +387,24 @@ pub fn map_values(interp: &mut Interpreter, this: JsValue, _args: Vec<JsValue>) 
         if let ExoticObject::Map { entries: ref e } = map.exotic {
             values = e.iter().map(|(_, v)| v.clone()).collect();
         } else {
-            return Err(JsError::type_error("Map.prototype.values called on non-Map"));
+            return Err(JsError::type_error(
+                "Map.prototype.values called on non-Map",
+            ));
         }
     }
 
     Ok(JsValue::Object(interp.create_array(values)))
 }
 
-pub fn map_entries(interp: &mut Interpreter, this: JsValue, _args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn map_entries(
+    interp: &mut Interpreter,
+    this: JsValue,
+    _args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let JsValue::Object(map_obj) = this else {
-        return Err(JsError::type_error("Map.prototype.entries called on non-object"));
+        return Err(JsError::type_error(
+            "Map.prototype.entries called on non-object",
+        ));
     };
 
     let raw_entries: Vec<(JsValue, JsValue)>;
@@ -336,13 +413,16 @@ pub fn map_entries(interp: &mut Interpreter, this: JsValue, _args: Vec<JsValue>)
         if let ExoticObject::Map { entries: ref e } = map.exotic {
             raw_entries = e.clone();
         } else {
-            return Err(JsError::type_error("Map.prototype.entries called on non-Map"));
+            return Err(JsError::type_error(
+                "Map.prototype.entries called on non-Map",
+            ));
         }
     }
 
-    let entries: Vec<JsValue> = raw_entries.into_iter().map(|(k, v)| {
-        JsValue::Object(interp.create_array(vec![k, v]))
-    }).collect();
+    let entries: Vec<JsValue> = raw_entries
+        .into_iter()
+        .map(|(k, v)| JsValue::Object(interp.create_array(vec![k, v])))
+        .collect();
 
     Ok(JsValue::Object(interp.create_array(entries)))
 }

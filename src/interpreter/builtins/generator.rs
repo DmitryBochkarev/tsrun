@@ -6,8 +6,8 @@ use std::rc::Rc;
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
 use crate::value::{
-    create_function, create_object, ExoticObject, GeneratorState, GeneratorStatus,
-    JsFunction, JsObjectRef, JsString, JsValue, NativeFunction, PropertyKey,
+    create_function, create_object, ExoticObject, GeneratorState, GeneratorStatus, JsFunction,
+    JsObjectRef, JsString, JsValue, NativeFunction, PropertyKey,
 };
 
 /// Create Generator.prototype
@@ -172,10 +172,7 @@ pub fn generator_throw(
 }
 
 /// Create a new generator object from a generator function
-pub fn create_generator_object(
-    interp: &Interpreter,
-    state: GeneratorState,
-) -> JsObjectRef {
+pub fn create_generator_object(interp: &Interpreter, state: GeneratorState) -> JsObjectRef {
     let obj = create_object();
     {
         let mut o = obj.borrow_mut();

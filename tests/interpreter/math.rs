@@ -46,8 +46,12 @@ fn test_math_log_exp() {
 
 #[test]
 fn test_math_constants() {
-    assert!(matches!(eval("Math.PI"), JsValue::Number(n) if (n - std::f64::consts::PI).abs() < 0.0001));
-    assert!(matches!(eval("Math.E"), JsValue::Number(n) if (n - std::f64::consts::E).abs() < 0.0001));
+    assert!(
+        matches!(eval("Math.PI"), JsValue::Number(n) if (n - std::f64::consts::PI).abs() < 0.0001)
+    );
+    assert!(
+        matches!(eval("Math.E"), JsValue::Number(n) if (n - std::f64::consts::E).abs() < 0.0001)
+    );
 }
 
 #[test]

@@ -5,7 +5,10 @@ use typescript_eval::JsValue;
 
 #[test]
 fn test_regexp_test_basic() {
-    assert_eq!(eval("new RegExp('abc').test('abc')"), JsValue::Boolean(true));
+    assert_eq!(
+        eval("new RegExp('abc').test('abc')"),
+        JsValue::Boolean(true)
+    );
     assert_eq!(
         eval("new RegExp('abc').test('def')"),
         JsValue::Boolean(false)
@@ -14,8 +17,14 @@ fn test_regexp_test_basic() {
 
 #[test]
 fn test_regexp_test_pattern() {
-    assert_eq!(eval("new RegExp('a.c').test('abc')"), JsValue::Boolean(true));
-    assert_eq!(eval("new RegExp('a.c').test('adc')"), JsValue::Boolean(true));
+    assert_eq!(
+        eval("new RegExp('a.c').test('abc')"),
+        JsValue::Boolean(true)
+    );
+    assert_eq!(
+        eval("new RegExp('a.c').test('adc')"),
+        JsValue::Boolean(true)
+    );
 }
 
 #[test]

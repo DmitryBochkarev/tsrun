@@ -2,7 +2,10 @@
 
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
-use crate::value::{create_function, create_object, JsFunction, JsObjectRef, JsString, JsValue, NativeFunction, PropertyKey};
+use crate::value::{
+    create_function, create_object, JsFunction, JsObjectRef, JsString, JsValue, NativeFunction,
+    PropertyKey,
+};
 
 /// Create Error.prototype with toString
 pub fn create_error_prototype() -> JsObjectRef {
@@ -11,8 +14,14 @@ pub fn create_error_prototype() -> JsObjectRef {
         let mut p = proto.borrow_mut();
 
         // Set default name and message
-        p.set_property(PropertyKey::from("name"), JsValue::String(JsString::from("Error")));
-        p.set_property(PropertyKey::from("message"), JsValue::String(JsString::from("")));
+        p.set_property(
+            PropertyKey::from("name"),
+            JsValue::String(JsString::from("Error")),
+        );
+        p.set_property(
+            PropertyKey::from("message"),
+            JsValue::String(JsString::from("")),
+        );
 
         let tostring_fn = create_function(JsFunction::Native(NativeFunction {
             name: "toString".to_string(),
@@ -42,7 +51,10 @@ pub fn create_error_constructors(error_prototype: &JsObjectRef) -> ErrorConstruc
         func: error_constructor,
         arity: 1,
     }));
-    error_fn.borrow_mut().set_property(PropertyKey::from("prototype"), JsValue::Object(error_prototype.clone()));
+    error_fn.borrow_mut().set_property(
+        PropertyKey::from("prototype"),
+        JsValue::Object(error_prototype.clone()),
+    );
 
     let type_error_fn = create_function(JsFunction::Native(NativeFunction {
         name: "TypeError".to_string(),
@@ -93,7 +105,11 @@ pub fn create_error_constructors(error_prototype: &JsObjectRef) -> ErrorConstruc
 
 /// Error.prototype.toString()
 /// Returns "name: message" or just "name" if message is empty
-pub fn error_to_string(_interp: &mut Interpreter, this: JsValue, _args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn error_to_string(
+    _interp: &mut Interpreter,
+    this: JsValue,
+    _args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let JsValue::Object(obj) = this else {
         return Ok(JsValue::String(JsString::from("Error")));
     };
@@ -101,19 +117,24 @@ pub fn error_to_string(_interp: &mut Interpreter, this: JsValue, _args: Vec<JsVa
     let obj_ref = obj.borrow();
 
     // Get name, default to "Error"
-    let name = obj_ref.get_property(&PropertyKey::from("name"))
+    let name = obj_ref
+        .get_property(&PropertyKey::from("name"))
         .map(|v| v.to_js_string().to_string())
         .unwrap_or_else(|| "Error".to_string());
 
     // Get message, default to ""
-    let message = obj_ref.get_property(&PropertyKey::from("message"))
+    let message = obj_ref
+        .get_property(&PropertyKey::from("message"))
         .map(|v| v.to_js_string().to_string())
         .unwrap_or_default();
 
     if message.is_empty() {
         Ok(JsValue::String(JsString::from(name)))
     } else {
-        Ok(JsValue::String(JsString::from(format!("{}: {}", name, message))))
+        Ok(JsValue::String(JsString::from(format!(
+            "{}: {}",
+            name, message
+        ))))
     }
 }
 
@@ -134,9 +155,15 @@ fn create_error_object_with_stack(
     let obj = create_object();
     {
         let mut obj_ref = obj.borrow_mut();
-        obj_ref.set_property(PropertyKey::from("name"), JsValue::String(JsString::from(name)));
+        obj_ref.set_property(
+            PropertyKey::from("name"),
+            JsValue::String(JsString::from(name)),
+        );
         obj_ref.set_property(PropertyKey::from("message"), JsValue::String(msg_str));
-        obj_ref.set_property(PropertyKey::from("stack"), JsValue::String(JsString::from(stack_trace)));
+        obj_ref.set_property(
+            PropertyKey::from("stack"),
+            JsValue::String(JsString::from(stack_trace)),
+        );
         if let Some(proto) = prototype {
             obj_ref.prototype = Some(proto);
         }
@@ -144,37 +171,100 @@ fn create_error_object_with_stack(
     JsValue::Object(obj)
 }
 
-pub fn error_constructor(interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn error_constructor(
+    interp: &mut Interpreter,
+    _this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let message = args.first().cloned().unwrap_or(JsValue::Undefined);
-    Ok(create_error_object_with_stack(interp, "Error", message, Some(interp.error_prototype.clone())))
+    Ok(create_error_object_with_stack(
+        interp,
+        "Error",
+        message,
+        Some(interp.error_prototype.clone()),
+    ))
 }
 
-pub fn type_error_constructor(interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn type_error_constructor(
+    interp: &mut Interpreter,
+    _this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let message = args.first().cloned().unwrap_or(JsValue::Undefined);
-    Ok(create_error_object_with_stack(interp, "TypeError", message, Some(interp.error_prototype.clone())))
+    Ok(create_error_object_with_stack(
+        interp,
+        "TypeError",
+        message,
+        Some(interp.error_prototype.clone()),
+    ))
 }
 
-pub fn reference_error_constructor(interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn reference_error_constructor(
+    interp: &mut Interpreter,
+    _this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let message = args.first().cloned().unwrap_or(JsValue::Undefined);
-    Ok(create_error_object_with_stack(interp, "ReferenceError", message, Some(interp.error_prototype.clone())))
+    Ok(create_error_object_with_stack(
+        interp,
+        "ReferenceError",
+        message,
+        Some(interp.error_prototype.clone()),
+    ))
 }
 
-pub fn syntax_error_constructor(interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn syntax_error_constructor(
+    interp: &mut Interpreter,
+    _this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let message = args.first().cloned().unwrap_or(JsValue::Undefined);
-    Ok(create_error_object_with_stack(interp, "SyntaxError", message, Some(interp.error_prototype.clone())))
+    Ok(create_error_object_with_stack(
+        interp,
+        "SyntaxError",
+        message,
+        Some(interp.error_prototype.clone()),
+    ))
 }
 
-pub fn range_error_constructor(interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn range_error_constructor(
+    interp: &mut Interpreter,
+    _this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let message = args.first().cloned().unwrap_or(JsValue::Undefined);
-    Ok(create_error_object_with_stack(interp, "RangeError", message, Some(interp.error_prototype.clone())))
+    Ok(create_error_object_with_stack(
+        interp,
+        "RangeError",
+        message,
+        Some(interp.error_prototype.clone()),
+    ))
 }
 
-pub fn uri_error_constructor(interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn uri_error_constructor(
+    interp: &mut Interpreter,
+    _this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let message = args.first().cloned().unwrap_or(JsValue::Undefined);
-    Ok(create_error_object_with_stack(interp, "URIError", message, Some(interp.error_prototype.clone())))
+    Ok(create_error_object_with_stack(
+        interp,
+        "URIError",
+        message,
+        Some(interp.error_prototype.clone()),
+    ))
 }
 
-pub fn eval_error_constructor(interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn eval_error_constructor(
+    interp: &mut Interpreter,
+    _this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let message = args.first().cloned().unwrap_or(JsValue::Undefined);
-    Ok(create_error_object_with_stack(interp, "EvalError", message, Some(interp.error_prototype.clone())))
+    Ok(create_error_object_with_stack(
+        interp,
+        "EvalError",
+        message,
+        Some(interp.error_prototype.clone()),
+    ))
 }

@@ -7,8 +7,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
 use crate::value::{
-    create_function, create_object, JsFunction, JsObjectRef, JsString,
-    JsSymbol, JsValue, NativeFunction, PropertyKey,
+    create_function, create_object, JsFunction, JsObjectRef, JsString, JsSymbol, JsValue,
+    NativeFunction, PropertyKey,
 };
 
 /// Global symbol ID counter for generating unique symbol IDs
@@ -109,7 +109,10 @@ pub fn create_symbol_constructor(
     // Well-known symbols
     sym.set_property(
         PropertyKey::from("iterator"),
-        JsValue::Symbol(JsSymbol::new(well_known.iterator, Some("Symbol.iterator".to_string()))),
+        JsValue::Symbol(JsSymbol::new(
+            well_known.iterator,
+            Some("Symbol.iterator".to_string()),
+        )),
     );
     sym.set_property(
         PropertyKey::from("toStringTag"),
@@ -134,7 +137,10 @@ pub fn create_symbol_constructor(
     );
     sym.set_property(
         PropertyKey::from("species"),
-        JsValue::Symbol(JsSymbol::new(well_known.species, Some("Symbol.species".to_string()))),
+        JsValue::Symbol(JsSymbol::new(
+            well_known.species,
+            Some("Symbol.species".to_string()),
+        )),
     );
     sym.set_property(
         PropertyKey::from("toPrimitive"),
@@ -159,15 +165,24 @@ pub fn create_symbol_constructor(
     );
     sym.set_property(
         PropertyKey::from("replace"),
-        JsValue::Symbol(JsSymbol::new(well_known.replace, Some("Symbol.replace".to_string()))),
+        JsValue::Symbol(JsSymbol::new(
+            well_known.replace,
+            Some("Symbol.replace".to_string()),
+        )),
     );
     sym.set_property(
         PropertyKey::from("search"),
-        JsValue::Symbol(JsSymbol::new(well_known.search, Some("Symbol.search".to_string()))),
+        JsValue::Symbol(JsSymbol::new(
+            well_known.search,
+            Some("Symbol.search".to_string()),
+        )),
     );
     sym.set_property(
         PropertyKey::from("split"),
-        JsValue::Symbol(JsSymbol::new(well_known.split, Some("Symbol.split".to_string()))),
+        JsValue::Symbol(JsSymbol::new(
+            well_known.split,
+            Some("Symbol.split".to_string()),
+        )),
     );
     sym.set_property(
         PropertyKey::from("asyncIterator"),
@@ -262,7 +277,11 @@ fn symbol_key_for(
 ) -> Result<JsValue, JsError> {
     let sym = match args.first() {
         Some(JsValue::Symbol(s)) => s,
-        _ => return Err(JsError::type_error("Symbol.keyFor requires a symbol argument")),
+        _ => {
+            return Err(JsError::type_error(
+                "Symbol.keyFor requires a symbol argument",
+            ))
+        }
     };
 
     SYMBOL_REGISTRY.with(|registry| {
@@ -290,7 +309,9 @@ fn symbol_to_string(
             };
             Ok(JsValue::String(JsString::from(result)))
         }
-        _ => Err(JsError::type_error("Symbol.prototype.toString requires that 'this' be a Symbol")),
+        _ => Err(JsError::type_error(
+            "Symbol.prototype.toString requires that 'this' be a Symbol",
+        )),
     }
 }
 
@@ -302,6 +323,8 @@ fn symbol_value_of(
 ) -> Result<JsValue, JsError> {
     match this {
         JsValue::Symbol(_) => Ok(this),
-        _ => Err(JsError::type_error("Symbol.prototype.valueOf requires that 'this' be a Symbol")),
+        _ => Err(JsError::type_error(
+            "Symbol.prototype.valueOf requires that 'this' be a Symbol",
+        )),
     }
 }

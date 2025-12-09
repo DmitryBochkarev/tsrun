@@ -11,7 +11,8 @@ use typescript_eval::JsValue;
 #[test]
 fn test_class_basic() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             class Counter {
                 count: number = 0;
                 increment(): void {
@@ -24,7 +25,8 @@ fn test_class_basic() {
             const c: Counter = new Counter();
             c.increment();
             c.getCount()
-        "#),
+        "#
+        ),
         JsValue::Number(1.0)
     );
 }
@@ -33,14 +35,16 @@ fn test_class_basic() {
 #[test]
 fn test_class_static_method() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             class MathHelper {
                 static double(x: number): number {
                     return x * 2;
                 }
             }
             MathHelper.double(5)
-        "#),
+        "#
+        ),
         JsValue::Number(10.0)
     );
 }
@@ -49,12 +53,14 @@ fn test_class_static_method() {
 #[test]
 fn test_class_static_field() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             class Config {
                 static version: string = "1.0";
             }
             Config.version
-        "#),
+        "#
+        ),
         JsValue::from("1.0")
     );
 }
@@ -63,7 +69,8 @@ fn test_class_static_field() {
 #[test]
 fn test_class_extends() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             class Animal {
                 name: string = "unknown";
                 speak(): string {
@@ -77,7 +84,8 @@ fn test_class_extends() {
             }
             const d: Dog = new Dog();
             d.speak()
-        "#),
+        "#
+        ),
         JsValue::from("woof")
     );
 }
@@ -86,7 +94,8 @@ fn test_class_extends() {
 #[test]
 fn test_class_super_call() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             class Animal {
                 name: string;
                 constructor(name: string) {
@@ -102,7 +111,8 @@ fn test_class_super_call() {
             }
             const d: Dog = new Dog("Rex", "German Shepherd");
             d.name + " is a " + d.breed
-        "#),
+        "#
+        ),
         JsValue::from("Rex is a German Shepherd")
     );
 }
@@ -111,7 +121,8 @@ fn test_class_super_call() {
 #[test]
 fn test_class_super_method() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             class Animal {
                 speak(): string {
                     return "generic sound";
@@ -124,7 +135,8 @@ fn test_class_super_method() {
             }
             const d: Dog = new Dog();
             d.speak()
-        "#),
+        "#
+        ),
         JsValue::from("generic sound and woof")
     );
 }
@@ -133,7 +145,8 @@ fn test_class_super_method() {
 #[test]
 fn test_class_expression() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             const Foo = class {
                 value: number = 10;
                 getValue(): number {
@@ -142,7 +155,8 @@ fn test_class_expression() {
             };
             const f = new Foo();
             f.getValue()
-        "#),
+        "#
+        ),
         JsValue::Number(10.0)
     );
 }
@@ -150,7 +164,8 @@ fn test_class_expression() {
 #[test]
 fn test_class_expression_named() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             const MyClass = class Named {
                 name: string = "test";
                 getName(): string {
@@ -159,7 +174,8 @@ fn test_class_expression_named() {
             };
             const m = new MyClass();
             m.getName()
-        "#),
+        "#
+        ),
         JsValue::from("test")
     );
 }
@@ -168,7 +184,8 @@ fn test_class_expression_named() {
 #[test]
 fn test_private_field_basic() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             class Counter {
                 #count: number = 0;
                 increment(): void {
@@ -182,7 +199,8 @@ fn test_private_field_basic() {
             c.increment();
             c.increment();
             c.getCount()
-        "#),
+        "#
+        ),
         JsValue::Number(2.0)
     );
 }
@@ -190,7 +208,8 @@ fn test_private_field_basic() {
 #[test]
 fn test_private_field_initial_value() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             class Box {
                 #value: number = 42;
                 getValue(): number {
@@ -199,7 +218,8 @@ fn test_private_field_initial_value() {
             }
             const b: Box = new Box();
             b.getValue()
-        "#),
+        "#
+        ),
         JsValue::Number(42.0)
     );
 }
@@ -207,7 +227,8 @@ fn test_private_field_initial_value() {
 #[test]
 fn test_private_method() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             class Calculator {
                 #double(n: number): number {
                     return n * 2;
@@ -218,7 +239,8 @@ fn test_private_method() {
             }
             const calc: Calculator = new Calculator();
             calc.compute(5)
-        "#),
+        "#
+        ),
         JsValue::Number(10.0)
     );
 }
@@ -227,7 +249,8 @@ fn test_private_method() {
 #[test]
 fn test_class_getter_setter() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             class Circle {
                 #radius: number = 1;
 
@@ -246,7 +269,8 @@ fn test_class_getter_setter() {
             const c = new Circle();
             c.radius = 5;
             c.diameter
-        "#),
+        "#
+        ),
         JsValue::Number(10.0)
     );
 }
@@ -255,7 +279,8 @@ fn test_class_getter_setter() {
 #[test]
 fn test_class_getter_only() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             class Box {
                 #value: number = 42;
 
@@ -265,7 +290,8 @@ fn test_class_getter_only() {
             }
             const b = new Box();
             b.value
-        "#),
+        "#
+        ),
         JsValue::Number(42.0)
     );
 }
@@ -275,7 +301,8 @@ fn test_class_getter_only() {
 fn test_class_static_getter_setter() {
     // Simple test with public static field first
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             class Config {
                 static _count: number = 0;
 
@@ -289,7 +316,8 @@ fn test_class_static_getter_setter() {
             }
             Config.count = 5;
             Config.count
-        "#),
+        "#
+        ),
         JsValue::Number(5.0)
     );
 }
@@ -298,7 +326,8 @@ fn test_class_static_getter_setter() {
 #[test]
 fn test_static_initialization_block() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             class Config {
                 static initialized: boolean = false;
                 static value: number = 0;
@@ -309,7 +338,8 @@ fn test_static_initialization_block() {
                 }
             }
             Config.value
-        "#),
+        "#
+        ),
         JsValue::Number(42.0)
     );
 }
@@ -318,7 +348,8 @@ fn test_static_initialization_block() {
 #[test]
 fn test_static_block_complex() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             class Counter {
                 static count: number = 0;
                 static doubled: number = 0;
@@ -329,7 +360,8 @@ fn test_static_block_complex() {
                 }
             }
             Counter.doubled
-        "#),
+        "#
+        ),
         JsValue::Number(10.0)
     );
 }

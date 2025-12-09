@@ -6,12 +6,18 @@ use typescript_eval::JsValue;
 
 #[test]
 fn test_object() {
-    assert_eq!(eval("const obj: { a: number } = { a: 1 }; obj.a"), JsValue::Number(1.0));
+    assert_eq!(
+        eval("const obj: { a: number } = { a: 1 }; obj.a"),
+        JsValue::Number(1.0)
+    );
 }
 
 #[test]
 fn test_object_hasownproperty() {
-    assert_eq!(eval("({a: 1} as { a: number }).hasOwnProperty('a')"), JsValue::Boolean(true));
+    assert_eq!(
+        eval("({a: 1} as { a: number }).hasOwnProperty('a')"),
+        JsValue::Boolean(true)
+    );
     assert_eq!(
         eval("({a: 1} as { a: number }).hasOwnProperty('b')"),
         JsValue::Boolean(false)
@@ -94,27 +100,33 @@ fn test_object_seal() {
 fn test_object_get_own_property_descriptor() {
     // Basic property descriptor
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             const obj = { x: 42 };
             const desc = Object.getOwnPropertyDescriptor(obj, 'x');
             desc.value
-        "#),
+        "#
+        ),
         JsValue::Number(42.0)
     );
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             const obj = { x: 42 };
             const desc = Object.getOwnPropertyDescriptor(obj, 'x');
             desc.writable
-        "#),
+        "#
+        ),
         JsValue::Boolean(true)
     );
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             const obj = { x: 42 };
             const desc = Object.getOwnPropertyDescriptor(obj, 'x');
             desc.enumerable
-        "#),
+        "#
+        ),
         JsValue::Boolean(true)
     );
 }
@@ -122,21 +134,25 @@ fn test_object_get_own_property_descriptor() {
 #[test]
 fn test_object_define_property() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             const obj: any = {};
             Object.defineProperty(obj, 'x', { value: 10, writable: true });
             obj.x
-        "#),
+        "#
+        ),
         JsValue::Number(10.0)
     );
     // Non-writable property
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             const obj: any = {};
             Object.defineProperty(obj, 'x', { value: 10, writable: false });
             obj.x = 20;
             obj.x
-        "#),
+        "#
+        ),
         JsValue::Number(10.0)
     );
 }
@@ -144,10 +160,12 @@ fn test_object_define_property() {
 #[test]
 fn test_object_get_prototype_of() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             const arr: number[] = [1, 2, 3];
             Object.getPrototypeOf(arr) === Array.prototype
-        "#),
+        "#
+        ),
         JsValue::Boolean(true)
     );
 }
@@ -155,10 +173,12 @@ fn test_object_get_prototype_of() {
 #[test]
 fn test_object_get_own_property_names() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             const obj = { a: 1, b: 2 };
             Object.getOwnPropertyNames(obj).length
-        "#),
+        "#
+        ),
         JsValue::Number(2.0)
     );
 }
@@ -167,14 +187,16 @@ fn test_object_get_own_property_names() {
 fn test_object_define_properties_basic() {
     // Define multiple properties at once
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             const obj: any = {};
             Object.defineProperties(obj, {
                 x: { value: 10, writable: true },
                 y: { value: 20, writable: true }
             });
             obj.x + obj.y
-        "#),
+        "#
+        ),
         JsValue::Number(30.0)
     );
 }
@@ -183,13 +205,15 @@ fn test_object_define_properties_basic() {
 fn test_object_define_properties_returns_object() {
     // Should return the object
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             const obj: any = {};
             const result = Object.defineProperties(obj, {
                 x: { value: 10 }
             });
             result === obj
-        "#),
+        "#
+        ),
         JsValue::Boolean(true)
     );
 }
@@ -198,14 +222,16 @@ fn test_object_define_properties_returns_object() {
 fn test_object_define_properties_attributes() {
     // Test non-writable property
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             const obj: any = {};
             Object.defineProperties(obj, {
                 x: { value: 10, writable: false }
             });
             obj.x = 20;
             obj.x
-        "#),
+        "#
+        ),
         JsValue::Number(10.0)
     );
 }
@@ -214,14 +240,16 @@ fn test_object_define_properties_attributes() {
 fn test_object_define_properties_enumerable() {
     // Test enumerable property
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             const obj: any = {};
             Object.defineProperties(obj, {
                 a: { value: 1, enumerable: true },
                 b: { value: 2, enumerable: false }
             });
             Object.keys(obj).length
-        "#),
+        "#
+        ),
         JsValue::Number(1.0)
     );
 }
@@ -231,11 +259,13 @@ fn test_object_define_properties_enumerable() {
 fn test_proto_get() {
     // __proto__ should return the prototype
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             const parent: { x: number } = { x: 42 };
             const child: any = Object.create(parent);
             child.__proto__.x
-        "#),
+        "#
+        ),
         JsValue::Number(42.0)
     );
 }
@@ -244,12 +274,14 @@ fn test_proto_get() {
 fn test_proto_set() {
     // Setting __proto__ should change the prototype
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             const parent: { x: number } = { x: 42 };
             const child: { x?: number } = {};
             child.__proto__ = parent;
             child.x
-        "#),
+        "#
+        ),
         JsValue::Number(42.0)
     );
 }
@@ -259,11 +291,13 @@ fn test_proto_null() {
     // Setting __proto__ to null should work
     // After setting __proto__ to null, accessing it returns null
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             const obj: any = {};
             obj.__proto__ = null;
             obj.__proto__
-        "#),
+        "#
+        ),
         JsValue::Null
     );
 }
@@ -272,11 +306,13 @@ fn test_proto_null() {
 fn test_proto_in_literal() {
     // __proto__ in object literal should set prototype
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             const parent: { x: number } = { x: 42 };
             const child: any = { __proto__: parent, y: 1 };
             child.x
-        "#),
+        "#
+        ),
         JsValue::Number(42.0)
     );
 }

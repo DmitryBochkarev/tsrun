@@ -56,7 +56,10 @@ fn test_set_object_values() {
 #[test]
 fn test_set_initialize_with_array() {
     // Initialize with array
-    assert_eq!(eval("let s = new Set([1, 2, 3]); s.size"), JsValue::Number(3.0));
+    assert_eq!(
+        eval("let s = new Set([1, 2, 3]); s.size"),
+        JsValue::Number(3.0)
+    );
     // Duplicates removed
     assert_eq!(
         eval("let s = new Set([1, 2, 2, 3]); s.size"),

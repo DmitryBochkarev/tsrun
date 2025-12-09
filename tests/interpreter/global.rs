@@ -37,7 +37,10 @@ fn test_isfinite() {
 
 #[test]
 fn test_encodeuri() {
-    assert_eq!(eval("encodeURI('hello world')"), JsValue::from("hello%20world"));
+    assert_eq!(
+        eval("encodeURI('hello world')"),
+        JsValue::from("hello%20world")
+    );
     assert_eq!(eval("encodeURI('a=1&b=2')"), JsValue::from("a=1&b=2"));
     assert_eq!(
         eval("encodeURI('http://example.com/path?q=hello world')"),
@@ -47,14 +50,23 @@ fn test_encodeuri() {
 
 #[test]
 fn test_decodeuri() {
-    assert_eq!(eval("decodeURI('hello%20world')"), JsValue::from("hello world"));
+    assert_eq!(
+        eval("decodeURI('hello%20world')"),
+        JsValue::from("hello world")
+    );
     assert_eq!(eval("decodeURI('a=1&b=2')"), JsValue::from("a=1&b=2"));
 }
 
 #[test]
 fn test_encodeuricomponent() {
-    assert_eq!(eval("encodeURIComponent('hello world')"), JsValue::from("hello%20world"));
-    assert_eq!(eval("encodeURIComponent('a=1&b=2')"), JsValue::from("a%3D1%26b%3D2"));
+    assert_eq!(
+        eval("encodeURIComponent('hello world')"),
+        JsValue::from("hello%20world")
+    );
+    assert_eq!(
+        eval("encodeURIComponent('a=1&b=2')"),
+        JsValue::from("a%3D1%26b%3D2")
+    );
     assert_eq!(
         eval("encodeURIComponent('http://example.com')"),
         JsValue::from("http%3A%2F%2Fexample.com")
@@ -63,6 +75,12 @@ fn test_encodeuricomponent() {
 
 #[test]
 fn test_decodeuricomponent() {
-    assert_eq!(eval("decodeURIComponent('hello%20world')"), JsValue::from("hello world"));
-    assert_eq!(eval("decodeURIComponent('a%3D1%26b%3D2')"), JsValue::from("a=1&b=2"));
+    assert_eq!(
+        eval("decodeURIComponent('hello%20world')"),
+        JsValue::from("hello world")
+    );
+    assert_eq!(
+        eval("decodeURIComponent('a%3D1%26b%3D2')"),
+        JsValue::from("a=1&b=2")
+    );
 }

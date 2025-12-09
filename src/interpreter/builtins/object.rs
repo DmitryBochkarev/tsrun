@@ -2,7 +2,10 @@
 
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
-use crate::value::{create_array, create_function, create_object, ExoticObject, JsFunction, JsObjectRef, JsString, JsValue, NativeFunction, Property, PropertyKey};
+use crate::value::{
+    create_array, create_function, create_object, ExoticObject, JsFunction, JsObjectRef, JsString,
+    JsValue, NativeFunction, Property, PropertyKey,
+};
 
 /// Create Object.prototype with hasOwnProperty, toString, valueOf
 pub fn create_object_prototype() -> JsObjectRef {
@@ -15,7 +18,10 @@ pub fn create_object_prototype() -> JsObjectRef {
             func: object_has_own_property,
             arity: 1,
         }));
-        p.set_property(PropertyKey::from("hasOwnProperty"), JsValue::Object(hasownprop_fn));
+        p.set_property(
+            PropertyKey::from("hasOwnProperty"),
+            JsValue::Object(hasownprop_fn),
+        );
 
         let tostring_fn = create_function(JsFunction::Native(NativeFunction {
             name: "toString".to_string(),
@@ -77,7 +83,10 @@ pub fn create_object_constructor() -> JsObjectRef {
             func: object_from_entries,
             arity: 1,
         }));
-        obj.set_property(PropertyKey::from("fromEntries"), JsValue::Object(fromentries_fn));
+        obj.set_property(
+            PropertyKey::from("fromEntries"),
+            JsValue::Object(fromentries_fn),
+        );
 
         let hasown_fn = create_function(JsFunction::Native(NativeFunction {
             name: "hasOwn".to_string(),
@@ -126,54 +135,79 @@ pub fn create_object_constructor() -> JsObjectRef {
             func: object_get_own_property_descriptor,
             arity: 2,
         }));
-        obj.set_property(PropertyKey::from("getOwnPropertyDescriptor"), JsValue::Object(getownpropdesc_fn));
+        obj.set_property(
+            PropertyKey::from("getOwnPropertyDescriptor"),
+            JsValue::Object(getownpropdesc_fn),
+        );
 
         let getownpropnames_fn = create_function(JsFunction::Native(NativeFunction {
             name: "getOwnPropertyNames".to_string(),
             func: object_get_own_property_names,
             arity: 1,
         }));
-        obj.set_property(PropertyKey::from("getOwnPropertyNames"), JsValue::Object(getownpropnames_fn));
+        obj.set_property(
+            PropertyKey::from("getOwnPropertyNames"),
+            JsValue::Object(getownpropnames_fn),
+        );
 
         let getownpropsyms_fn = create_function(JsFunction::Native(NativeFunction {
             name: "getOwnPropertySymbols".to_string(),
             func: object_get_own_property_symbols,
             arity: 1,
         }));
-        obj.set_property(PropertyKey::from("getOwnPropertySymbols"), JsValue::Object(getownpropsyms_fn));
+        obj.set_property(
+            PropertyKey::from("getOwnPropertySymbols"),
+            JsValue::Object(getownpropsyms_fn),
+        );
 
         let defineprop_fn = create_function(JsFunction::Native(NativeFunction {
             name: "defineProperty".to_string(),
             func: object_define_property,
             arity: 3,
         }));
-        obj.set_property(PropertyKey::from("defineProperty"), JsValue::Object(defineprop_fn));
+        obj.set_property(
+            PropertyKey::from("defineProperty"),
+            JsValue::Object(defineprop_fn),
+        );
 
         let defineprops_fn = create_function(JsFunction::Native(NativeFunction {
             name: "defineProperties".to_string(),
             func: object_define_properties,
             arity: 2,
         }));
-        obj.set_property(PropertyKey::from("defineProperties"), JsValue::Object(defineprops_fn));
+        obj.set_property(
+            PropertyKey::from("defineProperties"),
+            JsValue::Object(defineprops_fn),
+        );
 
         let getprotoof_fn = create_function(JsFunction::Native(NativeFunction {
             name: "getPrototypeOf".to_string(),
             func: object_get_prototype_of,
             arity: 1,
         }));
-        obj.set_property(PropertyKey::from("getPrototypeOf"), JsValue::Object(getprotoof_fn));
+        obj.set_property(
+            PropertyKey::from("getPrototypeOf"),
+            JsValue::Object(getprotoof_fn),
+        );
 
         let setprotoof_fn = create_function(JsFunction::Native(NativeFunction {
             name: "setPrototypeOf".to_string(),
             func: object_set_prototype_of,
             arity: 2,
         }));
-        obj.set_property(PropertyKey::from("setPrototypeOf"), JsValue::Object(setprotoof_fn));
+        obj.set_property(
+            PropertyKey::from("setPrototypeOf"),
+            JsValue::Object(setprotoof_fn),
+        );
     }
     constructor
 }
 
-pub fn object_constructor(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn object_constructor(
+    _interp: &mut Interpreter,
+    _this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let value = args.first().cloned().unwrap_or(JsValue::Undefined);
     match value {
         JsValue::Null | JsValue::Undefined => Ok(JsValue::Object(create_object())),
@@ -182,7 +216,11 @@ pub fn object_constructor(_interp: &mut Interpreter, _this: JsValue, args: Vec<J
     }
 }
 
-pub fn object_keys(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn object_keys(
+    _interp: &mut Interpreter,
+    _this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
     let JsValue::Object(obj_ref) = obj else {
         return Err(JsError::type_error("Object.keys requires an object"));
@@ -199,7 +237,11 @@ pub fn object_keys(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>
     Ok(JsValue::Object(create_array(keys)))
 }
 
-pub fn object_values(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn object_values(
+    _interp: &mut Interpreter,
+    _this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
     let JsValue::Object(obj_ref) = obj else {
         return Err(JsError::type_error("Object.values requires an object"));
@@ -216,7 +258,11 @@ pub fn object_values(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValu
     Ok(JsValue::Object(create_array(values)))
 }
 
-pub fn object_entries(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn object_entries(
+    _interp: &mut Interpreter,
+    _this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
     let JsValue::Object(obj_ref) = obj else {
         return Err(JsError::type_error("Object.entries requires an object"));
@@ -238,10 +284,16 @@ pub fn object_entries(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsVal
     Ok(JsValue::Object(create_array(entries)))
 }
 
-pub fn object_assign(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn object_assign(
+    _interp: &mut Interpreter,
+    _this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let target = args.first().cloned().unwrap_or(JsValue::Undefined);
     let JsValue::Object(target_ref) = target.clone() else {
-        return Err(JsError::type_error("Object.assign requires an object target"));
+        return Err(JsError::type_error(
+            "Object.assign requires an object target",
+        ));
     };
 
     for source in args.iter().skip(1) {
@@ -249,7 +301,9 @@ pub fn object_assign(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValu
             let src = src_ref.borrow();
             for (key, prop) in src.properties.iter() {
                 if prop.enumerable {
-                    target_ref.borrow_mut().set_property(key.clone(), prop.value.clone());
+                    target_ref
+                        .borrow_mut()
+                        .set_property(key.clone(), prop.value.clone());
                 }
             }
         }
@@ -258,11 +312,17 @@ pub fn object_assign(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValu
     Ok(target)
 }
 
-pub fn object_from_entries(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn object_from_entries(
+    _interp: &mut Interpreter,
+    _this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let iterable = args.first().cloned().unwrap_or(JsValue::Undefined);
 
     let JsValue::Object(arr) = iterable else {
-        return Err(JsError::type_error("Object.fromEntries requires an iterable"));
+        return Err(JsError::type_error(
+            "Object.fromEntries requires an iterable",
+        ));
     };
 
     let result = create_object();
@@ -271,20 +331,33 @@ pub fn object_from_entries(_interp: &mut Interpreter, _this: JsValue, args: Vec<
         let arr_ref = arr.borrow();
         match &arr_ref.exotic {
             ExoticObject::Array { length } => *length,
-            _ => return Err(JsError::type_error("Object.fromEntries requires an array-like")),
+            _ => {
+                return Err(JsError::type_error(
+                    "Object.fromEntries requires an array-like",
+                ))
+            }
         }
     };
 
     for i in 0..length {
-        let entry = arr.borrow().get_property(&PropertyKey::Index(i)).unwrap_or(JsValue::Undefined);
+        let entry = arr
+            .borrow()
+            .get_property(&PropertyKey::Index(i))
+            .unwrap_or(JsValue::Undefined);
         if let JsValue::Object(entry_ref) = entry {
             let entry_borrow = entry_ref.borrow();
             if let ExoticObject::Array { .. } = entry_borrow.exotic {
-                let key = entry_borrow.get_property(&PropertyKey::Index(0)).unwrap_or(JsValue::Undefined);
-                let value = entry_borrow.get_property(&PropertyKey::Index(1)).unwrap_or(JsValue::Undefined);
+                let key = entry_borrow
+                    .get_property(&PropertyKey::Index(0))
+                    .unwrap_or(JsValue::Undefined);
+                let value = entry_borrow
+                    .get_property(&PropertyKey::Index(1))
+                    .unwrap_or(JsValue::Undefined);
                 let key_str = key.to_js_string().to_string();
                 drop(entry_borrow);
-                result.borrow_mut().set_property(PropertyKey::from(key_str), value);
+                result
+                    .borrow_mut()
+                    .set_property(PropertyKey::from(key_str), value);
             }
         }
     }
@@ -292,7 +365,11 @@ pub fn object_from_entries(_interp: &mut Interpreter, _this: JsValue, args: Vec<
     Ok(JsValue::Object(result))
 }
 
-pub fn object_has_own(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn object_has_own(
+    _interp: &mut Interpreter,
+    _this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
     let key = args.get(1).cloned().unwrap_or(JsValue::Undefined);
 
@@ -301,11 +378,18 @@ pub fn object_has_own(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsVal
     };
 
     let key_str = key.to_js_string().to_string();
-    let has = obj_ref.borrow().properties.contains_key(&PropertyKey::from(key_str));
+    let has = obj_ref
+        .borrow()
+        .properties
+        .contains_key(&PropertyKey::from(key_str));
     Ok(JsValue::Boolean(has))
 }
 
-pub fn object_create(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn object_create(
+    _interp: &mut Interpreter,
+    _this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let proto = args.first().cloned().unwrap_or(JsValue::Undefined);
 
     let result = create_object();
@@ -321,13 +405,21 @@ pub fn object_create(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValu
         JsValue::Object(proto_ref) => {
             result.borrow_mut().prototype = Some(proto_ref);
         }
-        _ => return Err(JsError::type_error("Object prototype may only be an Object or null")),
+        _ => {
+            return Err(JsError::type_error(
+                "Object prototype may only be an Object or null",
+            ))
+        }
     }
 
     Ok(JsValue::Object(result))
 }
 
-pub fn object_freeze(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn object_freeze(
+    _interp: &mut Interpreter,
+    _this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
 
     if let JsValue::Object(obj_ref) = &obj {
@@ -343,7 +435,11 @@ pub fn object_freeze(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValu
     Ok(obj)
 }
 
-pub fn object_is_frozen(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn object_is_frozen(
+    _interp: &mut Interpreter,
+    _this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
 
     let is_frozen = match obj {
@@ -354,7 +450,11 @@ pub fn object_is_frozen(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsV
     Ok(JsValue::Boolean(is_frozen))
 }
 
-pub fn object_seal(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn object_seal(
+    _interp: &mut Interpreter,
+    _this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
 
     if let JsValue::Object(obj_ref) = &obj {
@@ -369,7 +469,11 @@ pub fn object_seal(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>
     Ok(obj)
 }
 
-pub fn object_is_sealed(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn object_is_sealed(
+    _interp: &mut Interpreter,
+    _this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
 
     let is_sealed = match obj {
@@ -382,19 +486,30 @@ pub fn object_is_sealed(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsV
 
 // Object.prototype methods
 
-pub fn object_has_own_property(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn object_has_own_property(
+    _interp: &mut Interpreter,
+    this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let JsValue::Object(obj) = this else {
         return Ok(JsValue::Boolean(false));
     };
 
-    let prop_name = args.first().map(|v| v.to_js_string().to_string()).unwrap_or_default();
+    let prop_name = args
+        .first()
+        .map(|v| v.to_js_string().to_string())
+        .unwrap_or_default();
     let key = PropertyKey::from(prop_name.as_str());
 
     let has_prop = obj.borrow().properties.contains_key(&key);
     Ok(JsValue::Boolean(has_prop))
 }
 
-pub fn object_to_string(_interp: &mut Interpreter, this: JsValue, _args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn object_to_string(
+    _interp: &mut Interpreter,
+    this: JsValue,
+    _args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     match this {
         JsValue::Object(obj) => {
             let obj_ref = obj.borrow();
@@ -414,44 +529,44 @@ pub fn object_to_string(_interp: &mut Interpreter, this: JsValue, _args: Vec<JsV
                 ExoticObject::Function(_) => {
                     Ok(JsValue::String(JsString::from("[object Function]")))
                 }
-                ExoticObject::Ordinary => {
-                    Ok(JsValue::String(JsString::from("[object Object]")))
-                }
-                ExoticObject::Map { .. } => {
-                    Ok(JsValue::String(JsString::from("[object Map]")))
-                }
-                ExoticObject::Set { .. } => {
-                    Ok(JsValue::String(JsString::from("[object Set]")))
-                }
-                ExoticObject::Date { .. } => {
-                    Ok(JsValue::String(JsString::from("[object Date]")))
-                }
+                ExoticObject::Ordinary => Ok(JsValue::String(JsString::from("[object Object]"))),
+                ExoticObject::Map { .. } => Ok(JsValue::String(JsString::from("[object Map]"))),
+                ExoticObject::Set { .. } => Ok(JsValue::String(JsString::from("[object Set]"))),
+                ExoticObject::Date { .. } => Ok(JsValue::String(JsString::from("[object Date]"))),
                 ExoticObject::RegExp { .. } => {
                     Ok(JsValue::String(JsString::from("[object RegExp]")))
                 }
                 ExoticObject::Generator(_) => {
                     Ok(JsValue::String(JsString::from("[object Generator]")))
                 }
-                ExoticObject::Promise(_) => {
-                    Ok(JsValue::String(JsString::from("[object Promise]")))
-                }
+                ExoticObject::Promise(_) => Ok(JsValue::String(JsString::from("[object Promise]"))),
             }
         }
         _ => Ok(JsValue::String(JsString::from("[object Object]"))),
     }
 }
 
-pub fn object_value_of(_interp: &mut Interpreter, this: JsValue, _args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn object_value_of(
+    _interp: &mut Interpreter,
+    this: JsValue,
+    _args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     Ok(this)
 }
 
 /// Object.getOwnPropertyDescriptor(obj, prop)
-pub fn object_get_own_property_descriptor(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn object_get_own_property_descriptor(
+    _interp: &mut Interpreter,
+    _this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
     let prop = args.get(1).cloned().unwrap_or(JsValue::Undefined);
 
     let JsValue::Object(obj_ref) = obj else {
-        return Err(JsError::type_error("Object.getOwnPropertyDescriptor requires an object"));
+        return Err(JsError::type_error(
+            "Object.getOwnPropertyDescriptor requires an object",
+        ));
     };
 
     let key = PropertyKey::from_value(&prop);
@@ -466,23 +581,34 @@ pub fn object_get_own_property_descriptor(_interp: &mut Interpreter, _this: JsVa
             if property.is_accessor() {
                 // Accessor descriptor
                 if let Some(ref getter) = property.getter {
-                    desc_ref.set_property(PropertyKey::from("get"), JsValue::Object(getter.clone()));
+                    desc_ref
+                        .set_property(PropertyKey::from("get"), JsValue::Object(getter.clone()));
                 } else {
                     desc_ref.set_property(PropertyKey::from("get"), JsValue::Undefined);
                 }
                 if let Some(ref setter) = property.setter {
-                    desc_ref.set_property(PropertyKey::from("set"), JsValue::Object(setter.clone()));
+                    desc_ref
+                        .set_property(PropertyKey::from("set"), JsValue::Object(setter.clone()));
                 } else {
                     desc_ref.set_property(PropertyKey::from("set"), JsValue::Undefined);
                 }
             } else {
                 // Data descriptor
                 desc_ref.set_property(PropertyKey::from("value"), property.value.clone());
-                desc_ref.set_property(PropertyKey::from("writable"), JsValue::Boolean(property.writable));
+                desc_ref.set_property(
+                    PropertyKey::from("writable"),
+                    JsValue::Boolean(property.writable),
+                );
             }
 
-            desc_ref.set_property(PropertyKey::from("enumerable"), JsValue::Boolean(property.enumerable));
-            desc_ref.set_property(PropertyKey::from("configurable"), JsValue::Boolean(property.configurable));
+            desc_ref.set_property(
+                PropertyKey::from("enumerable"),
+                JsValue::Boolean(property.enumerable),
+            );
+            desc_ref.set_property(
+                PropertyKey::from("configurable"),
+                JsValue::Boolean(property.configurable),
+            );
         }
         Ok(JsValue::Object(desc))
     } else {
@@ -491,11 +617,17 @@ pub fn object_get_own_property_descriptor(_interp: &mut Interpreter, _this: JsVa
 }
 
 /// Object.getOwnPropertyNames(obj)
-pub fn object_get_own_property_names(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn object_get_own_property_names(
+    _interp: &mut Interpreter,
+    _this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
 
     let JsValue::Object(obj_ref) = obj else {
-        return Err(JsError::type_error("Object.getOwnPropertyNames requires an object"));
+        return Err(JsError::type_error(
+            "Object.getOwnPropertyNames requires an object",
+        ));
     };
 
     // Filter out symbol keys - getOwnPropertyNames only returns string keys
@@ -511,11 +643,17 @@ pub fn object_get_own_property_names(_interp: &mut Interpreter, _this: JsValue, 
 }
 
 /// Object.getOwnPropertySymbols(obj)
-pub fn object_get_own_property_symbols(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn object_get_own_property_symbols(
+    _interp: &mut Interpreter,
+    _this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
 
     let JsValue::Object(obj_ref) = obj else {
-        return Err(JsError::type_error("Object.getOwnPropertySymbols requires an object"));
+        return Err(JsError::type_error(
+            "Object.getOwnPropertySymbols requires an object",
+        ));
     };
 
     // Return only symbol keys
@@ -536,13 +674,19 @@ pub fn object_get_own_property_symbols(_interp: &mut Interpreter, _this: JsValue
 }
 
 /// Object.defineProperty(obj, prop, descriptor)
-pub fn object_define_property(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn object_define_property(
+    _interp: &mut Interpreter,
+    _this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
     let prop = args.get(1).cloned().unwrap_or(JsValue::Undefined);
     let descriptor = args.get(2).cloned().unwrap_or(JsValue::Undefined);
 
     let JsValue::Object(obj_ref) = obj.clone() else {
-        return Err(JsError::type_error("Object.defineProperty requires an object"));
+        return Err(JsError::type_error(
+            "Object.defineProperty requires an object",
+        ));
     };
 
     let JsValue::Object(desc_ref) = descriptor else {
@@ -553,14 +697,19 @@ pub fn object_define_property(_interp: &mut Interpreter, _this: JsValue, args: V
 
     // Get descriptor properties
     let desc_borrowed = desc_ref.borrow();
-    let value = desc_borrowed.get_property(&PropertyKey::from("value")).unwrap_or(JsValue::Undefined);
-    let writable = desc_borrowed.get_property(&PropertyKey::from("writable"))
+    let value = desc_borrowed
+        .get_property(&PropertyKey::from("value"))
+        .unwrap_or(JsValue::Undefined);
+    let writable = desc_borrowed
+        .get_property(&PropertyKey::from("writable"))
         .map(|v| v.to_boolean())
         .unwrap_or(false);
-    let enumerable = desc_borrowed.get_property(&PropertyKey::from("enumerable"))
+    let enumerable = desc_borrowed
+        .get_property(&PropertyKey::from("enumerable"))
         .map(|v| v.to_boolean())
         .unwrap_or(false);
-    let configurable = desc_borrowed.get_property(&PropertyKey::from("configurable"))
+    let configurable = desc_borrowed
+        .get_property(&PropertyKey::from("configurable"))
         .map(|v| v.to_boolean())
         .unwrap_or(false);
 
@@ -596,16 +745,24 @@ pub fn object_define_property(_interp: &mut Interpreter, _this: JsValue, args: V
 
 /// Object.defineProperties(obj, props)
 /// Define multiple properties at once
-pub fn object_define_properties(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn object_define_properties(
+    _interp: &mut Interpreter,
+    _this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
     let props = args.get(1).cloned().unwrap_or(JsValue::Undefined);
 
     let JsValue::Object(obj_ref) = obj.clone() else {
-        return Err(JsError::type_error("Object.defineProperties requires an object"));
+        return Err(JsError::type_error(
+            "Object.defineProperties requires an object",
+        ));
     };
 
     let JsValue::Object(props_ref) = props else {
-        return Err(JsError::type_error("Property descriptors must be an object"));
+        return Err(JsError::type_error(
+            "Property descriptors must be an object",
+        ));
     };
 
     // Iterate over all properties in the descriptor object
@@ -617,7 +774,9 @@ pub fn object_define_properties(_interp: &mut Interpreter, _this: JsValue, args:
     for key in prop_keys {
         let descriptor = {
             let props_borrowed = props_ref.borrow();
-            props_borrowed.get_property(&key).unwrap_or(JsValue::Undefined)
+            props_borrowed
+                .get_property(&key)
+                .unwrap_or(JsValue::Undefined)
         };
 
         let JsValue::Object(desc_ref) = descriptor else {
@@ -626,14 +785,19 @@ pub fn object_define_properties(_interp: &mut Interpreter, _this: JsValue, args:
 
         // Get descriptor properties
         let desc_borrowed = desc_ref.borrow();
-        let value = desc_borrowed.get_property(&PropertyKey::from("value")).unwrap_or(JsValue::Undefined);
-        let writable = desc_borrowed.get_property(&PropertyKey::from("writable"))
+        let value = desc_borrowed
+            .get_property(&PropertyKey::from("value"))
+            .unwrap_or(JsValue::Undefined);
+        let writable = desc_borrowed
+            .get_property(&PropertyKey::from("writable"))
             .map(|v| v.to_boolean())
             .unwrap_or(false);
-        let enumerable = desc_borrowed.get_property(&PropertyKey::from("enumerable"))
+        let enumerable = desc_borrowed
+            .get_property(&PropertyKey::from("enumerable"))
             .map(|v| v.to_boolean())
             .unwrap_or(false);
-        let configurable = desc_borrowed.get_property(&PropertyKey::from("configurable"))
+        let configurable = desc_borrowed
+            .get_property(&PropertyKey::from("configurable"))
             .map(|v| v.to_boolean())
             .unwrap_or(false);
 
@@ -669,11 +833,17 @@ pub fn object_define_properties(_interp: &mut Interpreter, _this: JsValue, args:
 }
 
 /// Object.getPrototypeOf(obj)
-pub fn object_get_prototype_of(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn object_get_prototype_of(
+    _interp: &mut Interpreter,
+    _this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
 
     let JsValue::Object(obj_ref) = obj else {
-        return Err(JsError::type_error("Object.getPrototypeOf requires an object"));
+        return Err(JsError::type_error(
+            "Object.getPrototypeOf requires an object",
+        ));
     };
 
     let obj_borrowed = obj_ref.borrow();
@@ -684,18 +854,28 @@ pub fn object_get_prototype_of(_interp: &mut Interpreter, _this: JsValue, args: 
 }
 
 /// Object.setPrototypeOf(obj, proto)
-pub fn object_set_prototype_of(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn object_set_prototype_of(
+    _interp: &mut Interpreter,
+    _this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
     let proto = args.get(1).cloned().unwrap_or(JsValue::Undefined);
 
     let JsValue::Object(obj_ref) = obj.clone() else {
-        return Err(JsError::type_error("Object.setPrototypeOf requires an object"));
+        return Err(JsError::type_error(
+            "Object.setPrototypeOf requires an object",
+        ));
     };
 
     let new_proto = match proto {
         JsValue::Object(p) => Some(p),
         JsValue::Null => None,
-        _ => return Err(JsError::type_error("Object prototype may only be an Object or null")),
+        _ => {
+            return Err(JsError::type_error(
+                "Object prototype may only be an Object or null",
+            ))
+        }
     };
 
     obj_ref.borrow_mut().prototype = new_proto;

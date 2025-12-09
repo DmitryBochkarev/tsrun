@@ -630,13 +630,13 @@ pub struct UnaryExpression {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnaryOp {
-    Minus,      // -
-    Plus,       // +
-    Not,        // !
-    BitNot,     // ~
-    Typeof,     // typeof
-    Void,       // void
-    Delete,     // delete
+    Minus,  // -
+    Plus,   // +
+    Not,    // !
+    BitNot, // ~
+    Typeof, // typeof
+    Void,   // void
+    Delete, // delete
 }
 
 #[derive(Debug, Clone)]
@@ -650,30 +650,30 @@ pub struct BinaryExpression {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinaryOp {
     // Arithmetic
-    Add,        // +
-    Sub,        // -
-    Mul,        // *
-    Div,        // /
-    Mod,        // %
-    Exp,        // **
+    Add, // +
+    Sub, // -
+    Mul, // *
+    Div, // /
+    Mod, // %
+    Exp, // **
 
     // Comparison
-    Eq,         // ==
-    NotEq,      // !=
-    StrictEq,   // ===
+    Eq,          // ==
+    NotEq,       // !=
+    StrictEq,    // ===
     StrictNotEq, // !==
-    Lt,         // <
-    LtEq,       // <=
-    Gt,         // >
-    GtEq,       // >=
+    Lt,          // <
+    LtEq,        // <=
+    Gt,          // >
+    GtEq,        // >=
 
     // Bitwise
-    BitAnd,     // &
-    BitOr,      // |
-    BitXor,     // ^
-    LShift,     // <<
-    RShift,     // >>
-    URShift,    // >>>
+    BitAnd,  // &
+    BitOr,   // |
+    BitXor,  // ^
+    LShift,  // <<
+    RShift,  // >>
+    URShift, // >>>
 
     // Other
     In,         // in
@@ -690,8 +690,8 @@ pub struct LogicalExpression {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LogicalOp {
-    And,        // &&
-    Or,         // ||
+    And,               // &&
+    Or,                // ||
     NullishCoalescing, // ??
 }
 
@@ -720,21 +720,21 @@ pub enum AssignmentTarget {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AssignmentOp {
-    Assign,     // =
-    AddAssign,  // +=
-    SubAssign,  // -=
-    MulAssign,  // *=
-    DivAssign,  // /=
-    ModAssign,  // %=
-    ExpAssign,  // **=
-    BitAndAssign, // &=
-    BitOrAssign,  // |=
-    BitXorAssign, // ^=
-    LShiftAssign, // <<=
-    RShiftAssign, // >>=
+    Assign,        // =
+    AddAssign,     // +=
+    SubAssign,     // -=
+    MulAssign,     // *=
+    DivAssign,     // /=
+    ModAssign,     // %=
+    ExpAssign,     // **=
+    BitAndAssign,  // &=
+    BitOrAssign,   // |=
+    BitXorAssign,  // ^=
+    LShiftAssign,  // <<=
+    RShiftAssign,  // >>=
     URShiftAssign, // >>>=
-    AndAssign,  // &&=
-    OrAssign,   // ||=
+    AndAssign,     // &&=
+    OrAssign,      // ||=
     NullishAssign, // ??=
 }
 
@@ -748,8 +748,8 @@ pub struct UpdateExpression {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UpdateOp {
-    Increment,  // ++
-    Decrement,  // --
+    Increment, // ++
+    Decrement, // --
 }
 
 #[derive(Debug, Clone)]

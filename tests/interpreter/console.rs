@@ -49,7 +49,10 @@ fn test_console_time() {
 #[test]
 fn test_console_time_end() {
     // timeEnd returns undefined
-    assert_eq!(eval("console.time('test'); console.timeEnd('test')"), JsValue::Undefined);
+    assert_eq!(
+        eval("console.time('test'); console.timeEnd('test')"),
+        JsValue::Undefined
+    );
 }
 
 #[test]

@@ -22,7 +22,10 @@ fn test_map_has() {
         eval("let m = new Map(); m.set('a', 1); m.has('a')"),
         JsValue::Boolean(true)
     );
-    assert_eq!(eval("let m = new Map(); m.has('a')"), JsValue::Boolean(false));
+    assert_eq!(
+        eval("let m = new Map(); m.has('a')"),
+        JsValue::Boolean(false)
+    );
 }
 
 #[test]

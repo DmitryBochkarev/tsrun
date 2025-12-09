@@ -636,7 +636,12 @@ impl Property {
     }
 
     /// Create a property with custom attributes
-    pub fn with_attributes(value: JsValue, writable: bool, enumerable: bool, configurable: bool) -> Self {
+    pub fn with_attributes(
+        value: JsValue,
+        writable: bool,
+        enumerable: bool,
+        configurable: bool,
+    ) -> Self {
         Self {
             value,
             writable,
@@ -803,7 +808,8 @@ impl From<ArrowFunctionBody> for FunctionBody {
 }
 
 /// Native function signature
-pub type NativeFn = fn(&mut crate::interpreter::Interpreter, JsValue, Vec<JsValue>) -> Result<JsValue, JsError>;
+pub type NativeFn =
+    fn(&mut crate::interpreter::Interpreter, JsValue, Vec<JsValue>) -> Result<JsValue, JsError>;
 
 /// Native function wrapper
 #[derive(Clone)]
@@ -982,10 +988,8 @@ pub fn create_array(elements: Vec<JsValue>) -> JsObjectRef {
     };
 
     for (i, elem) in elements.into_iter().enumerate() {
-        obj.properties.insert(
-            PropertyKey::Index(i as u32),
-            Property::data(elem),
-        );
+        obj.properties
+            .insert(PropertyKey::Index(i as u32), Property::data(elem));
     }
 
     obj.properties.insert(
@@ -1042,7 +1046,9 @@ mod tests {
         assert_eq!(JsValue::Boolean(false).to_number(), 0.0);
         assert_eq!(JsValue::Number(42.0).to_number(), 42.0);
         assert_eq!(JsValue::String(JsString::from("42")).to_number(), 42.0);
-        assert!(JsValue::String(JsString::from("hello")).to_number().is_nan());
+        assert!(JsValue::String(JsString::from("hello"))
+            .to_number()
+            .is_nan());
     }
 
     #[test]

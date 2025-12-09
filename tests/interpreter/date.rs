@@ -49,11 +49,13 @@ fn test_date_toisostring() {
 #[test]
 fn test_date_settime() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             const d = new Date(0);
             d.setTime(1000);
             d.getTime()
-        "#),
+        "#
+        ),
         JsValue::Number(1000.0)
     );
 }
@@ -61,11 +63,13 @@ fn test_date_settime() {
 #[test]
 fn test_date_setfullyear() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             const d = new Date(0);
             d.setFullYear(2000);
             d.getFullYear()
-        "#),
+        "#
+        ),
         JsValue::Number(2000.0)
     );
 }
@@ -73,11 +77,13 @@ fn test_date_setfullyear() {
 #[test]
 fn test_date_setmonth() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             const d = new Date(0);
             d.setMonth(5);
             d.getMonth()
-        "#),
+        "#
+        ),
         JsValue::Number(5.0)
     );
 }
@@ -85,11 +91,13 @@ fn test_date_setmonth() {
 #[test]
 fn test_date_setdate() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             const d = new Date(0);
             d.setDate(15);
             d.getDate()
-        "#),
+        "#
+        ),
         JsValue::Number(15.0)
     );
 }
@@ -97,11 +105,13 @@ fn test_date_setdate() {
 #[test]
 fn test_date_sethours() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             const d = new Date(0);
             d.setHours(12);
             d.getHours()
-        "#),
+        "#
+        ),
         JsValue::Number(12.0)
     );
 }
@@ -109,11 +119,13 @@ fn test_date_sethours() {
 #[test]
 fn test_date_setminutes() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             const d = new Date(0);
             d.setMinutes(30);
             d.getMinutes()
-        "#),
+        "#
+        ),
         JsValue::Number(30.0)
     );
 }
@@ -121,11 +133,13 @@ fn test_date_setminutes() {
 #[test]
 fn test_date_setseconds() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             const d = new Date(0);
             d.setSeconds(45);
             d.getSeconds()
-        "#),
+        "#
+        ),
         JsValue::Number(45.0)
     );
 }
@@ -133,11 +147,13 @@ fn test_date_setseconds() {
 #[test]
 fn test_date_setmilliseconds() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             const d = new Date(0);
             d.setMilliseconds(500);
             d.getMilliseconds()
-        "#),
+        "#
+        ),
         JsValue::Number(500.0)
     );
 }
@@ -146,10 +162,12 @@ fn test_date_setmilliseconds() {
 fn test_date_setfullyear_returns_timestamp() {
     // setFullYear should return the new timestamp
     assert!(matches!(
-        eval(r#"
+        eval(
+            r#"
             const d = new Date(0);
             d.setFullYear(2000)
-        "#),
+        "#
+        ),
         JsValue::Number(_)
     ));
 }

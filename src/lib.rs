@@ -232,10 +232,7 @@ impl Runtime {
     }
 
     /// Create a JsValue from a JSON value
-    pub fn create_value_from_json(
-        &mut self,
-        json: &serde_json::Value,
-    ) -> Result<JsValue, JsError> {
+    pub fn create_value_from_json(&mut self, json: &serde_json::Value) -> Result<JsValue, JsError> {
         interpreter::builtins::json_to_js_value(json)
     }
 }

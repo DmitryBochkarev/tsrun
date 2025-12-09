@@ -2,7 +2,10 @@
 
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
-use crate::value::{create_function, create_object, BoundFunctionData, ExoticObject, JsFunction, JsObjectRef, JsValue, NativeFunction, PropertyKey};
+use crate::value::{
+    create_function, create_object, BoundFunctionData, ExoticObject, JsFunction, JsObjectRef,
+    JsValue, NativeFunction, PropertyKey,
+};
 
 /// Create Function.prototype with call, apply, bind methods
 pub fn create_function_prototype() -> JsObjectRef {
@@ -35,7 +38,11 @@ pub fn create_function_prototype() -> JsObjectRef {
 }
 
 // Function.prototype.call - call function with specified this value and arguments
-pub fn function_call(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn function_call(
+    interp: &mut Interpreter,
+    this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     // `this` is the function to call
     // args[0] is the thisArg for the call
     // args[1..] are the arguments
@@ -45,7 +52,11 @@ pub fn function_call(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>
 }
 
 // Function.prototype.apply - call function with specified this value and array of arguments
-pub fn function_apply(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn function_apply(
+    interp: &mut Interpreter,
+    this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     // `this` is the function to call
     // args[0] is the thisArg for the call
     // args[1] is an array of arguments
@@ -64,14 +75,22 @@ pub fn function_apply(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue
             }
         }
         JsValue::Undefined | JsValue::Null => vec![],
-        _ => return Err(JsError::type_error("Second argument to apply must be an array")),
+        _ => {
+            return Err(JsError::type_error(
+                "Second argument to apply must be an array",
+            ))
+        }
     };
 
     interp.call_function(this, this_arg, call_args)
 }
 
 // Function.prototype.bind - create a new function with bound this value and pre-filled arguments
-pub fn function_bind(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn function_bind(
+    _interp: &mut Interpreter,
+    this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     // `this` is the function to bind
     // args[0] is the thisArg to bind
     // args[1..] are pre-filled arguments

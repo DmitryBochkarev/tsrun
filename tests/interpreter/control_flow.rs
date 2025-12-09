@@ -14,13 +14,15 @@ use typescript_eval::JsValue;
 #[test]
 fn test_if_true_branch() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let result: number = 0;
             if (true) {
                 result = 1;
             }
             result
-        "#),
+        "#
+        ),
         JsValue::Number(1.0)
     );
 }
@@ -28,13 +30,15 @@ fn test_if_true_branch() {
 #[test]
 fn test_if_false_no_else() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let result: number = 0;
             if (false) {
                 result = 1;
             }
             result
-        "#),
+        "#
+        ),
         JsValue::Number(0.0)
     );
 }
@@ -42,7 +46,8 @@ fn test_if_false_no_else() {
 #[test]
 fn test_if_else_true_branch() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let result: number;
             if (true) {
                 result = 1;
@@ -50,7 +55,8 @@ fn test_if_else_true_branch() {
                 result = 2;
             }
             result
-        "#),
+        "#
+        ),
         JsValue::Number(1.0)
     );
 }
@@ -58,7 +64,8 @@ fn test_if_else_true_branch() {
 #[test]
 fn test_if_else_false_branch() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let result: number;
             if (false) {
                 result = 1;
@@ -66,7 +73,8 @@ fn test_if_else_false_branch() {
                 result = 2;
             }
             result
-        "#),
+        "#
+        ),
         JsValue::Number(2.0)
     );
 }
@@ -75,7 +83,8 @@ fn test_if_else_false_branch() {
 fn test_if_else_if_else_chain() {
     // Test first branch
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let x: number = 1;
             let result: string;
             if (x === 1) {
@@ -86,13 +95,15 @@ fn test_if_else_if_else_chain() {
                 result = "other";
             }
             result
-        "#),
+        "#
+        ),
         JsValue::String("one".into())
     );
 
     // Test middle branch
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let x: number = 2;
             let result: string;
             if (x === 1) {
@@ -103,13 +114,15 @@ fn test_if_else_if_else_chain() {
                 result = "other";
             }
             result
-        "#),
+        "#
+        ),
         JsValue::String("two".into())
     );
 
     // Test else branch
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let x: number = 99;
             let result: string;
             if (x === 1) {
@@ -120,7 +133,8 @@ fn test_if_else_if_else_chain() {
                 result = "other";
             }
             result
-        "#),
+        "#
+        ),
         JsValue::String("other".into())
     );
 }
@@ -129,14 +143,16 @@ fn test_if_else_if_else_chain() {
 fn test_if_with_block_scope() {
     // let should be scoped to if block
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let outer: number = 1;
             if (true) {
                 let inner: number = 2;
                 outer = inner;
             }
             outer
-        "#),
+        "#
+        ),
         JsValue::Number(2.0)
     );
 }
@@ -201,7 +217,8 @@ fn test_if_falsy_values() {
 #[test]
 fn test_switch_matching_case() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let x: number = 2;
             let result: string;
             switch (x) {
@@ -216,7 +233,8 @@ fn test_switch_matching_case() {
                     break;
             }
             result
-        "#),
+        "#
+        ),
         JsValue::String("two".into())
     );
 }
@@ -224,7 +242,8 @@ fn test_switch_matching_case() {
 #[test]
 fn test_switch_default_case() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let x: number = 99;
             let result: string;
             switch (x) {
@@ -236,7 +255,8 @@ fn test_switch_default_case() {
                     break;
             }
             result
-        "#),
+        "#
+        ),
         JsValue::String("default".into())
     );
 }
@@ -244,7 +264,8 @@ fn test_switch_default_case() {
 #[test]
 fn test_switch_break_stops_execution() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let x: number = 1;
             let result: string = "";
             switch (x) {
@@ -256,7 +277,8 @@ fn test_switch_break_stops_execution() {
                     break;
             }
             result
-        "#),
+        "#
+        ),
         JsValue::String("a".into())
     );
 }
@@ -265,7 +287,8 @@ fn test_switch_break_stops_execution() {
 fn test_switch_fall_through() {
     // Without break, execution falls through to next case
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let x: number = 1;
             let result: string = "";
             switch (x) {
@@ -278,7 +301,8 @@ fn test_switch_fall_through() {
                     break;
             }
             result
-        "#),
+        "#
+        ),
         JsValue::String("abc".into())
     );
 }
@@ -286,7 +310,8 @@ fn test_switch_fall_through() {
 #[test]
 fn test_switch_multiple_cases_same_body() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let x: number = 2;
             let result: string;
             switch (x) {
@@ -299,7 +324,8 @@ fn test_switch_multiple_cases_same_body() {
                     result = "big";
             }
             result
-        "#),
+        "#
+        ),
         JsValue::String("small".into())
     );
 }
@@ -307,7 +333,8 @@ fn test_switch_multiple_cases_same_body() {
 #[test]
 fn test_switch_string_cases() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let cmd: string = "start";
             let result: number;
             switch (cmd) {
@@ -321,7 +348,8 @@ fn test_switch_string_cases() {
                     result = -1;
             }
             result
-        "#),
+        "#
+        ),
         JsValue::Number(1.0)
     );
 }
@@ -329,7 +357,8 @@ fn test_switch_string_cases() {
 #[test]
 fn test_switch_expression_cases() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let x: number = 4;
             let result: string;
             switch (x) {
@@ -343,7 +372,8 @@ fn test_switch_expression_cases() {
                     result = "other";
             }
             result
-        "#),
+        "#
+        ),
         JsValue::String("four".into())
     );
 }
@@ -351,7 +381,8 @@ fn test_switch_expression_cases() {
 #[test]
 fn test_switch_no_matching_case_no_default() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let x: number = 99;
             let result: string = "unchanged";
             switch (x) {
@@ -363,7 +394,8 @@ fn test_switch_no_matching_case_no_default() {
                     break;
             }
             result
-        "#),
+        "#
+        ),
         JsValue::String("unchanged".into())
     );
 }
@@ -375,7 +407,8 @@ fn test_switch_no_matching_case_no_default() {
 #[test]
 fn test_while_basic_iteration() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let i: number = 0;
             let sum: number = 0;
             while (i < 5) {
@@ -383,7 +416,8 @@ fn test_while_basic_iteration() {
                 i = i + 1;
             }
             sum
-        "#),
+        "#
+        ),
         JsValue::Number(10.0) // 0+1+2+3+4 = 10
     );
 }
@@ -391,13 +425,15 @@ fn test_while_basic_iteration() {
 #[test]
 fn test_while_false_condition_no_execution() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let executed: boolean = false;
             while (false) {
                 executed = true;
             }
             executed
-        "#),
+        "#
+        ),
         JsValue::Boolean(false)
     );
 }
@@ -405,7 +441,8 @@ fn test_while_false_condition_no_execution() {
 #[test]
 fn test_while_with_mutation() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let arr: number[] = [];
             let i: number = 0;
             while (i < 3) {
@@ -413,7 +450,8 @@ fn test_while_with_mutation() {
                 i = i + 1;
             }
             arr.join(",")
-        "#),
+        "#
+        ),
         JsValue::String("0,1,2".into())
     );
 }
@@ -421,7 +459,8 @@ fn test_while_with_mutation() {
 #[test]
 fn test_while_complex_condition() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let i: number = 0;
             let j: number = 10;
             while (i < 5 && j > 5) {
@@ -429,7 +468,8 @@ fn test_while_complex_condition() {
                 j = j - 1;
             }
             i + j
-        "#),
+        "#
+        ),
         JsValue::Number(10.0) // i=5, j=5 when loop ends
     );
 }
@@ -441,13 +481,15 @@ fn test_while_complex_condition() {
 #[test]
 fn test_do_while_executes_once_minimum() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let count: number = 0;
             do {
                 count = count + 1;
             } while (count < 3);
             count
-        "#),
+        "#
+        ),
         JsValue::Number(3.0)
     );
 }
@@ -456,13 +498,15 @@ fn test_do_while_executes_once_minimum() {
 fn test_do_while_false_condition() {
     // Body runs once even if condition is immediately false
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let executed: number = 0;
             do {
                 executed = executed + 1;
             } while (false);
             executed
-        "#),
+        "#
+        ),
         JsValue::Number(1.0)
     );
 }
@@ -470,13 +514,15 @@ fn test_do_while_false_condition() {
 #[test]
 fn test_do_while_multiple_iterations() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let n: number = 1;
             do {
                 n = n * 2;
             } while (n < 100);
             n
-        "#),
+        "#
+        ),
         JsValue::Number(128.0) // 1->2->4->8->16->32->64->128
     );
 }
@@ -488,13 +534,15 @@ fn test_do_while_multiple_iterations() {
 #[test]
 fn test_for_basic_iteration() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let sum: number = 0;
             for (let i: number = 0; i < 5; i = i + 1) {
                 sum = sum + i;
             }
             sum
-        "#),
+        "#
+        ),
         JsValue::Number(10.0)
     );
 }
@@ -502,14 +550,16 @@ fn test_for_basic_iteration() {
 #[test]
 fn test_for_no_init() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let i: number = 0;
             let sum: number = 0;
             for (; i < 3; i = i + 1) {
                 sum = sum + i;
             }
             sum
-        "#),
+        "#
+        ),
         JsValue::Number(3.0) // 0+1+2
     );
 }
@@ -517,14 +567,16 @@ fn test_for_no_init() {
 #[test]
 fn test_for_no_update() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let sum: number = 0;
             for (let i: number = 0; i < 3;) {
                 sum = sum + i;
                 i = i + 1;
             }
             sum
-        "#),
+        "#
+        ),
         JsValue::Number(3.0)
     );
 }
@@ -533,7 +585,8 @@ fn test_for_no_update() {
 fn test_for_no_condition() {
     // Infinite loop with break
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let count: number = 0;
             for (let i: number = 0;; i = i + 1) {
                 count = count + 1;
@@ -542,7 +595,8 @@ fn test_for_no_condition() {
                 }
             }
             count
-        "#),
+        "#
+        ),
         JsValue::Number(5.0)
     );
 }
@@ -551,7 +605,8 @@ fn test_for_no_condition() {
 fn test_for_empty() {
     // for(;;) infinite loop with break
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let count: number = 0;
             for (;;) {
                 count = count + 1;
@@ -560,7 +615,8 @@ fn test_for_empty() {
                 }
             }
             count
-        "#),
+        "#
+        ),
         JsValue::Number(3.0)
     );
 }
@@ -568,13 +624,15 @@ fn test_for_empty() {
 #[test]
 fn test_for_multiple_variables() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let result: number = 0;
             for (let i: number = 0, j: number = 10; i < j; i = i + 1, j = j - 1) {
                 result = result + 1;
             }
             result
-        "#),
+        "#
+        ),
         JsValue::Number(5.0) // i=0,j=10; i=1,j=9; i=2,j=8; i=3,j=7; i=4,j=6; then i>=j
     );
 }
@@ -584,13 +642,15 @@ fn test_for_let_block_scope() {
     // let in for loop should create new binding per iteration for closures
     // Each closure captures its own copy of i from that iteration
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let funcs: any[] = [];
             for (let i: number = 0; i < 3; i = i + 1) {
                 funcs.push(() => i);
             }
             funcs[0]() + funcs[1]() + funcs[2]()
-        "#),
+        "#
+        ),
         JsValue::Number(3.0) // 0+1+2
     );
 }
@@ -600,14 +660,16 @@ fn test_for_let_closure_capture_simple() {
     // Simpler version: verify closures capture loop variable correctly
     // Using function expression instead of arrow to work around parser issue
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let result: number = 0;
             for (let i: number = 0; i < 3; i = i + 1) {
                 let capture: number = i;
                 result = result + capture;
             }
             result
-        "#),
+        "#
+        ),
         JsValue::Number(3.0) // 0+1+2
     );
 }
@@ -616,12 +678,14 @@ fn test_for_let_closure_capture_simple() {
 fn test_for_var_function_scope() {
     // var leaks out of for loop (function-scoped)
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             for (var i: number = 0; i < 3; i = i + 1) {
                 // loop body
             }
             i
-        "#),
+        "#
+        ),
         JsValue::Number(3.0)
     );
 }
@@ -630,13 +694,15 @@ fn test_for_var_function_scope() {
 fn test_for_var_hoisting_in_function() {
     // Simpler test: var declared inside block should hoist to function
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             function test(): number {
                 for (var i: number = 0; i < 3; i = i + 1) {}
                 return i;
             }
             test()
-        "#),
+        "#
+        ),
         JsValue::Number(3.0)
     );
 }
@@ -652,14 +718,16 @@ fn test_for_var_hoisting_in_function() {
 #[test]
 fn test_for_in_object_keys() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let obj: any = { a: 1, b: 2, c: 3 };
             let keys: string[] = [];
             for (let k: string in obj) {
                 keys.push(k);
             }
             keys.length
-        "#),
+        "#
+        ),
         JsValue::Number(3.0)
     );
 }
@@ -669,14 +737,16 @@ fn test_for_in_array_indices() {
     // for-in on arrays iterates indices as strings
     // Note: order may vary, so we check length and that values are accessed correctly
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let arr: number[] = [10, 20, 30];
             let sum: number = 0;
             for (let i: string in arr) {
                 sum = sum + arr[i];
             }
             sum
-        "#),
+        "#
+        ),
         JsValue::Number(60.0) // 10+20+30
     );
 }
@@ -684,14 +754,16 @@ fn test_for_in_array_indices() {
 #[test]
 fn test_for_in_empty_object() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let obj: any = {};
             let count: number = 0;
             for (let k: string in obj) {
                 count = count + 1;
             }
             count
-        "#),
+        "#
+        ),
         JsValue::Number(0.0)
     );
 }
@@ -703,14 +775,16 @@ fn test_for_in_empty_object() {
 #[test]
 fn test_for_of_array() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let arr: number[] = [1, 2, 3, 4, 5];
             let sum: number = 0;
             for (let x: number of arr) {
                 sum = sum + x;
             }
             sum
-        "#),
+        "#
+        ),
         JsValue::Number(15.0)
     );
 }
@@ -719,14 +793,16 @@ fn test_for_of_array() {
 fn test_for_of_string() {
     // for-of on string iterates characters
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let str: string = "abc";
             let chars: string[] = [];
             for (let c: string of str) {
                 chars.push(c);
             }
             chars.join("-")
-        "#),
+        "#
+        ),
         JsValue::String("a-b-c".into())
     );
 }
@@ -734,14 +810,16 @@ fn test_for_of_string() {
 #[test]
 fn test_for_of_empty_array() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let arr: number[] = [];
             let count: number = 0;
             for (let x: number of arr) {
                 count = count + 1;
             }
             count
-        "#),
+        "#
+        ),
         JsValue::Number(0.0)
     );
 }
@@ -749,14 +827,16 @@ fn test_for_of_empty_array() {
 #[test]
 fn test_for_of_with_destructuring() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let pairs: number[][] = [[1, 2], [3, 4], [5, 6]];
             let sum: number = 0;
             for (let [a, b]: number[] of pairs) {
                 sum = sum + a + b;
             }
             sum
-        "#),
+        "#
+        ),
         JsValue::Number(21.0) // 1+2+3+4+5+6
     );
 }
@@ -768,7 +848,8 @@ fn test_for_of_with_destructuring() {
 #[test]
 fn test_break_in_while() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let i: number = 0;
             while (true) {
                 i = i + 1;
@@ -777,7 +858,8 @@ fn test_break_in_while() {
                 }
             }
             i
-        "#),
+        "#
+        ),
         JsValue::Number(5.0)
     );
 }
@@ -785,7 +867,8 @@ fn test_break_in_while() {
 #[test]
 fn test_break_in_for() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let result: number = 0;
             for (let i: number = 0; i < 100; i = i + 1) {
                 result = i;
@@ -794,7 +877,8 @@ fn test_break_in_for() {
                 }
             }
             result
-        "#),
+        "#
+        ),
         JsValue::Number(7.0)
     );
 }
@@ -803,7 +887,8 @@ fn test_break_in_for() {
 fn test_break_in_switch() {
     // Already tested in switch tests, but verify explicitly
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let result: string = "";
             switch (2) {
                 case 1:
@@ -817,7 +902,8 @@ fn test_break_in_switch() {
                     break;
             }
             result
-        "#),
+        "#
+        ),
         JsValue::String("two".into())
     );
 }
@@ -826,7 +912,8 @@ fn test_break_in_switch() {
 fn test_break_innermost_loop() {
     // Break only exits the innermost loop
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let result: string = "";
             for (let i: number = 0; i < 3; i = i + 1) {
                 for (let j: number = 0; j < 3; j = j + 1) {
@@ -837,7 +924,8 @@ fn test_break_innermost_loop() {
                 }
             }
             result
-        "#),
+        "#
+        ),
         JsValue::String("0,0;1,0;2,0;".into())
     );
 }
@@ -849,7 +937,8 @@ fn test_break_innermost_loop() {
 #[test]
 fn test_continue_in_while() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let i: number = 0;
             let sum: number = 0;
             while (i < 10) {
@@ -860,7 +949,8 @@ fn test_continue_in_while() {
                 sum = sum + i;
             }
             sum
-        "#),
+        "#
+        ),
         JsValue::Number(25.0) // 1+3+5+7+9
     );
 }
@@ -868,7 +958,8 @@ fn test_continue_in_while() {
 #[test]
 fn test_continue_in_for() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let sum: number = 0;
             for (let i: number = 0; i < 10; i = i + 1) {
                 if (i % 2 === 0) {
@@ -877,7 +968,8 @@ fn test_continue_in_for() {
                 sum = sum + i;
             }
             sum
-        "#),
+        "#
+        ),
         JsValue::Number(25.0) // 1+3+5+7+9
     );
 }
@@ -886,7 +978,8 @@ fn test_continue_in_for() {
 fn test_continue_innermost_loop() {
     // Continue only affects the innermost loop
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let result: string = "";
             for (let i: number = 0; i < 3; i = i + 1) {
                 for (let j: number = 0; j < 3; j = j + 1) {
@@ -897,7 +990,8 @@ fn test_continue_innermost_loop() {
                 }
             }
             result
-        "#),
+        "#
+        ),
         JsValue::String("0,0;0,2;1,0;1,2;2,0;2,2;".into())
     );
 }
@@ -913,7 +1007,8 @@ fn test_continue_innermost_loop() {
 #[test]
 fn test_labeled_break_outer_loop() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let result: string = "";
             outer: for (let i: number = 0; i < 3; i = i + 1) {
                 for (let j: number = 0; j < 3; j = j + 1) {
@@ -924,7 +1019,8 @@ fn test_labeled_break_outer_loop() {
                 }
             }
             result
-        "#),
+        "#
+        ),
         JsValue::String("0,0;".into())
     );
 }
@@ -932,7 +1028,8 @@ fn test_labeled_break_outer_loop() {
 #[test]
 fn test_labeled_continue_outer_loop() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let result: string = "";
             outer: for (let i: number = 0; i < 3; i = i + 1) {
                 for (let j: number = 0; j < 3; j = j + 1) {
@@ -943,7 +1040,8 @@ fn test_labeled_continue_outer_loop() {
                 }
             }
             result
-        "#),
+        "#
+        ),
         JsValue::String("0,0;1,0;2,0;".into())
     );
 }
@@ -951,7 +1049,8 @@ fn test_labeled_continue_outer_loop() {
 #[test]
 fn test_labeled_nested_loops() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let result: number = 0;
             outer: for (let i: number = 0; i < 5; i = i + 1) {
                 middle: for (let j: number = 0; j < 5; j = j + 1) {
@@ -964,7 +1063,8 @@ fn test_labeled_nested_loops() {
                 }
             }
             result
-        "#),
+        "#
+        ),
         JsValue::Number(15.0) // 5 outer * 3 inner (k=0,1,2 then break)
     );
 }
@@ -976,7 +1076,8 @@ fn test_labeled_nested_loops() {
 #[test]
 fn test_try_no_error() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let result: string = "start";
             try {
                 result = result + "-try";
@@ -984,7 +1085,8 @@ fn test_try_no_error() {
                 result = result + "-catch";
             }
             result
-        "#),
+        "#
+        ),
         JsValue::String("start-try".into())
     );
 }
@@ -992,7 +1094,8 @@ fn test_try_no_error() {
 #[test]
 fn test_try_catch_error() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let result: string = "start";
             try {
                 throw "error";
@@ -1000,7 +1103,8 @@ fn test_try_catch_error() {
                 result = result + "-catch";
             }
             result
-        "#),
+        "#
+        ),
         JsValue::String("start-catch".into())
     );
 }
@@ -1008,7 +1112,8 @@ fn test_try_catch_error() {
 #[test]
 fn test_try_finally_no_error() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let result: string = "start";
             try {
                 result = result + "-try";
@@ -1016,7 +1121,8 @@ fn test_try_finally_no_error() {
                 result = result + "-finally";
             }
             result
-        "#),
+        "#
+        ),
         JsValue::String("start-try-finally".into())
     );
 }
@@ -1024,7 +1130,8 @@ fn test_try_finally_no_error() {
 #[test]
 fn test_try_catch_finally_with_error() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let result: string = "start";
             try {
                 throw "oops";
@@ -1034,7 +1141,8 @@ fn test_try_catch_finally_with_error() {
                 result = result + "-finally";
             }
             result
-        "#),
+        "#
+        ),
         JsValue::String("start-catch-finally".into())
     );
 }
@@ -1042,7 +1150,8 @@ fn test_try_catch_finally_with_error() {
 #[test]
 fn test_catch_error_parameter() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let message: string = "";
             try {
                 throw "test error";
@@ -1050,7 +1159,8 @@ fn test_catch_error_parameter() {
                 message = e;
             }
             message
-        "#),
+        "#
+        ),
         JsValue::String("test error".into())
     );
 }
@@ -1058,7 +1168,8 @@ fn test_catch_error_parameter() {
 #[test]
 fn test_finally_always_runs() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let result: string = "";
             function test(): string {
                 try {
@@ -1070,7 +1181,8 @@ fn test_finally_always_runs() {
             }
             test();
             result
-        "#),
+        "#
+        ),
         JsValue::String("try-finally".into())
     );
 }
@@ -1078,7 +1190,8 @@ fn test_finally_always_runs() {
 #[test]
 fn test_nested_try_catch() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let result: string = "";
             try {
                 try {
@@ -1091,7 +1204,8 @@ fn test_nested_try_catch() {
                 result = result + "outer-catch";
             }
             result
-        "#),
+        "#
+        ),
         JsValue::String("inner-catch-outer-catch".into())
     );
 }
@@ -1103,7 +1217,8 @@ fn test_nested_try_catch() {
 #[test]
 fn test_throw_string() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let result: string = "";
             try {
                 throw "error message";
@@ -1111,7 +1226,8 @@ fn test_throw_string() {
                 result = e;
             }
             result
-        "#),
+        "#
+        ),
         JsValue::String("error message".into())
     );
 }
@@ -1119,7 +1235,8 @@ fn test_throw_string() {
 #[test]
 fn test_throw_number() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let result: number = 0;
             try {
                 throw 42;
@@ -1127,7 +1244,8 @@ fn test_throw_number() {
                 result = e;
             }
             result
-        "#),
+        "#
+        ),
         JsValue::Number(42.0)
     );
 }
@@ -1135,7 +1253,8 @@ fn test_throw_number() {
 #[test]
 fn test_throw_error_object() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let result: string = "";
             try {
                 throw new Error("test error");
@@ -1143,7 +1262,8 @@ fn test_throw_error_object() {
                 result = e.message;
             }
             result
-        "#),
+        "#
+        ),
         JsValue::String("test error".into())
     );
 }
@@ -1151,7 +1271,8 @@ fn test_throw_error_object() {
 #[test]
 fn test_throw_custom_object() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let result: string = "";
             try {
                 throw { code: 404, message: "not found" };
@@ -1159,7 +1280,8 @@ fn test_throw_custom_object() {
                 result = e.code + ":" + e.message;
             }
             result
-        "#),
+        "#
+        ),
         JsValue::String("404:not found".into())
     );
 }
@@ -1167,7 +1289,8 @@ fn test_throw_custom_object() {
 #[test]
 fn test_throw_in_function() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             function thrower(): void {
                 throw "from function";
             }
@@ -1178,7 +1301,8 @@ fn test_throw_in_function() {
                 result = e;
             }
             result
-        "#),
+        "#
+        ),
         JsValue::String("from function".into())
     );
 }
@@ -1186,7 +1310,8 @@ fn test_throw_in_function() {
 #[test]
 fn test_rethrow_in_catch() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let result: string = "";
             try {
                 try {
@@ -1199,7 +1324,8 @@ fn test_rethrow_in_catch() {
                 result = result + e;
             }
             result
-        "#),
+        "#
+        ),
         JsValue::String("caught-original".into())
     );
 }
@@ -1267,7 +1393,8 @@ fn test_continue_undefined_label_error() {
 #[test]
 fn test_nested_if_in_loop() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let result: string = "";
             for (let i: number = 0; i < 5; i = i + 1) {
                 if (i % 2 === 0) {
@@ -1277,7 +1404,8 @@ fn test_nested_if_in_loop() {
                 }
             }
             result
-        "#),
+        "#
+        ),
         JsValue::String("EOEOE".into())
     );
 }
@@ -1285,7 +1413,8 @@ fn test_nested_if_in_loop() {
 #[test]
 fn test_nested_loops_with_break() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let count: number = 0;
             for (let i: number = 0; i < 5; i = i + 1) {
                 for (let j: number = 0; j < 5; j = j + 1) {
@@ -1294,7 +1423,8 @@ fn test_nested_loops_with_break() {
                 }
             }
             count
-        "#),
+        "#
+        ),
         JsValue::Number(15.0) // 5 outer * 3 inner (0,1,2)
     );
 }
@@ -1302,7 +1432,8 @@ fn test_nested_loops_with_break() {
 #[test]
 fn test_nested_loops_with_continue() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let result: string = "";
             for (let i: number = 0; i < 3; i = i + 1) {
                 for (let j: number = 0; j < 3; j = j + 1) {
@@ -1311,7 +1442,8 @@ fn test_nested_loops_with_continue() {
                 }
             }
             result
-        "#),
+        "#
+        ),
         JsValue::String("00,02,10,12,20,22,".into())
     );
 }
@@ -1319,7 +1451,8 @@ fn test_nested_loops_with_continue() {
 #[test]
 fn test_switch_inside_loop() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let result: string = "";
             let n: number = 0;
             while (n < 4) {
@@ -1336,7 +1469,8 @@ fn test_switch_inside_loop() {
                 n = n + 1;
             }
             result
-        "#),
+        "#
+        ),
         JsValue::String("zero,one,other,other,".into())
     );
 }
@@ -1344,7 +1478,8 @@ fn test_switch_inside_loop() {
 #[test]
 fn test_loop_inside_switch() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let result: number = 0;
             let mode: string = "sum";
             switch (mode) {
@@ -1361,7 +1496,8 @@ fn test_loop_inside_switch() {
                     break;
             }
             result
-        "#),
+        "#
+        ),
         JsValue::Number(15.0) // 1+2+3+4+5
     );
 }
@@ -1369,7 +1505,8 @@ fn test_loop_inside_switch() {
 #[test]
 fn test_try_catch_in_loop() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let successes: number = 0;
             let failures: number = 0;
             for (let i: number = 0; i < 5; i = i + 1) {
@@ -1383,7 +1520,8 @@ fn test_try_catch_in_loop() {
                 }
             }
             successes + "," + failures
-        "#),
+        "#
+        ),
         JsValue::String("2,3".into()) // odd numbers succeed (1,3), even fail (0,2,4)
     );
 }
@@ -1391,7 +1529,8 @@ fn test_try_catch_in_loop() {
 #[test]
 fn test_loop_in_try_catch() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let result: number = 0;
             try {
                 for (let i: number = 0; i < 10; i = i + 1) {
@@ -1402,7 +1541,8 @@ fn test_loop_in_try_catch() {
                 result = result * 10;  // Mark that we caught it
             }
             result  // (0+1+2+3+4) * 10 = 100
-        "#),
+        "#
+        ),
         JsValue::Number(100.0)
     );
 }
@@ -1414,7 +1554,8 @@ fn test_loop_in_try_catch() {
 #[test]
 fn test_return_in_loop() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             function findFirst(arr: number[], target: number): number {
                 for (let i: number = 0; i < arr.length; i = i + 1) {
                     if (arr[i] === target) {
@@ -1424,7 +1565,8 @@ fn test_return_in_loop() {
                 return -1;
             }
             findFirst([10, 20, 30, 40], 30)
-        "#),
+        "#
+        ),
         JsValue::Number(2.0)
     );
 }
@@ -1432,7 +1574,8 @@ fn test_return_in_loop() {
 #[test]
 fn test_return_in_try_finally() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let cleanup: boolean = false;
             function test(): number {
                 try {
@@ -1443,7 +1586,8 @@ fn test_return_in_try_finally() {
             }
             let result: number = test();
             result + "," + cleanup
-        "#),
+        "#
+        ),
         JsValue::String("42,true".into())
     );
 }
@@ -1453,13 +1597,15 @@ fn test_closure_capturing_loop_variable() {
     // This is the classic closure capture test
     // let should capture per-iteration value
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let funcs: any[] = [];
             for (let i: number = 0; i < 3; i = i + 1) {
                 funcs.push(function(): number { return i; });
             }
             funcs[0]() + "," + funcs[1]() + "," + funcs[2]()
-        "#),
+        "#
+        ),
         JsValue::String("0,1,2".into())
     );
 }
@@ -1467,7 +1613,8 @@ fn test_closure_capturing_loop_variable() {
 #[test]
 fn test_recursive_with_base_case() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             function factorial(n: number): number {
                 if (n <= 1) {
                     return 1;
@@ -1475,7 +1622,8 @@ fn test_recursive_with_base_case() {
                 return n * factorial(n - 1);
             }
             factorial(5)
-        "#),
+        "#
+        ),
         JsValue::Number(120.0)
     );
 }
@@ -1487,7 +1635,8 @@ fn test_recursive_with_base_case() {
 #[test]
 fn test_and_short_circuit() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let called: boolean = false;
             function sideEffect(): boolean {
                 called = true;
@@ -1495,7 +1644,8 @@ fn test_and_short_circuit() {
             }
             let result: boolean = false && sideEffect();
             called
-        "#),
+        "#
+        ),
         JsValue::Boolean(false) // sideEffect should not be called
     );
 }
@@ -1503,7 +1653,8 @@ fn test_and_short_circuit() {
 #[test]
 fn test_or_short_circuit() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let called: boolean = false;
             function sideEffect(): boolean {
                 called = true;
@@ -1511,7 +1662,8 @@ fn test_or_short_circuit() {
             }
             let result: boolean = true || sideEffect();
             called
-        "#),
+        "#
+        ),
         JsValue::Boolean(false) // sideEffect should not be called
     );
 }
@@ -1534,29 +1686,35 @@ fn test_and_returns_right_value() {
 fn test_logical_operators_with_complex_expressions() {
     // Test that logical operators work correctly with complex right-hand expressions
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let a: number = 5;
             let b: number = 10;
             (a > 0) && (b > 0)
-        "#),
+        "#
+        ),
         JsValue::Boolean(true)
     );
 
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let a: number = 5;
             let b: number = 10;
             (a > 0) && (b < 0)
-        "#),
+        "#
+        ),
         JsValue::Boolean(false)
     );
 
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let a: number = -5;
             let b: number = 10;
             (a > 0) || (b > 0)
-        "#),
+        "#
+        ),
         JsValue::Boolean(true)
     );
 }
@@ -1564,14 +1722,16 @@ fn test_logical_operators_with_complex_expressions() {
 #[test]
 fn test_nullish_coalescing() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let a: any = null;
             let b: any = undefined;
             let c: any = 0;
             let d: any = "";
 
             (a ?? "default1") + "," + (b ?? "default2") + "," + (c ?? "default3") + "," + (d ?? "default4")
-        "#),
+        "#
+        ),
         JsValue::String("default1,default2,0,".into())
     );
 }
@@ -1579,7 +1739,8 @@ fn test_nullish_coalescing() {
 #[test]
 fn test_optional_chaining_in_condition() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let obj: any = { a: { b: 42 } };
             let result: string = "";
 
@@ -1596,7 +1757,8 @@ fn test_optional_chaining_in_condition() {
             }
 
             result
-        "#),
+        "#
+        ),
         JsValue::String("exists,notfound".into())
     );
 }
@@ -1608,7 +1770,8 @@ fn test_optional_chaining_in_condition() {
 #[test]
 fn test_fizzbuzz() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let result: string[] = [];
             for (let i: number = 1; i <= 15; i = i + 1) {
                 if (i % 15 === 0) {
@@ -1622,7 +1785,8 @@ fn test_fizzbuzz() {
                 }
             }
             result.join(",")
-        "#),
+        "#
+        ),
         JsValue::String("1,2,Fizz,4,Buzz,Fizz,7,8,Fizz,Buzz,11,Fizz,13,14,FizzBuzz".into())
     );
 }
@@ -1630,7 +1794,8 @@ fn test_fizzbuzz() {
 #[test]
 fn test_binary_search() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             function binarySearch(arr: number[], target: number): number {
                 let left: number = 0;
                 let right: number = arr.length - 1;
@@ -1650,7 +1815,8 @@ fn test_binary_search() {
 
             let arr: number[] = [1, 3, 5, 7, 9, 11, 13];
             binarySearch(arr, 7) + "," + binarySearch(arr, 6)
-        "#),
+        "#
+        ),
         JsValue::String("3,-1".into())
     );
 }
@@ -1658,7 +1824,8 @@ fn test_binary_search() {
 #[test]
 fn test_bubble_sort() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             function bubbleSort(arr: number[]): number[] {
                 let n: number = arr.length;
                 let swapped: boolean = true;
@@ -1678,7 +1845,8 @@ fn test_bubble_sort() {
             }
 
             bubbleSort([5, 2, 8, 1, 9]).join(",")
-        "#),
+        "#
+        ),
         JsValue::String("1,2,5,8,9".into())
     );
 }
@@ -1686,7 +1854,8 @@ fn test_bubble_sort() {
 #[test]
 fn test_state_machine() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             function processInput(inputs: string[]): string {
                 let state: string = "start";
                 let output: string = "";
@@ -1726,7 +1895,8 @@ fn test_state_machine() {
             }
 
             processInput(["a", "b", "c", "a", "x", "a", "b", "c"])
-        "#),
+        "#
+        ),
         JsValue::String("ABC!AXABC!".into())
     );
 }
@@ -1734,7 +1904,8 @@ fn test_state_machine() {
 #[test]
 fn test_retry_with_try_catch() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let attempts: number = 0;
             let success: boolean = false;
             let result: string = "";
@@ -1753,7 +1924,8 @@ fn test_retry_with_try_catch() {
             }
 
             result
-        "#),
+        "#
+        ),
         JsValue::String("succeeded on attempt 3".into())
     );
 }
@@ -1761,7 +1933,8 @@ fn test_retry_with_try_catch() {
 #[test]
 fn test_iterator_pattern() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             function createIterator(arr: number[]) {
                 let index: number = 0;
                 return {
@@ -1784,7 +1957,8 @@ fn test_iterator_pattern() {
             }
 
             sum
-        "#),
+        "#
+        ),
         JsValue::Number(60.0)
     );
 }

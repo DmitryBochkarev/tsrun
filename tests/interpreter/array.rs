@@ -20,7 +20,10 @@ fn test_array_push_single() {
 
 #[test]
 fn test_array_push_returns_length() {
-    assert_eq!(eval("const arr = [1, 2]; arr.push(3)"), JsValue::Number(3.0));
+    assert_eq!(
+        eval("const arr = [1, 2]; arr.push(3)"),
+        JsValue::Number(3.0)
+    );
 }
 
 #[test]
@@ -42,7 +45,10 @@ fn test_array_push_element_access() {
 // Array.prototype.pop tests
 #[test]
 fn test_array_pop_returns_last() {
-    assert_eq!(eval("const arr = [1, 2, 3]; arr.pop()"), JsValue::Number(3.0));
+    assert_eq!(
+        eval("const arr = [1, 2, 3]; arr.pop()"),
+        JsValue::Number(3.0)
+    );
 }
 
 #[test]
@@ -229,10 +235,7 @@ fn test_array_reduce_to_object() {
 // Array.prototype.find tests
 #[test]
 fn test_array_find_found() {
-    assert_eq!(
-        eval("[1, 2, 3, 4].find(x => x > 2)"),
-        JsValue::Number(3.0)
-    );
+    assert_eq!(eval("[1, 2, 3, 4].find(x => x > 2)"), JsValue::Number(3.0));
 }
 
 #[test]
@@ -317,10 +320,7 @@ fn test_array_slice_basic() {
         eval("[1, 2, 3, 4, 5].slice(1, 4).length"),
         JsValue::Number(3.0)
     );
-    assert_eq!(
-        eval("[1, 2, 3, 4, 5].slice(1, 4)[0]"),
-        JsValue::Number(2.0)
-    );
+    assert_eq!(eval("[1, 2, 3, 4, 5].slice(1, 4)[0]"), JsValue::Number(2.0));
 }
 
 #[test]
@@ -330,7 +330,10 @@ fn test_array_slice_no_args() {
 
 #[test]
 fn test_array_slice_negative() {
-    assert_eq!(eval("[1, 2, 3, 4, 5].slice(-2).length"), JsValue::Number(2.0));
+    assert_eq!(
+        eval("[1, 2, 3, 4, 5].slice(-2).length"),
+        JsValue::Number(2.0)
+    );
     assert_eq!(eval("[1, 2, 3, 4, 5].slice(-2)[0]"), JsValue::Number(4.0));
 }
 
@@ -440,7 +443,10 @@ fn test_array_shift() {
 // Array.prototype.unshift tests
 #[test]
 fn test_array_unshift() {
-    assert_eq!(eval("let a = [1, 2, 3]; a.unshift(0)"), JsValue::Number(4.0));
+    assert_eq!(
+        eval("let a = [1, 2, 3]; a.unshift(0)"),
+        JsValue::Number(4.0)
+    );
     assert_eq!(
         eval("let a = [1, 2, 3]; a.unshift(0); a[0]"),
         JsValue::Number(0.0)
@@ -620,10 +626,7 @@ fn test_array_findlast() {
         eval("[1, 2, 3, 2].findLast(x => x === 2)"),
         JsValue::Number(2.0)
     );
-    assert_eq!(
-        eval("[1, 2, 3].findLast(x => x > 1)"),
-        JsValue::Number(3.0)
-    );
+    assert_eq!(eval("[1, 2, 3].findLast(x => x > 1)"), JsValue::Number(3.0));
     assert_eq!(eval("[1, 2, 3].findLast(x => x > 10)"), JsValue::Undefined);
 }
 

@@ -56,10 +56,7 @@ pub enum EvalFrame {
     },
 
     /// Member access: object evaluated, access property
-    MemberAccess {
-        property: String,
-        optional: bool,
-    },
+    MemberAccess { property: String, optional: bool },
 
     /// Computed member: object evaluated, need property expression
     ComputedMemberExpr {

@@ -1,9 +1,12 @@
 //! Set built-in methods
 
+use super::map::same_value_zero;
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
-use crate::value::{create_function, create_object, ExoticObject, JsFunction, JsObjectRef, JsValue, NativeFunction, PropertyKey};
-use super::map::same_value_zero;
+use crate::value::{
+    create_function, create_object, ExoticObject, JsFunction, JsObjectRef, JsValue, NativeFunction,
+    PropertyKey,
+};
 
 /// Create Set.prototype with add, has, delete, clear, forEach methods
 pub fn create_set_prototype() -> JsObjectRef {
@@ -79,11 +82,17 @@ pub fn create_set_constructor() -> JsObjectRef {
     }))
 }
 
-pub fn set_constructor(interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn set_constructor(
+    interp: &mut Interpreter,
+    _this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let set_obj = create_object();
     {
         let mut obj = set_obj.borrow_mut();
-        obj.exotic = ExoticObject::Set { entries: Vec::new() };
+        obj.exotic = ExoticObject::Set {
+            entries: Vec::new(),
+        };
         obj.prototype = Some(interp.set_prototype.clone());
         obj.set_property(PropertyKey::from("size"), JsValue::Number(0.0));
     }
@@ -118,9 +127,15 @@ pub fn set_constructor(interp: &mut Interpreter, _this: JsValue, args: Vec<JsVal
     Ok(JsValue::Object(set_obj))
 }
 
-pub fn set_add(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn set_add(
+    _interp: &mut Interpreter,
+    this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let JsValue::Object(set_obj) = this.clone() else {
-        return Err(JsError::type_error("Set.prototype.add called on non-object"));
+        return Err(JsError::type_error(
+            "Set.prototype.add called on non-object",
+        ));
     };
 
     let value = args.first().cloned().unwrap_or(JsValue::Undefined);
@@ -140,9 +155,15 @@ pub fn set_add(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> 
     Ok(this) // Return the set for chaining
 }
 
-pub fn set_has(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn set_has(
+    _interp: &mut Interpreter,
+    this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let JsValue::Object(set_obj) = this else {
-        return Err(JsError::type_error("Set.prototype.has called on non-object"));
+        return Err(JsError::type_error(
+            "Set.prototype.has called on non-object",
+        ));
     };
 
     let value = args.first().cloned().unwrap_or(JsValue::Undefined);
@@ -159,9 +180,15 @@ pub fn set_has(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> 
     Ok(JsValue::Boolean(false))
 }
 
-pub fn set_delete(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn set_delete(
+    _interp: &mut Interpreter,
+    this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let JsValue::Object(set_obj) = this else {
-        return Err(JsError::type_error("Set.prototype.delete called on non-object"));
+        return Err(JsError::type_error(
+            "Set.prototype.delete called on non-object",
+        ));
     };
 
     let value = args.first().cloned().unwrap_or(JsValue::Undefined);
@@ -181,9 +208,15 @@ pub fn set_delete(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) 
     Ok(JsValue::Boolean(false))
 }
 
-pub fn set_clear(_interp: &mut Interpreter, this: JsValue, _args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn set_clear(
+    _interp: &mut Interpreter,
+    this: JsValue,
+    _args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let JsValue::Object(set_obj) = this else {
-        return Err(JsError::type_error("Set.prototype.clear called on non-object"));
+        return Err(JsError::type_error(
+            "Set.prototype.clear called on non-object",
+        ));
     };
 
     let mut set = set_obj.borrow_mut();
@@ -196,9 +229,15 @@ pub fn set_clear(_interp: &mut Interpreter, this: JsValue, _args: Vec<JsValue>) 
     Ok(JsValue::Undefined)
 }
 
-pub fn set_foreach(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn set_foreach(
+    interp: &mut Interpreter,
+    this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let JsValue::Object(set_obj) = this.clone() else {
-        return Err(JsError::type_error("Set.prototype.forEach called on non-object"));
+        return Err(JsError::type_error(
+            "Set.prototype.forEach called on non-object",
+        ));
     };
 
     let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
@@ -211,26 +250,42 @@ pub fn set_foreach(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) 
         if let ExoticObject::Set { entries: ref e } = set.exotic {
             entries = e.clone();
         } else {
-            return Err(JsError::type_error("Set.prototype.forEach called on non-Set"));
+            return Err(JsError::type_error(
+                "Set.prototype.forEach called on non-Set",
+            ));
         }
     }
 
     for value in entries {
         // Set.forEach passes (value, value, set) - value is passed twice
-        interp.call_function(callback.clone(), this_arg.clone(), vec![value.clone(), value, this.clone()])?;
+        interp.call_function(
+            callback.clone(),
+            this_arg.clone(),
+            vec![value.clone(), value, this.clone()],
+        )?;
     }
 
     Ok(JsValue::Undefined)
 }
 
-pub fn set_keys(interp: &mut Interpreter, this: JsValue, _args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn set_keys(
+    interp: &mut Interpreter,
+    this: JsValue,
+    _args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     // For Set, keys() returns the same as values()
     set_values(interp, this, _args)
 }
 
-pub fn set_values(interp: &mut Interpreter, this: JsValue, _args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn set_values(
+    interp: &mut Interpreter,
+    this: JsValue,
+    _args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let JsValue::Object(set_obj) = this else {
-        return Err(JsError::type_error("Set.prototype.values called on non-object"));
+        return Err(JsError::type_error(
+            "Set.prototype.values called on non-object",
+        ));
     };
 
     let values: Vec<JsValue>;
@@ -239,16 +294,24 @@ pub fn set_values(interp: &mut Interpreter, this: JsValue, _args: Vec<JsValue>) 
         if let ExoticObject::Set { entries: ref e } = set.exotic {
             values = e.clone();
         } else {
-            return Err(JsError::type_error("Set.prototype.values called on non-Set"));
+            return Err(JsError::type_error(
+                "Set.prototype.values called on non-Set",
+            ));
         }
     }
 
     Ok(JsValue::Object(interp.create_array(values)))
 }
 
-pub fn set_entries(interp: &mut Interpreter, this: JsValue, _args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn set_entries(
+    interp: &mut Interpreter,
+    this: JsValue,
+    _args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let JsValue::Object(set_obj) = this else {
-        return Err(JsError::type_error("Set.prototype.entries called on non-object"));
+        return Err(JsError::type_error(
+            "Set.prototype.entries called on non-object",
+        ));
     };
 
     let raw_entries: Vec<JsValue>;
@@ -257,14 +320,17 @@ pub fn set_entries(interp: &mut Interpreter, this: JsValue, _args: Vec<JsValue>)
         if let ExoticObject::Set { entries: ref e } = set.exotic {
             raw_entries = e.clone();
         } else {
-            return Err(JsError::type_error("Set.prototype.entries called on non-Set"));
+            return Err(JsError::type_error(
+                "Set.prototype.entries called on non-Set",
+            ));
         }
     }
 
     // For Set, entries returns [value, value] pairs
-    let entries: Vec<JsValue> = raw_entries.into_iter().map(|v| {
-        JsValue::Object(interp.create_array(vec![v.clone(), v]))
-    }).collect();
+    let entries: Vec<JsValue> = raw_entries
+        .into_iter()
+        .map(|v| JsValue::Object(interp.create_array(vec![v.clone(), v])))
+        .collect();
 
     Ok(JsValue::Object(interp.create_array(entries)))
 }

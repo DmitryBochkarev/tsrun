@@ -364,7 +364,9 @@ fn test_call_function_returns_array() {
     let mut runtime = Runtime::new();
     run_eval(&mut runtime, source);
 
-    let result = runtime.call_function("range", &serde_json::json!(3)).unwrap();
+    let result = runtime
+        .call_function("range", &serde_json::json!(3))
+        .unwrap();
 
     if let JsValue::Object(arr) = result {
         let arr_ref = arr.borrow();
@@ -637,7 +639,9 @@ fn test_render_kubernetes_manifest() {
         );
 
         // Check nested structure
-        let metadata = obj_ref.get_property(&PropertyKey::from("metadata")).unwrap();
+        let metadata = obj_ref
+            .get_property(&PropertyKey::from("metadata"))
+            .unwrap();
         if let JsValue::Object(meta_obj) = metadata {
             let meta_ref = meta_obj.borrow();
             assert_eq!(
@@ -753,9 +757,8 @@ fn test_export_after_import() {
     match result {
         RuntimeResult::ImportAwaited { slot, specifier } => {
             assert_eq!(specifier, "./config");
-            let module = runtime.create_module_object(vec![
-                ("baseValue".to_string(), JsValue::Number(100.0)),
-            ]);
+            let module = runtime
+                .create_module_object(vec![("baseValue".to_string(), JsValue::Number(100.0))]);
             slot.set_success(module);
         }
         _ => panic!("Expected ImportAwaited"),
@@ -921,9 +924,8 @@ fn test_multiple_exports_with_import() {
     // Resolve import
     match result {
         RuntimeResult::ImportAwaited { slot, .. } => {
-            let module = runtime.create_module_object(vec![
-                ("CONFIG_VERSION".to_string(), JsValue::from("2.0")),
-            ]);
+            let module = runtime
+                .create_module_object(vec![("CONFIG_VERSION".to_string(), JsValue::from("2.0"))]);
             slot.set_success(module);
         }
         _ => panic!("Expected ImportAwaited"),

@@ -48,12 +48,12 @@ impl<'a> Parser<'a> {
         }
 
         match &self.current.kind {
-            TokenKind::Let | TokenKind::Const | TokenKind::Var => {
-                Ok(Statement::VariableDeclaration(self.parse_variable_declaration()?))
-            }
-            TokenKind::Function => {
-                Ok(Statement::FunctionDeclaration(self.parse_function_declaration(false)?))
-            }
+            TokenKind::Let | TokenKind::Const | TokenKind::Var => Ok(
+                Statement::VariableDeclaration(self.parse_variable_declaration()?),
+            ),
+            TokenKind::Function => Ok(Statement::FunctionDeclaration(
+                self.parse_function_declaration(false)?,
+            )),
             TokenKind::Async => {
                 // async function declaration
                 self.advance(); // consume 'async'
@@ -62,9 +62,7 @@ impl<'a> Parser<'a> {
                 func.async_ = true;
                 Ok(Statement::FunctionDeclaration(func))
             }
-            TokenKind::Class => {
-                Ok(Statement::ClassDeclaration(self.parse_class_declaration()?))
-            }
+            TokenKind::Class => Ok(Statement::ClassDeclaration(self.parse_class_declaration()?)),
             TokenKind::If => self.parse_if_statement(),
             TokenKind::For => self.parse_for_statement(),
             TokenKind::While => self.parse_while_statement(),
@@ -75,9 +73,7 @@ impl<'a> Parser<'a> {
             TokenKind::Break => self.parse_break_statement(),
             TokenKind::Continue => self.parse_continue_statement(),
             TokenKind::Throw => self.parse_throw_statement(),
-            TokenKind::LBrace => {
-                Ok(Statement::Block(self.parse_block_statement()?))
-            }
+            TokenKind::LBrace => Ok(Statement::Block(self.parse_block_statement()?)),
             TokenKind::Semicolon => {
                 self.advance();
                 Ok(Statement::Empty)
@@ -88,22 +84,12 @@ impl<'a> Parser<'a> {
                 Ok(Statement::Debugger)
             }
             // TypeScript declarations (no-op at runtime)
-            TokenKind::Type => {
-                Ok(Statement::TypeAlias(self.parse_type_alias()?))
-            }
-            TokenKind::Interface => {
-                Ok(Statement::InterfaceDeclaration(self.parse_interface()?))
-            }
-            TokenKind::Enum => {
-                Ok(Statement::EnumDeclaration(self.parse_enum()?))
-            }
+            TokenKind::Type => Ok(Statement::TypeAlias(self.parse_type_alias()?)),
+            TokenKind::Interface => Ok(Statement::InterfaceDeclaration(self.parse_interface()?)),
+            TokenKind::Enum => Ok(Statement::EnumDeclaration(self.parse_enum()?)),
             // Module declarations
-            TokenKind::Import => {
-                Ok(Statement::Import(self.parse_import()?))
-            }
-            TokenKind::Export => {
-                Ok(Statement::Export(self.parse_export()?))
-            }
+            TokenKind::Import => Ok(Statement::Import(self.parse_import()?)),
+            TokenKind::Export => Ok(Statement::Export(self.parse_export()?)),
             TokenKind::Namespace | TokenKind::Module => {
                 Ok(Statement::NamespaceDeclaration(self.parse_namespace()?))
             }
@@ -112,7 +98,10 @@ impl<'a> Parser<'a> {
                 let expr = self.parse_expression()?;
                 self.expect_semicolon()?;
                 let span = expr.span();
-                Ok(Statement::Expression(ExpressionStatement { expression: expr, span }))
+                Ok(Statement::Expression(ExpressionStatement {
+                    expression: expr,
+                    span,
+                }))
             }
         }
     }
@@ -136,7 +125,11 @@ impl<'a> Parser<'a> {
         self.expect_semicolon()?;
 
         let span = self.span_from(start);
-        Ok(VariableDeclaration { kind, declarations, span })
+        Ok(VariableDeclaration {
+            kind,
+            declarations,
+            span,
+        })
     }
 
     fn parse_variable_declarator(&mut self) -> Result<VariableDeclarator, JsError> {
@@ -158,7 +151,12 @@ impl<'a> Parser<'a> {
         };
 
         let span = self.span_from(start);
-        Ok(VariableDeclarator { id, type_annotation, init, span })
+        Ok(VariableDeclarator {
+            id,
+            type_annotation,
+            init,
+            span,
+        })
     }
 
     fn parse_binding_pattern(&mut self) -> Result<Pattern, JsError> {
@@ -220,7 +218,12 @@ impl<'a> Parser<'a> {
             };
 
             let span = self.span_from(prop_start);
-            properties.push(ObjectPatternProperty::KeyValue { key, value, shorthand, span });
+            properties.push(ObjectPatternProperty::KeyValue {
+                key,
+                value,
+                shorthand,
+                span,
+            });
 
             if !self.match_token(&TokenKind::Comma) {
                 break;
@@ -236,7 +239,11 @@ impl<'a> Parser<'a> {
         };
 
         let span = self.span_from(start);
-        Ok(Pattern::Object(ObjectPattern { properties, type_annotation, span }))
+        Ok(Pattern::Object(ObjectPattern {
+            properties,
+            type_annotation,
+            span,
+        }))
     }
 
     fn parse_array_pattern(&mut self) -> Result<Pattern, JsError> {
@@ -296,10 +303,17 @@ impl<'a> Parser<'a> {
         };
 
         let span = self.span_from(start);
-        Ok(Pattern::Array(ArrayPattern { elements, type_annotation, span }))
+        Ok(Pattern::Array(ArrayPattern {
+            elements,
+            type_annotation,
+            span,
+        }))
     }
 
-    fn parse_function_declaration(&mut self, is_async: bool) -> Result<FunctionDeclaration, JsError> {
+    fn parse_function_declaration(
+        &mut self,
+        is_async: bool,
+    ) -> Result<FunctionDeclaration, JsError> {
         self.expect(&TokenKind::Function)?;
         let mut func = self.parse_function_declaration_inner()?;
         func.async_ = is_async;
@@ -377,7 +391,12 @@ impl<'a> Parser<'a> {
             };
 
             let span = self.span_from(param_start);
-            params.push(FunctionParam { pattern, type_annotation, optional, span });
+            params.push(FunctionParam {
+                pattern,
+                type_annotation,
+                optional,
+                span,
+            });
 
             if !self.match_token(&TokenKind::Comma) {
                 break;
@@ -623,7 +642,12 @@ impl<'a> Parser<'a> {
         };
 
         let span = self.span_from(start);
-        Ok(Statement::If(IfStatement { test, consequent, alternate, span }))
+        Ok(Statement::If(IfStatement {
+            test,
+            consequent,
+            alternate,
+            span,
+        }))
     }
 
     fn parse_for_statement(&mut self) -> Result<Statement, JsError> {
@@ -634,7 +658,10 @@ impl<'a> Parser<'a> {
         // Check for for-in or for-of
         let init = if self.check(&TokenKind::Semicolon) {
             None
-        } else if self.check(&TokenKind::Let) || self.check(&TokenKind::Const) || self.check(&TokenKind::Var) {
+        } else if self.check(&TokenKind::Let)
+            || self.check(&TokenKind::Const)
+            || self.check(&TokenKind::Var)
+        {
             let kind = match &self.current.kind {
                 TokenKind::Let => VariableKind::Let,
                 TokenKind::Const => VariableKind::Const,
@@ -675,9 +702,20 @@ impl<'a> Parser<'a> {
                 });
 
                 return if is_of {
-                    Ok(Statement::ForOf(ForOfStatement { left, right, body, await_: false, span }))
+                    Ok(Statement::ForOf(ForOfStatement {
+                        left,
+                        right,
+                        body,
+                        await_: false,
+                        span,
+                    }))
                 } else {
-                    Ok(Statement::ForIn(ForInStatement { left, right, body, span }))
+                    Ok(Statement::ForIn(ForInStatement {
+                        left,
+                        right,
+                        body,
+                        span,
+                    }))
                 };
             }
 
@@ -721,9 +759,20 @@ impl<'a> Parser<'a> {
                 let left = ForInOfLeft::Pattern(self.expression_to_pattern(&expr)?);
 
                 return if is_of {
-                    Ok(Statement::ForOf(ForOfStatement { left, right, body, await_: false, span }))
+                    Ok(Statement::ForOf(ForOfStatement {
+                        left,
+                        right,
+                        body,
+                        await_: false,
+                        span,
+                    }))
                 } else {
-                    Ok(Statement::ForIn(ForInStatement { left, right, body, span }))
+                    Ok(Statement::ForIn(ForInStatement {
+                        left,
+                        right,
+                        body,
+                        span,
+                    }))
                 };
             }
 
@@ -750,7 +799,13 @@ impl<'a> Parser<'a> {
         let body = Box::new(self.parse_statement()?);
 
         let span = self.span_from(start);
-        Ok(Statement::For(ForStatement { init, test, update, body, span }))
+        Ok(Statement::For(ForStatement {
+            init,
+            test,
+            update,
+            body,
+            span,
+        }))
     }
 
     fn parse_while_statement(&mut self) -> Result<Statement, JsError> {
@@ -810,13 +865,21 @@ impl<'a> Parser<'a> {
             }
 
             let span = self.span_from(case_start);
-            cases.push(SwitchCase { test, consequent, span });
+            cases.push(SwitchCase {
+                test,
+                consequent,
+                span,
+            });
         }
 
         self.expect(&TokenKind::RBrace)?;
 
         let span = self.span_from(start);
-        Ok(Statement::Switch(SwitchStatement { discriminant, cases, span }))
+        Ok(Statement::Switch(SwitchStatement {
+            discriminant,
+            cases,
+            span,
+        }))
     }
 
     fn parse_try_statement(&mut self) -> Result<Statement, JsError> {
@@ -855,7 +918,12 @@ impl<'a> Parser<'a> {
         }
 
         let span = self.span_from(start);
-        Ok(Statement::Try(TryStatement { block, handler, finalizer, span }))
+        Ok(Statement::Try(TryStatement {
+            block,
+            handler,
+            finalizer,
+            span,
+        }))
     }
 
     fn parse_return_statement(&mut self) -> Result<Statement, JsError> {
@@ -964,7 +1032,12 @@ impl<'a> Parser<'a> {
         self.expect_semicolon()?;
 
         let span = self.span_from(start);
-        Ok(TypeAliasDeclaration { id, type_parameters, type_annotation, span })
+        Ok(TypeAliasDeclaration {
+            id,
+            type_parameters,
+            type_annotation,
+            span,
+        })
     }
 
     fn parse_interface(&mut self) -> Result<InterfaceDeclaration, JsError> {
@@ -988,7 +1061,13 @@ impl<'a> Parser<'a> {
         self.expect(&TokenKind::RBrace)?;
 
         let span = self.span_from(start);
-        Ok(InterfaceDeclaration { id, type_parameters, extends, body, span })
+        Ok(InterfaceDeclaration {
+            id,
+            type_parameters,
+            extends,
+            body,
+            span,
+        })
     }
 
     fn parse_enum(&mut self) -> Result<EnumDeclaration, JsError> {
@@ -1008,7 +1087,11 @@ impl<'a> Parser<'a> {
                 None
             };
             let span = self.span_from(member_start);
-            members.push(EnumMember { id: member_id, initializer, span });
+            members.push(EnumMember {
+                id: member_id,
+                initializer,
+                span,
+            });
 
             if !self.match_token(&TokenKind::Comma) {
                 break;
@@ -1018,7 +1101,12 @@ impl<'a> Parser<'a> {
         self.expect(&TokenKind::RBrace)?;
 
         let span = self.span_from(start);
-        Ok(EnumDeclaration { id, members, const_, span })
+        Ok(EnumDeclaration {
+            id,
+            members,
+            const_,
+            span,
+        })
     }
 
     fn parse_namespace(&mut self) -> Result<NamespaceDeclaration, JsError> {
@@ -1059,7 +1147,12 @@ impl<'a> Parser<'a> {
             self.advance();
             self.expect_semicolon()?;
             let span = self.span_from(start);
-            return Ok(ImportDeclaration { specifiers, source, type_only, span });
+            return Ok(ImportDeclaration {
+                specifiers,
+                source,
+                type_only,
+                span,
+            });
         }
 
         // Default import
@@ -1077,7 +1170,12 @@ impl<'a> Parser<'a> {
                 let source = self.parse_string_literal()?;
                 self.expect_semicolon()?;
                 let span = self.span_from(start);
-                return Ok(ImportDeclaration { specifiers, source, type_only, span });
+                return Ok(ImportDeclaration {
+                    specifiers,
+                    source,
+                    type_only,
+                    span,
+                });
             }
         }
 
@@ -1099,7 +1197,11 @@ impl<'a> Parser<'a> {
                     imported.clone()
                 };
                 let span = self.span_from(spec_start);
-                specifiers.push(ImportSpecifier::Named { local, imported, span });
+                specifiers.push(ImportSpecifier::Named {
+                    local,
+                    imported,
+                    span,
+                });
 
                 if !self.match_token(&TokenKind::Comma) {
                     break;
@@ -1113,7 +1215,12 @@ impl<'a> Parser<'a> {
         self.expect_semicolon()?;
 
         let span = self.span_from(start);
-        Ok(ImportDeclaration { specifiers, source, type_only, span })
+        Ok(ImportDeclaration {
+            specifiers,
+            source,
+            type_only,
+            span,
+        })
     }
 
     fn parse_export(&mut self) -> Result<ExportDeclaration, JsError> {
@@ -1203,7 +1310,11 @@ impl<'a> Parser<'a> {
                     local.clone()
                 };
                 let span = self.span_from(spec_start);
-                specifiers.push(ExportSpecifier { local, exported, span });
+                specifiers.push(ExportSpecifier {
+                    local,
+                    exported,
+                    span,
+                });
 
                 if !self.match_token(&TokenKind::Comma) {
                     break;
@@ -1250,11 +1361,9 @@ impl<'a> Parser<'a> {
 
         // export declaration
         let declaration = match &self.current.kind {
-            TokenKind::Let | TokenKind::Const | TokenKind::Var => {
-                Some(Box::new(Statement::VariableDeclaration(
-                    self.parse_variable_declaration()?,
-                )))
-            }
+            TokenKind::Let | TokenKind::Const | TokenKind::Var => Some(Box::new(
+                Statement::VariableDeclaration(self.parse_variable_declaration()?),
+            )),
             TokenKind::Async => {
                 // export async function
                 self.advance(); // consume 'async'
@@ -1263,32 +1372,20 @@ impl<'a> Parser<'a> {
                 func.async_ = true;
                 Some(Box::new(Statement::FunctionDeclaration(func)))
             }
-            TokenKind::Function => {
-                Some(Box::new(Statement::FunctionDeclaration(
-                    self.parse_function_declaration(false)?,
-                )))
-            }
-            TokenKind::Class => {
-                Some(Box::new(Statement::ClassDeclaration(
-                    self.parse_class_declaration()?,
-                )))
-            }
-            TokenKind::Interface => {
-                Some(Box::new(Statement::InterfaceDeclaration(
-                    self.parse_interface()?,
-                )))
-            }
-            TokenKind::Type => {
-                Some(Box::new(Statement::TypeAlias(self.parse_type_alias()?)))
-            }
-            TokenKind::Enum => {
-                Some(Box::new(Statement::EnumDeclaration(self.parse_enum()?)))
-            }
-            TokenKind::Namespace | TokenKind::Module => {
-                Some(Box::new(Statement::NamespaceDeclaration(
-                    self.parse_namespace()?,
-                )))
-            }
+            TokenKind::Function => Some(Box::new(Statement::FunctionDeclaration(
+                self.parse_function_declaration(false)?,
+            ))),
+            TokenKind::Class => Some(Box::new(Statement::ClassDeclaration(
+                self.parse_class_declaration()?,
+            ))),
+            TokenKind::Interface => Some(Box::new(Statement::InterfaceDeclaration(
+                self.parse_interface()?,
+            ))),
+            TokenKind::Type => Some(Box::new(Statement::TypeAlias(self.parse_type_alias()?))),
+            TokenKind::Enum => Some(Box::new(Statement::EnumDeclaration(self.parse_enum()?))),
+            TokenKind::Namespace | TokenKind::Module => Some(Box::new(
+                Statement::NamespaceDeclaration(self.parse_namespace()?),
+            )),
             _ => return Err(self.unexpected_token("export declaration")),
         };
 
@@ -1533,7 +1630,12 @@ impl<'a> Parser<'a> {
                 (vec![], None)
             };
             let span = self.span_from(start);
-            Expression::New(NewExpression { callee, arguments, type_arguments, span })
+            Expression::New(NewExpression {
+                callee,
+                arguments,
+                type_arguments,
+                span,
+            })
         } else {
             self.parse_member_expression()?
         };
@@ -1982,9 +2084,7 @@ impl<'a> Parser<'a> {
         } else {
             // Shorthand: { a } is { a: a }
             match &key {
-                ObjectPropertyKey::Identifier(id) => {
-                    (Expression::Identifier(id.clone()), true)
-                }
+                ObjectPropertyKey::Identifier(id) => (Expression::Identifier(id.clone()), true),
                 _ => return Err(self.error("Shorthand property must be an identifier")),
             }
         };
@@ -2085,7 +2185,10 @@ impl<'a> Parser<'a> {
 
             // Sequence expression in parentheses
             let span = self.span_from(start);
-            let seq = Expression::Sequence(SequenceExpression { expressions: items, span });
+            let seq = Expression::Sequence(SequenceExpression {
+                expressions: items,
+                span,
+            });
             return Ok(Expression::Parenthesized(Box::new(seq), span));
         }
 
@@ -2148,7 +2251,7 @@ impl<'a> Parser<'a> {
         // async () => or async (params) =>
         if self.check(&TokenKind::LParen) {
             self.advance(); // consume '('
-            // Parse params and then arrow
+                            // Parse params and then arrow
             let mut params = vec![];
             while !self.check(&TokenKind::RParen) && !self.is_at_end() {
                 if self.match_token(&TokenKind::DotDotDot) {
@@ -2260,7 +2363,11 @@ impl<'a> Parser<'a> {
         }))
     }
 
-    fn parse_template_literal(&mut self, first: String, start: Span) -> Result<Expression, JsError> {
+    fn parse_template_literal(
+        &mut self,
+        first: String,
+        start: Span,
+    ) -> Result<Expression, JsError> {
         let mut quasis = vec![TemplateElement {
             value: first,
             tail: false,
@@ -2274,7 +2381,10 @@ impl<'a> Parser<'a> {
             // Check for closing brace but don't advance - let scan_template_continuation handle it
             if !self.check(&TokenKind::RBrace) {
                 return Err(JsError::syntax_error(
-                    format!("Expected '}}' in template literal, found {:?}", self.current.kind),
+                    format!(
+                        "Expected '}}' in template literal, found {:?}",
+                        self.current.kind
+                    ),
                     self.current.span.line,
                     self.current.span.column,
                 ));
@@ -2310,7 +2420,11 @@ impl<'a> Parser<'a> {
         self.current = self.lexer.next_token();
 
         let span = self.span_from(start);
-        Ok(Expression::Template(TemplateLiteral { quasis, expressions, span }))
+        Ok(Expression::Template(TemplateLiteral {
+            quasis,
+            expressions,
+            span,
+        }))
     }
 
     fn parse_call_arguments(&mut self) -> Result<(Vec<Argument>, Option<TypeArguments>), JsError> {
@@ -2714,7 +2828,12 @@ impl<'a> Parser<'a> {
             };
 
             let span = self.span_from(param_start);
-            params.push(FunctionParam { pattern, type_annotation, optional, span });
+            params.push(FunctionParam {
+                pattern,
+                type_annotation,
+                optional,
+                span,
+            });
 
             if !self.match_token(&TokenKind::Comma) {
                 break;
@@ -2730,7 +2849,11 @@ impl<'a> Parser<'a> {
         let name = self.parse_identifier()?;
         let type_arguments = self.parse_optional_type_arguments()?;
         let span = self.span_from(start);
-        Ok(TypeReference { name, type_arguments, span })
+        Ok(TypeReference {
+            name,
+            type_arguments,
+            span,
+        })
     }
 
     fn parse_type_members(&mut self) -> Result<Vec<TypeMember>, JsError> {
@@ -2811,7 +2934,12 @@ impl<'a> Parser<'a> {
             };
 
             let span = self.span_from(param_start);
-            params.push(TypeParameter { name, constraint, default, span });
+            params.push(TypeParameter {
+                name,
+                constraint,
+                default,
+                span,
+            });
 
             if !self.match_token(&TokenKind::Comma) {
                 break;
@@ -3081,7 +3209,12 @@ impl<'a> Parser<'a> {
     }
 
     fn span_from(&self, start: Span) -> Span {
-        Span::new(start.start, self.previous.span.end, start.line, start.column)
+        Span::new(
+            start.start,
+            self.previous.span.end,
+            start.line,
+            start.column,
+        )
     }
 
     fn error(&self, message: &str) -> JsError {
@@ -3259,7 +3392,10 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn expression_to_assignment_target(&self, expr: &Expression) -> Result<AssignmentTarget, JsError> {
+    fn expression_to_assignment_target(
+        &self,
+        expr: &Expression,
+    ) -> Result<AssignmentTarget, JsError> {
         match expr {
             Expression::Identifier(id) => Ok(AssignmentTarget::Identifier(id.clone())),
             Expression::Member(m) => Ok(AssignmentTarget::Member(m.clone())),
@@ -3400,7 +3536,8 @@ mod tests {
 
     #[test]
     fn test_class_declaration() {
-        let prog = parse("class Person { name: string; constructor(name: string) { this.name = name; } }");
+        let prog =
+            parse("class Person { name: string; constructor(name: string) { this.name = name; } }");
         assert_eq!(prog.body.len(), 1);
     }
 
@@ -3430,7 +3567,9 @@ mod tests {
 
     #[test]
     fn test_for_in_loop() {
-        let prog = parse("for (const key in {a: 1, b: 2} as { a: number; b: number }) { console.log(key); }");
+        let prog = parse(
+            "for (const key in {a: 1, b: 2} as { a: number; b: number }) { console.log(key); }",
+        );
         assert_eq!(prog.body.len(), 1);
     }
 
@@ -3448,13 +3587,17 @@ mod tests {
 
     #[test]
     fn test_switch_statement() {
-        let prog = parse("switch (x as number) { case 1: break; case 2: return; default: throw new Error(); }");
+        let prog = parse(
+            "switch (x as number) { case 1: break; case 2: return; default: throw new Error(); }",
+        );
         assert_eq!(prog.body.len(), 1);
     }
 
     #[test]
     fn test_try_catch_finally() {
-        let prog = parse("try { riskyOperation(); } catch (e) { console.error(e); } finally { cleanup(); }");
+        let prog = parse(
+            "try { riskyOperation(); } catch (e) { console.error(e); } finally { cleanup(); }",
+        );
         assert_eq!(prog.body.len(), 1);
     }
 
@@ -3478,7 +3621,9 @@ mod tests {
 
     #[test]
     fn test_rest_parameter() {
-        let prog = parse("function sum(...nums: number[]): number { return nums.reduce((a, b) => a + b, 0); }");
+        let prog = parse(
+            "function sum(...nums: number[]): number { return nums.reduce((a, b) => a + b, 0); }",
+        );
         assert_eq!(prog.body.len(), 1);
     }
 
@@ -3546,7 +3691,9 @@ mod tests {
     #[test]
     fn test_static_initialization_block() {
         // JavaScript style
-        let prog = parse("class Config { static initialized = false; static { Config.initialized = true; } }");
+        let prog = parse(
+            "class Config { static initialized = false; static { Config.initialized = true; } }",
+        );
         assert_eq!(prog.body.len(), 1);
 
         // TypeScript style with type annotations

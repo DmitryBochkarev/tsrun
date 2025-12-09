@@ -2,7 +2,10 @@
 
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
-use crate::value::{create_function, create_object, JsFunction, JsObjectRef, JsString, JsValue, NativeFunction, PropertyKey};
+use crate::value::{
+    create_function, create_object, JsFunction, JsObjectRef, JsString, JsValue, NativeFunction,
+    PropertyKey,
+};
 
 use super::global::{global_parse_float, global_parse_int};
 
@@ -31,14 +34,20 @@ pub fn create_number_prototype() -> JsObjectRef {
             func: number_to_precision,
             arity: 1,
         }));
-        p.set_property(PropertyKey::from("toPrecision"), JsValue::Object(toprecision_fn));
+        p.set_property(
+            PropertyKey::from("toPrecision"),
+            JsValue::Object(toprecision_fn),
+        );
 
         let toexponential_fn = create_function(JsFunction::Native(NativeFunction {
             name: "toExponential".to_string(),
             func: number_to_exponential,
             arity: 1,
         }));
-        p.set_property(PropertyKey::from("toExponential"), JsValue::Object(toexponential_fn));
+        p.set_property(
+            PropertyKey::from("toExponential"),
+            JsValue::Object(toexponential_fn),
+        );
     }
     proto
 }
@@ -69,14 +78,20 @@ pub fn create_number_constructor(number_prototype: &JsObjectRef) -> JsObjectRef 
             func: number_is_integer,
             arity: 1,
         }));
-        num.set_property(PropertyKey::from("isInteger"), JsValue::Object(isinteger_fn));
+        num.set_property(
+            PropertyKey::from("isInteger"),
+            JsValue::Object(isinteger_fn),
+        );
 
         let issafeinteger_fn = create_function(JsFunction::Native(NativeFunction {
             name: "isSafeInteger".to_string(),
             func: number_is_safe_integer,
             arity: 1,
         }));
-        num.set_property(PropertyKey::from("isSafeInteger"), JsValue::Object(issafeinteger_fn));
+        num.set_property(
+            PropertyKey::from("isSafeInteger"),
+            JsValue::Object(issafeinteger_fn),
+        );
 
         let parseint_fn = create_function(JsFunction::Native(NativeFunction {
             name: "parseInt".to_string(),
@@ -90,25 +105,50 @@ pub fn create_number_constructor(number_prototype: &JsObjectRef) -> JsObjectRef 
             func: global_parse_float,
             arity: 1,
         }));
-        num.set_property(PropertyKey::from("parseFloat"), JsValue::Object(parsefloat_fn));
+        num.set_property(
+            PropertyKey::from("parseFloat"),
+            JsValue::Object(parsefloat_fn),
+        );
 
         // Constants
-        num.set_property(PropertyKey::from("POSITIVE_INFINITY"), JsValue::Number(f64::INFINITY));
-        num.set_property(PropertyKey::from("NEGATIVE_INFINITY"), JsValue::Number(f64::NEG_INFINITY));
+        num.set_property(
+            PropertyKey::from("POSITIVE_INFINITY"),
+            JsValue::Number(f64::INFINITY),
+        );
+        num.set_property(
+            PropertyKey::from("NEGATIVE_INFINITY"),
+            JsValue::Number(f64::NEG_INFINITY),
+        );
         num.set_property(PropertyKey::from("MAX_VALUE"), JsValue::Number(f64::MAX));
-        num.set_property(PropertyKey::from("MIN_VALUE"), JsValue::Number(f64::MIN_POSITIVE));
-        num.set_property(PropertyKey::from("MAX_SAFE_INTEGER"), JsValue::Number(9007199254740991.0));
-        num.set_property(PropertyKey::from("MIN_SAFE_INTEGER"), JsValue::Number(-9007199254740991.0));
+        num.set_property(
+            PropertyKey::from("MIN_VALUE"),
+            JsValue::Number(f64::MIN_POSITIVE),
+        );
+        num.set_property(
+            PropertyKey::from("MAX_SAFE_INTEGER"),
+            JsValue::Number(9007199254740991.0),
+        );
+        num.set_property(
+            PropertyKey::from("MIN_SAFE_INTEGER"),
+            JsValue::Number(-9007199254740991.0),
+        );
         num.set_property(PropertyKey::from("EPSILON"), JsValue::Number(f64::EPSILON));
         num.set_property(PropertyKey::from("NaN"), JsValue::Number(f64::NAN));
 
-        num.set_property(PropertyKey::from("prototype"), JsValue::Object(number_prototype.clone()));
+        num.set_property(
+            PropertyKey::from("prototype"),
+            JsValue::Object(number_prototype.clone()),
+        );
     }
     constructor
 }
 
 // Number.isNaN - stricter, no type coercion
-pub fn number_is_nan(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn number_is_nan(
+    _interp: &mut Interpreter,
+    _this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     match args.first() {
         Some(JsValue::Number(n)) => Ok(JsValue::Boolean(n.is_nan())),
         _ => Ok(JsValue::Boolean(false)),
@@ -116,7 +156,11 @@ pub fn number_is_nan(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValu
 }
 
 // Number.isFinite - stricter, no type coercion
-pub fn number_is_finite(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn number_is_finite(
+    _interp: &mut Interpreter,
+    _this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     match args.first() {
         Some(JsValue::Number(n)) => Ok(JsValue::Boolean(n.is_finite())),
         _ => Ok(JsValue::Boolean(false)),
@@ -124,7 +168,11 @@ pub fn number_is_finite(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsV
 }
 
 // Number.isInteger
-pub fn number_is_integer(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn number_is_integer(
+    _interp: &mut Interpreter,
+    _this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     match args.first() {
         Some(JsValue::Number(n)) => {
             let is_int = n.is_finite() && n.trunc() == *n;
@@ -135,7 +183,11 @@ pub fn number_is_integer(_interp: &mut Interpreter, _this: JsValue, args: Vec<Js
 }
 
 // Number.isSafeInteger
-pub fn number_is_safe_integer(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn number_is_safe_integer(
+    _interp: &mut Interpreter,
+    _this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     const MAX_SAFE: f64 = 9007199254740991.0;
     match args.first() {
         Some(JsValue::Number(n)) => {
@@ -147,12 +199,18 @@ pub fn number_is_safe_integer(_interp: &mut Interpreter, _this: JsValue, args: V
 }
 
 // Number.prototype.toFixed
-pub fn number_to_fixed(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn number_to_fixed(
+    _interp: &mut Interpreter,
+    this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let n = this.to_number();
     let digits = args.first().map(|v| v.to_number() as i32).unwrap_or(0);
 
     if digits < 0 || digits > 100 {
-        return Err(JsError::range_error("toFixed() digits argument must be between 0 and 100"));
+        return Err(JsError::range_error(
+            "toFixed() digits argument must be between 0 and 100",
+        ));
     }
 
     let result = format!("{:.prec$}", n, prec = digits as usize);
@@ -160,12 +218,18 @@ pub fn number_to_fixed(_interp: &mut Interpreter, this: JsValue, args: Vec<JsVal
 }
 
 // Number.prototype.toString
-pub fn number_to_string(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn number_to_string(
+    _interp: &mut Interpreter,
+    this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let n = this.to_number();
     let radix = args.first().map(|v| v.to_number() as i32).unwrap_or(10);
 
     if radix < 2 || radix > 36 {
-        return Err(JsError::range_error("toString() radix must be between 2 and 36"));
+        return Err(JsError::range_error(
+            "toString() radix must be between 2 and 36",
+        ));
     }
 
     if radix == 10 {
@@ -208,7 +272,11 @@ pub fn number_to_string(_interp: &mut Interpreter, this: JsValue, args: Vec<JsVa
 }
 
 // Number.prototype.toPrecision
-pub fn number_to_precision(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn number_to_precision(
+    _interp: &mut Interpreter,
+    this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let n = this.to_number();
 
     if args.is_empty() || matches!(args.first(), Some(JsValue::Undefined)) {
@@ -218,7 +286,9 @@ pub fn number_to_precision(_interp: &mut Interpreter, this: JsValue, args: Vec<J
     let precision = args.first().map(|v| v.to_number() as i32).unwrap_or(1);
 
     if precision < 1 || precision > 100 {
-        return Err(JsError::range_error("toPrecision() argument must be between 1 and 100"));
+        return Err(JsError::range_error(
+            "toPrecision() argument must be between 1 and 100",
+        ));
     }
 
     if !n.is_finite() {
@@ -236,26 +306,41 @@ pub fn number_to_precision(_interp: &mut Interpreter, this: JsValue, args: Vec<J
         if exp >= 0 && exp < precision {
             let decimals = precision - 1 - exp;
             if decimals >= 0 {
-                return Ok(JsValue::String(JsString::from(format!("{:.prec$}", n, prec = decimals as usize))));
+                return Ok(JsValue::String(JsString::from(format!(
+                    "{:.prec$}",
+                    n,
+                    prec = decimals as usize
+                ))));
             }
         } else if exp < 0 && exp >= -(4) {
             // For small numbers, use fixed notation
             let decimals = precision as i32 - 1 - exp;
             if decimals >= 0 && decimals <= 100 {
-                return Ok(JsValue::String(JsString::from(format!("{:.prec$}", n, prec = decimals as usize))));
+                return Ok(JsValue::String(JsString::from(format!(
+                    "{:.prec$}",
+                    n,
+                    prec = decimals as usize
+                ))));
             }
         }
 
         // Use exponential notation
         let exp_sign = if exp >= 0 { "+" } else { "" };
-        return Ok(JsValue::String(JsString::from(format!("{}e{}{}", mantissa, exp_sign, exp))));
+        return Ok(JsValue::String(JsString::from(format!(
+            "{}e{}{}",
+            mantissa, exp_sign, exp
+        ))));
     }
 
     Ok(JsValue::String(JsString::from(format!("{}", n))))
 }
 
 // Number.prototype.toExponential
-pub fn number_to_exponential(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn number_to_exponential(
+    _interp: &mut Interpreter,
+    this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let n = this.to_number();
 
     if !n.is_finite() {
@@ -265,7 +350,9 @@ pub fn number_to_exponential(_interp: &mut Interpreter, this: JsValue, args: Vec
     let digits = args.first().map(|v| v.to_number() as i32).unwrap_or(6);
 
     if digits < 0 || digits > 100 {
-        return Err(JsError::range_error("toExponential() argument must be between 0 and 100"));
+        return Err(JsError::range_error(
+            "toExponential() argument must be between 0 and 100",
+        ));
     }
 
     let result = format!("{:.prec$e}", n, prec = digits as usize);

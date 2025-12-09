@@ -156,7 +156,11 @@ impl Interpreter {
         // Add basic global values
         env.define("undefined".to_string(), JsValue::Undefined, false);
         env.define("NaN".to_string(), JsValue::Number(f64::NAN), false);
-        env.define("Infinity".to_string(), JsValue::Number(f64::INFINITY), false);
+        env.define(
+            "Infinity".to_string(),
+            JsValue::Number(f64::INFINITY),
+            false,
+        );
 
         // Create prototypes using builtin module functions
         let object_prototype = create_object_prototype();
@@ -175,22 +179,42 @@ impl Interpreter {
 
         // Create and register constructors
         let object_constructor = create_object_constructor();
-        env.define("Object".to_string(), JsValue::Object(object_constructor), false);
+        env.define(
+            "Object".to_string(),
+            JsValue::Object(object_constructor),
+            false,
+        );
 
         let array_constructor = create_array_constructor(&array_prototype);
-        env.define("Array".to_string(), JsValue::Object(array_constructor), false);
+        env.define(
+            "Array".to_string(),
+            JsValue::Object(array_constructor),
+            false,
+        );
 
         let string_constructor = create_string_constructor(&string_prototype);
-        env.define("String".to_string(), JsValue::Object(string_constructor), false);
+        env.define(
+            "String".to_string(),
+            JsValue::Object(string_constructor),
+            false,
+        );
 
         let number_constructor = create_number_constructor(&number_prototype);
-        env.define("Number".to_string(), JsValue::Object(number_constructor), false);
+        env.define(
+            "Number".to_string(),
+            JsValue::Object(number_constructor),
+            false,
+        );
 
         let date_constructor = create_date_constructor(&date_prototype);
         env.define("Date".to_string(), JsValue::Object(date_constructor), false);
 
         let regexp_constructor = create_regexp_constructor(&regexp_prototype);
-        env.define("RegExp".to_string(), JsValue::Object(regexp_constructor), false);
+        env.define(
+            "RegExp".to_string(),
+            JsValue::Object(regexp_constructor),
+            false,
+        );
 
         let map_constructor = create_map_constructor();
         env.define("Map".to_string(), JsValue::Object(map_constructor), false);
@@ -213,22 +237,58 @@ impl Interpreter {
 
         // Register error constructors
         let error_ctors = create_error_constructors(&error_prototype);
-        env.define("Error".to_string(), JsValue::Object(error_ctors.error), false);
-        env.define("TypeError".to_string(), JsValue::Object(error_ctors.type_error), false);
-        env.define("ReferenceError".to_string(), JsValue::Object(error_ctors.reference_error), false);
-        env.define("SyntaxError".to_string(), JsValue::Object(error_ctors.syntax_error), false);
-        env.define("RangeError".to_string(), JsValue::Object(error_ctors.range_error), false);
-        env.define("URIError".to_string(), JsValue::Object(error_ctors.uri_error), false);
-        env.define("EvalError".to_string(), JsValue::Object(error_ctors.eval_error), false);
+        env.define(
+            "Error".to_string(),
+            JsValue::Object(error_ctors.error),
+            false,
+        );
+        env.define(
+            "TypeError".to_string(),
+            JsValue::Object(error_ctors.type_error),
+            false,
+        );
+        env.define(
+            "ReferenceError".to_string(),
+            JsValue::Object(error_ctors.reference_error),
+            false,
+        );
+        env.define(
+            "SyntaxError".to_string(),
+            JsValue::Object(error_ctors.syntax_error),
+            false,
+        );
+        env.define(
+            "RangeError".to_string(),
+            JsValue::Object(error_ctors.range_error),
+            false,
+        );
+        env.define(
+            "URIError".to_string(),
+            JsValue::Object(error_ctors.uri_error),
+            false,
+        );
+        env.define(
+            "EvalError".to_string(),
+            JsValue::Object(error_ctors.eval_error),
+            false,
+        );
 
         // Register Symbol constructor
         let well_known_symbols = get_well_known_symbols();
         let symbol_constructor = create_symbol_constructor(&symbol_prototype, &well_known_symbols);
-        env.define("Symbol".to_string(), JsValue::Object(symbol_constructor), false);
+        env.define(
+            "Symbol".to_string(),
+            JsValue::Object(symbol_constructor),
+            false,
+        );
 
         // Register Promise constructor
         let promise_constructor = create_promise_constructor(&promise_prototype);
-        env.define("Promise".to_string(), JsValue::Object(promise_constructor), false);
+        env.define(
+            "Promise".to_string(),
+            JsValue::Object(promise_constructor),
+            false,
+        );
 
         Self {
             global,
@@ -267,7 +327,10 @@ impl Interpreter {
         let mut trace = format!("{}: {}", error_name, message);
         for frame in self.call_stack.iter().rev() {
             if let Some((line, col)) = frame.location {
-                trace.push_str(&format!("\n    at {} (line {}:{})", frame.function_name, line, col));
+                trace.push_str(&format!(
+                    "\n    at {} (line {}:{})",
+                    frame.function_name, line, col
+                ));
             } else {
                 trace.push_str(&format!("\n    at {}", frame.function_name));
             }
@@ -389,8 +452,8 @@ impl Interpreter {
             }
             // Clone AST and environment to release borrow before execution
             (
-                state.body.clone(),       // AST clone - needed to release borrow
-                state.closure.clone(),    // Environment clone - needed for execution context
+                state.body.clone(),    // AST clone - needed to release borrow
+                state.closure.clone(), // Environment clone - needed for execution context
                 state.stmt_index,
                 state.sent_value.clone(), // JsValue clone - may contain Rc types
                 state.params.clone(),     // AST clone - needed for parameter binding
@@ -470,10 +533,7 @@ impl Interpreter {
     ///
     /// This method supports suspension at import/await points by returning
     /// RuntimeResult::ImportAwaited or RuntimeResult::AsyncAwaited.
-    pub fn execute(
-        &mut self,
-        program: &Program,
-    ) -> Result<crate::RuntimeResult, JsError> {
+    pub fn execute(&mut self, program: &Program) -> Result<crate::RuntimeResult, JsError> {
         // Hoist var declarations at global scope
         self.hoist_var_declarations(&program.body);
 
@@ -553,7 +613,9 @@ impl Interpreter {
 
                     for spec in &import_decl.specifiers {
                         match spec {
-                            ImportSpecifier::Named { local, imported, .. } => {
+                            ImportSpecifier::Named {
+                                local, imported, ..
+                            } => {
                                 // String clones - needed to store in ImportBindings
                                 named.push((imported.name.clone(), local.name.clone()));
                             }
@@ -581,7 +643,10 @@ impl Interpreter {
                     }
                 };
 
-                self.static_imports.push(StaticImport { specifier, bindings });
+                self.static_imports.push(StaticImport {
+                    specifier,
+                    bindings,
+                });
             }
         }
     }
@@ -591,16 +656,15 @@ impl Interpreter {
         // Check if there are more imports to process
         if self.static_import_index < self.static_imports.len() {
             // String clone - specifier needed for both self and return value
-            let specifier = self.static_imports[self.static_import_index].specifier.clone();
+            let specifier = self.static_imports[self.static_import_index]
+                .specifier
+                .clone();
             let slot = crate::PendingSlot::new(self.generate_slot_id());
 
             self.static_import_index += 1;
             self.pending_slot = Some(slot.cheap_clone());
 
-            return Ok(crate::RuntimeResult::ImportAwaited {
-                slot,
-                specifier,
-            });
+            return Ok(crate::RuntimeResult::ImportAwaited { slot, specifier });
         }
 
         // All imports resolved - start program execution
@@ -693,13 +757,9 @@ impl Interpreter {
                 self.process_execute_program(statements, index)
             }
 
-            EvalFrame::ExecuteStmt(stmt) => {
-                self.process_execute_stmt(*stmt)
-            }
+            EvalFrame::ExecuteStmt(stmt) => self.process_execute_stmt(*stmt),
 
-            EvalFrame::EvaluateExpr(expr) => {
-                self.process_evaluate_expr(*expr)
-            }
+            EvalFrame::EvaluateExpr(expr) => self.process_evaluate_expr(*expr),
 
             // For frames not yet converted, use existing recursive methods
             // These will be implemented as we convert more expression/statement types
@@ -746,9 +806,8 @@ impl Interpreter {
             }
             Completion::Return(val) => {
                 // Clear remaining program execution and return
-                self.eval_stack.retain(|f| {
-                    !matches!(f, eval_stack::EvalFrame::ExecuteProgram { .. })
-                });
+                self.eval_stack
+                    .retain(|f| !matches!(f, eval_stack::EvalFrame::ExecuteProgram { .. }));
                 self.value_stack.clear();
                 self.value_stack.push(val);
             }
@@ -881,13 +940,13 @@ impl Interpreter {
                 Ok(Completion::Return(value))
             }
 
-            Statement::Break(brk) => {
-                Ok(Completion::Break(brk.label.as_ref().map(|l| l.name.clone())))
-            }
+            Statement::Break(brk) => Ok(Completion::Break(
+                brk.label.as_ref().map(|l| l.name.clone()),
+            )),
 
-            Statement::Continue(cont) => {
-                Ok(Completion::Continue(cont.label.as_ref().map(|l| l.name.clone())))
-            }
+            Statement::Continue(cont) => Ok(Completion::Continue(
+                cont.label.as_ref().map(|l| l.name.clone()),
+            )),
 
             Statement::Throw(throw) => {
                 let value = self.evaluate(&throw.argument)?;
@@ -969,9 +1028,13 @@ impl Interpreter {
                     if matched {
                         for stmt in &case.consequent {
                             match self.execute_statement(stmt)? {
-                                Completion::Break(_) => return Ok(Completion::Normal(JsValue::Undefined)),
+                                Completion::Break(_) => {
+                                    return Ok(Completion::Normal(JsValue::Undefined))
+                                }
                                 Completion::Return(val) => return Ok(Completion::Return(val)),
-                                Completion::Continue(label) => return Ok(Completion::Continue(label)),
+                                Completion::Continue(label) => {
+                                    return Ok(Completion::Continue(label))
+                                }
                                 Completion::Normal(_) => {}
                             }
                         }
@@ -984,9 +1047,13 @@ impl Interpreter {
                         for case in switch.cases.iter().skip(idx) {
                             for stmt in &case.consequent {
                                 match self.execute_statement(stmt)? {
-                                    Completion::Break(_) => return Ok(Completion::Normal(JsValue::Undefined)),
+                                    Completion::Break(_) => {
+                                        return Ok(Completion::Normal(JsValue::Undefined))
+                                    }
                                     Completion::Return(val) => return Ok(Completion::Return(val)),
-                                    Completion::Continue(label) => return Ok(Completion::Continue(label)),
+                                    Completion::Continue(label) => {
+                                        return Ok(Completion::Continue(label))
+                                    }
                                     Completion::Normal(_) => {}
                                 }
                             }
@@ -1027,9 +1094,7 @@ impl Interpreter {
                 Ok(Completion::Normal(JsValue::Undefined))
             }
 
-            Statement::Empty | Statement::Debugger => {
-                Ok(Completion::Normal(JsValue::Undefined))
-            }
+            Statement::Empty | Statement::Debugger => Ok(Completion::Normal(JsValue::Undefined)),
 
             Statement::Labeled(labeled) => {
                 let label_name = labeled.label.name.clone();
@@ -1056,7 +1121,7 @@ impl Interpreter {
                             Completion::Break(Some(ref l)) if l == &label_name => {
                                 Ok(Completion::Normal(JsValue::Undefined))
                             }
-                            other => Ok(other)
+                            other => Ok(other),
                         }
                     }
                 }
@@ -1220,7 +1285,8 @@ impl Interpreter {
         let func_obj = create_function(JsFunction::Interpreted(func));
 
         if let Some(id) = &decl.id {
-            self.env.define(id.name.clone(), JsValue::Object(func_obj), true);
+            self.env
+                .define(id.name.clone(), JsValue::Object(func_obj), true);
         }
 
         Ok(())
@@ -1231,7 +1297,11 @@ impl Interpreter {
 
         // Bind the class name first (so static blocks can reference it)
         if let Some(id) = &class.id {
-            self.env.define(id.name.clone(), JsValue::Object(constructor_fn.clone()), false);
+            self.env.define(
+                id.name.clone(),
+                JsValue::Object(constructor_fn.clone()),
+                false,
+            );
         }
 
         // Now execute static blocks - they can reference the class name
@@ -1250,25 +1320,32 @@ impl Interpreter {
         Ok(())
     }
 
-    fn create_class_constructor(&mut self, class: &ClassDeclaration) -> Result<JsObjectRef, JsError> {
+    fn create_class_constructor(
+        &mut self,
+        class: &ClassDeclaration,
+    ) -> Result<JsObjectRef, JsError> {
         // Handle extends - evaluate superclass first
-        let super_constructor: Option<JsObjectRef> = if let Some(super_class_expr) = &class.super_class {
-            let super_val = self.evaluate(super_class_expr)?;
-            if let JsValue::Object(sc) = super_val {
-                Some(sc)
+        let super_constructor: Option<JsObjectRef> =
+            if let Some(super_class_expr) = &class.super_class {
+                let super_val = self.evaluate(super_class_expr)?;
+                if let JsValue::Object(sc) = super_val {
+                    Some(sc)
+                } else {
+                    return Err(JsError::type_error(
+                        "Class extends value is not a constructor",
+                    ));
+                }
             } else {
-                return Err(JsError::type_error("Class extends value is not a constructor"));
-            }
-        } else {
-            None
-        };
+                None
+            };
 
         // Create prototype object
         let prototype = create_object();
 
         // If we have a superclass, set up prototype chain
         if let Some(ref super_ctor) = super_constructor {
-            let super_proto = super_ctor.borrow()
+            let super_proto = super_ctor
+                .borrow()
                 .get_property(&PropertyKey::from("prototype"));
             if let Some(JsValue::Object(sp)) = super_proto {
                 prototype.borrow_mut().prototype = Some(sp);
@@ -1309,7 +1386,10 @@ impl Interpreter {
 
         // Collect getters, setters, and regular methods separately
         // We need to combine getters and setters with the same name into one accessor property
-        let mut accessors: std::collections::HashMap<String, (Option<JsObjectRef>, Option<JsObjectRef>)> = std::collections::HashMap::new();
+        let mut accessors: std::collections::HashMap<
+            String,
+            (Option<JsObjectRef>, Option<JsObjectRef>),
+        > = std::collections::HashMap::new();
         let mut regular_methods: Vec<(String, JsObjectRef)> = Vec::new();
 
         for method in &instance_methods {
@@ -1362,18 +1442,16 @@ impl Interpreter {
 
         // Add accessor properties
         for (name, (getter, setter)) in accessors {
-            prototype.borrow_mut().define_property(
-                PropertyKey::from(name),
-                Property::accessor(getter, setter),
-            );
+            prototype
+                .borrow_mut()
+                .define_property(PropertyKey::from(name), Property::accessor(getter, setter));
         }
 
         // Add regular methods
         for (name, func_obj) in regular_methods {
-            prototype.borrow_mut().set_property(
-                PropertyKey::from(name),
-                JsValue::Object(func_obj),
-            );
+            prototype
+                .borrow_mut()
+                .set_property(PropertyKey::from(name), JsValue::Object(func_obj));
         }
 
         // Build constructor body that initializes instance fields then runs user constructor
@@ -1423,7 +1501,10 @@ impl Interpreter {
         // We'll use a special internal format
         {
             let mut ctor = constructor_fn.borrow_mut();
-            ctor.set_property(PropertyKey::from("prototype"), JsValue::Object(prototype.cheap_clone()));
+            ctor.set_property(
+                PropertyKey::from("prototype"),
+                JsValue::Object(prototype.cheap_clone()),
+            );
 
             // Store field initializers as internal data
             // For now, we'll evaluate them at class definition time and store as default values
@@ -1447,10 +1528,7 @@ impl Interpreter {
             // Then create the fields array
             let mut field_pairs: Vec<JsValue> = Vec::new();
             for (name, value) in field_values {
-                let pair = self.create_array(vec![
-                    JsValue::String(JsString::from(name)),
-                    value,
-                ]);
+                let pair = self.create_array(vec![JsValue::String(JsString::from(name)), value]);
                 field_pairs.push(JsValue::Object(pair));
             }
 
@@ -1470,7 +1548,10 @@ impl Interpreter {
         }
 
         // Collect static getters, setters, and regular methods separately
-        let mut static_accessors: std::collections::HashMap<String, (Option<JsObjectRef>, Option<JsObjectRef>)> = std::collections::HashMap::new();
+        let mut static_accessors: std::collections::HashMap<
+            String,
+            (Option<JsObjectRef>, Option<JsObjectRef>),
+        > = std::collections::HashMap::new();
         let mut static_regular_methods: Vec<(String, JsObjectRef)> = Vec::new();
 
         for method in &static_methods {
@@ -1515,18 +1596,16 @@ impl Interpreter {
 
         // Add static accessor properties
         for (name, (getter, setter)) in static_accessors {
-            constructor_fn.borrow_mut().define_property(
-                PropertyKey::from(name),
-                Property::accessor(getter, setter),
-            );
+            constructor_fn
+                .borrow_mut()
+                .define_property(PropertyKey::from(name), Property::accessor(getter, setter));
         }
 
         // Add static regular methods
         for (name, func_obj) in static_regular_methods {
-            constructor_fn.borrow_mut().set_property(
-                PropertyKey::from(name),
-                JsValue::Object(func_obj),
-            );
+            constructor_fn
+                .borrow_mut()
+                .set_property(PropertyKey::from(name), JsValue::Object(func_obj));
         }
 
         // Initialize static fields
@@ -1543,7 +1622,9 @@ impl Interpreter {
                 JsValue::Undefined
             };
 
-            constructor_fn.borrow_mut().set_property(PropertyKey::from(name), value);
+            constructor_fn
+                .borrow_mut()
+                .set_property(PropertyKey::from(name), value);
         }
 
         // Set prototype.constructor = constructor
@@ -1573,10 +1654,8 @@ impl Interpreter {
             };
 
             // Forward mapping: name -> value
-            obj.borrow_mut().set_property(
-                PropertyKey::from(member.id.name.as_str()),
-                value.clone(),
-            );
+            obj.borrow_mut()
+                .set_property(PropertyKey::from(member.id.name.as_str()), value.clone());
 
             // Reverse mapping for numeric enums: value -> name
             if let JsValue::Number(n) = &value {
@@ -1587,7 +1666,8 @@ impl Interpreter {
             }
         }
 
-        self.env.define(enum_decl.id.name.clone(), JsValue::Object(obj), false);
+        self.env
+            .define(enum_decl.id.name.clone(), JsValue::Object(obj), false);
         Ok(())
     }
 
@@ -1640,10 +1720,9 @@ impl Interpreter {
                     self.execute_function_declaration(func_decl)?;
                     if let Some(id) = &func_decl.id {
                         let value = self.env.get(&id.name)?;
-                        ns_obj.borrow_mut().set_property(
-                            PropertyKey::from(id.name.as_str()),
-                            value,
-                        );
+                        ns_obj
+                            .borrow_mut()
+                            .set_property(PropertyKey::from(id.name.as_str()), value);
                     }
                 }
                 Statement::VariableDeclaration(var_decl) => {
@@ -1657,19 +1736,17 @@ impl Interpreter {
                     self.execute_class_declaration(class_decl)?;
                     if let Some(id) = &class_decl.id {
                         let value = self.env.get(&id.name)?;
-                        ns_obj.borrow_mut().set_property(
-                            PropertyKey::from(id.name.as_str()),
-                            value,
-                        );
+                        ns_obj
+                            .borrow_mut()
+                            .set_property(PropertyKey::from(id.name.as_str()), value);
                     }
                 }
                 Statement::NamespaceDeclaration(inner_ns) => {
                     self.execute_namespace(inner_ns)?;
                     let value = self.env.get(&inner_ns.id.name)?;
-                    ns_obj.borrow_mut().set_property(
-                        PropertyKey::from(inner_ns.id.name.as_str()),
-                        value,
-                    );
+                    ns_obj
+                        .borrow_mut()
+                        .set_property(PropertyKey::from(inner_ns.id.name.as_str()), value);
                 }
                 _ => {
                     self.execute_statement(declaration)?;
@@ -1687,10 +1764,9 @@ impl Interpreter {
         match pattern {
             Pattern::Identifier(id) => {
                 let value = self.env.get(&id.name)?;
-                ns_obj.borrow_mut().set_property(
-                    PropertyKey::from(id.name.as_str()),
-                    value,
-                );
+                ns_obj
+                    .borrow_mut()
+                    .set_property(PropertyKey::from(id.name.as_str()), value);
             }
             Pattern::Object(obj_pat) => {
                 for prop in &obj_pat.properties {
@@ -1844,7 +1920,11 @@ impl Interpreter {
         self.execute_for_labeled(for_stmt, None)
     }
 
-    fn execute_for_labeled(&mut self, for_stmt: &ForStatement, label: Option<&str>) -> Result<Completion, JsError> {
+    fn execute_for_labeled(
+        &mut self,
+        for_stmt: &ForStatement,
+        label: Option<&str>,
+    ) -> Result<Completion, JsError> {
         let prev_env = self.env.clone();
         self.env = Environment::with_outer(self.env.clone());
 
@@ -1983,18 +2063,21 @@ impl Interpreter {
         self.execute_for_in_labeled(for_in, None)
     }
 
-    fn execute_for_in_labeled(&mut self, for_in: &ForInStatement, label: Option<&str>) -> Result<Completion, JsError> {
+    fn execute_for_in_labeled(
+        &mut self,
+        for_in: &ForInStatement,
+        label: Option<&str>,
+    ) -> Result<Completion, JsError> {
         let right = self.evaluate(&for_in.right)?;
 
         let keys = match &right {
-            JsValue::Object(obj) => {
-                obj.borrow()
-                    .properties
-                    .iter()
-                    .filter(|(key, prop)| prop.enumerable && !key.is_symbol())
-                    .map(|(key, _)| key.to_string())
-                    .collect::<Vec<_>>()
-            }
+            JsValue::Object(obj) => obj
+                .borrow()
+                .properties
+                .iter()
+                .filter(|(key, prop)| prop.enumerable && !key.is_symbol())
+                .map(|(key, _)| key.to_string())
+                .collect::<Vec<_>>(),
             _ => vec![],
         };
 
@@ -2052,7 +2135,11 @@ impl Interpreter {
         self.execute_for_of_labeled(for_of, None)
     }
 
-    fn execute_for_of_labeled(&mut self, for_of: &ForOfStatement, label: Option<&str>) -> Result<Completion, JsError> {
+    fn execute_for_of_labeled(
+        &mut self,
+        for_of: &ForOfStatement,
+        label: Option<&str>,
+    ) -> Result<Completion, JsError> {
         let right = self.evaluate(&for_of.right)?;
 
         let items = match &right {
@@ -2073,9 +2160,11 @@ impl Interpreter {
                     _ => vec![],
                 }
             }
-            JsValue::String(s) => {
-                s.as_str().chars().map(|c| JsValue::from(c.to_string())).collect()
-            }
+            JsValue::String(s) => s
+                .as_str()
+                .chars()
+                .map(|c| JsValue::from(c.to_string()))
+                .collect(),
             _ => vec![],
         };
 
@@ -2127,7 +2216,11 @@ impl Interpreter {
         Ok(Completion::Normal(JsValue::Undefined))
     }
 
-    fn execute_while_labeled(&mut self, while_stmt: &WhileStatement, label: Option<&str>) -> Result<Completion, JsError> {
+    fn execute_while_labeled(
+        &mut self,
+        while_stmt: &WhileStatement,
+        label: Option<&str>,
+    ) -> Result<Completion, JsError> {
         loop {
             let test = self.evaluate(&while_stmt.test)?;
             if !test.to_boolean() {
@@ -2153,7 +2246,11 @@ impl Interpreter {
         Ok(Completion::Normal(JsValue::Undefined))
     }
 
-    fn execute_do_while_labeled(&mut self, do_while: &DoWhileStatement, label: Option<&str>) -> Result<Completion, JsError> {
+    fn execute_do_while_labeled(
+        &mut self,
+        do_while: &DoWhileStatement,
+        label: Option<&str>,
+    ) -> Result<Completion, JsError> {
         loop {
             match self.execute_statement(&do_while.body)? {
                 Completion::Break(None) => break,
@@ -2178,7 +2275,12 @@ impl Interpreter {
         Ok(Completion::Normal(JsValue::Undefined))
     }
 
-    fn bind_pattern(&mut self, pattern: &Pattern, value: JsValue, mutable: bool) -> Result<(), JsError> {
+    fn bind_pattern(
+        &mut self,
+        pattern: &Pattern,
+        value: JsValue,
+        mutable: bool,
+    ) -> Result<(), JsError> {
         match pattern {
             Pattern::Identifier(id) => {
                 // String clone - env.define takes ownership
@@ -2194,7 +2296,11 @@ impl Interpreter {
 
                 for prop in &obj_pattern.properties {
                     match prop {
-                        ObjectPatternProperty::KeyValue { key, value: pattern, .. } => {
+                        ObjectPatternProperty::KeyValue {
+                            key,
+                            value: pattern,
+                            ..
+                        } => {
                             let key_str = match key {
                                 ObjectPropertyKey::Identifier(id) => id.name.clone(),
                                 ObjectPropertyKey::String(s) => s.value.clone(),
@@ -2253,7 +2359,8 @@ impl Interpreter {
                     if let Some(pattern) = elem {
                         match pattern {
                             Pattern::Rest(rest) => {
-                                let remaining: Vec<JsValue> = items.iter().skip(i).cloned().collect();
+                                let remaining: Vec<JsValue> =
+                                    items.iter().skip(i).cloned().collect();
                                 self.bind_pattern(
                                     &rest.argument,
                                     JsValue::Object(create_array(remaining)),
@@ -2281,9 +2388,7 @@ impl Interpreter {
                 self.bind_pattern(&assign.left, val, mutable)
             }
 
-            Pattern::Rest(rest) => {
-                self.bind_pattern(&rest.argument, value, mutable)
-            }
+            Pattern::Rest(rest) => self.bind_pattern(&rest.argument, value, mutable),
         }
     }
 
@@ -2311,7 +2416,11 @@ impl Interpreter {
 
                 for prop in &obj_pattern.properties {
                     match prop {
-                        ObjectPatternProperty::KeyValue { key, value: pattern, .. } => {
+                        ObjectPatternProperty::KeyValue {
+                            key,
+                            value: pattern,
+                            ..
+                        } => {
                             let key_str = match key {
                                 ObjectPropertyKey::Identifier(id) => id.name.clone(),
                                 ObjectPropertyKey::String(s) => s.value.clone(),
@@ -2368,7 +2477,8 @@ impl Interpreter {
                     if let Some(pattern) = elem {
                         match pattern {
                             Pattern::Rest(rest) => {
-                                let remaining: Vec<JsValue> = items.iter().skip(i).cloned().collect();
+                                let remaining: Vec<JsValue> =
+                                    items.iter().skip(i).cloned().collect();
                                 self.bind_pattern_var(
                                     &rest.argument,
                                     JsValue::Object(create_array(remaining)),
@@ -2395,9 +2505,7 @@ impl Interpreter {
                 self.bind_pattern_var(&assign.left, val)
             }
 
-            Pattern::Rest(rest) => {
-                self.bind_pattern_var(&rest.argument, value)
-            }
+            Pattern::Rest(rest) => self.bind_pattern_var(&rest.argument, value),
         }
     }
 
@@ -2406,9 +2514,7 @@ impl Interpreter {
         match expr {
             Expression::Literal(lit) => self.evaluate_literal(&lit.value),
 
-            Expression::Identifier(id) => {
-                self.env.get(&id.name)
-            }
+            Expression::Identifier(id) => self.env.get(&id.name),
 
             Expression::This(_) => {
                 // Look up 'this' from the environment
@@ -2428,7 +2534,9 @@ impl Interpreter {
                                 let obj_ref = obj.borrow();
                                 if let ExoticObject::Array { length } = &obj_ref.exotic {
                                     for i in 0..*length {
-                                        if let Some(v) = obj_ref.get_property(&PropertyKey::Index(i)) {
+                                        if let Some(v) =
+                                            obj_ref.get_property(&PropertyKey::Index(i))
+                                        {
                                             elements.push(v);
                                         }
                                     }
@@ -2486,7 +2594,9 @@ impl Interpreter {
                                 let src_ref = src.borrow();
                                 for (key, prop) in src_ref.properties.iter() {
                                     if prop.enumerable {
-                                        result.borrow_mut().set_property(key.clone(), prop.value.clone());
+                                        result
+                                            .borrow_mut()
+                                            .set_property(key.clone(), prop.value.clone());
                                     }
                                 }
                             }
@@ -2506,7 +2616,9 @@ impl Interpreter {
                     generator: func.generator,
                     async_: func.async_,
                 };
-                Ok(JsValue::Object(create_function(JsFunction::Interpreted(interpreted))))
+                Ok(JsValue::Object(create_function(JsFunction::Interpreted(
+                    interpreted,
+                ))))
             }
 
             Expression::ArrowFunction(arrow) => {
@@ -2519,7 +2631,9 @@ impl Interpreter {
                     generator: false, // Arrow functions cannot be generators
                     async_: arrow.async_,
                 };
-                Ok(JsValue::Object(create_function(JsFunction::Interpreted(interpreted))))
+                Ok(JsValue::Object(create_function(JsFunction::Interpreted(
+                    interpreted,
+                ))))
             }
 
             Expression::Unary(unary) => self.evaluate_unary(unary),
@@ -2647,7 +2761,9 @@ impl Interpreter {
 
             Expression::Yield(yield_expr) => {
                 // Check if we're in a generator context
-                let _ctx = self.generator_context.as_mut()
+                let _ctx = self
+                    .generator_context
+                    .as_mut()
                     .ok_or_else(|| JsError::syntax_error("yield outside of generator", 0, 0))?;
 
                 // Evaluate the yield argument
@@ -2663,7 +2779,9 @@ impl Interpreter {
                                 let obj_ref = obj.borrow();
                                 match &obj_ref.exotic {
                                     ExoticObject::Array { length } => (true, *length, None),
-                                    ExoticObject::Generator(gen) => (false, 0, Some(gen.cheap_clone())),
+                                    ExoticObject::Generator(gen) => {
+                                        (false, 0, Some(gen.cheap_clone()))
+                                    }
                                     _ => return Err(JsError::type_error("yield* on non-iterable")),
                                 }
                             };
@@ -2671,7 +2789,8 @@ impl Interpreter {
                             if is_array {
                                 // Yield each array element
                                 for i in 0..length {
-                                    let elem = obj.borrow()
+                                    let elem = obj
+                                        .borrow()
                                         .get_property(&PropertyKey::Index(i))
                                         .unwrap_or(JsValue::Undefined);
 
@@ -2690,11 +2809,13 @@ impl Interpreter {
                                     let JsValue::Object(res_obj) = &result else {
                                         return Ok(JsValue::Undefined);
                                     };
-                                    let done = res_obj.borrow()
+                                    let done = res_obj
+                                        .borrow()
                                         .get_property(&PropertyKey::from("done"))
                                         .map(|v| v.to_boolean())
                                         .unwrap_or(false);
-                                    let value = res_obj.borrow()
+                                    let value = res_obj
+                                        .borrow()
                                         .get_property(&PropertyKey::from("value"))
                                         .unwrap_or(JsValue::Undefined);
 
@@ -2723,7 +2844,9 @@ impl Interpreter {
                 };
 
                 // Re-get the mutable context after evaluation
-                let ctx = self.generator_context.as_mut()
+                let ctx = self
+                    .generator_context
+                    .as_mut()
                     .ok_or_else(|| JsError::syntax_error("yield outside of generator", 0, 0))?;
 
                 // Check if we should throw
@@ -2917,12 +3040,24 @@ impl Interpreter {
             BinaryOp::StrictNotEq => JsValue::Boolean(!left.strict_equals(&right)),
 
             // Bitwise
-            BinaryOp::BitAnd => JsValue::Number((left.to_number() as i32 & right.to_number() as i32) as f64),
-            BinaryOp::BitOr => JsValue::Number((left.to_number() as i32 | right.to_number() as i32) as f64),
-            BinaryOp::BitXor => JsValue::Number((left.to_number() as i32 ^ right.to_number() as i32) as f64),
-            BinaryOp::LShift => JsValue::Number(((left.to_number() as i32) << (right.to_number() as u32 & 0x1f)) as f64),
-            BinaryOp::RShift => JsValue::Number(((left.to_number() as i32) >> (right.to_number() as u32 & 0x1f)) as f64),
-            BinaryOp::URShift => JsValue::Number((((left.to_number() as i32) as u32) >> (right.to_number() as u32 & 0x1f)) as f64),
+            BinaryOp::BitAnd => {
+                JsValue::Number((left.to_number() as i32 & right.to_number() as i32) as f64)
+            }
+            BinaryOp::BitOr => {
+                JsValue::Number((left.to_number() as i32 | right.to_number() as i32) as f64)
+            }
+            BinaryOp::BitXor => {
+                JsValue::Number((left.to_number() as i32 ^ right.to_number() as i32) as f64)
+            }
+            BinaryOp::LShift => JsValue::Number(
+                ((left.to_number() as i32) << (right.to_number() as u32 & 0x1f)) as f64,
+            ),
+            BinaryOp::RShift => JsValue::Number(
+                ((left.to_number() as i32) >> (right.to_number() as u32 & 0x1f)) as f64,
+            ),
+            BinaryOp::URShift => JsValue::Number(
+                (((left.to_number() as i32) as u32) >> (right.to_number() as u32 & 0x1f)) as f64,
+            ),
 
             // Other
             BinaryOp::In => {
@@ -2930,7 +3065,9 @@ impl Interpreter {
                     let key = crate::value::PropertyKey::from_value(&left);
                     JsValue::Boolean(obj.borrow().has_own_property(&key))
                 } else {
-                    return Err(JsError::type_error("Cannot use 'in' operator on non-object"));
+                    return Err(JsError::type_error(
+                        "Cannot use 'in' operator on non-object",
+                    ));
                 }
             }
             BinaryOp::Instanceof => {
@@ -2982,7 +3119,9 @@ impl Interpreter {
 
         let value = if assign.operator != AssignmentOp::Assign {
             let left = match &assign.left {
-                AssignmentTarget::Identifier(id) => self.env.get(&id.name).unwrap_or(JsValue::Undefined),
+                AssignmentTarget::Identifier(id) => {
+                    self.env.get(&id.name).unwrap_or(JsValue::Undefined)
+                }
                 AssignmentTarget::Member(member) => self.evaluate_member(member)?,
                 AssignmentTarget::Pattern(_) => {
                     return Err(JsError::syntax_error("Invalid assignment target", 0, 0));
@@ -3001,13 +3140,28 @@ impl Interpreter {
                 AssignmentOp::MulAssign => JsValue::Number(left.to_number() * right.to_number()),
                 AssignmentOp::DivAssign => JsValue::Number(left.to_number() / right.to_number()),
                 AssignmentOp::ModAssign => JsValue::Number(left.to_number() % right.to_number()),
-                AssignmentOp::ExpAssign => JsValue::Number(left.to_number().powf(right.to_number())),
-                AssignmentOp::BitAndAssign => JsValue::Number((left.to_number() as i32 & right.to_number() as i32) as f64),
-                AssignmentOp::BitOrAssign => JsValue::Number((left.to_number() as i32 | right.to_number() as i32) as f64),
-                AssignmentOp::BitXorAssign => JsValue::Number((left.to_number() as i32 ^ right.to_number() as i32) as f64),
-                AssignmentOp::LShiftAssign => JsValue::Number(((left.to_number() as i32) << (right.to_number() as u32 & 0x1f)) as f64),
-                AssignmentOp::RShiftAssign => JsValue::Number(((left.to_number() as i32) >> (right.to_number() as u32 & 0x1f)) as f64),
-                AssignmentOp::URShiftAssign => JsValue::Number((((left.to_number() as i32) as u32) >> (right.to_number() as u32 & 0x1f)) as f64),
+                AssignmentOp::ExpAssign => {
+                    JsValue::Number(left.to_number().powf(right.to_number()))
+                }
+                AssignmentOp::BitAndAssign => {
+                    JsValue::Number((left.to_number() as i32 & right.to_number() as i32) as f64)
+                }
+                AssignmentOp::BitOrAssign => {
+                    JsValue::Number((left.to_number() as i32 | right.to_number() as i32) as f64)
+                }
+                AssignmentOp::BitXorAssign => {
+                    JsValue::Number((left.to_number() as i32 ^ right.to_number() as i32) as f64)
+                }
+                AssignmentOp::LShiftAssign => JsValue::Number(
+                    ((left.to_number() as i32) << (right.to_number() as u32 & 0x1f)) as f64,
+                ),
+                AssignmentOp::RShiftAssign => JsValue::Number(
+                    ((left.to_number() as i32) >> (right.to_number() as u32 & 0x1f)) as f64,
+                ),
+                AssignmentOp::URShiftAssign => JsValue::Number(
+                    (((left.to_number() as i32) as u32) >> (right.to_number() as u32 & 0x1f))
+                        as f64,
+                ),
                 AssignmentOp::AndAssign => {
                     if !left.to_boolean() {
                         left
@@ -3070,7 +3224,11 @@ impl Interpreter {
             _ => return Err(JsError::syntax_error("Invalid update target", 0, 0)),
         }
 
-        Ok(if update.prefix { new_value } else { JsValue::Number(old_num) })
+        Ok(if update.prefix {
+            new_value
+        } else {
+            JsValue::Number(old_num)
+        })
     }
 
     fn evaluate_member(&mut self, member: &MemberExpression) -> Result<JsValue, JsError> {
@@ -3093,7 +3251,10 @@ impl Interpreter {
             JsValue::Object(obj) => {
                 // Handle __proto__ special property
                 if key.to_string() == "__proto__" {
-                    return Ok(obj.borrow().prototype.as_ref()
+                    return Ok(obj
+                        .borrow()
+                        .prototype
+                        .as_ref()
                         .map(|p| JsValue::Object(p.cheap_clone()))
                         .unwrap_or(JsValue::Null));
                 }
@@ -3281,7 +3442,10 @@ impl Interpreter {
                                 PropertyKey::from(format!("#{}", id.name))
                             }
                         };
-                        proto_obj.borrow().get_property(&key).unwrap_or(JsValue::Undefined)
+                        proto_obj
+                            .borrow()
+                            .get_property(&key)
+                            .unwrap_or(JsValue::Undefined)
                     } else {
                         return Err(JsError::type_error("Super has no prototype"));
                     }
@@ -3352,7 +3516,9 @@ impl Interpreter {
         // Get prototype from constructor.prototype and set it on the new object
         if let JsValue::Object(ctor_obj) = &callee {
             let ctor_ref = ctor_obj.borrow();
-            if let Some(JsValue::Object(proto)) = ctor_ref.get_property(&PropertyKey::from("prototype")) {
+            if let Some(JsValue::Object(proto)) =
+                ctor_ref.get_property(&PropertyKey::from("prototype"))
+            {
                 drop(ctor_ref);
                 new_obj.borrow_mut().prototype = Some(proto);
             } else {
@@ -3360,21 +3526,27 @@ impl Interpreter {
             }
 
             // Initialize instance fields from __fields__
-            let fields = ctor_obj.borrow().get_property(&PropertyKey::from("__fields__"));
+            let fields = ctor_obj
+                .borrow()
+                .get_property(&PropertyKey::from("__fields__"));
             if let Some(JsValue::Object(fields_arr)) = fields {
                 let fields_ref = fields_arr.borrow();
                 if let ExoticObject::Array { length } = fields_ref.exotic {
                     for i in 0..length {
-                        if let Some(JsValue::Object(pair)) = fields_ref.get_property(&PropertyKey::Index(i)) {
+                        if let Some(JsValue::Object(pair)) =
+                            fields_ref.get_property(&PropertyKey::Index(i))
+                        {
                             let pair_ref = pair.borrow();
-                            if let Some(JsValue::String(name)) = pair_ref.get_property(&PropertyKey::Index(0)) {
-                                let value = pair_ref.get_property(&PropertyKey::Index(1))
+                            if let Some(JsValue::String(name)) =
+                                pair_ref.get_property(&PropertyKey::Index(0))
+                            {
+                                let value = pair_ref
+                                    .get_property(&PropertyKey::Index(1))
                                     .unwrap_or(JsValue::Undefined);
                                 drop(pair_ref);
-                                new_obj.borrow_mut().set_property(
-                                    PropertyKey::from(name.to_string()),
-                                    value,
-                                );
+                                new_obj
+                                    .borrow_mut()
+                                    .set_property(PropertyKey::from(name.to_string()), value);
                             }
                         }
                     }
@@ -3403,10 +3575,16 @@ impl Interpreter {
         let promise = builtins::promise::create_promise(self);
 
         // Push stack frame
-        let func_name = interpreted.name.clone().unwrap_or_else(|| "<anonymous>".to_string());
+        let func_name = interpreted
+            .name
+            .clone()
+            .unwrap_or_else(|| "<anonymous>".to_string());
         let span = interpreted.source_location;
         let location = Some((span.line, span.column));
-        self.call_stack.push(StackFrame { function_name: func_name, location });
+        self.call_stack.push(StackFrame {
+            function_name: func_name,
+            location,
+        });
 
         let prev_env = self.env.clone();
         self.env = Environment::with_outer(interpreted.closure.clone());
@@ -3416,7 +3594,11 @@ impl Interpreter {
 
         // Create and bind 'arguments' object
         let arguments_obj = self.create_array(args.clone());
-        self.env.define("arguments".to_string(), JsValue::Object(arguments_obj), false);
+        self.env.define(
+            "arguments".to_string(),
+            JsValue::Object(arguments_obj),
+            false,
+        );
 
         // Hoist var declarations
         if let FunctionBody::Block(block) = &interpreted.body {
@@ -3439,9 +3621,7 @@ impl Interpreter {
         // Execute body and resolve/reject the promise
         let execution_result = match &interpreted.body {
             FunctionBody::Block(block) => self.execute_block(block),
-            FunctionBody::Expression(expr) => {
-                self.evaluate(expr).map(Completion::Normal)
-            }
+            FunctionBody::Expression(expr) => self.evaluate(expr).map(Completion::Normal),
         };
 
         self.env = prev_env;
@@ -3516,20 +3696,31 @@ impl Interpreter {
                 }
 
                 // Push stack frame
-                let func_name = interpreted.name.clone().unwrap_or_else(|| "<anonymous>".to_string());
+                let func_name = interpreted
+                    .name
+                    .clone()
+                    .unwrap_or_else(|| "<anonymous>".to_string());
                 let span = interpreted.source_location;
                 let location = Some((span.line, span.column));
-                self.call_stack.push(StackFrame { function_name: func_name, location });
+                self.call_stack.push(StackFrame {
+                    function_name: func_name,
+                    location,
+                });
 
                 let prev_env = self.env.clone();
                 self.env = Environment::with_outer(interpreted.closure.clone());
 
                 // Bind 'this' value
-                self.env.define("this".to_string(), this_value.clone(), false);
+                self.env
+                    .define("this".to_string(), this_value.clone(), false);
 
                 // Create and bind 'arguments' object (array-like object with all args)
                 let arguments_obj = self.create_array(args.clone());
-                self.env.define("arguments".to_string(), JsValue::Object(arguments_obj), false);
+                self.env.define(
+                    "arguments".to_string(),
+                    JsValue::Object(arguments_obj),
+                    false,
+                );
 
                 // Check if function has __super__ (for class constructors/methods)
                 let super_ctor = obj.borrow().get_property(&PropertyKey::from("__super__"));
@@ -3559,13 +3750,11 @@ impl Interpreter {
 
                 // Execute body
                 let result = match &interpreted.body {
-                    FunctionBody::Block(block) => {
-                        match self.execute_block(block)? {
-                            Completion::Return(val) => val,
-                            Completion::Normal(val) => val,
-                            _ => JsValue::Undefined,
-                        }
-                    }
+                    FunctionBody::Block(block) => match self.execute_block(block)? {
+                        Completion::Return(val) => val,
+                        Completion::Normal(val) => val,
+                        _ => JsValue::Undefined,
+                    },
                     FunctionBody::Expression(expr) => self.evaluate(expr)?,
                 };
 
@@ -3579,7 +3768,7 @@ impl Interpreter {
                 // Push stack frame for native functions too
                 self.call_stack.push(StackFrame {
                     function_name: native.name.clone(),
-                    location: None
+                    location: None,
                 });
                 let result = (native.func)(self, this_value, args);
                 self.call_stack.pop();
@@ -3624,5 +3813,3 @@ impl Default for Interpreter {
         Self::new()
     }
 }
-
-

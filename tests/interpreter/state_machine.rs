@@ -81,7 +81,8 @@ fn test_import_awaited_simple() {
             assert_eq!(specifier, "./module");
 
             // Create a module object with 'foo' export
-            let module = runtime.create_module_object(vec![("foo".to_string(), JsValue::Number(42.0))]);
+            let module =
+                runtime.create_module_object(vec![("foo".to_string(), JsValue::Number(42.0))]);
             slot.set_success(module);
         }
         RuntimeResult::Complete(_) => panic!("Expected ImportAwaited, got Complete"),
@@ -116,7 +117,8 @@ fn test_import_awaited_multiple() {
     match result {
         RuntimeResult::ImportAwaited { slot, specifier } => {
             assert_eq!(specifier, "./mod_a");
-            let module = runtime.create_module_object(vec![("a".to_string(), JsValue::Number(10.0))]);
+            let module =
+                runtime.create_module_object(vec![("a".to_string(), JsValue::Number(10.0))]);
             slot.set_success(module);
         }
         _ => panic!("Expected ImportAwaited for first import"),
@@ -127,7 +129,8 @@ fn test_import_awaited_multiple() {
     match result {
         RuntimeResult::ImportAwaited { slot, specifier } => {
             assert_eq!(specifier, "./mod_b");
-            let module = runtime.create_module_object(vec![("b".to_string(), JsValue::Number(20.0))]);
+            let module =
+                runtime.create_module_object(vec![("b".to_string(), JsValue::Number(20.0))]);
             slot.set_success(module);
         }
         _ => panic!("Expected ImportAwaited for second import"),
@@ -159,7 +162,9 @@ fn test_import_error_propagation() {
     match result {
         RuntimeResult::ImportAwaited { slot, .. } => {
             // Simulate module not found error
-            slot.set_error(typescript_eval::JsError::type_error("Module not found: ./nonexistent"));
+            slot.set_error(typescript_eval::JsError::type_error(
+                "Module not found: ./nonexistent",
+            ));
         }
         _ => panic!("Expected ImportAwaited"),
     }
@@ -189,7 +194,8 @@ fn test_import_default() {
         RuntimeResult::ImportAwaited { slot, specifier } => {
             assert_eq!(specifier, "./module");
             // Create a module with a default export
-            let default_obj = runtime.create_module_object(vec![("value".to_string(), JsValue::Number(100.0))]);
+            let default_obj =
+                runtime.create_module_object(vec![("value".to_string(), JsValue::Number(100.0))]);
             let module = runtime.create_module_object(vec![("default".to_string(), default_obj)]);
             slot.set_success(module);
         }
@@ -265,9 +271,8 @@ fn test_import_module_with_side_effects() {
             assert_eq!(specifier, "./side-effect-module");
             // The host can modify runtime state before providing the module
             // This simulates a module that has side effects during load
-            let module = runtime.create_module_object(vec![
-                ("increment".to_string(), JsValue::Number(1.0)),
-            ]);
+            let module =
+                runtime.create_module_object(vec![("increment".to_string(), JsValue::Number(1.0))]);
             slot.set_success(module);
         }
         _ => panic!("Expected ImportAwaited"),
@@ -303,9 +308,10 @@ fn test_import_used_in_function() {
 
     match result {
         RuntimeResult::ImportAwaited { slot, .. } => {
-            let module = runtime.create_module_object(vec![
-                ("PI".to_string(), JsValue::Number(std::f64::consts::PI)),
-            ]);
+            let module = runtime.create_module_object(vec![(
+                "PI".to_string(),
+                JsValue::Number(std::f64::consts::PI),
+            )]);
             slot.set_success(module);
         }
         _ => panic!("Expected ImportAwaited"),
@@ -348,9 +354,8 @@ fn test_import_used_in_class() {
 
     match result {
         RuntimeResult::ImportAwaited { slot, .. } => {
-            let module = runtime.create_module_object(vec![
-                ("BASE_VALUE".to_string(), JsValue::Number(42.0)),
-            ]);
+            let module = runtime
+                .create_module_object(vec![("BASE_VALUE".to_string(), JsValue::Number(42.0))]);
             slot.set_success(module);
         }
         _ => panic!("Expected ImportAwaited"),
@@ -546,9 +551,8 @@ fn test_import_then_async_function() {
     match result {
         RuntimeResult::ImportAwaited { slot, specifier } => {
             assert_eq!(specifier, "./math");
-            let module = runtime.create_module_object(vec![
-                ("multiply".to_string(), JsValue::Number(7.0)),
-            ]);
+            let module =
+                runtime.create_module_object(vec![("multiply".to_string(), JsValue::Number(7.0))]);
             slot.set_success(module);
         }
         _ => panic!("Expected ImportAwaited"),
@@ -595,9 +599,8 @@ fn test_multiple_imports_then_async() {
     match result {
         RuntimeResult::ImportAwaited { slot, specifier } => {
             assert_eq!(specifier, "./mod_a");
-            let module = runtime.create_module_object(vec![
-                ("a".to_string(), JsValue::Number(10.0)),
-            ]);
+            let module =
+                runtime.create_module_object(vec![("a".to_string(), JsValue::Number(10.0))]);
             slot.set_success(module);
         }
         _ => panic!("Expected ImportAwaited for mod_a"),
@@ -608,9 +611,8 @@ fn test_multiple_imports_then_async() {
     match result {
         RuntimeResult::ImportAwaited { slot, specifier } => {
             assert_eq!(specifier, "./mod_b");
-            let module = runtime.create_module_object(vec![
-                ("b".to_string(), JsValue::Number(20.0)),
-            ]);
+            let module =
+                runtime.create_module_object(vec![("b".to_string(), JsValue::Number(20.0))]);
             slot.set_success(module);
         }
         _ => panic!("Expected ImportAwaited for mod_b"),
@@ -841,9 +843,8 @@ fn test_import_function_used_in_async() {
     match result {
         RuntimeResult::ImportAwaited { slot, specifier } => {
             assert_eq!(specifier, "./transformer");
-            let module = runtime.create_module_object(vec![
-                ("transform".to_string(), JsValue::Number(3.0)),
-            ]);
+            let module =
+                runtime.create_module_object(vec![("transform".to_string(), JsValue::Number(3.0))]);
             slot.set_success(module);
         }
         _ => panic!("Expected ImportAwaited"),
@@ -889,9 +890,8 @@ fn test_multiple_imports_async_composition() {
     match result {
         RuntimeResult::ImportAwaited { slot, specifier } => {
             assert_eq!(specifier, "./config");
-            let module = runtime.create_module_object(vec![
-                ("baseMultiplier".to_string(), JsValue::Number(2.0)),
-            ]);
+            let module = runtime
+                .create_module_object(vec![("baseMultiplier".to_string(), JsValue::Number(2.0))]);
             slot.set_success(module);
         }
         _ => panic!("Expected ImportAwaited for config"),
@@ -902,9 +902,8 @@ fn test_multiple_imports_async_composition() {
     match result {
         RuntimeResult::ImportAwaited { slot, specifier } => {
             assert_eq!(specifier, "./constants");
-            let module = runtime.create_module_object(vec![
-                ("offset".to_string(), JsValue::Number(7.0)),
-            ]);
+            let module =
+                runtime.create_module_object(vec![("offset".to_string(), JsValue::Number(7.0))]);
             slot.set_success(module);
         }
         _ => panic!("Expected ImportAwaited for constants"),
@@ -957,9 +956,10 @@ fn test_async_class_with_imports() {
     match result {
         RuntimeResult::ImportAwaited { slot, specifier } => {
             assert_eq!(specifier, "./settings");
-            let module = runtime.create_module_object(vec![
-                ("DEFAULT_TIMEOUT".to_string(), JsValue::Number(5000.0)),
-            ]);
+            let module = runtime.create_module_object(vec![(
+                "DEFAULT_TIMEOUT".to_string(),
+                JsValue::Number(5000.0),
+            )]);
             slot.set_success(module);
         }
         _ => panic!("Expected ImportAwaited"),
@@ -1001,9 +1001,8 @@ fn test_nested_imports_two_levels() {
             assert_eq!(specifier, "./moduleA");
             // Host simulates moduleA which has a value that came from moduleB
             // In real scenario, host would have already loaded moduleB
-            let module_a = runtime.create_module_object(vec![
-                ("valueFromA".to_string(), JsValue::Number(100.0)),
-            ]);
+            let module_a = runtime
+                .create_module_object(vec![("valueFromA".to_string(), JsValue::Number(100.0))]);
             slot.set_success(module_a);
         }
         _ => panic!("Expected ImportAwaited for moduleA"),
@@ -1037,9 +1036,8 @@ fn test_parallel_imports_same_package() {
     match result {
         RuntimeResult::ImportAwaited { slot, specifier } => {
             assert_eq!(specifier, "./utils/a");
-            let module = runtime.create_module_object(vec![
-                ("utilA".to_string(), JsValue::Number(10.0)),
-            ]);
+            let module =
+                runtime.create_module_object(vec![("utilA".to_string(), JsValue::Number(10.0))]);
             slot.set_success(module);
         }
         _ => panic!("Expected ImportAwaited for utils/a"),
@@ -1050,9 +1048,8 @@ fn test_parallel_imports_same_package() {
     match result {
         RuntimeResult::ImportAwaited { slot, specifier } => {
             assert_eq!(specifier, "./utils/b");
-            let module = runtime.create_module_object(vec![
-                ("utilB".to_string(), JsValue::Number(20.0)),
-            ]);
+            let module =
+                runtime.create_module_object(vec![("utilB".to_string(), JsValue::Number(20.0))]);
             slot.set_success(module);
         }
         _ => panic!("Expected ImportAwaited for utils/b"),
@@ -1092,9 +1089,8 @@ fn test_import_chain_with_composition() {
     match result {
         RuntimeResult::ImportAwaited { slot, specifier } => {
             assert_eq!(specifier, "./config");
-            let module = runtime.create_module_object(vec![
-                ("MULTIPLIER".to_string(), JsValue::Number(3.0)),
-            ]);
+            let module = runtime
+                .create_module_object(vec![("MULTIPLIER".to_string(), JsValue::Number(3.0))]);
             slot.set_success(module);
         }
         _ => panic!("Expected ImportAwaited for config"),
@@ -1106,9 +1102,8 @@ fn test_import_chain_with_composition() {
         RuntimeResult::ImportAwaited { slot, specifier } => {
             assert_eq!(specifier, "./calculator");
             // Calculator module - we don't actually use calculate in this test
-            let module = runtime.create_module_object(vec![
-                ("calculate".to_string(), JsValue::Undefined),
-            ]);
+            let module =
+                runtime.create_module_object(vec![("calculate".to_string(), JsValue::Undefined)]);
             slot.set_success(module);
         }
         _ => panic!("Expected ImportAwaited for calculator"),
@@ -1236,9 +1231,8 @@ fn test_deep_import_path() {
     match result {
         RuntimeResult::ImportAwaited { slot, specifier } => {
             assert_eq!(specifier, "./packages/core/utils/helpers/deep");
-            let module = runtime.create_module_object(vec![
-                ("deepValue".to_string(), JsValue::Number(21.0)),
-            ]);
+            let module = runtime
+                .create_module_object(vec![("deepValue".to_string(), JsValue::Number(21.0))]);
             slot.set_success(module);
         }
         _ => panic!("Expected ImportAwaited"),
@@ -1272,9 +1266,8 @@ fn test_import_parent_path() {
     match result {
         RuntimeResult::ImportAwaited { slot, specifier } => {
             assert_eq!(specifier, "../parent/module");
-            let module = runtime.create_module_object(vec![
-                ("parentValue".to_string(), JsValue::Number(100.0)),
-            ]);
+            let module = runtime
+                .create_module_object(vec![("parentValue".to_string(), JsValue::Number(100.0))]);
             slot.set_success(module);
         }
         _ => panic!("Expected ImportAwaited for parent"),
@@ -1285,9 +1278,8 @@ fn test_import_parent_path() {
     match result {
         RuntimeResult::ImportAwaited { slot, specifier } => {
             assert_eq!(specifier, "../sibling");
-            let module = runtime.create_module_object(vec![
-                ("siblingValue".to_string(), JsValue::Number(50.0)),
-            ]);
+            let module = runtime
+                .create_module_object(vec![("siblingValue".to_string(), JsValue::Number(50.0))]);
             slot.set_success(module);
         }
         _ => panic!("Expected ImportAwaited for sibling"),
@@ -1353,9 +1345,8 @@ fn test_partial_import_failure() {
     match result {
         RuntimeResult::ImportAwaited { slot, specifier } => {
             assert_eq!(specifier, "./good-module");
-            let module = runtime.create_module_object(vec![
-                ("good".to_string(), JsValue::Number(1.0)),
-            ]);
+            let module =
+                runtime.create_module_object(vec![("good".to_string(), JsValue::Number(1.0))]);
             slot.set_success(module);
         }
         _ => panic!("Expected ImportAwaited for good-module"),
@@ -1398,9 +1389,8 @@ fn test_default_and_named_imports() {
         RuntimeResult::ImportAwaited { slot, specifier } => {
             assert_eq!(specifier, "./mixed-module");
             // Create module with default and named exports
-            let default_obj = runtime.create_module_object(vec![
-                ("value".to_string(), JsValue::Number(100.0)),
-            ]);
+            let default_obj =
+                runtime.create_module_object(vec![("value".to_string(), JsValue::Number(100.0))]);
             let module = runtime.create_module_object(vec![
                 ("default".to_string(), default_obj), // default_obj is already JsValue
                 ("namedA".to_string(), JsValue::Number(10.0)),
@@ -1453,9 +1443,8 @@ fn test_namespace_and_named_imports() {
     match result {
         RuntimeResult::ImportAwaited { slot, specifier } => {
             assert_eq!(specifier, "./specific");
-            let module = runtime.create_module_object(vec![
-                ("specific".to_string(), JsValue::Number(7.0)),
-            ]);
+            let module =
+                runtime.create_module_object(vec![("specific".to_string(), JsValue::Number(7.0))]);
             slot.set_success(module);
         }
         _ => panic!("Expected ImportAwaited for specific"),
@@ -1489,9 +1478,8 @@ fn test_aliased_imports() {
     match result {
         RuntimeResult::ImportAwaited { slot, specifier } => {
             assert_eq!(specifier, "./module");
-            let module = runtime.create_module_object(vec![
-                ("originalName".to_string(), JsValue::Number(1.0)),
-            ]);
+            let module = runtime
+                .create_module_object(vec![("originalName".to_string(), JsValue::Number(1.0))]);
             slot.set_success(module);
         }
         _ => panic!("Expected ImportAwaited for module"),
@@ -1546,9 +1534,8 @@ fn test_circular_import_host_handling() {
             assert_eq!(specifier, "./moduleA");
             // Host has resolved the circular dependency and provides moduleA
             // The circular reference has already been handled by the host
-            let module = runtime.create_module_object(vec![
-                ("valueA".to_string(), JsValue::Number(42.0)),
-            ]);
+            let module =
+                runtime.create_module_object(vec![("valueA".to_string(), JsValue::Number(42.0))]);
             slot.set_success(module);
         }
         _ => panic!("Expected ImportAwaited"),
@@ -1588,9 +1575,8 @@ fn test_import_before_execution() {
     match result {
         RuntimeResult::ImportAwaited { slot, specifier } => {
             assert_eq!(specifier, "./values");
-            let module = runtime.create_module_object(vec![
-                ("importedValue".to_string(), JsValue::Number(21.0)),
-            ]);
+            let module = runtime
+                .create_module_object(vec![("importedValue".to_string(), JsValue::Number(21.0))]);
             slot.set_success(module);
         }
         _ => panic!("Expected ImportAwaited"),
@@ -1650,9 +1636,8 @@ fn test_side_effect_import() {
     match result {
         RuntimeResult::ImportAwaited { slot, specifier } => {
             assert_eq!(specifier, "./data");
-            let module = runtime.create_module_object(vec![
-                ("value".to_string(), JsValue::Number(999.0)),
-            ]);
+            let module =
+                runtime.create_module_object(vec![("value".to_string(), JsValue::Number(999.0))]);
             slot.set_success(module);
         }
         _ => panic!("Expected ImportAwaited for data"),
@@ -1714,9 +1699,8 @@ fn test_top_level_await_after_import() {
     match result {
         RuntimeResult::ImportAwaited { slot, specifier } => {
             assert_eq!(specifier, "./async-module");
-            let module = runtime.create_module_object(vec![
-                ("asyncValue".to_string(), JsValue::Number(100.0)),
-            ]);
+            let module = runtime
+                .create_module_object(vec![("asyncValue".to_string(), JsValue::Number(100.0))]);
             slot.set_success(module);
         }
         _ => panic!("Expected ImportAwaited"),
@@ -1893,7 +1877,10 @@ fn test_top_level_await_with_export() {
     // Verify the export is available
     let exports = runtime.get_exports();
     assert!(exports.contains_key("exportedValue"));
-    assert_eq!(*exports.get("exportedValue").unwrap(), JsValue::Number(42.0));
+    assert_eq!(
+        *exports.get("exportedValue").unwrap(),
+        JsValue::Number(42.0)
+    );
 }
 
 /// Test: Top-level await with dynamic import
@@ -1950,12 +1937,10 @@ fn test_top_level_await_full_module() {
         RuntimeResult::ImportAwaited { slot, specifier } => {
             assert_eq!(specifier, "./config");
             // Create inner object first to avoid borrow conflict
-            let base_config = runtime.create_module_object(vec![
-                ("value".to_string(), JsValue::Number(100.0)),
-            ]);
-            let module = runtime.create_module_object(vec![
-                ("baseConfig".to_string(), base_config),
-            ]);
+            let base_config =
+                runtime.create_module_object(vec![("value".to_string(), JsValue::Number(100.0))]);
+            let module =
+                runtime.create_module_object(vec![("baseConfig".to_string(), base_config)]);
             slot.set_success(module);
         }
         _ => panic!("Expected ImportAwaited"),
@@ -2152,7 +2137,10 @@ fn test_dynamic_load_evaluate_module() {
             // For this test, we'll provide the exports directly
             // In practice, you might need to wrap functions
             let pi_value = exports.get("PI").cloned().unwrap_or(JsValue::Undefined);
-            let multiply_fn = exports.get("multiply").cloned().unwrap_or(JsValue::Undefined);
+            let multiply_fn = exports
+                .get("multiply")
+                .cloned()
+                .unwrap_or(JsValue::Undefined);
 
             let module = runtime.create_module_object(vec![
                 ("PI".to_string(), pi_value),
@@ -2211,9 +2199,8 @@ fn test_dynamic_load_with_cache() {
                 slot.set_success(cached.clone());
             } else {
                 // Load and evaluate moduleA
-                let module = runtime.create_module_object(vec![
-                    ("a".to_string(), JsValue::Number(10.0)),
-                ]);
+                let module =
+                    runtime.create_module_object(vec![("a".to_string(), JsValue::Number(10.0))]);
                 // Cache the module
                 module_cache.insert(specifier.clone(), module.clone());
                 slot.set_success(module);
@@ -2231,9 +2218,8 @@ fn test_dynamic_load_with_cache() {
             if let Some(cached) = module_cache.get(&specifier) {
                 slot.set_success(cached.clone());
             } else {
-                let module = runtime.create_module_object(vec![
-                    ("b".to_string(), JsValue::Number(20.0)),
-                ]);
+                let module =
+                    runtime.create_module_object(vec![("b".to_string(), JsValue::Number(20.0))]);
                 module_cache.insert(specifier.clone(), module.clone());
                 slot.set_success(module);
             }
@@ -2331,7 +2317,10 @@ fn test_full_module_loading_workflow() {
         loop {
             match result {
                 RuntimeResult::Complete(_) => break,
-                RuntimeResult::ImportAwaited { slot, specifier: sub_spec } => {
+                RuntimeResult::ImportAwaited {
+                    slot,
+                    specifier: sub_spec,
+                } => {
                     // Recursively load sub-dependency
                     let sub_module = load_module(&sub_spec, files, cache, parent_runtime);
                     slot.set_success(sub_module);
@@ -2429,11 +2418,13 @@ fn test_dynamic_load_default_export() {
 
             // Get the default export
             let exports = module_runtime.get_exports();
-            let default_export = exports.get("default").cloned().unwrap_or(JsValue::Undefined);
+            let default_export = exports
+                .get("default")
+                .cloned()
+                .unwrap_or(JsValue::Undefined);
 
-            let module = runtime.create_module_object(vec![
-                ("default".to_string(), default_export),
-            ]);
+            let module =
+                runtime.create_module_object(vec![("default".to_string(), default_export)]);
             slot.set_success(module);
         }
         _ => panic!("Expected ImportAwaited"),

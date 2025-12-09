@@ -2,7 +2,10 @@
 
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
-use crate::value::{create_array, create_function, create_object, ExoticObject, JsFunction, JsObjectRef, JsString, JsValue, NativeFunction, PropertyKey};
+use crate::value::{
+    create_array, create_function, create_object, ExoticObject, JsFunction, JsObjectRef, JsString,
+    JsValue, NativeFunction, PropertyKey,
+};
 
 /// Create JSON object with stringify and parse methods
 pub fn create_json_object() -> JsObjectRef {
@@ -15,7 +18,10 @@ pub fn create_json_object() -> JsObjectRef {
             func: json_stringify,
             arity: 1,
         }));
-        j.set_property(PropertyKey::from("stringify"), JsValue::Object(stringify_fn));
+        j.set_property(
+            PropertyKey::from("stringify"),
+            JsValue::Object(stringify_fn),
+        );
 
         let parse_fn = create_function(JsFunction::Native(NativeFunction {
             name: "parse".to_string(),
@@ -27,13 +33,21 @@ pub fn create_json_object() -> JsObjectRef {
     json
 }
 
-pub fn json_stringify(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn json_stringify(
+    _interp: &mut Interpreter,
+    _this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let value = args.first().cloned().unwrap_or(JsValue::Undefined);
     let json = js_value_to_json(&value)?;
     Ok(JsValue::String(JsString::from(json.to_string())))
 }
 
-pub fn json_parse(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn json_parse(
+    _interp: &mut Interpreter,
+    _this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let text = args.first().cloned().unwrap_or(JsValue::Undefined);
     let text_str = text.to_js_string();
 
@@ -90,7 +104,9 @@ pub fn js_value_to_json(value: &JsValue) -> Result<serde_json::Value, JsError> {
                         if prop.enumerable {
                             let json_val = js_value_to_json(&prop.value)?;
                             // Skip undefined values in objects
-                            if json_val != serde_json::Value::Null || !matches!(prop.value, JsValue::Undefined) {
+                            if json_val != serde_json::Value::Null
+                                || !matches!(prop.value, JsValue::Undefined)
+                            {
                                 map.insert(key.to_string(), json_val);
                             }
                         }

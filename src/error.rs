@@ -35,7 +35,14 @@ impl std::fmt::Display for StackFrame {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let name = self.function_name.as_deref().unwrap_or("<anonymous>");
         if let Some(file) = &self.file {
-            write!(f, "    at {} ({}:{}:{})", name, file.display(), self.line, self.column)
+            write!(
+                f,
+                "    at {} ({}:{}:{})",
+                name,
+                file.display(),
+                self.line,
+                self.column
+            )
         } else {
             write!(f, "    at {} (<eval>:{}:{})", name, self.line, self.column)
         }
@@ -87,7 +94,11 @@ pub enum JsError {
 }
 
 fn format_stack(stack: &[StackFrame]) -> String {
-    stack.iter().map(|f| f.to_string()).collect::<Vec<_>>().join("\n")
+    stack
+        .iter()
+        .map(|f| f.to_string())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 impl JsError {
@@ -126,9 +137,12 @@ impl JsError {
         JsError::ReferenceError { name: name.into() }
     }
 
-    pub fn reference_error_with_message(name: impl Into<String>, message: impl Into<String>) -> Self {
+    pub fn reference_error_with_message(
+        name: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Self {
         JsError::ReferenceError {
-            name: format!("'{}': {}", name.into(), message.into())
+            name: format!("'{}': {}", name.into(), message.into()),
         }
     }
 
@@ -154,48 +168,27 @@ impl JsError {
         match self {
             JsError::ThrownValue { value } => value.clone(),
             JsError::GeneratorYield { value } => value.clone(),
-            JsError::TypeError { message } => {
-                crate::value::JsValue::String(crate::value::JsString::from(format!(
-                    "TypeError: {}",
-                    message
-                )))
-            }
-            JsError::ReferenceError { name } => {
-                crate::value::JsValue::String(crate::value::JsString::from(format!(
-                    "ReferenceError: {} is not defined",
-                    name
-                )))
-            }
-            JsError::RangeError { message } => {
-                crate::value::JsValue::String(crate::value::JsString::from(format!(
-                    "RangeError: {}",
-                    message
-                )))
-            }
-            JsError::SyntaxError { message, .. } => {
-                crate::value::JsValue::String(crate::value::JsString::from(format!(
-                    "SyntaxError: {}",
-                    message
-                )))
-            }
-            JsError::RuntimeError { kind, message, .. } => {
-                crate::value::JsValue::String(crate::value::JsString::from(format!(
-                    "{}: {}",
-                    kind, message
-                )))
-            }
-            JsError::ModuleError { message } => {
-                crate::value::JsValue::String(crate::value::JsString::from(format!(
-                    "ModuleError: {}",
-                    message
-                )))
-            }
-            JsError::Internal(msg) => {
-                crate::value::JsValue::String(crate::value::JsString::from(format!(
-                    "InternalError: {}",
-                    msg
-                )))
-            }
+            JsError::TypeError { message } => crate::value::JsValue::String(
+                crate::value::JsString::from(format!("TypeError: {}", message)),
+            ),
+            JsError::ReferenceError { name } => crate::value::JsValue::String(
+                crate::value::JsString::from(format!("ReferenceError: {} is not defined", name)),
+            ),
+            JsError::RangeError { message } => crate::value::JsValue::String(
+                crate::value::JsString::from(format!("RangeError: {}", message)),
+            ),
+            JsError::SyntaxError { message, .. } => crate::value::JsValue::String(
+                crate::value::JsString::from(format!("SyntaxError: {}", message)),
+            ),
+            JsError::RuntimeError { kind, message, .. } => crate::value::JsValue::String(
+                crate::value::JsString::from(format!("{}: {}", kind, message)),
+            ),
+            JsError::ModuleError { message } => crate::value::JsValue::String(
+                crate::value::JsString::from(format!("ModuleError: {}", message)),
+            ),
+            JsError::Internal(msg) => crate::value::JsValue::String(crate::value::JsString::from(
+                format!("InternalError: {}", msg),
+            )),
             JsError::Thrown => crate::value::JsValue::Undefined,
         }
     }

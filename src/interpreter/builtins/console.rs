@@ -6,7 +6,10 @@ use std::time::Instant;
 
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
-use crate::value::{create_function, create_object, ExoticObject, JsFunction, JsObjectRef, JsValue, NativeFunction, PropertyKey};
+use crate::value::{
+    create_function, create_object, ExoticObject, JsFunction, JsObjectRef, JsValue, NativeFunction,
+    PropertyKey,
+};
 
 // Thread-local storage for console timers and counters
 lazy_static::lazy_static! {
@@ -95,7 +98,10 @@ pub fn create_console_object() -> JsObjectRef {
             func: console_count_reset,
             arity: 1,
         }));
-        con.set_property(PropertyKey::from("countReset"), JsValue::Object(count_reset_fn));
+        con.set_property(
+            PropertyKey::from("countReset"),
+            JsValue::Object(count_reset_fn),
+        );
 
         let clear_fn = create_function(JsFunction::Native(NativeFunction {
             name: "clear".to_string(),
@@ -121,31 +127,51 @@ pub fn create_console_object() -> JsObjectRef {
     console
 }
 
-pub fn console_log(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn console_log(
+    _interp: &mut Interpreter,
+    _this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let output: Vec<String> = args.iter().map(|v| format!("{:?}", v)).collect();
     println!("{}", output.join(" "));
     Ok(JsValue::Undefined)
 }
 
-pub fn console_error(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn console_error(
+    _interp: &mut Interpreter,
+    _this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let output: Vec<String> = args.iter().map(|v| format!("{:?}", v)).collect();
     eprintln!("{}", output.join(" "));
     Ok(JsValue::Undefined)
 }
 
-pub fn console_warn(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn console_warn(
+    _interp: &mut Interpreter,
+    _this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let output: Vec<String> = args.iter().map(|v| format!("{:?}", v)).collect();
     eprintln!("{}", output.join(" "));
     Ok(JsValue::Undefined)
 }
 
-pub fn console_info(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn console_info(
+    _interp: &mut Interpreter,
+    _this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let output: Vec<String> = args.iter().map(|v| format!("{:?}", v)).collect();
     println!("{}", output.join(" "));
     Ok(JsValue::Undefined)
 }
 
-pub fn console_debug(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn console_debug(
+    _interp: &mut Interpreter,
+    _this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let output: Vec<String> = args.iter().map(|v| format!("{:?}", v)).collect();
     println!("{}", output.join(" "));
     Ok(JsValue::Undefined)
@@ -153,7 +179,11 @@ pub fn console_debug(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValu
 
 /// console.table(data, columns?)
 /// Displays tabular data as a table
-pub fn console_table(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn console_table(
+    _interp: &mut Interpreter,
+    _this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let data = args.first().cloned().unwrap_or(JsValue::Undefined);
 
     match &data {
@@ -165,7 +195,9 @@ pub fn console_table(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValu
                     println!("│ index │   value   │");
                     println!("├───────┼───────────┤");
                     for i in 0..*length {
-                        let val = obj_ref.get_property(&PropertyKey::Index(i)).unwrap_or(JsValue::Undefined);
+                        let val = obj_ref
+                            .get_property(&PropertyKey::Index(i))
+                            .unwrap_or(JsValue::Undefined);
                         println!("│ {:5} │ {:9} │", i, format!("{:?}", val));
                     }
                     println!("└───────┴───────────┘");
@@ -176,7 +208,11 @@ pub fn console_table(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValu
                     println!("│     key     │   value   │");
                     println!("├─────────────┼───────────┤");
                     for (key, prop) in obj_ref.properties.iter() {
-                        println!("│ {:11} │ {:9} │", key.to_string(), format!("{:?}", prop.value));
+                        println!(
+                            "│ {:11} │ {:9} │",
+                            key.to_string(),
+                            format!("{:?}", prop.value)
+                        );
                     }
                     println!("└─────────────┴───────────┘");
                 }
@@ -189,7 +225,11 @@ pub fn console_table(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValu
 
 /// console.dir(obj, options?)
 /// Displays an interactive listing of the properties of a specified JavaScript object
-pub fn console_dir(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn console_dir(
+    _interp: &mut Interpreter,
+    _this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
 
     match &obj {
@@ -208,8 +248,13 @@ pub fn console_dir(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>
 
 /// console.time(label)
 /// Starts a timer with a specified label
-pub fn console_time(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
-    let label = args.first()
+pub fn console_time(
+    _interp: &mut Interpreter,
+    _this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
+    let label = args
+        .first()
         .map(|v| v.to_js_string().to_string())
         .unwrap_or_else(|| "default".to_string());
 
@@ -221,8 +266,13 @@ pub fn console_time(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue
 
 /// console.timeEnd(label)
 /// Stops a timer and logs the elapsed time
-pub fn console_time_end(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
-    let label = args.first()
+pub fn console_time_end(
+    _interp: &mut Interpreter,
+    _this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
+    let label = args
+        .first()
         .map(|v| v.to_js_string().to_string())
         .unwrap_or_else(|| "default".to_string());
 
@@ -239,8 +289,13 @@ pub fn console_time_end(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsV
 
 /// console.count(label)
 /// Logs the number of times this particular call to count() has been called
-pub fn console_count(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
-    let label = args.first()
+pub fn console_count(
+    _interp: &mut Interpreter,
+    _this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
+    let label = args
+        .first()
         .map(|v| v.to_js_string().to_string())
         .unwrap_or_else(|| "default".to_string());
 
@@ -254,8 +309,13 @@ pub fn console_count(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValu
 
 /// console.countReset(label)
 /// Resets the counter for the given label
-pub fn console_count_reset(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
-    let label = args.first()
+pub fn console_count_reset(
+    _interp: &mut Interpreter,
+    _this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
+    let label = args
+        .first()
         .map(|v| v.to_js_string().to_string())
         .unwrap_or_else(|| "default".to_string());
 
@@ -267,7 +327,11 @@ pub fn console_count_reset(_interp: &mut Interpreter, _this: JsValue, args: Vec<
 
 /// console.clear()
 /// Clears the console
-pub fn console_clear(_interp: &mut Interpreter, _this: JsValue, _args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn console_clear(
+    _interp: &mut Interpreter,
+    _this: JsValue,
+    _args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     // In a real terminal, we'd clear the screen
     // For now, just print some newlines
     println!("\n\n--- Console cleared ---\n\n");
@@ -276,8 +340,13 @@ pub fn console_clear(_interp: &mut Interpreter, _this: JsValue, _args: Vec<JsVal
 
 /// console.group(label)
 /// Creates a new inline group, indenting subsequent console messages
-pub fn console_group(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
-    let label = args.first()
+pub fn console_group(
+    _interp: &mut Interpreter,
+    _this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
+    let label = args
+        .first()
         .map(|v| v.to_js_string().to_string())
         .unwrap_or_default();
 
@@ -291,7 +360,11 @@ pub fn console_group(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValu
 
 /// console.groupEnd()
 /// Exits the current inline group
-pub fn console_group_end(_interp: &mut Interpreter, _this: JsValue, _args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn console_group_end(
+    _interp: &mut Interpreter,
+    _this: JsValue,
+    _args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     // In a real implementation, this would decrease indentation
     Ok(JsValue::Undefined)
 }

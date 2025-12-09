@@ -273,9 +273,8 @@ fn test_dynamic_import_combined_with_static() {
     match result {
         RuntimeResult::ImportAwaited { slot, specifier } => {
             assert_eq!(specifier, "./config");
-            let module = runtime.create_module_object(vec![
-                ("baseValue".to_string(), JsValue::Number(5.0)),
-            ]);
+            let module =
+                runtime.create_module_object(vec![("baseValue".to_string(), JsValue::Number(5.0))]);
             slot.set_success(module);
         }
         _ => panic!("Expected ImportAwaited for static import"),
@@ -317,9 +316,10 @@ fn test_dynamic_import_lazy_loading_pattern() {
     match result {
         RuntimeResult::ImportAwaited { slot, specifier } => {
             assert_eq!(specifier, "./config");
-            let module = runtime.create_module_object(vec![
-                ("shouldLoadExtra".to_string(), JsValue::Boolean(false)),
-            ]);
+            let module = runtime.create_module_object(vec![(
+                "shouldLoadExtra".to_string(),
+                JsValue::Boolean(false),
+            )]);
             slot.set_success(module);
         }
         _ => panic!("Expected ImportAwaited"),

@@ -812,7 +812,10 @@ pub fn promise_any(
     // All rejected - reject with array of errors
     if !errors.is_empty() {
         let errors_array = JsValue::Object(interp.create_array(errors));
-        return Ok(JsValue::Object(create_rejected_promise(&proto, errors_array)));
+        return Ok(JsValue::Object(create_rejected_promise(
+            &proto,
+            errors_array,
+        )));
     }
 
     // No promise is settled yet

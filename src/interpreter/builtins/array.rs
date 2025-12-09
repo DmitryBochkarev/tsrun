@@ -2,7 +2,10 @@
 
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
-use crate::value::{create_array, create_function, create_object, CheapClone, ExoticObject, JsFunction, JsObjectRef, JsString, JsValue, NativeFunction, Property, PropertyKey};
+use crate::value::{
+    create_array, create_function, create_object, CheapClone, ExoticObject, JsFunction,
+    JsObjectRef, JsString, JsValue, NativeFunction, Property, PropertyKey,
+};
 
 /// Create Array.prototype with all array methods
 pub fn create_array_prototype() -> JsObjectRef {
@@ -64,7 +67,10 @@ pub fn create_array_prototype() -> JsObjectRef {
             func: array_find_index,
             arity: 1,
         }));
-        p.set_property(PropertyKey::from("findIndex"), JsValue::Object(findindex_fn));
+        p.set_property(
+            PropertyKey::from("findIndex"),
+            JsValue::Object(findindex_fn),
+        );
 
         let indexof_fn = create_function(JsFunction::Native(NativeFunction {
             name: "indexOf".to_string(),
@@ -155,7 +161,10 @@ pub fn create_array_prototype() -> JsObjectRef {
             func: array_copy_within,
             arity: 3,
         }));
-        p.set_property(PropertyKey::from("copyWithin"), JsValue::Object(copywithin_fn));
+        p.set_property(
+            PropertyKey::from("copyWithin"),
+            JsValue::Object(copywithin_fn),
+        );
 
         let splice_fn = create_function(JsFunction::Native(NativeFunction {
             name: "splice".to_string(),
@@ -176,14 +185,20 @@ pub fn create_array_prototype() -> JsObjectRef {
             func: array_last_index_of,
             arity: 1,
         }));
-        p.set_property(PropertyKey::from("lastIndexOf"), JsValue::Object(lastindexof_fn));
+        p.set_property(
+            PropertyKey::from("lastIndexOf"),
+            JsValue::Object(lastindexof_fn),
+        );
 
         let reduceright_fn = create_function(JsFunction::Native(NativeFunction {
             name: "reduceRight".to_string(),
             func: array_reduce_right,
             arity: 1,
         }));
-        p.set_property(PropertyKey::from("reduceRight"), JsValue::Object(reduceright_fn));
+        p.set_property(
+            PropertyKey::from("reduceRight"),
+            JsValue::Object(reduceright_fn),
+        );
 
         let flat_fn = create_function(JsFunction::Native(NativeFunction {
             name: "flat".to_string(),
@@ -211,14 +226,20 @@ pub fn create_array_prototype() -> JsObjectRef {
             func: array_find_last_index,
             arity: 1,
         }));
-        p.set_property(PropertyKey::from("findLastIndex"), JsValue::Object(findlastindex_fn));
+        p.set_property(
+            PropertyKey::from("findLastIndex"),
+            JsValue::Object(findlastindex_fn),
+        );
 
         let toreversed_fn = create_function(JsFunction::Native(NativeFunction {
             name: "toReversed".to_string(),
             func: array_to_reversed,
             arity: 0,
         }));
-        p.set_property(PropertyKey::from("toReversed"), JsValue::Object(toreversed_fn));
+        p.set_property(
+            PropertyKey::from("toReversed"),
+            JsValue::Object(toreversed_fn),
+        );
 
         let tosorted_fn = create_function(JsFunction::Native(NativeFunction {
             name: "toSorted".to_string(),
@@ -232,7 +253,10 @@ pub fn create_array_prototype() -> JsObjectRef {
             func: array_to_spliced,
             arity: 2,
         }));
-        p.set_property(PropertyKey::from("toSpliced"), JsValue::Object(tospliced_fn));
+        p.set_property(
+            PropertyKey::from("toSpliced"),
+            JsValue::Object(tospliced_fn),
+        );
 
         let with_fn = create_function(JsFunction::Native(NativeFunction {
             name: "with".to_string(),
@@ -296,12 +320,19 @@ pub fn create_array_constructor(array_prototype: &JsObjectRef) -> JsObjectRef {
         }));
         arr.set_property(PropertyKey::from("from"), JsValue::Object(from_fn));
 
-        arr.set_property(PropertyKey::from("prototype"), JsValue::Object(array_prototype.cheap_clone()));
+        arr.set_property(
+            PropertyKey::from("prototype"),
+            JsValue::Object(array_prototype.cheap_clone()),
+        );
     }
     constructor
 }
 
-pub fn array_constructor_fn(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn array_constructor_fn(
+    _interp: &mut Interpreter,
+    _this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     if args.len() == 1 {
         if let JsValue::Number(n) = &args[0] {
             let len = *n as u32;
@@ -315,7 +346,11 @@ pub fn array_constructor_fn(_interp: &mut Interpreter, _this: JsValue, args: Vec
     Ok(JsValue::Object(create_array(args)))
 }
 
-pub fn array_is_array(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn array_is_array(
+    _interp: &mut Interpreter,
+    _this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let value = args.first().cloned().unwrap_or(JsValue::Undefined);
     let is_array = match value {
         JsValue::Object(obj) => matches!(obj.borrow().exotic, ExoticObject::Array { .. }),
@@ -324,23 +359,32 @@ pub fn array_is_array(_interp: &mut Interpreter, _this: JsValue, args: Vec<JsVal
     Ok(JsValue::Boolean(is_array))
 }
 
-pub fn array_push(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn array_push(
+    _interp: &mut Interpreter,
+    this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this else {
-        return Err(JsError::type_error("Array.prototype.push called on non-object"));
+        return Err(JsError::type_error(
+            "Array.prototype.push called on non-object",
+        ));
     };
 
     let mut arr_ref = arr.borrow_mut();
 
     let mut current_length = match &arr_ref.exotic {
         ExoticObject::Array { length } => *length,
-        _ => return Err(JsError::type_error("Array.prototype.push called on non-array")),
+        _ => {
+            return Err(JsError::type_error(
+                "Array.prototype.push called on non-array",
+            ))
+        }
     };
 
     for arg in args {
-        arr_ref.properties.insert(
-            PropertyKey::Index(current_length),
-            Property::data(arg),
-        );
+        arr_ref
+            .properties
+            .insert(PropertyKey::Index(current_length), Property::data(arg));
         current_length += 1;
     }
 
@@ -356,16 +400,26 @@ pub fn array_push(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) 
     Ok(JsValue::Number(current_length as f64))
 }
 
-pub fn array_pop(_interp: &mut Interpreter, this: JsValue, _args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn array_pop(
+    _interp: &mut Interpreter,
+    this: JsValue,
+    _args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this else {
-        return Err(JsError::type_error("Array.prototype.pop called on non-object"));
+        return Err(JsError::type_error(
+            "Array.prototype.pop called on non-object",
+        ));
     };
 
     let mut arr_ref = arr.borrow_mut();
 
     let current_length = match &arr_ref.exotic {
         ExoticObject::Array { length } => *length,
-        _ => return Err(JsError::type_error("Array.prototype.pop called on non-array")),
+        _ => {
+            return Err(JsError::type_error(
+                "Array.prototype.pop called on non-array",
+            ))
+        }
     };
 
     if current_length == 0 {
@@ -392,14 +446,22 @@ pub fn array_pop(_interp: &mut Interpreter, this: JsValue, _args: Vec<JsValue>) 
     Ok(value)
 }
 
-pub fn array_map(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn array_map(
+    interp: &mut Interpreter,
+    this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this.clone() else {
-        return Err(JsError::type_error("Array.prototype.map called on non-object"));
+        return Err(JsError::type_error(
+            "Array.prototype.map called on non-object",
+        ));
     };
 
     let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
     if !callback.is_callable() {
-        return Err(JsError::type_error("Array.prototype.map callback is not a function"));
+        return Err(JsError::type_error(
+            "Array.prototype.map callback is not a function",
+        ));
     }
 
     let this_arg = args.get(1).cloned().unwrap_or(JsValue::Undefined);
@@ -431,14 +493,22 @@ pub fn array_map(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) ->
     Ok(JsValue::Object(interp.create_array(result)))
 }
 
-pub fn array_filter(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn array_filter(
+    interp: &mut Interpreter,
+    this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this.clone() else {
-        return Err(JsError::type_error("Array.prototype.filter called on non-object"));
+        return Err(JsError::type_error(
+            "Array.prototype.filter called on non-object",
+        ));
     };
 
     let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
     if !callback.is_callable() {
-        return Err(JsError::type_error("Array.prototype.filter callback is not a function"));
+        return Err(JsError::type_error(
+            "Array.prototype.filter callback is not a function",
+        ));
     }
 
     let this_arg = args.get(1).cloned().unwrap_or(JsValue::Undefined);
@@ -472,14 +542,22 @@ pub fn array_filter(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>)
     Ok(JsValue::Object(interp.create_array(result)))
 }
 
-pub fn array_foreach(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn array_foreach(
+    interp: &mut Interpreter,
+    this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this.clone() else {
-        return Err(JsError::type_error("Array.prototype.forEach called on non-object"));
+        return Err(JsError::type_error(
+            "Array.prototype.forEach called on non-object",
+        ));
     };
 
     let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
     if !callback.is_callable() {
-        return Err(JsError::type_error("Array.prototype.forEach callback is not a function"));
+        return Err(JsError::type_error(
+            "Array.prototype.forEach callback is not a function",
+        ));
     }
 
     let this_arg = args.get(1).cloned().unwrap_or(JsValue::Undefined);
@@ -508,14 +586,22 @@ pub fn array_foreach(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>
     Ok(JsValue::Undefined)
 }
 
-pub fn array_reduce(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn array_reduce(
+    interp: &mut Interpreter,
+    this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this.clone() else {
-        return Err(JsError::type_error("Array.prototype.reduce called on non-object"));
+        return Err(JsError::type_error(
+            "Array.prototype.reduce called on non-object",
+        ));
     };
 
     let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
     if !callback.is_callable() {
-        return Err(JsError::type_error("Array.prototype.reduce callback is not a function"));
+        return Err(JsError::type_error(
+            "Array.prototype.reduce callback is not a function",
+        ));
     }
 
     let length = {
@@ -530,7 +616,9 @@ pub fn array_reduce(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>)
         (args[1].clone(), 0)
     } else {
         if length == 0 {
-            return Err(JsError::type_error("Reduce of empty array with no initial value"));
+            return Err(JsError::type_error(
+                "Reduce of empty array with no initial value",
+            ));
         }
         let first = arr
             .borrow()
@@ -555,14 +643,22 @@ pub fn array_reduce(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>)
     Ok(accumulator)
 }
 
-pub fn array_find(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn array_find(
+    interp: &mut Interpreter,
+    this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this.clone() else {
-        return Err(JsError::type_error("Array.prototype.find called on non-object"));
+        return Err(JsError::type_error(
+            "Array.prototype.find called on non-object",
+        ));
     };
 
     let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
     if !callback.is_callable() {
-        return Err(JsError::type_error("Array.prototype.find callback is not a function"));
+        return Err(JsError::type_error(
+            "Array.prototype.find callback is not a function",
+        ));
     }
 
     let this_arg = args.get(1).cloned().unwrap_or(JsValue::Undefined);
@@ -595,14 +691,22 @@ pub fn array_find(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -
     Ok(JsValue::Undefined)
 }
 
-pub fn array_find_index(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn array_find_index(
+    interp: &mut Interpreter,
+    this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this.clone() else {
-        return Err(JsError::type_error("Array.prototype.findIndex called on non-object"));
+        return Err(JsError::type_error(
+            "Array.prototype.findIndex called on non-object",
+        ));
     };
 
     let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
     if !callback.is_callable() {
-        return Err(JsError::type_error("Array.prototype.findIndex callback is not a function"));
+        return Err(JsError::type_error(
+            "Array.prototype.findIndex callback is not a function",
+        ));
     }
 
     let this_arg = args.get(1).cloned().unwrap_or(JsValue::Undefined);
@@ -635,16 +739,19 @@ pub fn array_find_index(interp: &mut Interpreter, this: JsValue, args: Vec<JsVal
     Ok(JsValue::Number(-1.0))
 }
 
-pub fn array_index_of(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn array_index_of(
+    _interp: &mut Interpreter,
+    this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this else {
-        return Err(JsError::type_error("Array.prototype.indexOf called on non-object"));
+        return Err(JsError::type_error(
+            "Array.prototype.indexOf called on non-object",
+        ));
     };
 
     let search_element = args.first().cloned().unwrap_or(JsValue::Undefined);
-    let from_index = args
-        .get(1)
-        .map(|v| v.to_number() as i64)
-        .unwrap_or(0);
+    let from_index = args.get(1).map(|v| v.to_number() as i64).unwrap_or(0);
 
     let length = {
         let arr_ref = arr.borrow();
@@ -674,16 +781,19 @@ pub fn array_index_of(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValu
     Ok(JsValue::Number(-1.0))
 }
 
-pub fn array_includes(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn array_includes(
+    _interp: &mut Interpreter,
+    this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this else {
-        return Err(JsError::type_error("Array.prototype.includes called on non-object"));
+        return Err(JsError::type_error(
+            "Array.prototype.includes called on non-object",
+        ));
     };
 
     let search_element = args.first().cloned().unwrap_or(JsValue::Undefined);
-    let from_index = args
-        .get(1)
-        .map(|v| v.to_number() as i64)
-        .unwrap_or(0);
+    let from_index = args.get(1).map(|v| v.to_number() as i64).unwrap_or(0);
 
     let length = {
         let arr_ref = arr.borrow();
@@ -718,9 +828,15 @@ pub fn array_includes(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValu
     Ok(JsValue::Boolean(false))
 }
 
-pub fn array_slice(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn array_slice(
+    interp: &mut Interpreter,
+    this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this else {
-        return Err(JsError::type_error("Array.prototype.slice called on non-object"));
+        return Err(JsError::type_error(
+            "Array.prototype.slice called on non-object",
+        ));
     };
 
     let length = {
@@ -758,7 +874,11 @@ pub fn array_slice(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) 
     Ok(JsValue::Object(interp.create_array(result)))
 }
 
-pub fn array_concat(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn array_concat(
+    interp: &mut Interpreter,
+    this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let mut result = Vec::new();
 
     fn add_elements(result: &mut Vec<JsValue>, value: JsValue) {
@@ -789,9 +909,15 @@ pub fn array_concat(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>)
     Ok(JsValue::Object(interp.create_array(result)))
 }
 
-pub fn array_join(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn array_join(
+    _interp: &mut Interpreter,
+    this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this else {
-        return Err(JsError::type_error("Array.prototype.join called on non-object"));
+        return Err(JsError::type_error(
+            "Array.prototype.join called on non-object",
+        ));
     };
 
     let separator = args
@@ -830,14 +956,22 @@ pub fn array_join(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) 
     Ok(JsValue::String(JsString::from(parts.join(&separator))))
 }
 
-pub fn array_every(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn array_every(
+    interp: &mut Interpreter,
+    this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this.clone() else {
-        return Err(JsError::type_error("Array.prototype.every called on non-object"));
+        return Err(JsError::type_error(
+            "Array.prototype.every called on non-object",
+        ));
     };
 
     let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
     if !callback.is_callable() {
-        return Err(JsError::type_error("Array.prototype.every callback is not a function"));
+        return Err(JsError::type_error(
+            "Array.prototype.every callback is not a function",
+        ));
     }
 
     let this_arg = args.get(1).cloned().unwrap_or(JsValue::Undefined);
@@ -870,14 +1004,22 @@ pub fn array_every(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) 
     Ok(JsValue::Boolean(true))
 }
 
-pub fn array_some(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn array_some(
+    interp: &mut Interpreter,
+    this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this.clone() else {
-        return Err(JsError::type_error("Array.prototype.some called on non-object"));
+        return Err(JsError::type_error(
+            "Array.prototype.some called on non-object",
+        ));
     };
 
     let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
     if !callback.is_callable() {
-        return Err(JsError::type_error("Array.prototype.some callback is not a function"));
+        return Err(JsError::type_error(
+            "Array.prototype.some callback is not a function",
+        ));
     }
 
     let this_arg = args.get(1).cloned().unwrap_or(JsValue::Undefined);
@@ -910,9 +1052,15 @@ pub fn array_some(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -
     Ok(JsValue::Boolean(false))
 }
 
-pub fn array_shift(_interp: &mut Interpreter, this: JsValue, _args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn array_shift(
+    _interp: &mut Interpreter,
+    this: JsValue,
+    _args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this else {
-        return Err(JsError::type_error("Array.prototype.shift called on non-object"));
+        return Err(JsError::type_error(
+            "Array.prototype.shift called on non-object",
+        ));
     };
 
     let mut arr_ref = arr.borrow_mut();
@@ -925,10 +1073,14 @@ pub fn array_shift(_interp: &mut Interpreter, this: JsValue, _args: Vec<JsValue>
         return Ok(JsValue::Undefined);
     }
 
-    let first = arr_ref.get_property(&PropertyKey::Index(0)).unwrap_or(JsValue::Undefined);
+    let first = arr_ref
+        .get_property(&PropertyKey::Index(0))
+        .unwrap_or(JsValue::Undefined);
 
     for i in 1..length {
-        let val = arr_ref.get_property(&PropertyKey::Index(i)).unwrap_or(JsValue::Undefined);
+        let val = arr_ref
+            .get_property(&PropertyKey::Index(i))
+            .unwrap_or(JsValue::Undefined);
         arr_ref.set_property(PropertyKey::Index(i - 1), val);
     }
 
@@ -942,9 +1094,15 @@ pub fn array_shift(_interp: &mut Interpreter, this: JsValue, _args: Vec<JsValue>
     Ok(first)
 }
 
-pub fn array_unshift(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn array_unshift(
+    _interp: &mut Interpreter,
+    this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this else {
-        return Err(JsError::type_error("Array.prototype.unshift called on non-object"));
+        return Err(JsError::type_error(
+            "Array.prototype.unshift called on non-object",
+        ));
     };
 
     let mut arr_ref = arr.borrow_mut();
@@ -959,7 +1117,9 @@ pub fn array_unshift(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue
     }
 
     for i in (0..current_length).rev() {
-        let val = arr_ref.get_property(&PropertyKey::Index(i)).unwrap_or(JsValue::Undefined);
+        let val = arr_ref
+            .get_property(&PropertyKey::Index(i))
+            .unwrap_or(JsValue::Undefined);
         arr_ref.set_property(PropertyKey::Index(i + arg_count), val);
     }
 
@@ -971,14 +1131,23 @@ pub fn array_unshift(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue
     if let ExoticObject::Array { ref mut length } = arr_ref.exotic {
         *length = new_length;
     }
-    arr_ref.set_property(PropertyKey::from("length"), JsValue::Number(new_length as f64));
+    arr_ref.set_property(
+        PropertyKey::from("length"),
+        JsValue::Number(new_length as f64),
+    );
 
     Ok(JsValue::Number(new_length as f64))
 }
 
-pub fn array_reverse(_interp: &mut Interpreter, this: JsValue, _args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn array_reverse(
+    _interp: &mut Interpreter,
+    this: JsValue,
+    _args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this.clone() else {
-        return Err(JsError::type_error("Array.prototype.reverse called on non-object"));
+        return Err(JsError::type_error(
+            "Array.prototype.reverse called on non-object",
+        ));
     };
 
     let mut arr_ref = arr.borrow_mut();
@@ -992,7 +1161,11 @@ pub fn array_reverse(_interp: &mut Interpreter, this: JsValue, _args: Vec<JsValu
     }
 
     let mut elements: Vec<JsValue> = (0..length)
-        .map(|i| arr_ref.get_property(&PropertyKey::Index(i)).unwrap_or(JsValue::Undefined))
+        .map(|i| {
+            arr_ref
+                .get_property(&PropertyKey::Index(i))
+                .unwrap_or(JsValue::Undefined)
+        })
         .collect();
 
     elements.reverse();
@@ -1004,9 +1177,15 @@ pub fn array_reverse(_interp: &mut Interpreter, this: JsValue, _args: Vec<JsValu
     Ok(this)
 }
 
-pub fn array_sort(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn array_sort(
+    interp: &mut Interpreter,
+    this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this.clone() else {
-        return Err(JsError::type_error("Array.prototype.sort called on non-object"));
+        return Err(JsError::type_error(
+            "Array.prototype.sort called on non-object",
+        ));
     };
 
     let compare_fn = args.first().cloned();
@@ -1022,7 +1201,11 @@ pub fn array_sort(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -
     let mut elements: Vec<JsValue> = {
         let arr_ref = arr.borrow();
         (0..length)
-            .map(|i| arr_ref.get_property(&PropertyKey::Index(i)).unwrap_or(JsValue::Undefined))
+            .map(|i| {
+                arr_ref
+                    .get_property(&PropertyKey::Index(i))
+                    .unwrap_or(JsValue::Undefined)
+            })
             .collect()
     };
 
@@ -1059,9 +1242,15 @@ pub fn array_sort(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -
     Ok(this)
 }
 
-pub fn array_fill(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn array_fill(
+    _interp: &mut Interpreter,
+    this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this.clone() else {
-        return Err(JsError::type_error("Array.prototype.fill called on non-object"));
+        return Err(JsError::type_error(
+            "Array.prototype.fill called on non-object",
+        ));
     };
 
     let value = args.first().cloned().unwrap_or(JsValue::Undefined);
@@ -1072,15 +1261,29 @@ pub fn array_fill(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) 
         _ => return Err(JsError::type_error("Not an array")),
     };
 
-    let start = args.get(1).map(|v| {
-        let n = v.to_number() as i64;
-        if n < 0 { (length + n).max(0) } else { n.min(length) }
-    }).unwrap_or(0) as u32;
+    let start = args
+        .get(1)
+        .map(|v| {
+            let n = v.to_number() as i64;
+            if n < 0 {
+                (length + n).max(0)
+            } else {
+                n.min(length)
+            }
+        })
+        .unwrap_or(0) as u32;
 
-    let end = args.get(2).map(|v| {
-        let n = v.to_number() as i64;
-        if n < 0 { (length + n).max(0) } else { n.min(length) }
-    }).unwrap_or(length as i64) as u32;
+    let end = args
+        .get(2)
+        .map(|v| {
+            let n = v.to_number() as i64;
+            if n < 0 {
+                (length + n).max(0)
+            } else {
+                n.min(length)
+            }
+        })
+        .unwrap_or(length as i64) as u32;
 
     for i in start..end {
         arr_ref.set_property(PropertyKey::Index(i), value.clone());
@@ -1090,9 +1293,15 @@ pub fn array_fill(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) 
     Ok(this)
 }
 
-pub fn array_copy_within(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn array_copy_within(
+    _interp: &mut Interpreter,
+    this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this.clone() else {
-        return Err(JsError::type_error("Array.prototype.copyWithin called on non-object"));
+        return Err(JsError::type_error(
+            "Array.prototype.copyWithin called on non-object",
+        ));
     };
 
     let mut arr_ref = arr.borrow_mut();
@@ -1101,23 +1310,48 @@ pub fn array_copy_within(_interp: &mut Interpreter, this: JsValue, args: Vec<JsV
         _ => return Err(JsError::type_error("Not an array")),
     };
 
-    let target = args.first().map(|v| {
-        let n = v.to_number() as i64;
-        if n < 0 { (length + n).max(0) } else { n.min(length) }
-    }).unwrap_or(0) as u32;
+    let target = args
+        .first()
+        .map(|v| {
+            let n = v.to_number() as i64;
+            if n < 0 {
+                (length + n).max(0)
+            } else {
+                n.min(length)
+            }
+        })
+        .unwrap_or(0) as u32;
 
-    let start = args.get(1).map(|v| {
-        let n = v.to_number() as i64;
-        if n < 0 { (length + n).max(0) } else { n.min(length) }
-    }).unwrap_or(0) as u32;
+    let start = args
+        .get(1)
+        .map(|v| {
+            let n = v.to_number() as i64;
+            if n < 0 {
+                (length + n).max(0)
+            } else {
+                n.min(length)
+            }
+        })
+        .unwrap_or(0) as u32;
 
-    let end = args.get(2).map(|v| {
-        let n = v.to_number() as i64;
-        if n < 0 { (length + n).max(0) } else { n.min(length) }
-    }).unwrap_or(length as i64) as u32;
+    let end = args
+        .get(2)
+        .map(|v| {
+            let n = v.to_number() as i64;
+            if n < 0 {
+                (length + n).max(0)
+            } else {
+                n.min(length)
+            }
+        })
+        .unwrap_or(length as i64) as u32;
 
     let elements: Vec<JsValue> = (start..end)
-        .map(|i| arr_ref.get_property(&PropertyKey::Index(i)).unwrap_or(JsValue::Undefined))
+        .map(|i| {
+            arr_ref
+                .get_property(&PropertyKey::Index(i))
+                .unwrap_or(JsValue::Undefined)
+        })
         .collect();
 
     for (i, val) in elements.into_iter().enumerate() {
@@ -1131,9 +1365,15 @@ pub fn array_copy_within(_interp: &mut Interpreter, this: JsValue, args: Vec<JsV
     Ok(this)
 }
 
-pub fn array_splice(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn array_splice(
+    interp: &mut Interpreter,
+    this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this else {
-        return Err(JsError::type_error("Array.prototype.splice called on non-object"));
+        return Err(JsError::type_error(
+            "Array.prototype.splice called on non-object",
+        ));
     };
 
     let mut arr_ref = arr.borrow_mut();
@@ -1142,18 +1382,32 @@ pub fn array_splice(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>)
         _ => return Err(JsError::type_error("Not an array")),
     };
 
-    let start = args.first().map(|v| {
-        let n = v.to_number() as i64;
-        if n < 0 { (length + n).max(0) } else { n.min(length) }
-    }).unwrap_or(0) as u32;
+    let start = args
+        .first()
+        .map(|v| {
+            let n = v.to_number() as i64;
+            if n < 0 {
+                (length + n).max(0)
+            } else {
+                n.min(length)
+            }
+        })
+        .unwrap_or(0) as u32;
 
-    let delete_count = args.get(1).map(|v| {
-        let n = v.to_number() as i64;
-        n.max(0).min(length - start as i64) as u32
-    }).unwrap_or((length - start as i64) as u32);
+    let delete_count = args
+        .get(1)
+        .map(|v| {
+            let n = v.to_number() as i64;
+            n.max(0).min(length - start as i64) as u32
+        })
+        .unwrap_or((length - start as i64) as u32);
 
     let removed: Vec<JsValue> = (start..start + delete_count)
-        .map(|i| arr_ref.get_property(&PropertyKey::Index(i)).unwrap_or(JsValue::Undefined))
+        .map(|i| {
+            arr_ref
+                .get_property(&PropertyKey::Index(i))
+                .unwrap_or(JsValue::Undefined)
+        })
         .collect();
 
     let insert_items: Vec<JsValue> = args.into_iter().skip(2).collect();
@@ -1164,13 +1418,17 @@ pub fn array_splice(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>)
     if insert_count > delete_count {
         let shift = insert_count - delete_count;
         for i in (start + delete_count..length as u32).rev() {
-            let val = arr_ref.get_property(&PropertyKey::Index(i)).unwrap_or(JsValue::Undefined);
+            let val = arr_ref
+                .get_property(&PropertyKey::Index(i))
+                .unwrap_or(JsValue::Undefined);
             arr_ref.set_property(PropertyKey::Index(i + shift), val);
         }
     } else if insert_count < delete_count {
         let shift = delete_count - insert_count;
         for i in start + delete_count..length as u32 {
-            let val = arr_ref.get_property(&PropertyKey::Index(i)).unwrap_or(JsValue::Undefined);
+            let val = arr_ref
+                .get_property(&PropertyKey::Index(i))
+                .unwrap_or(JsValue::Undefined);
             arr_ref.set_property(PropertyKey::Index(i - shift), val);
         }
         for i in new_length..length as u32 {
@@ -1185,17 +1443,28 @@ pub fn array_splice(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>)
     if let ExoticObject::Array { ref mut length } = arr_ref.exotic {
         *length = new_length;
     }
-    arr_ref.set_property(PropertyKey::from("length"), JsValue::Number(new_length as f64));
+    arr_ref.set_property(
+        PropertyKey::from("length"),
+        JsValue::Number(new_length as f64),
+    );
 
     drop(arr_ref);
     Ok(JsValue::Object(interp.create_array(removed)))
 }
 
-pub fn array_of(interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn array_of(
+    interp: &mut Interpreter,
+    _this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     Ok(JsValue::Object(interp.create_array(args)))
 }
 
-pub fn array_from(interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn array_from(
+    interp: &mut Interpreter,
+    _this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let source = args.first().cloned().unwrap_or(JsValue::Undefined);
     let map_fn = args.get(1).cloned();
 
@@ -1207,7 +1476,11 @@ pub fn array_from(interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) 
                 let obj_ref = obj.borrow();
                 if let ExoticObject::Array { length } = obj_ref.exotic {
                     (0..length)
-                        .map(|i| obj_ref.get_property(&PropertyKey::Index(i)).unwrap_or(JsValue::Undefined))
+                        .map(|i| {
+                            obj_ref
+                                .get_property(&PropertyKey::Index(i))
+                                .unwrap_or(JsValue::Undefined)
+                        })
                         .collect()
                 } else {
                     vec![]
@@ -1217,7 +1490,11 @@ pub fn array_from(interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) 
             for (i, elem) in source_elements.into_iter().enumerate() {
                 let mapped = if let Some(ref map) = map_fn {
                     if map.is_callable() {
-                        interp.call_function(map.clone(), JsValue::Undefined, vec![elem, JsValue::Number(i as f64)])?
+                        interp.call_function(
+                            map.clone(),
+                            JsValue::Undefined,
+                            vec![elem, JsValue::Number(i as f64)],
+                        )?
                     } else {
                         elem
                     }
@@ -1232,7 +1509,11 @@ pub fn array_from(interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) 
                 let elem = JsValue::String(JsString::from(ch.to_string()));
                 let mapped = if let Some(ref map) = map_fn {
                     if map.is_callable() {
-                        interp.call_function(map.clone(), JsValue::Undefined, vec![elem, JsValue::Number(i as f64)])?
+                        interp.call_function(
+                            map.clone(),
+                            JsValue::Undefined,
+                            vec![elem, JsValue::Number(i as f64)],
+                        )?
                     } else {
                         elem
                     }
@@ -1248,9 +1529,15 @@ pub fn array_from(interp: &mut Interpreter, _this: JsValue, args: Vec<JsValue>) 
     Ok(JsValue::Object(interp.create_array(elements)))
 }
 
-pub fn array_at(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn array_at(
+    _interp: &mut Interpreter,
+    this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this else {
-        return Err(JsError::type_error("Array.prototype.at called on non-object"));
+        return Err(JsError::type_error(
+            "Array.prototype.at called on non-object",
+        ));
     };
 
     let arr_ref = arr.borrow();
@@ -1261,22 +1548,26 @@ pub fn array_at(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) ->
 
     let index = args.first().map(|v| v.to_number() as i64).unwrap_or(0);
 
-    let actual_index = if index < 0 {
-        length + index
-    } else {
-        index
-    };
+    let actual_index = if index < 0 { length + index } else { index };
 
     if actual_index < 0 || actual_index >= length {
         return Ok(JsValue::Undefined);
     }
 
-    Ok(arr_ref.get_property(&PropertyKey::Index(actual_index as u32)).unwrap_or(JsValue::Undefined))
+    Ok(arr_ref
+        .get_property(&PropertyKey::Index(actual_index as u32))
+        .unwrap_or(JsValue::Undefined))
 }
 
-pub fn array_last_index_of(_interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn array_last_index_of(
+    _interp: &mut Interpreter,
+    this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this else {
-        return Err(JsError::type_error("Array.prototype.lastIndexOf called on non-object"));
+        return Err(JsError::type_error(
+            "Array.prototype.lastIndexOf called on non-object",
+        ));
     };
 
     let search_elem = args.first().cloned().unwrap_or(JsValue::Undefined);
@@ -1287,17 +1578,26 @@ pub fn array_last_index_of(_interp: &mut Interpreter, this: JsValue, args: Vec<J
         _ => return Err(JsError::type_error("Not an array")),
     };
 
-    let from_index = args.get(1).map(|v| {
-        let n = v.to_number() as i64;
-        if n < 0 { (length as i64 + n).max(-1) } else { n.min(length as i64 - 1) }
-    }).unwrap_or(length as i64 - 1);
+    let from_index = args
+        .get(1)
+        .map(|v| {
+            let n = v.to_number() as i64;
+            if n < 0 {
+                (length as i64 + n).max(-1)
+            } else {
+                n.min(length as i64 - 1)
+            }
+        })
+        .unwrap_or(length as i64 - 1);
 
     if from_index < 0 {
         return Ok(JsValue::Number(-1.0));
     }
 
     for i in (0..=from_index as u32).rev() {
-        let elem = arr_ref.get_property(&PropertyKey::Index(i)).unwrap_or(JsValue::Undefined);
+        let elem = arr_ref
+            .get_property(&PropertyKey::Index(i))
+            .unwrap_or(JsValue::Undefined);
         if elem.strict_equals(&search_elem) {
             return Ok(JsValue::Number(i as f64));
         }
@@ -1306,14 +1606,22 @@ pub fn array_last_index_of(_interp: &mut Interpreter, this: JsValue, args: Vec<J
     Ok(JsValue::Number(-1.0))
 }
 
-pub fn array_reduce_right(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn array_reduce_right(
+    interp: &mut Interpreter,
+    this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this.clone() else {
-        return Err(JsError::type_error("Array.prototype.reduceRight called on non-object"));
+        return Err(JsError::type_error(
+            "Array.prototype.reduceRight called on non-object",
+        ));
     };
 
     let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
     if !callback.is_callable() {
-        return Err(JsError::type_error("Array.prototype.reduceRight callback is not a function"));
+        return Err(JsError::type_error(
+            "Array.prototype.reduceRight callback is not a function",
+        ));
     }
 
     let length = {
@@ -1325,24 +1633,37 @@ pub fn array_reduce_right(interp: &mut Interpreter, this: JsValue, args: Vec<JsV
     };
 
     if length == 0 && args.get(1).is_none() {
-        return Err(JsError::type_error("Reduce of empty array with no initial value"));
+        return Err(JsError::type_error(
+            "Reduce of empty array with no initial value",
+        ));
     }
 
     let mut accumulator = args.get(1).cloned();
     let start_index = if accumulator.is_some() {
         length as i64 - 1
     } else {
-        let elem = arr.borrow().get_property(&PropertyKey::Index(length - 1)).unwrap_or(JsValue::Undefined);
+        let elem = arr
+            .borrow()
+            .get_property(&PropertyKey::Index(length - 1))
+            .unwrap_or(JsValue::Undefined);
         accumulator = Some(elem);
         length as i64 - 2
     };
 
     for i in (0..=start_index).rev() {
-        let elem = arr.borrow().get_property(&PropertyKey::Index(i as u32)).unwrap_or(JsValue::Undefined);
+        let elem = arr
+            .borrow()
+            .get_property(&PropertyKey::Index(i as u32))
+            .unwrap_or(JsValue::Undefined);
         let result = interp.call_function(
             callback.clone(),
             JsValue::Undefined,
-            vec![accumulator.clone().unwrap(), elem, JsValue::Number(i as f64), this.clone()],
+            vec![
+                accumulator.clone().unwrap(),
+                elem,
+                JsValue::Number(i as f64),
+                this.clone(),
+            ],
         )?;
         accumulator = Some(result);
     }
@@ -1350,9 +1671,15 @@ pub fn array_reduce_right(interp: &mut Interpreter, this: JsValue, args: Vec<JsV
     Ok(accumulator.unwrap_or(JsValue::Undefined))
 }
 
-pub fn array_flat(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn array_flat(
+    interp: &mut Interpreter,
+    this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this else {
-        return Err(JsError::type_error("Array.prototype.flat called on non-object"));
+        return Err(JsError::type_error(
+            "Array.prototype.flat called on non-object",
+        ));
     };
 
     let depth = args.first().map(|v| v.to_number() as i32).unwrap_or(1);
@@ -1365,7 +1692,11 @@ pub fn array_flat(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -
                 _ => return vec![],
             };
             (0..length)
-                .map(|i| arr_ref.get_property(&PropertyKey::Index(i)).unwrap_or(JsValue::Undefined))
+                .map(|i| {
+                    arr_ref
+                        .get_property(&PropertyKey::Index(i))
+                        .unwrap_or(JsValue::Undefined)
+                })
                 .collect()
         };
 
@@ -1388,14 +1719,22 @@ pub fn array_flat(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -
     Ok(JsValue::Object(interp.create_array(elements)))
 }
 
-pub fn array_flat_map(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn array_flat_map(
+    interp: &mut Interpreter,
+    this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this.clone() else {
-        return Err(JsError::type_error("Array.prototype.flatMap called on non-object"));
+        return Err(JsError::type_error(
+            "Array.prototype.flatMap called on non-object",
+        ));
     };
 
     let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
     if !callback.is_callable() {
-        return Err(JsError::type_error("Array.prototype.flatMap callback is not a function"));
+        return Err(JsError::type_error(
+            "Array.prototype.flatMap callback is not a function",
+        ));
     }
 
     let this_arg = args.get(1).cloned().unwrap_or(JsValue::Undefined);
@@ -1411,7 +1750,10 @@ pub fn array_flat_map(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue
     let mut result = Vec::new();
 
     for i in 0..length {
-        let elem = arr.borrow().get_property(&PropertyKey::Index(i)).unwrap_or(JsValue::Undefined);
+        let elem = arr
+            .borrow()
+            .get_property(&PropertyKey::Index(i))
+            .unwrap_or(JsValue::Undefined);
 
         let mapped = interp.call_function(
             callback.clone(),
@@ -1423,7 +1765,9 @@ pub fn array_flat_map(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue
             let inner_ref = inner.borrow();
             if let ExoticObject::Array { length: inner_len } = inner_ref.exotic {
                 for j in 0..inner_len {
-                    let inner_elem = inner_ref.get_property(&PropertyKey::Index(j)).unwrap_or(JsValue::Undefined);
+                    let inner_elem = inner_ref
+                        .get_property(&PropertyKey::Index(j))
+                        .unwrap_or(JsValue::Undefined);
                     result.push(inner_elem);
                 }
                 continue;
@@ -1435,14 +1779,22 @@ pub fn array_flat_map(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue
     Ok(JsValue::Object(interp.create_array(result)))
 }
 
-pub fn array_find_last(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn array_find_last(
+    interp: &mut Interpreter,
+    this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this.clone() else {
-        return Err(JsError::type_error("Array.prototype.findLast called on non-object"));
+        return Err(JsError::type_error(
+            "Array.prototype.findLast called on non-object",
+        ));
     };
 
     let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
     if !callback.is_callable() {
-        return Err(JsError::type_error("Array.prototype.findLast callback is not a function"));
+        return Err(JsError::type_error(
+            "Array.prototype.findLast callback is not a function",
+        ));
     }
 
     let this_arg = args.get(1).cloned().unwrap_or(JsValue::Undefined);
@@ -1456,7 +1808,10 @@ pub fn array_find_last(interp: &mut Interpreter, this: JsValue, args: Vec<JsValu
     };
 
     for i in (0..length).rev() {
-        let elem = arr.borrow().get_property(&PropertyKey::Index(i)).unwrap_or(JsValue::Undefined);
+        let elem = arr
+            .borrow()
+            .get_property(&PropertyKey::Index(i))
+            .unwrap_or(JsValue::Undefined);
 
         let result = interp.call_function(
             callback.clone(),
@@ -1472,14 +1827,22 @@ pub fn array_find_last(interp: &mut Interpreter, this: JsValue, args: Vec<JsValu
     Ok(JsValue::Undefined)
 }
 
-pub fn array_find_last_index(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn array_find_last_index(
+    interp: &mut Interpreter,
+    this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this.clone() else {
-        return Err(JsError::type_error("Array.prototype.findLastIndex called on non-object"));
+        return Err(JsError::type_error(
+            "Array.prototype.findLastIndex called on non-object",
+        ));
     };
 
     let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
     if !callback.is_callable() {
-        return Err(JsError::type_error("Array.prototype.findLastIndex callback is not a function"));
+        return Err(JsError::type_error(
+            "Array.prototype.findLastIndex callback is not a function",
+        ));
     }
 
     let this_arg = args.get(1).cloned().unwrap_or(JsValue::Undefined);
@@ -1493,7 +1856,10 @@ pub fn array_find_last_index(interp: &mut Interpreter, this: JsValue, args: Vec<
     };
 
     for i in (0..length).rev() {
-        let elem = arr.borrow().get_property(&PropertyKey::Index(i)).unwrap_or(JsValue::Undefined);
+        let elem = arr
+            .borrow()
+            .get_property(&PropertyKey::Index(i))
+            .unwrap_or(JsValue::Undefined);
 
         let result = interp.call_function(
             callback.clone(),
@@ -1509,9 +1875,15 @@ pub fn array_find_last_index(interp: &mut Interpreter, this: JsValue, args: Vec<
     Ok(JsValue::Number(-1.0))
 }
 
-pub fn array_to_reversed(interp: &mut Interpreter, this: JsValue, _args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn array_to_reversed(
+    interp: &mut Interpreter,
+    this: JsValue,
+    _args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this else {
-        return Err(JsError::type_error("Array.prototype.toReversed called on non-object"));
+        return Err(JsError::type_error(
+            "Array.prototype.toReversed called on non-object",
+        ));
     };
 
     let length = {
@@ -1524,15 +1896,25 @@ pub fn array_to_reversed(interp: &mut Interpreter, this: JsValue, _args: Vec<JsV
 
     let elements: Vec<JsValue> = (0..length)
         .rev()
-        .map(|i| arr.borrow().get_property(&PropertyKey::Index(i)).unwrap_or(JsValue::Undefined))
+        .map(|i| {
+            arr.borrow()
+                .get_property(&PropertyKey::Index(i))
+                .unwrap_or(JsValue::Undefined)
+        })
         .collect();
 
     Ok(JsValue::Object(interp.create_array(elements)))
 }
 
-pub fn array_to_sorted(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn array_to_sorted(
+    interp: &mut Interpreter,
+    this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this.clone() else {
-        return Err(JsError::type_error("Array.prototype.toSorted called on non-object"));
+        return Err(JsError::type_error(
+            "Array.prototype.toSorted called on non-object",
+        ));
     };
 
     let comparator = args.first().cloned();
@@ -1546,7 +1928,11 @@ pub fn array_to_sorted(interp: &mut Interpreter, this: JsValue, args: Vec<JsValu
     };
 
     let mut elements: Vec<JsValue> = (0..length)
-        .map(|i| arr.borrow().get_property(&PropertyKey::Index(i)).unwrap_or(JsValue::Undefined))
+        .map(|i| {
+            arr.borrow()
+                .get_property(&PropertyKey::Index(i))
+                .unwrap_or(JsValue::Undefined)
+        })
         .collect();
 
     if let Some(ref cmp_fn) = comparator {
@@ -1583,9 +1969,15 @@ pub fn array_to_sorted(interp: &mut Interpreter, this: JsValue, args: Vec<JsValu
     Ok(JsValue::Object(interp.create_array(elements)))
 }
 
-pub fn array_to_spliced(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn array_to_spliced(
+    interp: &mut Interpreter,
+    this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this else {
-        return Err(JsError::type_error("Array.prototype.toSpliced called on non-object"));
+        return Err(JsError::type_error(
+            "Array.prototype.toSpliced called on non-object",
+        ));
     };
 
     let length = {
@@ -1603,13 +1995,18 @@ pub fn array_to_spliced(interp: &mut Interpreter, this: JsValue, args: Vec<JsVal
         (start_arg as u32).min(length as u32)
     };
 
-    let delete_count = args.get(1)
+    let delete_count = args
+        .get(1)
         .map(|v| (v.to_number() as i32).max(0) as u32)
         .unwrap_or((length as u32).saturating_sub(start));
     let delete_count = delete_count.min(length as u32 - start);
 
     let mut result: Vec<JsValue> = (0..start)
-        .map(|i| arr.borrow().get_property(&PropertyKey::Index(i)).unwrap_or(JsValue::Undefined))
+        .map(|i| {
+            arr.borrow()
+                .get_property(&PropertyKey::Index(i))
+                .unwrap_or(JsValue::Undefined)
+        })
         .collect();
 
     for arg in args.iter().skip(2) {
@@ -1617,15 +2014,25 @@ pub fn array_to_spliced(interp: &mut Interpreter, this: JsValue, args: Vec<JsVal
     }
 
     for i in (start + delete_count)..(length as u32) {
-        result.push(arr.borrow().get_property(&PropertyKey::Index(i)).unwrap_or(JsValue::Undefined));
+        result.push(
+            arr.borrow()
+                .get_property(&PropertyKey::Index(i))
+                .unwrap_or(JsValue::Undefined),
+        );
     }
 
     Ok(JsValue::Object(interp.create_array(result)))
 }
 
-pub fn array_with(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn array_with(
+    interp: &mut Interpreter,
+    this: JsValue,
+    args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this else {
-        return Err(JsError::type_error("Array.prototype.with called on non-object"));
+        return Err(JsError::type_error(
+            "Array.prototype.with called on non-object",
+        ));
     };
 
     let length = {
@@ -1654,7 +2061,9 @@ pub fn array_with(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -
             if i == index as u32 {
                 value.clone()
             } else {
-                arr.borrow().get_property(&PropertyKey::Index(i)).unwrap_or(JsValue::Undefined)
+                arr.borrow()
+                    .get_property(&PropertyKey::Index(i))
+                    .unwrap_or(JsValue::Undefined)
             }
         })
         .collect();
@@ -1662,9 +2071,15 @@ pub fn array_with(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -
     Ok(JsValue::Object(interp.create_array(elements)))
 }
 
-pub fn array_keys(interp: &mut Interpreter, this: JsValue, _args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn array_keys(
+    interp: &mut Interpreter,
+    this: JsValue,
+    _args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this else {
-        return Err(JsError::type_error("Array.prototype.keys called on non-object"));
+        return Err(JsError::type_error(
+            "Array.prototype.keys called on non-object",
+        ));
     };
 
     let length = {
@@ -1679,9 +2094,15 @@ pub fn array_keys(interp: &mut Interpreter, this: JsValue, _args: Vec<JsValue>) 
     Ok(JsValue::Object(interp.create_array(keys)))
 }
 
-pub fn array_values(interp: &mut Interpreter, this: JsValue, _args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn array_values(
+    interp: &mut Interpreter,
+    this: JsValue,
+    _args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this else {
-        return Err(JsError::type_error("Array.prototype.values called on non-object"));
+        return Err(JsError::type_error(
+            "Array.prototype.values called on non-object",
+        ));
     };
 
     let length = {
@@ -1693,14 +2114,24 @@ pub fn array_values(interp: &mut Interpreter, this: JsValue, _args: Vec<JsValue>
     };
 
     let values: Vec<JsValue> = (0..length)
-        .map(|i| arr.borrow().get_property(&PropertyKey::Index(i)).unwrap_or(JsValue::Undefined))
+        .map(|i| {
+            arr.borrow()
+                .get_property(&PropertyKey::Index(i))
+                .unwrap_or(JsValue::Undefined)
+        })
         .collect();
     Ok(JsValue::Object(interp.create_array(values)))
 }
 
-pub fn array_entries(interp: &mut Interpreter, this: JsValue, _args: Vec<JsValue>) -> Result<JsValue, JsError> {
+pub fn array_entries(
+    interp: &mut Interpreter,
+    this: JsValue,
+    _args: Vec<JsValue>,
+) -> Result<JsValue, JsError> {
     let JsValue::Object(arr) = this else {
-        return Err(JsError::type_error("Array.prototype.entries called on non-object"));
+        return Err(JsError::type_error(
+            "Array.prototype.entries called on non-object",
+        ));
     };
 
     let length = {
@@ -1713,7 +2144,10 @@ pub fn array_entries(interp: &mut Interpreter, this: JsValue, _args: Vec<JsValue
 
     let entries: Vec<JsValue> = (0..length)
         .map(|i| {
-            let value = arr.borrow().get_property(&PropertyKey::Index(i)).unwrap_or(JsValue::Undefined);
+            let value = arr
+                .borrow()
+                .get_property(&PropertyKey::Index(i))
+                .unwrap_or(JsValue::Undefined);
             let pair = vec![JsValue::Number(i as f64), value];
             JsValue::Object(interp.create_array(pair))
         })

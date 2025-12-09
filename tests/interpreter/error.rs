@@ -46,10 +46,7 @@ fn test_error_tostring_basic() {
 #[test]
 fn test_error_tostring_no_message() {
     // When message is empty, just return name
-    assert_eq!(
-        eval("new Error().toString()"),
-        JsValue::from("Error")
-    );
+    assert_eq!(eval("new Error().toString()"), JsValue::from("Error"));
 }
 
 #[test]
@@ -72,11 +69,13 @@ fn test_error_tostring_referenceerror() {
 fn test_error_tostring_custom() {
     // Custom name and message
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             const e = new Error('oops');
             e.name = 'CustomError';
             e.toString()
-        "#),
+        "#
+        ),
         JsValue::from("CustomError: oops")
     );
 }
@@ -104,12 +103,14 @@ fn test_error_stack_contains_error_name() {
 fn test_error_stack_in_function() {
     // Stack should include function names
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             function foo(): Error {
                 return new Error('in foo');
             }
             foo().stack.includes('foo')
-        "#),
+        "#
+        ),
         JsValue::Boolean(true)
     );
 }
