@@ -8,7 +8,8 @@ import {
     validateNumber,
     validateMinLength,
     validateRange,
-    validateEmail
+    validateEmail,
+    validateObject
 } from "./validators";
 
 import {
@@ -165,7 +166,7 @@ for (const user of invalidUsers) {
     }
 }
 
-// --- Manual Batch Validation ---
+// --- Batch Validation with validateObject ---
 console.log("\n--- Batch Validation ---");
 
 const testUser = {
@@ -174,32 +175,16 @@ const testUser = {
     email: "bad"
 };
 
-// Perform validation manually - demonstrating error collection
-function collectErrors(): string[] {
-    const result: string[] = [];
+// Use validateObject to collect all validation errors
+const batchResult = validateObject(testUser, [
+    { field: "name", validators: [(v: any) => validateMinLength(v, 2, "name")] },
+    { field: "age", validators: [(v: any) => validateRange(v, 0, 150, "age")] },
+    { field: "email", validators: [(v: any) => validateEmail(v)] }
+]);
 
-    // Name validation
-    if (testUser.name.length < 2) {
-        result.push("name must be at least 2 characters");
-    }
-
-    // Age validation
-    if (testUser.age < 0 || testUser.age > 150) {
-        result.push("age must be between 0 and 150");
-    }
-
-    // Email validation
-    if (!testUser.email.includes("@") || !testUser.email.includes(".")) {
-        result.push("Invalid email format");
-    }
-
-    return result;
-}
-
-const batchErrors: string[] = collectErrors();
-console.log("Valid:", batchErrors.length === 0);
+console.log("Valid:", batchResult.valid);
 console.log("Errors:");
-for (const error of batchErrors) {
+for (const error of batchResult.errors) {
     console.log("  - " + error);
 }
 

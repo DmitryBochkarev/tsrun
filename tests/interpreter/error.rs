@@ -418,3 +418,192 @@ fn test_catch_instanceof_assign_outer_var_in_loop() {
         JsValue::from("attempt 2")
     );
 }
+
+#[test]
+fn test_closure_arg_with_catch_instanceof_simplified() {
+    // Simplest reproduction: pass a closure that throws to a function with try-catch-instanceof
+    assert_eq!(
+        eval(
+            r#"
+            function callWithCatch(fn: () => void): string {
+                let msg: string = "none";
+                try {
+                    fn();
+                } catch (e) {
+                    if (e instanceof Error) {
+                        msg = e.message;
+                    }
+                }
+                return msg;
+            }
+
+            callWithCatch(() => { throw new Error("test"); })
+        "#
+        ),
+        JsValue::from("test")
+    );
+}
+
+#[test]
+fn test_closure_arg_with_catch_no_instanceof() {
+    // Same but without instanceof - does it work?
+    assert_eq!(
+        eval(
+            r#"
+            function callWithCatch(fn: () => void): string {
+                let msg: string = "none";
+                try {
+                    fn();
+                } catch (e) {
+                    msg = "caught";
+                }
+                return msg;
+            }
+
+            callWithCatch(() => { throw new Error("test"); })
+        "#
+        ),
+        JsValue::from("caught")
+    );
+}
+
+#[test]
+fn test_closure_arg_with_catch_direct_assign() {
+    // Minimal: direct assignment in catch after closure throws
+    assert_eq!(
+        eval(
+            r#"
+            function test(fn: () => void): string {
+                let x: string = "before";
+                try {
+                    fn();
+                } catch (e) {
+                    x = "after";
+                }
+                return x;
+            }
+
+            test(() => { throw "error"; })
+        "#
+        ),
+        JsValue::from("after")
+    );
+}
+
+#[test]
+fn test_named_function_throw_in_try_catch() {
+    // Does it work with a named function that throws?
+    assert_eq!(
+        eval(
+            r#"
+            function thrower(): void {
+                throw "error";
+            }
+
+            function test(): string {
+                let x: string = "before";
+                try {
+                    thrower();
+                } catch (e) {
+                    x = "after";
+                }
+                return x;
+            }
+
+            test()
+        "#
+        ),
+        JsValue::from("after")
+    );
+}
+
+#[test]
+fn test_closure_arg_with_catch_typeof() {
+    // Same but with typeof instead of instanceof
+    assert_eq!(
+        eval(
+            r#"
+            function callWithCatch(fn: () => void): string {
+                let msg: string = "none";
+                try {
+                    fn();
+                } catch (e) {
+                    if (typeof e === "object") {
+                        msg = "object caught";
+                    }
+                }
+                return msg;
+            }
+
+            callWithCatch(() => { throw new Error("test"); })
+        "#
+        ),
+        JsValue::from("object caught")
+    );
+}
+
+#[test]
+fn test_custom_error_class_inherits_message() {
+    // Custom error class should properly inherit message from Error
+    assert_eq!(
+        eval(
+            r#"
+            class CustomError extends Error {
+                code: number;
+                constructor(message: string, code: number) {
+                    super(message);
+                    this.name = "CustomError";
+                    this.code = code;
+                }
+            }
+
+            const err = new CustomError("test message", 42);
+            err.message
+        "#
+        ),
+        JsValue::from("test message")
+    );
+}
+
+#[test]
+fn test_custom_error_class_tostring() {
+    // Custom error class toString should work
+    assert_eq!(
+        eval(
+            r#"
+            class CustomError extends Error {
+                constructor(message: string) {
+                    super(message);
+                    this.name = "CustomError";
+                }
+            }
+
+            new CustomError("my error").toString()
+        "#
+        ),
+        JsValue::from("CustomError: my error")
+    );
+}
+
+#[test]
+fn test_error_instanceof_hierarchy() {
+    // TypeError is not RangeError
+    assert_eq!(
+        eval("new TypeError('test') instanceof RangeError"),
+        JsValue::Boolean(false)
+    );
+    // RangeError is not TypeError
+    assert_eq!(
+        eval("new RangeError('test') instanceof TypeError"),
+        JsValue::Boolean(false)
+    );
+    // Both are Error instances
+    assert_eq!(
+        eval("new TypeError('test') instanceof Error"),
+        JsValue::Boolean(true)
+    );
+    assert_eq!(
+        eval("new RangeError('test') instanceof Error"),
+        JsValue::Boolean(true)
+    );
+}

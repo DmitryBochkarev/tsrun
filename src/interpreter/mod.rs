@@ -4187,22 +4187,27 @@ impl Interpreter {
                     }
                 }
 
-                // Execute body
+                // Execute body - must restore environment even if an error occurs
                 let result = match interpreted.body.as_ref() {
-                    FunctionBody::Block(block) => match self.execute_block(block)? {
-                        Completion::Return(val) => val,
-                        Completion::Normal(val) => val,
-                        _ => JsValue::Undefined,
-                    },
-                    FunctionBody::Expression(expr) => self.evaluate(expr)?,
+                    FunctionBody::Block(block) => self.execute_block(block),
+                    FunctionBody::Expression(expr) => self.evaluate(expr).map(Completion::Normal),
                 };
 
+                // Always restore environment and clean up, even on error
                 let func_env = self.env;
                 self.env = prev_env;
                 self.env_arena.try_free(func_env);
-                // Pop stack frame
                 self.call_stack.pop();
-                Ok(result)
+
+                // Now handle the result
+                match result {
+                    Ok(completion) => match completion {
+                        Completion::Return(val) => Ok(val),
+                        Completion::Normal(val) => Ok(val),
+                        _ => Ok(JsValue::Undefined),
+                    },
+                    Err(e) => Err(e),
+                }
             }
 
             JsFunction::Native(native) => {
