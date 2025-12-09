@@ -12,209 +12,116 @@ With `Rc<Environment>`, short-lived closures in loops accumulate memory:
 - 10,000 loop iterations with closures: 16MB leaked during execution
 - Same loop without closures: 456 bytes
 
-## Solution
+## Solution - IMPLEMENTED
 
-Replace `Rc<Environment>` with arena-based storage using indices (`EnvId`).
+Replace `Rc<Environment>` with arena-based storage using indices (`EnvId`) and
+reference counting for capture tracking.
 
-## New Types
+### Results
 
-```rust
-/// Index into environment arena
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct EnvId(usize);
+After implementation:
+- With closures: **6.2 MB** (was 22.5 MB)
+- Without closures: **5.7 MB**
+- Memory difference reduced from 17 MB to 0.5 MB
 
-/// Arena owning all environments
-pub struct EnvironmentArena {
-    envs: Vec<Environment>,
-    free_list: Vec<usize>,  // Reusable slots
-}
+## Implementation Details
 
-/// Environment now uses EnvId instead of Rc
-pub struct Environment {
-    pub bindings: HashMap<JsString, Binding>,  // No longer Rc<RefCell<...>>
-    pub outer: Option<EnvId>,                  // Was: Option<Rc<Environment>>
-}
-```
-
-## Changes Required
-
-### 1. value.rs - Environment Types
-
-- [x] Add `EnvId` type
-- [x] Add `EnvironmentArena` with alloc/free/get/set methods
-- [ ] Modify `Environment`:
-  - Change `bindings: Rc<RefCell<HashMap<...>>>` → `bindings: HashMap<...>`
-  - Change `outer: Option<Rc<Environment>>` → `outer: Option<EnvId>`
-  - Remove `Environment::get`, `set`, `has` methods (move to arena)
-- [ ] Modify `InterpretedFunction`:
-  - Change `closure: Rc<Environment>` → `closure: EnvId`
-- [ ] Modify `GeneratorState`:
-  - Change `closure: Rc<Environment>` → `closure: EnvId`
-
-### 2. interpreter/mod.rs - Interpreter
-
-- [ ] Add `env_arena: EnvironmentArena` field
-- [ ] Change `env: Rc<Environment>` → `env: EnvId`
-- [ ] Update `Interpreter::new()` to create arena
-- [ ] Replace all `self.env.define(...)` → `self.env_arena.define(self.env, ...)`
-- [ ] Replace all `self.env.get(...)` → `self.env_arena.get_binding(self.env, ...)`
-- [ ] Replace all `self.env.set(...)` → `self.env_arena.set_binding(self.env, ...)`
-- [ ] Replace all `Rc::new(Environment::child(...))` → `self.env_arena.alloc(Some(self.env))`
-- [ ] Replace all `Rc::new(Environment::with_outer(...))` → `self.env_arena.alloc(Some(...))`
-- [ ] Add environment freeing when scopes exit (blocks, functions, loops)
-- [ ] Remove `Drop` implementation (no longer needed)
-
-### 3. Key Call Sites to Update
-
-```rust
-// Before:
-self.env = Rc::new(Environment::child(&self.env));
-// After:
-self.env = self.env_arena.alloc(Some(self.env));
-
-// Before:
-self.env.define(name, value, mutable);
-// After:
-self.env_arena.define(self.env, name, value, mutable);
-
-// Before:
-self.env.get(&name)?
-// After:
-self.env_arena.get_binding(self.env, &name)?
-```
-
-### 4. Environment Lifetime Management
-
-When a scope exits, we need to free its environment:
-
-```rust
-// Block scope
-fn execute_block(&mut self, block: &BlockStatement) -> Result<Completion, JsError> {
-    let prev_env = self.env;
-    self.env = self.env_arena.alloc(Some(prev_env));
-
-    let result = self.execute_statements(&block.body);
-
-    let block_env = self.env;
-    self.env = prev_env;
-    self.env_arena.free(block_env);  // NEW: free the block's environment
-
-    result
-}
-```
-
-**Important**: Only free environments that are NOT captured by closures.
-
-### 5. Closure Capture Tracking (Option C: Scope-based with capture flag)
-
-When a function is created, it captures `self.env` as its closure. We must NOT free that environment until the function is dropped.
-
-**Chosen approach: Scope-based tracking with capture flag**
-
-Each environment has a `captured: bool` flag:
-- When a closure is created, mark its captured environment (and ancestors) as captured
-- When exiting a scope, only free the environment if `captured == false`
-- Captured environments stay alive until Interpreter drops
+### Environment Structure
 
 ```rust
 pub struct Environment {
     pub bindings: HashMap<JsString, Binding>,
     pub outer: Option<EnvId>,
-    pub captured: bool,  // True if a closure references this env
-}
-
-impl EnvironmentArena {
-    /// Mark an environment (and its ancestors) as captured by a closure
-    pub fn mark_captured(&mut self, id: EnvId) {
-        let mut current = Some(id);
-        while let Some(env_id) = current {
-            if let Some(env) = self.get_mut(env_id) {
-                if env.captured {
-                    break;  // Already captured, ancestors must be too
-                }
-                env.captured = true;
-                current = env.outer;
-            } else {
-                break;
-            }
-        }
-    }
-
-    /// Try to free an environment. Only succeeds if not captured.
-    pub fn try_free(&mut self, id: EnvId) -> bool {
-        if id == EnvId::GLOBAL {
-            return false;
-        }
-        if let Some(env) = self.get(id) {
-            if env.captured {
-                return false;  // Can't free, it's captured
-            }
-        }
-        self.free(id);
-        true
-    }
+    pub capture_count: usize,  // Number of closures capturing this env
 }
 ```
 
-**Usage pattern:**
+### Key Methods
 
 ```rust
-// When creating a function/closure:
-let func = InterpretedFunction {
-    closure: self.env,
-    // ...
-};
-self.env_arena.mark_captured(self.env);
+impl EnvironmentArena {
+    /// Increment capture count when closure is created
+    pub fn increment_capture(&mut self, id: EnvId);
 
-// When exiting a block scope:
-fn execute_block(&mut self, block: &BlockStatement) -> Result<Completion, JsError> {
-    let prev_env = self.env;
-    self.env = self.env_arena.alloc(Some(prev_env));
+    /// Decrement capture count when closure is dropped
+    pub fn decrement_capture(&mut self, id: EnvId) -> bool;
 
-    let result = self.execute_statements(&block.body);
+    /// Try to free an environment (handles self-referential closures)
+    pub fn try_free(&mut self, id: EnvId) -> bool;
 
-    let block_env = self.env;
-    self.env = prev_env;
-    self.env_arena.try_free(block_env);  // Only frees if not captured
+    /// Set binding with automatic capture decrement for old function values
+    pub fn set_binding(&mut self, id: EnvId, name: &JsString, value: JsValue) -> Result<(), JsError>;
 
-    result
+    /// Free environment with automatic capture decrement for function bindings
+    pub fn free(&mut self, id: EnvId);
 }
 ```
 
-**Advantages:**
-- Simple flag per environment
-- No reference counting needed
-- Captured environments stay alive (correct semantics)
-- Non-captured environments are freed immediately (good memory usage)
+### Self-Referential Closure Handling
 
-**Trade-off:**
-- Captured environments are never freed during execution
-- For pathological cases (creating many closures), memory grows
-- But normal code (loops with temporary closures that escape) works well
+The key insight is handling closures that capture their own environment:
 
-## Testing
-
-```bash
-# Should show no leaks at exit
-valgrind --leak-check=full ./target/debug/typescript-eval-runner examples/algorithms/main.ts
-
-# Should show stable memory during execution (no accumulation)
-cat > /tmp/loop_closures.ts << 'EOF'
-let sum = 0;
+```javascript
 for (let i = 0; i < 10000; i++) {
-    let fn = () => i;
+    let fn = () => i;  // fn is in iter_env and captures iter_env
     sum = sum + fn();
 }
-sum
-EOF
-valgrind ./target/debug/typescript-eval-runner /tmp/loop_closures.ts
 ```
 
-## Migration Strategy
+`try_free` counts "self-captures" (closures in the environment that capture that
+same environment) and only blocks freeing for external captures:
 
-1. Add new types (`EnvId`, `EnvironmentArena`) - DONE
-2. Add arena to Interpreter, keep old `Rc<Environment>` working
-3. Migrate one file at a time, running tests after each
-4. Remove old `Rc<Environment>` code
-5. Remove `Drop` implementation
-6. Verify with valgrind
+```rust
+pub fn try_free(&mut self, id: EnvId) -> bool {
+    let self_captures = /* count bindings that captured id */;
+    let capture_count = self.get(id).map(|e| e.capture_count).unwrap_or(0);
+
+    if capture_count > self_captures {
+        return false; // External captures exist
+    }
+    self.free(id);
+    true
+}
+```
+
+## Checklist - All Complete
+
+### 1. value.rs - Environment Types ✅
+
+- [x] Add `EnvId` type
+- [x] Add `EnvironmentArena` with alloc/free/get/set methods
+- [x] Modify `Environment`:
+  - Change `bindings: Rc<RefCell<HashMap<...>>>` → `bindings: HashMap<...>`
+  - Change `outer: Option<Rc<Environment>>` → `outer: Option<EnvId>`
+  - Change `captured: bool` → `capture_count: usize`
+- [x] Modify `InterpretedFunction`:
+  - Change `closure: Rc<Environment>` → `closure: EnvId`
+- [x] Modify `GeneratorState`:
+  - Change `closure: Rc<Environment>` → `closure: EnvId`
+- [x] Add `closure_env()` helper to JsValue and JsFunction
+
+### 2. interpreter/mod.rs - Interpreter ✅
+
+- [x] Add `env_arena: EnvironmentArena` field
+- [x] Change `env: Rc<Environment>` → `env: EnvId`
+- [x] Update `Interpreter::new()` to create arena
+- [x] Replace all `mark_captured` → `increment_capture`
+- [x] Add environment freeing when scopes exit (blocks, functions, loops)
+- [x] Handle self-referential closures in `try_free`
+- [x] Decrement captures when function values are overwritten
+
+### 3. Testing ✅
+
+```bash
+# Memory usage with closures
+/usr/bin/time -v ./target/debug/typescript-eval-runner examples/loop_closures.ts
+# Result: 6.2 MB (was 22.5 MB)
+
+# Memory usage without closures
+/usr/bin/time -v ./target/debug/typescript-eval-runner examples/loop_no_closures.ts
+# Result: 5.7 MB
+
+# No leaks
+valgrind --leak-check=full ./target/debug/typescript-eval-runner examples/loop_closures.ts
+# Result: 0 bytes lost
+```

@@ -77,14 +77,35 @@ impl EnvironmentArena {
 
     /// Mark an environment as free for reuse.
     /// This clears the environment's bindings and adds it to the free list.
+    /// Before clearing, decrements capture counts for any function values in bindings.
     pub fn free(&mut self, id: EnvId) {
         // Never free the global environment
         if id == EnvId::GLOBAL {
             return;
         }
+
+        // First, collect closure envs from all function bindings
+        let closure_envs: Vec<EnvId> = self
+            .envs
+            .get(id.0)
+            .map(|env| {
+                env.bindings
+                    .values()
+                    .filter_map(|binding| binding.value.closure_env())
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        // Decrement capture counts for those closures
+        for closure_env in closure_envs {
+            self.decrement_capture(closure_env);
+        }
+
+        // Now clear the environment
         if let Some(env) = self.envs.get_mut(id.0) {
             env.bindings.clear();
             env.outer = None;
+            env.capture_count = 0;
             self.free_list.push(id.0);
         }
     }
@@ -139,29 +160,55 @@ impl EnvironmentArena {
         Err(JsError::reference_error(name.as_str()))
     }
 
-    /// Set a binding value, walking the outer chain
+    /// Set a binding value, walking the outer chain.
+    /// If the old value was a function with a captured environment, decrements
+    /// the capture count for that environment.
     pub fn set_binding(
         &mut self,
         id: EnvId,
         name: &JsString,
         value: JsValue,
     ) -> Result<(), JsError> {
+        // First, find the binding and get the old value's closure env (if any)
+        let old_closure_env = {
+            let mut current = Some(id);
+            let mut result = None;
+            while let Some(env_id) = current {
+                if let Some(env) = self.get(env_id) {
+                    if let Some(binding) = env.bindings.get(name) {
+                        if !binding.initialized {
+                            return Err(JsError::reference_error_with_message(
+                                name.as_str(),
+                                "Cannot access before initialization",
+                            ));
+                        }
+                        if !binding.mutable {
+                            return Err(JsError::type_error(format!(
+                                "Assignment to constant variable '{}'",
+                                name
+                            )));
+                        }
+                        result = binding.value.closure_env();
+                        break;
+                    }
+                    current = env.outer;
+                } else {
+                    break;
+                }
+            }
+            result
+        };
+
+        // Decrement capture count for old value's closure (if it was a function)
+        if let Some(old_env) = old_closure_env {
+            self.decrement_capture(old_env);
+        }
+
+        // Now set the new value
         let mut current = Some(id);
         while let Some(env_id) = current {
             if let Some(env) = self.get_mut(env_id) {
                 if let Some(binding) = env.bindings.get_mut(name) {
-                    if !binding.initialized {
-                        return Err(JsError::reference_error_with_message(
-                            name.as_str(),
-                            "Cannot access before initialization",
-                        ));
-                    }
-                    if !binding.mutable {
-                        return Err(JsError::type_error(format!(
-                            "Assignment to constant variable '{}'",
-                            name
-                        )));
-                    }
                     binding.value = value;
                     return Ok(());
                 }
@@ -219,16 +266,13 @@ impl EnvironmentArena {
             .unwrap_or(false)
     }
 
-    /// Mark an environment (and its ancestor chain) as captured by a closure.
-    /// Captured environments cannot be freed until the interpreter is dropped.
-    pub fn mark_captured(&mut self, id: EnvId) {
+    /// Increment the capture count for an environment (and its ancestor chain).
+    /// Called when a closure is created that captures this environment.
+    pub fn increment_capture(&mut self, id: EnvId) {
         let mut current = Some(id);
         while let Some(env_id) = current {
             if let Some(env) = self.get_mut(env_id) {
-                if env.captured {
-                    break; // Already captured, ancestors must be too
-                }
-                env.captured = true;
+                env.capture_count = env.capture_count.saturating_add(1);
                 current = env.outer;
             } else {
                 break;
@@ -236,19 +280,54 @@ impl EnvironmentArena {
         }
     }
 
-    /// Try to free an environment. Only succeeds if not captured by a closure.
+    /// Decrement the capture count for an environment (and its ancestor chain).
+    /// Called when a closure that captured this environment is dropped.
+    /// Returns true if the environment's capture count reached 0.
+    pub fn decrement_capture(&mut self, id: EnvId) -> bool {
+        let mut current = Some(id);
+        let mut reached_zero = false;
+        while let Some(env_id) = current {
+            if let Some(env) = self.get_mut(env_id) {
+                env.capture_count = env.capture_count.saturating_sub(1);
+                if env_id == id && env.capture_count == 0 {
+                    reached_zero = true;
+                }
+                current = env.outer;
+            } else {
+                break;
+            }
+        }
+        reached_zero
+    }
+
+    /// Try to free an environment. Only succeeds if not captured by external closures.
+    /// This handles the self-referential case where closures in the environment's
+    /// bindings captured the environment itself - those don't count as external captures.
     /// Returns true if the environment was freed.
     pub fn try_free(&mut self, id: EnvId) -> bool {
         if id == EnvId::GLOBAL {
             return false;
         }
-        if let Some(env) = self.get(id) {
-            if env.captured {
-                return false; // Can't free, it's captured by a closure
-            }
-        } else {
-            return false;
+
+        // Count how many captures come from bindings within this environment itself
+        let self_captures = self
+            .envs
+            .get(id.0)
+            .map(|env| {
+                env.bindings
+                    .values()
+                    .filter_map(|binding| binding.value.closure_env())
+                    .filter(|closure_env| *closure_env == id)
+                    .count()
+            })
+            .unwrap_or(0);
+
+        // Check if there are external captures (captures not from self)
+        let capture_count = self.get(id).map(|env| env.capture_count).unwrap_or(0);
+        if capture_count > self_captures {
+            return false; // Can't free, it's captured by an external closure
         }
+
         self.free(id);
         true
     }
@@ -420,6 +499,21 @@ impl JsValue {
             (JsValue::Symbol(a), JsValue::Symbol(b)) => a == b, // Symbols compare by id
             (JsValue::Object(a), JsValue::Object(b)) => Rc::ptr_eq(a, b),
             _ => false,
+        }
+    }
+
+    /// Get the closure EnvId if this value is a function with a captured environment.
+    /// Returns None for native functions, non-function objects, and primitives.
+    pub fn closure_env(&self) -> Option<EnvId> {
+        match self {
+            JsValue::Object(obj) => {
+                if let ExoticObject::Function(func) = &obj.borrow().exotic {
+                    func.closure_env()
+                } else {
+                    None
+                }
+            }
+            _ => None,
         }
     }
 }
@@ -1049,6 +1143,22 @@ impl JsFunction {
             JsFunction::PromiseReject(_) => Some("reject"),
         }
     }
+
+    /// Get the closure EnvId if this is an interpreted function
+    pub fn closure_env(&self) -> Option<EnvId> {
+        match self {
+            JsFunction::Interpreted(f) => Some(f.closure),
+            JsFunction::Bound(b) => {
+                // For bound functions, get the closure from the target
+                if let ExoticObject::Function(target_fn) = &b.target.borrow().exotic {
+                    target_fn.closure_env()
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
 }
 
 /// User-defined function
@@ -1115,9 +1225,9 @@ pub struct Environment {
     pub bindings: HashMap<JsString, Binding>,
     /// Parent environment (if any)
     pub outer: Option<EnvId>,
-    /// Whether this environment is captured by a closure.
-    /// Captured environments cannot be freed until the interpreter drops.
-    pub captured: bool,
+    /// Number of closures that have captured this environment.
+    /// When this count drops to 0, the environment can be freed.
+    pub capture_count: usize,
 }
 
 impl Environment {
@@ -1126,7 +1236,7 @@ impl Environment {
         Self {
             bindings: HashMap::new(),
             outer: None,
-            captured: false,
+            capture_count: 0,
         }
     }
 
@@ -1135,7 +1245,7 @@ impl Environment {
         Self {
             bindings: HashMap::new(),
             outer,
-            captured: false,
+            capture_count: 0,
         }
     }
 }

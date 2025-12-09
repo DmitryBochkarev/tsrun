@@ -9,5 +9,8 @@ for (let i = 0; i < 10000; i++) {
 }
 sum
 
-// valgrind ./target/debug/typescript-eval-runner /tmp/loop_closures.ts
-// /usr/bin/time -v ./target/debug/typescript-eval-runner examples/loop_closures.ts
+/*
+ cargo build --bin typescript-eval-runner
+ /usr/bin/time -v ./target/debug/typescript-eval-runner examples/loop_closures.ts
+ valgrind ./target/debug/typescript-eval-runner examples/loop_closures.ts
+*/

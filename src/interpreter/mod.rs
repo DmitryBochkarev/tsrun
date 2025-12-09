@@ -1375,7 +1375,7 @@ impl Interpreter {
             async_: decl.async_,
         };
         // Mark the closure environment as captured
-        self.env_arena.mark_captured(self.env);
+        self.env_arena.increment_capture(self.env);
 
         let func_obj = create_function(JsFunction::Interpreted(func));
 
@@ -1511,7 +1511,7 @@ impl Interpreter {
                 async_: func.async_,
             };
             // Mark the closure environment as captured
-            self.env_arena.mark_captured(self.env);
+            self.env_arena.increment_capture(self.env);
 
             let func_obj = create_function(JsFunction::Interpreted(interpreted));
 
@@ -1588,7 +1588,7 @@ impl Interpreter {
 
         // Store field initializers in a special property so evaluate_new can access them
         // Mark the closure environment as captured
-        self.env_arena.mark_captured(self.env);
+        self.env_arena.increment_capture(self.env);
         let constructor_fn = create_function(JsFunction::Interpreted(InterpretedFunction {
             name: class.id.as_ref().map(|id| id.name.clone()),
             params: Rc::from(ctor_params), // Rc wrap for cheap cloning
@@ -1679,7 +1679,7 @@ impl Interpreter {
                 async_: func.async_,
             };
             // Mark the closure environment as captured
-            self.env_arena.mark_captured(self.env);
+            self.env_arena.increment_capture(self.env);
 
             let func_obj = create_function(JsFunction::Interpreted(interpreted));
 
@@ -2897,7 +2897,7 @@ impl Interpreter {
                     async_: func.async_,
                 };
                 // Mark the closure environment as captured
-                self.env_arena.mark_captured(self.env);
+                self.env_arena.increment_capture(self.env);
                 Ok(JsValue::Object(create_function(JsFunction::Interpreted(
                     interpreted,
                 ))))
@@ -2914,7 +2914,7 @@ impl Interpreter {
                     async_: arrow.async_,
                 };
                 // Mark the closure environment as captured
-                self.env_arena.mark_captured(self.env);
+                self.env_arena.increment_capture(self.env);
                 Ok(JsValue::Object(create_function(JsFunction::Interpreted(
                     interpreted,
                 ))))
