@@ -8,7 +8,6 @@ mod basics;
 mod class;
 mod console;
 mod control_flow;
-mod data_pipeline_debug;
 mod date;
 mod dynamic_import;
 mod error;

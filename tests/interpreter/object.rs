@@ -316,3 +316,96 @@ fn test_proto_in_literal() {
         JsValue::Number(42.0)
     );
 }
+
+// Object.keys/values/entries should return arrays with proper prototype
+#[test]
+fn test_object_keys_has_array_methods() {
+    // Object.keys should return an array that supports array methods
+    assert_eq!(
+        eval(
+            r#"
+            const obj = { a: 1, b: 2, c: 3 };
+            Object.keys(obj).map(k => k.toUpperCase()).length
+        "#
+        ),
+        JsValue::Number(3.0)
+    );
+    assert_eq!(
+        eval(
+            r#"
+            const obj = { a: 1, b: 2 };
+            Object.keys(obj).filter(k => k === "a").length
+        "#
+        ),
+        JsValue::Number(1.0)
+    );
+    // Test join works (order may vary)
+    let result = eval(
+        r#"
+            const obj = { a: 1, b: 2 };
+            Object.keys(obj).sort().join("-")
+        "#,
+    );
+    assert_eq!(result, JsValue::String(JsString::from("a-b")));
+}
+
+#[test]
+fn test_object_values_has_array_methods() {
+    // Object.values should return an array that supports array methods
+    assert_eq!(
+        eval(
+            r#"
+            const obj = { a: 10, b: 20, c: 30 };
+            Object.values(obj).reduce((sum, v) => sum + v, 0)
+        "#
+        ),
+        JsValue::Number(60.0)
+    );
+    assert_eq!(
+        eval(
+            r#"
+            const obj = { a: 1, b: 2, c: 3 };
+            Object.values(obj).map(v => v * 2).length
+        "#
+        ),
+        JsValue::Number(3.0)
+    );
+}
+
+#[test]
+fn test_object_entries_has_array_methods() {
+    // Object.entries should return an array that supports array methods
+    assert_eq!(
+        eval(
+            r#"
+            const obj = { a: 1, b: 2 };
+            Object.entries(obj).map(([k, v]) => k + ":" + v).length
+        "#
+        ),
+        JsValue::Number(2.0)
+    );
+    assert_eq!(
+        eval(
+            r#"
+            const obj = { x: 10, y: 20 };
+            Object.entries(obj).filter(([k, v]) => v > 15).length
+        "#
+        ),
+        JsValue::Number(1.0)
+    );
+}
+
+#[test]
+fn test_object_entries_inner_arrays_have_methods() {
+    // The inner [key, value] arrays should also have array methods
+    assert_eq!(
+        eval(
+            r#"
+            const obj = { a: 1 };
+            const entries = Object.entries(obj);
+            entries[0].join("=")
+        "#
+        ),
+        JsValue::String(JsString::from("a=1"))
+    );
+}

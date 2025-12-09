@@ -168,3 +168,36 @@ fn test_arrow_destructuring_param() {
         JsValue::Number(10.0)
     );
 }
+
+#[test]
+fn test_arrow_with_return_type_annotation() {
+    // Arrow function with typed parameters and return type annotation
+    assert_eq!(
+        eval(
+            r#"
+            const filterByCategory = (items: any[], category: string): any[] =>
+                items.filter(p => p.category === category);
+            const products = [
+                { id: 1, category: "X" },
+                { id: 2, category: "Y" },
+            ];
+            filterByCategory(products, "X").length
+        "#
+        ),
+        JsValue::Number(1.0)
+    );
+}
+
+#[test]
+fn test_arrow_array_destructuring_param() {
+    // Array destructuring pattern in arrow function parameter
+    assert_eq!(
+        eval(
+            r#"
+            const arr = [[1, 2], [3, 4]];
+            arr.map(([a, b]) => a + b).reduce((sum, x) => sum + x, 0)
+        "#
+        ),
+        JsValue::Number(10.0)
+    );
+}

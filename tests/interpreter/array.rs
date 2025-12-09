@@ -808,3 +808,46 @@ fn test_array_holes_trailing_comma() {
         JsValue::Number(2.0)
     );
 }
+
+#[test]
+fn test_reduce_with_object_destructuring() {
+    // Reduce with object destructuring in callback
+    assert_eq!(
+        eval(
+            r#"
+            const products = [
+                { price: 10, stock: 5 },
+                { price: 20, stock: 3 },
+            ];
+            products.reduce((total, { price, stock }) => total + price * stock, 0)
+        "#
+        ),
+        JsValue::Number(110.0)
+    );
+}
+
+#[test]
+fn test_reduce_grouping_pattern() {
+    // Common grouping pattern using reduce
+    assert_eq!(
+        eval(
+            r#"
+            const products = [
+                { id: 1, category: "X" },
+                { id: 2, category: "Y" },
+                { id: 3, category: "X" },
+            ];
+            const grouped = products.reduce((groups, product) => {
+                const category = product.category;
+                if (!groups[category]) {
+                    groups[category] = [];
+                }
+                groups[category].push(product);
+                return groups;
+            }, {});
+            Object.keys(grouped).length
+        "#
+        ),
+        JsValue::Number(2.0)
+    );
+}
