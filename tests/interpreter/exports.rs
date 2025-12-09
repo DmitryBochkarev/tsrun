@@ -971,7 +971,6 @@ fn test_export_interface_ignored_at_runtime() {
 }
 
 #[test]
-#[ignore] // TODO: Implement export type parsing
 fn test_export_type_alias_ignored_at_runtime() {
     // Type aliases are type-only
     let source = r#"

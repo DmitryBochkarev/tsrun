@@ -945,6 +945,18 @@ impl<'a> Parser<'a> {
     fn parse_type_alias(&mut self) -> Result<TypeAliasDeclaration, JsError> {
         let start = self.current.span;
         self.expect(&TokenKind::Type)?;
+        self.parse_type_alias_inner(start)
+    }
+
+    /// Parse type alias after 'type' keyword has been consumed.
+    /// Used by `export type ID = ...` syntax.
+    fn parse_type_alias_after_type_keyword(&mut self) -> Result<TypeAliasDeclaration, JsError> {
+        // Use previous token span as start since we already consumed 'type'
+        let start = self.previous.span;
+        self.parse_type_alias_inner(start)
+    }
+
+    fn parse_type_alias_inner(&mut self, start: Span) -> Result<TypeAliasDeclaration, JsError> {
         let id = self.parse_identifier()?;
         let type_parameters = self.parse_optional_type_parameters()?;
         self.expect(&TokenKind::Eq)?;
@@ -1108,7 +1120,36 @@ impl<'a> Parser<'a> {
         let start = self.current.span;
         self.expect(&TokenKind::Export)?;
 
-        let type_only = self.match_token(&TokenKind::Type);
+        // Check for `export type` which can be:
+        // 1. `export type { ... }` - type-only re-export (type_only flag)
+        // 2. `export type ID = ...` - type alias export (NOT type_only, fall through to declaration parsing)
+        //
+        // We consume 'type' and then check what follows. If it's '{' or '*', it's a type-only re-export.
+        // Otherwise, we restore and let the normal declaration parsing handle `type ID = ...`
+        let type_only = if self.check(&TokenKind::Type) {
+            self.advance(); // consume 'type'
+
+            if self.check(&TokenKind::LBrace) || self.check(&TokenKind::Star) {
+                // type-only re-export: `export type { x }` or `export type * from`
+                true
+            } else {
+                // This is `export type ID = ...` - restore and let it be parsed as type alias
+                // We already consumed 'type', but check() for Type below won't match
+                // So we need to insert the type alias parsing here
+                let type_alias = self.parse_type_alias_after_type_keyword()?;
+                let span = self.span_from(start);
+                return Ok(ExportDeclaration {
+                    declaration: Some(Box::new(Statement::TypeAlias(type_alias))),
+                    specifiers: vec![],
+                    source: None,
+                    default: false,
+                    type_only: false,
+                    span,
+                });
+            }
+        } else {
+            false
+        };
 
         // export default
         if self.match_token(&TokenKind::Default) {
