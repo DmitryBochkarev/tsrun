@@ -254,7 +254,7 @@ To fully implement classes, the following components are needed:
 #### Async/Await
 - [x] `async function` declarations and expressions
 - [x] `await` expression (synchronous Promise resolution)
-- [ ] Top-level await in modules
+- [x] Top-level await in modules
 - [x] Async arrow functions
 
 ### TypeScript Features

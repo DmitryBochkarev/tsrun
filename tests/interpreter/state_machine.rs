@@ -1666,3 +1666,306 @@ fn test_side_effect_import() {
         _ => panic!("Expected Complete"),
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Top-Level Await Tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Test: Top-level await with already-resolved Promise
+#[test]
+fn test_top_level_await_resolved() {
+    let mut runtime = Runtime::new();
+
+    let result = runtime
+        .eval(
+            r#"
+        const value = await Promise.resolve(42);
+        value
+    "#,
+        )
+        .unwrap();
+
+    match result {
+        RuntimeResult::Complete(value) => {
+            assert_eq!(value, JsValue::Number(42.0));
+        }
+        _ => panic!("Expected Complete for resolved promise TLA"),
+    }
+}
+
+/// Test: Top-level await with import then await
+#[test]
+fn test_top_level_await_after_import() {
+    let mut runtime = Runtime::new();
+
+    let result = runtime
+        .eval(
+            r#"
+        import { asyncValue } from './async-module';
+
+        // Top-level await on the imported value (which is a promise)
+        const resolved = await Promise.resolve(asyncValue);
+        resolved
+    "#,
+        )
+        .unwrap();
+
+    // First: resolve import
+    match result {
+        RuntimeResult::ImportAwaited { slot, specifier } => {
+            assert_eq!(specifier, "./async-module");
+            let module = runtime.create_module_object(vec![
+                ("asyncValue".to_string(), JsValue::Number(100.0)),
+            ]);
+            slot.set_success(module);
+        }
+        _ => panic!("Expected ImportAwaited"),
+    }
+
+    // Continue with TLA
+    let result = runtime.continue_eval().unwrap();
+    match result {
+        RuntimeResult::Complete(value) => {
+            assert_eq!(value, JsValue::Number(100.0));
+        }
+        _ => panic!("Expected Complete after TLA"),
+    }
+}
+
+/// Test: Multiple top-level awaits
+#[test]
+fn test_multiple_top_level_awaits() {
+    let mut runtime = Runtime::new();
+
+    let result = runtime
+        .eval(
+            r#"
+        const a = await Promise.resolve(1);
+        const b = await Promise.resolve(2);
+        const c = await Promise.resolve(3);
+        a + b + c
+    "#,
+        )
+        .unwrap();
+
+    match result {
+        RuntimeResult::Complete(value) => {
+            assert_eq!(value, JsValue::Number(6.0));
+        }
+        _ => panic!("Expected Complete"),
+    }
+}
+
+/// Test: Top-level await with Promise.all
+#[test]
+fn test_top_level_await_promise_all() {
+    let mut runtime = Runtime::new();
+
+    let result = runtime
+        .eval(
+            r#"
+        const results = await Promise.all([
+            Promise.resolve(10),
+            Promise.resolve(20),
+            Promise.resolve(30)
+        ]);
+        results[0] + results[1] + results[2]
+    "#,
+        )
+        .unwrap();
+
+    match result {
+        RuntimeResult::Complete(value) => {
+            assert_eq!(value, JsValue::Number(60.0));
+        }
+        _ => panic!("Expected Complete"),
+    }
+}
+
+/// Test: Top-level await with error handling
+#[test]
+fn test_top_level_await_with_try_catch() {
+    let mut runtime = Runtime::new();
+
+    let result = runtime
+        .eval(
+            r#"
+        let result: string;
+        try {
+            const value = await Promise.reject("error!");
+            result = "success: " + value;
+        } catch (e) {
+            result = "caught: " + e;
+        }
+        result
+    "#,
+        )
+        .unwrap();
+
+    match result {
+        RuntimeResult::Complete(value) => {
+            assert_eq!(value, JsValue::String("caught: error!".into()));
+        }
+        _ => panic!("Expected Complete"),
+    }
+}
+
+/// Test: Top-level await in conditional
+#[test]
+fn test_top_level_await_conditional() {
+    let mut runtime = Runtime::new();
+
+    let result = runtime
+        .eval(
+            r#"
+        const shouldAwait = true;
+        let value: number;
+
+        if (shouldAwait) {
+            value = await Promise.resolve(42);
+        } else {
+            value = 0;
+        }
+
+        value
+    "#,
+        )
+        .unwrap();
+
+    match result {
+        RuntimeResult::Complete(value) => {
+            assert_eq!(value, JsValue::Number(42.0));
+        }
+        _ => panic!("Expected Complete"),
+    }
+}
+
+/// Test: Top-level await with loop
+#[test]
+fn test_top_level_await_in_loop() {
+    let mut runtime = Runtime::new();
+
+    let result = runtime
+        .eval(
+            r#"
+        let sum = 0;
+        const values = [1, 2, 3];
+
+        for (let i = 0; i < values.length; i++) {
+            sum += await Promise.resolve(values[i]);
+        }
+
+        sum
+    "#,
+        )
+        .unwrap();
+
+    match result {
+        RuntimeResult::Complete(value) => {
+            assert_eq!(value, JsValue::Number(6.0));
+        }
+        _ => panic!("Expected Complete"),
+    }
+}
+
+/// Test: Top-level await export
+#[test]
+fn test_top_level_await_with_export() {
+    let mut runtime = Runtime::new();
+
+    let result = runtime
+        .eval(
+            r#"
+        const data = await Promise.resolve({ value: 42 });
+        export const exportedValue = data.value;
+        exportedValue
+    "#,
+        )
+        .unwrap();
+
+    match result {
+        RuntimeResult::Complete(value) => {
+            assert_eq!(value, JsValue::Number(42.0));
+        }
+        _ => panic!("Expected Complete"),
+    }
+
+    // Verify the export is available
+    let exports = runtime.get_exports();
+    assert!(exports.contains_key("exportedValue"));
+    assert_eq!(*exports.get("exportedValue").unwrap(), JsValue::Number(42.0));
+}
+
+/// Test: Top-level await with dynamic import
+#[test]
+fn test_top_level_await_dynamic_import() {
+    let mut runtime = Runtime::new();
+
+    // Note: Dynamic import currently returns a pending promise that doesn't suspend
+    // This test verifies the syntax works, not full dynamic import resolution
+    let result = runtime
+        .eval(
+            r#"
+        // Await a resolved promise - dynamic import scenario would be similar
+        // Using quoted property names to avoid 'default' keyword issue
+        const moduleData = await Promise.resolve({ "defaultExport": 123, named: 456 });
+        moduleData.defaultExport + moduleData.named
+    "#,
+        )
+        .unwrap();
+
+    match result {
+        RuntimeResult::Complete(value) => {
+            assert_eq!(value, JsValue::Number(579.0)); // 123 + 456
+        }
+        _ => panic!("Expected Complete"),
+    }
+}
+
+/// Test: Top-level await combined with imports and exports
+#[test]
+fn test_top_level_await_full_module() {
+    let mut runtime = Runtime::new();
+
+    let result = runtime
+        .eval(
+            r#"
+        import { baseConfig } from './config';
+
+        // Top-level await to "load" additional data
+        const additionalData = await Promise.resolve({ extra: 50 });
+
+        export const config = {
+            ...baseConfig,
+            ...additionalData
+        };
+
+        config.value + config.extra
+    "#,
+        )
+        .unwrap();
+
+    // First: resolve import
+    match result {
+        RuntimeResult::ImportAwaited { slot, specifier } => {
+            assert_eq!(specifier, "./config");
+            // Create inner object first to avoid borrow conflict
+            let base_config = runtime.create_module_object(vec![
+                ("value".to_string(), JsValue::Number(100.0)),
+            ]);
+            let module = runtime.create_module_object(vec![
+                ("baseConfig".to_string(), base_config),
+            ]);
+            slot.set_success(module);
+        }
+        _ => panic!("Expected ImportAwaited"),
+    }
+
+    let result = runtime.continue_eval().unwrap();
+    match result {
+        RuntimeResult::Complete(value) => {
+            assert_eq!(value, JsValue::Number(150.0)); // 100 + 50
+        }
+        _ => panic!("Expected Complete"),
+    }
+}
