@@ -122,3 +122,11 @@ fn test_number_toexponential() {
         JsValue::String(JsString::from("1.2e+4"))
     );
 }
+
+#[test]
+fn test_number_tostring_radix() {
+    // Test Number.toString with different radixes
+    assert_eq!(eval("(12).toString(2)"), JsValue::String("1100".into()));
+    assert_eq!(eval("(255).toString(16)"), JsValue::String("ff".into()));
+    assert_eq!(eval("(8).toString(8)"), JsValue::String("10".into()));
+}

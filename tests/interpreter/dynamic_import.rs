@@ -358,3 +358,232 @@ fn test_dynamic_import_factory_pattern() {
     );
     assert_eq!(result, JsValue::Boolean(true));
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Nested module loading with state save/restore
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_nested_static_imports_with_state_save_restore() {
+    // Test that nested static imports work correctly when using save/restore
+    let mut runtime = Runtime::new();
+
+    // Main module imports from module A
+    let result = runtime
+        .eval(
+            r#"
+        import { getValue } from './moduleA';
+
+        // Use the imported value
+        getValue() + 100
+    "#,
+        )
+        .unwrap();
+
+    // First import: moduleA
+    match result {
+        RuntimeResult::ImportAwaited { slot, specifier } => {
+            assert_eq!(specifier, "./moduleA");
+
+            // Save state before loading moduleA
+            let saved_state = runtime.save_execution_state();
+
+            // Simulate loading moduleA (which has no nested imports)
+            runtime
+                .eval(
+                    r#"
+                export function getValue(): number {
+                    return 42;
+                }
+            "#,
+                )
+                .unwrap();
+
+            // Create module object from exports
+            let exports: Vec<(String, JsValue)> = runtime
+                .get_exports()
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.clone()))
+                .collect();
+            let module_a = runtime.create_module_object(exports);
+
+            // Restore state and fill slot
+            runtime.restore_execution_state(saved_state);
+            slot.set_success(module_a);
+        }
+        _ => panic!("Expected ImportAwaited for moduleA"),
+    }
+
+    // Continue execution
+    let result = runtime.continue_eval().unwrap();
+    match result {
+        RuntimeResult::Complete(value) => {
+            assert_eq!(value, JsValue::Number(142.0)); // 42 + 100
+        }
+        _ => panic!("Expected Complete"),
+    }
+}
+
+#[test]
+fn test_module_returning_array_with_prototype() {
+    // Test that arrays from nested modules have proper prototype chain
+    let mut runtime = Runtime::new();
+
+    let result = runtime
+        .eval(
+            r#"
+        import { getNumbers } from './arrayModule';
+
+        // Use array methods on imported array
+        const nums = getNumbers();
+        nums.map(x => x * 2).join(",")
+    "#,
+        )
+        .unwrap();
+
+    // Import: arrayModule
+    match result {
+        RuntimeResult::ImportAwaited { slot, specifier } => {
+            assert_eq!(specifier, "./arrayModule");
+
+            // Save state before loading module
+            let saved_state = runtime.save_execution_state();
+
+            // Load the array module - it exports a function that returns an array
+            runtime
+                .eval(
+                    r#"
+                export function getNumbers(): number[] {
+                    return [1, 2, 3, 4, 5];
+                }
+            "#,
+                )
+                .unwrap();
+
+            // Create module object from exports
+            let exports: Vec<(String, JsValue)> = runtime
+                .get_exports()
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.clone()))
+                .collect();
+            let module = runtime.create_module_object(exports);
+
+            // Restore state and fill slot
+            runtime.restore_execution_state(saved_state);
+            slot.set_success(module);
+        }
+        _ => panic!("Expected ImportAwaited"),
+    }
+
+    // Continue execution
+    let result = runtime.continue_eval().unwrap();
+    match result {
+        RuntimeResult::Complete(value) => {
+            // Array methods should work because prototype is shared
+            assert_eq!(value, JsValue::String("2,4,6,8,10".into()));
+        }
+        _ => panic!("Expected Complete"),
+    }
+}
+
+#[test]
+fn test_deeply_nested_imports_with_state_save_restore() {
+    // Test: main -> A -> B chain of imports
+    let mut runtime = Runtime::new();
+
+    let result = runtime
+        .eval(
+            r#"
+        import { aValue } from './moduleA';
+        aValue + 1000
+    "#,
+        )
+        .unwrap();
+
+    // First import: moduleA
+    match result {
+        RuntimeResult::ImportAwaited { slot, specifier } => {
+            assert_eq!(specifier, "./moduleA");
+
+            // Save main state
+            let main_saved_state = runtime.save_execution_state();
+
+            // Load moduleA which imports from moduleB
+            let result_a = runtime
+                .eval(
+                    r#"
+                import { bValue } from './moduleB';
+                export const aValue: number = bValue * 10;
+            "#,
+                )
+                .unwrap();
+
+            // moduleA wants moduleB
+            match result_a {
+                RuntimeResult::ImportAwaited {
+                    slot: slot_b,
+                    specifier: spec_b,
+                } => {
+                    assert_eq!(spec_b, "./moduleB");
+
+                    // Save moduleA state
+                    let a_saved_state = runtime.save_execution_state();
+
+                    // Load moduleB
+                    runtime
+                        .eval(
+                            r#"
+                        export const bValue: number = 5;
+                    "#,
+                        )
+                        .unwrap();
+
+                    // Create moduleB object
+                    let exports_b: Vec<(String, JsValue)> = runtime
+                        .get_exports()
+                        .iter()
+                        .map(|(k, v)| (k.to_string(), v.clone()))
+                        .collect();
+                    let module_b = runtime.create_module_object(exports_b);
+
+                    // Restore moduleA state and continue
+                    runtime.restore_execution_state(a_saved_state);
+                    slot_b.set_success(module_b);
+
+                    // Continue moduleA execution
+                    let result_a_continued = runtime.continue_eval().unwrap();
+                    match result_a_continued {
+                        RuntimeResult::Complete(_) => {
+                            // moduleA completed
+                        }
+                        _ => panic!("Expected moduleA to complete"),
+                    }
+                }
+                _ => panic!("Expected ImportAwaited for moduleB"),
+            }
+
+            // Create moduleA object
+            let exports_a: Vec<(String, JsValue)> = runtime
+                .get_exports()
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.clone()))
+                .collect();
+            let module_a = runtime.create_module_object(exports_a);
+
+            // Restore main state and continue
+            runtime.restore_execution_state(main_saved_state);
+            slot.set_success(module_a);
+        }
+        _ => panic!("Expected ImportAwaited for moduleA"),
+    }
+
+    // Continue main execution
+    let result = runtime.continue_eval().unwrap();
+    match result {
+        RuntimeResult::Complete(value) => {
+            // 5 (bValue) * 10 (in moduleA) + 1000 (in main) = 1050
+            assert_eq!(value, JsValue::Number(1050.0));
+        }
+        _ => panic!("Expected Complete"),
+    }
+}

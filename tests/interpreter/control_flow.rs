@@ -1962,3 +1962,40 @@ fn test_iterator_pattern() {
         JsValue::Number(60.0)
     );
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Sieve of Eratosthenes (complex algorithm with loops)
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_sieve_of_eratosthenes() {
+    let result = eval(
+        r#"
+        function sieveOfEratosthenes(n: number): number[] {
+            if (n < 2) return [];
+            const sieve: boolean[] = [];
+            for (let i = 0; i <= n; i++) {
+                sieve.push(true);
+            }
+            sieve[0] = false;
+            sieve[1] = false;
+            for (let i = 2; i * i <= n; i++) {
+                if (sieve[i]) {
+                    for (let j = i * i; j <= n; j += i) {
+                        sieve[j] = false;
+                    }
+                }
+            }
+            const primes: number[] = [];
+            for (let i = 2; i <= n; i++) {
+                if (sieve[i]) {
+                    primes.push(i);
+                }
+            }
+            return primes;
+        }
+        sieveOfEratosthenes(20).join(",")
+    "#,
+    );
+    assert_eq!(result, JsValue::String("2,3,5,7,11,13,17,19".into()));
+}

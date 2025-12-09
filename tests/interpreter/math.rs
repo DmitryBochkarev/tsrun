@@ -117,3 +117,35 @@ fn test_math_hyperbolic() {
     assert_eq!(eval("Math.asinh(0)"), JsValue::Number(0.0));
     assert_eq!(eval("Math.atanh(0)"), JsValue::Number(0.0));
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Math with spread operator
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_math_spread_min() {
+    // Test Math.min with spread
+    assert_eq!(
+        eval(
+            r#"
+            const arr: number[] = [5, 3, 9, 1];
+            Math.min(...arr)
+        "#
+        ),
+        JsValue::Number(1.0)
+    );
+}
+
+#[test]
+fn test_math_spread_max() {
+    // Test Math.max with spread
+    assert_eq!(
+        eval(
+            r#"
+            const arr: number[] = [5, 3, 9, 1];
+            Math.max(...arr)
+        "#
+        ),
+        JsValue::Number(9.0)
+    );
+}

@@ -201,3 +201,79 @@ fn test_arrow_array_destructuring_param() {
         JsValue::Number(10.0)
     );
 }
+
+#[test]
+fn test_recursive_fibonacci() {
+    let result = eval(
+        r#"
+        function fibRecursive(n: number): number {
+            if (n <= 1) return n;
+            return fibRecursive(n - 1) + fibRecursive(n - 2);
+        }
+        fibRecursive(10)
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(55.0));
+}
+
+#[test]
+fn test_memoized_closure() {
+    // Test closure-based memoization pattern
+    let result = eval(
+        r#"
+        function createMemoizedFib(): (n: number) => number {
+            const cache: { [key: number]: number } = {};
+            return function fib(n: number): number {
+                if (n in cache) return cache[n];
+                if (n <= 1) return n;
+                const result = fib(n - 1) + fib(n - 2);
+                cache[n] = result;
+                return result;
+            };
+        }
+        const fib = createMemoizedFib();
+        fib(10)
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(55.0));
+}
+
+#[test]
+fn test_function_returning_array() {
+    // Test function that returns an array with array methods
+    let result = eval(
+        r#"
+        function getNumbers(): number[] {
+            const arr: number[] = [];
+            for (let i = 0; i < 5; i++) {
+                arr.push(i);
+            }
+            return arr;
+        }
+        const nums = getNumbers();
+        nums.map(x => x * 2).join(",")
+    "#,
+    );
+    assert_eq!(result, JsValue::String("0,2,4,6,8".into()));
+}
+
+#[test]
+fn test_fibonacci_iterative() {
+    let result = eval(
+        r#"
+        function fibIterative(n: number): number {
+            if (n <= 1) return n;
+            let prev = 0;
+            let curr = 1;
+            for (let i = 2; i <= n; i++) {
+                const next = prev + curr;
+                prev = curr;
+                curr = next;
+            }
+            return curr;
+        }
+        fibIterative(10)
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(55.0));
+}

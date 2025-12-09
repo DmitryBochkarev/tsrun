@@ -19,6 +19,7 @@ pub mod value;
 
 pub use error::JsError;
 pub use interpreter::Interpreter;
+pub use interpreter::SavedExecutionState;
 pub use value::CheapClone;
 pub use value::JsString;
 pub use value::JsValue;
@@ -235,6 +236,38 @@ impl Runtime {
     /// Create a JsValue from a JSON value
     pub fn create_value_from_json(&mut self, json: &serde_json::Value) -> Result<JsValue, JsError> {
         interpreter::builtins::json_to_js_value(json)
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Nested Module Loading Support
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// Save the current execution state for nested module loading
+    ///
+    /// Call this before executing a nested module with `eval()`, then restore
+    /// after the module finishes. This allows loading modules during execution
+    /// without losing the parent module's state.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // When an import is requested during execution:
+    /// let state = runtime.save_execution_state();
+    /// let module = load_nested_module(&mut runtime)?;
+    /// runtime.restore_execution_state(state);
+    /// slot.set_success(module);
+    /// runtime.continue_eval()?;
+    /// ```
+    pub fn save_execution_state(&mut self) -> SavedExecutionState {
+        self.interpreter.save_execution_state()
+    }
+
+    /// Restore a previously saved execution state
+    ///
+    /// Call this after a nested module has finished executing to restore
+    /// the parent module's state so execution can continue.
+    pub fn restore_execution_state(&mut self, state: SavedExecutionState) {
+        self.interpreter.restore_execution_state(state);
     }
 }
 

@@ -148,6 +148,21 @@ pub struct StaticImport {
     pub bindings: eval_stack::ImportBindings,
 }
 
+/// Saved execution state for nested module loading
+///
+/// When loading a module during another module's execution,
+/// we need to save and restore the execution state.
+pub struct SavedExecutionState {
+    eval_stack: Vec<eval_stack::EvalFrame>,
+    value_stack: Vec<JsValue>,
+    completion_stack: Vec<eval_stack::CompletionValue>,
+    static_imports: Vec<StaticImport>,
+    static_import_index: usize,
+    pending_slot: Option<crate::PendingSlot>,
+    pending_program_body: Option<Vec<Statement>>,
+    exports: std::collections::HashMap<JsString, JsValue>,
+}
+
 impl Interpreter {
     /// Create a new interpreter with global environment
     pub fn new() -> Self {
@@ -589,6 +604,36 @@ impl Interpreter {
 
         // Continue with next import or program execution
         self.process_next_import_or_execute()
+    }
+
+    /// Save the current execution state for nested module loading
+    ///
+    /// Call this before executing a nested module, then restore after.
+    pub fn save_execution_state(&mut self) -> SavedExecutionState {
+        SavedExecutionState {
+            eval_stack: std::mem::take(&mut self.eval_stack),
+            value_stack: std::mem::take(&mut self.value_stack),
+            completion_stack: std::mem::take(&mut self.completion_stack),
+            static_imports: std::mem::take(&mut self.static_imports),
+            static_import_index: self.static_import_index,
+            pending_slot: self.pending_slot.take(),
+            pending_program_body: self.pending_program_body.take(),
+            exports: std::mem::take(&mut self.exports),
+        }
+    }
+
+    /// Restore a previously saved execution state
+    ///
+    /// Call this after a nested module has finished executing.
+    pub fn restore_execution_state(&mut self, state: SavedExecutionState) {
+        self.eval_stack = state.eval_stack;
+        self.value_stack = state.value_stack;
+        self.completion_stack = state.completion_stack;
+        self.static_imports = state.static_imports;
+        self.static_import_index = state.static_import_index;
+        self.pending_slot = state.pending_slot;
+        self.pending_program_body = state.pending_program_body;
+        self.exports = state.exports;
     }
 
     /// Collect static import declarations from statements

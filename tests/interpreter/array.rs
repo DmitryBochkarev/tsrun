@@ -851,3 +851,58 @@ fn test_reduce_grouping_pattern() {
         JsValue::Number(2.0)
     );
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Algorithm tests (complex array operations)
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_array_operations_chain() {
+    // Test chained array operations
+    assert_eq!(
+        eval(
+            r#"
+            const data: number[] = [1, 2, 3, 4, 5];
+            const result = data
+                .filter(x => x > 2)
+                .map(x => x * 2)
+                .reduce((sum, x) => sum + x, 0);
+            result
+        "#
+        ),
+        JsValue::Number(24.0) // (3+4+5)*2 = 24
+    );
+}
+
+#[test]
+fn test_quicksort() {
+    let result = eval(
+        r#"
+        function quickSort(arr: number[]): number[] {
+            if (arr.length <= 1) return arr;
+            const pivot = arr[Math.floor(arr.length / 2)];
+            const left = arr.filter((x) => x < pivot);
+            const middle = arr.filter((x) => x === pivot);
+            const right = arr.filter((x) => x > pivot);
+            return [...quickSort(left), ...middle, ...quickSort(right)];
+        }
+        quickSort([64, 34, 25, 12]).join(",")
+    "#,
+    );
+    assert_eq!(result, JsValue::String("12,25,34,64".into()));
+}
+
+#[test]
+fn test_array_spread_sort() {
+    // Test spreading into array and sorting
+    assert_eq!(
+        eval(
+            r#"
+            const arr: number[] = [3, 1, 2];
+            const sorted = [...arr].sort((a, b) => a - b);
+            sorted.join(",")
+        "#
+        ),
+        JsValue::String("1,2,3".into())
+    );
+}

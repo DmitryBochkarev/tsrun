@@ -452,3 +452,19 @@ fn test_tdz_function_can_reference_later_let() {
         JsValue::Number(42.0)
     );
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Bitwise operations
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_bitwise_operations() {
+    // Test bitwise operators
+    assert_eq!(eval("12 & 10"), JsValue::Number(8.0));
+    assert_eq!(eval("12 | 10"), JsValue::Number(14.0));
+    assert_eq!(eval("12 ^ 10"), JsValue::Number(6.0));
+    assert_eq!(eval("5 << 2"), JsValue::Number(20.0));
+    assert_eq!(eval("20 >> 2"), JsValue::Number(5.0));
+    assert_eq!(eval("~5"), JsValue::Number(-6.0));
+    assert_eq!(eval("-20 >>> 2"), JsValue::Number(1073741819.0));
+}

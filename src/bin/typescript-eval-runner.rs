@@ -55,8 +55,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 if let Some(cached) = module_cache.get(&module_path) {
                     slot.set_success(cached.clone());
                 } else {
-                    // Load and evaluate module
+                    // Save main program state, load module, then restore
+                    let saved_state = runtime.save_execution_state();
                     let module = load_module(&mut runtime, &module_path, &mut module_cache)?;
+                    runtime.restore_execution_state(saved_state);
                     slot.set_success(module);
                 }
             }
@@ -100,7 +102,7 @@ fn resolve_module(base_dir: &Path, specifier: &str) -> Result<PathBuf, Box<dyn s
 }
 
 fn load_module(
-    main_runtime: &mut Runtime,
+    runtime: &mut Runtime,
     path: &Path,
     cache: &mut HashMap<PathBuf, JsValue>,
 ) -> Result<JsValue, Box<dyn std::error::Error>> {
@@ -110,22 +112,22 @@ fn load_module(
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| PathBuf::from("."));
 
-    // Evaluate the module with a SEPARATE runtime to avoid corrupting main runtime state
-    let mut module_runtime = Runtime::new();
-    let mut result = module_runtime.eval(&source)?;
+    // Use the SAME runtime for all modules to ensure consistent prototypes
+    // The runtime handles module isolation through separate environments
+    let mut result = runtime.eval(&source)?;
 
     loop {
         match result {
             RuntimeResult::Complete(_) => {
-                // Get module exports from the module runtime
-                let exports: Vec<(String, JsValue)> = module_runtime
+                // Get module exports from the runtime
+                let exports: Vec<(String, JsValue)> = runtime
                     .get_exports()
                     .iter()
                     .map(|(k, v)| (k.to_string(), v.clone()))
                     .collect();
 
-                // Create module object on the MAIN runtime so it's usable there
-                let module = main_runtime.create_module_object(exports);
+                // Create module object
+                let module = runtime.create_module_object(exports);
                 cache.insert(path.to_path_buf(), module.clone());
                 return Ok(module);
             }
@@ -135,9 +137,10 @@ fn load_module(
                 if let Some(cached) = cache.get(&nested_path) {
                     slot.set_success(cached.clone());
                 } else {
-                    // For nested imports, use the module_runtime as parent
-                    let nested_module =
-                        load_module_nested(&mut module_runtime, &nested_path, cache)?;
+                    // Save current module state, load nested module, then restore
+                    let saved_state = runtime.save_execution_state();
+                    let nested_module = load_module(runtime, &nested_path, cache)?;
+                    runtime.restore_execution_state(saved_state);
                     slot.set_success(nested_module);
                 }
             }
@@ -145,54 +148,7 @@ fn load_module(
                 slot.set_success(JsValue::Undefined);
             }
         }
-        result = module_runtime.continue_eval()?;
-    }
-}
-
-fn load_module_nested(
-    parent_runtime: &mut Runtime,
-    path: &Path,
-    cache: &mut HashMap<PathBuf, JsValue>,
-) -> Result<JsValue, Box<dyn std::error::Error>> {
-    let source = fs::read_to_string(path)?;
-    let module_dir = path
-        .parent()
-        .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| PathBuf::from("."));
-
-    // Each nested module also gets its own runtime
-    let mut module_runtime = Runtime::new();
-    let mut result = module_runtime.eval(&source)?;
-
-    loop {
-        match result {
-            RuntimeResult::Complete(_) => {
-                let exports: Vec<(String, JsValue)> = module_runtime
-                    .get_exports()
-                    .iter()
-                    .map(|(k, v)| (k.to_string(), v.clone()))
-                    .collect();
-
-                let module = parent_runtime.create_module_object(exports);
-                cache.insert(path.to_path_buf(), module.clone());
-                return Ok(module);
-            }
-            RuntimeResult::ImportAwaited { slot, specifier } => {
-                let nested_path = resolve_module(&module_dir, &specifier)?;
-
-                if let Some(cached) = cache.get(&nested_path) {
-                    slot.set_success(cached.clone());
-                } else {
-                    let nested_module =
-                        load_module_nested(&mut module_runtime, &nested_path, cache)?;
-                    slot.set_success(nested_module);
-                }
-            }
-            RuntimeResult::AsyncAwaited { slot, .. } => {
-                slot.set_success(JsValue::Undefined);
-            }
-        }
-        result = module_runtime.continue_eval()?;
+        result = runtime.continue_eval()?;
     }
 }
 
