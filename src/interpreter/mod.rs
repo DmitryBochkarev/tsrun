@@ -2289,8 +2289,11 @@ impl Interpreter {
 
         loop {
             // Call generator.next()
-            let next_result =
-                builtins::generator::generator_next(self, JsValue::Object(gen_obj.cheap_clone()), &[])?;
+            let next_result = builtins::generator::generator_next(
+                self,
+                JsValue::Object(gen_obj.cheap_clone()),
+                &[],
+            )?;
 
             // Get 'done' and 'value' from the result
             let (done, value) = if let JsValue::Object(result_obj) = next_result {
@@ -3973,5 +3976,50 @@ impl Interpreter {
 impl Default for Interpreter {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl Drop for Interpreter {
+    /// Break reference cycles on drop to prevent memory leaks.
+    ///
+    /// Reference cycles occur when:
+    /// - A function is defined in a scope (captures Environment via Rc)
+    /// - That function is stored as a variable in the same scope
+    /// - Environment -> bindings -> JsValue::Object -> JsFunction -> closure -> Environment
+    ///
+    /// Breaking the cycle by clearing all bindings allows Rc to deallocate properly.
+    fn drop(&mut self) {
+        // Clear all environment bindings to break Rc cycles
+        // Walk the environment chain from current to global
+        let mut current = Some(self.env.cheap_clone());
+        while let Some(env) = current {
+            env.bindings.borrow_mut().clear();
+            current = env.outer.as_ref().map(|e| e.cheap_clone());
+        }
+
+        // Clear prototypes - they may contain functions that capture environments
+        self.object_prototype.borrow_mut().properties.clear();
+        self.array_prototype.borrow_mut().properties.clear();
+        self.string_prototype.borrow_mut().properties.clear();
+        self.number_prototype.borrow_mut().properties.clear();
+        self.function_prototype.borrow_mut().properties.clear();
+        self.map_prototype.borrow_mut().properties.clear();
+        self.set_prototype.borrow_mut().properties.clear();
+        self.date_prototype.borrow_mut().properties.clear();
+        self.regexp_prototype.borrow_mut().properties.clear();
+        self.error_prototype.borrow_mut().properties.clear();
+        self.symbol_prototype.borrow_mut().properties.clear();
+        self.generator_prototype.borrow_mut().properties.clear();
+        self.promise_prototype.borrow_mut().properties.clear();
+
+        // Clear global object properties
+        self.global.borrow_mut().properties.clear();
+
+        // Clear any pending values
+        self.thrown_value = None;
+        self.value_stack.clear();
+        self.eval_stack.clear();
+        self.completion_stack.clear();
+        self.exports.clear();
     }
 }
