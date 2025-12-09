@@ -2308,7 +2308,9 @@ fn test_full_module_loading_workflow() {
         }
 
         // Load file content
-        let source = files.get(specifier).unwrap_or_else(|| panic!("File not found: {}", specifier));
+        let source = files
+            .get(specifier)
+            .unwrap_or_else(|| panic!("File not found: {}", specifier));
 
         // Create a new runtime for this module
         let mut module_runtime = Runtime::new();

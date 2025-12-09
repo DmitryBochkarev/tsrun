@@ -57,7 +57,7 @@ impl<'a> Parser<'a> {
             TokenKind::Async => {
                 // async function declaration
                 self.advance(); // consume 'async'
-                self.expect(&TokenKind::Function)?;
+                self.require_token(&TokenKind::Function)?;
                 let mut func = self.parse_function_declaration_inner()?;
                 func.async_ = true;
                 Ok(Statement::FunctionDeclaration(func))
@@ -173,7 +173,7 @@ impl<'a> Parser<'a> {
 
     fn parse_object_pattern(&mut self) -> Result<Pattern, JsError> {
         let start = self.current.span;
-        self.expect(&TokenKind::LBrace)?;
+        self.require_token(&TokenKind::LBrace)?;
 
         let mut properties = vec![];
 
@@ -230,7 +230,7 @@ impl<'a> Parser<'a> {
             }
         }
 
-        self.expect(&TokenKind::RBrace)?;
+        self.require_token(&TokenKind::RBrace)?;
 
         let type_annotation = if self.match_token(&TokenKind::Colon) {
             Some(self.parse_type_annotation()?)
@@ -248,7 +248,7 @@ impl<'a> Parser<'a> {
 
     fn parse_array_pattern(&mut self) -> Result<Pattern, JsError> {
         let start = self.current.span;
-        self.expect(&TokenKind::LBracket)?;
+        self.require_token(&TokenKind::LBracket)?;
 
         let mut elements = vec![];
 
@@ -294,7 +294,7 @@ impl<'a> Parser<'a> {
             }
         }
 
-        self.expect(&TokenKind::RBracket)?;
+        self.require_token(&TokenKind::RBracket)?;
 
         let type_annotation = if self.match_token(&TokenKind::Colon) {
             Some(self.parse_type_annotation()?)
@@ -314,7 +314,7 @@ impl<'a> Parser<'a> {
         &mut self,
         is_async: bool,
     ) -> Result<FunctionDeclaration, JsError> {
-        self.expect(&TokenKind::Function)?;
+        self.require_token(&TokenKind::Function)?;
         let mut func = self.parse_function_declaration_inner()?;
         func.async_ = is_async;
         Ok(func)
@@ -349,7 +349,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_function_params(&mut self) -> Result<Vec<FunctionParam>, JsError> {
-        self.expect(&TokenKind::LParen)?;
+        self.require_token(&TokenKind::LParen)?;
 
         let mut params = vec![];
 
@@ -403,13 +403,13 @@ impl<'a> Parser<'a> {
             }
         }
 
-        self.expect(&TokenKind::RParen)?;
+        self.require_token(&TokenKind::RParen)?;
         Ok(params)
     }
 
     fn parse_class_declaration(&mut self) -> Result<ClassDeclaration, JsError> {
         let start = self.current.span;
-        self.expect(&TokenKind::Class)?;
+        self.require_token(&TokenKind::Class)?;
 
         let id = if self.check_identifier() {
             Some(self.parse_identifier()?)
@@ -452,7 +452,7 @@ impl<'a> Parser<'a> {
 
     fn parse_class_body(&mut self) -> Result<ClassBody, JsError> {
         let start = self.current.span;
-        self.expect(&TokenKind::LBrace)?;
+        self.require_token(&TokenKind::LBrace)?;
 
         let mut members = vec![];
 
@@ -465,7 +465,7 @@ impl<'a> Parser<'a> {
             members.push(self.parse_class_member()?);
         }
 
-        self.expect(&TokenKind::RBrace)?;
+        self.require_token(&TokenKind::RBrace)?;
 
         let span = self.span_from(start);
         Ok(ClassBody { members, span })
@@ -599,7 +599,7 @@ impl<'a> Parser<'a> {
     fn parse_class_element_name(&mut self) -> Result<(ObjectPropertyKey, bool), JsError> {
         if self.match_token(&TokenKind::LBracket) {
             let expr = self.parse_assignment_expression()?;
-            self.expect(&TokenKind::RBracket)?;
+            self.require_token(&TokenKind::RBracket)?;
             Ok((ObjectPropertyKey::Computed(Box::new(expr)), true))
         } else if self.match_token(&TokenKind::Hash) {
             // Private identifier: #name
@@ -612,7 +612,7 @@ impl<'a> Parser<'a> {
 
     fn parse_block_statement(&mut self) -> Result<BlockStatement, JsError> {
         let start = self.current.span;
-        self.expect(&TokenKind::LBrace)?;
+        self.require_token(&TokenKind::LBrace)?;
 
         let mut body = vec![];
 
@@ -620,7 +620,7 @@ impl<'a> Parser<'a> {
             body.push(self.parse_statement()?);
         }
 
-        self.expect(&TokenKind::RBrace)?;
+        self.require_token(&TokenKind::RBrace)?;
 
         let span = self.span_from(start);
         Ok(BlockStatement { body, span })
@@ -628,10 +628,10 @@ impl<'a> Parser<'a> {
 
     fn parse_if_statement(&mut self) -> Result<Statement, JsError> {
         let start = self.current.span;
-        self.expect(&TokenKind::If)?;
-        self.expect(&TokenKind::LParen)?;
+        self.require_token(&TokenKind::If)?;
+        self.require_token(&TokenKind::LParen)?;
         let test = self.parse_expression()?;
-        self.expect(&TokenKind::RParen)?;
+        self.require_token(&TokenKind::RParen)?;
 
         let consequent = Box::new(self.parse_statement()?);
 
@@ -652,8 +652,8 @@ impl<'a> Parser<'a> {
 
     fn parse_for_statement(&mut self) -> Result<Statement, JsError> {
         let start = self.current.span;
-        self.expect(&TokenKind::For)?;
-        self.expect(&TokenKind::LParen)?;
+        self.require_token(&TokenKind::For)?;
+        self.require_token(&TokenKind::LParen)?;
 
         // Check for for-in or for-of
         let init = if self.check(&TokenKind::Semicolon) {
@@ -686,7 +686,7 @@ impl<'a> Parser<'a> {
                 self.advance();
 
                 let right = self.parse_expression()?;
-                self.expect(&TokenKind::RParen)?;
+                self.require_token(&TokenKind::RParen)?;
                 let body = Box::new(self.parse_statement()?);
 
                 let span = self.span_from(start);
@@ -752,7 +752,7 @@ impl<'a> Parser<'a> {
                 self.advance();
 
                 let right = self.parse_expression()?;
-                self.expect(&TokenKind::RParen)?;
+                self.require_token(&TokenKind::RParen)?;
                 let body = Box::new(self.parse_statement()?);
 
                 let span = self.span_from(start);
@@ -779,7 +779,7 @@ impl<'a> Parser<'a> {
             Some(ForInit::Expression(expr))
         };
 
-        self.expect(&TokenKind::Semicolon)?;
+        self.require_token(&TokenKind::Semicolon)?;
 
         let test = if self.check(&TokenKind::Semicolon) {
             None
@@ -787,7 +787,7 @@ impl<'a> Parser<'a> {
             Some(self.parse_expression()?)
         };
 
-        self.expect(&TokenKind::Semicolon)?;
+        self.require_token(&TokenKind::Semicolon)?;
 
         let update = if self.check(&TokenKind::RParen) {
             None
@@ -795,7 +795,7 @@ impl<'a> Parser<'a> {
             Some(self.parse_expression()?)
         };
 
-        self.expect(&TokenKind::RParen)?;
+        self.require_token(&TokenKind::RParen)?;
         let body = Box::new(self.parse_statement()?);
 
         let span = self.span_from(start);
@@ -810,10 +810,10 @@ impl<'a> Parser<'a> {
 
     fn parse_while_statement(&mut self) -> Result<Statement, JsError> {
         let start = self.current.span;
-        self.expect(&TokenKind::While)?;
-        self.expect(&TokenKind::LParen)?;
+        self.require_token(&TokenKind::While)?;
+        self.require_token(&TokenKind::LParen)?;
         let test = self.parse_expression()?;
-        self.expect(&TokenKind::RParen)?;
+        self.require_token(&TokenKind::RParen)?;
         let body = Box::new(self.parse_statement()?);
 
         let span = self.span_from(start);
@@ -822,12 +822,12 @@ impl<'a> Parser<'a> {
 
     fn parse_do_while_statement(&mut self) -> Result<Statement, JsError> {
         let start = self.current.span;
-        self.expect(&TokenKind::Do)?;
+        self.require_token(&TokenKind::Do)?;
         let body = Box::new(self.parse_statement()?);
-        self.expect(&TokenKind::While)?;
-        self.expect(&TokenKind::LParen)?;
+        self.require_token(&TokenKind::While)?;
+        self.require_token(&TokenKind::LParen)?;
         let test = self.parse_expression()?;
-        self.expect(&TokenKind::RParen)?;
+        self.require_token(&TokenKind::RParen)?;
         self.expect_semicolon()?;
 
         let span = self.span_from(start);
@@ -836,11 +836,11 @@ impl<'a> Parser<'a> {
 
     fn parse_switch_statement(&mut self) -> Result<Statement, JsError> {
         let start = self.current.span;
-        self.expect(&TokenKind::Switch)?;
-        self.expect(&TokenKind::LParen)?;
+        self.require_token(&TokenKind::Switch)?;
+        self.require_token(&TokenKind::LParen)?;
         let discriminant = self.parse_expression()?;
-        self.expect(&TokenKind::RParen)?;
-        self.expect(&TokenKind::LBrace)?;
+        self.require_token(&TokenKind::RParen)?;
+        self.require_token(&TokenKind::LBrace)?;
 
         let mut cases = vec![];
 
@@ -849,11 +849,11 @@ impl<'a> Parser<'a> {
             let test = if self.match_token(&TokenKind::Case) {
                 Some(self.parse_expression()?)
             } else {
-                self.expect(&TokenKind::Default)?;
+                self.require_token(&TokenKind::Default)?;
                 None
             };
 
-            self.expect(&TokenKind::Colon)?;
+            self.require_token(&TokenKind::Colon)?;
 
             let mut consequent = vec![];
             while !self.check(&TokenKind::Case)
@@ -872,7 +872,7 @@ impl<'a> Parser<'a> {
             });
         }
 
-        self.expect(&TokenKind::RBrace)?;
+        self.require_token(&TokenKind::RBrace)?;
 
         let span = self.span_from(start);
         Ok(Statement::Switch(SwitchStatement {
@@ -884,7 +884,7 @@ impl<'a> Parser<'a> {
 
     fn parse_try_statement(&mut self) -> Result<Statement, JsError> {
         let start = self.current.span;
-        self.expect(&TokenKind::Try)?;
+        self.require_token(&TokenKind::Try)?;
         let block = self.parse_block_statement()?;
 
         let handler = if self.match_token(&TokenKind::Catch) {
@@ -895,7 +895,7 @@ impl<'a> Parser<'a> {
                 if self.match_token(&TokenKind::Colon) {
                     let _ = self.parse_type_annotation()?;
                 }
-                self.expect(&TokenKind::RParen)?;
+                self.require_token(&TokenKind::RParen)?;
                 Some(p)
             } else {
                 None
@@ -928,7 +928,7 @@ impl<'a> Parser<'a> {
 
     fn parse_return_statement(&mut self) -> Result<Statement, JsError> {
         let start = self.current.span;
-        self.expect(&TokenKind::Return)?;
+        self.require_token(&TokenKind::Return)?;
 
         let argument = if self.check(&TokenKind::Semicolon)
             || self.check(&TokenKind::RBrace)
@@ -947,7 +947,7 @@ impl<'a> Parser<'a> {
 
     fn parse_break_statement(&mut self) -> Result<Statement, JsError> {
         let start = self.current.span;
-        self.expect(&TokenKind::Break)?;
+        self.require_token(&TokenKind::Break)?;
 
         let label = if !self.check(&TokenKind::Semicolon)
             && !self.lexer.had_newline_before()
@@ -966,7 +966,7 @@ impl<'a> Parser<'a> {
 
     fn parse_continue_statement(&mut self) -> Result<Statement, JsError> {
         let start = self.current.span;
-        self.expect(&TokenKind::Continue)?;
+        self.require_token(&TokenKind::Continue)?;
 
         let label = if !self.check(&TokenKind::Semicolon)
             && !self.lexer.had_newline_before()
@@ -985,7 +985,7 @@ impl<'a> Parser<'a> {
 
     fn parse_throw_statement(&mut self) -> Result<Statement, JsError> {
         let start = self.current.span;
-        self.expect(&TokenKind::Throw)?;
+        self.require_token(&TokenKind::Throw)?;
 
         if self.lexer.had_newline_before() {
             return Err(self.error("Illegal newline after throw"));
@@ -1001,7 +1001,7 @@ impl<'a> Parser<'a> {
     fn parse_labeled_statement(&mut self) -> Result<Statement, JsError> {
         let start = self.current.span;
         let label = self.parse_identifier()?;
-        self.expect(&TokenKind::Colon)?;
+        self.require_token(&TokenKind::Colon)?;
         let body = Box::new(self.parse_statement()?);
 
         let span = self.span_from(start);
@@ -1012,7 +1012,7 @@ impl<'a> Parser<'a> {
 
     fn parse_type_alias(&mut self) -> Result<TypeAliasDeclaration, JsError> {
         let start = self.current.span;
-        self.expect(&TokenKind::Type)?;
+        self.require_token(&TokenKind::Type)?;
         self.parse_type_alias_inner(start)
     }
 
@@ -1027,7 +1027,7 @@ impl<'a> Parser<'a> {
     fn parse_type_alias_inner(&mut self, start: Span) -> Result<TypeAliasDeclaration, JsError> {
         let id = self.parse_identifier()?;
         let type_parameters = self.parse_optional_type_parameters()?;
-        self.expect(&TokenKind::Eq)?;
+        self.require_token(&TokenKind::Eq)?;
         let type_annotation = self.parse_type_annotation()?;
         self.expect_semicolon()?;
 
@@ -1042,7 +1042,7 @@ impl<'a> Parser<'a> {
 
     fn parse_interface(&mut self) -> Result<InterfaceDeclaration, JsError> {
         let start = self.current.span;
-        self.expect(&TokenKind::Interface)?;
+        self.require_token(&TokenKind::Interface)?;
         let id = self.parse_identifier()?;
         let type_parameters = self.parse_optional_type_parameters()?;
 
@@ -1056,9 +1056,9 @@ impl<'a> Parser<'a> {
             vec![]
         };
 
-        self.expect(&TokenKind::LBrace)?;
+        self.require_token(&TokenKind::LBrace)?;
         let body = self.parse_type_members()?;
-        self.expect(&TokenKind::RBrace)?;
+        self.require_token(&TokenKind::RBrace)?;
 
         let span = self.span_from(start);
         Ok(InterfaceDeclaration {
@@ -1073,9 +1073,9 @@ impl<'a> Parser<'a> {
     fn parse_enum(&mut self) -> Result<EnumDeclaration, JsError> {
         let start = self.current.span;
         let const_ = self.match_token(&TokenKind::Const);
-        self.expect(&TokenKind::Enum)?;
+        self.require_token(&TokenKind::Enum)?;
         let id = self.parse_identifier()?;
-        self.expect(&TokenKind::LBrace)?;
+        self.require_token(&TokenKind::LBrace)?;
 
         let mut members = vec![];
         while !self.check(&TokenKind::RBrace) && !self.is_at_end() {
@@ -1098,7 +1098,7 @@ impl<'a> Parser<'a> {
             }
         }
 
-        self.expect(&TokenKind::RBrace)?;
+        self.require_token(&TokenKind::RBrace)?;
 
         let span = self.span_from(start);
         Ok(EnumDeclaration {
@@ -1115,14 +1115,14 @@ impl<'a> Parser<'a> {
         self.advance();
 
         let id = self.parse_identifier()?;
-        self.expect(&TokenKind::LBrace)?;
+        self.require_token(&TokenKind::LBrace)?;
 
         let mut body = vec![];
         while !self.check(&TokenKind::RBrace) && !self.is_at_end() {
             body.push(self.parse_statement()?);
         }
 
-        self.expect(&TokenKind::RBrace)?;
+        self.require_token(&TokenKind::RBrace)?;
 
         let span = self.span_from(start);
         Ok(NamespaceDeclaration { id, body, span })
@@ -1132,7 +1132,7 @@ impl<'a> Parser<'a> {
 
     fn parse_import(&mut self) -> Result<ImportDeclaration, JsError> {
         let start = self.current.span;
-        self.expect(&TokenKind::Import)?;
+        self.require_token(&TokenKind::Import)?;
 
         let type_only = self.match_token(&TokenKind::Type);
 
@@ -1166,7 +1166,7 @@ impl<'a> Parser<'a> {
             if self.match_token(&TokenKind::Comma) {
                 // Continue with named imports
             } else {
-                self.expect(&TokenKind::From)?;
+                self.require_token(&TokenKind::From)?;
                 let source = self.parse_string_literal()?;
                 self.expect_semicolon()?;
                 let span = self.span_from(start);
@@ -1181,7 +1181,7 @@ impl<'a> Parser<'a> {
 
         // Namespace or named imports
         if self.match_token(&TokenKind::Star) {
-            self.expect(&TokenKind::As)?;
+            self.require_token(&TokenKind::As)?;
             let local = self.parse_identifier()?;
             specifiers.push(ImportSpecifier::Namespace {
                 local: local.clone(),
@@ -1207,10 +1207,10 @@ impl<'a> Parser<'a> {
                     break;
                 }
             }
-            self.expect(&TokenKind::RBrace)?;
+            self.require_token(&TokenKind::RBrace)?;
         }
 
-        self.expect(&TokenKind::From)?;
+        self.require_token(&TokenKind::From)?;
         let source = self.parse_string_literal()?;
         self.expect_semicolon()?;
 
@@ -1225,7 +1225,7 @@ impl<'a> Parser<'a> {
 
     fn parse_export(&mut self) -> Result<ExportDeclaration, JsError> {
         let start = self.current.span;
-        self.expect(&TokenKind::Export)?;
+        self.require_token(&TokenKind::Export)?;
 
         // Check for `export type` which can be:
         // 1. `export type { ... }` - type-only re-export (type_only flag)
@@ -1263,7 +1263,7 @@ impl<'a> Parser<'a> {
             let declaration = if self.check(&TokenKind::Async) {
                 // export default async function
                 self.advance(); // consume 'async'
-                self.expect(&TokenKind::Function)?;
+                self.require_token(&TokenKind::Function)?;
                 let mut func = self.parse_function_declaration_inner()?;
                 func.async_ = true;
                 Some(Box::new(Statement::FunctionDeclaration(func)))
@@ -1321,7 +1321,7 @@ impl<'a> Parser<'a> {
                 }
             }
 
-            self.expect(&TokenKind::RBrace)?;
+            self.require_token(&TokenKind::RBrace)?;
 
             let source = if self.match_token(&TokenKind::From) {
                 Some(self.parse_string_literal()?)
@@ -1344,7 +1344,7 @@ impl<'a> Parser<'a> {
 
         // export * from
         if self.match_token(&TokenKind::Star) {
-            self.expect(&TokenKind::From)?;
+            self.require_token(&TokenKind::From)?;
             let source = Some(self.parse_string_literal()?);
             self.expect_semicolon()?;
 
@@ -1367,7 +1367,7 @@ impl<'a> Parser<'a> {
             TokenKind::Async => {
                 // export async function
                 self.advance(); // consume 'async'
-                self.expect(&TokenKind::Function)?;
+                self.require_token(&TokenKind::Function)?;
                 let mut func = self.parse_function_declaration_inner()?;
                 func.async_ = true;
                 Some(Box::new(Statement::FunctionDeclaration(func)))
@@ -1454,7 +1454,7 @@ impl<'a> Parser<'a> {
 
     fn parse_yield_expression(&mut self) -> Result<Expression, JsError> {
         let start = self.current.span;
-        self.expect(&TokenKind::Yield)?;
+        self.require_token(&TokenKind::Yield)?;
 
         // Check for yield* (delegation)
         let delegate = self.match_token(&TokenKind::Star);
@@ -1486,7 +1486,7 @@ impl<'a> Parser<'a> {
 
     fn parse_await_expression(&mut self) -> Result<Expression, JsError> {
         let start = self.current.span;
-        self.expect(&TokenKind::Await)?;
+        self.require_token(&TokenKind::Await)?;
 
         // await always requires an argument
         let argument = Box::new(self.parse_unary_expression()?);
@@ -1501,7 +1501,7 @@ impl<'a> Parser<'a> {
 
         if self.match_token(&TokenKind::Question) {
             let consequent = Box::new(self.parse_assignment_expression()?);
-            self.expect(&TokenKind::Colon)?;
+            self.require_token(&TokenKind::Colon)?;
             let alternate = Box::new(self.parse_assignment_expression()?);
             let span = self.span_from(start);
             return Ok(Expression::Conditional(ConditionalExpression {
@@ -1670,7 +1670,7 @@ impl<'a> Parser<'a> {
                 }
             } else if self.match_token(&TokenKind::LBracket) {
                 let property = self.parse_expression()?;
-                self.expect(&TokenKind::RBracket)?;
+                self.require_token(&TokenKind::RBracket)?;
                 let span = self.span_from(start);
                 expr = Expression::Member(MemberExpression {
                     object: Box::new(expr),
@@ -1723,7 +1723,7 @@ impl<'a> Parser<'a> {
                     });
                 } else if self.match_token(&TokenKind::LBracket) {
                     let property = self.parse_expression()?;
-                    self.expect(&TokenKind::RBracket)?;
+                    self.require_token(&TokenKind::RBracket)?;
                     let span = self.span_from(start);
                     expr = Expression::Member(MemberExpression {
                         object: Box::new(expr),
@@ -1797,7 +1797,7 @@ impl<'a> Parser<'a> {
                 }
             } else if self.match_token(&TokenKind::LBracket) {
                 let property = self.parse_expression()?;
-                self.expect(&TokenKind::RBracket)?;
+                self.require_token(&TokenKind::RBracket)?;
                 let span = self.span_from(start);
                 expr = Expression::Member(MemberExpression {
                     object: Box::new(expr),
@@ -1954,7 +1954,7 @@ impl<'a> Parser<'a> {
 
     fn parse_array_literal(&mut self) -> Result<Expression, JsError> {
         let start = self.current.span;
-        self.expect(&TokenKind::LBracket)?;
+        self.require_token(&TokenKind::LBracket)?;
 
         let mut elements = vec![];
 
@@ -1979,7 +1979,7 @@ impl<'a> Parser<'a> {
             }
         }
 
-        self.expect(&TokenKind::RBracket)?;
+        self.require_token(&TokenKind::RBracket)?;
 
         let span = self.span_from(start);
         Ok(Expression::Array(ArrayExpression { elements, span }))
@@ -1987,7 +1987,7 @@ impl<'a> Parser<'a> {
 
     fn parse_object_literal(&mut self) -> Result<Expression, JsError> {
         let start = self.current.span;
-        self.expect(&TokenKind::LBrace)?;
+        self.require_token(&TokenKind::LBrace)?;
 
         let mut properties = vec![];
 
@@ -2006,7 +2006,7 @@ impl<'a> Parser<'a> {
             }
         }
 
-        self.expect(&TokenKind::RBrace)?;
+        self.require_token(&TokenKind::RBrace)?;
 
         let span = self.span_from(start);
         Ok(Expression::Object(ObjectExpression { properties, span }))
@@ -2036,7 +2036,7 @@ impl<'a> Parser<'a> {
         let key = if computed {
             self.advance();
             let expr = self.parse_assignment_expression()?;
-            self.expect(&TokenKind::RBracket)?;
+            self.require_token(&TokenKind::RBracket)?;
             ObjectPropertyKey::Computed(Box::new(expr))
         } else {
             self.parse_property_name()?
@@ -2098,7 +2098,7 @@ impl<'a> Parser<'a> {
 
     fn parse_parenthesized_or_arrow(&mut self) -> Result<Expression, JsError> {
         let start = self.current.span;
-        self.expect(&TokenKind::LParen)?;
+        self.require_token(&TokenKind::LParen)?;
 
         // Empty parens -> arrow function
         if self.match_token(&TokenKind::RParen) {
@@ -2138,7 +2138,7 @@ impl<'a> Parser<'a> {
                     } else {
                         None
                     };
-                    self.expect(&TokenKind::RParen)?;
+                    self.require_token(&TokenKind::RParen)?;
 
                     let mut params: Vec<FunctionParam> = items
                         .into_iter()
@@ -2167,7 +2167,7 @@ impl<'a> Parser<'a> {
                 }
             }
 
-            self.expect(&TokenKind::RParen)?;
+            self.require_token(&TokenKind::RParen)?;
 
             // Check for arrow
             if self.check(&TokenKind::Arrow) {
@@ -2205,7 +2205,7 @@ impl<'a> Parser<'a> {
         is_async: bool,
     ) -> Result<Expression, JsError> {
         let return_type = self.parse_optional_return_type()?;
-        self.expect(&TokenKind::Arrow)?;
+        self.require_token(&TokenKind::Arrow)?;
 
         let body = if self.check(&TokenKind::LBrace) {
             ArrowFunctionBody::Block(self.parse_block_statement()?)
@@ -2226,17 +2226,17 @@ impl<'a> Parser<'a> {
 
     fn parse_import_expression(&mut self) -> Result<Expression, JsError> {
         let start = self.current.span;
-        self.expect(&TokenKind::Import)?;
-        self.expect(&TokenKind::LParen)?;
+        self.require_token(&TokenKind::Import)?;
+        self.require_token(&TokenKind::LParen)?;
         let source = Box::new(self.parse_assignment_expression()?);
-        self.expect(&TokenKind::RParen)?;
+        self.require_token(&TokenKind::RParen)?;
         let span = self.span_from(start);
         Ok(Expression::Import(ImportExpression { source, span }))
     }
 
     fn parse_async_expression(&mut self) -> Result<Expression, JsError> {
         let start = self.current.span;
-        self.expect(&TokenKind::Async)?;
+        self.require_token(&TokenKind::Async)?;
 
         // async function - async function expression
         if self.check(&TokenKind::Function) {
@@ -2270,10 +2270,10 @@ impl<'a> Parser<'a> {
                 let param = self.parse_function_param()?;
                 params.push(param);
                 if !self.check(&TokenKind::RParen) {
-                    self.expect(&TokenKind::Comma)?;
+                    self.require_token(&TokenKind::Comma)?;
                 }
             }
-            self.expect(&TokenKind::RParen)?;
+            self.require_token(&TokenKind::RParen)?;
             return self.parse_arrow_function_from_params_async(params, start, true);
         }
 
@@ -2318,7 +2318,7 @@ impl<'a> Parser<'a> {
 
     fn parse_function_expression(&mut self, is_async: bool) -> Result<Expression, JsError> {
         let start = self.current.span;
-        self.expect(&TokenKind::Function)?;
+        self.require_token(&TokenKind::Function)?;
 
         let generator = self.match_token(&TokenKind::Star);
         let id = if self.check_identifier() {
@@ -2424,7 +2424,7 @@ impl<'a> Parser<'a> {
 
     fn parse_call_arguments(&mut self) -> Result<(Vec<Argument>, Option<TypeArguments>), JsError> {
         let type_args = self.parse_optional_type_arguments()?;
-        self.expect(&TokenKind::LParen)?;
+        self.require_token(&TokenKind::LParen)?;
 
         let mut arguments = vec![];
 
@@ -2443,7 +2443,7 @@ impl<'a> Parser<'a> {
             }
         }
 
-        self.expect(&TokenKind::RParen)?;
+        self.require_token(&TokenKind::RParen)?;
         Ok((arguments, type_args))
     }
 
@@ -2501,7 +2501,7 @@ impl<'a> Parser<'a> {
                 // Array shorthand: any[]
                 while self.check(&TokenKind::LBracket) {
                     self.advance();
-                    self.expect(&TokenKind::RBracket)?;
+                    self.require_token(&TokenKind::RBracket)?;
                     ty = TypeAnnotation::Array(ArrayType {
                         element_type: Box::new(ty),
                         span: self.span_from(start),
@@ -2518,7 +2518,7 @@ impl<'a> Parser<'a> {
                 // Array shorthand: unknown[]
                 while self.check(&TokenKind::LBracket) {
                     self.advance();
-                    self.expect(&TokenKind::RBracket)?;
+                    self.require_token(&TokenKind::RBracket)?;
                     ty = TypeAnnotation::Array(ArrayType {
                         element_type: Box::new(ty),
                         span: self.span_from(start),
@@ -2535,7 +2535,7 @@ impl<'a> Parser<'a> {
                 // Array shorthand: never[]
                 while self.check(&TokenKind::LBracket) {
                     self.advance();
-                    self.expect(&TokenKind::RBracket)?;
+                    self.require_token(&TokenKind::RBracket)?;
                     ty = TypeAnnotation::Array(ArrayType {
                         element_type: Box::new(ty),
                         span: self.span_from(start),
@@ -2552,7 +2552,7 @@ impl<'a> Parser<'a> {
                 // Array shorthand: void[]
                 while self.check(&TokenKind::LBracket) {
                     self.advance();
-                    self.expect(&TokenKind::RBracket)?;
+                    self.require_token(&TokenKind::RBracket)?;
                     ty = TypeAnnotation::Array(ArrayType {
                         element_type: Box::new(ty),
                         span: self.span_from(start),
@@ -2569,7 +2569,7 @@ impl<'a> Parser<'a> {
                 // Array shorthand: null[]
                 while self.check(&TokenKind::LBracket) {
                     self.advance();
-                    self.expect(&TokenKind::RBracket)?;
+                    self.require_token(&TokenKind::RBracket)?;
                     ty = TypeAnnotation::Array(ArrayType {
                         element_type: Box::new(ty),
                         span: self.span_from(start),
@@ -2601,7 +2601,7 @@ impl<'a> Parser<'a> {
                     // Array shorthand: string[]
                     while self.check(&TokenKind::LBracket) {
                         self.advance();
-                        self.expect(&TokenKind::RBracket)?;
+                        self.require_token(&TokenKind::RBracket)?;
                         ty = TypeAnnotation::Array(ArrayType {
                             element_type: Box::new(ty),
                             span: self.span_from(start),
@@ -2616,7 +2616,7 @@ impl<'a> Parser<'a> {
                     // Array shorthand
                     while self.check(&TokenKind::LBracket) {
                         self.advance();
-                        self.expect(&TokenKind::RBracket)?;
+                        self.require_token(&TokenKind::RBracket)?;
                         ty = TypeAnnotation::Array(ArrayType {
                             element_type: Box::new(ty),
                             span: self.span_from(start),
@@ -2631,7 +2631,7 @@ impl<'a> Parser<'a> {
             TokenKind::LBrace => {
                 self.advance();
                 let members = self.parse_type_members()?;
-                self.expect(&TokenKind::RBrace)?;
+                self.require_token(&TokenKind::RBrace)?;
                 Ok(TypeAnnotation::Object(ObjectType {
                     members,
                     span: self.span_from(start),
@@ -2648,7 +2648,7 @@ impl<'a> Parser<'a> {
                         break;
                     }
                 }
-                self.expect(&TokenKind::RBracket)?;
+                self.require_token(&TokenKind::RBracket)?;
                 Ok(TypeAnnotation::Tuple(TupleType {
                     element_types: types,
                     span: self.span_from(start),
@@ -2664,13 +2664,13 @@ impl<'a> Parser<'a> {
                 // Fall back to parenthesized type
                 self.advance();
                 let inner_ty = self.parse_type_annotation()?;
-                self.expect(&TokenKind::RParen)?;
+                self.require_token(&TokenKind::RParen)?;
                 let mut ty = TypeAnnotation::Parenthesized(Box::new(inner_ty));
 
                 // Array shorthand: (number | undefined)[]
                 while self.check(&TokenKind::LBracket) {
                     self.advance();
-                    self.expect(&TokenKind::RBracket)?;
+                    self.require_token(&TokenKind::RBracket)?;
                     ty = TypeAnnotation::Array(ArrayType {
                         element_type: Box::new(ty),
                         span: self.span_from(start),
@@ -2780,7 +2780,7 @@ impl<'a> Parser<'a> {
 
     /// Parse function type parameters: (a: T, b?: T, ...rest: T[])
     fn parse_function_type_params(&mut self) -> Result<Vec<FunctionParam>, JsError> {
-        self.expect(&TokenKind::LParen)?;
+        self.require_token(&TokenKind::LParen)?;
 
         let mut params = vec![];
 
@@ -2835,7 +2835,7 @@ impl<'a> Parser<'a> {
             }
         }
 
-        self.expect(&TokenKind::RParen)?;
+        self.require_token(&TokenKind::RParen)?;
         Ok(params)
     }
 
@@ -2941,7 +2941,7 @@ impl<'a> Parser<'a> {
             }
         }
 
-        self.expect(&TokenKind::Gt)?;
+        self.require_token(&TokenKind::Gt)?;
 
         let span = self.span_from(start);
         Ok(Some(TypeParameters { params, span }))
@@ -2964,7 +2964,7 @@ impl<'a> Parser<'a> {
             }
         }
 
-        self.expect(&TokenKind::Gt)?;
+        self.require_token(&TokenKind::Gt)?;
 
         let span = self.span_from(start);
         Ok(Some(TypeArguments { params, span }))
@@ -3059,7 +3059,7 @@ impl<'a> Parser<'a> {
         self.previous = std::mem::replace(&mut self.current, self.lexer.next_token());
     }
 
-    fn expect(&mut self, kind: &TokenKind) -> Result<(), JsError> {
+    fn require_token(&mut self, kind: &TokenKind) -> Result<(), JsError> {
         if self.check(kind) {
             self.advance();
             Ok(())
