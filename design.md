@@ -245,9 +245,9 @@ To fully implement classes, the following components are needed:
 - [x] Default imports/exports (parsing)
 - [x] Namespace imports (`import * as`) (parsing)
 - [x] Re-exports (`export { x } from`) (parsing)
-- [ ] Static import resolution (via `RuntimeResult::ImportAwaited`)
+- [x] Static import resolution (via `RuntimeResult::ImportAwaited`)
 - [x] Dynamic `import()` (returns Promise)
-- [ ] Module object creation (host provides, runtime binds)
+- [x] Module object creation (host provides via `create_module_object`)
 
 **Note:** Module caching and circular dependency handling are the host's responsibility. The runtime always asks for modules via `ImportAwaited` and the host decides whether to cache or handle cycles.
 
