@@ -1613,6 +1613,8 @@ impl Interpreter {
             let name = match &prop.key {
                 ObjectPropertyKey::Identifier(id) => id.name.clone(),
                 ObjectPropertyKey::String(s) => s.value.clone(),
+                // Private fields are stored with # prefix to match how they're looked up
+                ObjectPropertyKey::PrivateIdentifier(id) => JsString::from(format!("#{}", id.name)),
                 _ => continue,
             };
 

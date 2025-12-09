@@ -365,3 +365,56 @@ fn test_static_block_complex() {
         JsValue::Number(10.0)
     );
 }
+
+// Test static private field
+#[test]
+fn test_static_private_field() {
+    assert_eq!(
+        eval(
+            r#"
+            class Counter {
+                static #count: number = 0;
+
+                static increment(): void {
+                    Counter.#count++;
+                }
+
+                static getCount(): number {
+                    return Counter.#count;
+                }
+            }
+            Counter.increment();
+            Counter.increment();
+            Counter.getCount()
+        "#
+        ),
+        JsValue::Number(2.0)
+    );
+}
+
+// Test static private field in instance method
+#[test]
+fn test_static_private_field_in_instance() {
+    assert_eq!(
+        eval(
+            r#"
+            class Entity {
+                static #nextId: number = 1;
+                #id: number;
+
+                constructor() {
+                    this.#id = Entity.#nextId++;
+                }
+
+                getId(): number {
+                    return this.#id;
+                }
+            }
+            const e1 = new Entity();
+            const e2 = new Entity();
+            e1.getId() + e2.getId()
+        "#
+        ),
+        JsValue::Number(3.0) // 1 + 2
+    );
+}
