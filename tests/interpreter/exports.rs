@@ -1,7 +1,15 @@
 //! Tests for export handling and call_function API
 
 use typescript_eval::value::PropertyKey;
-use typescript_eval::{JsValue, Runtime};
+use typescript_eval::{JsValue, Runtime, RuntimeResult};
+
+/// Helper to run eval_resumable and expect Complete
+fn run_eval(runtime: &mut Runtime, source: &str) {
+    match runtime.eval_resumable(source).unwrap() {
+        RuntimeResult::Complete(_) => {}
+        other => panic!("Expected Complete, got {:?}", other),
+    }
+}
 
 #[test]
 fn test_call_exported_render_function() {
@@ -28,7 +36,7 @@ fn test_call_exported_render_function() {
     "#;
 
     let mut runtime = Runtime::new();
-    runtime.eval(source).unwrap();
+    run_eval(&mut runtime, source);
 
     // Create context object
     let context = serde_json::json!({
@@ -77,7 +85,7 @@ fn test_export_function_declaration() {
     "#;
 
     let mut runtime = Runtime::new();
-    runtime.eval(source).unwrap();
+    run_eval(&mut runtime, source);
 
     let result = runtime
         .call_function("add", &serde_json::json!([5, 3]))
@@ -92,7 +100,7 @@ fn test_export_const() {
     "#;
 
     let mut runtime = Runtime::new();
-    runtime.eval(source).unwrap();
+    run_eval(&mut runtime, source);
 
     let exports = runtime.get_exports();
     let version = exports.get("VERSION").unwrap();
@@ -110,7 +118,7 @@ fn test_export_multiple_declarations() {
     "#;
 
     let mut runtime = Runtime::new();
-    runtime.eval(source).unwrap();
+    run_eval(&mut runtime, source);
 
     let exports = runtime.get_exports();
     assert!(exports.contains_key("name"));
@@ -127,7 +135,7 @@ fn test_call_function_with_object_arg() {
     "#;
 
     let mut runtime = Runtime::new();
-    runtime.eval(source).unwrap();
+    run_eval(&mut runtime, source);
 
     let result = runtime
         .call_function("process", &serde_json::json!({"value": 21}))
@@ -146,7 +154,7 @@ fn test_call_function_no_args() {
     "#;
 
     let mut runtime = Runtime::new();
-    runtime.eval(source).unwrap();
+    run_eval(&mut runtime, source);
 
     // Pass empty array for no args
     let result = runtime
@@ -164,7 +172,7 @@ fn test_call_function_primitive_string_arg() {
     "#;
 
     let mut runtime = Runtime::new();
-    runtime.eval(source).unwrap();
+    run_eval(&mut runtime, source);
 
     let result = runtime
         .call_function("greet", &serde_json::json!("World"))
@@ -181,7 +189,7 @@ fn test_call_function_primitive_number_arg() {
     "#;
 
     let mut runtime = Runtime::new();
-    runtime.eval(source).unwrap();
+    run_eval(&mut runtime, source);
 
     let result = runtime
         .call_function("double", &serde_json::json!(21))
@@ -198,7 +206,7 @@ fn test_call_function_primitive_boolean_arg() {
     "#;
 
     let mut runtime = Runtime::new();
-    runtime.eval(source).unwrap();
+    run_eval(&mut runtime, source);
 
     let result = runtime
         .call_function("negate", &serde_json::json!(true))
@@ -220,7 +228,7 @@ fn test_call_function_null_arg() {
     "#;
 
     let mut runtime = Runtime::new();
-    runtime.eval(source).unwrap();
+    run_eval(&mut runtime, source);
 
     let result = runtime
         .call_function("isNull", &serde_json::json!(null))
@@ -237,7 +245,7 @@ fn test_call_function_multiple_args_spread() {
     "#;
 
     let mut runtime = Runtime::new();
-    runtime.eval(source).unwrap();
+    run_eval(&mut runtime, source);
 
     // Array args are spread as individual arguments
     let result = runtime
@@ -263,7 +271,7 @@ fn test_call_function_nested_object_arg() {
     "#;
 
     let mut runtime = Runtime::new();
-    runtime.eval(source).unwrap();
+    run_eval(&mut runtime, source);
 
     let config = serde_json::json!({
         "server": {
@@ -294,7 +302,7 @@ fn test_call_function_array_in_object_arg() {
     "#;
 
     let mut runtime = Runtime::new();
-    runtime.eval(source).unwrap();
+    run_eval(&mut runtime, source);
 
     let input = serde_json::json!({
         "items": [1, 2, 3, 4, 5]
@@ -313,7 +321,7 @@ fn test_call_function_empty_object_arg() {
     "#;
 
     let mut runtime = Runtime::new();
-    runtime.eval(source).unwrap();
+    run_eval(&mut runtime, source);
 
     let result = runtime
         .call_function("countKeys", &serde_json::json!({}))
@@ -330,7 +338,7 @@ fn test_call_function_empty_array_arg() {
     "#;
 
     let mut runtime = Runtime::new();
-    runtime.eval(source).unwrap();
+    run_eval(&mut runtime, source);
 
     // Pass array as single argument (wrapped in another array)
     let result = runtime
@@ -354,7 +362,7 @@ fn test_call_function_returns_array() {
     "#;
 
     let mut runtime = Runtime::new();
-    runtime.eval(source).unwrap();
+    run_eval(&mut runtime, source);
 
     let result = runtime.call_function("range", &serde_json::json!(3)).unwrap();
 
@@ -398,7 +406,7 @@ fn test_call_function_returns_nested_object() {
     "#;
 
     let mut runtime = Runtime::new();
-    runtime.eval(source).unwrap();
+    run_eval(&mut runtime, source);
 
     let result = runtime
         .call_function("createUser", &serde_json::json!(["Alice", 30]))
@@ -435,7 +443,7 @@ fn test_call_function_returns_undefined() {
     "#;
 
     let mut runtime = Runtime::new();
-    runtime.eval(source).unwrap();
+    run_eval(&mut runtime, source);
 
     let result = runtime
         .call_function("doNothing", &serde_json::json!([]))
@@ -452,7 +460,7 @@ fn test_call_function_returns_null() {
     "#;
 
     let mut runtime = Runtime::new();
-    runtime.eval(source).unwrap();
+    run_eval(&mut runtime, source);
 
     let result = runtime
         .call_function("returnNull", &serde_json::json!([]))
@@ -469,7 +477,7 @@ fn test_call_nonexistent_export() {
     "#;
 
     let mut runtime = Runtime::new();
-    runtime.eval(source).unwrap();
+    run_eval(&mut runtime, source);
 
     let result = runtime.call_function("doesNotExist", &serde_json::json!([]));
     assert!(result.is_err());
@@ -484,7 +492,7 @@ fn test_call_non_function_export() {
     "#;
 
     let mut runtime = Runtime::new();
-    runtime.eval(source).unwrap();
+    run_eval(&mut runtime, source);
 
     let result = runtime.call_function("notAFunction", &serde_json::json!([]));
     assert!(result.is_err());
@@ -521,7 +529,7 @@ fn test_render_with_array_context() {
     "#;
 
     let mut runtime = Runtime::new();
-    runtime.eval(source).unwrap();
+    run_eval(&mut runtime, source);
 
     let context = serde_json::json!({
         "title": "My List",
@@ -606,7 +614,7 @@ fn test_render_kubernetes_manifest() {
     "#;
 
     let mut runtime = Runtime::new();
-    runtime.eval(source).unwrap();
+    run_eval(&mut runtime, source);
 
     let context = serde_json::json!({
         "name": "my-app",
@@ -671,7 +679,7 @@ fn test_multiple_function_calls() {
     "#;
 
     let mut runtime = Runtime::new();
-    runtime.eval(source).unwrap();
+    run_eval(&mut runtime, source);
 
     // Call increment multiple times
     let r1 = runtime
@@ -709,7 +717,7 @@ fn test_function_uses_helper() {
     "#;
 
     let mut runtime = Runtime::new();
-    runtime.eval(source).unwrap();
+    run_eval(&mut runtime, source);
 
     let result = runtime
         .call_function(
