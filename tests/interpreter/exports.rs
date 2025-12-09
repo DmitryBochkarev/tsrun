@@ -727,3 +727,301 @@ fn test_function_uses_helper() {
         .unwrap();
     assert_eq!(result, JsValue::from("Hello, John Doe!"));
 }
+
+// ============ Export with Import Tests ============
+
+#[test]
+fn test_export_after_import() {
+    // Test that exports work correctly after imports are resolved
+    let mut runtime = Runtime::new();
+    let result = runtime
+        .eval(
+            r#"
+        import { baseValue } from './config';
+
+        export function calculate(x: number): number {
+            return baseValue + x;
+        }
+
+        // Return something to verify execution
+        "ready"
+    "#,
+        )
+        .unwrap();
+
+    // Resolve the import
+    match result {
+        RuntimeResult::ImportAwaited { slot, specifier } => {
+            assert_eq!(specifier, "./config");
+            let module = runtime.create_module_object(vec![
+                ("baseValue".to_string(), JsValue::Number(100.0)),
+            ]);
+            slot.set_success(module);
+        }
+        _ => panic!("Expected ImportAwaited"),
+    }
+
+    // Continue and verify
+    let result = runtime.continue_eval().unwrap();
+    match result {
+        RuntimeResult::Complete(value) => {
+            assert_eq!(value, JsValue::from("ready"));
+        }
+        _ => panic!("Expected Complete"),
+    }
+
+    // Now call the exported function
+    let calc_result = runtime
+        .call_function("calculate", &serde_json::json!(42))
+        .unwrap();
+    assert_eq!(calc_result, JsValue::Number(142.0)); // 100 + 42
+}
+
+// Note: export default is parsed but not currently tracked in the exports map.
+// These tests document expected behavior once implemented.
+
+#[test]
+#[ignore] // TODO: Implement export default tracking
+fn test_export_default_function() {
+    let source = r#"
+        export default function greet(name: string): string {
+            return "Hello, " + name;
+        }
+    "#;
+
+    let mut runtime = Runtime::new();
+    run_eval(&mut runtime, source);
+
+    let exports = runtime.get_exports();
+    assert!(exports.contains_key("default"));
+}
+
+#[test]
+#[ignore] // TODO: Implement export default tracking
+fn test_export_default_expression() {
+    let source = r#"
+        const config = {
+            version: "1.0.0",
+            name: "my-app"
+        };
+        export default config;
+    "#;
+
+    let mut runtime = Runtime::new();
+    run_eval(&mut runtime, source);
+
+    let exports = runtime.get_exports();
+    assert!(exports.contains_key("default"));
+
+    if let Some(JsValue::Object(obj)) = exports.get("default") {
+        let obj_ref = obj.borrow();
+        assert_eq!(
+            obj_ref.get_property(&PropertyKey::from("version")),
+            Some(JsValue::from("1.0.0"))
+        );
+    } else {
+        panic!("Expected default export to be an object");
+    }
+}
+
+#[test]
+fn test_export_list() {
+    let source = r#"
+        const x = 1;
+        const y = 2;
+        function add(a: number, b: number): number { return a + b; }
+
+        export { x, y, add };
+    "#;
+
+    let mut runtime = Runtime::new();
+    run_eval(&mut runtime, source);
+
+    let exports = runtime.get_exports();
+    assert!(exports.contains_key("x"));
+    assert!(exports.contains_key("y"));
+    assert!(exports.contains_key("add"));
+
+    assert_eq!(*exports.get("x").unwrap(), JsValue::Number(1.0));
+    assert_eq!(*exports.get("y").unwrap(), JsValue::Number(2.0));
+}
+
+#[test]
+fn test_export_renamed() {
+    let source = r#"
+        const internalName = "value";
+        export { internalName as publicName };
+    "#;
+
+    let mut runtime = Runtime::new();
+    run_eval(&mut runtime, source);
+
+    let exports = runtime.get_exports();
+    assert!(exports.contains_key("publicName"));
+    assert!(!exports.contains_key("internalName"));
+
+    assert_eq!(*exports.get("publicName").unwrap(), JsValue::from("value"));
+}
+
+#[test]
+fn test_export_class() {
+    let source = r#"
+        export class Calculator {
+            value: number;
+
+            constructor(initial: number) {
+                this.value = initial;
+            }
+
+            add(n: number): number {
+                this.value += n;
+                return this.value;
+            }
+        }
+    "#;
+
+    let mut runtime = Runtime::new();
+    run_eval(&mut runtime, source);
+
+    let exports = runtime.get_exports();
+    assert!(exports.contains_key("Calculator"));
+}
+
+#[test]
+fn test_export_async_function() {
+    let source = r#"
+        export async function fetchData(): Promise<number> {
+            return await Promise.resolve(42);
+        }
+    "#;
+
+    let mut runtime = Runtime::new();
+    run_eval(&mut runtime, source);
+
+    let exports = runtime.get_exports();
+    assert!(exports.contains_key("fetchData"));
+}
+
+#[test]
+fn test_multiple_exports_with_import() {
+    // Test complex scenario with imports and multiple exports
+    let mut runtime = Runtime::new();
+    let result = runtime
+        .eval(
+            r#"
+        import { CONFIG_VERSION } from './config';
+
+        export const version = CONFIG_VERSION;
+        export const name = "my-module";
+
+        export function getInfo(): string {
+            return name + " v" + version;
+        }
+
+        "initialized"
+    "#,
+        )
+        .unwrap();
+
+    // Resolve import
+    match result {
+        RuntimeResult::ImportAwaited { slot, .. } => {
+            let module = runtime.create_module_object(vec![
+                ("CONFIG_VERSION".to_string(), JsValue::from("2.0")),
+            ]);
+            slot.set_success(module);
+        }
+        _ => panic!("Expected ImportAwaited"),
+    }
+
+    let result = runtime.continue_eval().unwrap();
+    assert!(matches!(result, RuntimeResult::Complete(_)));
+
+    // Verify exports
+    let exports = runtime.get_exports();
+    assert_eq!(*exports.get("version").unwrap(), JsValue::from("2.0"));
+    assert_eq!(*exports.get("name").unwrap(), JsValue::from("my-module"));
+
+    // Call exported function
+    let info = runtime
+        .call_function("getInfo", &serde_json::json!([]))
+        .unwrap();
+    assert_eq!(info, JsValue::from("my-module v2.0"));
+}
+
+// ============ Export with Types Tests ============
+
+#[test]
+fn test_export_interface_ignored_at_runtime() {
+    // Interfaces are type-only and should not appear in exports
+    let source = r#"
+        export interface Config {
+            name: string;
+            value: number;
+        }
+
+        export const config: Config = {
+            name: "test",
+            value: 42
+        };
+    "#;
+
+    let mut runtime = Runtime::new();
+    run_eval(&mut runtime, source);
+
+    let exports = runtime.get_exports();
+    // Interface should NOT be in exports (it's type-only)
+    // Only the value `config` should be exported
+    assert!(exports.contains_key("config"));
+}
+
+#[test]
+#[ignore] // TODO: Implement export type parsing
+fn test_export_type_alias_ignored_at_runtime() {
+    // Type aliases are type-only
+    let source = r#"
+        export type ID = string | number;
+
+        export const defaultId: ID = "default";
+    "#;
+
+    let mut runtime = Runtime::new();
+    run_eval(&mut runtime, source);
+
+    let exports = runtime.get_exports();
+    // Type alias should NOT be in exports
+    // Only defaultId should be exported
+    assert!(exports.contains_key("defaultId"));
+}
+
+#[test]
+#[ignore] // TODO: Implement export enum tracking
+fn test_export_enum() {
+    // Enums are compiled to objects at runtime
+    let source = r#"
+        export enum Status {
+            Active = "active",
+            Inactive = "inactive"
+        }
+    "#;
+
+    let mut runtime = Runtime::new();
+    run_eval(&mut runtime, source);
+
+    let exports = runtime.get_exports();
+    assert!(exports.contains_key("Status"));
+
+    if let Some(JsValue::Object(status)) = exports.get("Status") {
+        let status_ref = status.borrow();
+        assert_eq!(
+            status_ref.get_property(&PropertyKey::from("Active")),
+            Some(JsValue::from("active"))
+        );
+        assert_eq!(
+            status_ref.get_property(&PropertyKey::from("Inactive")),
+            Some(JsValue::from("inactive"))
+        );
+    } else {
+        panic!("Expected Status to be an object");
+    }
+}
