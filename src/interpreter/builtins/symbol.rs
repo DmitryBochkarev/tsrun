@@ -7,8 +7,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
 use crate::value::{
-    create_function, create_object, JsFunction, JsObjectRef, JsString, JsSymbol, JsValue,
-    NativeFunction, PropertyKey,
+    create_function, create_object, register_method, JsFunction, JsObjectRef, JsString, JsSymbol,
+    JsValue, NativeFunction, PropertyKey,
 };
 
 /// Global symbol ID counter for generating unique symbol IDs
@@ -90,21 +90,9 @@ pub fn create_symbol_constructor(
 
     let mut sym = symbol_fn.borrow_mut();
 
-    // Symbol.for(key)
-    let for_fn = create_function(JsFunction::Native(NativeFunction {
-        name: "for".to_string(),
-        func: symbol_for,
-        arity: 1,
-    }));
-    sym.set_property(PropertyKey::from("for"), JsValue::Object(for_fn));
-
-    // Symbol.keyFor(sym)
-    let key_for_fn = create_function(JsFunction::Native(NativeFunction {
-        name: "keyFor".to_string(),
-        func: symbol_key_for,
-        arity: 1,
-    }));
-    sym.set_property(PropertyKey::from("keyFor"), JsValue::Object(key_for_fn));
+    // Symbol.for(key) and Symbol.keyFor(sym)
+    register_method(&mut sym, "for", symbol_for, 1);
+    register_method(&mut sym, "keyFor", symbol_key_for, 1);
 
     // Well-known symbols
     sym.set_property(

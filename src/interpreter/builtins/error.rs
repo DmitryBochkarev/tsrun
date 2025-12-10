@@ -3,8 +3,8 @@
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
 use crate::value::{
-    create_function, create_object, JsFunction, JsObjectRef, JsString, JsValue, NativeFunction,
-    PropertyKey,
+    create_function, create_object, register_method, JsFunction, JsObjectRef, JsString, JsValue,
+    NativeFunction, PropertyKey,
 };
 
 /// Create Error.prototype with toString
@@ -23,12 +23,7 @@ pub fn create_error_prototype() -> JsObjectRef {
             JsValue::String(JsString::from("")),
         );
 
-        let tostring_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "toString".to_string(),
-            func: error_to_string,
-            arity: 0,
-        }));
-        p.set_property(PropertyKey::from("toString"), JsValue::Object(tostring_fn));
+        register_method(&mut p, "toString", error_to_string, 0);
     }
     proto
 }

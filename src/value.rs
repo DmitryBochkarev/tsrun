@@ -1325,6 +1325,33 @@ pub fn create_function(func: JsFunction) -> JsObjectRef {
     Rc::new(RefCell::new(obj))
 }
 
+/// Register a native method on a prototype object.
+///
+/// This is a helper function to reduce code duplication when registering
+/// builtin methods. Instead of repeating the full registration pattern,
+/// use this function:
+///
+/// ```ignore
+/// // Instead of:
+/// let push_fn = create_function(JsFunction::Native(NativeFunction {
+///     name: "push".to_string(),
+///     func: array_push,
+///     arity: 1,
+/// }));
+/// p.set_property(PropertyKey::from("push"), JsValue::Object(push_fn));
+///
+/// // Use:
+/// register_method(&mut p, "push", array_push, 1);
+/// ```
+pub fn register_method(obj: &mut JsObject, name: &str, func: NativeFn, arity: usize) {
+    let f = create_function(JsFunction::Native(NativeFunction {
+        name: name.to_string(),
+        func,
+        arity,
+    }));
+    obj.set_property(PropertyKey::from(name), JsValue::Object(f));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

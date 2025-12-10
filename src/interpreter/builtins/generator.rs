@@ -6,8 +6,8 @@ use std::rc::Rc;
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
 use crate::value::{
-    create_function, create_object, ExoticObject, GeneratorState, GeneratorStatus, JsFunction,
-    JsObjectRef, JsString, JsValue, NativeFunction, PropertyKey,
+    create_object, register_method, ExoticObject, GeneratorState, GeneratorStatus, JsObjectRef,
+    JsString, JsValue, PropertyKey,
 };
 
 /// Create Generator.prototype
@@ -22,29 +22,9 @@ pub fn create_generator_prototype() -> JsObjectRef {
             JsValue::String(JsString::from("Generator")),
         );
 
-        // Generator.prototype.next
-        let next_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "next".to_string(),
-            func: generator_next,
-            arity: 1,
-        }));
-        p.set_property(PropertyKey::from("next"), JsValue::Object(next_fn));
-
-        // Generator.prototype.return
-        let return_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "return".to_string(),
-            func: generator_return,
-            arity: 1,
-        }));
-        p.set_property(PropertyKey::from("return"), JsValue::Object(return_fn));
-
-        // Generator.prototype.throw
-        let throw_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "throw".to_string(),
-            func: generator_throw,
-            arity: 1,
-        }));
-        p.set_property(PropertyKey::from("throw"), JsValue::Object(throw_fn));
+        register_method(&mut p, "next", generator_next, 1);
+        register_method(&mut p, "return", generator_return, 1);
+        register_method(&mut p, "throw", generator_throw, 1);
     }
     proto
 }

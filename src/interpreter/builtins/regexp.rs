@@ -3,8 +3,8 @@
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
 use crate::value::{
-    create_function, create_object, ExoticObject, JsFunction, JsObjectRef, JsString, JsValue,
-    NativeFunction, PropertyKey,
+    create_function, create_object, register_method, ExoticObject, JsFunction, JsObjectRef,
+    JsString, JsValue, NativeFunction, PropertyKey,
 };
 
 /// Create RegExp.prototype with test and exec methods
@@ -13,19 +13,8 @@ pub fn create_regexp_prototype() -> JsObjectRef {
     {
         let mut p = proto.borrow_mut();
 
-        let test_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "test".to_string(),
-            func: regexp_test,
-            arity: 1,
-        }));
-        p.set_property(PropertyKey::from("test"), JsValue::Object(test_fn));
-
-        let exec_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "exec".to_string(),
-            func: regexp_exec,
-            arity: 1,
-        }));
-        p.set_property(PropertyKey::from("exec"), JsValue::Object(exec_fn));
+        register_method(&mut p, "test", regexp_test, 1);
+        register_method(&mut p, "exec", regexp_exec, 1);
     }
     proto
 }

@@ -5,8 +5,8 @@ use chrono::{Datelike, TimeZone, Timelike, Utc};
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
 use crate::value::{
-    create_function, create_object, CheapClone, ExoticObject, JsFunction, JsObjectRef, JsString,
-    JsValue, NativeFunction, PropertyKey,
+    create_function, create_object, register_method, CheapClone, ExoticObject, JsFunction,
+    JsObjectRef, JsString, JsValue, NativeFunction, PropertyKey,
 };
 
 /// Create a date from components, handling JavaScript-style overflow
@@ -81,282 +81,44 @@ pub fn create_date_prototype() -> JsObjectRef {
     {
         let mut p = proto.borrow_mut();
 
-        let get_time_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "getTime".to_string(),
-            func: date_get_time,
-            arity: 0,
-        }));
-        p.set_property(PropertyKey::from("getTime"), JsValue::Object(get_time_fn));
-
-        let get_full_year_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "getFullYear".to_string(),
-            func: date_get_full_year,
-            arity: 0,
-        }));
-        p.set_property(
-            PropertyKey::from("getFullYear"),
-            JsValue::Object(get_full_year_fn),
-        );
-
-        let get_month_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "getMonth".to_string(),
-            func: date_get_month,
-            arity: 0,
-        }));
-        p.set_property(PropertyKey::from("getMonth"), JsValue::Object(get_month_fn));
-
-        let get_date_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "getDate".to_string(),
-            func: date_get_date,
-            arity: 0,
-        }));
-        p.set_property(PropertyKey::from("getDate"), JsValue::Object(get_date_fn));
-
-        let get_day_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "getDay".to_string(),
-            func: date_get_day,
-            arity: 0,
-        }));
-        p.set_property(PropertyKey::from("getDay"), JsValue::Object(get_day_fn));
-
-        let get_hours_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "getHours".to_string(),
-            func: date_get_hours,
-            arity: 0,
-        }));
-        p.set_property(PropertyKey::from("getHours"), JsValue::Object(get_hours_fn));
-
-        let get_minutes_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "getMinutes".to_string(),
-            func: date_get_minutes,
-            arity: 0,
-        }));
-        p.set_property(
-            PropertyKey::from("getMinutes"),
-            JsValue::Object(get_minutes_fn),
-        );
-
-        let get_seconds_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "getSeconds".to_string(),
-            func: date_get_seconds,
-            arity: 0,
-        }));
-        p.set_property(
-            PropertyKey::from("getSeconds"),
-            JsValue::Object(get_seconds_fn),
-        );
-
-        let get_milliseconds_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "getMilliseconds".to_string(),
-            func: date_get_milliseconds,
-            arity: 0,
-        }));
-        p.set_property(
-            PropertyKey::from("getMilliseconds"),
-            JsValue::Object(get_milliseconds_fn),
-        );
+        // Getter methods (local time = UTC in our implementation)
+        register_method(&mut p, "getTime", date_get_time, 0);
+        register_method(&mut p, "getFullYear", date_get_full_year, 0);
+        register_method(&mut p, "getMonth", date_get_month, 0);
+        register_method(&mut p, "getDate", date_get_date, 0);
+        register_method(&mut p, "getDay", date_get_day, 0);
+        register_method(&mut p, "getHours", date_get_hours, 0);
+        register_method(&mut p, "getMinutes", date_get_minutes, 0);
+        register_method(&mut p, "getSeconds", date_get_seconds, 0);
+        register_method(&mut p, "getMilliseconds", date_get_milliseconds, 0);
 
         // UTC getter methods (same as regular getters since we store UTC internally)
-        let get_utc_full_year_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "getUTCFullYear".to_string(),
-            func: date_get_full_year,
-            arity: 0,
-        }));
-        p.set_property(
-            PropertyKey::from("getUTCFullYear"),
-            JsValue::Object(get_utc_full_year_fn),
-        );
-
-        let get_utc_month_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "getUTCMonth".to_string(),
-            func: date_get_month,
-            arity: 0,
-        }));
-        p.set_property(
-            PropertyKey::from("getUTCMonth"),
-            JsValue::Object(get_utc_month_fn),
-        );
-
-        let get_utc_date_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "getUTCDate".to_string(),
-            func: date_get_date,
-            arity: 0,
-        }));
-        p.set_property(
-            PropertyKey::from("getUTCDate"),
-            JsValue::Object(get_utc_date_fn),
-        );
-
-        let get_utc_day_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "getUTCDay".to_string(),
-            func: date_get_day,
-            arity: 0,
-        }));
-        p.set_property(
-            PropertyKey::from("getUTCDay"),
-            JsValue::Object(get_utc_day_fn),
-        );
-
-        let get_utc_hours_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "getUTCHours".to_string(),
-            func: date_get_hours,
-            arity: 0,
-        }));
-        p.set_property(
-            PropertyKey::from("getUTCHours"),
-            JsValue::Object(get_utc_hours_fn),
-        );
-
-        let get_utc_minutes_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "getUTCMinutes".to_string(),
-            func: date_get_minutes,
-            arity: 0,
-        }));
-        p.set_property(
-            PropertyKey::from("getUTCMinutes"),
-            JsValue::Object(get_utc_minutes_fn),
-        );
-
-        let get_utc_seconds_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "getUTCSeconds".to_string(),
-            func: date_get_seconds,
-            arity: 0,
-        }));
-        p.set_property(
-            PropertyKey::from("getUTCSeconds"),
-            JsValue::Object(get_utc_seconds_fn),
-        );
-
-        let get_utc_milliseconds_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "getUTCMilliseconds".to_string(),
-            func: date_get_milliseconds,
-            arity: 0,
-        }));
-        p.set_property(
-            PropertyKey::from("getUTCMilliseconds"),
-            JsValue::Object(get_utc_milliseconds_fn),
-        );
-
-        let to_iso_string_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "toISOString".to_string(),
-            func: date_to_iso_string,
-            arity: 0,
-        }));
-        p.set_property(
-            PropertyKey::from("toISOString"),
-            JsValue::Object(to_iso_string_fn),
-        );
-
-        let to_json_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "toJSON".to_string(),
-            func: date_to_iso_string, // toJSON returns the same as toISOString
-            arity: 0,
-        }));
-        p.set_property(PropertyKey::from("toJSON"), JsValue::Object(to_json_fn));
-
-        let value_of_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "valueOf".to_string(),
-            func: date_get_time, // valueOf returns the same as getTime
-            arity: 0,
-        }));
-        p.set_property(PropertyKey::from("valueOf"), JsValue::Object(value_of_fn));
+        register_method(&mut p, "getUTCFullYear", date_get_full_year, 0);
+        register_method(&mut p, "getUTCMonth", date_get_month, 0);
+        register_method(&mut p, "getUTCDate", date_get_date, 0);
+        register_method(&mut p, "getUTCDay", date_get_day, 0);
+        register_method(&mut p, "getUTCHours", date_get_hours, 0);
+        register_method(&mut p, "getUTCMinutes", date_get_minutes, 0);
+        register_method(&mut p, "getUTCSeconds", date_get_seconds, 0);
+        register_method(&mut p, "getUTCMilliseconds", date_get_milliseconds, 0);
 
         // Setter methods
-        let set_time_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "setTime".to_string(),
-            func: date_set_time,
-            arity: 1,
-        }));
-        p.set_property(PropertyKey::from("setTime"), JsValue::Object(set_time_fn));
+        register_method(&mut p, "setTime", date_set_time, 1);
+        register_method(&mut p, "setFullYear", date_set_full_year, 3);
+        register_method(&mut p, "setMonth", date_set_month, 2);
+        register_method(&mut p, "setDate", date_set_date, 1);
+        register_method(&mut p, "setHours", date_set_hours, 4);
+        register_method(&mut p, "setMinutes", date_set_minutes, 3);
+        register_method(&mut p, "setSeconds", date_set_seconds, 2);
+        register_method(&mut p, "setMilliseconds", date_set_milliseconds, 1);
 
-        let set_full_year_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "setFullYear".to_string(),
-            func: date_set_full_year,
-            arity: 3,
-        }));
-        p.set_property(
-            PropertyKey::from("setFullYear"),
-            JsValue::Object(set_full_year_fn),
-        );
-
-        let set_month_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "setMonth".to_string(),
-            func: date_set_month,
-            arity: 2,
-        }));
-        p.set_property(PropertyKey::from("setMonth"), JsValue::Object(set_month_fn));
-
-        let set_date_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "setDate".to_string(),
-            func: date_set_date,
-            arity: 1,
-        }));
-        p.set_property(PropertyKey::from("setDate"), JsValue::Object(set_date_fn));
-
-        let set_hours_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "setHours".to_string(),
-            func: date_set_hours,
-            arity: 4,
-        }));
-        p.set_property(PropertyKey::from("setHours"), JsValue::Object(set_hours_fn));
-
-        let set_minutes_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "setMinutes".to_string(),
-            func: date_set_minutes,
-            arity: 3,
-        }));
-        p.set_property(
-            PropertyKey::from("setMinutes"),
-            JsValue::Object(set_minutes_fn),
-        );
-
-        let set_seconds_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "setSeconds".to_string(),
-            func: date_set_seconds,
-            arity: 2,
-        }));
-        p.set_property(
-            PropertyKey::from("setSeconds"),
-            JsValue::Object(set_seconds_fn),
-        );
-
-        let set_milliseconds_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "setMilliseconds".to_string(),
-            func: date_set_milliseconds,
-            arity: 1,
-        }));
-        p.set_property(
-            PropertyKey::from("setMilliseconds"),
-            JsValue::Object(set_milliseconds_fn),
-        );
-
-        // toString methods
-        let to_string_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "toString".to_string(),
-            func: date_to_string,
-            arity: 0,
-        }));
-        p.set_property(PropertyKey::from("toString"), JsValue::Object(to_string_fn));
-
-        let to_date_string_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "toDateString".to_string(),
-            func: date_to_date_string,
-            arity: 0,
-        }));
-        p.set_property(
-            PropertyKey::from("toDateString"),
-            JsValue::Object(to_date_string_fn),
-        );
-
-        let to_time_string_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "toTimeString".to_string(),
-            func: date_to_time_string,
-            arity: 0,
-        }));
-        p.set_property(
-            PropertyKey::from("toTimeString"),
-            JsValue::Object(to_time_string_fn),
-        );
+        // Conversion methods
+        register_method(&mut p, "toISOString", date_to_iso_string, 0);
+        register_method(&mut p, "toJSON", date_to_iso_string, 0); // toJSON = toISOString
+        register_method(&mut p, "valueOf", date_get_time, 0); // valueOf = getTime
+        register_method(&mut p, "toString", date_to_string, 0);
+        register_method(&mut p, "toDateString", date_to_date_string, 0);
+        register_method(&mut p, "toTimeString", date_to_time_string, 0);
     }
     proto
 }
@@ -371,26 +133,9 @@ pub fn create_date_constructor(date_prototype: &JsObjectRef) -> JsObjectRef {
     {
         let mut date = constructor.borrow_mut();
 
-        let now_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "now".to_string(),
-            func: date_now,
-            arity: 0,
-        }));
-        date.set_property(PropertyKey::from("now"), JsValue::Object(now_fn));
-
-        let utc_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "UTC".to_string(),
-            func: date_utc,
-            arity: 7,
-        }));
-        date.set_property(PropertyKey::from("UTC"), JsValue::Object(utc_fn));
-
-        let parse_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "parse".to_string(),
-            func: date_parse,
-            arity: 1,
-        }));
-        date.set_property(PropertyKey::from("parse"), JsValue::Object(parse_fn));
+        register_method(&mut date, "now", date_now, 0);
+        register_method(&mut date, "UTC", date_utc, 7);
+        register_method(&mut date, "parse", date_parse, 1);
 
         date.set_property(
             PropertyKey::from("prototype"),

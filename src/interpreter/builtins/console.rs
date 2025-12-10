@@ -7,8 +7,7 @@ use std::time::Instant;
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
 use crate::value::{
-    create_function, create_object, ExoticObject, JsFunction, JsObjectRef, JsValue, NativeFunction,
-    PropertyKey,
+    create_object, register_method, ExoticObject, JsObjectRef, JsValue, PropertyKey,
 };
 
 // Thread-local storage for console timers and counters
@@ -23,106 +22,29 @@ pub fn create_console_object() -> JsObjectRef {
     {
         let mut con = console.borrow_mut();
 
-        let log_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "log".to_string(),
-            func: console_log,
-            arity: 0,
-        }));
-        con.set_property(PropertyKey::from("log"), JsValue::Object(log_fn));
+        // Logging methods
+        register_method(&mut con, "log", console_log, 0);
+        register_method(&mut con, "error", console_error, 0);
+        register_method(&mut con, "warn", console_warn, 0);
+        register_method(&mut con, "info", console_info, 0);
+        register_method(&mut con, "debug", console_debug, 0);
 
-        let error_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "error".to_string(),
-            func: console_error,
-            arity: 0,
-        }));
-        con.set_property(PropertyKey::from("error"), JsValue::Object(error_fn));
+        // Display methods
+        register_method(&mut con, "table", console_table, 1);
+        register_method(&mut con, "dir", console_dir, 1);
 
-        let warn_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "warn".to_string(),
-            func: console_warn,
-            arity: 0,
-        }));
-        con.set_property(PropertyKey::from("warn"), JsValue::Object(warn_fn));
+        // Timing methods
+        register_method(&mut con, "time", console_time, 1);
+        register_method(&mut con, "timeEnd", console_time_end, 1);
 
-        let info_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "info".to_string(),
-            func: console_info,
-            arity: 0,
-        }));
-        con.set_property(PropertyKey::from("info"), JsValue::Object(info_fn));
+        // Counting methods
+        register_method(&mut con, "count", console_count, 1);
+        register_method(&mut con, "countReset", console_count_reset, 1);
 
-        let debug_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "debug".to_string(),
-            func: console_debug,
-            arity: 0,
-        }));
-        con.set_property(PropertyKey::from("debug"), JsValue::Object(debug_fn));
-
-        let table_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "table".to_string(),
-            func: console_table,
-            arity: 1,
-        }));
-        con.set_property(PropertyKey::from("table"), JsValue::Object(table_fn));
-
-        let dir_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "dir".to_string(),
-            func: console_dir,
-            arity: 1,
-        }));
-        con.set_property(PropertyKey::from("dir"), JsValue::Object(dir_fn));
-
-        let time_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "time".to_string(),
-            func: console_time,
-            arity: 1,
-        }));
-        con.set_property(PropertyKey::from("time"), JsValue::Object(time_fn));
-
-        let time_end_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "timeEnd".to_string(),
-            func: console_time_end,
-            arity: 1,
-        }));
-        con.set_property(PropertyKey::from("timeEnd"), JsValue::Object(time_end_fn));
-
-        let count_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "count".to_string(),
-            func: console_count,
-            arity: 1,
-        }));
-        con.set_property(PropertyKey::from("count"), JsValue::Object(count_fn));
-
-        let count_reset_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "countReset".to_string(),
-            func: console_count_reset,
-            arity: 1,
-        }));
-        con.set_property(
-            PropertyKey::from("countReset"),
-            JsValue::Object(count_reset_fn),
-        );
-
-        let clear_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "clear".to_string(),
-            func: console_clear,
-            arity: 0,
-        }));
-        con.set_property(PropertyKey::from("clear"), JsValue::Object(clear_fn));
-
-        let group_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "group".to_string(),
-            func: console_group,
-            arity: 0,
-        }));
-        con.set_property(PropertyKey::from("group"), JsValue::Object(group_fn));
-
-        let group_end_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "groupEnd".to_string(),
-            func: console_group_end,
-            arity: 0,
-        }));
-        con.set_property(PropertyKey::from("groupEnd"), JsValue::Object(group_end_fn));
+        // Other methods
+        register_method(&mut con, "clear", console_clear, 0);
+        register_method(&mut con, "group", console_group, 0);
+        register_method(&mut con, "groupEnd", console_group_end, 0);
     }
     console
 }

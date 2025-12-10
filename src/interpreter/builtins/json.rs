@@ -3,8 +3,8 @@
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
 use crate::value::{
-    create_array, create_function, create_object, ExoticObject, JsFunction, JsObjectRef, JsString,
-    JsValue, NativeFunction, PropertyKey,
+    create_array, create_object, register_method, ExoticObject, JsObjectRef, JsString, JsValue,
+    PropertyKey,
 };
 
 /// Create JSON object with stringify and parse methods
@@ -13,22 +13,8 @@ pub fn create_json_object() -> JsObjectRef {
     {
         let mut j = json.borrow_mut();
 
-        let stringify_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "stringify".to_string(),
-            func: json_stringify,
-            arity: 1,
-        }));
-        j.set_property(
-            PropertyKey::from("stringify"),
-            JsValue::Object(stringify_fn),
-        );
-
-        let parse_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "parse".to_string(),
-            func: json_parse,
-            arity: 1,
-        }));
-        j.set_property(PropertyKey::from("parse"), JsValue::Object(parse_fn));
+        register_method(&mut j, "stringify", json_stringify, 1);
+        register_method(&mut j, "parse", json_parse, 1);
     }
     json
 }

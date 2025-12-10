@@ -2,9 +2,7 @@
 
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
-use crate::value::{
-    create_function, create_object, JsFunction, JsObjectRef, JsValue, NativeFunction, PropertyKey,
-};
+use crate::value::{create_object, register_method, JsObjectRef, JsValue, PropertyKey};
 
 /// Create Math object with all math methods and constants
 pub fn create_math_object() -> JsObjectRef {
@@ -43,230 +41,51 @@ pub fn create_math_object() -> JsObjectRef {
             JsValue::Number(std::f64::consts::FRAC_1_SQRT_2),
         );
 
-        // Methods
-        let abs_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "abs".to_string(),
-            func: math_abs,
-            arity: 1,
-        }));
-        math.set_property(PropertyKey::from("abs"), JsValue::Object(abs_fn));
+        // Rounding methods
+        register_method(&mut math, "abs", math_abs, 1);
+        register_method(&mut math, "floor", math_floor, 1);
+        register_method(&mut math, "ceil", math_ceil, 1);
+        register_method(&mut math, "round", math_round, 1);
+        register_method(&mut math, "trunc", math_trunc, 1);
+        register_method(&mut math, "sign", math_sign, 1);
 
-        let floor_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "floor".to_string(),
-            func: math_floor,
-            arity: 1,
-        }));
-        math.set_property(PropertyKey::from("floor"), JsValue::Object(floor_fn));
+        // Min/max
+        register_method(&mut math, "min", math_min, 2);
+        register_method(&mut math, "max", math_max, 2);
 
-        let ceil_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "ceil".to_string(),
-            func: math_ceil,
-            arity: 1,
-        }));
-        math.set_property(PropertyKey::from("ceil"), JsValue::Object(ceil_fn));
+        // Power and root functions
+        register_method(&mut math, "pow", math_pow, 2);
+        register_method(&mut math, "sqrt", math_sqrt, 1);
+        register_method(&mut math, "cbrt", math_cbrt, 1);
+        register_method(&mut math, "hypot", math_hypot, 2);
 
-        let round_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "round".to_string(),
-            func: math_round,
-            arity: 1,
-        }));
-        math.set_property(PropertyKey::from("round"), JsValue::Object(round_fn));
+        // Logarithmic and exponential
+        register_method(&mut math, "log", math_log, 1);
+        register_method(&mut math, "log10", math_log10, 1);
+        register_method(&mut math, "log2", math_log2, 1);
+        register_method(&mut math, "log1p", math_log1p, 1);
+        register_method(&mut math, "exp", math_exp, 1);
+        register_method(&mut math, "expm1", math_expm1, 1);
 
-        let trunc_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "trunc".to_string(),
-            func: math_trunc,
-            arity: 1,
-        }));
-        math.set_property(PropertyKey::from("trunc"), JsValue::Object(trunc_fn));
+        // Trigonometric
+        register_method(&mut math, "sin", math_sin, 1);
+        register_method(&mut math, "cos", math_cos, 1);
+        register_method(&mut math, "tan", math_tan, 1);
+        register_method(&mut math, "asin", math_asin, 1);
+        register_method(&mut math, "acos", math_acos, 1);
+        register_method(&mut math, "atan", math_atan, 1);
+        register_method(&mut math, "atan2", math_atan2, 2);
 
-        let sign_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "sign".to_string(),
-            func: math_sign,
-            arity: 1,
-        }));
-        math.set_property(PropertyKey::from("sign"), JsValue::Object(sign_fn));
+        // Hyperbolic
+        register_method(&mut math, "sinh", math_sinh, 1);
+        register_method(&mut math, "cosh", math_cosh, 1);
+        register_method(&mut math, "tanh", math_tanh, 1);
+        register_method(&mut math, "asinh", math_asinh, 1);
+        register_method(&mut math, "acosh", math_acosh, 1);
+        register_method(&mut math, "atanh", math_atanh, 1);
 
-        let min_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "min".to_string(),
-            func: math_min,
-            arity: 2,
-        }));
-        math.set_property(PropertyKey::from("min"), JsValue::Object(min_fn));
-
-        let max_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "max".to_string(),
-            func: math_max,
-            arity: 2,
-        }));
-        math.set_property(PropertyKey::from("max"), JsValue::Object(max_fn));
-
-        let pow_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "pow".to_string(),
-            func: math_pow,
-            arity: 2,
-        }));
-        math.set_property(PropertyKey::from("pow"), JsValue::Object(pow_fn));
-
-        let sqrt_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "sqrt".to_string(),
-            func: math_sqrt,
-            arity: 1,
-        }));
-        math.set_property(PropertyKey::from("sqrt"), JsValue::Object(sqrt_fn));
-
-        let log_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "log".to_string(),
-            func: math_log,
-            arity: 1,
-        }));
-        math.set_property(PropertyKey::from("log"), JsValue::Object(log_fn));
-
-        let exp_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "exp".to_string(),
-            func: math_exp,
-            arity: 1,
-        }));
-        math.set_property(PropertyKey::from("exp"), JsValue::Object(exp_fn));
-
-        let random_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "random".to_string(),
-            func: math_random,
-            arity: 0,
-        }));
-        math.set_property(PropertyKey::from("random"), JsValue::Object(random_fn));
-
-        let sin_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "sin".to_string(),
-            func: math_sin,
-            arity: 1,
-        }));
-        math.set_property(PropertyKey::from("sin"), JsValue::Object(sin_fn));
-
-        let cos_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "cos".to_string(),
-            func: math_cos,
-            arity: 1,
-        }));
-        math.set_property(PropertyKey::from("cos"), JsValue::Object(cos_fn));
-
-        let tan_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "tan".to_string(),
-            func: math_tan,
-            arity: 1,
-        }));
-        math.set_property(PropertyKey::from("tan"), JsValue::Object(tan_fn));
-
-        let asin_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "asin".to_string(),
-            func: math_asin,
-            arity: 1,
-        }));
-        math.set_property(PropertyKey::from("asin"), JsValue::Object(asin_fn));
-
-        let acos_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "acos".to_string(),
-            func: math_acos,
-            arity: 1,
-        }));
-        math.set_property(PropertyKey::from("acos"), JsValue::Object(acos_fn));
-
-        let atan_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "atan".to_string(),
-            func: math_atan,
-            arity: 1,
-        }));
-        math.set_property(PropertyKey::from("atan"), JsValue::Object(atan_fn));
-
-        let atan2_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "atan2".to_string(),
-            func: math_atan2,
-            arity: 2,
-        }));
-        math.set_property(PropertyKey::from("atan2"), JsValue::Object(atan2_fn));
-
-        let sinh_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "sinh".to_string(),
-            func: math_sinh,
-            arity: 1,
-        }));
-        math.set_property(PropertyKey::from("sinh"), JsValue::Object(sinh_fn));
-
-        let cosh_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "cosh".to_string(),
-            func: math_cosh,
-            arity: 1,
-        }));
-        math.set_property(PropertyKey::from("cosh"), JsValue::Object(cosh_fn));
-
-        let tanh_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "tanh".to_string(),
-            func: math_tanh,
-            arity: 1,
-        }));
-        math.set_property(PropertyKey::from("tanh"), JsValue::Object(tanh_fn));
-
-        let asinh_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "asinh".to_string(),
-            func: math_asinh,
-            arity: 1,
-        }));
-        math.set_property(PropertyKey::from("asinh"), JsValue::Object(asinh_fn));
-
-        let acosh_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "acosh".to_string(),
-            func: math_acosh,
-            arity: 1,
-        }));
-        math.set_property(PropertyKey::from("acosh"), JsValue::Object(acosh_fn));
-
-        let atanh_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "atanh".to_string(),
-            func: math_atanh,
-            arity: 1,
-        }));
-        math.set_property(PropertyKey::from("atanh"), JsValue::Object(atanh_fn));
-
-        let cbrt_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "cbrt".to_string(),
-            func: math_cbrt,
-            arity: 1,
-        }));
-        math.set_property(PropertyKey::from("cbrt"), JsValue::Object(cbrt_fn));
-
-        let hypot_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "hypot".to_string(),
-            func: math_hypot,
-            arity: 2,
-        }));
-        math.set_property(PropertyKey::from("hypot"), JsValue::Object(hypot_fn));
-
-        let log10_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "log10".to_string(),
-            func: math_log10,
-            arity: 1,
-        }));
-        math.set_property(PropertyKey::from("log10"), JsValue::Object(log10_fn));
-
-        let log2_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "log2".to_string(),
-            func: math_log2,
-            arity: 1,
-        }));
-        math.set_property(PropertyKey::from("log2"), JsValue::Object(log2_fn));
-
-        let log1p_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "log1p".to_string(),
-            func: math_log1p,
-            arity: 1,
-        }));
-        math.set_property(PropertyKey::from("log1p"), JsValue::Object(log1p_fn));
-
-        let expm1_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "expm1".to_string(),
-            func: math_expm1,
-            arity: 1,
-        }));
-        math.set_property(PropertyKey::from("expm1"), JsValue::Object(expm1_fn));
+        // Random
+        register_method(&mut math, "random", math_random, 0);
     }
     math_obj
 }

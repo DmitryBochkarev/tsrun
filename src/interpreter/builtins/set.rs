@@ -4,8 +4,8 @@ use super::map::same_value_zero;
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
 use crate::value::{
-    create_function, create_object, ExoticObject, JsFunction, JsObjectRef, JsValue, NativeFunction,
-    PropertyKey,
+    create_function, create_object, register_method, ExoticObject, JsFunction, JsObjectRef,
+    JsValue, NativeFunction, PropertyKey,
 };
 
 /// Create Set.prototype with add, has, delete, clear, forEach methods
@@ -14,61 +14,14 @@ pub fn create_set_prototype() -> JsObjectRef {
     {
         let mut p = proto.borrow_mut();
 
-        let add_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "add".to_string(),
-            func: set_add,
-            arity: 1,
-        }));
-        p.set_property(PropertyKey::from("add"), JsValue::Object(add_fn));
-
-        let has_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "has".to_string(),
-            func: set_has,
-            arity: 1,
-        }));
-        p.set_property(PropertyKey::from("has"), JsValue::Object(has_fn));
-
-        let delete_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "delete".to_string(),
-            func: set_delete,
-            arity: 1,
-        }));
-        p.set_property(PropertyKey::from("delete"), JsValue::Object(delete_fn));
-
-        let clear_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "clear".to_string(),
-            func: set_clear,
-            arity: 0,
-        }));
-        p.set_property(PropertyKey::from("clear"), JsValue::Object(clear_fn));
-
-        let foreach_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "forEach".to_string(),
-            func: set_foreach,
-            arity: 1,
-        }));
-        p.set_property(PropertyKey::from("forEach"), JsValue::Object(foreach_fn));
-
-        let keys_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "keys".to_string(),
-            func: set_keys,
-            arity: 0,
-        }));
-        p.set_property(PropertyKey::from("keys"), JsValue::Object(keys_fn));
-
-        let values_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "values".to_string(),
-            func: set_values,
-            arity: 0,
-        }));
-        p.set_property(PropertyKey::from("values"), JsValue::Object(values_fn));
-
-        let entries_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "entries".to_string(),
-            func: set_entries,
-            arity: 0,
-        }));
-        p.set_property(PropertyKey::from("entries"), JsValue::Object(entries_fn));
+        register_method(&mut p, "add", set_add, 1);
+        register_method(&mut p, "has", set_has, 1);
+        register_method(&mut p, "delete", set_delete, 1);
+        register_method(&mut p, "clear", set_clear, 0);
+        register_method(&mut p, "forEach", set_foreach, 1);
+        register_method(&mut p, "keys", set_keys, 0);
+        register_method(&mut p, "values", set_values, 0);
+        register_method(&mut p, "entries", set_entries, 0);
     }
     proto
 }

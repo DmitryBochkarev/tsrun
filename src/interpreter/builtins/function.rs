@@ -3,8 +3,8 @@
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
 use crate::value::{
-    create_function, create_object, BoundFunctionData, ExoticObject, JsFunction, JsObjectRef,
-    JsValue, NativeFunction, PropertyKey,
+    create_function, create_object, register_method, BoundFunctionData, ExoticObject, JsFunction,
+    JsObjectRef, JsValue, PropertyKey,
 };
 
 /// Create Function.prototype with call, apply, bind methods
@@ -13,26 +13,9 @@ pub fn create_function_prototype() -> JsObjectRef {
     {
         let mut p = proto.borrow_mut();
 
-        let call_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "call".to_string(),
-            func: function_call,
-            arity: 1,
-        }));
-        p.set_property(PropertyKey::from("call"), JsValue::Object(call_fn));
-
-        let apply_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "apply".to_string(),
-            func: function_apply,
-            arity: 2,
-        }));
-        p.set_property(PropertyKey::from("apply"), JsValue::Object(apply_fn));
-
-        let bind_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "bind".to_string(),
-            func: function_bind,
-            arity: 1,
-        }));
-        p.set_property(PropertyKey::from("bind"), JsValue::Object(bind_fn));
+        register_method(&mut p, "call", function_call, 1);
+        register_method(&mut p, "apply", function_apply, 2);
+        register_method(&mut p, "bind", function_bind, 1);
     }
     proto
 }

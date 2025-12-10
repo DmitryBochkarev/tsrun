@@ -6,8 +6,9 @@ use std::rc::Rc;
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
 use crate::value::{
-    create_function, create_object, CheapClone, ExoticObject, JsFunction, JsObject, JsObjectRef,
-    JsValue, NativeFunction, PromiseHandler, PromiseState, PromiseStatus, PropertyKey,
+    create_function, create_object, register_method, CheapClone, ExoticObject, JsFunction,
+    JsObject, JsObjectRef, JsValue, NativeFunction, PromiseHandler, PromiseState, PromiseStatus,
+    PropertyKey,
 };
 
 /// Create Promise.prototype with then, catch, finally methods
@@ -16,26 +17,9 @@ pub fn create_promise_prototype() -> JsObjectRef {
     {
         let mut p = proto.borrow_mut();
 
-        let then_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "then".to_string(),
-            func: promise_then,
-            arity: 2,
-        }));
-        p.set_property(PropertyKey::from("then"), JsValue::Object(then_fn));
-
-        let catch_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "catch".to_string(),
-            func: promise_catch,
-            arity: 1,
-        }));
-        p.set_property(PropertyKey::from("catch"), JsValue::Object(catch_fn));
-
-        let finally_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "finally".to_string(),
-            func: promise_finally,
-            arity: 1,
-        }));
-        p.set_property(PropertyKey::from("finally"), JsValue::Object(finally_fn));
+        register_method(&mut p, "then", promise_then, 2);
+        register_method(&mut p, "catch", promise_catch, 1);
+        register_method(&mut p, "finally", promise_finally, 1);
     }
     proto
 }
@@ -56,50 +40,12 @@ pub fn create_promise_constructor(promise_prototype: &JsObjectRef) -> JsObjectRe
         );
 
         // Static methods
-        let resolve_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "resolve".to_string(),
-            func: promise_resolve_static,
-            arity: 1,
-        }));
-        c.set_property(PropertyKey::from("resolve"), JsValue::Object(resolve_fn));
-
-        let reject_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "reject".to_string(),
-            func: promise_reject_static,
-            arity: 1,
-        }));
-        c.set_property(PropertyKey::from("reject"), JsValue::Object(reject_fn));
-
-        let all_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "all".to_string(),
-            func: promise_all,
-            arity: 1,
-        }));
-        c.set_property(PropertyKey::from("all"), JsValue::Object(all_fn));
-
-        let race_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "race".to_string(),
-            func: promise_race,
-            arity: 1,
-        }));
-        c.set_property(PropertyKey::from("race"), JsValue::Object(race_fn));
-
-        let allsettled_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "allSettled".to_string(),
-            func: promise_allsettled,
-            arity: 1,
-        }));
-        c.set_property(
-            PropertyKey::from("allSettled"),
-            JsValue::Object(allsettled_fn),
-        );
-
-        let any_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "any".to_string(),
-            func: promise_any,
-            arity: 1,
-        }));
-        c.set_property(PropertyKey::from("any"), JsValue::Object(any_fn));
+        register_method(&mut c, "resolve", promise_resolve_static, 1);
+        register_method(&mut c, "reject", promise_reject_static, 1);
+        register_method(&mut c, "all", promise_all, 1);
+        register_method(&mut c, "race", promise_race, 1);
+        register_method(&mut c, "allSettled", promise_allsettled, 1);
+        register_method(&mut c, "any", promise_any, 1);
     }
 
     ctor

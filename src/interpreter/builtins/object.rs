@@ -3,8 +3,8 @@
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
 use crate::value::{
-    create_array, create_function, create_object, ExoticObject, JsFunction, JsObjectRef, JsString,
-    JsValue, NativeFunction, Property, PropertyKey,
+    create_array, create_function, create_object, register_method, ExoticObject, JsFunction,
+    JsObjectRef, JsString, JsValue, NativeFunction, Property, PropertyKey,
 };
 
 /// Create Object.prototype with hasOwnProperty, toString, valueOf
@@ -13,29 +13,9 @@ pub fn create_object_prototype() -> JsObjectRef {
     {
         let mut p = proto.borrow_mut();
 
-        let hasownprop_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "hasOwnProperty".to_string(),
-            func: object_has_own_property,
-            arity: 1,
-        }));
-        p.set_property(
-            PropertyKey::from("hasOwnProperty"),
-            JsValue::Object(hasownprop_fn),
-        );
-
-        let tostring_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "toString".to_string(),
-            func: object_to_string,
-            arity: 0,
-        }));
-        p.set_property(PropertyKey::from("toString"), JsValue::Object(tostring_fn));
-
-        let valueof_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "valueOf".to_string(),
-            func: object_value_of,
-            arity: 0,
-        }));
-        p.set_property(PropertyKey::from("valueOf"), JsValue::Object(valueof_fn));
+        register_method(&mut p, "hasOwnProperty", object_has_own_property, 1);
+        register_method(&mut p, "toString", object_to_string, 0);
+        register_method(&mut p, "valueOf", object_value_of, 0);
     }
     proto
 }
@@ -50,155 +30,50 @@ pub fn create_object_constructor() -> JsObjectRef {
     {
         let mut obj = constructor.borrow_mut();
 
-        let keys_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "keys".to_string(),
-            func: object_keys,
-            arity: 1,
-        }));
-        obj.set_property(PropertyKey::from("keys"), JsValue::Object(keys_fn));
+        // Property enumeration
+        register_method(&mut obj, "keys", object_keys, 1);
+        register_method(&mut obj, "values", object_values, 1);
+        register_method(&mut obj, "entries", object_entries, 1);
 
-        let values_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "values".to_string(),
-            func: object_values,
-            arity: 1,
-        }));
-        obj.set_property(PropertyKey::from("values"), JsValue::Object(values_fn));
+        // Object manipulation
+        register_method(&mut obj, "assign", object_assign, 2);
+        register_method(&mut obj, "fromEntries", object_from_entries, 1);
+        register_method(&mut obj, "create", object_create, 1);
 
-        let entries_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "entries".to_string(),
-            func: object_entries,
-            arity: 1,
-        }));
-        obj.set_property(PropertyKey::from("entries"), JsValue::Object(entries_fn));
+        // Property checking
+        register_method(&mut obj, "hasOwn", object_has_own, 2);
 
-        let assign_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "assign".to_string(),
-            func: object_assign,
-            arity: 2,
-        }));
-        obj.set_property(PropertyKey::from("assign"), JsValue::Object(assign_fn));
+        // Freezing/sealing
+        register_method(&mut obj, "freeze", object_freeze, 1);
+        register_method(&mut obj, "isFrozen", object_is_frozen, 1);
+        register_method(&mut obj, "seal", object_seal, 1);
+        register_method(&mut obj, "isSealed", object_is_sealed, 1);
 
-        let fromentries_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "fromEntries".to_string(),
-            func: object_from_entries,
-            arity: 1,
-        }));
-        obj.set_property(
-            PropertyKey::from("fromEntries"),
-            JsValue::Object(fromentries_fn),
+        // Property descriptors
+        register_method(
+            &mut obj,
+            "getOwnPropertyDescriptor",
+            object_get_own_property_descriptor,
+            2,
         );
-
-        let hasown_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "hasOwn".to_string(),
-            func: object_has_own,
-            arity: 2,
-        }));
-        obj.set_property(PropertyKey::from("hasOwn"), JsValue::Object(hasown_fn));
-
-        let create_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "create".to_string(),
-            func: object_create,
-            arity: 1,
-        }));
-        obj.set_property(PropertyKey::from("create"), JsValue::Object(create_fn));
-
-        let freeze_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "freeze".to_string(),
-            func: object_freeze,
-            arity: 1,
-        }));
-        obj.set_property(PropertyKey::from("freeze"), JsValue::Object(freeze_fn));
-
-        let isfrozen_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "isFrozen".to_string(),
-            func: object_is_frozen,
-            arity: 1,
-        }));
-        obj.set_property(PropertyKey::from("isFrozen"), JsValue::Object(isfrozen_fn));
-
-        let seal_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "seal".to_string(),
-            func: object_seal,
-            arity: 1,
-        }));
-        obj.set_property(PropertyKey::from("seal"), JsValue::Object(seal_fn));
-
-        let issealed_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "isSealed".to_string(),
-            func: object_is_sealed,
-            arity: 1,
-        }));
-        obj.set_property(PropertyKey::from("isSealed"), JsValue::Object(issealed_fn));
-
-        let getownpropdesc_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "getOwnPropertyDescriptor".to_string(),
-            func: object_get_own_property_descriptor,
-            arity: 2,
-        }));
-        obj.set_property(
-            PropertyKey::from("getOwnPropertyDescriptor"),
-            JsValue::Object(getownpropdesc_fn),
+        register_method(
+            &mut obj,
+            "getOwnPropertyNames",
+            object_get_own_property_names,
+            1,
         );
-
-        let getownpropnames_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "getOwnPropertyNames".to_string(),
-            func: object_get_own_property_names,
-            arity: 1,
-        }));
-        obj.set_property(
-            PropertyKey::from("getOwnPropertyNames"),
-            JsValue::Object(getownpropnames_fn),
+        register_method(
+            &mut obj,
+            "getOwnPropertySymbols",
+            object_get_own_property_symbols,
+            1,
         );
+        register_method(&mut obj, "defineProperty", object_define_property, 3);
+        register_method(&mut obj, "defineProperties", object_define_properties, 2);
 
-        let getownpropsyms_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "getOwnPropertySymbols".to_string(),
-            func: object_get_own_property_symbols,
-            arity: 1,
-        }));
-        obj.set_property(
-            PropertyKey::from("getOwnPropertySymbols"),
-            JsValue::Object(getownpropsyms_fn),
-        );
-
-        let defineprop_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "defineProperty".to_string(),
-            func: object_define_property,
-            arity: 3,
-        }));
-        obj.set_property(
-            PropertyKey::from("defineProperty"),
-            JsValue::Object(defineprop_fn),
-        );
-
-        let defineprops_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "defineProperties".to_string(),
-            func: object_define_properties,
-            arity: 2,
-        }));
-        obj.set_property(
-            PropertyKey::from("defineProperties"),
-            JsValue::Object(defineprops_fn),
-        );
-
-        let getprotoof_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "getPrototypeOf".to_string(),
-            func: object_get_prototype_of,
-            arity: 1,
-        }));
-        obj.set_property(
-            PropertyKey::from("getPrototypeOf"),
-            JsValue::Object(getprotoof_fn),
-        );
-
-        let setprotoof_fn = create_function(JsFunction::Native(NativeFunction {
-            name: "setPrototypeOf".to_string(),
-            func: object_set_prototype_of,
-            arity: 2,
-        }));
-        obj.set_property(
-            PropertyKey::from("setPrototypeOf"),
-            JsValue::Object(setprotoof_fn),
-        );
+        // Prototype manipulation
+        register_method(&mut obj, "getPrototypeOf", object_get_prototype_of, 1);
+        register_method(&mut obj, "setPrototypeOf", object_set_prototype_of, 2);
     }
     constructor
 }
