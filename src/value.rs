@@ -3,9 +3,10 @@
 //! The core JsValue type and related structures for representing JavaScript values at runtime.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::fmt;
 use std::rc::Rc;
+
+use rustc_hash::FxHashMap;
 
 use crate::ast::{ArrowFunctionBody, BlockStatement, FunctionParam};
 use crate::error::JsError;
@@ -759,7 +760,7 @@ pub struct JsObject {
     /// Whether this object was explicitly created with null prototype (Object.create(null))
     pub null_prototype: bool,
     /// Object properties
-    pub properties: HashMap<PropertyKey, Property>,
+    pub properties: FxHashMap<PropertyKey, Property>,
     /// Exotic object behavior
     pub exotic: ExoticObject,
 }
@@ -773,7 +774,7 @@ impl JsObject {
             frozen: false,
             sealed: false,
             null_prototype: false,
-            properties: HashMap::new(),
+            properties: FxHashMap::default(),
             exotic: ExoticObject::Ordinary,
         }
     }
@@ -786,7 +787,7 @@ impl JsObject {
             frozen: false,
             sealed: false,
             null_prototype: false,
-            properties: HashMap::new(),
+            properties: FxHashMap::default(),
             exotic: ExoticObject::Ordinary,
         }
     }
@@ -906,14 +907,29 @@ impl PropertyKey {
     pub fn is_symbol(&self) -> bool {
         matches!(self, PropertyKey::Symbol(_))
     }
+
+    /// Check if this key equals a string literal (avoids allocation)
+    #[inline]
+    pub fn eq_str(&self, s: &str) -> bool {
+        match self {
+            PropertyKey::String(js_str) => js_str.as_str() == s,
+            PropertyKey::Index(_) | PropertyKey::Symbol(_) => false,
+        }
+    }
 }
 
 impl From<&str> for PropertyKey {
+    #[inline]
     fn from(s: &str) -> Self {
-        // Check if it's a valid array index
-        if let Ok(idx) = s.parse::<u32>() {
-            if idx.to_string() == s {
-                return PropertyKey::Index(idx);
+        // Fast path: check first char is a digit before parsing
+        if let Some(first) = s.bytes().next() {
+            if first.is_ascii_digit() {
+                if let Ok(idx) = s.parse::<u32>() {
+                    // Verify it's canonical (no leading zeros except "0")
+                    if idx.to_string() == s {
+                        return PropertyKey::Index(idx);
+                    }
+                }
             }
         }
         PropertyKey::String(JsString::from(s))
@@ -927,11 +943,17 @@ impl From<String> for PropertyKey {
 }
 
 impl From<JsString> for PropertyKey {
+    #[inline]
     fn from(s: JsString) -> Self {
-        // Check if it's a valid array index
-        if let Ok(idx) = s.parse::<u32>() {
-            if idx.to_string() == s.as_str() {
-                return PropertyKey::Index(idx);
+        // Fast path: check first char is a digit before parsing
+        if let Some(first) = s.as_str().bytes().next() {
+            if first.is_ascii_digit() {
+                if let Ok(idx) = s.parse::<u32>() {
+                    // Verify it's canonical (no leading zeros except "0")
+                    if idx.to_string() == s.as_str() {
+                        return PropertyKey::Index(idx);
+                    }
+                }
             }
         }
         PropertyKey::String(s)
@@ -1229,7 +1251,7 @@ impl fmt::Debug for NativeFunction {
 #[derive(Debug, Clone)]
 pub struct Environment {
     /// Variable bindings in this scope
-    pub bindings: HashMap<JsString, Binding>,
+    pub bindings: FxHashMap<JsString, Binding>,
     /// Parent environment (if any)
     pub outer: Option<EnvId>,
     /// Number of closures that have captured this environment.
@@ -1241,7 +1263,7 @@ impl Environment {
     /// Create a new global environment (no outer scope)
     pub fn new() -> Self {
         Self {
-            bindings: HashMap::new(),
+            bindings: FxHashMap::default(),
             outer: None,
             capture_count: 0,
         }
@@ -1250,7 +1272,7 @@ impl Environment {
     /// Create a new environment with the given outer environment as parent
     pub fn with_outer(outer: Option<EnvId>) -> Self {
         Self {
-            bindings: HashMap::new(),
+            bindings: FxHashMap::default(),
             outer,
             capture_count: 0,
         }
@@ -1287,7 +1309,7 @@ pub fn create_array(elements: Vec<JsValue>) -> JsObjectRef {
         frozen: false,
         sealed: false,
         null_prototype: false,
-        properties: HashMap::new(),
+        properties: FxHashMap::default(),
         exotic: ExoticObject::Array { length: len },
     };
 
@@ -1312,7 +1334,7 @@ pub fn create_function(func: JsFunction) -> JsObjectRef {
         frozen: false,
         sealed: false,
         null_prototype: false,
-        properties: HashMap::new(),
+        properties: FxHashMap::default(),
         exotic: ExoticObject::Function(func),
     };
 

@@ -219,7 +219,7 @@ impl Runtime {
     }
 
     /// Get a reference to all exported values
-    pub fn get_exports(&self) -> &std::collections::HashMap<JsString, JsValue> {
+    pub fn get_exports(&self) -> &rustc_hash::FxHashMap<JsString, JsValue> {
         &self.interpreter.exports
     }
 

@@ -114,7 +114,7 @@ pub struct Interpreter {
     /// Stores thrown value during exception propagation
     thrown_value: Option<JsValue>,
     /// Exported values from the module
-    pub exports: std::collections::HashMap<JsString, JsValue>,
+    pub exports: rustc_hash::FxHashMap<JsString, JsValue>,
     /// Call stack for stack traces
     pub call_stack: Vec<StackFrame>,
     /// Generator execution context (Some when executing inside a generator)
@@ -170,7 +170,7 @@ pub struct SavedExecutionState {
     static_import_index: usize,
     pending_slot: Option<crate::PendingSlot>,
     pending_program_body: Option<Vec<Statement>>,
-    exports: std::collections::HashMap<JsString, JsValue>,
+    exports: rustc_hash::FxHashMap<JsString, JsValue>,
 }
 
 impl Interpreter {
@@ -365,7 +365,7 @@ impl Interpreter {
             generator_prototype,
             promise_prototype,
             thrown_value: None,
-            exports: std::collections::HashMap::new(),
+            exports: rustc_hash::FxHashMap::default(),
             call_stack: Vec::new(),
             generator_context: None,
             // State machine execution
@@ -2955,7 +2955,7 @@ impl Interpreter {
                         ObjectProperty::Property(p) => {
                             let key = self.evaluate_property_key(&p.key)?;
                             // Skip __proto__ since we handled it above
-                            if key.to_string() == "__proto__" {
+                            if key.eq_str("__proto__") {
                                 continue;
                             }
                             let value = if p.method {
@@ -3674,7 +3674,7 @@ impl Interpreter {
         match object.clone() {
             JsValue::Object(obj) => {
                 // Handle __proto__ special property
-                if key.to_string() == "__proto__" {
+                if key.eq_str("__proto__") {
                     return Ok(obj
                         .borrow()
                         .prototype
@@ -3733,7 +3733,7 @@ impl Interpreter {
                         return Ok(JsValue::String(JsString::from(ch.to_string())));
                     }
                 }
-                if key.to_string() == "length" {
+                if key.eq_str("length") {
                     return Ok(JsValue::Number(s.len() as f64));
                 }
                 // Look up on String.prototype
@@ -3751,7 +3751,7 @@ impl Interpreter {
             }
             JsValue::Symbol(ref s) => {
                 // Handle special symbol properties
-                if key.to_string() == "description" {
+                if key.eq_str("description") {
                     return Ok(match &s.description {
                         Some(desc) => JsValue::String(JsString::from(desc.as_str())),
                         None => JsValue::Undefined,
@@ -3785,7 +3785,7 @@ impl Interpreter {
         match object.clone() {
             JsValue::Object(obj) => {
                 // Handle __proto__ special property
-                if key.to_string() == "__proto__" {
+                if key.eq_str("__proto__") {
                     let new_proto = match value {
                         JsValue::Null => None,
                         JsValue::Object(proto) => Some(proto),

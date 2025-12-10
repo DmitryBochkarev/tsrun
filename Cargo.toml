@@ -19,6 +19,7 @@ unicode-normalization = "0.1"
 regex = { version = "1.10", default-features = false, features = ["std", "unicode-perl", "unicode-case"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 lazy_static = "1.4"
+rustc-hash = "2.1"
 
 [dev-dependencies]
 pretty_assertions = "1.4"
@@ -39,3 +40,8 @@ codegen-units = 1
 opt-level = "z"
 strip = true
 panic = "abort"
+
+[profile.profiling]
+inherits = "release"
+debug = true
+strip = false

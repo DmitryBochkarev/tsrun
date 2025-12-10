@@ -65,7 +65,7 @@ pub fn create_promise_object(prototype: &JsObjectRef) -> JsObjectRef {
         frozen: false,
         sealed: false,
         null_prototype: false,
-        properties: std::collections::HashMap::new(),
+        properties: rustc_hash::FxHashMap::default(),
         exotic: ExoticObject::Promise(state),
     }))
 }
@@ -89,7 +89,7 @@ pub fn create_fulfilled_promise(prototype: &JsObjectRef, value: JsValue) -> JsOb
         frozen: false,
         sealed: false,
         null_prototype: false,
-        properties: std::collections::HashMap::new(),
+        properties: rustc_hash::FxHashMap::default(),
         exotic: ExoticObject::Promise(state),
     }))
 }
@@ -108,7 +108,7 @@ pub fn create_rejected_promise(prototype: &JsObjectRef, reason: JsValue) -> JsOb
         frozen: false,
         sealed: false,
         null_prototype: false,
-        properties: std::collections::HashMap::new(),
+        properties: rustc_hash::FxHashMap::default(),
         exotic: ExoticObject::Promise(state),
     }))
 }
