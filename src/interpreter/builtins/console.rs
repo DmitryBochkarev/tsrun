@@ -7,7 +7,7 @@ use std::time::Instant;
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
 use crate::value::{
-    create_object, register_method, ExoticObject, JsObjectRef, JsValue, PropertyKey,
+    create_object_with_capacity, register_method, ExoticObject, JsObjectRef, JsValue, PropertyKey,
 };
 
 // Thread-local storage for console timers and counters
@@ -18,7 +18,7 @@ lazy_static::lazy_static! {
 
 /// Create console object with log, error, warn, info, debug methods
 pub fn create_console_object() -> JsObjectRef {
-    let console = create_object();
+    let console = create_object_with_capacity(14);
     {
         let mut con = console.borrow_mut();
 
@@ -45,6 +45,13 @@ pub fn create_console_object() -> JsObjectRef {
         register_method(&mut con, "clear", console_clear, 0);
         register_method(&mut con, "group", console_group, 0);
         register_method(&mut con, "groupEnd", console_group_end, 0);
+
+        debug_assert_eq!(
+            con.properties.len(),
+            14,
+            "console object capacity mismatch: expected 14, got {}",
+            con.properties.len()
+        );
     }
     console
 }

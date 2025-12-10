@@ -779,6 +779,19 @@ impl JsObject {
         }
     }
 
+    /// Create a new ordinary object with pre-allocated property capacity
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            prototype: None,
+            extensible: true,
+            frozen: false,
+            sealed: false,
+            null_prototype: false,
+            properties: FxHashMap::with_capacity_and_hasher(capacity, Default::default()),
+            exotic: ExoticObject::Ordinary,
+        }
+    }
+
     /// Create a new ordinary object with a prototype
     pub fn with_prototype(prototype: JsObjectRef) -> Self {
         Self {
@@ -1298,6 +1311,13 @@ pub struct Binding {
 /// Create a new ordinary object
 pub fn create_object() -> JsObjectRef {
     Rc::new(RefCell::new(JsObject::new()))
+}
+
+/// Create a new ordinary object with pre-allocated property capacity
+///
+/// Use this for prototype objects where you know the number of methods upfront.
+pub fn create_object_with_capacity(capacity: usize) -> JsObjectRef {
+    Rc::new(RefCell::new(JsObject::with_capacity(capacity)))
 }
 
 /// Create a new array object

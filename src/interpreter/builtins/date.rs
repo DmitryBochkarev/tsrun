@@ -5,8 +5,8 @@ use chrono::{Datelike, TimeZone, Timelike, Utc};
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
 use crate::value::{
-    create_function, create_object, register_method, CheapClone, ExoticObject, JsFunction,
-    JsObjectRef, JsString, JsValue, NativeFunction, PropertyKey,
+    create_function, create_object, create_object_with_capacity, register_method, CheapClone,
+    ExoticObject, JsFunction, JsObjectRef, JsString, JsValue, NativeFunction, PropertyKey,
 };
 
 /// Create a date from components, handling JavaScript-style overflow
@@ -77,7 +77,7 @@ fn parse_date_string(s: &str) -> f64 {
 
 /// Create Date.prototype with getTime, getFullYear, getMonth, etc.
 pub fn create_date_prototype() -> JsObjectRef {
-    let proto = create_object();
+    let proto = create_object_with_capacity(31);
     {
         let mut p = proto.borrow_mut();
 
@@ -119,6 +119,13 @@ pub fn create_date_prototype() -> JsObjectRef {
         register_method(&mut p, "toString", date_to_string, 0);
         register_method(&mut p, "toDateString", date_to_date_string, 0);
         register_method(&mut p, "toTimeString", date_to_time_string, 0);
+
+        debug_assert_eq!(
+            p.properties.len(),
+            31,
+            "Date.prototype capacity mismatch: expected 31, got {}",
+            p.properties.len()
+        );
     }
     proto
 }

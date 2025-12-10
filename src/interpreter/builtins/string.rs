@@ -6,13 +6,13 @@ use super::regexp::build_regex;
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
 use crate::value::{
-    create_function, create_object, register_method, ExoticObject, JsFunction, JsObjectRef,
-    JsString, JsValue, NativeFunction, PropertyKey,
+    create_function, create_object_with_capacity, register_method, ExoticObject, JsFunction,
+    JsObjectRef, JsString, JsValue, NativeFunction, PropertyKey,
 };
 
 /// Create String.prototype with all string methods
 pub fn create_string_prototype() -> JsObjectRef {
-    let proto = create_object();
+    let proto = create_object_with_capacity(29);
     {
         let mut p = proto.borrow_mut();
 
@@ -60,6 +60,13 @@ pub fn create_string_prototype() -> JsObjectRef {
 
         // Comparison
         register_method(&mut p, "localeCompare", string_locale_compare, 1);
+
+        debug_assert_eq!(
+            p.properties.len(),
+            29,
+            "String.prototype capacity mismatch: expected 29, got {}",
+            p.properties.len()
+        );
     }
     proto
 }

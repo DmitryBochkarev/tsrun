@@ -3,19 +3,27 @@
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
 use crate::value::{
-    create_array, create_function, create_object, register_method, ExoticObject, JsFunction,
-    JsObjectRef, JsString, JsValue, NativeFunction, Property, PropertyKey,
+    create_array, create_function, create_object, create_object_with_capacity, register_method,
+    ExoticObject, JsFunction, JsObjectRef, JsString, JsValue, NativeFunction, Property,
+    PropertyKey,
 };
 
 /// Create Object.prototype with hasOwnProperty, toString, valueOf
 pub fn create_object_prototype() -> JsObjectRef {
-    let proto = create_object();
+    let proto = create_object_with_capacity(4);
     {
         let mut p = proto.borrow_mut();
 
         register_method(&mut p, "hasOwnProperty", object_has_own_property, 1);
         register_method(&mut p, "toString", object_to_string, 0);
         register_method(&mut p, "valueOf", object_value_of, 0);
+
+        debug_assert_eq!(
+            p.properties.len(),
+            3,
+            "Object.prototype capacity mismatch: expected 3, got {}",
+            p.properties.len()
+        );
     }
     proto
 }

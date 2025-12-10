@@ -2,11 +2,13 @@
 
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
-use crate::value::{create_object, register_method, JsObjectRef, JsValue, PropertyKey};
+use crate::value::{
+    create_object_with_capacity, register_method, JsObjectRef, JsValue, PropertyKey,
+};
 
 /// Create Math object with all math methods and constants
 pub fn create_math_object() -> JsObjectRef {
-    let math_obj = create_object();
+    let math_obj = create_object_with_capacity(40);
     {
         let mut math = math_obj.borrow_mut();
 
@@ -86,6 +88,13 @@ pub fn create_math_object() -> JsObjectRef {
 
         // Random
         register_method(&mut math, "random", math_random, 0);
+
+        debug_assert_eq!(
+            math.properties.len(),
+            40,
+            "Math object capacity mismatch: expected 40, got {}",
+            math.properties.len()
+        );
     }
     math_obj
 }

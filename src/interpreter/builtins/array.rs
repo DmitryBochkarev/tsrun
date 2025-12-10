@@ -3,13 +3,14 @@
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
 use crate::value::{
-    create_array, create_function, create_object, register_method, CheapClone, ExoticObject,
-    JsFunction, JsObjectRef, JsString, JsValue, NativeFunction, Property, PropertyKey,
+    create_array, create_function, create_object_with_capacity, register_method, CheapClone,
+    ExoticObject, JsFunction, JsObjectRef, JsString, JsValue, NativeFunction, Property,
+    PropertyKey,
 };
 
 /// Create Array.prototype with all array methods
 pub fn create_array_prototype() -> JsObjectRef {
-    let proto = create_object();
+    let proto = create_object_with_capacity(36);
     {
         let mut p = proto.borrow_mut();
 
@@ -58,6 +59,13 @@ pub fn create_array_prototype() -> JsObjectRef {
         register_method(&mut p, "keys", array_keys, 0);
         register_method(&mut p, "values", array_values, 0);
         register_method(&mut p, "entries", array_entries, 0);
+
+        debug_assert_eq!(
+            p.properties.len(),
+            36,
+            "Array.prototype capacity mismatch: expected 36, got {}",
+            p.properties.len()
+        );
     }
     proto
 }
