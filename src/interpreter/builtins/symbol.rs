@@ -5,10 +5,11 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::error::JsError;
+use crate::gc::Space;
 use crate::interpreter::Interpreter;
 use crate::value::{
-    create_function, create_object, register_method, JsFunction, JsObjectRef, JsString, JsSymbol,
-    JsValue, NativeFunction, PropertyKey,
+    create_function, create_object, register_method, JsFunction, JsObject, JsObjectRef, JsString,
+    JsSymbol, JsValue, NativeFunction, PropertyKey,
 };
 
 /// Global symbol ID counter for generating unique symbol IDs
@@ -78,21 +79,25 @@ pub fn get_well_known_symbols() -> WellKnownSymbols {
 
 /// Create the Symbol constructor function object
 pub fn create_symbol_constructor(
+    space: &mut Space<JsObject>,
     _symbol_prototype: &JsObjectRef,
     well_known: &WellKnownSymbols,
 ) -> JsObjectRef {
     // Create the Symbol function (not a constructor - can't be called with new)
-    let symbol_fn = create_function(JsFunction::Native(NativeFunction {
-        name: "Symbol".to_string(),
-        func: symbol_call,
-        arity: 0,
-    }));
-
-    let mut sym = symbol_fn.borrow_mut();
+    let symbol_fn = create_function(
+        space,
+        JsFunction::Native(NativeFunction {
+            name: "Symbol".to_string(),
+            func: symbol_call,
+            arity: 0,
+        }),
+    );
 
     // Symbol.for(key) and Symbol.keyFor(sym)
-    register_method(&mut sym, "for", symbol_for, 1);
-    register_method(&mut sym, "keyFor", symbol_key_for, 1);
+    register_method(space, &symbol_fn, "for", symbol_for, 1);
+    register_method(space, &symbol_fn, "keyFor", symbol_key_for, 1);
+
+    let mut sym = symbol_fn.borrow_mut();
 
     // Well-known symbols
     sym.set_property(
@@ -185,31 +190,19 @@ pub fn create_symbol_constructor(
 }
 
 /// Create Symbol.prototype
-pub fn create_symbol_prototype() -> JsObjectRef {
-    let proto = create_object();
-    let mut p = proto.borrow_mut();
+pub fn create_symbol_prototype(space: &mut Space<JsObject>) -> JsObjectRef {
+    let proto = create_object(space);
 
     // Symbol.prototype.toString()
-    let to_string_fn = create_function(JsFunction::Native(NativeFunction {
-        name: "toString".to_string(),
-        func: symbol_to_string,
-        arity: 0,
-    }));
-    p.set_property(PropertyKey::from("toString"), JsValue::Object(to_string_fn));
+    register_method(space, &proto, "toString", symbol_to_string, 0);
 
     // Symbol.prototype.valueOf()
-    let value_of_fn = create_function(JsFunction::Native(NativeFunction {
-        name: "valueOf".to_string(),
-        func: symbol_value_of,
-        arity: 0,
-    }));
-    p.set_property(PropertyKey::from("valueOf"), JsValue::Object(value_of_fn));
+    register_method(space, &proto, "valueOf", symbol_value_of, 0);
 
     // Symbol.prototype.description (getter)
     // Note: In full JS this is an accessor property. For simplicity we implement
     // description access directly in member expression evaluation.
 
-    drop(p);
     proto
 }
 

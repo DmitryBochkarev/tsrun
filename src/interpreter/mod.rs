@@ -21,10 +21,11 @@ use crate::ast::{
     WhileStatement,
 };
 use crate::error::JsError;
+use crate::gc::Space;
 use crate::value::{
     create_array, create_function, create_object, CheapClone, EnvId, EnvironmentArena,
     ExoticObject, FunctionBody, GeneratorState, GeneratorStatus, InterpretedFunction, JsFunction,
-    JsObjectRef, JsString, JsValue, PromiseStatus, Property, PropertyKey,
+    JsObject, JsObjectRef, JsString, JsValue, PromiseStatus, Property, PropertyKey,
 };
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -77,9 +78,20 @@ enum FrameResult {
     Suspend(crate::RuntimeResult),
 }
 
+/// GC statistics for debugging and monitoring
+#[derive(Debug, Clone)]
+pub struct GcStats {
+    pub alive_count: usize,
+    pub tracked_count: usize,
+    pub roots_count: usize,
+    pub free_count: usize,
+}
+
 /// The interpreter state
 pub struct Interpreter {
-    /// Global object
+    /// GC space managing all JavaScript objects
+    pub gc_space: Space<JsObject>,
+    /// Global object (rooted)
     pub global: JsObjectRef,
     /// Arena storing all environments (avoids Rc cycles)
     pub env_arena: EnvironmentArena,
@@ -176,9 +188,13 @@ pub struct SavedExecutionState {
 impl Interpreter {
     /// Create a new interpreter with global environment
     pub fn new() -> Self {
-        let global = create_object();
+        let mut gc_space = Space::with_capacity(4096);
         let mut env_arena = EnvironmentArena::new();
         let env = env_arena.global_id();
+
+        // Create global object and root it
+        let global = create_object(&mut gc_space);
+        gc_space.add_root(&global);
 
         // Add basic global values
         env_arena.define(env, "undefined".to_string(), JsValue::Undefined, false);
@@ -190,23 +206,48 @@ impl Interpreter {
             false,
         );
 
-        // Create prototypes using builtin module functions
-        let object_prototype = create_object_prototype();
-        let array_prototype = create_array_prototype();
-        let string_prototype = create_string_prototype();
-        let number_prototype = create_number_prototype();
-        let function_prototype = create_function_prototype();
-        let map_prototype = create_map_prototype();
-        let set_prototype = create_set_prototype();
-        let date_prototype = create_date_prototype();
-        let regexp_prototype = create_regexp_prototype();
-        let error_prototype = create_error_prototype();
-        let symbol_prototype = create_symbol_prototype();
-        let generator_prototype = create_generator_prototype();
-        let promise_prototype = create_promise_prototype();
+        // Create prototypes using builtin module functions (all rooted)
+        let object_prototype = create_object_prototype(&mut gc_space);
+        gc_space.add_root(&object_prototype);
+
+        let array_prototype = create_array_prototype(&mut gc_space);
+        gc_space.add_root(&array_prototype);
+
+        let string_prototype = create_string_prototype(&mut gc_space);
+        gc_space.add_root(&string_prototype);
+
+        let number_prototype = create_number_prototype(&mut gc_space);
+        gc_space.add_root(&number_prototype);
+
+        let function_prototype = create_function_prototype(&mut gc_space);
+        gc_space.add_root(&function_prototype);
+
+        let map_prototype = create_map_prototype(&mut gc_space);
+        gc_space.add_root(&map_prototype);
+
+        let set_prototype = create_set_prototype(&mut gc_space);
+        gc_space.add_root(&set_prototype);
+
+        let date_prototype = create_date_prototype(&mut gc_space);
+        gc_space.add_root(&date_prototype);
+
+        let regexp_prototype = create_regexp_prototype(&mut gc_space);
+        gc_space.add_root(&regexp_prototype);
+
+        let error_prototype = create_error_prototype(&mut gc_space);
+        gc_space.add_root(&error_prototype);
+
+        let symbol_prototype = create_symbol_prototype(&mut gc_space);
+        gc_space.add_root(&symbol_prototype);
+
+        let generator_prototype = create_generator_prototype(&mut gc_space);
+        gc_space.add_root(&generator_prototype);
+
+        let promise_prototype = create_promise_prototype(&mut gc_space);
+        gc_space.add_root(&promise_prototype);
 
         // Create and register constructors
-        let object_constructor = create_object_constructor();
+        let object_constructor = create_object_constructor(&mut gc_space);
         env_arena.define(
             env,
             "Object".to_string(),
@@ -214,7 +255,7 @@ impl Interpreter {
             false,
         );
 
-        let array_constructor = create_array_constructor(&array_prototype);
+        let array_constructor = create_array_constructor(&mut gc_space, &array_prototype);
         env_arena.define(
             env,
             "Array".to_string(),
@@ -222,7 +263,7 @@ impl Interpreter {
             false,
         );
 
-        let string_constructor = create_string_constructor(&string_prototype);
+        let string_constructor = create_string_constructor(&mut gc_space, &string_prototype);
         env_arena.define(
             env,
             "String".to_string(),
@@ -230,7 +271,7 @@ impl Interpreter {
             false,
         );
 
-        let number_constructor = create_number_constructor(&number_prototype);
+        let number_constructor = create_number_constructor(&mut gc_space, &number_prototype);
         env_arena.define(
             env,
             "Number".to_string(),
@@ -238,7 +279,7 @@ impl Interpreter {
             false,
         );
 
-        let date_constructor = create_date_constructor(&date_prototype);
+        let date_constructor = create_date_constructor(&mut gc_space, &date_prototype);
         env_arena.define(
             env,
             "Date".to_string(),
@@ -246,7 +287,7 @@ impl Interpreter {
             false,
         );
 
-        let regexp_constructor = create_regexp_constructor(&regexp_prototype);
+        let regexp_constructor = create_regexp_constructor(&mut gc_space, &regexp_prototype);
         env_arena.define(
             env,
             "RegExp".to_string(),
@@ -254,7 +295,7 @@ impl Interpreter {
             false,
         );
 
-        let map_constructor = create_map_constructor();
+        let map_constructor = create_map_constructor(&mut gc_space);
         env_arena.define(
             env,
             "Map".to_string(),
@@ -262,7 +303,7 @@ impl Interpreter {
             false,
         );
 
-        let set_constructor = create_set_constructor();
+        let set_constructor = create_set_constructor(&mut gc_space);
         env_arena.define(
             env,
             "Set".to_string(),
@@ -271,20 +312,20 @@ impl Interpreter {
         );
 
         // Create and register global objects
-        let console = create_console_object();
+        let console = create_console_object(&mut gc_space);
         env_arena.define(env, "console".to_string(), JsValue::Object(console), false);
 
-        let json = create_json_object();
+        let json = create_json_object(&mut gc_space);
         env_arena.define(env, "JSON".to_string(), JsValue::Object(json), false);
 
-        let math = create_math_object();
+        let math = create_math_object(&mut gc_space);
         env_arena.define(env, "Math".to_string(), JsValue::Object(math), false);
 
         // Register global functions
-        register_global_functions(&mut env_arena, env);
+        register_global_functions(&mut gc_space, &mut env_arena, env);
 
         // Register error constructors
-        let error_ctors = create_error_constructors(&error_prototype);
+        let error_ctors = create_error_constructors(&mut gc_space, &error_prototype);
         env_arena.define(
             env,
             "Error".to_string(),
@@ -330,7 +371,8 @@ impl Interpreter {
 
         // Register Symbol constructor
         let well_known_symbols = get_well_known_symbols();
-        let symbol_constructor = create_symbol_constructor(&symbol_prototype, &well_known_symbols);
+        let symbol_constructor =
+            create_symbol_constructor(&mut gc_space, &symbol_prototype, &well_known_symbols);
         env_arena.define(
             env,
             "Symbol".to_string(),
@@ -339,7 +381,7 @@ impl Interpreter {
         );
 
         // Register Promise constructor
-        let promise_constructor = create_promise_constructor(&promise_prototype);
+        let promise_constructor = create_promise_constructor(&mut gc_space, &promise_prototype);
         env_arena.define(
             env,
             "Promise".to_string(),
@@ -348,6 +390,7 @@ impl Interpreter {
         );
 
         Self {
+            gc_space,
             global,
             env_arena,
             env,
@@ -400,25 +443,65 @@ impl Interpreter {
     }
 
     /// Create an array with the proper prototype
-    pub fn create_array(&self, elements: Vec<JsValue>) -> JsObjectRef {
-        let arr = create_array(elements);
-        arr.borrow_mut().prototype = Some(self.array_prototype.cheap_clone());
+    pub fn create_array(&mut self, elements: Vec<JsValue>) -> JsObjectRef {
+        let arr = create_array(&mut self.gc_space, elements);
+        arr.borrow_mut().prototype = Some(self.array_prototype.clone());
         arr
+    }
+
+    /// Create a plain object with the proper prototype
+    pub fn create_object(&mut self) -> JsObjectRef {
+        let obj = create_object(&mut self.gc_space);
+        obj.borrow_mut().prototype = Some(self.object_prototype.clone());
+        obj
+    }
+
+    /// Create a function object with the proper prototype
+    pub fn create_function(&mut self, func: JsFunction) -> JsObjectRef {
+        let obj = create_function(&mut self.gc_space, func);
+        obj.borrow_mut().prototype = Some(self.function_prototype.clone());
+        obj
+    }
+
+    /// Create a generator result object { value, done }
+    pub fn create_generator_result(&mut self, value: JsValue, done: bool) -> JsValue {
+        let obj = self.create_object();
+        {
+            let mut o = obj.borrow_mut();
+            o.set_property(PropertyKey::from("value"), value);
+            o.set_property(PropertyKey::from("done"), JsValue::Boolean(done));
+        }
+        JsValue::Object(obj)
     }
 
     /// Create a module object with the given exports
     ///
     /// This is used to create module namespace objects for import resolution.
-    pub fn create_module_object(&self, exports: Vec<(String, JsValue)>) -> JsValue {
-        let obj = create_object();
+    pub fn create_module_object(&mut self, exports: Vec<(String, JsValue)>) -> JsValue {
+        let obj = create_object(&mut self.gc_space);
         {
             let mut obj_ref = obj.borrow_mut();
-            obj_ref.prototype = Some(self.object_prototype.cheap_clone());
+            obj_ref.prototype = Some(self.object_prototype.clone());
             for (name, value) in exports {
                 obj_ref.set_property(PropertyKey::from(name), value);
             }
         }
         JsValue::Object(obj)
+    }
+
+    /// Run garbage collection manually
+    pub fn collect_garbage(&mut self) {
+        self.gc_space.collect();
+    }
+
+    /// Get GC statistics
+    pub fn gc_stats(&self) -> GcStats {
+        GcStats {
+            alive_count: self.gc_space.alive_count(),
+            tracked_count: self.gc_space.tracked_count(),
+            roots_count: self.gc_space.roots_count(),
+            free_count: self.gc_space.free_count(),
+        }
     }
 
     /// Set the execution timeout in milliseconds
@@ -441,7 +524,7 @@ impl Interpreter {
         let (body, closure, target_yield, sent_value, _status, params, args) = {
             let state = gen_state.borrow();
             if state.state == GeneratorStatus::Completed {
-                return Ok(create_generator_result(JsValue::Undefined, true));
+                return Ok(self.create_generator_result(JsValue::Undefined, true));
             }
             // Clone Rc refs and values to release borrow before execution
             (
@@ -492,19 +575,19 @@ impl Interpreter {
             Ok(Completion::Normal(_)) => {
                 // Generator completed normally
                 gen_state.borrow_mut().state = GeneratorStatus::Completed;
-                Ok(create_generator_result(JsValue::Undefined, true))
+                Ok(self.create_generator_result(JsValue::Undefined, true))
             }
             Ok(Completion::Return(val)) => {
                 // Generator returned
                 gen_state.borrow_mut().state = GeneratorStatus::Completed;
-                Ok(create_generator_result(val, true))
+                Ok(self.create_generator_result(val, true))
             }
             Err(JsError::GeneratorYield { value }) => {
                 // Generator yielded - update state for next resume
                 if let Some(ctx) = ctx {
                     gen_state.borrow_mut().stmt_index = ctx.current_yield;
                 }
-                Ok(create_generator_result(value, false))
+                Ok(self.create_generator_result(value, false))
             }
             Err(e) => {
                 // Generator threw an error
@@ -513,7 +596,7 @@ impl Interpreter {
             }
             _ => {
                 gen_state.borrow_mut().state = GeneratorStatus::Completed;
-                Ok(create_generator_result(JsValue::Undefined, true))
+                Ok(self.create_generator_result(JsValue::Undefined, true))
             }
         }
     }
@@ -575,17 +658,17 @@ impl Interpreter {
         match result {
             Ok(Completion::Normal(_)) => {
                 gen_state.borrow_mut().state = GeneratorStatus::Completed;
-                Ok(create_generator_result(JsValue::Undefined, true))
+                Ok(self.create_generator_result(JsValue::Undefined, true))
             }
             Ok(Completion::Return(val)) => {
                 gen_state.borrow_mut().state = GeneratorStatus::Completed;
-                Ok(create_generator_result(val, true))
+                Ok(self.create_generator_result(val, true))
             }
             Err(JsError::GeneratorYield { value }) => {
                 if let Some(ctx) = ctx {
                     gen_state.borrow_mut().stmt_index = ctx.current_yield;
                 }
-                Ok(create_generator_result(value, false))
+                Ok(self.create_generator_result(value, false))
             }
             Err(e) => {
                 gen_state.borrow_mut().state = GeneratorStatus::Completed;
@@ -593,7 +676,7 @@ impl Interpreter {
             }
             _ => {
                 gen_state.borrow_mut().state = GeneratorStatus::Completed;
-                Ok(create_generator_result(JsValue::Undefined, true))
+                Ok(self.create_generator_result(JsValue::Undefined, true))
             }
         }
     }
@@ -1436,7 +1519,7 @@ impl Interpreter {
         // Mark the closure environment as captured
         self.env_arena.increment_capture(self.env);
 
-        let func_obj = create_function(JsFunction::Interpreted(func));
+        let func_obj = self.create_function(JsFunction::Interpreted(func));
 
         if let Some(id) = &decl.id {
             self.env_arena
@@ -1495,7 +1578,7 @@ impl Interpreter {
             };
 
         // Create prototype object
-        let prototype = create_object();
+        let prototype = self.create_object();
 
         // If we have a superclass, set up prototype chain
         if let Some(ref super_ctor) = super_constructor {
@@ -1572,7 +1655,7 @@ impl Interpreter {
             // Mark the closure environment as captured
             self.env_arena.increment_capture(self.env);
 
-            let func_obj = create_function(JsFunction::Interpreted(interpreted));
+            let func_obj = self.create_function(JsFunction::Interpreted(interpreted));
 
             // If we have a superclass, store __super__ on the method so super.method() works
             if let Some(ref super_ctor) = super_constructor {
@@ -1648,7 +1731,7 @@ impl Interpreter {
         // Store field initializers in a special property so evaluate_new can access them
         // Mark the closure environment as captured
         self.env_arena.increment_capture(self.env);
-        let constructor_fn = create_function(JsFunction::Interpreted(InterpretedFunction {
+        let constructor_fn = self.create_function(JsFunction::Interpreted(InterpretedFunction {
             name: class.id.as_ref().map(|id| id.name.clone()),
             params: Rc::from(ctor_params), // Rc wrap for cheap cloning
             body: Rc::new(FunctionBody::Block(ctor_body)), // Rc wrap for cheap cloning
@@ -1740,7 +1823,7 @@ impl Interpreter {
             // Mark the closure environment as captured
             self.env_arena.increment_capture(self.env);
 
-            let func_obj = create_function(JsFunction::Interpreted(interpreted));
+            let func_obj = self.create_function(JsFunction::Interpreted(interpreted));
 
             match method.kind {
                 MethodKind::Get => {
@@ -1802,7 +1885,7 @@ impl Interpreter {
     }
 
     fn execute_enum(&mut self, enum_decl: &EnumDeclaration) -> Result<(), JsError> {
-        let obj = create_object();
+        let obj = self.create_object();
         let mut next_value = 0i32;
 
         // Collect member names for cleanup after enum processing
@@ -1861,7 +1944,7 @@ impl Interpreter {
         let ns_obj = if let Ok(JsValue::Object(obj)) = self.env_arena.get_binding(self.env, &name) {
             obj
         } else {
-            create_object()
+            self.create_object()
         };
 
         // Save current exports and create new scope for namespace
@@ -2696,7 +2779,7 @@ impl Interpreter {
                         }
                         ObjectPatternProperty::Rest(rest) => {
                             // Collect remaining properties
-                            let rest_obj = create_object();
+                            let rest_obj = self.create_object();
                             // Simplified - would need to track which keys were already destructured
                             self.bind_pattern(&rest.argument, JsValue::Object(rest_obj), mutable)?;
                         }
@@ -2733,9 +2816,10 @@ impl Interpreter {
                             Pattern::Rest(rest) => {
                                 let remaining: Vec<JsValue> =
                                     items.iter().skip(i).cloned().collect();
+                                let rest_array = self.create_array(remaining);
                                 self.bind_pattern(
                                     &rest.argument,
-                                    JsValue::Object(create_array(remaining)),
+                                    JsValue::Object(rest_array),
                                     mutable,
                                 )?;
                                 break;
@@ -2818,7 +2902,7 @@ impl Interpreter {
                             self.bind_pattern_var(pattern, prop_value)?;
                         }
                         ObjectPatternProperty::Rest(rest) => {
-                            let rest_obj = create_object();
+                            let rest_obj = self.create_object();
                             self.bind_pattern_var(&rest.argument, JsValue::Object(rest_obj))?;
                         }
                     }
@@ -2854,10 +2938,8 @@ impl Interpreter {
                             Pattern::Rest(rest) => {
                                 let remaining: Vec<JsValue> =
                                     items.iter().skip(i).cloned().collect();
-                                self.bind_pattern_var(
-                                    &rest.argument,
-                                    JsValue::Object(create_array(remaining)),
-                                )?;
+                                let rest_array = self.create_array(remaining);
+                                self.bind_pattern_var(&rest.argument, JsValue::Object(rest_array))?;
                                 break;
                             }
                             _ => {
@@ -2930,7 +3012,7 @@ impl Interpreter {
             }
 
             Expression::Object(obj) => {
-                let result = create_object();
+                let result = self.create_object();
                 // Set prototype first if __proto__ is specified
                 for prop in &obj.properties {
                     if let ObjectProperty::Property(p) = prop {
@@ -2996,9 +3078,9 @@ impl Interpreter {
                 };
                 // Mark the closure environment as captured
                 self.env_arena.increment_capture(self.env);
-                Ok(JsValue::Object(create_function(JsFunction::Interpreted(
-                    interpreted,
-                ))))
+                Ok(JsValue::Object(
+                    self.create_function(JsFunction::Interpreted(interpreted)),
+                ))
             }
 
             Expression::ArrowFunction(arrow) => {
@@ -3013,9 +3095,9 @@ impl Interpreter {
                 };
                 // Mark the closure environment as captured
                 self.env_arena.increment_capture(self.env);
-                Ok(JsValue::Object(create_function(JsFunction::Interpreted(
-                    interpreted,
-                ))))
+                Ok(JsValue::Object(
+                    self.create_function(JsFunction::Interpreted(interpreted)),
+                ))
             }
 
             Expression::Unary(unary) => self.evaluate_unary(unary),
@@ -3290,7 +3372,7 @@ impl Interpreter {
         }
     }
 
-    fn evaluate_literal(&self, value: &LiteralValue) -> Result<JsValue, JsError> {
+    fn evaluate_literal(&mut self, value: &LiteralValue) -> Result<JsValue, JsError> {
         Ok(match value {
             LiteralValue::Null => JsValue::Null,
             LiteralValue::Undefined => JsValue::Undefined,
@@ -3304,7 +3386,7 @@ impl Interpreter {
             }
             LiteralValue::RegExp { pattern, flags } => {
                 // Create RegExp object with proper prototype and properties
-                let regexp_obj = create_object();
+                let regexp_obj = self.create_object();
                 {
                     let mut obj = regexp_obj.borrow_mut();
                     // String clones - needed for ExoticObject storage
@@ -3484,7 +3566,7 @@ impl Interpreter {
                 // Walk the prototype chain of the instance
                 let mut current_proto = instance.borrow().prototype.clone();
                 while let Some(proto) = current_proto {
-                    if Rc::ptr_eq(&proto, &constructor_proto) {
+                    if crate::gc::Gc::ptr_eq(&proto, &constructor_proto) {
                         return Ok(JsValue::Boolean(true));
                     }
                     current_proto = proto.borrow().prototype.clone();
@@ -3942,7 +4024,7 @@ impl Interpreter {
         }
 
         // Create new object with prototype from constructor
-        let new_obj = create_object();
+        let new_obj = self.create_object();
 
         // Get prototype from constructor.prototype and set it on the new object
         if let JsValue::Object(ctor_obj) = &callee {

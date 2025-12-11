@@ -1,18 +1,27 @@
 //! Global built-in functions (parseInt, parseFloat, URI functions, etc.)
 
 use crate::error::JsError;
+use crate::gc::Space;
 use crate::interpreter::Interpreter;
 use crate::value::{
-    create_function, EnvId, EnvironmentArena, JsFunction, JsString, JsValue, NativeFunction,
+    create_function, EnvId, EnvironmentArena, JsFunction, JsObject, JsString, JsValue,
+    NativeFunction,
 };
 
 /// Register global functions (parseInt, parseFloat, isNaN, isFinite, URI functions) into environment
-pub fn register_global_functions(arena: &mut EnvironmentArena, env: EnvId) {
-    let parseint_fn = create_function(JsFunction::Native(NativeFunction {
-        name: "parseInt".to_string(),
-        func: global_parse_int,
-        arity: 2,
-    }));
+pub fn register_global_functions(
+    space: &mut Space<JsObject>,
+    arena: &mut EnvironmentArena,
+    env: EnvId,
+) {
+    let parseint_fn = create_function(
+        space,
+        JsFunction::Native(NativeFunction {
+            name: "parseInt".to_string(),
+            func: global_parse_int,
+            arity: 2,
+        }),
+    );
     arena.define(
         env,
         "parseInt".to_string(),
@@ -20,11 +29,14 @@ pub fn register_global_functions(arena: &mut EnvironmentArena, env: EnvId) {
         false,
     );
 
-    let parsefloat_fn = create_function(JsFunction::Native(NativeFunction {
-        name: "parseFloat".to_string(),
-        func: global_parse_float,
-        arity: 1,
-    }));
+    let parsefloat_fn = create_function(
+        space,
+        JsFunction::Native(NativeFunction {
+            name: "parseFloat".to_string(),
+            func: global_parse_float,
+            arity: 1,
+        }),
+    );
     arena.define(
         env,
         "parseFloat".to_string(),
@@ -32,18 +44,24 @@ pub fn register_global_functions(arena: &mut EnvironmentArena, env: EnvId) {
         false,
     );
 
-    let isnan_fn = create_function(JsFunction::Native(NativeFunction {
-        name: "isNaN".to_string(),
-        func: global_is_nan,
-        arity: 1,
-    }));
+    let isnan_fn = create_function(
+        space,
+        JsFunction::Native(NativeFunction {
+            name: "isNaN".to_string(),
+            func: global_is_nan,
+            arity: 1,
+        }),
+    );
     arena.define(env, "isNaN".to_string(), JsValue::Object(isnan_fn), false);
 
-    let isfinite_fn = create_function(JsFunction::Native(NativeFunction {
-        name: "isFinite".to_string(),
-        func: global_is_finite,
-        arity: 1,
-    }));
+    let isfinite_fn = create_function(
+        space,
+        JsFunction::Native(NativeFunction {
+            name: "isFinite".to_string(),
+            func: global_is_finite,
+            arity: 1,
+        }),
+    );
     arena.define(
         env,
         "isFinite".to_string(),
@@ -51,11 +69,14 @@ pub fn register_global_functions(arena: &mut EnvironmentArena, env: EnvId) {
         false,
     );
 
-    let encodeuri_fn = create_function(JsFunction::Native(NativeFunction {
-        name: "encodeURI".to_string(),
-        func: global_encode_uri,
-        arity: 1,
-    }));
+    let encodeuri_fn = create_function(
+        space,
+        JsFunction::Native(NativeFunction {
+            name: "encodeURI".to_string(),
+            func: global_encode_uri,
+            arity: 1,
+        }),
+    );
     arena.define(
         env,
         "encodeURI".to_string(),
@@ -63,11 +84,14 @@ pub fn register_global_functions(arena: &mut EnvironmentArena, env: EnvId) {
         false,
     );
 
-    let decodeuri_fn = create_function(JsFunction::Native(NativeFunction {
-        name: "decodeURI".to_string(),
-        func: global_decode_uri,
-        arity: 1,
-    }));
+    let decodeuri_fn = create_function(
+        space,
+        JsFunction::Native(NativeFunction {
+            name: "decodeURI".to_string(),
+            func: global_decode_uri,
+            arity: 1,
+        }),
+    );
     arena.define(
         env,
         "decodeURI".to_string(),
@@ -75,11 +99,14 @@ pub fn register_global_functions(arena: &mut EnvironmentArena, env: EnvId) {
         false,
     );
 
-    let encodeuricomponent_fn = create_function(JsFunction::Native(NativeFunction {
-        name: "encodeURIComponent".to_string(),
-        func: global_encode_uri_component,
-        arity: 1,
-    }));
+    let encodeuricomponent_fn = create_function(
+        space,
+        JsFunction::Native(NativeFunction {
+            name: "encodeURIComponent".to_string(),
+            func: global_encode_uri_component,
+            arity: 1,
+        }),
+    );
     arena.define(
         env,
         "encodeURIComponent".to_string(),
@@ -87,11 +114,14 @@ pub fn register_global_functions(arena: &mut EnvironmentArena, env: EnvId) {
         false,
     );
 
-    let decodeuricomponent_fn = create_function(JsFunction::Native(NativeFunction {
-        name: "decodeURIComponent".to_string(),
-        func: global_decode_uri_component,
-        arity: 1,
-    }));
+    let decodeuricomponent_fn = create_function(
+        space,
+        JsFunction::Native(NativeFunction {
+            name: "decodeURIComponent".to_string(),
+            func: global_decode_uri_component,
+            arity: 1,
+        }),
+    );
     arena.define(
         env,
         "decodeURIComponent".to_string(),

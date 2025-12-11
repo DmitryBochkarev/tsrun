@@ -1,38 +1,40 @@
 //! Map built-in methods
 
 use crate::error::JsError;
+use crate::gc::Space;
 use crate::interpreter::Interpreter;
 use crate::value::{
-    create_function, create_object, register_method, ExoticObject, JsFunction, JsObjectRef,
-    JsValue, NativeFunction, PropertyKey,
+    create_function, create_object, register_method, ExoticObject, JsFunction, JsObject,
+    JsObjectRef, JsValue, NativeFunction, PropertyKey,
 };
 
 /// Create Map.prototype with get, set, has, delete, clear, forEach methods
-pub fn create_map_prototype() -> JsObjectRef {
-    let proto = create_object();
-    {
-        let mut p = proto.borrow_mut();
+pub fn create_map_prototype(space: &mut Space<JsObject>) -> JsObjectRef {
+    let proto = create_object(space);
 
-        register_method(&mut p, "get", map_get, 1);
-        register_method(&mut p, "set", map_set, 2);
-        register_method(&mut p, "has", map_has, 1);
-        register_method(&mut p, "delete", map_delete, 1);
-        register_method(&mut p, "clear", map_clear, 0);
-        register_method(&mut p, "forEach", map_foreach, 1);
-        register_method(&mut p, "keys", map_keys, 0);
-        register_method(&mut p, "values", map_values, 0);
-        register_method(&mut p, "entries", map_entries, 0);
-    }
+    register_method(space, &proto, "get", map_get, 1);
+    register_method(space, &proto, "set", map_set, 2);
+    register_method(space, &proto, "has", map_has, 1);
+    register_method(space, &proto, "delete", map_delete, 1);
+    register_method(space, &proto, "clear", map_clear, 0);
+    register_method(space, &proto, "forEach", map_foreach, 1);
+    register_method(space, &proto, "keys", map_keys, 0);
+    register_method(space, &proto, "values", map_values, 0);
+    register_method(space, &proto, "entries", map_entries, 0);
+
     proto
 }
 
 /// Create Map constructor
-pub fn create_map_constructor() -> JsObjectRef {
-    create_function(JsFunction::Native(NativeFunction {
-        name: "Map".to_string(),
-        func: map_constructor,
-        arity: 0,
-    }))
+pub fn create_map_constructor(space: &mut Space<JsObject>) -> JsObjectRef {
+    create_function(
+        space,
+        JsFunction::Native(NativeFunction {
+            name: "Map".to_string(),
+            func: map_constructor,
+            arity: 0,
+        }),
+    )
 }
 
 // Helper to check SameValueZero equality for Map/Set keys
@@ -49,7 +51,7 @@ pub fn same_value_zero(a: &JsValue, b: &JsValue) -> bool {
         (JsValue::Boolean(x), JsValue::Boolean(y)) => x == y,
         (JsValue::Null, JsValue::Null) => true,
         (JsValue::Undefined, JsValue::Undefined) => true,
-        (JsValue::Object(x), JsValue::Object(y)) => std::ptr::eq(x.as_ptr(), y.as_ptr()),
+        (JsValue::Object(x), JsValue::Object(y)) => x.id() == y.id(),
         _ => false,
     }
 }
@@ -59,7 +61,7 @@ pub fn map_constructor(
     _this: JsValue,
     args: &[JsValue],
 ) -> Result<JsValue, JsError> {
-    let map_obj = create_object();
+    let map_obj = interp.create_object();
     {
         let mut obj = map_obj.borrow_mut();
         obj.exotic = ExoticObject::Map {

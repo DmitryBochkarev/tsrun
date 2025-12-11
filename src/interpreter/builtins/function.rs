@@ -1,22 +1,21 @@
 //! Function.prototype built-in methods (call, apply, bind)
 
 use crate::error::JsError;
+use crate::gc::Space;
 use crate::interpreter::Interpreter;
 use crate::value::{
-    create_function, create_object, register_method, BoundFunctionData, ExoticObject, JsFunction,
+    create_object, register_method, BoundFunctionData, ExoticObject, JsFunction, JsObject,
     JsObjectRef, JsValue, PropertyKey,
 };
 
 /// Create Function.prototype with call, apply, bind methods
-pub fn create_function_prototype() -> JsObjectRef {
-    let proto = create_object();
-    {
-        let mut p = proto.borrow_mut();
+pub fn create_function_prototype(space: &mut Space<JsObject>) -> JsObjectRef {
+    let proto = create_object(space);
 
-        register_method(&mut p, "call", function_call, 1);
-        register_method(&mut p, "apply", function_apply, 2);
-        register_method(&mut p, "bind", function_bind, 1);
-    }
+    register_method(space, &proto, "call", function_call, 1);
+    register_method(space, &proto, "apply", function_apply, 2);
+    register_method(space, &proto, "bind", function_bind, 1);
+
     proto
 }
 
@@ -70,7 +69,7 @@ pub fn function_apply(
 
 // Function.prototype.bind - create a new function with bound this value and pre-filled arguments
 pub fn function_bind(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
 ) -> Result<JsValue, JsError> {
@@ -90,7 +89,7 @@ pub fn function_bind(
     let bound_args: Vec<JsValue> = args.iter().skip(1).cloned().collect();
 
     // Create a bound function using JsFunction::Bound
-    let bound_fn = create_function(JsFunction::Bound(Box::new(BoundFunctionData {
+    let bound_fn = interp.create_function(JsFunction::Bound(Box::new(BoundFunctionData {
         target: target_fn,
         this_arg,
         bound_args,

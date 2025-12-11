@@ -1,30 +1,29 @@
 //! Error constructor built-in methods
 
 use crate::error::JsError;
+use crate::gc::Space;
 use crate::interpreter::Interpreter;
 use crate::value::{
-    create_function, create_object, register_method, JsFunction, JsObjectRef, JsString, JsValue,
-    NativeFunction, PropertyKey,
+    create_function, create_object, register_method, JsFunction, JsObject, JsObjectRef, JsString,
+    JsValue, NativeFunction, PropertyKey,
 };
 
 /// Create Error.prototype with toString
-pub fn create_error_prototype() -> JsObjectRef {
-    let proto = create_object();
-    {
-        let mut p = proto.borrow_mut();
+pub fn create_error_prototype(space: &mut Space<JsObject>) -> JsObjectRef {
+    let proto = create_object(space);
 
-        // Set default name and message
-        p.set_property(
-            PropertyKey::from("name"),
-            JsValue::String(JsString::from("Error")),
-        );
-        p.set_property(
-            PropertyKey::from("message"),
-            JsValue::String(JsString::from("")),
-        );
+    // Set default name and message
+    proto.borrow_mut().set_property(
+        PropertyKey::from("name"),
+        JsValue::String(JsString::from("Error")),
+    );
+    proto.borrow_mut().set_property(
+        PropertyKey::from("message"),
+        JsValue::String(JsString::from("")),
+    );
 
-        register_method(&mut p, "toString", error_to_string, 0);
-    }
+    register_method(space, &proto, "toString", error_to_string, 0);
+
     proto
 }
 
@@ -40,8 +39,12 @@ pub struct ErrorConstructors {
 }
 
 /// Helper to create an error subtype prototype that inherits from Error.prototype
-fn create_error_subtype_prototype(error_prototype: &JsObjectRef, name: &str) -> JsObjectRef {
-    let proto = create_object();
+fn create_error_subtype_prototype(
+    space: &mut Space<JsObject>,
+    error_prototype: &JsObjectRef,
+    name: &str,
+) -> JsObjectRef {
+    let proto = create_object(space);
     {
         let mut p = proto.borrow_mut();
         p.prototype = Some(error_prototype.clone());
@@ -54,79 +57,104 @@ fn create_error_subtype_prototype(error_prototype: &JsObjectRef, name: &str) -> 
 }
 
 /// Returns error constructors and the Error.prototype
-pub fn create_error_constructors(error_prototype: &JsObjectRef) -> ErrorConstructors {
-    let error_fn = create_function(JsFunction::Native(NativeFunction {
-        name: "Error".to_string(),
-        func: error_constructor,
-        arity: 1,
-    }));
+pub fn create_error_constructors(
+    space: &mut Space<JsObject>,
+    error_prototype: &JsObjectRef,
+) -> ErrorConstructors {
+    let error_fn = create_function(
+        space,
+        JsFunction::Native(NativeFunction {
+            name: "Error".to_string(),
+            func: error_constructor,
+            arity: 1,
+        }),
+    );
     error_fn.borrow_mut().set_property(
         PropertyKey::from("prototype"),
         JsValue::Object(error_prototype.clone()),
     );
 
     // Create separate prototypes for each error type that inherit from Error.prototype
-    let type_error_proto = create_error_subtype_prototype(error_prototype, "TypeError");
-    let type_error_fn = create_function(JsFunction::Native(NativeFunction {
-        name: "TypeError".to_string(),
-        func: type_error_constructor,
-        arity: 1,
-    }));
+    let type_error_proto = create_error_subtype_prototype(space, error_prototype, "TypeError");
+    let type_error_fn = create_function(
+        space,
+        JsFunction::Native(NativeFunction {
+            name: "TypeError".to_string(),
+            func: type_error_constructor,
+            arity: 1,
+        }),
+    );
     type_error_fn.borrow_mut().set_property(
         PropertyKey::from("prototype"),
         JsValue::Object(type_error_proto),
     );
 
-    let reference_error_proto = create_error_subtype_prototype(error_prototype, "ReferenceError");
-    let reference_error_fn = create_function(JsFunction::Native(NativeFunction {
-        name: "ReferenceError".to_string(),
-        func: reference_error_constructor,
-        arity: 1,
-    }));
+    let reference_error_proto =
+        create_error_subtype_prototype(space, error_prototype, "ReferenceError");
+    let reference_error_fn = create_function(
+        space,
+        JsFunction::Native(NativeFunction {
+            name: "ReferenceError".to_string(),
+            func: reference_error_constructor,
+            arity: 1,
+        }),
+    );
     reference_error_fn.borrow_mut().set_property(
         PropertyKey::from("prototype"),
         JsValue::Object(reference_error_proto),
     );
 
-    let syntax_error_proto = create_error_subtype_prototype(error_prototype, "SyntaxError");
-    let syntax_error_fn = create_function(JsFunction::Native(NativeFunction {
-        name: "SyntaxError".to_string(),
-        func: syntax_error_constructor,
-        arity: 1,
-    }));
+    let syntax_error_proto = create_error_subtype_prototype(space, error_prototype, "SyntaxError");
+    let syntax_error_fn = create_function(
+        space,
+        JsFunction::Native(NativeFunction {
+            name: "SyntaxError".to_string(),
+            func: syntax_error_constructor,
+            arity: 1,
+        }),
+    );
     syntax_error_fn.borrow_mut().set_property(
         PropertyKey::from("prototype"),
         JsValue::Object(syntax_error_proto),
     );
 
-    let range_error_proto = create_error_subtype_prototype(error_prototype, "RangeError");
-    let range_error_fn = create_function(JsFunction::Native(NativeFunction {
-        name: "RangeError".to_string(),
-        func: range_error_constructor,
-        arity: 1,
-    }));
+    let range_error_proto = create_error_subtype_prototype(space, error_prototype, "RangeError");
+    let range_error_fn = create_function(
+        space,
+        JsFunction::Native(NativeFunction {
+            name: "RangeError".to_string(),
+            func: range_error_constructor,
+            arity: 1,
+        }),
+    );
     range_error_fn.borrow_mut().set_property(
         PropertyKey::from("prototype"),
         JsValue::Object(range_error_proto),
     );
 
-    let uri_error_proto = create_error_subtype_prototype(error_prototype, "URIError");
-    let uri_error_fn = create_function(JsFunction::Native(NativeFunction {
-        name: "URIError".to_string(),
-        func: uri_error_constructor,
-        arity: 1,
-    }));
+    let uri_error_proto = create_error_subtype_prototype(space, error_prototype, "URIError");
+    let uri_error_fn = create_function(
+        space,
+        JsFunction::Native(NativeFunction {
+            name: "URIError".to_string(),
+            func: uri_error_constructor,
+            arity: 1,
+        }),
+    );
     uri_error_fn.borrow_mut().set_property(
         PropertyKey::from("prototype"),
         JsValue::Object(uri_error_proto),
     );
 
-    let eval_error_proto = create_error_subtype_prototype(error_prototype, "EvalError");
-    let eval_error_fn = create_function(JsFunction::Native(NativeFunction {
-        name: "EvalError".to_string(),
-        func: eval_error_constructor,
-        arity: 1,
-    }));
+    let eval_error_proto = create_error_subtype_prototype(space, error_prototype, "EvalError");
+    let eval_error_fn = create_function(
+        space,
+        JsFunction::Native(NativeFunction {
+            name: "EvalError".to_string(),
+            func: eval_error_constructor,
+            arity: 1,
+        }),
+    );
     eval_error_fn.borrow_mut().set_property(
         PropertyKey::from("prototype"),
         JsValue::Object(eval_error_proto),
@@ -179,7 +207,7 @@ pub fn error_to_string(
 }
 
 fn create_error_object_with_stack(
-    interp: &Interpreter,
+    interp: &mut Interpreter,
     name: &str,
     message: JsValue,
     prototype: Option<JsObjectRef>,
@@ -192,7 +220,7 @@ fn create_error_object_with_stack(
     // Capture stack trace
     let stack_trace = interp.format_stack_trace(name, msg_str.as_ref());
 
-    let obj = create_object();
+    let obj = interp.create_object();
     {
         let mut obj_ref = obj.borrow_mut();
         obj_ref.set_property(

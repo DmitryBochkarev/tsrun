@@ -10,6 +10,7 @@ use rustc_hash::FxHashMap;
 
 use crate::ast::{ArrowFunctionBody, BlockStatement, FunctionParam};
 use crate::error::JsError;
+use crate::gc::{Gc, Space, Traceable, Tracer};
 use crate::lexer::Span;
 
 /// Environment identifier - an index into the environment arena.
@@ -505,7 +506,7 @@ impl JsValue {
             }
             (JsValue::String(a), JsValue::String(b)) => a == b,
             (JsValue::Symbol(a), JsValue::Symbol(b)) => a == b, // Symbols compare by id
-            (JsValue::Object(a), JsValue::Object(b)) => Rc::ptr_eq(a, b),
+            (JsValue::Object(a), JsValue::Object(b)) => crate::gc::Gc::ptr_eq(a, b),
             _ => false,
         }
     }
@@ -739,12 +740,138 @@ impl std::hash::Hash for JsSymbol {
     }
 }
 
-/// Reference to a heap-allocated object
-/// Clone is cheap - just increments reference count (Rc)
-pub type JsObjectRef = Rc<RefCell<JsObject>>;
+/// Reference to a heap-allocated object (GC-managed)
+///
+/// This is now `Gc<JsObject>` which gives us `Ref<'_, JsObject>` directly
+/// from `borrow()` calls, matching the old `Rc<RefCell<JsObject>>` API.
+pub type JsObjectRef = Gc<JsObject>;
 
-// Note: JsObjectRef is Rc<RefCell<JsObject>>, which already implements CheapClone
-// via the blanket impl above
+// Implement CheapClone for Gc<T> (clone is just Rc increment)
+impl<T: Traceable> CheapClone for Gc<T> {}
+
+impl Traceable for JsObject {
+    fn trace(&self, tracer: &mut Tracer<'_>) {
+        // Trace prototype reference
+        if let Some(ref proto) = self.prototype {
+            tracer.trace(proto);
+        }
+
+        // Trace all property values
+        for prop in self.properties.values() {
+            trace_property(prop, tracer);
+        }
+
+        // Trace exotic object data
+        trace_exotic(&self.exotic, tracer);
+    }
+
+    fn unlink(&mut self) {
+        // Clear prototype
+        self.prototype = None;
+
+        // Clear all properties
+        self.properties.clear();
+
+        // Clear exotic data
+        self.exotic = ExoticObject::Ordinary;
+    }
+}
+
+fn trace_property(prop: &Property, tracer: &mut Tracer<'_>) {
+    trace_jsvalue(&prop.value, tracer);
+
+    if let Some(ref getter) = prop.getter {
+        tracer.trace(getter);
+    }
+    if let Some(ref setter) = prop.setter {
+        tracer.trace(setter);
+    }
+}
+
+fn trace_jsvalue(value: &JsValue, tracer: &mut Tracer<'_>) {
+    if let JsValue::Object(ref obj_ref) = value {
+        tracer.trace(obj_ref);
+    }
+}
+
+fn trace_exotic(exotic: &ExoticObject, tracer: &mut Tracer<'_>) {
+    match exotic {
+        ExoticObject::Ordinary => {}
+
+        ExoticObject::Array { .. } => {
+            // Array elements are stored as properties, already traced
+        }
+
+        ExoticObject::Function(func) => {
+            trace_function(func, tracer);
+        }
+
+        ExoticObject::Map { entries } => {
+            for (key, value) in entries {
+                trace_jsvalue(key, tracer);
+                trace_jsvalue(value, tracer);
+            }
+        }
+
+        ExoticObject::Set { entries } => {
+            for value in entries {
+                trace_jsvalue(value, tracer);
+            }
+        }
+
+        ExoticObject::Date { .. } => {}
+
+        ExoticObject::RegExp { .. } => {}
+
+        ExoticObject::Generator(state) => {
+            if let Ok(state) = state.try_borrow() {
+                for arg in &state.args {
+                    trace_jsvalue(arg, tracer);
+                }
+                trace_jsvalue(&state.sent_value, tracer);
+            }
+        }
+
+        ExoticObject::Promise(state) => {
+            if let Ok(state) = state.try_borrow() {
+                if let Some(ref result) = state.result {
+                    trace_jsvalue(result, tracer);
+                }
+                for handler in &state.handlers {
+                    if let Some(ref on_fulfilled) = handler.on_fulfilled {
+                        trace_jsvalue(on_fulfilled, tracer);
+                    }
+                    if let Some(ref on_rejected) = handler.on_rejected {
+                        trace_jsvalue(on_rejected, tracer);
+                    }
+                    tracer.trace(&handler.result_promise);
+                }
+            }
+        }
+    }
+}
+
+fn trace_function(func: &JsFunction, tracer: &mut Tracer<'_>) {
+    match func {
+        JsFunction::Interpreted(_) => {
+            // Closure environment is tracked via EnvId (arena), not Gc
+        }
+        JsFunction::Native(_) => {}
+        JsFunction::Bound(bound) => {
+            tracer.trace(&bound.target);
+            trace_jsvalue(&bound.this_arg, tracer);
+            for arg in &bound.bound_args {
+                trace_jsvalue(arg, tracer);
+            }
+        }
+        JsFunction::PromiseResolve(promise) => {
+            tracer.trace(promise);
+        }
+        JsFunction::PromiseReject(promise) => {
+            tracer.trace(promise);
+        }
+    }
+}
 
 /// A JavaScript object
 #[derive(Debug)]
@@ -1306,22 +1433,22 @@ pub struct Binding {
     pub initialized: bool,
 }
 
-// Helper functions for creating objects
+// Helper functions for creating GC-managed objects
 
-/// Create a new ordinary object
-pub fn create_object() -> JsObjectRef {
-    Rc::new(RefCell::new(JsObject::new()))
+/// Create a new ordinary object in the GC space
+pub fn create_object(space: &mut Space<JsObject>) -> JsObjectRef {
+    space.alloc(JsObject::new())
 }
 
 /// Create a new ordinary object with pre-allocated property capacity
 ///
 /// Use this for prototype objects where you know the number of methods upfront.
-pub fn create_object_with_capacity(capacity: usize) -> JsObjectRef {
-    Rc::new(RefCell::new(JsObject::with_capacity(capacity)))
+pub fn create_object_with_capacity(space: &mut Space<JsObject>, capacity: usize) -> JsObjectRef {
+    space.alloc(JsObject::with_capacity(capacity))
 }
 
-/// Create a new array object
-pub fn create_array(elements: Vec<JsValue>) -> JsObjectRef {
+/// Create a new array object in the GC space
+pub fn create_array(space: &mut Space<JsObject>, elements: Vec<JsValue>) -> JsObjectRef {
     let len = elements.len() as u32;
     let mut obj = JsObject {
         prototype: None, // Should be Array.prototype
@@ -1343,11 +1470,11 @@ pub fn create_array(elements: Vec<JsValue>) -> JsObjectRef {
         Property::with_attributes(JsValue::Number(len as f64), true, false, false),
     );
 
-    Rc::new(RefCell::new(obj))
+    space.alloc(obj)
 }
 
-/// Create a function object
-pub fn create_function(func: JsFunction) -> JsObjectRef {
+/// Create a function object in the GC space
+pub fn create_function(space: &mut Space<JsObject>, func: JsFunction) -> JsObjectRef {
     let mut obj = JsObject {
         prototype: None, // Should be Function.prototype
         extensible: true,
@@ -1364,7 +1491,7 @@ pub fn create_function(func: JsFunction) -> JsObjectRef {
         Property::with_attributes(JsValue::Number(0.0), false, false, true),
     );
 
-    Rc::new(RefCell::new(obj))
+    space.alloc(obj)
 }
 
 /// Register a native method on a prototype object.
@@ -1375,23 +1502,33 @@ pub fn create_function(func: JsFunction) -> JsObjectRef {
 ///
 /// ```ignore
 /// // Instead of:
-/// let push_fn = create_function(JsFunction::Native(NativeFunction {
+/// let push_fn = create_function(space, JsFunction::Native(NativeFunction {
 ///     name: "push".to_string(),
 ///     func: array_push,
 ///     arity: 1,
 /// }));
-/// p.set_property(PropertyKey::from("push"), JsValue::Object(push_fn));
+/// p.borrow_mut().set_property(PropertyKey::from("push"), JsValue::Object(push_fn));
 ///
 /// // Use:
-/// register_method(&mut p, "push", array_push, 1);
+/// register_method(space, &proto, "push", array_push, 1);
 /// ```
-pub fn register_method(obj: &mut JsObject, name: &str, func: NativeFn, arity: usize) {
-    let f = create_function(JsFunction::Native(NativeFunction {
-        name: name.to_string(),
-        func,
-        arity,
-    }));
-    obj.set_property(PropertyKey::from(name), JsValue::Object(f));
+pub fn register_method(
+    space: &mut Space<JsObject>,
+    obj: &JsObjectRef,
+    name: &str,
+    func: NativeFn,
+    arity: usize,
+) {
+    let f = create_function(
+        space,
+        JsFunction::Native(NativeFunction {
+            name: name.to_string(),
+            func,
+            arity,
+        }),
+    );
+    obj.borrow_mut()
+        .set_property(PropertyKey::from(name), JsValue::Object(f));
 }
 
 #[cfg(test)]

@@ -4,6 +4,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::error::JsError;
+use crate::gc::Space;
 use crate::interpreter::Interpreter;
 use crate::value::{
     create_function, create_object, register_method, CheapClone, ExoticObject, JsFunction,
@@ -12,105 +13,100 @@ use crate::value::{
 };
 
 /// Create Promise.prototype with then, catch, finally methods
-pub fn create_promise_prototype() -> JsObjectRef {
-    let proto = create_object();
-    {
-        let mut p = proto.borrow_mut();
+pub fn create_promise_prototype(space: &mut Space<JsObject>) -> JsObjectRef {
+    let proto = create_object(space);
 
-        register_method(&mut p, "then", promise_then, 2);
-        register_method(&mut p, "catch", promise_catch, 1);
-        register_method(&mut p, "finally", promise_finally, 1);
-    }
+    register_method(space, &proto, "then", promise_then, 2);
+    register_method(space, &proto, "catch", promise_catch, 1);
+    register_method(space, &proto, "finally", promise_finally, 1);
+
     proto
 }
 
 /// Create Promise constructor with static methods
-pub fn create_promise_constructor(promise_prototype: &JsObjectRef) -> JsObjectRef {
-    let ctor = create_function(JsFunction::Native(NativeFunction {
-        name: "Promise".to_string(),
-        func: promise_constructor,
-        arity: 1,
-    }));
+pub fn create_promise_constructor(
+    space: &mut Space<JsObject>,
+    promise_prototype: &JsObjectRef,
+) -> JsObjectRef {
+    let ctor = create_function(
+        space,
+        JsFunction::Native(NativeFunction {
+            name: "Promise".to_string(),
+            func: promise_constructor,
+            arity: 1,
+        }),
+    );
 
-    {
-        let mut c = ctor.borrow_mut();
-        c.set_property(
-            PropertyKey::from("prototype"),
-            JsValue::Object(promise_prototype.cheap_clone()),
-        );
+    ctor.borrow_mut().set_property(
+        PropertyKey::from("prototype"),
+        JsValue::Object(promise_prototype.clone()),
+    );
 
-        // Static methods
-        register_method(&mut c, "resolve", promise_resolve_static, 1);
-        register_method(&mut c, "reject", promise_reject_static, 1);
-        register_method(&mut c, "all", promise_all, 1);
-        register_method(&mut c, "race", promise_race, 1);
-        register_method(&mut c, "allSettled", promise_allsettled, 1);
-        register_method(&mut c, "any", promise_any, 1);
-    }
+    // Static methods
+    register_method(space, &ctor, "resolve", promise_resolve_static, 1);
+    register_method(space, &ctor, "reject", promise_reject_static, 1);
+    register_method(space, &ctor, "all", promise_all, 1);
+    register_method(space, &ctor, "race", promise_race, 1);
+    register_method(space, &ctor, "allSettled", promise_allsettled, 1);
+    register_method(space, &ctor, "any", promise_any, 1);
 
     ctor
 }
 
-/// Create a new promise object with pending state
-pub fn create_promise_object(prototype: &JsObjectRef) -> JsObjectRef {
+/// Create a new promise object with pending state using the interpreter's GC space
+pub fn create_promise_object(interp: &mut Interpreter) -> JsObjectRef {
     let state = Rc::new(RefCell::new(PromiseState {
         status: PromiseStatus::Pending,
         result: None,
         handlers: Vec::new(),
     }));
 
-    Rc::new(RefCell::new(JsObject {
-        prototype: Some(prototype.cheap_clone()),
-        extensible: true,
-        frozen: false,
-        sealed: false,
-        null_prototype: false,
-        properties: rustc_hash::FxHashMap::default(),
-        exotic: ExoticObject::Promise(state),
-    }))
+    let obj = interp.create_object();
+    {
+        let mut o = obj.borrow_mut();
+        o.prototype = Some(interp.promise_prototype.cheap_clone());
+        o.exotic = ExoticObject::Promise(state);
+    }
+    obj
 }
 
-/// Create a pending promise using the interpreter's prototype
-pub fn create_promise(interp: &super::super::Interpreter) -> JsObjectRef {
-    create_promise_object(&interp.promise_prototype)
+/// Create a pending promise using the interpreter's prototype (alias)
+pub fn create_promise(interp: &mut Interpreter) -> JsObjectRef {
+    create_promise_object(interp)
 }
 
-/// Create a fulfilled promise
-pub fn create_fulfilled_promise(prototype: &JsObjectRef, value: JsValue) -> JsObjectRef {
+/// Create a fulfilled promise using the interpreter's GC space
+pub fn create_fulfilled_promise(interp: &mut Interpreter, value: JsValue) -> JsObjectRef {
     let state = Rc::new(RefCell::new(PromiseState {
         status: PromiseStatus::Fulfilled,
         result: Some(value),
         handlers: Vec::new(),
     }));
 
-    Rc::new(RefCell::new(JsObject {
-        prototype: Some(prototype.cheap_clone()),
-        extensible: true,
-        frozen: false,
-        sealed: false,
-        null_prototype: false,
-        properties: rustc_hash::FxHashMap::default(),
-        exotic: ExoticObject::Promise(state),
-    }))
+    let obj = interp.create_object();
+    {
+        let mut o = obj.borrow_mut();
+        o.prototype = Some(interp.promise_prototype.cheap_clone());
+        o.exotic = ExoticObject::Promise(state);
+    }
+    obj
 }
 
-/// Create a rejected promise
-pub fn create_rejected_promise(prototype: &JsObjectRef, reason: JsValue) -> JsObjectRef {
+/// Create a rejected promise using the interpreter's GC space
+pub fn create_rejected_promise(interp: &mut Interpreter, reason: JsValue) -> JsObjectRef {
     let state = Rc::new(RefCell::new(PromiseState {
         status: PromiseStatus::Rejected,
         result: Some(reason),
         handlers: Vec::new(),
     }));
 
-    Rc::new(RefCell::new(JsObject {
-        prototype: Some(prototype.cheap_clone()),
-        extensible: true,
-        frozen: false,
-        sealed: false,
-        null_prototype: false,
-        properties: rustc_hash::FxHashMap::default(),
-        exotic: ExoticObject::Promise(state),
-    }))
+    let obj = interp.create_object();
+    {
+        let mut o = obj.borrow_mut();
+        o.prototype = Some(interp.promise_prototype.cheap_clone());
+        o.exotic = ExoticObject::Promise(state);
+    }
+    obj
 }
 
 /// Public function to resolve a promise (called from PromiseResolve function handling)
@@ -291,13 +287,13 @@ pub fn promise_constructor(
         )));
     }
 
-    let promise = create_promise_object(&interp.promise_prototype);
+    let promise = create_promise_object(interp);
 
     // Create resolve function using the new PromiseResolve variant
-    let resolve_fn = create_function(JsFunction::PromiseResolve(promise.cheap_clone()));
+    let resolve_fn = interp.create_function(JsFunction::PromiseResolve(promise.cheap_clone()));
 
     // Create reject function using the new PromiseReject variant
-    let reject_fn = create_function(JsFunction::PromiseReject(promise.cheap_clone()));
+    let reject_fn = interp.create_function(JsFunction::PromiseReject(promise.cheap_clone()));
 
     // Call executor(resolve, reject)
     match interp.call_function(
@@ -336,7 +332,7 @@ pub fn promise_then(
     let on_rejected = on_rejected.filter(|v| v.is_callable());
 
     // Create the result promise
-    let result_promise = create_promise_object(&interp.promise_prototype);
+    let result_promise = create_promise_object(interp);
 
     let (status, result) = {
         let obj = promise.borrow();
@@ -417,7 +413,7 @@ pub fn promise_finally(
             // This is tricky without closures. We'll use a simpler approach:
             // Create wrapper functions that call the callback then return/re-throw
 
-            let result_promise = create_promise_object(&interp.promise_prototype);
+            let result_promise = create_promise_object(interp);
 
             let (status, result) = {
                 let obj = promise.borrow();
@@ -485,10 +481,7 @@ pub fn promise_resolve_static(
         }
     }
 
-    Ok(JsValue::Object(create_fulfilled_promise(
-        &interp.promise_prototype,
-        value,
-    )))
+    Ok(JsValue::Object(create_fulfilled_promise(interp, value)))
 }
 
 /// Promise.reject(reason)
@@ -498,10 +491,7 @@ pub fn promise_reject_static(
     args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let reason = args.first().cloned().unwrap_or(JsValue::Undefined);
-    Ok(JsValue::Object(create_rejected_promise(
-        &interp.promise_prototype,
-        reason,
-    )))
+    Ok(JsValue::Object(create_rejected_promise(interp, reason)))
 }
 
 /// Promise.all(iterable)
@@ -516,46 +506,41 @@ pub fn promise_all(
     let promises = extract_iterable(&iterable)?;
 
     if promises.is_empty() {
+        let empty_array = interp.create_array(vec![]);
         return Ok(JsValue::Object(create_fulfilled_promise(
-            &interp.promise_prototype,
-            JsValue::Object(interp.create_array(vec![])),
+            interp,
+            JsValue::Object(empty_array),
         )));
     }
 
     // For Promise.all, we need to track all results.
     // Since we process synchronously, we can collect results directly.
     let mut results: Vec<JsValue> = Vec::with_capacity(promises.len());
-    let proto = interp.promise_prototype.cheap_clone();
+    let mut rejected_reason: Option<JsValue> = None;
 
-    for promise_value in promises {
-        // Convert to promise if not already
-        let promise = if let JsValue::Object(obj) = &promise_value {
-            if matches!(obj.borrow().exotic, ExoticObject::Promise(_)) {
-                promise_value.clone()
+    for promise_value in &promises {
+        // Convert to promise if not already - for non-promise values, just extract directly
+        let (status, result) = if let JsValue::Object(obj) = promise_value {
+            let obj_ref = obj.borrow();
+            if let ExoticObject::Promise(ref state) = obj_ref.exotic {
+                let state_ref = state.borrow();
+                (state_ref.status.clone(), state_ref.result.clone())
             } else {
-                JsValue::Object(create_fulfilled_promise(&proto, promise_value.clone()))
+                // Non-promise object - treat as fulfilled with that value
+                (PromiseStatus::Fulfilled, Some(promise_value.clone()))
             }
         } else {
-            JsValue::Object(create_fulfilled_promise(&proto, promise_value.clone()))
+            // Primitive value - treat as fulfilled with that value
+            (PromiseStatus::Fulfilled, Some(promise_value.clone()))
         };
 
-        // Check promise state
-        let JsValue::Object(obj) = &promise else {
-            continue;
-        };
-        let obj_ref = obj.borrow();
-        let ExoticObject::Promise(ref state) = obj_ref.exotic else {
-            continue;
-        };
-        let state_ref = state.borrow();
-
-        match state_ref.status {
+        match status {
             PromiseStatus::Fulfilled => {
-                results.push(state_ref.result.clone().unwrap_or(JsValue::Undefined));
+                results.push(result.unwrap_or(JsValue::Undefined));
             }
             PromiseStatus::Rejected => {
-                let reason = state_ref.result.clone().unwrap_or(JsValue::Undefined);
-                return Ok(JsValue::Object(create_rejected_promise(&proto, reason)));
+                rejected_reason = Some(result.unwrap_or(JsValue::Undefined));
+                break;
             }
             PromiseStatus::Pending => {
                 // In a sync context, pending promises won't resolve
@@ -565,8 +550,12 @@ pub fn promise_all(
         }
     }
 
+    if let Some(reason) = rejected_reason {
+        return Ok(JsValue::Object(create_rejected_promise(interp, reason)));
+    }
+
     let array = JsValue::Object(interp.create_array(results));
-    Ok(JsValue::Object(create_fulfilled_promise(&proto, array)))
+    Ok(JsValue::Object(create_fulfilled_promise(interp, array)))
 }
 
 /// Promise.race(iterable)
@@ -577,38 +566,30 @@ pub fn promise_race(
 ) -> Result<JsValue, JsError> {
     let iterable = args.first().cloned().unwrap_or(JsValue::Undefined);
     let promises = extract_iterable(&iterable)?;
-    let proto = interp.promise_prototype.cheap_clone();
 
     // Race returns the first settled promise
-    for promise_value in promises {
-        // JsValue clones - needed for conversion to promise
-        let promise = if let JsValue::Object(obj) = &promise_value {
-            if matches!(obj.borrow().exotic, ExoticObject::Promise(_)) {
-                promise_value.clone()
+    // First, scan for the first settled promise without creating new promises
+    let mut first_result: Option<(PromiseStatus, JsValue)> = None;
+
+    for promise_value in &promises {
+        let (status, result) = if let JsValue::Object(obj) = promise_value {
+            let obj_ref = obj.borrow();
+            if let ExoticObject::Promise(ref state) = obj_ref.exotic {
+                let state_ref = state.borrow();
+                (state_ref.status.clone(), state_ref.result.clone())
             } else {
-                JsValue::Object(create_fulfilled_promise(&proto, promise_value.clone()))
+                // Non-promise object - treat as fulfilled with that value
+                (PromiseStatus::Fulfilled, Some(promise_value.clone()))
             }
         } else {
-            JsValue::Object(create_fulfilled_promise(&proto, promise_value.clone()))
+            // Primitive value - treat as fulfilled with that value
+            (PromiseStatus::Fulfilled, Some(promise_value.clone()))
         };
 
-        let JsValue::Object(obj) = &promise else {
-            continue;
-        };
-        let obj_ref = obj.borrow();
-        let ExoticObject::Promise(ref state) = obj_ref.exotic else {
-            continue;
-        };
-        let state_ref = state.borrow();
-
-        match state_ref.status {
-            PromiseStatus::Fulfilled => {
-                let value = state_ref.result.clone().unwrap_or(JsValue::Undefined);
-                return Ok(JsValue::Object(create_fulfilled_promise(&proto, value)));
-            }
-            PromiseStatus::Rejected => {
-                let reason = state_ref.result.clone().unwrap_or(JsValue::Undefined);
-                return Ok(JsValue::Object(create_rejected_promise(&proto, reason)));
+        match status {
+            PromiseStatus::Fulfilled | PromiseStatus::Rejected => {
+                first_result = Some((status, result.unwrap_or(JsValue::Undefined)));
+                break;
             }
             PromiseStatus::Pending => {
                 // Continue to next promise
@@ -616,8 +597,19 @@ pub fn promise_race(
         }
     }
 
-    // If no promise is settled yet, return a pending promise
-    Ok(JsValue::Object(create_promise_object(&proto)))
+    // Now create the result promise
+    match first_result {
+        Some((PromiseStatus::Fulfilled, value)) => {
+            Ok(JsValue::Object(create_fulfilled_promise(interp, value)))
+        }
+        Some((PromiseStatus::Rejected, reason)) => {
+            Ok(JsValue::Object(create_rejected_promise(interp, reason)))
+        }
+        _ => {
+            // If no promise is settled yet, return a pending promise
+            Ok(JsValue::Object(create_promise_object(interp)))
+        }
+    }
 }
 
 /// Promise.allSettled(iterable)
@@ -628,44 +620,45 @@ pub fn promise_allsettled(
 ) -> Result<JsValue, JsError> {
     let iterable = args.first().cloned().unwrap_or(JsValue::Undefined);
     let promises = extract_iterable(&iterable)?;
-    let proto = interp.promise_prototype.clone();
-    let obj_proto = interp.object_prototype.clone();
 
     if promises.is_empty() {
+        let empty_array = interp.create_array(vec![]);
         return Ok(JsValue::Object(create_fulfilled_promise(
-            &proto,
-            JsValue::Object(interp.create_array(vec![])),
+            interp,
+            JsValue::Object(empty_array),
         )));
     }
 
-    let mut results: Vec<JsValue> = Vec::with_capacity(promises.len());
+    // Collect status info first without borrowing interp
+    let mut status_info: Vec<(PromiseStatus, Option<JsValue>)> = Vec::with_capacity(promises.len());
 
-    for promise_value in promises {
-        let promise = if let JsValue::Object(obj) = &promise_value {
-            if matches!(obj.borrow().exotic, ExoticObject::Promise(_)) {
-                promise_value.clone()
+    for promise_value in &promises {
+        let (status, result) = if let JsValue::Object(obj) = promise_value {
+            let obj_ref = obj.borrow();
+            if let ExoticObject::Promise(ref state) = obj_ref.exotic {
+                let state_ref = state.borrow();
+                (state_ref.status.clone(), state_ref.result.clone())
             } else {
-                JsValue::Object(create_fulfilled_promise(&proto, promise_value.clone()))
+                // Non-promise object - treat as fulfilled with that value
+                (PromiseStatus::Fulfilled, Some(promise_value.clone()))
             }
         } else {
-            JsValue::Object(create_fulfilled_promise(&proto, promise_value.clone()))
+            // Primitive value - treat as fulfilled with that value
+            (PromiseStatus::Fulfilled, Some(promise_value.clone()))
         };
+        status_info.push((status, result));
+    }
 
-        let JsValue::Object(obj) = &promise else {
-            continue;
-        };
-        let obj_ref = obj.borrow();
-        let ExoticObject::Promise(ref state) = obj_ref.exotic else {
-            continue;
-        };
-        let state_ref = state.borrow();
+    // Now create result objects using interp
+    let mut results: Vec<JsValue> = Vec::with_capacity(status_info.len());
 
-        let result_obj = create_object();
+    for (status, result) in status_info {
+        let result_obj = interp.create_object();
         {
             let mut result_ref = result_obj.borrow_mut();
-            result_ref.prototype = Some(obj_proto.clone());
+            result_ref.prototype = Some(interp.object_prototype.cheap_clone());
 
-            match state_ref.status {
+            match status {
                 PromiseStatus::Fulfilled => {
                     result_ref.set_property(
                         PropertyKey::from("status"),
@@ -673,7 +666,7 @@ pub fn promise_allsettled(
                     );
                     result_ref.set_property(
                         PropertyKey::from("value"),
-                        state_ref.result.clone().unwrap_or(JsValue::Undefined),
+                        result.unwrap_or(JsValue::Undefined),
                     );
                 }
                 PromiseStatus::Rejected => {
@@ -683,7 +676,7 @@ pub fn promise_allsettled(
                     );
                     result_ref.set_property(
                         PropertyKey::from("reason"),
-                        state_ref.result.clone().unwrap_or(JsValue::Undefined),
+                        result.unwrap_or(JsValue::Undefined),
                     );
                 }
                 PromiseStatus::Pending => {
@@ -698,7 +691,7 @@ pub fn promise_allsettled(
     }
 
     let array = JsValue::Object(interp.create_array(results));
-    Ok(JsValue::Object(create_fulfilled_promise(&proto, array)))
+    Ok(JsValue::Object(create_fulfilled_promise(interp, array)))
 }
 
 /// Promise.any(iterable)
@@ -709,63 +702,65 @@ pub fn promise_any(
 ) -> Result<JsValue, JsError> {
     let iterable = args.first().cloned().unwrap_or(JsValue::Undefined);
     let promises = extract_iterable(&iterable)?;
-    let proto = interp.promise_prototype.clone();
 
     if promises.is_empty() {
         // AggregateError with no errors
         return Ok(JsValue::Object(create_rejected_promise(
-            &proto,
+            interp,
             JsValue::String("All promises were rejected".into()),
         )));
     }
 
+    // Scan for first fulfilled or collect errors
     let mut errors: Vec<JsValue> = Vec::new();
+    let mut fulfilled_value: Option<JsValue> = None;
+    let mut any_pending = false;
 
-    for promise_value in promises {
-        let promise = if let JsValue::Object(obj) = &promise_value {
-            if matches!(obj.borrow().exotic, ExoticObject::Promise(_)) {
-                promise_value.clone()
+    for promise_value in &promises {
+        let (status, result) = if let JsValue::Object(obj) = promise_value {
+            let obj_ref = obj.borrow();
+            if let ExoticObject::Promise(ref state) = obj_ref.exotic {
+                let state_ref = state.borrow();
+                (state_ref.status.clone(), state_ref.result.clone())
             } else {
-                JsValue::Object(create_fulfilled_promise(&proto, promise_value.clone()))
+                // Non-promise object - treat as fulfilled with that value
+                (PromiseStatus::Fulfilled, Some(promise_value.clone()))
             }
         } else {
-            JsValue::Object(create_fulfilled_promise(&proto, promise_value.clone()))
+            // Primitive value - treat as fulfilled with that value
+            (PromiseStatus::Fulfilled, Some(promise_value.clone()))
         };
 
-        let JsValue::Object(obj) = &promise else {
-            continue;
-        };
-        let obj_ref = obj.borrow();
-        let ExoticObject::Promise(ref state) = obj_ref.exotic else {
-            continue;
-        };
-        let state_ref = state.borrow();
-
-        match state_ref.status {
+        match status {
             PromiseStatus::Fulfilled => {
-                let value = state_ref.result.clone().unwrap_or(JsValue::Undefined);
-                return Ok(JsValue::Object(create_fulfilled_promise(&proto, value)));
+                fulfilled_value = Some(result.unwrap_or(JsValue::Undefined));
+                break;
             }
             PromiseStatus::Rejected => {
-                errors.push(state_ref.result.clone().unwrap_or(JsValue::Undefined));
+                errors.push(result.unwrap_or(JsValue::Undefined));
             }
             PromiseStatus::Pending => {
-                // Continue to next promise
+                any_pending = true;
             }
         }
     }
 
+    // Now create the result using interp
+    if let Some(value) = fulfilled_value {
+        return Ok(JsValue::Object(create_fulfilled_promise(interp, value)));
+    }
+
     // All rejected - reject with array of errors
-    if !errors.is_empty() {
+    if !errors.is_empty() && !any_pending {
         let errors_array = JsValue::Object(interp.create_array(errors));
         return Ok(JsValue::Object(create_rejected_promise(
-            &proto,
+            interp,
             errors_array,
         )));
     }
 
-    // No promise is settled yet
-    Ok(JsValue::Object(create_promise_object(&proto)))
+    // No promise is settled yet (or some pending)
+    Ok(JsValue::Object(create_promise_object(interp)))
 }
 
 /// Extract values from an iterable (for Promise.all/race/etc)

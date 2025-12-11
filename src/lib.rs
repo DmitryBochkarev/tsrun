@@ -12,17 +12,20 @@
 
 pub mod ast;
 pub mod error;
+pub mod gc;
 pub mod interpreter;
 pub mod lexer;
 pub mod parser;
 pub mod value;
 
 pub use error::JsError;
+pub use gc::{Gc, GcBox, Space, Traceable, Tracer};
 pub use interpreter::Interpreter;
 pub use interpreter::SavedExecutionState;
 pub use value::CheapClone;
 pub use value::EnvId;
 pub use value::EnvironmentArena;
+pub use value::JsObject;
 pub use value::JsString;
 pub use value::JsValue;
 
@@ -202,15 +205,23 @@ impl Runtime {
             .cloned()
             .ok_or_else(|| JsError::reference_error(format!("{} is not exported", name)))?;
 
-        // Convert JSON args to JsValue
+        // Convert JSON args to JsValue using interpreter's GC space
         let js_args = if let serde_json::Value::Array(arr) = args {
             // Spread array elements as individual arguments
-            arr.iter()
-                .map(interpreter::builtins::json_to_js_value)
-                .collect::<Result<Vec<_>, _>>()?
+            let mut converted = Vec::with_capacity(arr.len());
+            for item in arr {
+                converted.push(interpreter::builtins::json_to_js_value_with_interp(
+                    &mut self.interpreter,
+                    item,
+                )?);
+            }
+            converted
         } else {
             // Single argument
-            vec![interpreter::builtins::json_to_js_value(args)?]
+            vec![interpreter::builtins::json_to_js_value_with_interp(
+                &mut self.interpreter,
+                args,
+            )?]
         };
 
         // Call the function
@@ -237,7 +248,7 @@ impl Runtime {
 
     /// Create a JsValue from a JSON value
     pub fn create_value_from_json(&mut self, json: &serde_json::Value) -> Result<JsValue, JsError> {
-        interpreter::builtins::json_to_js_value(json)
+        interpreter::builtins::json_to_js_value_with_interp(&mut self.interpreter, json)
     }
 
     // ═══════════════════════════════════════════════════════════════════════════

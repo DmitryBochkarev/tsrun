@@ -5,9 +5,11 @@ use std::sync::Mutex;
 use std::time::Instant;
 
 use crate::error::JsError;
+use crate::gc::Space;
 use crate::interpreter::Interpreter;
 use crate::value::{
-    create_object_with_capacity, register_method, ExoticObject, JsObjectRef, JsValue, PropertyKey,
+    create_object_with_capacity, register_method, ExoticObject, JsObject, JsObjectRef, JsValue,
+    PropertyKey,
 };
 
 // Thread-local storage for console timers and counters
@@ -17,42 +19,40 @@ lazy_static::lazy_static! {
 }
 
 /// Create console object with log, error, warn, info, debug methods
-pub fn create_console_object() -> JsObjectRef {
-    let console = create_object_with_capacity(14);
-    {
-        let mut con = console.borrow_mut();
+pub fn create_console_object(space: &mut Space<JsObject>) -> JsObjectRef {
+    let console = create_object_with_capacity(space, 14);
 
-        // Logging methods
-        register_method(&mut con, "log", console_log, 0);
-        register_method(&mut con, "error", console_error, 0);
-        register_method(&mut con, "warn", console_warn, 0);
-        register_method(&mut con, "info", console_info, 0);
-        register_method(&mut con, "debug", console_debug, 0);
+    // Logging methods
+    register_method(space, &console, "log", console_log, 0);
+    register_method(space, &console, "error", console_error, 0);
+    register_method(space, &console, "warn", console_warn, 0);
+    register_method(space, &console, "info", console_info, 0);
+    register_method(space, &console, "debug", console_debug, 0);
 
-        // Display methods
-        register_method(&mut con, "table", console_table, 1);
-        register_method(&mut con, "dir", console_dir, 1);
+    // Display methods
+    register_method(space, &console, "table", console_table, 1);
+    register_method(space, &console, "dir", console_dir, 1);
 
-        // Timing methods
-        register_method(&mut con, "time", console_time, 1);
-        register_method(&mut con, "timeEnd", console_time_end, 1);
+    // Timing methods
+    register_method(space, &console, "time", console_time, 1);
+    register_method(space, &console, "timeEnd", console_time_end, 1);
 
-        // Counting methods
-        register_method(&mut con, "count", console_count, 1);
-        register_method(&mut con, "countReset", console_count_reset, 1);
+    // Counting methods
+    register_method(space, &console, "count", console_count, 1);
+    register_method(space, &console, "countReset", console_count_reset, 1);
 
-        // Other methods
-        register_method(&mut con, "clear", console_clear, 0);
-        register_method(&mut con, "group", console_group, 0);
-        register_method(&mut con, "groupEnd", console_group_end, 0);
+    // Other methods
+    register_method(space, &console, "clear", console_clear, 0);
+    register_method(space, &console, "group", console_group, 0);
+    register_method(space, &console, "groupEnd", console_group_end, 0);
 
-        debug_assert_eq!(
-            con.properties.len(),
-            14,
-            "console object capacity mismatch: expected 14, got {}",
-            con.properties.len()
-        );
-    }
+    debug_assert_eq!(
+        console.borrow().properties.len(),
+        14,
+        "console object capacity mismatch: expected 14, got {}",
+        console.borrow().properties.len()
+    );
+
     console
 }
 

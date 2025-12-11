@@ -4,34 +4,37 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::error::JsError;
+use crate::gc::Space;
 use crate::interpreter::Interpreter;
 use crate::value::{
-    create_object, register_method, ExoticObject, GeneratorState, GeneratorStatus, JsObjectRef,
-    JsString, JsValue, PropertyKey,
+    create_object, register_method, ExoticObject, GeneratorState, GeneratorStatus, JsObject,
+    JsObjectRef, JsString, JsValue, PropertyKey,
 };
 
 /// Create Generator.prototype
-pub fn create_generator_prototype() -> JsObjectRef {
-    let proto = create_object();
-    {
-        let mut p = proto.borrow_mut();
+pub fn create_generator_prototype(space: &mut Space<JsObject>) -> JsObjectRef {
+    let proto = create_object(space);
 
-        // Set Symbol.toStringTag
-        p.set_property(
-            PropertyKey::from("@@toStringTag"),
-            JsValue::String(JsString::from("Generator")),
-        );
+    // Set Symbol.toStringTag
+    proto.borrow_mut().set_property(
+        PropertyKey::from("@@toStringTag"),
+        JsValue::String(JsString::from("Generator")),
+    );
 
-        register_method(&mut p, "next", generator_next, 1);
-        register_method(&mut p, "return", generator_return, 1);
-        register_method(&mut p, "throw", generator_throw, 1);
-    }
+    register_method(space, &proto, "next", generator_next, 1);
+    register_method(space, &proto, "return", generator_return, 1);
+    register_method(space, &proto, "throw", generator_throw, 1);
+
     proto
 }
 
 /// Create a generator result object { value, done }
-pub fn create_generator_result(value: JsValue, done: bool) -> JsValue {
-    let obj = create_object();
+pub fn create_generator_result_with_interp(
+    interp: &mut Interpreter,
+    value: JsValue,
+    done: bool,
+) -> JsValue {
+    let obj = interp.create_object();
     {
         let mut o = obj.borrow_mut();
         o.set_property(PropertyKey::from("value"), value);
@@ -77,7 +80,7 @@ pub fn generator_next(
 
 /// Generator.prototype.return(value)
 pub fn generator_return(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
 ) -> Result<JsValue, JsError> {
@@ -107,7 +110,7 @@ pub fn generator_return(
         state.state = GeneratorStatus::Completed;
     }
 
-    Ok(create_generator_result(value, true))
+    Ok(create_generator_result_with_interp(interp, value, true))
 }
 
 /// Generator.prototype.throw(exception)
@@ -152,8 +155,8 @@ pub fn generator_throw(
 }
 
 /// Create a new generator object from a generator function
-pub fn create_generator_object(interp: &Interpreter, state: GeneratorState) -> JsObjectRef {
-    let obj = create_object();
+pub fn create_generator_object(interp: &mut Interpreter, state: GeneratorState) -> JsObjectRef {
+    let obj = interp.create_object();
     {
         let mut o = obj.borrow_mut();
         o.exotic = ExoticObject::Generator(Rc::new(RefCell::new(state)));

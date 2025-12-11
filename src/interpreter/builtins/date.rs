@@ -3,10 +3,11 @@
 use chrono::{Datelike, TimeZone, Timelike, Utc};
 
 use crate::error::JsError;
+use crate::gc::Space;
 use crate::interpreter::Interpreter;
 use crate::value::{
-    create_function, create_object, create_object_with_capacity, register_method, CheapClone,
-    ExoticObject, JsFunction, JsObjectRef, JsString, JsValue, NativeFunction, PropertyKey,
+    create_function, create_object_with_capacity, register_method, ExoticObject, JsFunction,
+    JsObject, JsObjectRef, JsString, JsValue, NativeFunction, PropertyKey,
 };
 
 /// Create a date from components, handling JavaScript-style overflow
@@ -76,79 +77,87 @@ fn parse_date_string(s: &str) -> f64 {
 }
 
 /// Create Date.prototype with getTime, getFullYear, getMonth, etc.
-pub fn create_date_prototype() -> JsObjectRef {
-    let proto = create_object_with_capacity(31);
-    {
-        let mut p = proto.borrow_mut();
+pub fn create_date_prototype(space: &mut Space<JsObject>) -> JsObjectRef {
+    let proto = create_object_with_capacity(space, 31);
 
-        // Getter methods (local time = UTC in our implementation)
-        register_method(&mut p, "getTime", date_get_time, 0);
-        register_method(&mut p, "getFullYear", date_get_full_year, 0);
-        register_method(&mut p, "getMonth", date_get_month, 0);
-        register_method(&mut p, "getDate", date_get_date, 0);
-        register_method(&mut p, "getDay", date_get_day, 0);
-        register_method(&mut p, "getHours", date_get_hours, 0);
-        register_method(&mut p, "getMinutes", date_get_minutes, 0);
-        register_method(&mut p, "getSeconds", date_get_seconds, 0);
-        register_method(&mut p, "getMilliseconds", date_get_milliseconds, 0);
+    // Getter methods (local time = UTC in our implementation)
+    register_method(space, &proto, "getTime", date_get_time, 0);
+    register_method(space, &proto, "getFullYear", date_get_full_year, 0);
+    register_method(space, &proto, "getMonth", date_get_month, 0);
+    register_method(space, &proto, "getDate", date_get_date, 0);
+    register_method(space, &proto, "getDay", date_get_day, 0);
+    register_method(space, &proto, "getHours", date_get_hours, 0);
+    register_method(space, &proto, "getMinutes", date_get_minutes, 0);
+    register_method(space, &proto, "getSeconds", date_get_seconds, 0);
+    register_method(space, &proto, "getMilliseconds", date_get_milliseconds, 0);
 
-        // UTC getter methods (same as regular getters since we store UTC internally)
-        register_method(&mut p, "getUTCFullYear", date_get_full_year, 0);
-        register_method(&mut p, "getUTCMonth", date_get_month, 0);
-        register_method(&mut p, "getUTCDate", date_get_date, 0);
-        register_method(&mut p, "getUTCDay", date_get_day, 0);
-        register_method(&mut p, "getUTCHours", date_get_hours, 0);
-        register_method(&mut p, "getUTCMinutes", date_get_minutes, 0);
-        register_method(&mut p, "getUTCSeconds", date_get_seconds, 0);
-        register_method(&mut p, "getUTCMilliseconds", date_get_milliseconds, 0);
+    // UTC getter methods (same as regular getters since we store UTC internally)
+    register_method(space, &proto, "getUTCFullYear", date_get_full_year, 0);
+    register_method(space, &proto, "getUTCMonth", date_get_month, 0);
+    register_method(space, &proto, "getUTCDate", date_get_date, 0);
+    register_method(space, &proto, "getUTCDay", date_get_day, 0);
+    register_method(space, &proto, "getUTCHours", date_get_hours, 0);
+    register_method(space, &proto, "getUTCMinutes", date_get_minutes, 0);
+    register_method(space, &proto, "getUTCSeconds", date_get_seconds, 0);
+    register_method(
+        space,
+        &proto,
+        "getUTCMilliseconds",
+        date_get_milliseconds,
+        0,
+    );
 
-        // Setter methods
-        register_method(&mut p, "setTime", date_set_time, 1);
-        register_method(&mut p, "setFullYear", date_set_full_year, 3);
-        register_method(&mut p, "setMonth", date_set_month, 2);
-        register_method(&mut p, "setDate", date_set_date, 1);
-        register_method(&mut p, "setHours", date_set_hours, 4);
-        register_method(&mut p, "setMinutes", date_set_minutes, 3);
-        register_method(&mut p, "setSeconds", date_set_seconds, 2);
-        register_method(&mut p, "setMilliseconds", date_set_milliseconds, 1);
+    // Setter methods
+    register_method(space, &proto, "setTime", date_set_time, 1);
+    register_method(space, &proto, "setFullYear", date_set_full_year, 3);
+    register_method(space, &proto, "setMonth", date_set_month, 2);
+    register_method(space, &proto, "setDate", date_set_date, 1);
+    register_method(space, &proto, "setHours", date_set_hours, 4);
+    register_method(space, &proto, "setMinutes", date_set_minutes, 3);
+    register_method(space, &proto, "setSeconds", date_set_seconds, 2);
+    register_method(space, &proto, "setMilliseconds", date_set_milliseconds, 1);
 
-        // Conversion methods
-        register_method(&mut p, "toISOString", date_to_iso_string, 0);
-        register_method(&mut p, "toJSON", date_to_iso_string, 0); // toJSON = toISOString
-        register_method(&mut p, "valueOf", date_get_time, 0); // valueOf = getTime
-        register_method(&mut p, "toString", date_to_string, 0);
-        register_method(&mut p, "toDateString", date_to_date_string, 0);
-        register_method(&mut p, "toTimeString", date_to_time_string, 0);
+    // Conversion methods
+    register_method(space, &proto, "toISOString", date_to_iso_string, 0);
+    register_method(space, &proto, "toJSON", date_to_iso_string, 0); // toJSON = toISOString
+    register_method(space, &proto, "valueOf", date_get_time, 0); // valueOf = getTime
+    register_method(space, &proto, "toString", date_to_string, 0);
+    register_method(space, &proto, "toDateString", date_to_date_string, 0);
+    register_method(space, &proto, "toTimeString", date_to_time_string, 0);
 
-        debug_assert_eq!(
-            p.properties.len(),
-            31,
-            "Date.prototype capacity mismatch: expected 31, got {}",
-            p.properties.len()
-        );
-    }
+    debug_assert_eq!(
+        proto.borrow().properties.len(),
+        31,
+        "Date.prototype capacity mismatch: expected 31, got {}",
+        proto.borrow().properties.len()
+    );
+
     proto
 }
 
 /// Create Date constructor with static methods (now, UTC, parse)
-pub fn create_date_constructor(date_prototype: &JsObjectRef) -> JsObjectRef {
-    let constructor = create_function(JsFunction::Native(NativeFunction {
-        name: "Date".to_string(),
-        func: date_constructor,
-        arity: 0,
-    }));
-    {
-        let mut date = constructor.borrow_mut();
+pub fn create_date_constructor(
+    space: &mut Space<JsObject>,
+    date_prototype: &JsObjectRef,
+) -> JsObjectRef {
+    let constructor = create_function(
+        space,
+        JsFunction::Native(NativeFunction {
+            name: "Date".to_string(),
+            func: date_constructor,
+            arity: 0,
+        }),
+    );
 
-        register_method(&mut date, "now", date_now, 0);
-        register_method(&mut date, "UTC", date_utc, 7);
-        register_method(&mut date, "parse", date_parse, 1);
+    register_method(space, &constructor, "now", date_now, 0);
+    register_method(space, &constructor, "UTC", date_utc, 7);
+    register_method(space, &constructor, "parse", date_parse, 1);
 
-        date.set_property(
-            PropertyKey::from("prototype"),
-            JsValue::Object(date_prototype.cheap_clone()),
-        );
-    }
+    constructor.borrow_mut().set_property(
+        PropertyKey::from("prototype"),
+        JsValue::Object(date_prototype.clone()),
+    );
+
     constructor
 }
 
@@ -182,11 +191,11 @@ pub fn date_constructor(
         make_date_from_components(year, month, day, hours, minutes, seconds, ms)
     };
 
-    let date_obj = create_object();
+    let date_obj = interp.create_object();
     {
         let mut obj = date_obj.borrow_mut();
         obj.exotic = ExoticObject::Date { timestamp };
-        obj.prototype = Some(interp.date_prototype.cheap_clone());
+        obj.prototype = Some(interp.date_prototype.clone());
     }
     Ok(JsValue::Object(date_obj))
 }

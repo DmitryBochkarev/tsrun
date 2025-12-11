@@ -1,101 +1,127 @@
 //! Object built-in methods
 
 use crate::error::JsError;
+use crate::gc::Space;
 use crate::interpreter::Interpreter;
 use crate::value::{
-    create_array, create_function, create_object, create_object_with_capacity, register_method,
-    ExoticObject, JsFunction, JsObjectRef, JsString, JsValue, NativeFunction, Property,
-    PropertyKey,
+    create_function, create_object_with_capacity, register_method, ExoticObject, JsFunction,
+    JsObject, JsObjectRef, JsString, JsValue, NativeFunction, Property, PropertyKey,
 };
 
 /// Create Object.prototype with hasOwnProperty, toString, valueOf
-pub fn create_object_prototype() -> JsObjectRef {
-    let proto = create_object_with_capacity(4);
-    {
-        let mut p = proto.borrow_mut();
+pub fn create_object_prototype(space: &mut Space<JsObject>) -> JsObjectRef {
+    let proto = create_object_with_capacity(space, 4);
 
-        register_method(&mut p, "hasOwnProperty", object_has_own_property, 1);
-        register_method(&mut p, "toString", object_to_string, 0);
-        register_method(&mut p, "valueOf", object_value_of, 0);
+    register_method(space, &proto, "hasOwnProperty", object_has_own_property, 1);
+    register_method(space, &proto, "toString", object_to_string, 0);
+    register_method(space, &proto, "valueOf", object_value_of, 0);
 
-        debug_assert_eq!(
-            p.properties.len(),
-            3,
-            "Object.prototype capacity mismatch: expected 3, got {}",
-            p.properties.len()
-        );
-    }
+    debug_assert_eq!(
+        proto.borrow().properties.len(),
+        3,
+        "Object.prototype capacity mismatch: expected 3, got {}",
+        proto.borrow().properties.len()
+    );
+
     proto
 }
 
 /// Create Object constructor with static methods (keys, values, entries, assign, etc.)
-pub fn create_object_constructor() -> JsObjectRef {
-    let constructor = create_function(JsFunction::Native(NativeFunction {
-        name: "Object".to_string(),
-        func: object_constructor,
-        arity: 1,
-    }));
-    {
-        let mut obj = constructor.borrow_mut();
+pub fn create_object_constructor(space: &mut Space<JsObject>) -> JsObjectRef {
+    let constructor = create_function(
+        space,
+        JsFunction::Native(NativeFunction {
+            name: "Object".to_string(),
+            func: object_constructor,
+            arity: 1,
+        }),
+    );
 
-        // Property enumeration
-        register_method(&mut obj, "keys", object_keys, 1);
-        register_method(&mut obj, "values", object_values, 1);
-        register_method(&mut obj, "entries", object_entries, 1);
+    // Property enumeration
+    register_method(space, &constructor, "keys", object_keys, 1);
+    register_method(space, &constructor, "values", object_values, 1);
+    register_method(space, &constructor, "entries", object_entries, 1);
 
-        // Object manipulation
-        register_method(&mut obj, "assign", object_assign, 2);
-        register_method(&mut obj, "fromEntries", object_from_entries, 1);
-        register_method(&mut obj, "create", object_create, 1);
+    // Object manipulation
+    register_method(space, &constructor, "assign", object_assign, 2);
+    register_method(space, &constructor, "fromEntries", object_from_entries, 1);
+    register_method(space, &constructor, "create", object_create, 1);
 
-        // Property checking
-        register_method(&mut obj, "hasOwn", object_has_own, 2);
+    // Property checking
+    register_method(space, &constructor, "hasOwn", object_has_own, 2);
 
-        // Freezing/sealing
-        register_method(&mut obj, "freeze", object_freeze, 1);
-        register_method(&mut obj, "isFrozen", object_is_frozen, 1);
-        register_method(&mut obj, "seal", object_seal, 1);
-        register_method(&mut obj, "isSealed", object_is_sealed, 1);
+    // Freezing/sealing
+    register_method(space, &constructor, "freeze", object_freeze, 1);
+    register_method(space, &constructor, "isFrozen", object_is_frozen, 1);
+    register_method(space, &constructor, "seal", object_seal, 1);
+    register_method(space, &constructor, "isSealed", object_is_sealed, 1);
 
-        // Property descriptors
-        register_method(
-            &mut obj,
-            "getOwnPropertyDescriptor",
-            object_get_own_property_descriptor,
-            2,
-        );
-        register_method(
-            &mut obj,
-            "getOwnPropertyNames",
-            object_get_own_property_names,
-            1,
-        );
-        register_method(
-            &mut obj,
-            "getOwnPropertySymbols",
-            object_get_own_property_symbols,
-            1,
-        );
-        register_method(&mut obj, "defineProperty", object_define_property, 3);
-        register_method(&mut obj, "defineProperties", object_define_properties, 2);
+    // Property descriptors
+    register_method(
+        space,
+        &constructor,
+        "getOwnPropertyDescriptor",
+        object_get_own_property_descriptor,
+        2,
+    );
+    register_method(
+        space,
+        &constructor,
+        "getOwnPropertyNames",
+        object_get_own_property_names,
+        1,
+    );
+    register_method(
+        space,
+        &constructor,
+        "getOwnPropertySymbols",
+        object_get_own_property_symbols,
+        1,
+    );
+    register_method(
+        space,
+        &constructor,
+        "defineProperty",
+        object_define_property,
+        3,
+    );
+    register_method(
+        space,
+        &constructor,
+        "defineProperties",
+        object_define_properties,
+        2,
+    );
 
-        // Prototype manipulation
-        register_method(&mut obj, "getPrototypeOf", object_get_prototype_of, 1);
-        register_method(&mut obj, "setPrototypeOf", object_set_prototype_of, 2);
-    }
+    // Prototype manipulation
+    register_method(
+        space,
+        &constructor,
+        "getPrototypeOf",
+        object_get_prototype_of,
+        1,
+    );
+    register_method(
+        space,
+        &constructor,
+        "setPrototypeOf",
+        object_set_prototype_of,
+        2,
+    );
+
     constructor
 }
 
 pub fn object_constructor(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let value = args.first().cloned().unwrap_or(JsValue::Undefined);
     match value {
-        JsValue::Null | JsValue::Undefined => Ok(JsValue::Object(create_object())),
+        JsValue::Null | JsValue::Undefined => Ok(JsValue::Object(interp.create_object())),
         JsValue::Object(_) => Ok(value),
-        _ => Ok(JsValue::Object(create_object())),
+        _ => Ok(JsValue::Object(interp.create_object())),
     }
 }
 
@@ -200,7 +226,7 @@ pub fn object_assign(
 }
 
 pub fn object_from_entries(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
 ) -> Result<JsValue, JsError> {
@@ -212,7 +238,7 @@ pub fn object_from_entries(
         ));
     };
 
-    let result = create_object();
+    let result = interp.create_object();
 
     let length = {
         let arr_ref = arr.borrow();
@@ -273,13 +299,13 @@ pub fn object_has_own(
 }
 
 pub fn object_create(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
 ) -> Result<JsValue, JsError> {
     let proto = args.first().cloned().unwrap_or(JsValue::Undefined);
 
-    let result = create_object();
+    let result = interp.create_object();
 
     // Set prototype (or null)
     match proto {
@@ -443,7 +469,7 @@ pub fn object_value_of(
 
 /// Object.getOwnPropertyDescriptor(obj, prop)
 pub fn object_get_own_property_descriptor(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
 ) -> Result<JsValue, JsError> {
@@ -461,7 +487,7 @@ pub fn object_get_own_property_descriptor(
 
     if let Some(property) = obj_borrowed.get_own_property(&key) {
         // Create a descriptor object
-        let desc = create_object();
+        let desc = interp.create_object();
         {
             let mut desc_ref = desc.borrow_mut();
 
@@ -505,7 +531,7 @@ pub fn object_get_own_property_descriptor(
 
 /// Object.getOwnPropertyNames(obj)
 pub fn object_get_own_property_names(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
 ) -> Result<JsValue, JsError> {
@@ -526,12 +552,12 @@ pub fn object_get_own_property_names(
         .map(|key| JsValue::String(JsString::from(key.to_string())))
         .collect();
 
-    Ok(JsValue::Object(create_array(names)))
+    Ok(JsValue::Object(interp.create_array(names)))
 }
 
 /// Object.getOwnPropertySymbols(obj)
 pub fn object_get_own_property_symbols(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
 ) -> Result<JsValue, JsError> {
@@ -557,7 +583,7 @@ pub fn object_get_own_property_symbols(
         })
         .collect();
 
-    Ok(JsValue::Object(create_array(symbols)))
+    Ok(JsValue::Object(interp.create_array(symbols)))
 }
 
 /// Object.defineProperty(obj, prop, descriptor)

@@ -2,37 +2,39 @@
 
 use super::map::same_value_zero;
 use crate::error::JsError;
+use crate::gc::Space;
 use crate::interpreter::Interpreter;
 use crate::value::{
-    create_function, create_object, register_method, ExoticObject, JsFunction, JsObjectRef,
-    JsValue, NativeFunction, PropertyKey,
+    create_function, create_object, register_method, ExoticObject, JsFunction, JsObject,
+    JsObjectRef, JsValue, NativeFunction, PropertyKey,
 };
 
 /// Create Set.prototype with add, has, delete, clear, forEach methods
-pub fn create_set_prototype() -> JsObjectRef {
-    let proto = create_object();
-    {
-        let mut p = proto.borrow_mut();
+pub fn create_set_prototype(space: &mut Space<JsObject>) -> JsObjectRef {
+    let proto = create_object(space);
 
-        register_method(&mut p, "add", set_add, 1);
-        register_method(&mut p, "has", set_has, 1);
-        register_method(&mut p, "delete", set_delete, 1);
-        register_method(&mut p, "clear", set_clear, 0);
-        register_method(&mut p, "forEach", set_foreach, 1);
-        register_method(&mut p, "keys", set_keys, 0);
-        register_method(&mut p, "values", set_values, 0);
-        register_method(&mut p, "entries", set_entries, 0);
-    }
+    register_method(space, &proto, "add", set_add, 1);
+    register_method(space, &proto, "has", set_has, 1);
+    register_method(space, &proto, "delete", set_delete, 1);
+    register_method(space, &proto, "clear", set_clear, 0);
+    register_method(space, &proto, "forEach", set_foreach, 1);
+    register_method(space, &proto, "keys", set_keys, 0);
+    register_method(space, &proto, "values", set_values, 0);
+    register_method(space, &proto, "entries", set_entries, 0);
+
     proto
 }
 
 /// Create Set constructor
-pub fn create_set_constructor() -> JsObjectRef {
-    create_function(JsFunction::Native(NativeFunction {
-        name: "Set".to_string(),
-        func: set_constructor,
-        arity: 0,
-    }))
+pub fn create_set_constructor(space: &mut Space<JsObject>) -> JsObjectRef {
+    create_function(
+        space,
+        JsFunction::Native(NativeFunction {
+            name: "Set".to_string(),
+            func: set_constructor,
+            arity: 0,
+        }),
+    )
 }
 
 pub fn set_constructor(
@@ -40,7 +42,7 @@ pub fn set_constructor(
     _this: JsValue,
     args: &[JsValue],
 ) -> Result<JsValue, JsError> {
-    let set_obj = create_object();
+    let set_obj = interp.create_object();
     {
         let mut obj = set_obj.borrow_mut();
         obj.exotic = ExoticObject::Set {

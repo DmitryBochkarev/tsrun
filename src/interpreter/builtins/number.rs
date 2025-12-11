@@ -1,40 +1,50 @@
 //! Number built-in methods
 
 use crate::error::JsError;
+use crate::gc::Space;
 use crate::interpreter::Interpreter;
-use crate::value::{create_object, register_method, JsObjectRef, JsString, JsValue, PropertyKey};
+use crate::value::{
+    create_object, register_method, JsObject, JsObjectRef, JsString, JsValue, PropertyKey,
+};
 
 use super::global::{global_parse_float, global_parse_int};
 
 /// Create Number.prototype with toFixed, toString, toPrecision, toExponential
-pub fn create_number_prototype() -> JsObjectRef {
-    let proto = create_object();
-    {
-        let mut p = proto.borrow_mut();
+pub fn create_number_prototype(space: &mut Space<JsObject>) -> JsObjectRef {
+    let proto = create_object(space);
 
-        register_method(&mut p, "toFixed", number_to_fixed, 1);
-        register_method(&mut p, "toString", number_to_string, 1);
-        register_method(&mut p, "toPrecision", number_to_precision, 1);
-        register_method(&mut p, "toExponential", number_to_exponential, 1);
-    }
+    register_method(space, &proto, "toFixed", number_to_fixed, 1);
+    register_method(space, &proto, "toString", number_to_string, 1);
+    register_method(space, &proto, "toPrecision", number_to_precision, 1);
+    register_method(space, &proto, "toExponential", number_to_exponential, 1);
+
     proto
 }
 
 /// Create Number constructor with static methods and constants
-pub fn create_number_constructor(number_prototype: &JsObjectRef) -> JsObjectRef {
-    let constructor = create_object();
+pub fn create_number_constructor(
+    space: &mut Space<JsObject>,
+    number_prototype: &JsObjectRef,
+) -> JsObjectRef {
+    let constructor = create_object(space);
+
+    // Static methods
+    register_method(space, &constructor, "isNaN", number_is_nan, 1);
+    register_method(space, &constructor, "isFinite", number_is_finite, 1);
+    register_method(space, &constructor, "isInteger", number_is_integer, 1);
+    register_method(
+        space,
+        &constructor,
+        "isSafeInteger",
+        number_is_safe_integer,
+        1,
+    );
+    register_method(space, &constructor, "parseInt", global_parse_int, 2);
+    register_method(space, &constructor, "parseFloat", global_parse_float, 1);
+
+    // Constants
     {
         let mut num = constructor.borrow_mut();
-
-        // Static methods
-        register_method(&mut num, "isNaN", number_is_nan, 1);
-        register_method(&mut num, "isFinite", number_is_finite, 1);
-        register_method(&mut num, "isInteger", number_is_integer, 1);
-        register_method(&mut num, "isSafeInteger", number_is_safe_integer, 1);
-        register_method(&mut num, "parseInt", global_parse_int, 2);
-        register_method(&mut num, "parseFloat", global_parse_float, 1);
-
-        // Constants
         num.set_property(
             PropertyKey::from("POSITIVE_INFINITY"),
             JsValue::Number(f64::INFINITY),

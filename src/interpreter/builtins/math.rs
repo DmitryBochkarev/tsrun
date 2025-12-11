@@ -1,18 +1,19 @@
 //! Math built-in methods
 
 use crate::error::JsError;
+use crate::gc::Space;
 use crate::interpreter::Interpreter;
 use crate::value::{
-    create_object_with_capacity, register_method, JsObjectRef, JsValue, PropertyKey,
+    create_object_with_capacity, register_method, JsObject, JsObjectRef, JsValue, PropertyKey,
 };
 
 /// Create Math object with all math methods and constants
-pub fn create_math_object() -> JsObjectRef {
-    let math_obj = create_object_with_capacity(40);
+pub fn create_math_object(space: &mut Space<JsObject>) -> JsObjectRef {
+    let math_obj = create_object_with_capacity(space, 40);
+
+    // Constants
     {
         let mut math = math_obj.borrow_mut();
-
-        // Constants
         math.set_property(
             PropertyKey::from("PI"),
             JsValue::Number(std::f64::consts::PI),
@@ -42,60 +43,61 @@ pub fn create_math_object() -> JsObjectRef {
             PropertyKey::from("SQRT1_2"),
             JsValue::Number(std::f64::consts::FRAC_1_SQRT_2),
         );
-
-        // Rounding methods
-        register_method(&mut math, "abs", math_abs, 1);
-        register_method(&mut math, "floor", math_floor, 1);
-        register_method(&mut math, "ceil", math_ceil, 1);
-        register_method(&mut math, "round", math_round, 1);
-        register_method(&mut math, "trunc", math_trunc, 1);
-        register_method(&mut math, "sign", math_sign, 1);
-
-        // Min/max
-        register_method(&mut math, "min", math_min, 2);
-        register_method(&mut math, "max", math_max, 2);
-
-        // Power and root functions
-        register_method(&mut math, "pow", math_pow, 2);
-        register_method(&mut math, "sqrt", math_sqrt, 1);
-        register_method(&mut math, "cbrt", math_cbrt, 1);
-        register_method(&mut math, "hypot", math_hypot, 2);
-
-        // Logarithmic and exponential
-        register_method(&mut math, "log", math_log, 1);
-        register_method(&mut math, "log10", math_log10, 1);
-        register_method(&mut math, "log2", math_log2, 1);
-        register_method(&mut math, "log1p", math_log1p, 1);
-        register_method(&mut math, "exp", math_exp, 1);
-        register_method(&mut math, "expm1", math_expm1, 1);
-
-        // Trigonometric
-        register_method(&mut math, "sin", math_sin, 1);
-        register_method(&mut math, "cos", math_cos, 1);
-        register_method(&mut math, "tan", math_tan, 1);
-        register_method(&mut math, "asin", math_asin, 1);
-        register_method(&mut math, "acos", math_acos, 1);
-        register_method(&mut math, "atan", math_atan, 1);
-        register_method(&mut math, "atan2", math_atan2, 2);
-
-        // Hyperbolic
-        register_method(&mut math, "sinh", math_sinh, 1);
-        register_method(&mut math, "cosh", math_cosh, 1);
-        register_method(&mut math, "tanh", math_tanh, 1);
-        register_method(&mut math, "asinh", math_asinh, 1);
-        register_method(&mut math, "acosh", math_acosh, 1);
-        register_method(&mut math, "atanh", math_atanh, 1);
-
-        // Random
-        register_method(&mut math, "random", math_random, 0);
-
-        debug_assert_eq!(
-            math.properties.len(),
-            40,
-            "Math object capacity mismatch: expected 40, got {}",
-            math.properties.len()
-        );
     }
+
+    // Rounding methods
+    register_method(space, &math_obj, "abs", math_abs, 1);
+    register_method(space, &math_obj, "floor", math_floor, 1);
+    register_method(space, &math_obj, "ceil", math_ceil, 1);
+    register_method(space, &math_obj, "round", math_round, 1);
+    register_method(space, &math_obj, "trunc", math_trunc, 1);
+    register_method(space, &math_obj, "sign", math_sign, 1);
+
+    // Min/max
+    register_method(space, &math_obj, "min", math_min, 2);
+    register_method(space, &math_obj, "max", math_max, 2);
+
+    // Power and root functions
+    register_method(space, &math_obj, "pow", math_pow, 2);
+    register_method(space, &math_obj, "sqrt", math_sqrt, 1);
+    register_method(space, &math_obj, "cbrt", math_cbrt, 1);
+    register_method(space, &math_obj, "hypot", math_hypot, 2);
+
+    // Logarithmic and exponential
+    register_method(space, &math_obj, "log", math_log, 1);
+    register_method(space, &math_obj, "log10", math_log10, 1);
+    register_method(space, &math_obj, "log2", math_log2, 1);
+    register_method(space, &math_obj, "log1p", math_log1p, 1);
+    register_method(space, &math_obj, "exp", math_exp, 1);
+    register_method(space, &math_obj, "expm1", math_expm1, 1);
+
+    // Trigonometric
+    register_method(space, &math_obj, "sin", math_sin, 1);
+    register_method(space, &math_obj, "cos", math_cos, 1);
+    register_method(space, &math_obj, "tan", math_tan, 1);
+    register_method(space, &math_obj, "asin", math_asin, 1);
+    register_method(space, &math_obj, "acos", math_acos, 1);
+    register_method(space, &math_obj, "atan", math_atan, 1);
+    register_method(space, &math_obj, "atan2", math_atan2, 2);
+
+    // Hyperbolic
+    register_method(space, &math_obj, "sinh", math_sinh, 1);
+    register_method(space, &math_obj, "cosh", math_cosh, 1);
+    register_method(space, &math_obj, "tanh", math_tanh, 1);
+    register_method(space, &math_obj, "asinh", math_asinh, 1);
+    register_method(space, &math_obj, "acosh", math_acosh, 1);
+    register_method(space, &math_obj, "atanh", math_atanh, 1);
+
+    // Random
+    register_method(space, &math_obj, "random", math_random, 0);
+
+    debug_assert_eq!(
+        math_obj.borrow().properties.len(),
+        40,
+        "Math object capacity mismatch: expected 40, got {}",
+        math_obj.borrow().properties.len()
+    );
+
     math_obj
 }
 

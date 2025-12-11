@@ -1,50 +1,8 @@
 //! A cycle-breaking garbage collector for Rc-based object graphs.
 //!
-//! This library provides a mark-and-sweep garbage collector that can detect and break
+//! This module provides a mark-and-sweep garbage collector that can detect and break
 //! reference cycles in `Rc`-based object graphs. Users implement the [`Traceable`] trait
 //! on their types to define how the GC should traverse and unlink references.
-//!
-//! # Example
-//!
-//! ```rust
-//! use rc_cycle_breaking::{Gc, Space, Traceable, Tracer};
-//!
-//! // A node that can form cycles
-//! struct Node {
-//!     value: i32,
-//!     next: Option<Gc<Node>>,
-//! }
-//!
-//! impl Traceable for Node {
-//!     fn trace(&self, tracer: &mut Tracer<'_>) {
-//!         if let Some(next) = &self.next {
-//!             tracer.trace(next);
-//!         }
-//!     }
-//!
-//!     fn unlink(&mut self) {
-//!         self.next = None;
-//!     }
-//! }
-//!
-//! let mut space = Space::new();
-//!
-//! // Create nodes that form a cycle
-//! let node_a = space.alloc(Node { value: 1, next: None });
-//! let node_b = space.alloc(Node { value: 2, next: None });
-//!
-//! // Form a cycle: A -> B -> A
-//! node_a.borrow_mut().next = Some(node_b.clone());
-//! node_b.borrow_mut().next = Some(node_a.clone());
-//!
-//! // Without rooting, both nodes are unreachable
-//! drop(node_a);
-//! drop(node_b);
-//!
-//! // The GC will break the cycle and reclaim memory
-//! space.collect();
-//! assert_eq!(space.alive_count(), 0);
-//! ```
 
 use std::{
     cell::RefCell,
@@ -64,32 +22,6 @@ pub trait Traceable: 'static {
     /// this object holds. This allows the GC to traverse the object graph and
     /// mark reachable objects.
     ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use rc_cycle_breaking::{Gc, Traceable, Tracer};
-    ///
-    /// struct MyNode {
-    ///     child: Option<Gc<MyNode>>,
-    ///     items: Vec<Gc<MyNode>>,
-    /// }
-    ///
-    /// impl Traceable for MyNode {
-    ///     fn trace(&self, tracer: &mut Tracer<'_>) {
-    ///         if let Some(ref child) = self.child {
-    ///             tracer.trace(child);
-    ///         }
-    ///         for item in &self.items {
-    ///             tracer.trace(item);
-    ///         }
-    ///     }
-    ///
-    ///     fn unlink(&mut self) {
-    ///         self.child = None;
-    ///         self.items.clear();
-    ///     }
-    /// }
-    /// ```
     fn trace(&self, tracer: &mut Tracer<'_>);
 
     /// Unlink all [`Gc`] references held by this object.
@@ -97,33 +29,6 @@ pub trait Traceable: 'static {
     /// This method is called by the GC when breaking cycles. The implementation
     /// should set all [`Gc`] fields to `None` or clear collections containing
     /// [`Gc`] pointers.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use rc_cycle_breaking::{Gc, Traceable, Tracer};
-    ///
-    /// struct MyNode {
-    ///     child: Option<Gc<MyNode>>,
-    ///     items: Vec<Gc<MyNode>>,
-    /// }
-    ///
-    /// impl Traceable for MyNode {
-    ///     fn trace(&self, tracer: &mut Tracer<'_>) {
-    ///         if let Some(ref child) = self.child {
-    ///             tracer.trace(child);
-    ///         }
-    ///         for item in &self.items {
-    ///             tracer.trace(item);
-    ///         }
-    ///     }
-    ///
-    ///     fn unlink(&mut self) {
-    ///         self.child = None;
-    ///         self.items.clear();
-    ///     }
-    /// }
-    /// ```
     fn unlink(&mut self);
 }
 
@@ -176,17 +81,7 @@ impl<T: Traceable> Drop for GcData<T> {
 /// but with the ability to be traced and collected by a [`Space`] when it becomes
 /// part of an unreachable cycle.
 ///
-/// # Creating Gc pointers
-///
-/// `Gc` pointers are created through [`Space::alloc`]:
-///
-/// ```rust
-/// use rc_cycle_breaking::{Gc, GcBox, Space};
-///
-/// let mut space = Space::new();
-/// let gc_ptr: Gc<GcBox<i32>> = space.alloc(GcBox::new(42));
-/// assert_eq!(*gc_ptr.borrow().get(), 42);
-/// ```
+/// `Gc` pointers are created through [`Space::alloc`].
 pub struct Gc<T: Traceable> {
     ptr: Rc<GcData<T>>,
 }
@@ -196,6 +91,12 @@ impl<T: Traceable> Clone for Gc<T> {
         Gc {
             ptr: Rc::clone(&self.ptr),
         }
+    }
+}
+
+impl<T: Traceable + std::fmt::Debug> std::fmt::Debug for Gc<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Gc(id={}, {:?})", self.ptr.id, &*self.ptr.value.borrow())
     }
 }
 
@@ -219,6 +120,11 @@ impl<T: Traceable> Gc<T> {
     pub fn strong_count(&self) -> usize {
         Rc::strong_count(&self.ptr)
     }
+
+    /// Check if two Gc pointers point to the same object.
+    pub fn ptr_eq(this: &Self, other: &Self) -> bool {
+        Rc::ptr_eq(&this.ptr, &other.ptr)
+    }
 }
 
 struct WeakSpace<T: Traceable> {
@@ -227,10 +133,10 @@ struct WeakSpace<T: Traceable> {
 
 impl<T: Traceable> WeakSpace<T> {
     fn free_object(&self, id: usize) {
-        if let Some(internal) = self.internal.upgrade()
-            && let Ok(mut internal) = internal.try_borrow_mut()
-        {
-            internal.free_object(id);
+        if let Some(internal) = self.internal.upgrade() {
+            if let Ok(mut internal) = internal.try_borrow_mut() {
+                internal.free_object(id);
+            }
         }
     }
 }
@@ -247,26 +153,6 @@ struct SpaceInternal<T: Traceable> {
 /// `Space` is the central manager for GC objects. It tracks all allocated objects,
 /// maintains a set of root objects, and performs mark-and-sweep collection to
 /// identify and break unreachable cycles.
-///
-/// # Example
-///
-/// ```rust
-/// use rc_cycle_breaking::{GcBox, Space};
-///
-/// let mut space = Space::new();
-///
-/// // Allocate objects
-/// let obj = space.alloc(GcBox::new(42));
-///
-/// // Mark as root to prevent collection
-/// space.add_root(&obj);
-///
-/// // Run garbage collection
-/// space.collect();
-///
-/// // Object is still alive because it's rooted
-/// assert_eq!(space.alive_count(), 1);
-/// ```
 pub struct Space<T: Traceable> {
     internal: Rc<RefCell<SpaceInternal<T>>>,
 }
@@ -504,16 +390,16 @@ impl<T: Traceable> SpaceInternal<T> {
             self.objects.len()
         );
 
-        if let Some(slot) = self.objects.get_mut(id)
-            && slot.is_some()
-        {
-            *slot = None;
-            debug_assert!(
-                !self.free_list.contains(&id),
-                "Double-free detected: id {} is already in free list",
-                id
-            );
-            self.free_list.push(id);
+        if let Some(slot) = self.objects.get_mut(id) {
+            if slot.is_some() {
+                *slot = None;
+                debug_assert!(
+                    !self.free_list.contains(&id),
+                    "Double-free detected: id {} is already in free list",
+                    id
+                );
+                self.free_list.push(id);
+            }
         }
     }
 
@@ -585,7 +471,13 @@ impl<T: Traceable> SpaceInternal<T> {
             if let Some(weak) = slot {
                 if let Some(obj) = weak.upgrade() {
                     debug_assert_eq!(obj.id, id, "Object id {} doesn't match slot {}", obj.id, id);
-                    obj.unlink_object();
+                    // Only unlink if no external references exist (strong_count == 1 means
+                    // only this temporary `obj` reference exists, plus weak refs in space)
+                    // If strong_count > 1, external code still holds references to this object
+                    // so we should NOT clear its properties
+                    if Rc::strong_count(&obj) == 1 {
+                        obj.unlink_object();
+                    }
                 }
                 *slot = None;
                 debug_assert!(
@@ -606,27 +498,27 @@ impl<T: Traceable> SpaceInternal<T> {
     fn verify_invariants(&self) {
         // Verify all live objects have correct ids
         for (id, slot) in self.objects.iter().enumerate() {
-            if let Some(weak) = slot
-                && let Some(obj) = weak.upgrade()
-            {
-                debug_assert_eq!(
-                    obj.id, id,
-                    "Object at slot {} has mismatched id {}",
-                    id, obj.id
-                );
+            if let Some(weak) = slot {
+                if let Some(obj) = weak.upgrade() {
+                    debug_assert_eq!(
+                        obj.id, id,
+                        "Object at slot {} has mismatched id {}",
+                        id, obj.id
+                    );
+                }
             }
         }
 
         // Verify all live objects are marked (reachable)
         for (id, slot) in self.objects.iter().enumerate() {
-            if let Some(weak) = slot
-                && weak.upgrade().is_some()
-            {
-                debug_assert!(
-                    self.marked.contains(&id),
-                    "Live object {} should be marked as reachable",
-                    id
-                );
+            if let Some(weak) = slot {
+                if weak.upgrade().is_some() {
+                    debug_assert!(
+                        self.marked.contains(&id),
+                        "Live object {} should be marked as reachable",
+                        id
+                    );
+                }
             }
         }
 
@@ -661,16 +553,6 @@ impl<T: Traceable> SpaceInternal<T> {
 ///
 /// Use this when you want to store plain values in the GC without implementing
 /// [`Traceable`] manually.
-///
-/// # Example
-///
-/// ```rust
-/// use rc_cycle_breaking::{Space, GcBox};
-///
-/// let mut space = Space::new();
-/// let boxed = space.alloc(GcBox::new(42i32));
-/// assert_eq!(*boxed.borrow().get(), 42);
-/// ```
 pub struct GcBox<T> {
     value: T,
 }

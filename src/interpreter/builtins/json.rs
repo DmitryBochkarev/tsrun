@@ -1,21 +1,20 @@
 //! JSON built-in methods
 
 use crate::error::JsError;
+use crate::gc::Space;
 use crate::interpreter::Interpreter;
 use crate::value::{
-    create_array, create_object, register_method, ExoticObject, JsObjectRef, JsString, JsValue,
+    create_object, register_method, ExoticObject, JsObject, JsObjectRef, JsString, JsValue,
     PropertyKey,
 };
 
 /// Create JSON object with stringify and parse methods
-pub fn create_json_object() -> JsObjectRef {
-    let json = create_object();
-    {
-        let mut j = json.borrow_mut();
+pub fn create_json_object(space: &mut Space<JsObject>) -> JsObjectRef {
+    let json = create_object(space);
 
-        register_method(&mut j, "stringify", json_stringify, 1);
-        register_method(&mut j, "parse", json_parse, 1);
-    }
+    register_method(space, &json, "stringify", json_stringify, 1);
+    register_method(space, &json, "parse", json_parse, 1);
+
     json
 }
 
@@ -88,7 +87,7 @@ pub fn json_stringify(
 }
 
 pub fn json_parse(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
 ) -> Result<JsValue, JsError> {
@@ -98,7 +97,7 @@ pub fn json_parse(
     let json: serde_json::Value = serde_json::from_str(text_str.as_str())
         .map_err(|e| JsError::syntax_error(format!("JSON parse error: {}", e), 0, 0))?;
 
-    json_to_js_value(&json)
+    json_to_js_value_with_interp(interp, &json)
 }
 
 pub fn js_value_to_json(value: &JsValue) -> Result<serde_json::Value, JsError> {
@@ -167,21 +166,29 @@ pub fn js_value_to_json(value: &JsValue) -> Result<serde_json::Value, JsError> {
     })
 }
 
-pub fn json_to_js_value(json: &serde_json::Value) -> Result<JsValue, JsError> {
+/// Convert a serde_json value to a JsValue using the interpreter's GC space
+pub fn json_to_js_value_with_interp(
+    interp: &mut Interpreter,
+    json: &serde_json::Value,
+) -> Result<JsValue, JsError> {
     Ok(match json {
         serde_json::Value::Null => JsValue::Null,
         serde_json::Value::Bool(b) => JsValue::Boolean(*b),
         serde_json::Value::Number(n) => JsValue::Number(n.as_f64().unwrap_or(0.0)),
         serde_json::Value::String(s) => JsValue::String(JsString::from(s.clone())),
         serde_json::Value::Array(arr) => {
-            let elements: Result<Vec<_>, _> = arr.iter().map(json_to_js_value).collect();
-            JsValue::Object(create_array(elements?))
+            let mut elements = Vec::with_capacity(arr.len());
+            for item in arr {
+                elements.push(json_to_js_value_with_interp(interp, item)?);
+            }
+            JsValue::Object(interp.create_array(elements))
         }
         serde_json::Value::Object(map) => {
-            let obj = create_object();
+            let obj = interp.create_object();
             for (key, value) in map {
+                let js_value = json_to_js_value_with_interp(interp, value)?;
                 obj.borrow_mut()
-                    .set_property(PropertyKey::from(key.as_str()), json_to_js_value(value)?);
+                    .set_property(PropertyKey::from(key.as_str()), js_value);
             }
             JsValue::Object(obj)
         }

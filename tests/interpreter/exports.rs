@@ -1085,3 +1085,21 @@ fn test_export_enum() {
         panic!("Expected Status to be an object");
     }
 }
+
+#[test]
+fn test_json_to_js_object_property_access_via_call_function() {
+    // Verify that JSON objects converted to JsValue via call_function preserve properties
+    let source = r#"
+        export function getValueProp(obj: { value: number }): number {
+            return obj.value;
+        }
+    "#;
+
+    let mut runtime = Runtime::new();
+    run_eval(&mut runtime, source);
+
+    let result = runtime
+        .call_function("getValueProp", &serde_json::json!({"value": 21}))
+        .unwrap();
+    assert_eq!(result, JsValue::Number(21.0));
+}
