@@ -1,78 +1,57 @@
 //! Number built-in methods
 
 use crate::error::JsError;
-use crate::gc::Space;
 use crate::interpreter::Interpreter;
-use crate::value::{
-    create_object, register_method, JsObject, JsObjectRef, JsString, JsValue, PropertyKey,
-};
+use crate::value::{create_object, JsObjectRef, JsString, JsValue};
 
 use super::global::{global_parse_float, global_parse_int};
 
 /// Create Number.prototype with toFixed, toString, toPrecision, toExponential
-pub fn create_number_prototype(space: &mut Space<JsObject>) -> JsObjectRef {
-    let proto = create_object(space);
+pub fn create_number_prototype(interp: &mut Interpreter) -> JsObjectRef {
+    let proto = create_object(&mut interp.gc_space);
 
-    register_method(space, &proto, "toFixed", number_to_fixed, 1);
-    register_method(space, &proto, "toString", number_to_string, 1);
-    register_method(space, &proto, "toPrecision", number_to_precision, 1);
-    register_method(space, &proto, "toExponential", number_to_exponential, 1);
+    interp.register_method(&proto, "toFixed", number_to_fixed, 1);
+    interp.register_method(&proto, "toString", number_to_string, 1);
+    interp.register_method(&proto, "toPrecision", number_to_precision, 1);
+    interp.register_method(&proto, "toExponential", number_to_exponential, 1);
 
     proto
 }
 
 /// Create Number constructor with static methods and constants
-pub fn create_number_constructor(
-    space: &mut Space<JsObject>,
-    number_prototype: &JsObjectRef,
-) -> JsObjectRef {
-    let constructor = create_object(space);
+pub fn create_number_constructor(interp: &mut Interpreter) -> JsObjectRef {
+    let constructor = create_object(&mut interp.gc_space);
 
     // Static methods
-    register_method(space, &constructor, "isNaN", number_is_nan, 1);
-    register_method(space, &constructor, "isFinite", number_is_finite, 1);
-    register_method(space, &constructor, "isInteger", number_is_integer, 1);
-    register_method(
-        space,
-        &constructor,
-        "isSafeInteger",
-        number_is_safe_integer,
-        1,
-    );
-    register_method(space, &constructor, "parseInt", global_parse_int, 2);
-    register_method(space, &constructor, "parseFloat", global_parse_float, 1);
+    interp.register_method(&constructor, "isNaN", number_is_nan, 1);
+    interp.register_method(&constructor, "isFinite", number_is_finite, 1);
+    interp.register_method(&constructor, "isInteger", number_is_integer, 1);
+    interp.register_method(&constructor, "isSafeInteger", number_is_safe_integer, 1);
+    interp.register_method(&constructor, "parseInt", global_parse_int, 2);
+    interp.register_method(&constructor, "parseFloat", global_parse_float, 1);
 
-    // Constants
+    // Constants - create keys first
+    let pos_inf_key = interp.key("POSITIVE_INFINITY");
+    let neg_inf_key = interp.key("NEGATIVE_INFINITY");
+    let max_val_key = interp.key("MAX_VALUE");
+    let min_val_key = interp.key("MIN_VALUE");
+    let max_safe_key = interp.key("MAX_SAFE_INTEGER");
+    let min_safe_key = interp.key("MIN_SAFE_INTEGER");
+    let epsilon_key = interp.key("EPSILON");
+    let nan_key = interp.key("NaN");
+    let proto_key = interp.key("prototype");
+
     {
         let mut num = constructor.borrow_mut();
-        num.set_property(
-            PropertyKey::from("POSITIVE_INFINITY"),
-            JsValue::Number(f64::INFINITY),
-        );
-        num.set_property(
-            PropertyKey::from("NEGATIVE_INFINITY"),
-            JsValue::Number(f64::NEG_INFINITY),
-        );
-        num.set_property(PropertyKey::from("MAX_VALUE"), JsValue::Number(f64::MAX));
-        num.set_property(
-            PropertyKey::from("MIN_VALUE"),
-            JsValue::Number(f64::MIN_POSITIVE),
-        );
-        num.set_property(
-            PropertyKey::from("MAX_SAFE_INTEGER"),
-            JsValue::Number(9007199254740991.0),
-        );
-        num.set_property(
-            PropertyKey::from("MIN_SAFE_INTEGER"),
-            JsValue::Number(-9007199254740991.0),
-        );
-        num.set_property(PropertyKey::from("EPSILON"), JsValue::Number(f64::EPSILON));
-        num.set_property(PropertyKey::from("NaN"), JsValue::Number(f64::NAN));
-
-        num.set_property(
-            PropertyKey::from("prototype"),
-            JsValue::Object(number_prototype.clone()),
-        );
+        num.set_property(pos_inf_key, JsValue::Number(f64::INFINITY));
+        num.set_property(neg_inf_key, JsValue::Number(f64::NEG_INFINITY));
+        num.set_property(max_val_key, JsValue::Number(f64::MAX));
+        num.set_property(min_val_key, JsValue::Number(f64::MIN_POSITIVE));
+        num.set_property(max_safe_key, JsValue::Number(9007199254740991.0));
+        num.set_property(min_safe_key, JsValue::Number(-9007199254740991.0));
+        num.set_property(epsilon_key, JsValue::Number(f64::EPSILON));
+        num.set_property(nan_key, JsValue::Number(f64::NAN));
+        num.set_property(proto_key, JsValue::Object(interp.number_prototype.clone()));
     }
     constructor
 }

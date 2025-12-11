@@ -1,20 +1,19 @@
 //! Object built-in methods
 
 use crate::error::JsError;
-use crate::gc::Space;
 use crate::interpreter::Interpreter;
 use crate::value::{
-    create_function, create_object_with_capacity, register_method, ExoticObject, JsFunction,
-    JsObject, JsObjectRef, JsString, JsValue, NativeFunction, Property, PropertyKey,
+    create_function, create_object_with_capacity, ExoticObject, JsFunction, JsObjectRef, JsString,
+    JsValue, NativeFunction, Property, PropertyKey,
 };
 
 /// Create Object.prototype with hasOwnProperty, toString, valueOf
-pub fn create_object_prototype(space: &mut Space<JsObject>) -> JsObjectRef {
-    let proto = create_object_with_capacity(space, 4);
+pub fn create_object_prototype(interp: &mut Interpreter) -> JsObjectRef {
+    let proto = create_object_with_capacity(&mut interp.gc_space, 4);
 
-    register_method(space, &proto, "hasOwnProperty", object_has_own_property, 1);
-    register_method(space, &proto, "toString", object_to_string, 0);
-    register_method(space, &proto, "valueOf", object_value_of, 0);
+    interp.register_method(&proto, "hasOwnProperty", object_has_own_property, 1);
+    interp.register_method(&proto, "toString", object_to_string, 0);
+    interp.register_method(&proto, "valueOf", object_value_of, 0);
 
     debug_assert_eq!(
         proto.borrow().properties.len(),
@@ -27,9 +26,10 @@ pub fn create_object_prototype(space: &mut Space<JsObject>) -> JsObjectRef {
 }
 
 /// Create Object constructor with static methods (keys, values, entries, assign, etc.)
-pub fn create_object_constructor(space: &mut Space<JsObject>) -> JsObjectRef {
+pub fn create_object_constructor(interp: &mut Interpreter) -> JsObjectRef {
     let constructor = create_function(
-        space,
+        &mut interp.gc_space,
+        &mut interp.string_dict,
         JsFunction::Native(NativeFunction {
             name: "Object".to_string(),
             func: object_constructor,
@@ -38,55 +38,45 @@ pub fn create_object_constructor(space: &mut Space<JsObject>) -> JsObjectRef {
     );
 
     // Property enumeration
-    register_method(space, &constructor, "keys", object_keys, 1);
-    register_method(space, &constructor, "values", object_values, 1);
-    register_method(space, &constructor, "entries", object_entries, 1);
+    interp.register_method(&constructor, "keys", object_keys, 1);
+    interp.register_method(&constructor, "values", object_values, 1);
+    interp.register_method(&constructor, "entries", object_entries, 1);
 
     // Object manipulation
-    register_method(space, &constructor, "assign", object_assign, 2);
-    register_method(space, &constructor, "fromEntries", object_from_entries, 1);
-    register_method(space, &constructor, "create", object_create, 1);
+    interp.register_method(&constructor, "assign", object_assign, 2);
+    interp.register_method(&constructor, "fromEntries", object_from_entries, 1);
+    interp.register_method(&constructor, "create", object_create, 1);
 
     // Property checking
-    register_method(space, &constructor, "hasOwn", object_has_own, 2);
+    interp.register_method(&constructor, "hasOwn", object_has_own, 2);
 
     // Freezing/sealing
-    register_method(space, &constructor, "freeze", object_freeze, 1);
-    register_method(space, &constructor, "isFrozen", object_is_frozen, 1);
-    register_method(space, &constructor, "seal", object_seal, 1);
-    register_method(space, &constructor, "isSealed", object_is_sealed, 1);
+    interp.register_method(&constructor, "freeze", object_freeze, 1);
+    interp.register_method(&constructor, "isFrozen", object_is_frozen, 1);
+    interp.register_method(&constructor, "seal", object_seal, 1);
+    interp.register_method(&constructor, "isSealed", object_is_sealed, 1);
 
     // Property descriptors
-    register_method(
-        space,
+    interp.register_method(
         &constructor,
         "getOwnPropertyDescriptor",
         object_get_own_property_descriptor,
         2,
     );
-    register_method(
-        space,
+    interp.register_method(
         &constructor,
         "getOwnPropertyNames",
         object_get_own_property_names,
         1,
     );
-    register_method(
-        space,
+    interp.register_method(
         &constructor,
         "getOwnPropertySymbols",
         object_get_own_property_symbols,
         1,
     );
-    register_method(
-        space,
-        &constructor,
-        "defineProperty",
-        object_define_property,
-        3,
-    );
-    register_method(
-        space,
+    interp.register_method(&constructor, "defineProperty", object_define_property, 3);
+    interp.register_method(
         &constructor,
         "defineProperties",
         object_define_properties,
@@ -94,20 +84,8 @@ pub fn create_object_constructor(space: &mut Space<JsObject>) -> JsObjectRef {
     );
 
     // Prototype manipulation
-    register_method(
-        space,
-        &constructor,
-        "getPrototypeOf",
-        object_get_prototype_of,
-        1,
-    );
-    register_method(
-        space,
-        &constructor,
-        "setPrototypeOf",
-        object_set_prototype_of,
-        2,
-    );
+    interp.register_method(&constructor, "getPrototypeOf", object_get_prototype_of, 1);
+    interp.register_method(&constructor, "setPrototypeOf", object_set_prototype_of, 2);
 
     constructor
 }

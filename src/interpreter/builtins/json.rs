@@ -1,19 +1,15 @@
 //! JSON built-in methods
 
 use crate::error::JsError;
-use crate::gc::Space;
 use crate::interpreter::Interpreter;
-use crate::value::{
-    create_object, register_method, ExoticObject, JsObject, JsObjectRef, JsString, JsValue,
-    PropertyKey,
-};
+use crate::value::{create_object, ExoticObject, JsObjectRef, JsString, JsValue, PropertyKey};
 
 /// Create JSON object with stringify and parse methods
-pub fn create_json_object(space: &mut Space<JsObject>) -> JsObjectRef {
-    let json = create_object(space);
+pub fn create_json_object(interp: &mut Interpreter) -> JsObjectRef {
+    let json = create_object(&mut interp.gc_space);
 
-    register_method(space, &json, "stringify", json_stringify, 1);
-    register_method(space, &json, "parse", json_parse, 1);
+    interp.register_method(&json, "stringify", json_stringify, 1);
+    interp.register_method(&json, "parse", json_parse, 1);
 
     json
 }

@@ -1,20 +1,18 @@
 //! Function.prototype built-in methods (call, apply, bind)
 
 use crate::error::JsError;
-use crate::gc::Space;
 use crate::interpreter::Interpreter;
 use crate::value::{
-    create_object, register_method, BoundFunctionData, ExoticObject, JsFunction, JsObject,
-    JsObjectRef, JsValue, PropertyKey,
+    create_object, BoundFunctionData, ExoticObject, JsFunction, JsObjectRef, JsValue, PropertyKey,
 };
 
 /// Create Function.prototype with call, apply, bind methods
-pub fn create_function_prototype(space: &mut Space<JsObject>) -> JsObjectRef {
-    let proto = create_object(space);
+pub fn create_function_prototype(interp: &mut Interpreter) -> JsObjectRef {
+    let proto = create_object(&mut interp.gc_space);
 
-    register_method(space, &proto, "call", function_call, 1);
-    register_method(space, &proto, "apply", function_apply, 2);
-    register_method(space, &proto, "bind", function_bind, 1);
+    interp.register_method(&proto, "call", function_call, 1);
+    interp.register_method(&proto, "apply", function_apply, 2);
+    interp.register_method(&proto, "bind", function_bind, 1);
 
     proto
 }

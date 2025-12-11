@@ -1,34 +1,34 @@
 //! Map built-in methods
 
 use crate::error::JsError;
-use crate::gc::Space;
 use crate::interpreter::Interpreter;
 use crate::value::{
-    create_function, create_object, register_method, ExoticObject, JsFunction, JsObject,
-    JsObjectRef, JsValue, NativeFunction, PropertyKey,
+    create_function, create_object, ExoticObject, JsFunction, JsObjectRef, JsValue, NativeFunction,
+    PropertyKey,
 };
 
 /// Create Map.prototype with get, set, has, delete, clear, forEach methods
-pub fn create_map_prototype(space: &mut Space<JsObject>) -> JsObjectRef {
-    let proto = create_object(space);
+pub fn create_map_prototype(interp: &mut Interpreter) -> JsObjectRef {
+    let proto = create_object(&mut interp.gc_space);
 
-    register_method(space, &proto, "get", map_get, 1);
-    register_method(space, &proto, "set", map_set, 2);
-    register_method(space, &proto, "has", map_has, 1);
-    register_method(space, &proto, "delete", map_delete, 1);
-    register_method(space, &proto, "clear", map_clear, 0);
-    register_method(space, &proto, "forEach", map_foreach, 1);
-    register_method(space, &proto, "keys", map_keys, 0);
-    register_method(space, &proto, "values", map_values, 0);
-    register_method(space, &proto, "entries", map_entries, 0);
+    interp.register_method(&proto, "get", map_get, 1);
+    interp.register_method(&proto, "set", map_set, 2);
+    interp.register_method(&proto, "has", map_has, 1);
+    interp.register_method(&proto, "delete", map_delete, 1);
+    interp.register_method(&proto, "clear", map_clear, 0);
+    interp.register_method(&proto, "forEach", map_foreach, 1);
+    interp.register_method(&proto, "keys", map_keys, 0);
+    interp.register_method(&proto, "values", map_values, 0);
+    interp.register_method(&proto, "entries", map_entries, 0);
 
     proto
 }
 
 /// Create Map constructor
-pub fn create_map_constructor(space: &mut Space<JsObject>) -> JsObjectRef {
+pub fn create_map_constructor(interp: &mut Interpreter) -> JsObjectRef {
     create_function(
-        space,
+        &mut interp.gc_space,
+        &mut interp.string_dict,
         JsFunction::Native(NativeFunction {
             name: "Map".to_string(),
             func: map_constructor,

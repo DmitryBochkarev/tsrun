@@ -4,32 +4,28 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::error::JsError;
-use crate::gc::Space;
 use crate::interpreter::Interpreter;
 use crate::value::{
-    create_function, create_object, register_method, CheapClone, ExoticObject, JsFunction,
-    JsObject, JsObjectRef, JsValue, NativeFunction, PromiseHandler, PromiseState, PromiseStatus,
-    PropertyKey,
+    create_function, create_object, CheapClone, ExoticObject, JsFunction, JsObjectRef, JsValue,
+    NativeFunction, PromiseHandler, PromiseState, PromiseStatus, PropertyKey,
 };
 
 /// Create Promise.prototype with then, catch, finally methods
-pub fn create_promise_prototype(space: &mut Space<JsObject>) -> JsObjectRef {
-    let proto = create_object(space);
+pub fn create_promise_prototype(interp: &mut Interpreter) -> JsObjectRef {
+    let proto = create_object(&mut interp.gc_space);
 
-    register_method(space, &proto, "then", promise_then, 2);
-    register_method(space, &proto, "catch", promise_catch, 1);
-    register_method(space, &proto, "finally", promise_finally, 1);
+    interp.register_method(&proto, "then", promise_then, 2);
+    interp.register_method(&proto, "catch", promise_catch, 1);
+    interp.register_method(&proto, "finally", promise_finally, 1);
 
     proto
 }
 
 /// Create Promise constructor with static methods
-pub fn create_promise_constructor(
-    space: &mut Space<JsObject>,
-    promise_prototype: &JsObjectRef,
-) -> JsObjectRef {
+pub fn create_promise_constructor(interp: &mut Interpreter) -> JsObjectRef {
     let ctor = create_function(
-        space,
+        &mut interp.gc_space,
+        &mut interp.string_dict,
         JsFunction::Native(NativeFunction {
             name: "Promise".to_string(),
             func: promise_constructor,
@@ -37,18 +33,17 @@ pub fn create_promise_constructor(
         }),
     );
 
-    ctor.borrow_mut().set_property(
-        PropertyKey::from("prototype"),
-        JsValue::Object(promise_prototype.clone()),
-    );
+    let proto_key = interp.key("prototype");
+    ctor.borrow_mut()
+        .set_property(proto_key, JsValue::Object(interp.promise_prototype.clone()));
 
     // Static methods
-    register_method(space, &ctor, "resolve", promise_resolve_static, 1);
-    register_method(space, &ctor, "reject", promise_reject_static, 1);
-    register_method(space, &ctor, "all", promise_all, 1);
-    register_method(space, &ctor, "race", promise_race, 1);
-    register_method(space, &ctor, "allSettled", promise_allsettled, 1);
-    register_method(space, &ctor, "any", promise_any, 1);
+    interp.register_method(&ctor, "resolve", promise_resolve_static, 1);
+    interp.register_method(&ctor, "reject", promise_reject_static, 1);
+    interp.register_method(&ctor, "all", promise_all, 1);
+    interp.register_method(&ctor, "race", promise_race, 1);
+    interp.register_method(&ctor, "allSettled", promise_allsettled, 1);
+    interp.register_method(&ctor, "any", promise_any, 1);
 
     ctor
 }

@@ -1,43 +1,39 @@
 //! RegExp built-in methods
 
 use crate::error::JsError;
-use crate::gc::Space;
 use crate::interpreter::Interpreter;
 use crate::value::{
-    create_function, create_object, register_method, ExoticObject, JsFunction, JsObject,
-    JsObjectRef, JsString, JsValue, NativeFunction, PropertyKey,
+    create_function, create_object, ExoticObject, JsFunction, JsObjectRef, JsString, JsValue,
+    NativeFunction, PropertyKey,
 };
 
 /// Create RegExp.prototype with test and exec methods
-pub fn create_regexp_prototype(space: &mut Space<JsObject>) -> JsObjectRef {
-    let proto = create_object(space);
+pub fn create_regexp_prototype(interp: &mut Interpreter) -> JsObjectRef {
+    let proto = create_object(&mut interp.gc_space);
 
-    register_method(space, &proto, "test", regexp_test, 1);
-    register_method(space, &proto, "exec", regexp_exec, 1);
+    interp.register_method(&proto, "test", regexp_test, 1);
+    interp.register_method(&proto, "exec", regexp_exec, 1);
 
     proto
 }
 
 /// Create RegExp constructor
-pub fn create_regexp_constructor(
-    space: &mut Space<JsObject>,
-    regexp_prototype: &JsObjectRef,
-) -> JsObjectRef {
+pub fn create_regexp_constructor(interp: &mut Interpreter) -> JsObjectRef {
     let constructor = create_function(
-        space,
+        &mut interp.gc_space,
+        &mut interp.string_dict,
         JsFunction::Native(NativeFunction {
             name: "RegExp".to_string(),
             func: regexp_constructor,
             arity: 2,
         }),
     );
-    {
-        let mut re = constructor.borrow_mut();
-        re.set_property(
-            PropertyKey::from("prototype"),
-            JsValue::Object(regexp_prototype.clone()),
-        );
-    }
+
+    let proto_key = interp.key("prototype");
+    constructor
+        .borrow_mut()
+        .set_property(proto_key, JsValue::Object(interp.regexp_prototype.clone()));
+
     constructor
 }
 

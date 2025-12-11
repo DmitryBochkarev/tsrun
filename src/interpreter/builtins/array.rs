@@ -1,62 +1,61 @@
 //! Array built-in methods
 
 use crate::error::JsError;
-use crate::gc::Space;
 use crate::interpreter::Interpreter;
 use crate::value::{
-    create_function, create_object_with_capacity, register_method, ExoticObject, JsFunction,
-    JsObject, JsObjectRef, JsString, JsValue, NativeFunction, Property, PropertyKey,
+    create_function, create_object_with_capacity, ExoticObject, JsFunction, JsObjectRef, JsString,
+    JsValue, NativeFunction, Property, PropertyKey,
 };
 
 /// Create Array.prototype with all array methods
-pub fn create_array_prototype(space: &mut Space<JsObject>) -> JsObjectRef {
-    let proto = create_object_with_capacity(space, 36);
+pub fn create_array_prototype(interp: &mut Interpreter) -> JsObjectRef {
+    let proto = create_object_with_capacity(&mut interp.gc_space, 36);
 
     // Mutating methods
-    register_method(space, &proto, "push", array_push, 1);
-    register_method(space, &proto, "pop", array_pop, 0);
-    register_method(space, &proto, "shift", array_shift, 0);
-    register_method(space, &proto, "unshift", array_unshift, 1);
-    register_method(space, &proto, "splice", array_splice, 2);
-    register_method(space, &proto, "reverse", array_reverse, 0);
-    register_method(space, &proto, "sort", array_sort, 1);
-    register_method(space, &proto, "fill", array_fill, 3);
-    register_method(space, &proto, "copyWithin", array_copy_within, 3);
+    interp.register_method(&proto, "push", array_push, 1);
+    interp.register_method(&proto, "pop", array_pop, 0);
+    interp.register_method(&proto, "shift", array_shift, 0);
+    interp.register_method(&proto, "unshift", array_unshift, 1);
+    interp.register_method(&proto, "splice", array_splice, 2);
+    interp.register_method(&proto, "reverse", array_reverse, 0);
+    interp.register_method(&proto, "sort", array_sort, 1);
+    interp.register_method(&proto, "fill", array_fill, 3);
+    interp.register_method(&proto, "copyWithin", array_copy_within, 3);
 
     // Accessor methods
-    register_method(space, &proto, "at", array_at, 1);
-    register_method(space, &proto, "concat", array_concat, 1);
-    register_method(space, &proto, "slice", array_slice, 2);
-    register_method(space, &proto, "join", array_join, 1);
-    register_method(space, &proto, "indexOf", array_index_of, 1);
-    register_method(space, &proto, "lastIndexOf", array_last_index_of, 1);
-    register_method(space, &proto, "includes", array_includes, 1);
+    interp.register_method(&proto, "at", array_at, 1);
+    interp.register_method(&proto, "concat", array_concat, 1);
+    interp.register_method(&proto, "slice", array_slice, 2);
+    interp.register_method(&proto, "join", array_join, 1);
+    interp.register_method(&proto, "indexOf", array_index_of, 1);
+    interp.register_method(&proto, "lastIndexOf", array_last_index_of, 1);
+    interp.register_method(&proto, "includes", array_includes, 1);
 
     // Iteration methods
-    register_method(space, &proto, "forEach", array_foreach, 1);
-    register_method(space, &proto, "map", array_map, 1);
-    register_method(space, &proto, "filter", array_filter, 1);
-    register_method(space, &proto, "reduce", array_reduce, 1);
-    register_method(space, &proto, "reduceRight", array_reduce_right, 1);
-    register_method(space, &proto, "find", array_find, 1);
-    register_method(space, &proto, "findIndex", array_find_index, 1);
-    register_method(space, &proto, "findLast", array_find_last, 1);
-    register_method(space, &proto, "findLastIndex", array_find_last_index, 1);
-    register_method(space, &proto, "every", array_every, 1);
-    register_method(space, &proto, "some", array_some, 1);
-    register_method(space, &proto, "flat", array_flat, 1);
-    register_method(space, &proto, "flatMap", array_flat_map, 1);
+    interp.register_method(&proto, "forEach", array_foreach, 1);
+    interp.register_method(&proto, "map", array_map, 1);
+    interp.register_method(&proto, "filter", array_filter, 1);
+    interp.register_method(&proto, "reduce", array_reduce, 1);
+    interp.register_method(&proto, "reduceRight", array_reduce_right, 1);
+    interp.register_method(&proto, "find", array_find, 1);
+    interp.register_method(&proto, "findIndex", array_find_index, 1);
+    interp.register_method(&proto, "findLast", array_find_last, 1);
+    interp.register_method(&proto, "findLastIndex", array_find_last_index, 1);
+    interp.register_method(&proto, "every", array_every, 1);
+    interp.register_method(&proto, "some", array_some, 1);
+    interp.register_method(&proto, "flat", array_flat, 1);
+    interp.register_method(&proto, "flatMap", array_flat_map, 1);
 
     // Non-mutating methods (ES2023+)
-    register_method(space, &proto, "toReversed", array_to_reversed, 0);
-    register_method(space, &proto, "toSorted", array_to_sorted, 1);
-    register_method(space, &proto, "toSpliced", array_to_spliced, 2);
-    register_method(space, &proto, "with", array_with, 2);
+    interp.register_method(&proto, "toReversed", array_to_reversed, 0);
+    interp.register_method(&proto, "toSorted", array_to_sorted, 1);
+    interp.register_method(&proto, "toSpliced", array_to_spliced, 2);
+    interp.register_method(&proto, "with", array_with, 2);
 
     // Iterator methods
-    register_method(space, &proto, "keys", array_keys, 0);
-    register_method(space, &proto, "values", array_values, 0);
-    register_method(space, &proto, "entries", array_entries, 0);
+    interp.register_method(&proto, "keys", array_keys, 0);
+    interp.register_method(&proto, "values", array_values, 0);
+    interp.register_method(&proto, "entries", array_entries, 0);
 
     debug_assert_eq!(
         proto.borrow().properties.len(),
@@ -69,12 +68,10 @@ pub fn create_array_prototype(space: &mut Space<JsObject>) -> JsObjectRef {
 }
 
 /// Create Array constructor with static methods (isArray, of, from)
-pub fn create_array_constructor(
-    space: &mut Space<JsObject>,
-    array_prototype: &JsObjectRef,
-) -> JsObjectRef {
+pub fn create_array_constructor(interp: &mut Interpreter) -> JsObjectRef {
     let constructor = create_function(
-        space,
+        &mut interp.gc_space,
+        &mut interp.string_dict,
         JsFunction::Native(NativeFunction {
             name: "Array".to_string(),
             func: array_constructor_fn,
@@ -82,14 +79,14 @@ pub fn create_array_constructor(
         }),
     );
 
-    register_method(space, &constructor, "isArray", array_is_array, 1);
-    register_method(space, &constructor, "of", array_of, 0);
-    register_method(space, &constructor, "from", array_from, 1);
+    interp.register_method(&constructor, "isArray", array_is_array, 1);
+    interp.register_method(&constructor, "of", array_of, 0);
+    interp.register_method(&constructor, "from", array_from, 1);
 
-    constructor.borrow_mut().set_property(
-        PropertyKey::from("prototype"),
-        JsValue::Object(array_prototype.clone()),
-    );
+    let proto_key = interp.key("prototype");
+    constructor
+        .borrow_mut()
+        .set_property(proto_key, JsValue::Object(interp.array_prototype.clone()));
 
     constructor
 }

@@ -4,26 +4,25 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::error::JsError;
-use crate::gc::Space;
 use crate::interpreter::Interpreter;
 use crate::value::{
-    create_object, register_method, ExoticObject, GeneratorState, GeneratorStatus, JsObject,
-    JsObjectRef, JsString, JsValue, PropertyKey,
+    create_object, ExoticObject, GeneratorState, GeneratorStatus, JsObjectRef, JsString, JsValue,
+    PropertyKey,
 };
 
 /// Create Generator.prototype
-pub fn create_generator_prototype(space: &mut Space<JsObject>) -> JsObjectRef {
-    let proto = create_object(space);
+pub fn create_generator_prototype(interp: &mut Interpreter) -> JsObjectRef {
+    let proto = create_object(&mut interp.gc_space);
 
     // Set Symbol.toStringTag
-    proto.borrow_mut().set_property(
-        PropertyKey::from("@@toStringTag"),
-        JsValue::String(JsString::from("Generator")),
-    );
+    let tag_key = interp.key("@@toStringTag");
+    proto
+        .borrow_mut()
+        .set_property(tag_key, JsValue::String(JsString::from("Generator")));
 
-    register_method(space, &proto, "next", generator_next, 1);
-    register_method(space, &proto, "return", generator_return, 1);
-    register_method(space, &proto, "throw", generator_throw, 1);
+    interp.register_method(&proto, "next", generator_next, 1);
+    interp.register_method(&proto, "return", generator_return, 1);
+    interp.register_method(&proto, "throw", generator_throw, 1);
 
     proto
 }

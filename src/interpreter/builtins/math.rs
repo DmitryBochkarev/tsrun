@@ -1,95 +1,83 @@
 //! Math built-in methods
 
 use crate::error::JsError;
-use crate::gc::Space;
 use crate::interpreter::Interpreter;
-use crate::value::{
-    create_object_with_capacity, register_method, JsObject, JsObjectRef, JsValue, PropertyKey,
-};
+use crate::value::{create_object_with_capacity, JsObjectRef, JsValue};
 
 /// Create Math object with all math methods and constants
-pub fn create_math_object(space: &mut Space<JsObject>) -> JsObjectRef {
-    let math_obj = create_object_with_capacity(space, 40);
+pub fn create_math_object(interp: &mut Interpreter) -> JsObjectRef {
+    let math_obj = create_object_with_capacity(&mut interp.gc_space, 40);
 
-    // Constants
+    // Constants - create keys first
+    let pi_key = interp.key("PI");
+    let e_key = interp.key("E");
+    let ln2_key = interp.key("LN2");
+    let ln10_key = interp.key("LN10");
+    let log2e_key = interp.key("LOG2E");
+    let log10e_key = interp.key("LOG10E");
+    let sqrt2_key = interp.key("SQRT2");
+    let sqrt1_2_key = interp.key("SQRT1_2");
+
     {
         let mut math = math_obj.borrow_mut();
+        math.set_property(pi_key, JsValue::Number(std::f64::consts::PI));
+        math.set_property(e_key, JsValue::Number(std::f64::consts::E));
+        math.set_property(ln2_key, JsValue::Number(std::f64::consts::LN_2));
+        math.set_property(ln10_key, JsValue::Number(std::f64::consts::LN_10));
+        math.set_property(log2e_key, JsValue::Number(std::f64::consts::LOG2_E));
+        math.set_property(log10e_key, JsValue::Number(std::f64::consts::LOG10_E));
+        math.set_property(sqrt2_key, JsValue::Number(std::f64::consts::SQRT_2));
         math.set_property(
-            PropertyKey::from("PI"),
-            JsValue::Number(std::f64::consts::PI),
-        );
-        math.set_property(PropertyKey::from("E"), JsValue::Number(std::f64::consts::E));
-        math.set_property(
-            PropertyKey::from("LN2"),
-            JsValue::Number(std::f64::consts::LN_2),
-        );
-        math.set_property(
-            PropertyKey::from("LN10"),
-            JsValue::Number(std::f64::consts::LN_10),
-        );
-        math.set_property(
-            PropertyKey::from("LOG2E"),
-            JsValue::Number(std::f64::consts::LOG2_E),
-        );
-        math.set_property(
-            PropertyKey::from("LOG10E"),
-            JsValue::Number(std::f64::consts::LOG10_E),
-        );
-        math.set_property(
-            PropertyKey::from("SQRT2"),
-            JsValue::Number(std::f64::consts::SQRT_2),
-        );
-        math.set_property(
-            PropertyKey::from("SQRT1_2"),
+            sqrt1_2_key,
             JsValue::Number(std::f64::consts::FRAC_1_SQRT_2),
         );
     }
 
     // Rounding methods
-    register_method(space, &math_obj, "abs", math_abs, 1);
-    register_method(space, &math_obj, "floor", math_floor, 1);
-    register_method(space, &math_obj, "ceil", math_ceil, 1);
-    register_method(space, &math_obj, "round", math_round, 1);
-    register_method(space, &math_obj, "trunc", math_trunc, 1);
-    register_method(space, &math_obj, "sign", math_sign, 1);
+    interp.register_method(&math_obj, "abs", math_abs, 1);
+    interp.register_method(&math_obj, "floor", math_floor, 1);
+    interp.register_method(&math_obj, "ceil", math_ceil, 1);
+    interp.register_method(&math_obj, "round", math_round, 1);
+    interp.register_method(&math_obj, "trunc", math_trunc, 1);
+    interp.register_method(&math_obj, "sign", math_sign, 1);
 
     // Min/max
-    register_method(space, &math_obj, "min", math_min, 2);
-    register_method(space, &math_obj, "max", math_max, 2);
+    interp.register_method(&math_obj, "min", math_min, 2);
+    interp.register_method(&math_obj, "max", math_max, 2);
 
     // Power and root functions
-    register_method(space, &math_obj, "pow", math_pow, 2);
-    register_method(space, &math_obj, "sqrt", math_sqrt, 1);
-    register_method(space, &math_obj, "cbrt", math_cbrt, 1);
-    register_method(space, &math_obj, "hypot", math_hypot, 2);
+    interp.register_method(&math_obj, "pow", math_pow, 2);
+    interp.register_method(&math_obj, "sqrt", math_sqrt, 1);
+    interp.register_method(&math_obj, "cbrt", math_cbrt, 1);
+    interp.register_method(&math_obj, "hypot", math_hypot, 2);
 
     // Logarithmic and exponential
-    register_method(space, &math_obj, "log", math_log, 1);
-    register_method(space, &math_obj, "log10", math_log10, 1);
-    register_method(space, &math_obj, "log2", math_log2, 1);
-    register_method(space, &math_obj, "log1p", math_log1p, 1);
-    register_method(space, &math_obj, "exp", math_exp, 1);
-    register_method(space, &math_obj, "expm1", math_expm1, 1);
+    interp.register_method(&math_obj, "log", math_log, 1);
+    interp.register_method(&math_obj, "log10", math_log10, 1);
+    interp.register_method(&math_obj, "log2", math_log2, 1);
+    interp.register_method(&math_obj, "log1p", math_log1p, 1);
+    interp.register_method(&math_obj, "exp", math_exp, 1);
+    interp.register_method(&math_obj, "expm1", math_expm1, 1);
 
     // Trigonometric
-    register_method(space, &math_obj, "sin", math_sin, 1);
-    register_method(space, &math_obj, "cos", math_cos, 1);
-    register_method(space, &math_obj, "tan", math_tan, 1);
-    register_method(space, &math_obj, "asin", math_asin, 1);
-    register_method(space, &math_obj, "acos", math_acos, 1);
-    register_method(space, &math_obj, "atan", math_atan, 1);
-    register_method(space, &math_obj, "atan2", math_atan2, 2);
+    interp.register_method(&math_obj, "sin", math_sin, 1);
+    interp.register_method(&math_obj, "cos", math_cos, 1);
+    interp.register_method(&math_obj, "tan", math_tan, 1);
+    interp.register_method(&math_obj, "asin", math_asin, 1);
+    interp.register_method(&math_obj, "acos", math_acos, 1);
+    interp.register_method(&math_obj, "atan", math_atan, 1);
+    interp.register_method(&math_obj, "atan2", math_atan2, 2);
 
     // Hyperbolic
-    register_method(space, &math_obj, "sinh", math_sinh, 1);
-    register_method(space, &math_obj, "cosh", math_cosh, 1);
-    register_method(space, &math_obj, "tanh", math_tanh, 1);
-    register_method(space, &math_obj, "asinh", math_asinh, 1);
-    register_method(space, &math_obj, "acosh", math_acosh, 1);
-    register_method(space, &math_obj, "atanh", math_atanh, 1);
+    interp.register_method(&math_obj, "sinh", math_sinh, 1);
+    interp.register_method(&math_obj, "cosh", math_cosh, 1);
+    interp.register_method(&math_obj, "tanh", math_tanh, 1);
+    interp.register_method(&math_obj, "asinh", math_asinh, 1);
+    interp.register_method(&math_obj, "acosh", math_acosh, 1);
+    interp.register_method(&math_obj, "atanh", math_atanh, 1);
 
     // Random
-    register_method(space, &math_obj, "random", math_random, 0);
+    interp.register_method(&math_obj, "random", math_random, 0);
 
     debug_assert_eq!(
         math_obj.borrow().properties.len(),

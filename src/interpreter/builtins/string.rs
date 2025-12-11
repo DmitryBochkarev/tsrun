@@ -4,61 +4,60 @@ use unicode_normalization::UnicodeNormalization;
 
 use super::regexp::build_regex;
 use crate::error::JsError;
-use crate::gc::Space;
 use crate::interpreter::Interpreter;
 use crate::value::{
-    create_function, create_object_with_capacity, register_method, ExoticObject, JsFunction,
-    JsObject, JsObjectRef, JsString, JsValue, NativeFunction, PropertyKey,
+    create_function, create_object_with_capacity, ExoticObject, JsFunction, JsObjectRef, JsString,
+    JsValue, NativeFunction, PropertyKey,
 };
 
 /// Create String.prototype with all string methods
-pub fn create_string_prototype(space: &mut Space<JsObject>) -> JsObjectRef {
-    let proto = create_object_with_capacity(space, 29);
+pub fn create_string_prototype(interp: &mut Interpreter) -> JsObjectRef {
+    let proto = create_object_with_capacity(&mut interp.gc_space, 29);
 
     // Character access
-    register_method(space, &proto, "charAt", string_char_at, 1);
-    register_method(space, &proto, "charCodeAt", string_char_code_at, 1);
-    register_method(space, &proto, "codePointAt", string_code_point_at, 1);
-    register_method(space, &proto, "at", string_at, 1);
+    interp.register_method(&proto, "charAt", string_char_at, 1);
+    interp.register_method(&proto, "charCodeAt", string_char_code_at, 1);
+    interp.register_method(&proto, "codePointAt", string_code_point_at, 1);
+    interp.register_method(&proto, "at", string_at, 1);
 
     // Search methods
-    register_method(space, &proto, "indexOf", string_index_of, 1);
-    register_method(space, &proto, "lastIndexOf", string_last_index_of, 1);
-    register_method(space, &proto, "includes", string_includes, 1);
-    register_method(space, &proto, "startsWith", string_starts_with, 1);
-    register_method(space, &proto, "endsWith", string_ends_with, 1);
-    register_method(space, &proto, "search", string_search, 1);
+    interp.register_method(&proto, "indexOf", string_index_of, 1);
+    interp.register_method(&proto, "lastIndexOf", string_last_index_of, 1);
+    interp.register_method(&proto, "includes", string_includes, 1);
+    interp.register_method(&proto, "startsWith", string_starts_with, 1);
+    interp.register_method(&proto, "endsWith", string_ends_with, 1);
+    interp.register_method(&proto, "search", string_search, 1);
 
     // Extraction methods
-    register_method(space, &proto, "slice", string_slice, 2);
-    register_method(space, &proto, "substring", string_substring, 2);
-    register_method(space, &proto, "substr", string_substr, 2);
+    interp.register_method(&proto, "slice", string_slice, 2);
+    interp.register_method(&proto, "substring", string_substring, 2);
+    interp.register_method(&proto, "substr", string_substr, 2);
 
     // Case conversion
-    register_method(space, &proto, "toLowerCase", string_to_lower_case, 0);
-    register_method(space, &proto, "toUpperCase", string_to_upper_case, 0);
+    interp.register_method(&proto, "toLowerCase", string_to_lower_case, 0);
+    interp.register_method(&proto, "toUpperCase", string_to_upper_case, 0);
 
     // Whitespace handling
-    register_method(space, &proto, "trim", string_trim, 0);
-    register_method(space, &proto, "trimStart", string_trim_start, 0);
-    register_method(space, &proto, "trimEnd", string_trim_end, 0);
+    interp.register_method(&proto, "trim", string_trim, 0);
+    interp.register_method(&proto, "trimStart", string_trim_start, 0);
+    interp.register_method(&proto, "trimEnd", string_trim_end, 0);
 
     // Transformation methods
-    register_method(space, &proto, "split", string_split, 2);
-    register_method(space, &proto, "repeat", string_repeat, 1);
-    register_method(space, &proto, "replace", string_replace, 2);
-    register_method(space, &proto, "replaceAll", string_replace_all, 2);
-    register_method(space, &proto, "padStart", string_pad_start, 2);
-    register_method(space, &proto, "padEnd", string_pad_end, 2);
-    register_method(space, &proto, "concat", string_concat, 1);
-    register_method(space, &proto, "normalize", string_normalize, 1);
+    interp.register_method(&proto, "split", string_split, 2);
+    interp.register_method(&proto, "repeat", string_repeat, 1);
+    interp.register_method(&proto, "replace", string_replace, 2);
+    interp.register_method(&proto, "replaceAll", string_replace_all, 2);
+    interp.register_method(&proto, "padStart", string_pad_start, 2);
+    interp.register_method(&proto, "padEnd", string_pad_end, 2);
+    interp.register_method(&proto, "concat", string_concat, 1);
+    interp.register_method(&proto, "normalize", string_normalize, 1);
 
     // RegExp methods
-    register_method(space, &proto, "match", string_match, 1);
-    register_method(space, &proto, "matchAll", string_match_all, 1);
+    interp.register_method(&proto, "match", string_match, 1);
+    interp.register_method(&proto, "matchAll", string_match_all, 1);
 
     // Comparison
-    register_method(space, &proto, "localeCompare", string_locale_compare, 1);
+    interp.register_method(&proto, "localeCompare", string_locale_compare, 1);
 
     debug_assert_eq!(
         proto.borrow().properties.len(),
@@ -86,12 +85,10 @@ pub fn string_constructor_fn(
 }
 
 /// Create String constructor with static methods (fromCharCode, fromCodePoint)
-pub fn create_string_constructor(
-    space: &mut Space<JsObject>,
-    string_prototype: &JsObjectRef,
-) -> JsObjectRef {
+pub fn create_string_constructor(interp: &mut Interpreter) -> JsObjectRef {
     let constructor = create_function(
-        space,
+        &mut interp.gc_space,
+        &mut interp.string_dict,
         JsFunction::Native(NativeFunction {
             name: "String".to_string(),
             func: string_constructor_fn,
@@ -99,25 +96,13 @@ pub fn create_string_constructor(
         }),
     );
 
-    register_method(
-        space,
-        &constructor,
-        "fromCharCode",
-        string_from_char_code,
-        1,
-    );
-    register_method(
-        space,
-        &constructor,
-        "fromCodePoint",
-        string_from_code_point,
-        1,
-    );
+    interp.register_method(&constructor, "fromCharCode", string_from_char_code, 1);
+    interp.register_method(&constructor, "fromCodePoint", string_from_code_point, 1);
 
-    constructor.borrow_mut().set_property(
-        PropertyKey::from("prototype"),
-        JsValue::Object(string_prototype.clone()),
-    );
+    let proto_key = interp.key("prototype");
+    constructor
+        .borrow_mut()
+        .set_property(proto_key, JsValue::Object(interp.string_prototype.clone()));
 
     constructor
 }

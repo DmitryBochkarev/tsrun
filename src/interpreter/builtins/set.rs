@@ -2,33 +2,33 @@
 
 use super::map::same_value_zero;
 use crate::error::JsError;
-use crate::gc::Space;
 use crate::interpreter::Interpreter;
 use crate::value::{
-    create_function, create_object, register_method, ExoticObject, JsFunction, JsObject,
-    JsObjectRef, JsValue, NativeFunction, PropertyKey,
+    create_function, create_object, ExoticObject, JsFunction, JsObjectRef, JsValue, NativeFunction,
+    PropertyKey,
 };
 
 /// Create Set.prototype with add, has, delete, clear, forEach methods
-pub fn create_set_prototype(space: &mut Space<JsObject>) -> JsObjectRef {
-    let proto = create_object(space);
+pub fn create_set_prototype(interp: &mut Interpreter) -> JsObjectRef {
+    let proto = create_object(&mut interp.gc_space);
 
-    register_method(space, &proto, "add", set_add, 1);
-    register_method(space, &proto, "has", set_has, 1);
-    register_method(space, &proto, "delete", set_delete, 1);
-    register_method(space, &proto, "clear", set_clear, 0);
-    register_method(space, &proto, "forEach", set_foreach, 1);
-    register_method(space, &proto, "keys", set_keys, 0);
-    register_method(space, &proto, "values", set_values, 0);
-    register_method(space, &proto, "entries", set_entries, 0);
+    interp.register_method(&proto, "add", set_add, 1);
+    interp.register_method(&proto, "has", set_has, 1);
+    interp.register_method(&proto, "delete", set_delete, 1);
+    interp.register_method(&proto, "clear", set_clear, 0);
+    interp.register_method(&proto, "forEach", set_foreach, 1);
+    interp.register_method(&proto, "keys", set_keys, 0);
+    interp.register_method(&proto, "values", set_values, 0);
+    interp.register_method(&proto, "entries", set_entries, 0);
 
     proto
 }
 
 /// Create Set constructor
-pub fn create_set_constructor(space: &mut Space<JsObject>) -> JsObjectRef {
+pub fn create_set_constructor(interp: &mut Interpreter) -> JsObjectRef {
     create_function(
-        space,
+        &mut interp.gc_space,
+        &mut interp.string_dict,
         JsFunction::Native(NativeFunction {
             name: "Set".to_string(),
             func: set_constructor,

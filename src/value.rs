@@ -12,6 +12,7 @@ use crate::ast::{ArrowFunctionBody, BlockStatement, FunctionParam};
 use crate::error::JsError;
 use crate::gc::{Gc, Space, Traceable, Tracer};
 use crate::lexer::Span;
+use crate::string_dict::StringDict;
 
 /// Environment identifier - an index into the environment arena.
 ///
@@ -1448,7 +1449,11 @@ pub fn create_object_with_capacity(space: &mut Space<JsObject>, capacity: usize)
 }
 
 /// Create a new array object in the GC space
-pub fn create_array(space: &mut Space<JsObject>, elements: Vec<JsValue>) -> JsObjectRef {
+pub fn create_array(
+    space: &mut Space<JsObject>,
+    dict: &mut StringDict,
+    elements: Vec<JsValue>,
+) -> JsObjectRef {
     let len = elements.len() as u32;
     let mut obj = JsObject {
         prototype: None, // Should be Array.prototype
@@ -1465,8 +1470,9 @@ pub fn create_array(space: &mut Space<JsObject>, elements: Vec<JsValue>) -> JsOb
             .insert(PropertyKey::Index(i as u32), Property::data(elem));
     }
 
+    let length_key = PropertyKey::String(dict.get_or_insert("length"));
     obj.properties.insert(
-        PropertyKey::from("length"),
+        length_key,
         Property::with_attributes(JsValue::Number(len as f64), true, false, false),
     );
 
@@ -1474,7 +1480,11 @@ pub fn create_array(space: &mut Space<JsObject>, elements: Vec<JsValue>) -> JsOb
 }
 
 /// Create a function object in the GC space
-pub fn create_function(space: &mut Space<JsObject>, func: JsFunction) -> JsObjectRef {
+pub fn create_function(
+    space: &mut Space<JsObject>,
+    dict: &mut StringDict,
+    func: JsFunction,
+) -> JsObjectRef {
     let mut obj = JsObject {
         prototype: None, // Should be Function.prototype
         extensible: true,
@@ -1486,8 +1496,9 @@ pub fn create_function(space: &mut Space<JsObject>, func: JsFunction) -> JsObjec
     };
 
     // Add length and name properties
+    let length_key = PropertyKey::String(dict.get_or_insert("length"));
     obj.properties.insert(
-        PropertyKey::from("length"),
+        length_key,
         Property::with_attributes(JsValue::Number(0.0), false, false, true),
     );
 
@@ -1510,10 +1521,11 @@ pub fn create_function(space: &mut Space<JsObject>, func: JsFunction) -> JsObjec
 /// p.borrow_mut().set_property(PropertyKey::from("push"), JsValue::Object(push_fn));
 ///
 /// // Use:
-/// register_method(space, &proto, "push", array_push, 1);
+/// register_method(space, dict, &proto, "push", array_push, 1);
 /// ```
 pub fn register_method(
     space: &mut Space<JsObject>,
+    dict: &mut StringDict,
     obj: &JsObjectRef,
     name: &str,
     func: NativeFn,
@@ -1521,14 +1533,15 @@ pub fn register_method(
 ) {
     let f = create_function(
         space,
+        dict,
         JsFunction::Native(NativeFunction {
             name: name.to_string(),
             func,
             arity,
         }),
     );
-    obj.borrow_mut()
-        .set_property(PropertyKey::from(name), JsValue::Object(f));
+    let key = PropertyKey::String(dict.get_or_insert(name));
+    obj.borrow_mut().set_property(key, JsValue::Object(f));
 }
 
 #[cfg(test)]

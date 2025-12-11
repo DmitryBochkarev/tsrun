@@ -26,7 +26,8 @@ use crate::string_dict::StringDict;
 use crate::value::{
     create_array, create_function, create_object, CheapClone, EnvId, EnvironmentArena,
     ExoticObject, FunctionBody, GeneratorState, GeneratorStatus, InterpretedFunction, JsFunction,
-    JsObject, JsObjectRef, JsString, JsValue, PromiseStatus, Property, PropertyKey,
+    JsObject, JsObjectRef, JsString, JsValue, NativeFn, NativeFunction, PromiseStatus, Property,
+    PropertyKey,
 };
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -194,8 +195,9 @@ impl Interpreter {
         let mut gc_space = Space::with_capacity(4096);
         let mut env_arena = EnvironmentArena::new();
         let env = env_arena.global_id();
+        let string_dict = StringDict::with_common_strings();
 
-        // Create global object and root it
+        // Create global object and root it - also used as placeholder for prototypes
         let global = create_object(&mut gc_space);
         gc_space.add_root(&global);
 
@@ -209,213 +211,32 @@ impl Interpreter {
             false,
         );
 
-        // Create prototypes using builtin module functions (all rooted)
-        let object_prototype = create_object_prototype(&mut gc_space);
-        gc_space.add_root(&object_prototype);
-
-        let array_prototype = create_array_prototype(&mut gc_space);
-        gc_space.add_root(&array_prototype);
-
-        let string_prototype = create_string_prototype(&mut gc_space);
-        gc_space.add_root(&string_prototype);
-
-        let number_prototype = create_number_prototype(&mut gc_space);
-        gc_space.add_root(&number_prototype);
-
-        let function_prototype = create_function_prototype(&mut gc_space);
-        gc_space.add_root(&function_prototype);
-
-        let map_prototype = create_map_prototype(&mut gc_space);
-        gc_space.add_root(&map_prototype);
-
-        let set_prototype = create_set_prototype(&mut gc_space);
-        gc_space.add_root(&set_prototype);
-
-        let date_prototype = create_date_prototype(&mut gc_space);
-        gc_space.add_root(&date_prototype);
-
-        let regexp_prototype = create_regexp_prototype(&mut gc_space);
-        gc_space.add_root(&regexp_prototype);
-
-        let error_prototype = create_error_prototype(&mut gc_space);
-        gc_space.add_root(&error_prototype);
-
-        let symbol_prototype = create_symbol_prototype(&mut gc_space);
-        gc_space.add_root(&symbol_prototype);
-
-        let generator_prototype = create_generator_prototype(&mut gc_space);
-        gc_space.add_root(&generator_prototype);
-
-        let promise_prototype = create_promise_prototype(&mut gc_space);
-        gc_space.add_root(&promise_prototype);
-
-        // Create and register constructors
-        let object_constructor = create_object_constructor(&mut gc_space);
-        env_arena.define(
-            env,
-            "Object".to_string(),
-            JsValue::Object(object_constructor),
-            false,
-        );
-
-        let array_constructor = create_array_constructor(&mut gc_space, &array_prototype);
-        env_arena.define(
-            env,
-            "Array".to_string(),
-            JsValue::Object(array_constructor),
-            false,
-        );
-
-        let string_constructor = create_string_constructor(&mut gc_space, &string_prototype);
-        env_arena.define(
-            env,
-            "String".to_string(),
-            JsValue::Object(string_constructor),
-            false,
-        );
-
-        let number_constructor = create_number_constructor(&mut gc_space, &number_prototype);
-        env_arena.define(
-            env,
-            "Number".to_string(),
-            JsValue::Object(number_constructor),
-            false,
-        );
-
-        let date_constructor = create_date_constructor(&mut gc_space, &date_prototype);
-        env_arena.define(
-            env,
-            "Date".to_string(),
-            JsValue::Object(date_constructor),
-            false,
-        );
-
-        let regexp_constructor = create_regexp_constructor(&mut gc_space, &regexp_prototype);
-        env_arena.define(
-            env,
-            "RegExp".to_string(),
-            JsValue::Object(regexp_constructor),
-            false,
-        );
-
-        let map_constructor = create_map_constructor(&mut gc_space);
-        env_arena.define(
-            env,
-            "Map".to_string(),
-            JsValue::Object(map_constructor),
-            false,
-        );
-
-        let set_constructor = create_set_constructor(&mut gc_space);
-        env_arena.define(
-            env,
-            "Set".to_string(),
-            JsValue::Object(set_constructor),
-            false,
-        );
-
-        // Create and register global objects
-        let console = create_console_object(&mut gc_space);
-        env_arena.define(env, "console".to_string(), JsValue::Object(console), false);
-
-        let json = create_json_object(&mut gc_space);
-        env_arena.define(env, "JSON".to_string(), JsValue::Object(json), false);
-
-        let math = create_math_object(&mut gc_space);
-        env_arena.define(env, "Math".to_string(), JsValue::Object(math), false);
-
-        // Register global functions
-        register_global_functions(&mut gc_space, &mut env_arena, env);
-
-        // Register error constructors
-        let error_ctors = create_error_constructors(&mut gc_space, &error_prototype);
-        env_arena.define(
-            env,
-            "Error".to_string(),
-            JsValue::Object(error_ctors.error),
-            false,
-        );
-        env_arena.define(
-            env,
-            "TypeError".to_string(),
-            JsValue::Object(error_ctors.type_error),
-            false,
-        );
-        env_arena.define(
-            env,
-            "ReferenceError".to_string(),
-            JsValue::Object(error_ctors.reference_error),
-            false,
-        );
-        env_arena.define(
-            env,
-            "SyntaxError".to_string(),
-            JsValue::Object(error_ctors.syntax_error),
-            false,
-        );
-        env_arena.define(
-            env,
-            "RangeError".to_string(),
-            JsValue::Object(error_ctors.range_error),
-            false,
-        );
-        env_arena.define(
-            env,
-            "URIError".to_string(),
-            JsValue::Object(error_ctors.uri_error),
-            false,
-        );
-        env_arena.define(
-            env,
-            "EvalError".to_string(),
-            JsValue::Object(error_ctors.eval_error),
-            false,
-        );
-
-        // Register Symbol constructor
-        let well_known_symbols = get_well_known_symbols();
-        let symbol_constructor =
-            create_symbol_constructor(&mut gc_space, &symbol_prototype, &well_known_symbols);
-        env_arena.define(
-            env,
-            "Symbol".to_string(),
-            JsValue::Object(symbol_constructor),
-            false,
-        );
-
-        // Register Promise constructor
-        let promise_constructor = create_promise_constructor(&mut gc_space, &promise_prototype);
-        env_arena.define(
-            env,
-            "Promise".to_string(),
-            JsValue::Object(promise_constructor),
-            false,
-        );
-
-        Self {
+        // Create interpreter with placeholder prototypes (global object)
+        // We'll initialize the real prototypes below
+        let placeholder = global.clone();
+        let mut interp = Self {
             gc_space,
             global,
             env_arena,
             env,
-            string_dict: StringDict::with_common_strings(),
-            object_prototype,
-            array_prototype,
-            string_prototype,
-            number_prototype,
-            function_prototype,
-            map_prototype,
-            set_prototype,
-            date_prototype,
-            regexp_prototype,
-            error_prototype,
-            symbol_prototype,
-            generator_prototype,
-            promise_prototype,
+            string_dict,
+            object_prototype: placeholder.clone(),
+            array_prototype: placeholder.clone(),
+            string_prototype: placeholder.clone(),
+            number_prototype: placeholder.clone(),
+            function_prototype: placeholder.clone(),
+            map_prototype: placeholder.clone(),
+            set_prototype: placeholder.clone(),
+            date_prototype: placeholder.clone(),
+            regexp_prototype: placeholder.clone(),
+            error_prototype: placeholder.clone(),
+            symbol_prototype: placeholder.clone(),
+            generator_prototype: placeholder.clone(),
+            promise_prototype: placeholder,
             thrown_value: None,
             exports: rustc_hash::FxHashMap::default(),
             call_stack: Vec::new(),
             generator_context: None,
-            // State machine execution
             eval_stack: Vec::new(),
             value_stack: Vec::new(),
             completion_stack: Vec::new(),
@@ -424,10 +245,218 @@ impl Interpreter {
             static_import_index: 0,
             pending_slot: None,
             pending_program_body: None,
-            // Timeout tracking (default: 3 seconds)
             execution_start: None,
             timeout_ms: 3000,
-        }
+        };
+
+        // Now initialize prototypes using &mut self
+        interp.init_prototypes();
+        interp
+    }
+
+    /// Initialize all builtin prototypes and constructors
+    fn init_prototypes(&mut self) {
+        // Create prototypes using builtin module functions (all rooted)
+        let object_prototype = create_object_prototype(self);
+        self.gc_space.add_root(&object_prototype);
+        self.object_prototype = object_prototype;
+
+        let array_prototype = create_array_prototype(self);
+        self.gc_space.add_root(&array_prototype);
+        self.array_prototype = array_prototype;
+
+        let string_prototype = create_string_prototype(self);
+        self.gc_space.add_root(&string_prototype);
+        self.string_prototype = string_prototype;
+
+        let number_prototype = create_number_prototype(self);
+        self.gc_space.add_root(&number_prototype);
+        self.number_prototype = number_prototype;
+
+        let function_prototype = create_function_prototype(self);
+        self.gc_space.add_root(&function_prototype);
+        self.function_prototype = function_prototype;
+
+        let map_prototype = create_map_prototype(self);
+        self.gc_space.add_root(&map_prototype);
+        self.map_prototype = map_prototype;
+
+        let set_prototype = create_set_prototype(self);
+        self.gc_space.add_root(&set_prototype);
+        self.set_prototype = set_prototype;
+
+        let date_prototype = create_date_prototype(self);
+        self.gc_space.add_root(&date_prototype);
+        self.date_prototype = date_prototype;
+
+        let regexp_prototype = create_regexp_prototype(self);
+        self.gc_space.add_root(&regexp_prototype);
+        self.regexp_prototype = regexp_prototype;
+
+        let error_prototype = create_error_prototype(self);
+        self.gc_space.add_root(&error_prototype);
+        self.error_prototype = error_prototype;
+
+        let symbol_prototype = create_symbol_prototype(self);
+        self.gc_space.add_root(&symbol_prototype);
+        self.symbol_prototype = symbol_prototype;
+
+        let generator_prototype = create_generator_prototype(self);
+        self.gc_space.add_root(&generator_prototype);
+        self.generator_prototype = generator_prototype;
+
+        let promise_prototype = create_promise_prototype(self);
+        self.gc_space.add_root(&promise_prototype);
+        self.promise_prototype = promise_prototype;
+
+        // Create and register constructors
+        let object_constructor = create_object_constructor(self);
+        self.env_arena.define(
+            self.env,
+            "Object".to_string(),
+            JsValue::Object(object_constructor),
+            false,
+        );
+
+        let array_constructor = create_array_constructor(self);
+        self.env_arena.define(
+            self.env,
+            "Array".to_string(),
+            JsValue::Object(array_constructor),
+            false,
+        );
+
+        let string_constructor = create_string_constructor(self);
+        self.env_arena.define(
+            self.env,
+            "String".to_string(),
+            JsValue::Object(string_constructor),
+            false,
+        );
+
+        let number_constructor = create_number_constructor(self);
+        self.env_arena.define(
+            self.env,
+            "Number".to_string(),
+            JsValue::Object(number_constructor),
+            false,
+        );
+
+        let date_constructor = create_date_constructor(self);
+        self.env_arena.define(
+            self.env,
+            "Date".to_string(),
+            JsValue::Object(date_constructor),
+            false,
+        );
+
+        let regexp_constructor = create_regexp_constructor(self);
+        self.env_arena.define(
+            self.env,
+            "RegExp".to_string(),
+            JsValue::Object(regexp_constructor),
+            false,
+        );
+
+        let map_constructor = create_map_constructor(self);
+        self.env_arena.define(
+            self.env,
+            "Map".to_string(),
+            JsValue::Object(map_constructor),
+            false,
+        );
+
+        let set_constructor = create_set_constructor(self);
+        self.env_arena.define(
+            self.env,
+            "Set".to_string(),
+            JsValue::Object(set_constructor),
+            false,
+        );
+
+        // Create and register global objects
+        let console = create_console_object(self);
+        self.env_arena.define(
+            self.env,
+            "console".to_string(),
+            JsValue::Object(console),
+            false,
+        );
+
+        let json = create_json_object(self);
+        self.env_arena
+            .define(self.env, "JSON".to_string(), JsValue::Object(json), false);
+
+        let math = create_math_object(self);
+        self.env_arena
+            .define(self.env, "Math".to_string(), JsValue::Object(math), false);
+
+        // Register global functions
+        register_global_functions(self);
+
+        // Register error constructors
+        let error_ctors = create_error_constructors(self);
+        self.env_arena.define(
+            self.env,
+            "Error".to_string(),
+            JsValue::Object(error_ctors.error),
+            false,
+        );
+        self.env_arena.define(
+            self.env,
+            "TypeError".to_string(),
+            JsValue::Object(error_ctors.type_error),
+            false,
+        );
+        self.env_arena.define(
+            self.env,
+            "ReferenceError".to_string(),
+            JsValue::Object(error_ctors.reference_error),
+            false,
+        );
+        self.env_arena.define(
+            self.env,
+            "SyntaxError".to_string(),
+            JsValue::Object(error_ctors.syntax_error),
+            false,
+        );
+        self.env_arena.define(
+            self.env,
+            "RangeError".to_string(),
+            JsValue::Object(error_ctors.range_error),
+            false,
+        );
+        self.env_arena.define(
+            self.env,
+            "URIError".to_string(),
+            JsValue::Object(error_ctors.uri_error),
+            false,
+        );
+        self.env_arena.define(
+            self.env,
+            "EvalError".to_string(),
+            JsValue::Object(error_ctors.eval_error),
+            false,
+        );
+
+        // Register Symbol constructor
+        let well_known_symbols = get_well_known_symbols();
+        let symbol_constructor = create_symbol_constructor(self, &well_known_symbols);
+        self.env_arena.define(
+            self.env,
+            "Symbol".to_string(),
+            JsValue::Object(symbol_constructor),
+            false,
+        );
+
+        // Register Promise constructor
+        let promise_constructor = create_promise_constructor(self);
+        self.env_arena.define(
+            self.env,
+            "Promise".to_string(),
+            JsValue::Object(promise_constructor),
+            false,
+        );
     }
 
     /// Get the current stack trace as a formatted string
@@ -465,7 +494,7 @@ impl Interpreter {
 
     /// Create an array with the proper prototype
     pub fn create_array(&mut self, elements: Vec<JsValue>) -> JsObjectRef {
-        let arr = create_array(&mut self.gc_space, elements);
+        let arr = create_array(&mut self.gc_space, &mut self.string_dict, elements);
         arr.borrow_mut().prototype = Some(self.array_prototype.clone());
         arr
     }
@@ -479,18 +508,38 @@ impl Interpreter {
 
     /// Create a function object with the proper prototype
     pub fn create_function(&mut self, func: JsFunction) -> JsObjectRef {
-        let obj = create_function(&mut self.gc_space, func);
+        let obj = create_function(&mut self.gc_space, &mut self.string_dict, func);
         obj.borrow_mut().prototype = Some(self.function_prototype.clone());
         obj
     }
 
+    /// Register a native method on a prototype object
+    ///
+    /// This is a helper for builtin registration that uses the string dictionary
+    /// for property key interning.
+    pub fn register_method(&mut self, obj: &JsObjectRef, name: &str, func: NativeFn, arity: usize) {
+        let f = create_function(
+            &mut self.gc_space,
+            &mut self.string_dict,
+            JsFunction::Native(NativeFunction {
+                name: name.to_string(),
+                func,
+                arity,
+            }),
+        );
+        let key = self.key(name);
+        obj.borrow_mut().set_property(key, JsValue::Object(f));
+    }
+
     /// Create a generator result object { value, done }
     pub fn create_generator_result(&mut self, value: JsValue, done: bool) -> JsValue {
+        let value_key = self.key("value");
+        let done_key = self.key("done");
         let obj = self.create_object();
         {
             let mut o = obj.borrow_mut();
-            o.set_property(PropertyKey::from("value"), value);
-            o.set_property(PropertyKey::from("done"), JsValue::Boolean(done));
+            o.set_property(value_key, value);
+            o.set_property(done_key, JsValue::Boolean(done));
         }
         JsValue::Object(obj)
     }
@@ -499,12 +548,17 @@ impl Interpreter {
     ///
     /// This is used to create module namespace objects for import resolution.
     pub fn create_module_object(&mut self, exports: Vec<(String, JsValue)>) -> JsValue {
+        // Intern all keys first
+        let keyed_exports: Vec<_> = exports
+            .into_iter()
+            .map(|(name, value)| (self.key(&name), value))
+            .collect();
         let obj = create_object(&mut self.gc_space);
         {
             let mut obj_ref = obj.borrow_mut();
             obj_ref.prototype = Some(self.object_prototype.clone());
-            for (name, value) in exports {
-                obj_ref.set_property(PropertyKey::from(name), value);
+            for (key, value) in keyed_exports {
+                obj_ref.set_property(key, value);
             }
         }
         JsValue::Object(obj)
@@ -916,10 +970,10 @@ impl Interpreter {
                 };
 
                 for (imported, local) in pairs {
-                    // String clone - PropertyKey::from takes ownership
+                    let key = self.key(imported.as_ref());
                     let value = module_obj
                         .borrow()
-                        .get_property(&PropertyKey::from(imported.clone()))
+                        .get_property(&key)
                         .unwrap_or(JsValue::Undefined);
                     // String clone - env.define takes ownership
                     self.env_arena.define(self.env, local.clone(), value, false);
@@ -931,9 +985,10 @@ impl Interpreter {
                     return Err(JsError::type_error("Module is not an object"));
                 };
 
+                let default_key = self.key("default");
                 let value = module_obj
                     .borrow()
-                    .get_property(&PropertyKey::from("default"))
+                    .get_property(&default_key)
                     .unwrap_or(JsValue::Undefined);
                 // String clone - env.define takes ownership
                 self.env_arena.define(self.env, local.clone(), value, false);
@@ -1603,9 +1658,8 @@ impl Interpreter {
 
         // If we have a superclass, set up prototype chain
         if let Some(ref super_ctor) = super_constructor {
-            let super_proto = super_ctor
-                .borrow()
-                .get_property(&PropertyKey::from("prototype"));
+            let proto_key = self.key("prototype");
+            let super_proto = super_ctor.borrow().get_property(&proto_key);
             if let Some(JsValue::Object(sp)) = super_proto {
                 prototype.borrow_mut().prototype = Some(sp);
             }
@@ -1680,10 +1734,10 @@ impl Interpreter {
 
             // If we have a superclass, store __super__ on the method so super.method() works
             if let Some(ref super_ctor) = super_constructor {
-                func_obj.borrow_mut().set_property(
-                    PropertyKey::from("__super__"),
-                    JsValue::Object(super_ctor.cheap_clone()),
-                );
+                let super_key = self.key("__super__");
+                func_obj
+                    .borrow_mut()
+                    .set_property(super_key, JsValue::Object(super_ctor.cheap_clone()));
             }
 
             match method.kind {
@@ -1703,16 +1757,17 @@ impl Interpreter {
 
         // Add accessor properties
         for (name, (getter, setter)) in accessors {
-            prototype
-                .borrow_mut()
-                .define_property(PropertyKey::from(name), Property::accessor(getter, setter));
+            prototype.borrow_mut().define_property(
+                PropertyKey::String(name),
+                Property::accessor(getter, setter),
+            );
         }
 
         // Add regular methods
         for (name, func_obj) in regular_methods {
             prototype
                 .borrow_mut()
-                .set_property(PropertyKey::from(name), JsValue::Object(func_obj));
+                .set_property(PropertyKey::String(name), JsValue::Object(func_obj));
         }
 
         // Build constructor body that initializes instance fields then runs user constructor
@@ -1765,11 +1820,9 @@ impl Interpreter {
         // Store field initializers as a property on the constructor
         // We'll use a special internal format
         {
+            let proto_key = self.key("prototype");
             let mut ctor = constructor_fn.borrow_mut();
-            ctor.set_property(
-                PropertyKey::from("prototype"),
-                JsValue::Object(prototype.cheap_clone()),
-            );
+            ctor.set_property(proto_key, JsValue::Object(prototype.cheap_clone()));
 
             // Store field initializers as internal data
             // For now, we'll evaluate them at class definition time and store as default values
@@ -1798,18 +1851,18 @@ impl Interpreter {
             }
 
             let fields_array = self.create_array(field_pairs);
-            constructor_fn.borrow_mut().set_property(
-                PropertyKey::from("__fields__"),
-                JsValue::Object(fields_array),
-            );
+            let fields_key = self.key("__fields__");
+            constructor_fn
+                .borrow_mut()
+                .set_property(fields_key, JsValue::Object(fields_array));
         }
 
         // Store super constructor if we have one
         if let Some(ref super_ctor) = super_constructor {
-            constructor_fn.borrow_mut().set_property(
-                PropertyKey::from("__super__"),
-                JsValue::Object(super_ctor.cheap_clone()),
-            );
+            let super_key = self.key("__super__");
+            constructor_fn
+                .borrow_mut()
+                .set_property(super_key, JsValue::Object(super_ctor.cheap_clone()));
         }
 
         // Collect static getters, setters, and regular methods separately
@@ -1863,16 +1916,17 @@ impl Interpreter {
 
         // Add static accessor properties
         for (name, (getter, setter)) in static_accessors {
-            constructor_fn
-                .borrow_mut()
-                .define_property(PropertyKey::from(name), Property::accessor(getter, setter));
+            constructor_fn.borrow_mut().define_property(
+                PropertyKey::String(name),
+                Property::accessor(getter, setter),
+            );
         }
 
         // Add static regular methods
         for (name, func_obj) in static_regular_methods {
             constructor_fn
                 .borrow_mut()
-                .set_property(PropertyKey::from(name), JsValue::Object(func_obj));
+                .set_property(PropertyKey::String(name), JsValue::Object(func_obj));
         }
 
         // Initialize static fields
@@ -1893,14 +1947,14 @@ impl Interpreter {
 
             constructor_fn
                 .borrow_mut()
-                .set_property(PropertyKey::from(name), value);
+                .set_property(PropertyKey::String(name), value);
         }
 
         // Set prototype.constructor = constructor
-        prototype.borrow_mut().set_property(
-            PropertyKey::from("constructor"),
-            JsValue::Object(constructor_fn.cheap_clone()),
-        );
+        let ctor_key = self.key("constructor");
+        prototype
+            .borrow_mut()
+            .set_property(ctor_key, JsValue::Object(constructor_fn.cheap_clone()));
 
         Ok(constructor_fn)
     }
@@ -1927,14 +1981,13 @@ impl Interpreter {
 
             // Forward mapping: name -> value
             obj.borrow_mut()
-                .set_property(PropertyKey::from(member.id.name.as_str()), value.clone());
+                .set_property(PropertyKey::String(member.id.name.clone()), value.clone());
 
             // Reverse mapping for numeric enums: value -> name
             if let JsValue::Number(n) = &value {
-                obj.borrow_mut().set_property(
-                    PropertyKey::from(n.to_string()),
-                    JsValue::String(member.id.name.clone()),
-                );
+                let key = self.key(&n.to_string());
+                obj.borrow_mut()
+                    .set_property(key, JsValue::String(member.id.name.clone()));
             }
 
             // Define each member in current scope so later members can reference it
@@ -2006,7 +2059,7 @@ impl Interpreter {
                         let value = self.env_arena.get_binding(self.env, &id.name)?;
                         ns_obj
                             .borrow_mut()
-                            .set_property(PropertyKey::from(id.name.as_str()), value);
+                            .set_property(PropertyKey::String(id.name.clone()), value);
                     }
                 }
                 Statement::VariableDeclaration(var_decl) => {
@@ -2022,7 +2075,7 @@ impl Interpreter {
                         let value = self.env_arena.get_binding(self.env, &id.name)?;
                         ns_obj
                             .borrow_mut()
-                            .set_property(PropertyKey::from(id.name.as_str()), value);
+                            .set_property(PropertyKey::String(id.name.clone()), value);
                     }
                 }
                 Statement::NamespaceDeclaration(inner_ns) => {
@@ -2030,7 +2083,7 @@ impl Interpreter {
                     let value = self.env_arena.get_binding(self.env, &inner_ns.id.name)?;
                     ns_obj
                         .borrow_mut()
-                        .set_property(PropertyKey::from(inner_ns.id.name.as_str()), value);
+                        .set_property(PropertyKey::String(inner_ns.id.name.clone()), value);
                 }
                 _ => {
                     self.execute_statement(declaration)?;
@@ -2050,7 +2103,7 @@ impl Interpreter {
                 let value = self.env_arena.get_binding(self.env, &id.name)?;
                 ns_obj
                     .borrow_mut()
-                    .set_property(PropertyKey::from(id.name.as_str()), value);
+                    .set_property(PropertyKey::String(id.name.clone()), value);
             }
             Pattern::Object(obj_pat) => {
                 for prop in &obj_pat.properties {
@@ -2605,13 +2658,15 @@ impl Interpreter {
             )?;
 
             // Get 'done' and 'value' from the result
+            let done_key = self.key("done");
+            let value_key = self.key("value");
             let (done, value) = if let JsValue::Object(result_obj) = next_result {
                 let result_ref = result_obj.borrow();
                 let done = result_ref
-                    .get_property(&PropertyKey::from("done"))
+                    .get_property(&done_key)
                     .unwrap_or(JsValue::Boolean(false));
                 let value = result_ref
-                    .get_property(&PropertyKey::from("value"))
+                    .get_property(&value_key)
                     .unwrap_or(JsValue::Undefined);
                 (done.to_boolean(), value)
             } else {
@@ -2793,7 +2848,7 @@ impl Interpreter {
 
                             let prop_value = obj
                                 .borrow()
-                                .get_property(&PropertyKey::from(key_str.as_str()))
+                                .get_property(&PropertyKey::String(key_str))
                                 .unwrap_or(JsValue::Undefined);
 
                             self.bind_pattern(pattern, prop_value, mutable)?;
@@ -2917,7 +2972,7 @@ impl Interpreter {
 
                             let prop_value = obj
                                 .borrow()
-                                .get_property(&PropertyKey::from(key_str.as_str()))
+                                .get_property(&PropertyKey::String(key_str))
                                 .unwrap_or(JsValue::Undefined);
 
                             self.bind_pattern_var(pattern, prop_value)?;
@@ -3174,8 +3229,8 @@ impl Interpreter {
                         .map(|q| JsValue::String(q.value.clone()))
                         .collect();
                     let raw_array = JsValue::Object(self.create_array(raw));
-                    arr.borrow_mut()
-                        .set_property(PropertyKey::from("raw"), raw_array);
+                    let raw_key = self.key("raw");
+                    arr.borrow_mut().set_property(raw_key, raw_array);
                 }
 
                 // Evaluate all interpolated expressions (remaining arguments)
@@ -3291,6 +3346,8 @@ impl Interpreter {
                                 return Ok(JsValue::Undefined);
                             } else if let Some(gen) = gen_state {
                                 // Delegate to another generator
+                                let done_key = self.key("done");
+                                let value_key = self.key("value");
                                 loop {
                                     let result = self.resume_generator(&gen)?;
                                     let JsValue::Object(res_obj) = &result else {
@@ -3298,12 +3355,12 @@ impl Interpreter {
                                     };
                                     let done = res_obj
                                         .borrow()
-                                        .get_property(&PropertyKey::from("done"))
+                                        .get_property(&done_key)
                                         .map(|v| v.to_boolean())
                                         .unwrap_or(false);
                                     let value = res_obj
                                         .borrow()
-                                        .get_property(&PropertyKey::from("value"))
+                                        .get_property(&value_key)
                                         .unwrap_or(JsValue::Undefined);
 
                                     if done {
@@ -3407,6 +3464,19 @@ impl Interpreter {
             }
             LiteralValue::RegExp { pattern, flags } => {
                 // Create RegExp object with proper prototype and properties
+                // Intern all keys before creating object
+                let source_key = self.key("source");
+                let flags_key = self.key("flags");
+                let global_key = self.key("global");
+                let ignore_case_key = self.key("ignoreCase");
+                let multiline_key = self.key("multiline");
+                let dot_all_key = self.key("dotAll");
+                let unicode_key = self.key("unicode");
+                let sticky_key = self.key("sticky");
+                let last_index_key = self.key("lastIndex");
+                let source_val = self.intern(pattern);
+                let flags_val = self.intern(flags);
+
                 let regexp_obj = self.create_object();
                 {
                     let mut obj = regexp_obj.borrow_mut();
@@ -3416,41 +3486,15 @@ impl Interpreter {
                         flags: flags.clone(),
                     };
                     obj.prototype = Some(self.regexp_prototype.cheap_clone());
-                    // String clones - needed for property storage (creates JsString via Rc)
-                    obj.set_property(
-                        PropertyKey::from("source"),
-                        JsValue::String(JsString::from(pattern.clone())),
-                    );
-                    obj.set_property(
-                        PropertyKey::from("flags"),
-                        JsValue::String(JsString::from(flags.clone())),
-                    );
-                    obj.set_property(
-                        PropertyKey::from("global"),
-                        JsValue::Boolean(flags.contains('g')),
-                    );
-                    obj.set_property(
-                        PropertyKey::from("ignoreCase"),
-                        JsValue::Boolean(flags.contains('i')),
-                    );
-                    obj.set_property(
-                        PropertyKey::from("multiline"),
-                        JsValue::Boolean(flags.contains('m')),
-                    );
-                    obj.set_property(
-                        PropertyKey::from("dotAll"),
-                        JsValue::Boolean(flags.contains('s')),
-                    );
-                    obj.set_property(
-                        PropertyKey::from("unicode"),
-                        JsValue::Boolean(flags.contains('u')),
-                    );
-                    obj.set_property(
-                        PropertyKey::from("sticky"),
-                        JsValue::Boolean(flags.contains('y')),
-                    );
-                    // Initialize lastIndex to 0
-                    obj.set_property(PropertyKey::from("lastIndex"), JsValue::Number(0.0));
+                    obj.set_property(source_key, JsValue::String(source_val));
+                    obj.set_property(flags_key, JsValue::String(flags_val));
+                    obj.set_property(global_key, JsValue::Boolean(flags.contains('g')));
+                    obj.set_property(ignore_case_key, JsValue::Boolean(flags.contains('i')));
+                    obj.set_property(multiline_key, JsValue::Boolean(flags.contains('m')));
+                    obj.set_property(dot_all_key, JsValue::Boolean(flags.contains('s')));
+                    obj.set_property(unicode_key, JsValue::Boolean(flags.contains('u')));
+                    obj.set_property(sticky_key, JsValue::Boolean(flags.contains('y')));
+                    obj.set_property(last_index_key, JsValue::Number(0.0));
                 }
                 JsValue::Object(regexp_obj)
             }
@@ -3459,13 +3503,13 @@ impl Interpreter {
 
     fn evaluate_property_key(&mut self, key: &ObjectPropertyKey) -> Result<PropertyKey, JsError> {
         Ok(match key {
-            ObjectPropertyKey::Identifier(id) => PropertyKey::from(id.name.as_str()),
-            ObjectPropertyKey::String(s) => PropertyKey::from(s.value.as_str()),
+            ObjectPropertyKey::Identifier(id) => PropertyKey::String(id.name.clone()),
+            ObjectPropertyKey::String(s) => PropertyKey::String(s.value.clone()),
             ObjectPropertyKey::Number(lit) => {
                 if let LiteralValue::Number(n) = &lit.value {
                     PropertyKey::from_value(&JsValue::Number(*n))
                 } else {
-                    PropertyKey::from("undefined")
+                    self.key("undefined")
                 }
             }
             ObjectPropertyKey::Computed(expr) => {
@@ -3474,7 +3518,7 @@ impl Interpreter {
             }
             ObjectPropertyKey::PrivateIdentifier(id) => {
                 // Private fields are stored with # prefix
-                PropertyKey::from(format!("#{}", id.name))
+                self.key(&format!("#{}", id.name))
             }
         })
     }
@@ -3572,9 +3616,8 @@ impl Interpreter {
                 };
 
                 // Get the prototype property of the constructor
-                let proto_val = constructor
-                    .borrow()
-                    .get_property(&PropertyKey::from("prototype"));
+                let proto_key = self.key("prototype");
+                let proto_val = constructor.borrow().get_property(&proto_key);
                 let Some(JsValue::Object(constructor_proto)) = proto_val else {
                     return Ok(JsValue::Boolean(false));
                 };
@@ -3762,14 +3805,14 @@ impl Interpreter {
         let object = self.evaluate(&member.object)?;
 
         let key = match &member.property {
-            MemberProperty::Identifier(id) => crate::value::PropertyKey::from(id.name.as_str()),
+            MemberProperty::Identifier(id) => PropertyKey::String(id.name.clone()),
             MemberProperty::Expression(expr) => {
                 let val = self.evaluate(expr)?;
-                crate::value::PropertyKey::from_value(&val)
+                PropertyKey::from_value(&val)
             }
             MemberProperty::PrivateIdentifier(id) => {
                 // Private fields are stored with # prefix
-                crate::value::PropertyKey::from(format!("#{}", id.name))
+                self.key(&format!("#{}", id.name))
             }
         };
 
@@ -3874,14 +3917,14 @@ impl Interpreter {
         let object = self.evaluate(&member.object)?;
 
         let key = match &member.property {
-            MemberProperty::Identifier(id) => crate::value::PropertyKey::from(id.name.as_str()),
+            MemberProperty::Identifier(id) => PropertyKey::String(id.name.clone()),
             MemberProperty::Expression(expr) => {
                 let val = self.evaluate(expr)?;
-                crate::value::PropertyKey::from_value(&val)
+                PropertyKey::from_value(&val)
             }
             MemberProperty::PrivateIdentifier(id) => {
                 // Private fields are stored with # prefix
-                crate::value::PropertyKey::from(format!("#{}", id.name))
+                self.key(&format!("#{}", id.name))
             }
         };
 
@@ -3963,17 +4006,18 @@ impl Interpreter {
                     })?;
                 // Get super prototype
                 if let JsValue::Object(ctor) = super_ctor {
-                    let proto = ctor.borrow().get_property(&PropertyKey::from("prototype"));
+                    let proto_key = self.key("prototype");
+                    let proto = ctor.borrow().get_property(&proto_key);
                     if let Some(JsValue::Object(proto_obj)) = proto {
                         // Get the method from prototype
                         let key = match &member.property {
-                            MemberProperty::Identifier(id) => PropertyKey::from(id.name.as_str()),
+                            MemberProperty::Identifier(id) => PropertyKey::String(id.name.clone()),
                             MemberProperty::Expression(expr) => {
                                 let val = self.evaluate(expr)?;
                                 PropertyKey::from_value(&val)
                             }
                             MemberProperty::PrivateIdentifier(id) => {
-                                PropertyKey::from(format!("#{}", id.name))
+                                self.key(&format!("#{}", id.name))
                             }
                         };
                         proto_obj
@@ -4048,11 +4092,11 @@ impl Interpreter {
         let new_obj = self.create_object();
 
         // Get prototype from constructor.prototype and set it on the new object
+        let proto_key = self.key("prototype");
+        let fields_key = self.key("__fields__");
         if let JsValue::Object(ctor_obj) = &callee {
             let ctor_ref = ctor_obj.borrow();
-            if let Some(JsValue::Object(proto)) =
-                ctor_ref.get_property(&PropertyKey::from("prototype"))
-            {
+            if let Some(JsValue::Object(proto)) = ctor_ref.get_property(&proto_key) {
                 drop(ctor_ref);
                 new_obj.borrow_mut().prototype = Some(proto);
             } else {
@@ -4060,9 +4104,7 @@ impl Interpreter {
             }
 
             // Initialize instance fields from __fields__
-            let fields = ctor_obj
-                .borrow()
-                .get_property(&PropertyKey::from("__fields__"));
+            let fields = ctor_obj.borrow().get_property(&fields_key);
             if let Some(JsValue::Object(fields_arr)) = fields {
                 let fields_ref = fields_arr.borrow();
                 if let ExoticObject::Array { length } = fields_ref.exotic {
@@ -4080,7 +4122,7 @@ impl Interpreter {
                                 drop(pair_ref);
                                 new_obj
                                     .borrow_mut()
-                                    .set_property(PropertyKey::from(name.to_string()), value);
+                                    .set_property(PropertyKey::String(name), value);
                             }
                         }
                     }
@@ -4264,7 +4306,8 @@ impl Interpreter {
                 );
 
                 // Check if function has __super__ (for class constructors/methods)
-                let super_ctor = obj.borrow().get_property(&PropertyKey::from("__super__"));
+                let super_key = self.key("__super__");
+                let super_ctor = obj.borrow().get_property(&super_key);
                 if let Some(super_val) = super_ctor {
                     self.env_arena
                         .define(self.env, "__super__".to_string(), super_val, false);

@@ -5,12 +5,8 @@ use std::sync::Mutex;
 use std::time::Instant;
 
 use crate::error::JsError;
-use crate::gc::Space;
 use crate::interpreter::Interpreter;
-use crate::value::{
-    create_object_with_capacity, register_method, ExoticObject, JsObject, JsObjectRef, JsValue,
-    PropertyKey,
-};
+use crate::value::{create_object_with_capacity, ExoticObject, JsObjectRef, JsValue, PropertyKey};
 
 // Thread-local storage for console timers and counters
 lazy_static::lazy_static! {
@@ -19,32 +15,32 @@ lazy_static::lazy_static! {
 }
 
 /// Create console object with log, error, warn, info, debug methods
-pub fn create_console_object(space: &mut Space<JsObject>) -> JsObjectRef {
-    let console = create_object_with_capacity(space, 14);
+pub fn create_console_object(interp: &mut Interpreter) -> JsObjectRef {
+    let console = create_object_with_capacity(&mut interp.gc_space, 14);
 
     // Logging methods
-    register_method(space, &console, "log", console_log, 0);
-    register_method(space, &console, "error", console_error, 0);
-    register_method(space, &console, "warn", console_warn, 0);
-    register_method(space, &console, "info", console_info, 0);
-    register_method(space, &console, "debug", console_debug, 0);
+    interp.register_method(&console, "log", console_log, 0);
+    interp.register_method(&console, "error", console_error, 0);
+    interp.register_method(&console, "warn", console_warn, 0);
+    interp.register_method(&console, "info", console_info, 0);
+    interp.register_method(&console, "debug", console_debug, 0);
 
     // Display methods
-    register_method(space, &console, "table", console_table, 1);
-    register_method(space, &console, "dir", console_dir, 1);
+    interp.register_method(&console, "table", console_table, 1);
+    interp.register_method(&console, "dir", console_dir, 1);
 
     // Timing methods
-    register_method(space, &console, "time", console_time, 1);
-    register_method(space, &console, "timeEnd", console_time_end, 1);
+    interp.register_method(&console, "time", console_time, 1);
+    interp.register_method(&console, "timeEnd", console_time_end, 1);
 
     // Counting methods
-    register_method(space, &console, "count", console_count, 1);
-    register_method(space, &console, "countReset", console_count_reset, 1);
+    interp.register_method(&console, "count", console_count, 1);
+    interp.register_method(&console, "countReset", console_count_reset, 1);
 
     // Other methods
-    register_method(space, &console, "clear", console_clear, 0);
-    register_method(space, &console, "group", console_group, 0);
-    register_method(space, &console, "groupEnd", console_group_end, 0);
+    interp.register_method(&console, "clear", console_clear, 0);
+    interp.register_method(&console, "group", console_group, 0);
+    interp.register_method(&console, "groupEnd", console_group_end, 0);
 
     debug_assert_eq!(
         console.borrow().properties.len(),
