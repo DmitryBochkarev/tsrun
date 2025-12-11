@@ -245,3 +245,5 @@ if (( $(echo "$ACTUAL > $BASELINE * 1.2" | bc -l) )); then
     exit 1
 fi
 ```
+
+valgrind --leak-check=full ./target/profiling/typescript-eval-runner examples/memory-management/gc-cycles.ts

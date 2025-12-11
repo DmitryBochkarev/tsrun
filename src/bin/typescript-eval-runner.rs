@@ -39,6 +39,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let source = fs::read_to_string(&entry_path)?;
 
     let mut runtime = Runtime::new();
+    // Disable timeout for CLI runner - useful for stress tests and profiling
+    runtime.set_timeout_ms(0);
     let mut module_cache: HashMap<PathBuf, JsValue> = HashMap::new();
     let mut result = runtime.eval(&source)?;
 

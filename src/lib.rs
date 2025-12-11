@@ -20,7 +20,8 @@ pub mod string_dict;
 pub mod value;
 
 pub use error::JsError;
-pub use gc::{Gc, GcBox, Space, Traceable, Tracer};
+pub use gc::{Gc, GcBox, Space, Traceable, Tracer, DEFAULT_GC_THRESHOLD};
+pub use interpreter::GcStats;
 pub use interpreter::Interpreter;
 pub use interpreter::SavedExecutionState;
 pub use string_dict::StringDict;
@@ -312,6 +313,50 @@ impl Runtime {
     /// Get the current execution timeout in milliseconds
     pub fn timeout_ms(&self) -> u64 {
         self.interpreter.timeout_ms()
+    }
+
+    /// Run garbage collection manually
+    ///
+    /// This performs a mark-and-sweep collection to break reference cycles
+    /// and reclaim memory from unreachable objects.
+    pub fn collect_garbage(&mut self) {
+        self.interpreter.collect_garbage();
+    }
+
+    /// Get GC statistics
+    ///
+    /// Returns information about the current state of the garbage collector.
+    pub fn gc_stats(&self) -> interpreter::GcStats {
+        self.interpreter.gc_stats()
+    }
+
+    /// Get the current GC threshold
+    ///
+    /// Returns the number of allocations that trigger a collection.
+    /// A value of 0 means threshold-based collection is disabled.
+    pub fn gc_threshold(&self) -> usize {
+        self.interpreter.gc_threshold()
+    }
+
+    /// Set the GC threshold
+    ///
+    /// Controls how often garbage collection runs:
+    /// - `0`: Disable threshold-based collection (only collect when memory exhausted)
+    /// - `n > 0`: Collect after every `n` allocations
+    ///
+    /// Lower values reduce peak memory usage but increase GC overhead.
+    /// Default is 1024.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use typescript_eval::Runtime;
+    ///
+    /// let mut runtime = Runtime::new();
+    /// runtime.set_gc_threshold(512); // More aggressive collection
+    /// ```
+    pub fn set_gc_threshold(&mut self, threshold: usize) {
+        self.interpreter.set_gc_threshold(threshold);
     }
 }
 

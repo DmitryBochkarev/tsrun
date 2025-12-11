@@ -87,6 +87,8 @@ pub struct GcStats {
     pub tracked_count: usize,
     pub roots_count: usize,
     pub free_count: usize,
+    pub gc_threshold: usize,
+    pub allocs_since_gc: usize,
 }
 
 /// The interpreter state
@@ -577,7 +579,24 @@ impl Interpreter {
             tracked_count: self.gc_space.tracked_count(),
             roots_count: self.gc_space.roots_count(),
             free_count: self.gc_space.free_count(),
+            gc_threshold: self.gc_space.gc_threshold(),
+            allocs_since_gc: self.gc_space.allocs_since_gc(),
         }
+    }
+
+    /// Get the current GC threshold
+    pub fn gc_threshold(&self) -> usize {
+        self.gc_space.gc_threshold()
+    }
+
+    /// Set the GC threshold
+    ///
+    /// - `0`: Disable threshold-based collection (only collect when memory exhausted)
+    /// - `n > 0`: Collect after every `n` allocations
+    ///
+    /// Lower values reduce peak memory but increase GC overhead.
+    pub fn set_gc_threshold(&mut self, threshold: usize) {
+        self.gc_space.set_gc_threshold(threshold);
     }
 
     /// Set the execution timeout in milliseconds

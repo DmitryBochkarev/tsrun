@@ -146,6 +146,10 @@ struct SpaceInternal<T: Traceable> {
     objects: Vec<Option<Weak<GcData<T>>>>,
     free_list: Vec<usize>,
     marked: HashSet<usize>,
+    /// Number of allocations since last GC
+    allocs_since_gc: usize,
+    /// Threshold for triggering GC (0 = disabled, only trigger when free_list empty)
+    gc_threshold: usize,
 }
 
 /// A memory space that manages garbage-collected objects of type `T`.
@@ -157,15 +161,31 @@ pub struct Space<T: Traceable> {
     internal: Rc<RefCell<SpaceInternal<T>>>,
 }
 
+/// Default GC threshold - collect after this many allocations
+/// Set to 1024 to balance collection frequency vs overhead
+pub const DEFAULT_GC_THRESHOLD: usize = 1024;
+
 impl<T: Traceable> Space<T> {
-    /// Create a new space with default capacity (1024 slots).
+    /// Create a new space with default capacity (1024 slots) and default GC threshold.
     pub fn new() -> Self {
         Self::with_capacity(1024)
     }
 
-    /// Create a new space with the specified initial capacity.
+    /// Create a new space with the specified initial capacity and default GC threshold.
     pub fn with_capacity(capacity: usize) -> Self {
-        let internal = SpaceInternal::new(capacity);
+        Self::with_capacity_and_threshold(capacity, DEFAULT_GC_THRESHOLD)
+    }
+
+    /// Create a new space with specified capacity and GC threshold.
+    ///
+    /// The GC threshold controls how often garbage collection runs:
+    /// - `0`: Only collect when free_list is exhausted (lazy collection)
+    /// - `n > 0`: Collect after every `n` allocations (eager collection)
+    ///
+    /// Lower thresholds reduce peak memory but increase GC overhead.
+    /// Higher thresholds improve throughput but may use more memory.
+    pub fn with_capacity_and_threshold(capacity: usize, gc_threshold: usize) -> Self {
+        let internal = SpaceInternal::new(capacity, gc_threshold);
         Space {
             internal: Rc::new(RefCell::new(internal)),
         }
@@ -312,6 +332,29 @@ impl<T: Traceable> Space<T> {
     pub fn roots_count(&self) -> usize {
         self.internal.borrow().roots.len()
     }
+
+    /// Get the current GC threshold.
+    ///
+    /// Returns the number of allocations that trigger a collection.
+    /// A value of 0 means threshold-based collection is disabled.
+    pub fn gc_threshold(&self) -> usize {
+        self.internal.borrow().gc_threshold
+    }
+
+    /// Set the GC threshold.
+    ///
+    /// - `0`: Disable threshold-based collection (only collect when free_list exhausted)
+    /// - `n > 0`: Collect after every `n` allocations
+    ///
+    /// Lower values reduce peak memory usage but increase GC overhead.
+    pub fn set_gc_threshold(&mut self, threshold: usize) {
+        self.internal.borrow_mut().gc_threshold = threshold;
+    }
+
+    /// Returns the number of allocations since the last GC.
+    pub fn allocs_since_gc(&self) -> usize {
+        self.internal.borrow().allocs_since_gc
+    }
 }
 
 impl<T: Traceable> Default for Space<T> {
@@ -327,19 +370,28 @@ impl<T: Traceable> Drop for Space<T> {
 }
 
 impl<T: Traceable> SpaceInternal<T> {
-    fn new(capacity: usize) -> Self {
+    fn new(capacity: usize, gc_threshold: usize) -> Self {
         SpaceInternal {
             roots: HashMap::new(),
             objects: (0..capacity).map(|_| None).collect(),
             free_list: (0..capacity).rev().collect(),
             marked: HashSet::new(),
+            allocs_since_gc: 0,
+            gc_threshold,
         }
     }
 
     fn prepare_for_alloc(&mut self) {
+        // Trigger GC if threshold exceeded (and threshold is enabled)
+        if self.gc_threshold > 0 && self.allocs_since_gc >= self.gc_threshold {
+            self.collect();
+        }
+        // Also trigger if free_list is empty (must have space to allocate)
         if self.free_list.is_empty() {
             self.collect();
         }
+        // Track allocation
+        self.allocs_since_gc += 1;
     }
 
     fn allocate_id(&mut self) -> usize {
@@ -406,6 +458,8 @@ impl<T: Traceable> SpaceInternal<T> {
     fn collect(&mut self) {
         self.mark_reachable();
         self.break_cycles();
+        // Reset allocation counter after collection
+        self.allocs_since_gc = 0;
     }
 
     fn mark_reachable(&mut self) {
@@ -864,5 +918,201 @@ mod tests {
 
         // All 4 should survive (reachable from root)
         assert_eq!(space.alive_count(), 4);
+    }
+
+    #[test]
+    fn test_gc_threshold_default() {
+        let space: Space<Node> = Space::new();
+        assert_eq!(space.gc_threshold(), DEFAULT_GC_THRESHOLD);
+    }
+
+    #[test]
+    fn test_gc_threshold_custom() {
+        let space: Space<Node> = Space::with_capacity_and_threshold(100, 50);
+        assert_eq!(space.gc_threshold(), 50);
+    }
+
+    #[test]
+    fn test_gc_threshold_disabled() {
+        let mut space: Space<Node> = Space::with_capacity_and_threshold(100, 0);
+        assert_eq!(space.gc_threshold(), 0);
+
+        // Create cycles that stay alive via cyclic references
+        let mut nodes = Vec::new();
+        for i in 0..25 {
+            let a = space.alloc(Node {
+                value: i,
+                next: None,
+            });
+            let b = space.alloc(Node {
+                value: i + 100,
+                next: None,
+            });
+            // Create cycle to keep them alive
+            a.borrow_mut().next = Some(b.clone());
+            b.borrow_mut().next = Some(a.clone());
+            nodes.push(a);
+            nodes.push(b);
+        }
+
+        // All 50 should still be alive (cycles keep them alive, no GC ran)
+        assert_eq!(space.alive_count(), 50);
+
+        // Drop local references - cycles still keep them alive
+        drop(nodes);
+        assert_eq!(space.alive_count(), 50);
+
+        // Now collect - should break cycles
+        space.collect();
+        assert_eq!(space.alive_count(), 0);
+    }
+
+    #[test]
+    fn test_gc_threshold_triggers_collection() {
+        // Small threshold to trigger frequent GC
+        let mut space: Space<Node> = Space::with_capacity_and_threshold(100, 10);
+
+        // Create cycles that go out of scope
+        for _ in 0..30 {
+            let a = space.alloc(Node {
+                value: 1,
+                next: None,
+            });
+            let b = space.alloc(Node {
+                value: 2,
+                next: None,
+            });
+            // Create cycle
+            a.borrow_mut().next = Some(b.clone());
+            b.borrow_mut().next = Some(a.clone());
+            // a, b go out of scope - become unreachable cycles
+        }
+
+        // With threshold=10, GC should have run multiple times
+        // breaking cycles and keeping alive count low
+        // Without threshold, we'd have 60 objects (30 * 2)
+        // With threshold, cycles get collected periodically
+        assert!(
+            space.alive_count() < 30,
+            "Threshold GC should keep alive count bounded: {}",
+            space.alive_count()
+        );
+    }
+
+    #[test]
+    fn test_set_gc_threshold() {
+        let mut space: Space<Node> = Space::new();
+        assert_eq!(space.gc_threshold(), DEFAULT_GC_THRESHOLD);
+
+        space.set_gc_threshold(256);
+        assert_eq!(space.gc_threshold(), 256);
+
+        space.set_gc_threshold(0);
+        assert_eq!(space.gc_threshold(), 0);
+    }
+
+    #[test]
+    fn test_allocs_since_gc() {
+        let mut space: Space<Node> = Space::with_capacity_and_threshold(100, 0);
+        assert_eq!(space.allocs_since_gc(), 0);
+
+        // Allocate some objects
+        for i in 0..5 {
+            let _node = space.alloc(Node {
+                value: i,
+                next: None,
+            });
+        }
+        assert_eq!(space.allocs_since_gc(), 5);
+
+        // Manual collect should reset counter
+        space.collect();
+        assert_eq!(space.allocs_since_gc(), 0);
+    }
+
+    #[test]
+    fn test_threshold_resets_after_collection() {
+        let mut space: Space<Node> = Space::with_capacity_and_threshold(100, 5);
+
+        // Allocate 5 objects to reach threshold
+        for i in 0..5 {
+            let _node = space.alloc(Node {
+                value: i,
+                next: None,
+            });
+        }
+        // Counter is 5 (threshold reached but GC hasn't run yet)
+        assert_eq!(space.allocs_since_gc(), 5);
+
+        // 6th allocation: check finds counter >= threshold, runs GC, resets to 0, then increments
+        let _node = space.alloc(Node {
+            value: 99,
+            next: None,
+        });
+
+        // Counter should be 1 (GC ran at start of alloc, reset to 0, then incremented)
+        assert_eq!(space.allocs_since_gc(), 1);
+    }
+
+    #[test]
+    fn test_gc_threshold_memory_bounded() {
+        // This test verifies that threshold-based GC keeps memory bounded
+        // when creating many cycles
+
+        // With threshold = 20, GC runs every 20 allocations
+        let mut space_with_threshold: Space<Node> = Space::with_capacity_and_threshold(1000, 20);
+
+        // Without threshold (0), GC only runs when free_list exhausted
+        let mut space_without: Space<Node> = Space::with_capacity_and_threshold(1000, 0);
+
+        // Create 100 cycles (200 objects) in each space
+        for _ in 0..100 {
+            // With threshold
+            {
+                let a = space_with_threshold.alloc(Node {
+                    value: 1,
+                    next: None,
+                });
+                let b = space_with_threshold.alloc(Node {
+                    value: 2,
+                    next: None,
+                });
+                a.borrow_mut().next = Some(b.clone());
+                b.borrow_mut().next = Some(a.clone());
+            }
+
+            // Without threshold
+            {
+                let a = space_without.alloc(Node {
+                    value: 1,
+                    next: None,
+                });
+                let b = space_without.alloc(Node {
+                    value: 2,
+                    next: None,
+                });
+                a.borrow_mut().next = Some(b.clone());
+                b.borrow_mut().next = Some(a.clone());
+            }
+        }
+
+        // Space with threshold should have far fewer live objects
+        let alive_with = space_with_threshold.alive_count();
+        let alive_without = space_without.alive_count();
+
+        println!(
+            "With threshold: {}, Without threshold: {}",
+            alive_with, alive_without
+        );
+
+        // Without threshold, all 200 cycles should still be alive
+        assert_eq!(alive_without, 200);
+
+        // With threshold, most should have been collected
+        assert!(
+            alive_with < 50,
+            "Threshold should keep alive count low: {}",
+            alive_with
+        );
     }
 }

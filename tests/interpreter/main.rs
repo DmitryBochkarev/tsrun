@@ -13,6 +13,7 @@ mod dynamic_import;
 mod error;
 mod exports;
 mod function;
+mod gc;
 mod generator;
 mod global;
 mod json;
