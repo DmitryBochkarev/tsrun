@@ -247,9 +247,8 @@ pub fn object_from_entries(
                     .unwrap_or(JsValue::Undefined);
                 let key_str = key.to_js_string().to_string();
                 drop(entry_borrow);
-                result
-                    .borrow_mut()
-                    .set_property(PropertyKey::from(key_str), value);
+                let interned_key = interp.key(&key_str);
+                result.borrow_mut().set_property(interned_key, value);
             }
         }
     }
@@ -258,7 +257,7 @@ pub fn object_from_entries(
 }
 
 pub fn object_has_own(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
 ) -> Result<JsValue, JsError> {
@@ -270,10 +269,8 @@ pub fn object_has_own(
     };
 
     let key_str = key.to_js_string().to_string();
-    let has = obj_ref
-        .borrow()
-        .properties
-        .contains_key(&PropertyKey::from(key_str));
+    let interned_key = interp.key(&key_str);
+    let has = obj_ref.borrow().properties.contains_key(&interned_key);
     Ok(JsValue::Boolean(has))
 }
 
@@ -379,7 +376,7 @@ pub fn object_is_sealed(
 // Object.prototype methods
 
 pub fn object_has_own_property(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
 ) -> Result<JsValue, JsError> {
@@ -391,7 +388,7 @@ pub fn object_has_own_property(
         .first()
         .map(|v| v.to_js_string().to_string())
         .unwrap_or_default();
-    let key = PropertyKey::from(prop_name.as_str());
+    let key = interp.key(&prop_name);
 
     let has_prop = obj.borrow().properties.contains_key(&key);
     Ok(JsValue::Boolean(has_prop))

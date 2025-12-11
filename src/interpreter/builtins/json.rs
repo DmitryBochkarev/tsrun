@@ -184,8 +184,8 @@ pub fn json_to_js_value_with_interp(
             let obj = interp.create_object();
             for (key, value) in map {
                 let js_value = json_to_js_value_with_interp(interp, value)?;
-                obj.borrow_mut()
-                    .set_property(PropertyKey::from(key.as_str()), js_value);
+                let interned_key = interp.key(key);
+                obj.borrow_mut().set_property(interned_key, js_value);
             }
             JsValue::Object(obj)
         }

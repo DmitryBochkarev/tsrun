@@ -1080,7 +1080,8 @@ impl Interpreter {
                             eval_stack::ImportBindings::Default(local)
                         } else {
                             // Has both default and named - treat as named with "default" key
-                            named.insert(0, (JsString::from("default"), local));
+                            let default_key = self.intern("default");
+                            named.insert(0, (default_key, local));
                             eval_stack::ImportBindings::Named(named)
                         }
                     } else {
@@ -2354,7 +2355,8 @@ impl Interpreter {
                         self.execute_function_declaration(func_decl)?;
                         if let Some(id) = &func_decl.id {
                             if let Ok(value) = self.env_get_binding(&id.name) {
-                                self.exports.insert(JsString::from("default"), value);
+                                let default_key = self.intern("default");
+                                self.exports.insert(default_key, value);
                             }
                         }
                     }
@@ -2363,14 +2365,16 @@ impl Interpreter {
                         self.execute_class_declaration(class_decl)?;
                         if let Some(id) = &class_decl.id {
                             if let Ok(value) = self.env_get_binding(&id.name) {
-                                self.exports.insert(JsString::from("default"), value);
+                                let default_key = self.intern("default");
+                                self.exports.insert(default_key, value);
                             }
                         }
                     }
                     // export default expression (handled via Expression statement)
                     Statement::Expression(expr_stmt) => {
                         let value = self.evaluate(&expr_stmt.expression)?;
-                        self.exports.insert(JsString::from("default"), value);
+                        let default_key = self.intern("default");
+                        self.exports.insert(default_key, value);
                     }
                     _ => {
                         // Other default exports not yet supported
