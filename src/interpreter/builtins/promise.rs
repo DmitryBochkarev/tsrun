@@ -645,6 +645,11 @@ pub fn promise_allsettled(
         status_info.push((status, result));
     }
 
+    // Pre-intern keys for allSettled result objects
+    let status_key = interp.key("status");
+    let value_key = interp.key("value");
+    let reason_key = interp.key("reason");
+
     // Now create result objects using interp
     let mut results: Vec<JsValue> = Vec::with_capacity(status_info.len());
 
@@ -656,30 +661,18 @@ pub fn promise_allsettled(
 
             match status {
                 PromiseStatus::Fulfilled => {
-                    result_ref.set_property(
-                        PropertyKey::from("status"),
-                        JsValue::String("fulfilled".into()),
-                    );
-                    result_ref.set_property(
-                        PropertyKey::from("value"),
-                        result.unwrap_or(JsValue::Undefined),
-                    );
+                    result_ref
+                        .set_property(status_key.clone(), JsValue::String("fulfilled".into()));
+                    result_ref
+                        .set_property(value_key.clone(), result.unwrap_or(JsValue::Undefined));
                 }
                 PromiseStatus::Rejected => {
-                    result_ref.set_property(
-                        PropertyKey::from("status"),
-                        JsValue::String("rejected".into()),
-                    );
-                    result_ref.set_property(
-                        PropertyKey::from("reason"),
-                        result.unwrap_or(JsValue::Undefined),
-                    );
+                    result_ref.set_property(status_key.clone(), JsValue::String("rejected".into()));
+                    result_ref
+                        .set_property(reason_key.clone(), result.unwrap_or(JsValue::Undefined));
                 }
                 PromiseStatus::Pending => {
-                    result_ref.set_property(
-                        PropertyKey::from("status"),
-                        JsValue::String("pending".into()),
-                    );
+                    result_ref.set_property(status_key.clone(), JsValue::String("pending".into()));
                 }
             }
         }

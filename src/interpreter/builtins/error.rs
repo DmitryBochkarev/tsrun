@@ -4,7 +4,6 @@ use crate::error::JsError;
 use crate::interpreter::Interpreter;
 use crate::value::{
     create_function, create_object, JsFunction, JsObjectRef, JsString, JsValue, NativeFunction,
-    PropertyKey,
 };
 
 /// Create Error.prototype with toString
@@ -184,7 +183,7 @@ pub fn create_error_constructors(interp: &mut Interpreter) -> ErrorConstructors 
 /// Error.prototype.toString()
 /// Returns "name: message" or just "name" if message is empty
 pub fn error_to_string(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     this: JsValue,
     _args: &[JsValue],
 ) -> Result<JsValue, JsError> {
@@ -192,17 +191,21 @@ pub fn error_to_string(
         return Ok(JsValue::String(JsString::from("Error")));
     };
 
+    // Pre-intern keys
+    let name_key = interp.key("name");
+    let message_key = interp.key("message");
+
     let obj_ref = obj.borrow();
 
     // Get name, default to "Error"
     let name = obj_ref
-        .get_property(&PropertyKey::from("name"))
+        .get_property(&name_key)
         .map(|v| v.to_js_string().to_string())
         .unwrap_or_else(|| "Error".to_string());
 
     // Get message, default to ""
     let message = obj_ref
-        .get_property(&PropertyKey::from("message"))
+        .get_property(&message_key)
         .map(|v| v.to_js_string().to_string())
         .unwrap_or_default();
 
@@ -230,18 +233,17 @@ fn create_error_object_with_stack(
     // Capture stack trace
     let stack_trace = interp.format_stack_trace(name, msg_str.as_ref());
 
+    // Pre-intern keys
+    let name_key = interp.key("name");
+    let message_key = interp.key("message");
+    let stack_key = interp.key("stack");
+
     let obj = interp.create_object();
     {
         let mut obj_ref = obj.borrow_mut();
-        obj_ref.set_property(
-            PropertyKey::from("name"),
-            JsValue::String(JsString::from(name)),
-        );
-        obj_ref.set_property(PropertyKey::from("message"), JsValue::String(msg_str));
-        obj_ref.set_property(
-            PropertyKey::from("stack"),
-            JsValue::String(JsString::from(stack_trace)),
-        );
+        obj_ref.set_property(name_key, JsValue::String(JsString::from(name)));
+        obj_ref.set_property(message_key, JsValue::String(msg_str));
+        obj_ref.set_property(stack_key, JsValue::String(JsString::from(stack_trace)));
         if let Some(proto) = prototype {
             obj_ref.prototype = Some(proto);
         }
@@ -251,7 +253,7 @@ fn create_error_object_with_stack(
 
 /// Initialize error properties on an existing object (for subclass support via super())
 fn initialize_error_on_this(
-    interp: &Interpreter,
+    interp: &mut Interpreter,
     this: &JsObjectRef,
     name: &str,
     message: JsValue,
@@ -264,16 +266,15 @@ fn initialize_error_on_this(
     // Capture stack trace
     let stack_trace = interp.format_stack_trace(name, msg_str.as_ref());
 
+    // Pre-intern keys
+    let name_key = interp.key("name");
+    let message_key = interp.key("message");
+    let stack_key = interp.key("stack");
+
     let mut obj_ref = this.borrow_mut();
-    obj_ref.set_property(
-        PropertyKey::from("name"),
-        JsValue::String(JsString::from(name)),
-    );
-    obj_ref.set_property(PropertyKey::from("message"), JsValue::String(msg_str));
-    obj_ref.set_property(
-        PropertyKey::from("stack"),
-        JsValue::String(JsString::from(stack_trace)),
-    );
+    obj_ref.set_property(name_key, JsValue::String(JsString::from(name)));
+    obj_ref.set_property(message_key, JsValue::String(msg_str));
+    obj_ref.set_property(stack_key, JsValue::String(JsString::from(stack_trace)));
 }
 
 pub fn error_constructor(

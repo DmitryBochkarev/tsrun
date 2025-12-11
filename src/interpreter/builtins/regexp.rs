@@ -4,7 +4,7 @@ use crate::error::JsError;
 use crate::interpreter::Interpreter;
 use crate::value::{
     create_function, create_object, ExoticObject, JsFunction, JsObjectRef, JsString, JsValue,
-    NativeFunction, PropertyKey,
+    NativeFunction,
 };
 
 /// Create RegExp.prototype with test and exec methods
@@ -56,6 +56,17 @@ pub fn regexp_constructor(
         .to_js_string()
         .to_string();
 
+    // Pre-intern all property keys
+    let source_key = interp.key("source");
+    let flags_key = interp.key("flags");
+    let global_key = interp.key("global");
+    let ignore_case_key = interp.key("ignoreCase");
+    let multiline_key = interp.key("multiline");
+    let dot_all_key = interp.key("dotAll");
+    let unicode_key = interp.key("unicode");
+    let sticky_key = interp.key("sticky");
+    let last_index_key = interp.key("lastIndex");
+
     let regexp_obj = interp.create_object();
     {
         let mut obj = regexp_obj.borrow_mut();
@@ -64,40 +75,16 @@ pub fn regexp_constructor(
             flags: flags.clone(),
         };
         obj.prototype = Some(interp.regexp_prototype.clone());
-        obj.set_property(
-            PropertyKey::from("source"),
-            JsValue::String(JsString::from(pattern)),
-        );
-        obj.set_property(
-            PropertyKey::from("flags"),
-            JsValue::String(JsString::from(flags.clone())),
-        );
-        obj.set_property(
-            PropertyKey::from("global"),
-            JsValue::Boolean(flags.contains('g')),
-        );
-        obj.set_property(
-            PropertyKey::from("ignoreCase"),
-            JsValue::Boolean(flags.contains('i')),
-        );
-        obj.set_property(
-            PropertyKey::from("multiline"),
-            JsValue::Boolean(flags.contains('m')),
-        );
-        obj.set_property(
-            PropertyKey::from("dotAll"),
-            JsValue::Boolean(flags.contains('s')),
-        );
-        obj.set_property(
-            PropertyKey::from("unicode"),
-            JsValue::Boolean(flags.contains('u')),
-        );
-        obj.set_property(
-            PropertyKey::from("sticky"),
-            JsValue::Boolean(flags.contains('y')),
-        );
+        obj.set_property(source_key, JsValue::String(JsString::from(pattern)));
+        obj.set_property(flags_key, JsValue::String(JsString::from(flags.clone())));
+        obj.set_property(global_key, JsValue::Boolean(flags.contains('g')));
+        obj.set_property(ignore_case_key, JsValue::Boolean(flags.contains('i')));
+        obj.set_property(multiline_key, JsValue::Boolean(flags.contains('m')));
+        obj.set_property(dot_all_key, JsValue::Boolean(flags.contains('s')));
+        obj.set_property(unicode_key, JsValue::Boolean(flags.contains('u')));
+        obj.set_property(sticky_key, JsValue::Boolean(flags.contains('y')));
         // Initialize lastIndex to 0
-        obj.set_property(PropertyKey::from("lastIndex"), JsValue::Number(0.0));
+        obj.set_property(last_index_key, JsValue::Number(0.0));
     }
     Ok(JsValue::Object(regexp_obj))
 }
@@ -184,11 +171,16 @@ pub fn regexp_exec(
     let is_global = flags.contains('g');
     let is_sticky = flags.contains('y');
 
+    // Pre-intern property keys
+    let last_index_key = interp.key("lastIndex");
+    let index_key = interp.key("index");
+    let input_key = interp.key("input");
+
     // Get lastIndex for global/sticky regexes
     let last_index = if is_global || is_sticky {
         let li = obj
             .borrow()
-            .get_property(&PropertyKey::from("lastIndex"))
+            .get_property(&last_index_key)
             .unwrap_or(JsValue::Number(0.0));
         match li {
             JsValue::Number(n) => n as usize,
@@ -212,7 +204,7 @@ pub fn regexp_exec(
         // lastIndex past end of string - no match
         if is_global || is_sticky {
             obj.borrow_mut()
-                .set_property(PropertyKey::from("lastIndex"), JsValue::Number(0.0));
+                .set_property(last_index_key, JsValue::Number(0.0));
         }
         return Ok(JsValue::Null);
     } else {
@@ -234,23 +226,17 @@ pub fn regexp_exec(
             let match_start = caps.get(0).map(|m| m.start()).unwrap_or(0);
             let actual_index = last_index + match_start;
 
-            arr.borrow_mut().set_property(
-                PropertyKey::from("index"),
-                JsValue::Number(actual_index as f64),
-            );
-            arr.borrow_mut().set_property(
-                PropertyKey::from("input"),
-                JsValue::String(JsString::from(input.clone())),
-            );
+            arr.borrow_mut()
+                .set_property(index_key, JsValue::Number(actual_index as f64));
+            arr.borrow_mut()
+                .set_property(input_key, JsValue::String(JsString::from(input.clone())));
 
             // Update lastIndex for global/sticky regexes
             if is_global || is_sticky {
                 let match_end = caps.get(0).map(|m| m.end()).unwrap_or(0);
                 let new_last_index = last_index + match_end;
-                obj.borrow_mut().set_property(
-                    PropertyKey::from("lastIndex"),
-                    JsValue::Number(new_last_index as f64),
-                );
+                obj.borrow_mut()
+                    .set_property(last_index_key, JsValue::Number(new_last_index as f64));
             }
 
             Ok(JsValue::Object(arr))
@@ -259,7 +245,7 @@ pub fn regexp_exec(
             // Reset lastIndex to 0 on no match for global/sticky
             if is_global || is_sticky {
                 obj.borrow_mut()
-                    .set_property(PropertyKey::from("lastIndex"), JsValue::Number(0.0));
+                    .set_property(last_index_key, JsValue::Number(0.0));
             }
             Ok(JsValue::Null)
         }

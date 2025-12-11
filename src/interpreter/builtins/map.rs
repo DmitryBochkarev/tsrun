@@ -62,6 +62,8 @@ pub fn map_constructor(
     _this: JsValue,
     args: &[JsValue],
 ) -> Result<JsValue, JsError> {
+    let size_key = interp.key("size");
+
     let map_obj = interp.create_object();
     {
         let mut obj = map_obj.borrow_mut();
@@ -69,7 +71,7 @@ pub fn map_constructor(
             entries: Vec::new(),
         };
         obj.prototype = Some(interp.map_prototype.clone());
-        obj.set_property(PropertyKey::from("size"), JsValue::Number(0.0));
+        obj.set_property(size_key.clone(), JsValue::Number(0.0));
     }
 
     // If an iterable is passed, add its entries
@@ -117,7 +119,7 @@ pub fn map_constructor(
                 }
             }
             let len = entries.len();
-            map.set_property(PropertyKey::from("size"), JsValue::Number(len as f64));
+            map.set_property(size_key, JsValue::Number(len as f64));
         }
     }
 
@@ -150,7 +152,7 @@ pub fn map_get(
 }
 
 pub fn map_set(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
 ) -> Result<JsValue, JsError> {
@@ -159,6 +161,8 @@ pub fn map_set(
             "Map.prototype.set called on non-object",
         ));
     };
+
+    let size_key = interp.key("size");
 
     let key = args.first().cloned().unwrap_or(JsValue::Undefined);
     let value = args.get(1).cloned().unwrap_or(JsValue::Undefined);
@@ -177,7 +181,7 @@ pub fn map_set(
         entries.push((key, value));
         // Update size property
         let len = entries.len();
-        map.set_property(PropertyKey::from("size"), JsValue::Number(len as f64));
+        map.set_property(size_key, JsValue::Number(len as f64));
     }
 
     drop(map);
@@ -210,7 +214,7 @@ pub fn map_has(
 }
 
 pub fn map_delete(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
 ) -> Result<JsValue, JsError> {
@@ -220,6 +224,8 @@ pub fn map_delete(
         ));
     };
 
+    let size_key = interp.key("size");
+
     let key = args.first().cloned().unwrap_or(JsValue::Undefined);
     let mut map = map_obj.borrow_mut();
 
@@ -227,7 +233,7 @@ pub fn map_delete(
         if let Some(i) = entries.iter().position(|(k, _)| same_value_zero(k, &key)) {
             entries.remove(i);
             let len = entries.len();
-            map.set_property(PropertyKey::from("size"), JsValue::Number(len as f64));
+            map.set_property(size_key, JsValue::Number(len as f64));
             return Ok(JsValue::Boolean(true));
         }
     }
@@ -236,7 +242,7 @@ pub fn map_delete(
 }
 
 pub fn map_clear(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     this: JsValue,
     _args: &[JsValue],
 ) -> Result<JsValue, JsError> {
@@ -246,11 +252,13 @@ pub fn map_clear(
         ));
     };
 
+    let size_key = interp.key("size");
+
     let mut map = map_obj.borrow_mut();
 
     if let ExoticObject::Map { ref mut entries } = map.exotic {
         entries.clear();
-        map.set_property(PropertyKey::from("size"), JsValue::Number(0.0));
+        map.set_property(size_key, JsValue::Number(0.0));
     }
 
     Ok(JsValue::Undefined)

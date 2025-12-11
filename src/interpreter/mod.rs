@@ -3381,7 +3381,9 @@ impl Interpreter {
                     .collect();
                 let raw_array = JsValue::Object(self.create_array(raw));
                 let raw_key = self.key("raw");
-                strings_arr_obj.borrow_mut().set_property(raw_key, raw_array);
+                strings_arr_obj
+                    .borrow_mut()
+                    .set_property(raw_key, raw_array);
 
                 let strings_array = JsValue::Object(strings_arr_obj.cheap_clone());
 

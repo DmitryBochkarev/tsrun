@@ -124,7 +124,7 @@ pub fn array_is_array(
 }
 
 pub fn array_push(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
 ) -> Result<JsValue, JsError> {
@@ -133,6 +133,8 @@ pub fn array_push(
             "Array.prototype.push called on non-object",
         ));
     };
+
+    let length_key = interp.key("length");
 
     let mut arr_ref = arr.borrow_mut();
 
@@ -158,7 +160,7 @@ pub fn array_push(
     }
 
     arr_ref.properties.insert(
-        PropertyKey::from("length"),
+        length_key,
         Property::with_attributes(JsValue::Number(current_length as f64), true, false, false),
     );
 
@@ -166,7 +168,7 @@ pub fn array_push(
 }
 
 pub fn array_pop(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     this: JsValue,
     _args: &[JsValue],
 ) -> Result<JsValue, JsError> {
@@ -175,6 +177,8 @@ pub fn array_pop(
             "Array.prototype.pop called on non-object",
         ));
     };
+
+    let length_key = interp.key("length");
 
     let mut arr_ref = arr.borrow_mut();
 
@@ -204,7 +208,7 @@ pub fn array_pop(
     }
 
     arr_ref.properties.insert(
-        PropertyKey::from("length"),
+        length_key,
         Property::with_attributes(JsValue::Number(new_length as f64), true, false, false),
     );
 
@@ -818,7 +822,7 @@ pub fn array_some(
 }
 
 pub fn array_shift(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     this: JsValue,
     _args: &[JsValue],
 ) -> Result<JsValue, JsError> {
@@ -827,6 +831,8 @@ pub fn array_shift(
             "Array.prototype.shift called on non-object",
         ));
     };
+
+    let length_key = interp.key("length");
 
     let mut arr_ref = arr.borrow_mut();
     let length = match &arr_ref.exotic {
@@ -854,13 +860,13 @@ pub fn array_shift(
     if let ExoticObject::Array { ref mut length } = arr_ref.exotic {
         *length = new_len;
     }
-    arr_ref.set_property(PropertyKey::from("length"), JsValue::Number(new_len as f64));
+    arr_ref.set_property(length_key, JsValue::Number(new_len as f64));
 
     Ok(first)
 }
 
 pub fn array_unshift(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
 ) -> Result<JsValue, JsError> {
@@ -869,6 +875,8 @@ pub fn array_unshift(
             "Array.prototype.unshift called on non-object",
         ));
     };
+
+    let length_key = interp.key("length");
 
     let mut arr_ref = arr.borrow_mut();
     let current_length = match &arr_ref.exotic {
@@ -896,10 +904,7 @@ pub fn array_unshift(
     if let ExoticObject::Array { ref mut length } = arr_ref.exotic {
         *length = new_length;
     }
-    arr_ref.set_property(
-        PropertyKey::from("length"),
-        JsValue::Number(new_length as f64),
-    );
+    arr_ref.set_property(length_key, JsValue::Number(new_length as f64));
 
     Ok(JsValue::Number(new_length as f64))
 }
@@ -1144,6 +1149,8 @@ pub fn array_splice(
         ));
     };
 
+    let length_key = interp.key("length");
+
     let mut arr_ref = arr.borrow_mut();
     let length = match &arr_ref.exotic {
         ExoticObject::Array { length } => *length as i64,
@@ -1211,10 +1218,7 @@ pub fn array_splice(
     if let ExoticObject::Array { ref mut length } = arr_ref.exotic {
         *length = new_length;
     }
-    arr_ref.set_property(
-        PropertyKey::from("length"),
-        JsValue::Number(new_length as f64),
-    );
+    arr_ref.set_property(length_key, JsValue::Number(new_length as f64));
 
     drop(arr_ref);
     Ok(JsValue::Object(interp.create_array(removed)))

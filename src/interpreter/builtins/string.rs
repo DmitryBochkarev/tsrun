@@ -7,7 +7,7 @@ use crate::error::JsError;
 use crate::interpreter::Interpreter;
 use crate::value::{
     create_function, create_object_with_capacity, ExoticObject, JsFunction, JsObjectRef, JsString,
-    JsValue, NativeFunction, PropertyKey,
+    JsValue, NativeFunction,
 };
 
 /// Create String.prototype with all string methods
@@ -903,6 +903,10 @@ pub fn string_match(
         // Non-global: return first match with groups (like exec)
         match re.captures(&s) {
             Some(caps) => {
+                // Pre-intern keys
+                let index_key = interp.key("index");
+                let input_key = interp.key("input");
+
                 let mut result = Vec::new();
                 for cap in caps.iter() {
                     match cap {
@@ -913,15 +917,11 @@ pub fn string_match(
                 let arr = interp.create_array(result);
                 // Add index property
                 if let Some(m) = caps.get(0) {
-                    arr.borrow_mut().set_property(
-                        PropertyKey::from("index"),
-                        JsValue::Number(m.start() as f64),
-                    );
+                    arr.borrow_mut()
+                        .set_property(index_key, JsValue::Number(m.start() as f64));
                 }
-                arr.borrow_mut().set_property(
-                    PropertyKey::from("input"),
-                    JsValue::String(JsString::from(s)),
-                );
+                arr.borrow_mut()
+                    .set_property(input_key, JsValue::String(JsString::from(s)));
                 Ok(JsValue::Object(arr))
             }
             None => Ok(JsValue::Null),
@@ -968,6 +968,10 @@ pub fn string_match_all(
 
     let re = build_regex(&pattern, &flags)?;
 
+    // Pre-intern keys
+    let index_key = interp.key("index");
+    let input_key = interp.key("input");
+
     // Collect all matches with their capture groups
     let mut all_matches = Vec::new();
     for caps in re.captures_iter(&s) {
@@ -981,13 +985,11 @@ pub fn string_match_all(
         let arr = interp.create_array(result);
         // Add index property
         if let Some(m) = caps.get(0) {
-            arr.borrow_mut().set_property(
-                PropertyKey::from("index"),
-                JsValue::Number(m.start() as f64),
-            );
+            arr.borrow_mut()
+                .set_property(index_key.clone(), JsValue::Number(m.start() as f64));
         }
         arr.borrow_mut().set_property(
-            PropertyKey::from("input"),
+            input_key.clone(),
             JsValue::String(JsString::from(s.clone())),
         );
         all_matches.push(JsValue::Object(arr));

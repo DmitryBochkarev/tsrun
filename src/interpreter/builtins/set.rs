@@ -43,6 +43,8 @@ pub fn set_constructor(
     _this: JsValue,
     args: &[JsValue],
 ) -> Result<JsValue, JsError> {
+    let size_key = interp.key("size");
+
     let set_obj = interp.create_object();
     {
         let mut obj = set_obj.borrow_mut();
@@ -50,7 +52,7 @@ pub fn set_constructor(
             entries: Vec::new(),
         };
         obj.prototype = Some(interp.set_prototype.clone());
-        obj.set_property(PropertyKey::from("size"), JsValue::Number(0.0));
+        obj.set_property(size_key.clone(), JsValue::Number(0.0));
     }
 
     // If an iterable (array) is passed, add its elements
@@ -75,7 +77,7 @@ pub fn set_constructor(
                     }
                 }
                 let len = entries.len();
-                set.set_property(PropertyKey::from("size"), JsValue::Number(len as f64));
+                set.set_property(size_key, JsValue::Number(len as f64));
             }
         }
     }
@@ -84,7 +86,7 @@ pub fn set_constructor(
 }
 
 pub fn set_add(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
 ) -> Result<JsValue, JsError> {
@@ -93,6 +95,8 @@ pub fn set_add(
             "Set.prototype.add called on non-object",
         ));
     };
+
+    let size_key = interp.key("size");
 
     let value = args.first().cloned().unwrap_or(JsValue::Undefined);
     let mut set = set_obj.borrow_mut();
@@ -103,7 +107,7 @@ pub fn set_add(
         if !exists {
             entries.push(value);
             let len = entries.len();
-            set.set_property(PropertyKey::from("size"), JsValue::Number(len as f64));
+            set.set_property(size_key, JsValue::Number(len as f64));
         }
     }
 
@@ -137,7 +141,7 @@ pub fn set_has(
 }
 
 pub fn set_delete(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
 ) -> Result<JsValue, JsError> {
@@ -147,6 +151,8 @@ pub fn set_delete(
         ));
     };
 
+    let size_key = interp.key("size");
+
     let value = args.first().cloned().unwrap_or(JsValue::Undefined);
     let mut set = set_obj.borrow_mut();
 
@@ -154,7 +160,7 @@ pub fn set_delete(
         if let Some(i) = entries.iter().position(|v| same_value_zero(v, &value)) {
             entries.remove(i);
             let len = entries.len();
-            set.set_property(PropertyKey::from("size"), JsValue::Number(len as f64));
+            set.set_property(size_key, JsValue::Number(len as f64));
             return Ok(JsValue::Boolean(true));
         }
     }
@@ -163,7 +169,7 @@ pub fn set_delete(
 }
 
 pub fn set_clear(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     this: JsValue,
     _args: &[JsValue],
 ) -> Result<JsValue, JsError> {
@@ -173,11 +179,13 @@ pub fn set_clear(
         ));
     };
 
+    let size_key = interp.key("size");
+
     let mut set = set_obj.borrow_mut();
 
     if let ExoticObject::Set { ref mut entries } = set.exotic {
         entries.clear();
-        set.set_property(PropertyKey::from("size"), JsValue::Number(0.0));
+        set.set_property(size_key, JsValue::Number(0.0));
     }
 
     Ok(JsValue::Undefined)

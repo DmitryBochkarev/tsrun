@@ -575,7 +575,9 @@ results
     if let typescript_eval::JsValue::Object(arr) = result {
         let arr_ref = arr.borrow();
         let get = |i: usize| -> f64 {
-            if let Some(typescript_eval::JsValue::Number(n)) = arr_ref.get_property(&typescript_eval::value::PropertyKey::Index(i as u32)) {
+            if let Some(typescript_eval::JsValue::Number(n)) =
+                arr_ref.get_property(&typescript_eval::value::PropertyKey::Index(i as u32))
+            {
                 n
             } else {
                 f64::NAN

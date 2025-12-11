@@ -468,6 +468,14 @@ pub fn object_get_own_property_descriptor(
     let obj_borrowed = obj_ref.borrow();
 
     if let Some(property) = obj_borrowed.get_own_property(&key) {
+        // Pre-intern all descriptor property keys
+        let get_key = interp.key("get");
+        let set_key = interp.key("set");
+        let value_key = interp.key("value");
+        let writable_key = interp.key("writable");
+        let enumerable_key = interp.key("enumerable");
+        let configurable_key = interp.key("configurable");
+
         // Create a descriptor object
         let desc = interp.create_object();
         {
@@ -476,34 +484,23 @@ pub fn object_get_own_property_descriptor(
             if property.is_accessor() {
                 // Accessor descriptor
                 if let Some(ref getter) = property.getter {
-                    desc_ref
-                        .set_property(PropertyKey::from("get"), JsValue::Object(getter.clone()));
+                    desc_ref.set_property(get_key, JsValue::Object(getter.clone()));
                 } else {
-                    desc_ref.set_property(PropertyKey::from("get"), JsValue::Undefined);
+                    desc_ref.set_property(get_key, JsValue::Undefined);
                 }
                 if let Some(ref setter) = property.setter {
-                    desc_ref
-                        .set_property(PropertyKey::from("set"), JsValue::Object(setter.clone()));
+                    desc_ref.set_property(set_key, JsValue::Object(setter.clone()));
                 } else {
-                    desc_ref.set_property(PropertyKey::from("set"), JsValue::Undefined);
+                    desc_ref.set_property(set_key, JsValue::Undefined);
                 }
             } else {
                 // Data descriptor
-                desc_ref.set_property(PropertyKey::from("value"), property.value.clone());
-                desc_ref.set_property(
-                    PropertyKey::from("writable"),
-                    JsValue::Boolean(property.writable),
-                );
+                desc_ref.set_property(value_key, property.value.clone());
+                desc_ref.set_property(writable_key, JsValue::Boolean(property.writable));
             }
 
-            desc_ref.set_property(
-                PropertyKey::from("enumerable"),
-                JsValue::Boolean(property.enumerable),
-            );
-            desc_ref.set_property(
-                PropertyKey::from("configurable"),
-                JsValue::Boolean(property.configurable),
-            );
+            desc_ref.set_property(enumerable_key, JsValue::Boolean(property.enumerable));
+            desc_ref.set_property(configurable_key, JsValue::Boolean(property.configurable));
         }
         Ok(JsValue::Object(desc))
     } else {
@@ -570,7 +567,7 @@ pub fn object_get_own_property_symbols(
 
 /// Object.defineProperty(obj, prop, descriptor)
 pub fn object_define_property(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
 ) -> Result<JsValue, JsError> {
@@ -590,27 +587,35 @@ pub fn object_define_property(
 
     let key = PropertyKey::from_value(&prop);
 
+    // Pre-intern descriptor property keys
+    let value_key = interp.key("value");
+    let writable_key = interp.key("writable");
+    let enumerable_key = interp.key("enumerable");
+    let configurable_key = interp.key("configurable");
+    let get_key = interp.key("get");
+    let set_key = interp.key("set");
+
     // Get descriptor properties
     let desc_borrowed = desc_ref.borrow();
     let value = desc_borrowed
-        .get_property(&PropertyKey::from("value"))
+        .get_property(&value_key)
         .unwrap_or(JsValue::Undefined);
     let writable = desc_borrowed
-        .get_property(&PropertyKey::from("writable"))
+        .get_property(&writable_key)
         .map(|v| v.to_boolean())
         .unwrap_or(false);
     let enumerable = desc_borrowed
-        .get_property(&PropertyKey::from("enumerable"))
+        .get_property(&enumerable_key)
         .map(|v| v.to_boolean())
         .unwrap_or(false);
     let configurable = desc_borrowed
-        .get_property(&PropertyKey::from("configurable"))
+        .get_property(&configurable_key)
         .map(|v| v.to_boolean())
         .unwrap_or(false);
 
     // Check for getter/setter
-    let getter = desc_borrowed.get_property(&PropertyKey::from("get"));
-    let setter = desc_borrowed.get_property(&PropertyKey::from("set"));
+    let getter = desc_borrowed.get_property(&get_key);
+    let setter = desc_borrowed.get_property(&set_key);
     drop(desc_borrowed);
 
     let is_accessor = getter.is_some() || setter.is_some();
@@ -641,7 +646,7 @@ pub fn object_define_property(
 /// Object.defineProperties(obj, props)
 /// Define multiple properties at once
 pub fn object_define_properties(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
 ) -> Result<JsValue, JsError> {
@@ -659,6 +664,14 @@ pub fn object_define_properties(
             "Property descriptors must be an object",
         ));
     };
+
+    // Pre-intern descriptor property keys
+    let value_key = interp.key("value");
+    let writable_key = interp.key("writable");
+    let enumerable_key = interp.key("enumerable");
+    let configurable_key = interp.key("configurable");
+    let get_key = interp.key("get");
+    let set_key = interp.key("set");
 
     // Iterate over all properties in the descriptor object
     let prop_keys: Vec<PropertyKey> = {
@@ -681,24 +694,24 @@ pub fn object_define_properties(
         // Get descriptor properties
         let desc_borrowed = desc_ref.borrow();
         let value = desc_borrowed
-            .get_property(&PropertyKey::from("value"))
+            .get_property(&value_key)
             .unwrap_or(JsValue::Undefined);
         let writable = desc_borrowed
-            .get_property(&PropertyKey::from("writable"))
+            .get_property(&writable_key)
             .map(|v| v.to_boolean())
             .unwrap_or(false);
         let enumerable = desc_borrowed
-            .get_property(&PropertyKey::from("enumerable"))
+            .get_property(&enumerable_key)
             .map(|v| v.to_boolean())
             .unwrap_or(false);
         let configurable = desc_borrowed
-            .get_property(&PropertyKey::from("configurable"))
+            .get_property(&configurable_key)
             .map(|v| v.to_boolean())
             .unwrap_or(false);
 
         // Check for getter/setter
-        let getter = desc_borrowed.get_property(&PropertyKey::from("get"));
-        let setter = desc_borrowed.get_property(&PropertyKey::from("set"));
+        let getter = desc_borrowed.get_property(&get_key);
+        let setter = desc_borrowed.get_property(&set_key);
         drop(desc_borrowed);
 
         let is_accessor = getter.is_some() || setter.is_some();

@@ -7,7 +7,6 @@ use crate::error::JsError;
 use crate::interpreter::Interpreter;
 use crate::value::{
     create_object, ExoticObject, GeneratorState, GeneratorStatus, JsObjectRef, JsString, JsValue,
-    PropertyKey,
 };
 
 /// Create Generator.prototype
@@ -33,11 +32,15 @@ pub fn create_generator_result_with_interp(
     value: JsValue,
     done: bool,
 ) -> JsValue {
+    // Pre-intern keys
+    let value_key = interp.key("value");
+    let done_key = interp.key("done");
+
     let obj = interp.create_object();
     {
         let mut o = obj.borrow_mut();
-        o.set_property(PropertyKey::from("value"), value);
-        o.set_property(PropertyKey::from("done"), JsValue::Boolean(done));
+        o.set_property(value_key, value);
+        o.set_property(done_key, JsValue::Boolean(done));
     }
     JsValue::Object(obj)
 }
