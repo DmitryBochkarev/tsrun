@@ -14,341 +14,6 @@ use crate::gc::{Gc, Space, Traceable, Tracer};
 use crate::lexer::Span;
 use crate::string_dict::StringDict;
 
-/// Environment identifier - an index into the environment arena.
-///
-/// Using indices instead of Rc<Environment> prevents reference cycles between
-/// closures and their captured environments.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct EnvId(pub usize);
-
-impl EnvId {
-    /// The global environment ID (always 0)
-    pub const GLOBAL: EnvId = EnvId(0);
-}
-
-/// Arena for storing environments.
-///
-/// All environments are owned by this arena, and referenced by `EnvId` indices.
-/// This prevents reference cycles that would occur with `Rc<Environment>`.
-#[derive(Debug)]
-pub struct EnvironmentArena {
-    /// All environments, indexed by EnvId
-    envs: Vec<Environment>,
-    /// Free list of reusable environment slots (indices of cleared environments)
-    free_list: Vec<usize>,
-}
-
-impl EnvironmentArena {
-    /// Create a new arena with a global environment
-    pub fn new() -> Self {
-        let global = Environment::new();
-        Self {
-            envs: vec![global],
-            free_list: Vec::new(),
-        }
-    }
-
-    /// Get the global environment ID
-    pub fn global_id(&self) -> EnvId {
-        EnvId::GLOBAL
-    }
-
-    /// Allocate a new environment with the given outer environment
-    pub fn alloc(&mut self, outer: Option<EnvId>) -> EnvId {
-        let env = Environment::with_outer(outer);
-        if let Some(id) = self.free_list.pop() {
-            if let Some(slot) = self.envs.get_mut(id) {
-                *slot = env;
-            }
-            EnvId(id)
-        } else {
-            let id = self.envs.len();
-            self.envs.push(env);
-            EnvId(id)
-        }
-    }
-
-    /// Get an environment by ID
-    pub fn get(&self, id: EnvId) -> Option<&Environment> {
-        self.envs.get(id.0)
-    }
-
-    /// Get a mutable environment by ID
-    pub fn get_mut(&mut self, id: EnvId) -> Option<&mut Environment> {
-        self.envs.get_mut(id.0)
-    }
-
-    /// Mark an environment as free for reuse.
-    /// This clears the environment's bindings and adds it to the free list.
-    /// Before clearing, decrements capture counts for any function values in bindings.
-    pub fn free(&mut self, id: EnvId) {
-        // Never free the global environment
-        if id == EnvId::GLOBAL {
-            return;
-        }
-
-        // First, collect closure envs from all function bindings
-        let closure_envs: Vec<EnvId> = self
-            .envs
-            .get(id.0)
-            .map(|env| {
-                env.bindings
-                    .values()
-                    .filter_map(|binding| binding.value.closure_env())
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        // Decrement capture counts for those closures
-        for closure_env in closure_envs {
-            self.decrement_capture(closure_env);
-        }
-
-        // Now clear the environment
-        if let Some(env) = self.envs.get_mut(id.0) {
-            env.bindings.clear();
-            env.outer = None;
-            env.capture_count = 0;
-            self.free_list.push(id.0);
-        }
-    }
-
-    /// Define a binding in the specified environment
-    pub fn define(&mut self, id: EnvId, name: impl Into<JsString>, value: JsValue, mutable: bool) {
-        if let Some(env) = self.get_mut(id) {
-            env.bindings.insert(
-                name.into(),
-                Binding {
-                    value,
-                    mutable,
-                    initialized: true,
-                },
-            );
-        }
-    }
-
-    /// Define an uninitialized binding (for TDZ)
-    pub fn define_uninitialized(&mut self, id: EnvId, name: impl Into<JsString>, mutable: bool) {
-        if let Some(env) = self.get_mut(id) {
-            env.bindings.insert(
-                name.into(),
-                Binding {
-                    value: JsValue::Undefined,
-                    mutable,
-                    initialized: false,
-                },
-            );
-        }
-    }
-
-    /// Delete a binding from the specified environment (does not walk outer chain)
-    pub fn delete(&mut self, id: EnvId, name: &JsString) {
-        if let Some(env) = self.get_mut(id) {
-            env.bindings.remove(name);
-        }
-    }
-
-    /// Get a binding value, walking the outer chain
-    pub fn get_binding(&self, id: EnvId, name: &JsString) -> Result<JsValue, JsError> {
-        let mut current = Some(id);
-        while let Some(env_id) = current {
-            if let Some(env) = self.get(env_id) {
-                if let Some(binding) = env.bindings.get(name) {
-                    if !binding.initialized {
-                        return Err(JsError::reference_error_with_message(
-                            name.as_str(),
-                            "Cannot access before initialization",
-                        ));
-                    }
-                    return Ok(binding.value.clone());
-                }
-                current = env.outer;
-            } else {
-                break;
-            }
-        }
-        Err(JsError::reference_error(name.as_str()))
-    }
-
-    /// Set a binding value, walking the outer chain.
-    /// If the old value was a function with a captured environment, decrements
-    /// the capture count for that environment.
-    pub fn set_binding(
-        &mut self,
-        id: EnvId,
-        name: &JsString,
-        value: JsValue,
-    ) -> Result<(), JsError> {
-        // First, find the binding and get the old value's closure env (if any)
-        let old_closure_env = {
-            let mut current = Some(id);
-            let mut result = None;
-            while let Some(env_id) = current {
-                if let Some(env) = self.get(env_id) {
-                    if let Some(binding) = env.bindings.get(name) {
-                        if !binding.initialized {
-                            return Err(JsError::reference_error_with_message(
-                                name.as_str(),
-                                "Cannot access before initialization",
-                            ));
-                        }
-                        if !binding.mutable {
-                            return Err(JsError::type_error(format!(
-                                "Assignment to constant variable '{}'",
-                                name
-                            )));
-                        }
-                        result = binding.value.closure_env();
-                        break;
-                    }
-                    current = env.outer;
-                } else {
-                    break;
-                }
-            }
-            result
-        };
-
-        // Decrement capture count for old value's closure (if it was a function)
-        if let Some(old_env) = old_closure_env {
-            self.decrement_capture(old_env);
-        }
-
-        // Now set the new value
-        let mut current = Some(id);
-        while let Some(env_id) = current {
-            if let Some(env) = self.get_mut(env_id) {
-                if let Some(binding) = env.bindings.get_mut(name) {
-                    binding.value = value;
-                    return Ok(());
-                }
-                current = env.outer;
-            } else {
-                break;
-            }
-        }
-        Err(JsError::reference_error(name.as_str()))
-    }
-
-    /// Initialize a previously uninitialized binding (for TDZ)
-    pub fn initialize(
-        &mut self,
-        id: EnvId,
-        name: &JsString,
-        value: JsValue,
-    ) -> Result<(), JsError> {
-        let mut current = Some(id);
-        while let Some(env_id) = current {
-            if let Some(env) = self.get_mut(env_id) {
-                if let Some(binding) = env.bindings.get_mut(name) {
-                    binding.value = value;
-                    binding.initialized = true;
-                    return Ok(());
-                }
-                current = env.outer;
-            } else {
-                break;
-            }
-        }
-        Err(JsError::reference_error(name.as_str()))
-    }
-
-    /// Check if a binding exists, walking the outer chain
-    pub fn has_binding(&self, id: EnvId, name: &JsString) -> bool {
-        let mut current = Some(id);
-        while let Some(env_id) = current {
-            if let Some(env) = self.get(env_id) {
-                if env.bindings.contains_key(name) {
-                    return true;
-                }
-                current = env.outer;
-            } else {
-                break;
-            }
-        }
-        false
-    }
-
-    /// Check if a binding exists in this exact environment (not outer)
-    pub fn has_own_binding(&self, id: EnvId, name: &JsString) -> bool {
-        self.get(id)
-            .map(|env| env.bindings.contains_key(name))
-            .unwrap_or(false)
-    }
-
-    /// Increment the capture count for an environment (and its ancestor chain).
-    /// Called when a closure is created that captures this environment.
-    pub fn increment_capture(&mut self, id: EnvId) {
-        let mut current = Some(id);
-        while let Some(env_id) = current {
-            if let Some(env) = self.get_mut(env_id) {
-                env.capture_count = env.capture_count.saturating_add(1);
-                current = env.outer;
-            } else {
-                break;
-            }
-        }
-    }
-
-    /// Decrement the capture count for an environment (and its ancestor chain).
-    /// Called when a closure that captured this environment is dropped.
-    /// Returns true if the environment's capture count reached 0.
-    pub fn decrement_capture(&mut self, id: EnvId) -> bool {
-        let mut current = Some(id);
-        let mut reached_zero = false;
-        while let Some(env_id) = current {
-            if let Some(env) = self.get_mut(env_id) {
-                env.capture_count = env.capture_count.saturating_sub(1);
-                if env_id == id && env.capture_count == 0 {
-                    reached_zero = true;
-                }
-                current = env.outer;
-            } else {
-                break;
-            }
-        }
-        reached_zero
-    }
-
-    /// Try to free an environment. Only succeeds if not captured by external closures.
-    /// This handles the self-referential case where closures in the environment's
-    /// bindings captured the environment itself - those don't count as external captures.
-    /// Returns true if the environment was freed.
-    pub fn try_free(&mut self, id: EnvId) -> bool {
-        if id == EnvId::GLOBAL {
-            return false;
-        }
-
-        // Count how many captures come from bindings within this environment itself
-        let self_captures = self
-            .envs
-            .get(id.0)
-            .map(|env| {
-                env.bindings
-                    .values()
-                    .filter_map(|binding| binding.value.closure_env())
-                    .filter(|closure_env| *closure_env == id)
-                    .count()
-            })
-            .unwrap_or(0);
-
-        // Check if there are external captures (captures not from self)
-        let capture_count = self.get(id).map(|env| env.capture_count).unwrap_or(0);
-        if capture_count > self_captures {
-            return false; // Can't free, it's captured by an external closure
-        }
-
-        self.free(id);
-        true
-    }
-}
-
-impl Default for EnvironmentArena {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 /// Trait for types that have cheap (O(1), reference-counted) clones.
 ///
 /// This trait makes it explicit when a clone is cheap (just incrementing a reference count)
@@ -511,21 +176,6 @@ impl JsValue {
             _ => false,
         }
     }
-
-    /// Get the closure EnvId if this value is a function with a captured environment.
-    /// Returns None for native functions, non-function objects, and primitives.
-    pub fn closure_env(&self) -> Option<EnvId> {
-        match self {
-            JsValue::Object(obj) => {
-                if let ExoticObject::Function(func) = &obj.borrow().exotic {
-                    func.closure_env()
-                } else {
-                    None
-                }
-            }
-            _ => None,
-        }
-    }
 }
 
 impl fmt::Debug for JsValue {
@@ -561,6 +211,9 @@ impl fmt::Debug for JsValue {
                             PromiseStatus::Rejected => "rejected",
                         };
                         write!(f, "Promise {{{}}}", status)
+                    }
+                    ExoticObject::Environment(env_data) => {
+                        write!(f, "[Environment {} bindings]", env_data.bindings.len())
                     }
                 }
             }
@@ -826,6 +479,8 @@ fn trace_exotic(exotic: &ExoticObject, tracer: &mut Tracer<'_>) {
 
         ExoticObject::Generator(state) => {
             if let Ok(state) = state.try_borrow() {
+                // Trace the closure environment
+                tracer.trace(&state.closure);
                 for arg in &state.args {
                     trace_jsvalue(arg, tracer);
                 }
@@ -849,13 +504,25 @@ fn trace_exotic(exotic: &ExoticObject, tracer: &mut Tracer<'_>) {
                 }
             }
         }
+
+        ExoticObject::Environment(env_data) => {
+            // Trace all binding values
+            for binding in env_data.bindings.values() {
+                trace_jsvalue(&binding.value, tracer);
+            }
+            // Trace outer environment reference
+            if let Some(ref outer) = env_data.outer {
+                tracer.trace(outer);
+            }
+        }
     }
 }
 
 fn trace_function(func: &JsFunction, tracer: &mut Tracer<'_>) {
     match func {
-        JsFunction::Interpreted(_) => {
-            // Closure environment is tracked via EnvId (arena), not Gc
+        JsFunction::Interpreted(interpreted) => {
+            // Trace the closure environment (now GC-managed)
+            tracer.trace(&interpreted.closure);
         }
         JsFunction::Native(_) => {}
         JsFunction::Bound(bound) => {
@@ -1191,6 +858,42 @@ impl Property {
     }
 }
 
+/// Environment data stored in Environment exotic objects.
+///
+/// This is used to store variable bindings in the GC-managed object graph,
+/// allowing the GC to trace and collect environments that form cycles.
+#[derive(Debug)]
+pub struct EnvironmentData {
+    /// Variable bindings in this scope
+    pub bindings: FxHashMap<JsString, Binding>,
+    /// Parent environment (if any) - now a GC reference
+    pub outer: Option<JsObjectRef>,
+}
+
+impl EnvironmentData {
+    /// Create a new environment with no outer scope (for global environment)
+    pub fn new() -> Self {
+        Self {
+            bindings: FxHashMap::default(),
+            outer: None,
+        }
+    }
+
+    /// Create a new environment with the given outer environment as parent
+    pub fn with_outer(outer: Option<JsObjectRef>) -> Self {
+        Self {
+            bindings: FxHashMap::default(),
+            outer,
+        }
+    }
+}
+
+impl Default for EnvironmentData {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Exotic object behavior
 #[derive(Debug)]
 pub enum ExoticObject {
@@ -1212,6 +915,8 @@ pub enum ExoticObject {
     Generator(Rc<RefCell<GeneratorState>>),
     /// Promise exotic object - stores promise state
     Promise(Rc<RefCell<PromiseState>>),
+    /// Environment exotic object - stores variable bindings
+    Environment(EnvironmentData),
 }
 
 /// Promise internal state
@@ -1256,8 +961,8 @@ pub struct GeneratorState {
     pub params: Rc<[FunctionParam]>,
     /// Arguments passed to the generator
     pub args: Vec<JsValue>,
-    /// The captured closure environment ID
-    pub closure: EnvId,
+    /// The captured closure environment (GC-managed)
+    pub closure: JsObjectRef,
     /// Current execution state
     pub state: GeneratorStatus,
     /// Current statement index
@@ -1313,22 +1018,6 @@ impl JsFunction {
             JsFunction::PromiseReject(_) => Some("reject"),
         }
     }
-
-    /// Get the closure EnvId if this is an interpreted function
-    pub fn closure_env(&self) -> Option<EnvId> {
-        match self {
-            JsFunction::Interpreted(f) => Some(f.closure),
-            JsFunction::Bound(b) => {
-                // For bound functions, get the closure from the target
-                if let ExoticObject::Function(target_fn) = &b.target.borrow().exotic {
-                    target_fn.closure_env()
-                } else {
-                    None
-                }
-            }
-            _ => None,
-        }
-    }
 }
 
 /// User-defined function
@@ -1339,8 +1028,8 @@ pub struct InterpretedFunction {
     pub params: Rc<[FunctionParam]>,
     /// Function body wrapped in Rc for cheap cloning
     pub body: Rc<FunctionBody>,
-    /// The captured closure environment ID
-    pub closure: EnvId,
+    /// The captured closure environment (GC-managed)
+    pub closure: JsObjectRef,
     pub source_location: Span,
     /// Whether this is a generator function (function*)
     pub generator: bool,
@@ -1382,47 +1071,6 @@ impl fmt::Debug for NativeFunction {
             .field("name", &self.name)
             .field("arity", &self.arity)
             .finish()
-    }
-}
-
-/// Execution environment for variable bindings.
-///
-/// Environments are stored in an `EnvironmentArena` and referenced by `EnvId`.
-/// This avoids reference cycles that would occur with `Rc<Environment>`.
-#[derive(Debug, Clone)]
-pub struct Environment {
-    /// Variable bindings in this scope
-    pub bindings: FxHashMap<JsString, Binding>,
-    /// Parent environment (if any)
-    pub outer: Option<EnvId>,
-    /// Number of closures that have captured this environment.
-    /// When this count drops to 0, the environment can be freed.
-    pub capture_count: usize,
-}
-
-impl Environment {
-    /// Create a new global environment (no outer scope)
-    pub fn new() -> Self {
-        Self {
-            bindings: FxHashMap::default(),
-            outer: None,
-            capture_count: 0,
-        }
-    }
-
-    /// Create a new environment with the given outer environment as parent
-    pub fn with_outer(outer: Option<EnvId>) -> Self {
-        Self {
-            bindings: FxHashMap::default(),
-            outer,
-            capture_count: 0,
-        }
-    }
-}
-
-impl Default for Environment {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -1543,6 +1191,55 @@ pub fn register_method(
     );
     let key = PropertyKey::String(interned_name);
     obj.borrow_mut().set_property(key, JsValue::Object(f));
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Environment GC Integration
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Environment reference - a GC-managed environment object.
+///
+/// This is an alias for `JsObjectRef` where the object has `ExoticObject::Environment`.
+/// Using this type makes it clear when a reference is expected to be an environment.
+pub type EnvRef = JsObjectRef;
+
+/// Create a new environment object in the GC space.
+///
+/// The environment is created with an optional outer environment reference.
+pub fn create_environment(space: &mut Space<JsObject>, outer: Option<EnvRef>) -> EnvRef {
+    let obj = JsObject {
+        prototype: None,
+        extensible: true,
+        frozen: false,
+        sealed: false,
+        null_prototype: true,
+        properties: FxHashMap::default(),
+        exotic: ExoticObject::Environment(EnvironmentData::with_outer(outer)),
+    };
+    space.alloc(obj)
+}
+
+impl JsObject {
+    /// Get environment data if this is an environment object
+    pub fn as_environment(&self) -> Option<&EnvironmentData> {
+        match &self.exotic {
+            ExoticObject::Environment(data) => Some(data),
+            _ => None,
+        }
+    }
+
+    /// Get mutable environment data if this is an environment object
+    pub fn as_environment_mut(&mut self) -> Option<&mut EnvironmentData> {
+        match &mut self.exotic {
+            ExoticObject::Environment(data) => Some(data),
+            _ => None,
+        }
+    }
+
+    /// Check if this object is an environment
+    pub fn is_environment(&self) -> bool {
+        matches!(self.exotic, ExoticObject::Environment(_))
+    }
 }
 
 #[cfg(test)]

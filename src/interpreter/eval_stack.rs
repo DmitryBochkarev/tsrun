@@ -7,7 +7,7 @@ use crate::ast::{
     AssignmentOp, AssignmentTarget, BinaryOp, BlockStatement, Expression, LogicalOp, Pattern,
     Statement, UnaryOp, VariableKind,
 };
-use crate::value::{Environment, JsString, JsValue, PropertyKey};
+use crate::value::{EnvRef, JsString, JsValue, PropertyKey};
 
 /// A frame on the evaluation stack
 ///
@@ -135,7 +135,7 @@ pub enum EvalFrame {
     ExecuteBlock {
         statements: Vec<Statement>,
         index: usize,
-        saved_env: Option<Environment>,
+        saved_env: Option<EnvRef>,
     },
 
     /// Variable declaration: initializer evaluated, bind pattern
@@ -224,7 +224,7 @@ pub enum EvalFrame {
     // Function Execution Frames
     // ═══════════════════════════════════════════════════════════════
     /// Function body execution complete, restore environment
-    FunctionTeardown { saved_env: Environment },
+    FunctionTeardown { saved_env: EnvRef },
 
     // ═══════════════════════════════════════════════════════════════
     // Import/Await Frames (for future use)

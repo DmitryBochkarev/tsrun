@@ -365,6 +365,7 @@ impl<T: Traceable> Default for Space<T> {
 
 impl<T: Traceable> Drop for Space<T> {
     fn drop(&mut self) {
+        // Run final collection to break cycles before dropping.
         self.internal.borrow_mut().collect();
     }
 }
@@ -525,13 +526,11 @@ impl<T: Traceable> SpaceInternal<T> {
             if let Some(weak) = slot {
                 if let Some(obj) = weak.upgrade() {
                     debug_assert_eq!(obj.id, id, "Object id {} doesn't match slot {}", obj.id, id);
-                    // Only unlink if no external references exist (strong_count == 1 means
-                    // only this temporary `obj` reference exists, plus weak refs in space)
-                    // If strong_count > 1, external code still holds references to this object
-                    // so we should NOT clear its properties
-                    if Rc::strong_count(&obj) == 1 {
-                        obj.unlink_object();
-                    }
+                    // Unlink ALL unmarked objects to break cycles.
+                    // If an object is unmarked, it's unreachable from roots.
+                    // Any external references (strong_count > 1) indicate a bug in the
+                    // interpreter - objects held externally must be rooted.
+                    obj.unlink_object();
                 }
                 *slot = None;
                 debug_assert!(

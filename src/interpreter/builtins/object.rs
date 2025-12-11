@@ -432,6 +432,9 @@ pub fn object_to_string(
                     Ok(JsValue::String(JsString::from("[object Generator]")))
                 }
                 ExoticObject::Promise(_) => Ok(JsValue::String(JsString::from("[object Promise]"))),
+                ExoticObject::Environment(_) => {
+                    Ok(JsValue::String(JsString::from("[object Environment]")))
+                }
             }
         }
         _ => Ok(JsValue::String(JsString::from("[object Object]"))),

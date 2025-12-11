@@ -2088,8 +2088,9 @@ fn test_dynamic_load_nested_modules() {
 
 /// Example: Host evaluates imported module code
 ///
-/// This is the recommended pattern: the host creates a separate Runtime
-/// to evaluate each imported module, then transfers the exports.
+/// This is the recommended pattern: the host uses save/restore_execution_state
+/// to evaluate nested modules within the same Runtime, keeping all GC objects
+/// in the same space.
 #[test]
 fn test_dynamic_load_evaluate_module() {
     let mut runtime = Runtime::new();
@@ -2107,8 +2108,8 @@ fn test_dynamic_load_evaluate_module() {
         RuntimeResult::ImportAwaited { slot, specifier } => {
             assert_eq!(specifier, "./math");
 
-            // Host evaluates the math module in a separate runtime
-            let mut module_runtime = Runtime::new();
+            // Save state before evaluating nested module
+            let saved_state = runtime.save_execution_state();
 
             // This is what './math.ts' contains:
             let math_module_source = r#"
@@ -2118,8 +2119,8 @@ fn test_dynamic_load_evaluate_module() {
                 }
             "#;
 
-            // Evaluate the module
-            let module_result = module_runtime.eval(math_module_source).unwrap();
+            // Evaluate the module in the same runtime
+            let module_result = runtime.eval(math_module_source).unwrap();
 
             // Should complete without imports
             match module_result {
@@ -2127,20 +2128,18 @@ fn test_dynamic_load_evaluate_module() {
                 _ => panic!("Module should complete"),
             }
 
-            // Get the exports from the module runtime
-            let exports = module_runtime.get_exports();
+            // Get the exports
+            let exports = runtime.get_exports();
 
-            // Transfer exports to the main runtime's module object
-            // For simple values, we can copy them directly
-            // For functions, we need to keep them callable
-
-            // For this test, we'll provide the exports directly
-            // In practice, you might need to wrap functions
+            // Transfer exports to module object
             let pi_value = exports.get("PI").cloned().unwrap_or(JsValue::Undefined);
             let multiply_fn = exports
                 .get("multiply")
                 .cloned()
                 .unwrap_or(JsValue::Undefined);
+
+            // Restore state before continuing main module
+            runtime.restore_execution_state(saved_state);
 
             let module = runtime.create_module_object(vec![
                 ("PI".to_string(), pi_value),
@@ -2399,9 +2398,11 @@ fn test_dynamic_load_default_export() {
             //     constructor(name: string) { this.prefix = "[" + name + "]"; }
             // }
 
-            // We simulate by evaluating the module
-            let mut module_runtime = Runtime::new();
-            let module_result = module_runtime
+            // Save state before evaluating nested module
+            let saved_state = runtime.save_execution_state();
+
+            // Evaluate in the same runtime to keep GC objects in same space
+            let module_result = runtime
                 .eval(
                     r#"
                 export default class Logger {
@@ -2420,11 +2421,14 @@ fn test_dynamic_load_default_export() {
             }
 
             // Get the default export
-            let exports = module_runtime.get_exports();
+            let exports = runtime.get_exports();
             let default_export = exports
                 .get("default")
                 .cloned()
                 .unwrap_or(JsValue::Undefined);
+
+            // Restore state before continuing main module
+            runtime.restore_execution_state(saved_state);
 
             let module =
                 runtime.create_module_object(vec![("default".to_string(), default_export)]);

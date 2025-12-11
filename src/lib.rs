@@ -26,8 +26,7 @@ pub use interpreter::Interpreter;
 pub use interpreter::SavedExecutionState;
 pub use string_dict::StringDict;
 pub use value::CheapClone;
-pub use value::EnvId;
-pub use value::EnvironmentArena;
+pub use value::EnvRef;
 pub use value::JsObject;
 pub use value::JsString;
 pub use value::JsValue;
@@ -151,7 +150,14 @@ impl Runtime {
     pub fn eval(&mut self, source: &str) -> Result<RuntimeResult, JsError> {
         let mut parser = parser::Parser::new(source, &mut self.interpreter.string_dict);
         let program = parser.parse_program()?;
-        self.interpreter.execute(&program)
+        let result = self.interpreter.execute(&program)?;
+
+        // Capture escaping values so they stay rooted until released
+        if let RuntimeResult::Complete(ref value) = result {
+            self.interpreter.capture_escaping_value(value);
+        }
+
+        Ok(result)
     }
 
     /// Continue execution after filling a pending slot
@@ -159,7 +165,14 @@ impl Runtime {
     /// Call this after receiving `ImportAwaited` or `AsyncAwaited` and
     /// filling the slot with `set_success()` or `set_error()`.
     pub fn continue_eval(&mut self) -> Result<RuntimeResult, JsError> {
-        self.interpreter.continue_execution()
+        let result = self.interpreter.continue_execution()?;
+
+        // Capture escaping values so they stay rooted until released
+        if let RuntimeResult::Complete(ref value) = result {
+            self.interpreter.capture_escaping_value(value);
+        }
+
+        Ok(result)
     }
 
     /// Evaluate TypeScript source code, expecting immediate completion.
@@ -357,6 +370,26 @@ impl Runtime {
     /// ```
     pub fn set_gc_threshold(&mut self, threshold: usize) {
         self.interpreter.set_gc_threshold(threshold);
+    }
+
+    /// Release all escaped values, allowing them to be garbage collected.
+    ///
+    /// Values returned from `eval()` are kept rooted to prevent collection.
+    /// Call this method when you're done with all returned values to allow
+    /// the GC to reclaim their memory.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use typescript_eval::Runtime;
+    ///
+    /// let mut runtime = Runtime::new();
+    /// let result = runtime.eval_simple("({ count: 42 })").unwrap();
+    /// // Use the result...
+    /// runtime.release_escaped_values(); // Allow GC to collect the object
+    /// ```
+    pub fn release_escaped_values(&mut self) {
+        self.interpreter.release_escaped_values();
     }
 }
 

@@ -142,6 +142,7 @@ pub fn js_value_to_json(value: &JsValue) -> Result<serde_json::Value, JsError> {
                 ExoticObject::RegExp { .. } => serde_json::Value::Object(serde_json::Map::new()),
                 ExoticObject::Generator(_) => serde_json::Value::Null,
                 ExoticObject::Promise(_) => serde_json::Value::Null,
+                ExoticObject::Environment(_) => serde_json::Value::Null, // Internal type
                 ExoticObject::Ordinary => {
                     let mut map = serde_json::Map::new();
                     for (key, prop) in obj_ref.properties.iter() {

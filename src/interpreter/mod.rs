@@ -24,7 +24,7 @@ use crate::error::JsError;
 use crate::gc::Space;
 use crate::string_dict::StringDict;
 use crate::value::{
-    create_array, create_function, create_object, CheapClone, EnvId, EnvironmentArena,
+    create_array, create_environment, create_function, create_object, Binding, CheapClone, EnvRef,
     ExoticObject, FunctionBody, GeneratorState, GeneratorStatus, InterpretedFunction, JsFunction,
     JsObject, JsObjectRef, JsString, JsValue, NativeFn, NativeFunction, PromiseStatus, Property,
     PropertyKey,
@@ -97,10 +97,10 @@ pub struct Interpreter {
     pub gc_space: Space<JsObject>,
     /// Global object (rooted)
     pub global: JsObjectRef,
-    /// Arena storing all environments (avoids Rc cycles)
-    pub env_arena: EnvironmentArena,
-    /// Current environment ID
-    pub env: EnvId,
+    /// Global environment (rooted) - bindings for global scope
+    pub global_env: EnvRef,
+    /// Current environment (GC-managed, changes during execution)
+    pub env: EnvRef,
     /// String dictionary for deduplicating strings
     pub string_dict: StringDict,
     /// Object.prototype for all objects
@@ -165,6 +165,12 @@ pub struct Interpreter {
     execution_start: Option<std::time::Instant>,
     /// Maximum execution time in milliseconds (default: 3000ms)
     timeout_ms: u64,
+
+    // ═══════════════════════════════════════════════════════════════
+    // GC rooting for escaped values
+    // ═══════════════════════════════════════════════════════════════
+    /// Values returned from eval() that need to stay rooted until released
+    escaped_values: Vec<JsValue>,
 }
 
 /// A static import declaration to be resolved
@@ -195,23 +201,46 @@ impl Interpreter {
     /// Create a new interpreter with global environment
     pub fn new() -> Self {
         let mut gc_space = Space::with_capacity(4096);
-        let mut env_arena = EnvironmentArena::new();
-        let env = env_arena.global_id();
         let string_dict = StringDict::with_common_strings();
 
         // Create global object and root it - also used as placeholder for prototypes
         let global = create_object(&mut gc_space);
         gc_space.add_root(&global);
 
-        // Add basic global values
-        env_arena.define(env, "undefined".to_string(), JsValue::Undefined, false);
-        env_arena.define(env, "NaN".to_string(), JsValue::Number(f64::NAN), false);
-        env_arena.define(
-            env,
-            "Infinity".to_string(),
-            JsValue::Number(f64::INFINITY),
-            false,
-        );
+        // Create global environment and root it
+        let global_env = create_environment(&mut gc_space, None);
+        gc_space.add_root(&global_env);
+
+        // Add basic global values to the global environment
+        {
+            let mut env_ref = global_env.borrow_mut();
+            if let Some(env_data) = env_ref.as_environment_mut() {
+                env_data.bindings.insert(
+                    JsString::from("undefined"),
+                    Binding {
+                        value: JsValue::Undefined,
+                        mutable: false,
+                        initialized: true,
+                    },
+                );
+                env_data.bindings.insert(
+                    JsString::from("NaN"),
+                    Binding {
+                        value: JsValue::Number(f64::NAN),
+                        mutable: false,
+                        initialized: true,
+                    },
+                );
+                env_data.bindings.insert(
+                    JsString::from("Infinity"),
+                    Binding {
+                        value: JsValue::Number(f64::INFINITY),
+                        mutable: false,
+                        initialized: true,
+                    },
+                );
+            }
+        }
 
         // Create interpreter with placeholder prototypes (global object)
         // We'll initialize the real prototypes below
@@ -219,8 +248,8 @@ impl Interpreter {
         let mut interp = Self {
             gc_space,
             global,
-            env_arena,
-            env,
+            global_env: global_env.clone(),
+            env: global_env,
             string_dict,
             object_prototype: placeholder.clone(),
             array_prototype: placeholder.clone(),
@@ -249,6 +278,7 @@ impl Interpreter {
             pending_program_body: None,
             execution_start: None,
             timeout_ms: 3000,
+            escaped_values: Vec::new(),
         };
 
         // Now initialize prototypes using &mut self
@@ -313,152 +343,72 @@ impl Interpreter {
 
         // Create and register constructors
         let object_constructor = create_object_constructor(self);
-        self.env_arena.define(
-            self.env,
-            "Object".to_string(),
-            JsValue::Object(object_constructor),
-            false,
-        );
+        self.env_define("Object", JsValue::Object(object_constructor), false);
 
         let array_constructor = create_array_constructor(self);
-        self.env_arena.define(
-            self.env,
-            "Array".to_string(),
-            JsValue::Object(array_constructor),
-            false,
-        );
+        self.env_define("Array", JsValue::Object(array_constructor), false);
 
         let string_constructor = create_string_constructor(self);
-        self.env_arena.define(
-            self.env,
-            "String".to_string(),
-            JsValue::Object(string_constructor),
-            false,
-        );
+        self.env_define("String", JsValue::Object(string_constructor), false);
 
         let number_constructor = create_number_constructor(self);
-        self.env_arena.define(
-            self.env,
-            "Number".to_string(),
-            JsValue::Object(number_constructor),
-            false,
-        );
+        self.env_define("Number", JsValue::Object(number_constructor), false);
 
         let date_constructor = create_date_constructor(self);
-        self.env_arena.define(
-            self.env,
-            "Date".to_string(),
-            JsValue::Object(date_constructor),
-            false,
-        );
+        self.env_define("Date", JsValue::Object(date_constructor), false);
 
         let regexp_constructor = create_regexp_constructor(self);
-        self.env_arena.define(
-            self.env,
-            "RegExp".to_string(),
-            JsValue::Object(regexp_constructor),
-            false,
-        );
+        self.env_define("RegExp", JsValue::Object(regexp_constructor), false);
 
         let map_constructor = create_map_constructor(self);
-        self.env_arena.define(
-            self.env,
-            "Map".to_string(),
-            JsValue::Object(map_constructor),
-            false,
-        );
+        self.env_define("Map", JsValue::Object(map_constructor), false);
 
         let set_constructor = create_set_constructor(self);
-        self.env_arena.define(
-            self.env,
-            "Set".to_string(),
-            JsValue::Object(set_constructor),
-            false,
-        );
+        self.env_define("Set", JsValue::Object(set_constructor), false);
 
         // Create and register global objects
         let console = create_console_object(self);
-        self.env_arena.define(
-            self.env,
-            "console".to_string(),
-            JsValue::Object(console),
-            false,
-        );
+        self.env_define("console", JsValue::Object(console), false);
 
         let json = create_json_object(self);
-        self.env_arena
-            .define(self.env, "JSON".to_string(), JsValue::Object(json), false);
+        self.env_define("JSON", JsValue::Object(json), false);
 
         let math = create_math_object(self);
-        self.env_arena
-            .define(self.env, "Math".to_string(), JsValue::Object(math), false);
+        self.env_define("Math", JsValue::Object(math), false);
 
         // Register global functions
         register_global_functions(self);
 
         // Register error constructors
         let error_ctors = create_error_constructors(self);
-        self.env_arena.define(
-            self.env,
-            "Error".to_string(),
-            JsValue::Object(error_ctors.error),
-            false,
-        );
-        self.env_arena.define(
-            self.env,
-            "TypeError".to_string(),
-            JsValue::Object(error_ctors.type_error),
-            false,
-        );
-        self.env_arena.define(
-            self.env,
-            "ReferenceError".to_string(),
+        self.env_define("Error", JsValue::Object(error_ctors.error), false);
+        self.env_define("TypeError", JsValue::Object(error_ctors.type_error), false);
+        self.env_define(
+            "ReferenceError",
             JsValue::Object(error_ctors.reference_error),
             false,
         );
-        self.env_arena.define(
-            self.env,
-            "SyntaxError".to_string(),
+        self.env_define(
+            "SyntaxError",
             JsValue::Object(error_ctors.syntax_error),
             false,
         );
-        self.env_arena.define(
-            self.env,
-            "RangeError".to_string(),
+        self.env_define(
+            "RangeError",
             JsValue::Object(error_ctors.range_error),
             false,
         );
-        self.env_arena.define(
-            self.env,
-            "URIError".to_string(),
-            JsValue::Object(error_ctors.uri_error),
-            false,
-        );
-        self.env_arena.define(
-            self.env,
-            "EvalError".to_string(),
-            JsValue::Object(error_ctors.eval_error),
-            false,
-        );
+        self.env_define("URIError", JsValue::Object(error_ctors.uri_error), false);
+        self.env_define("EvalError", JsValue::Object(error_ctors.eval_error), false);
 
         // Register Symbol constructor
         let well_known_symbols = get_well_known_symbols();
         let symbol_constructor = create_symbol_constructor(self, &well_known_symbols);
-        self.env_arena.define(
-            self.env,
-            "Symbol".to_string(),
-            JsValue::Object(symbol_constructor),
-            false,
-        );
+        self.env_define("Symbol", JsValue::Object(symbol_constructor), false);
 
         // Register Promise constructor
         let promise_constructor = create_promise_constructor(self);
-        self.env_arena.define(
-            self.env,
-            "Promise".to_string(),
-            JsValue::Object(promise_constructor),
-            false,
-        );
+        self.env_define("Promise", JsValue::Object(promise_constructor), false);
     }
 
     /// Get the current stack trace as a formatted string
@@ -599,6 +549,208 @@ impl Interpreter {
         self.gc_space.set_gc_threshold(threshold);
     }
 
+    /// Capture an escaping value to keep it rooted until released
+    ///
+    /// Values returned from eval() are added as GC roots to prevent collection.
+    /// Call release_escaped_values() when you're done with them.
+    pub fn capture_escaping_value(&mut self, value: &JsValue) {
+        // Add any objects in the value as GC roots
+        if let JsValue::Object(obj) = value {
+            self.gc_space.add_root(obj);
+        }
+        self.escaped_values.push(value.clone());
+    }
+
+    /// Release all escaped values, allowing them to be garbage collected
+    ///
+    /// Call this when you're done with all values returned from eval().
+    pub fn release_escaped_values(&mut self) {
+        // Remove GC roots for all escaped objects
+        for value in &self.escaped_values {
+            if let JsValue::Object(obj) = value {
+                self.gc_space.remove_root(obj);
+            }
+        }
+        self.escaped_values.clear();
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Environment Operations (GC-managed environments)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// Allocate a new environment with the given outer scope
+    ///
+    /// The new environment is automatically rooted to prevent GC collection.
+    pub fn env_alloc(&mut self, outer: Option<EnvRef>) -> EnvRef {
+        let env = create_environment(&mut self.gc_space, outer);
+        self.gc_space.add_root(&env);
+        env
+    }
+
+    /// Restore a previous environment, unrooting the current one
+    ///
+    /// Call this when exiting a scope to allow GC to collect the environment.
+    pub fn env_restore(&mut self, old_env: EnvRef) {
+        self.gc_space.remove_root(&self.env);
+        self.env = old_env;
+    }
+
+    /// Define a binding in the current environment
+    pub fn env_define(&mut self, name: impl Into<JsString>, value: JsValue, mutable: bool) {
+        let name = name.into();
+        let mut env_ref = self.env.borrow_mut();
+        if let Some(env_data) = env_ref.as_environment_mut() {
+            env_data.bindings.insert(
+                name,
+                Binding {
+                    value,
+                    mutable,
+                    initialized: true,
+                },
+            );
+        }
+    }
+
+    /// Define a binding in a specific environment
+    pub fn env_define_in(
+        &mut self,
+        env: &EnvRef,
+        name: impl Into<JsString>,
+        value: JsValue,
+        mutable: bool,
+    ) {
+        let name = name.into();
+        let mut env_ref = env.borrow_mut();
+        if let Some(env_data) = env_ref.as_environment_mut() {
+            env_data.bindings.insert(
+                name,
+                Binding {
+                    value,
+                    mutable,
+                    initialized: true,
+                },
+            );
+        }
+    }
+
+    /// Get a binding value from the current environment (walks the scope chain)
+    pub fn env_get_binding(&self, name: &JsString) -> Result<JsValue, JsError> {
+        self.env_get_binding_in(&self.env, name)
+    }
+
+    /// Get a binding value from a specific environment (walks the scope chain)
+    pub fn env_get_binding_in(&self, env: &EnvRef, name: &JsString) -> Result<JsValue, JsError> {
+        let mut current = Some(env.cheap_clone());
+        while let Some(env_ref) = current.take() {
+            let borrowed = env_ref.borrow();
+            if let Some(env_data) = borrowed.as_environment() {
+                if let Some(binding) = env_data.bindings.get(name) {
+                    if !binding.initialized {
+                        return Err(JsError::reference_error(format!(
+                            "Cannot access '{}' before initialization",
+                            name
+                        )));
+                    }
+                    return Ok(binding.value.clone());
+                }
+                let outer = env_data.outer.as_ref().map(|o| o.cheap_clone());
+                drop(borrowed);
+                current = outer;
+            } else {
+                break;
+            }
+        }
+        Err(JsError::reference_error(format!("{} is not defined", name)))
+    }
+
+    /// Set a binding value in the current environment (walks the scope chain)
+    pub fn env_set_binding(&mut self, name: &JsString, value: JsValue) -> Result<(), JsError> {
+        self.env_set_binding_in(&self.env.cheap_clone(), name, value)
+    }
+
+    /// Set a binding value in a specific environment (walks the scope chain)
+    pub fn env_set_binding_in(
+        &mut self,
+        env: &EnvRef,
+        name: &JsString,
+        value: JsValue,
+    ) -> Result<(), JsError> {
+        let mut current = Some(env.cheap_clone());
+        while let Some(env_ref) = current.take() {
+            let mut borrowed = env_ref.borrow_mut();
+            if let Some(env_data) = borrowed.as_environment_mut() {
+                if let Some(binding) = env_data.bindings.get_mut(name) {
+                    if !binding.mutable {
+                        return Err(JsError::type_error(format!(
+                            "Assignment to constant variable '{}'",
+                            name
+                        )));
+                    }
+                    binding.value = value;
+                    return Ok(());
+                }
+                let outer = env_data.outer.as_ref().map(|o| o.cheap_clone());
+                drop(borrowed);
+                current = outer;
+            } else {
+                break;
+            }
+        }
+        Err(JsError::reference_error(format!("{} is not defined", name)))
+    }
+
+    /// Check if a binding exists in the current environment (walks the scope chain)
+    pub fn env_has_binding(&self, name: &JsString) -> bool {
+        self.env_has_binding_in(&self.env, name)
+    }
+
+    /// Check if a binding exists in a specific environment (walks the scope chain)
+    pub fn env_has_binding_in(&self, env: &EnvRef, name: &JsString) -> bool {
+        let mut current = Some(env.cheap_clone());
+        while let Some(env_ref) = current.take() {
+            let borrowed = env_ref.borrow();
+            if let Some(env_data) = borrowed.as_environment() {
+                if env_data.bindings.contains_key(name) {
+                    return true;
+                }
+                let outer = env_data.outer.as_ref().map(|o| o.cheap_clone());
+                drop(borrowed);
+                current = outer;
+            } else {
+                break;
+            }
+        }
+        false
+    }
+
+    /// Check if a binding exists only in the current environment (no chain walk)
+    pub fn env_has_own_binding(&self, name: &JsString) -> bool {
+        self.env_has_own_binding_in(&self.env, name)
+    }
+
+    /// Check if a binding exists only in a specific environment (no chain walk)
+    pub fn env_has_own_binding_in(&self, env: &EnvRef, name: &JsString) -> bool {
+        let borrowed = env.borrow();
+        if let Some(env_data) = borrowed.as_environment() {
+            env_data.bindings.contains_key(name)
+        } else {
+            false
+        }
+    }
+
+    /// Delete a binding from the current environment
+    pub fn env_delete(&mut self, name: &JsString) {
+        self.env_delete_in(&self.env.cheap_clone(), name)
+    }
+
+    /// Delete a binding from a specific environment
+    pub fn env_delete_in(&mut self, env: &EnvRef, name: &JsString) {
+        let mut borrowed = env.borrow_mut();
+        if let Some(env_data) = borrowed.as_environment_mut() {
+            env_data.bindings.remove(name);
+        }
+    }
+
     /// Set the execution timeout in milliseconds
     ///
     /// Default is 3000ms (3 seconds). Set to 0 to disable timeout.
@@ -623,8 +775,8 @@ impl Interpreter {
             }
             // Clone Rc refs and values to release borrow before execution
             (
-                state.body.cheap_clone(), // Rc clone - cheap
-                state.closure,            // EnvId is Copy
+                state.body.cheap_clone(),    // Rc clone - cheap
+                state.closure.cheap_clone(), // EnvRef (JsObjectRef) clone - cheap
                 state.stmt_index,
                 state.sent_value.clone(), // JsValue clone - may contain Rc types
                 state.state.clone(),      // enum Copy
@@ -645,8 +797,8 @@ impl Interpreter {
         });
 
         // Save current environment and set up generator environment
-        let saved_env = self.env;
-        self.env = self.env_arena.alloc(Some(closure));
+        let saved_env = self.env.cheap_clone();
+        self.env = self.env_alloc(Some(closure.cheap_clone()));
 
         // Bind parameters
         for (i, param) in params.iter().enumerate() {
@@ -657,10 +809,8 @@ impl Interpreter {
         // Execute the generator body
         let result = self.execute_generator_body(&body.body);
 
-        // Restore environment and free the generator's local env
-        let gen_env = self.env;
-        self.env = saved_env;
-        self.env_arena.try_free(gen_env);
+        // Restore environment (env_restore unroots the current env)
+        self.env_restore(saved_env);
 
         // Get the final generator context state and restore outer context
         let ctx = self.generator_context.take();
@@ -708,8 +858,8 @@ impl Interpreter {
             }
             // Clone Rc refs and values to release borrow before execution
             (
-                state.body.cheap_clone(), // Rc clone - cheap
-                state.closure,            // EnvId is Copy
+                state.body.cheap_clone(),    // Rc clone - cheap
+                state.closure.cheap_clone(), // EnvRef (JsObjectRef) clone - cheap
                 state.stmt_index,
                 state.sent_value.clone(), // JsValue clone - may contain Rc types
                 state.params.cheap_clone(), // Rc clone - cheap
@@ -729,8 +879,8 @@ impl Interpreter {
         });
 
         // Save current environment and set up generator environment
-        let saved_env = self.env;
-        self.env = self.env_arena.alloc(Some(closure));
+        let saved_env = self.env.cheap_clone();
+        self.env = self.env_alloc(Some(closure.cheap_clone()));
 
         // Bind parameters
         for (i, param) in params.iter().enumerate() {
@@ -741,10 +891,8 @@ impl Interpreter {
         // Execute the generator body
         let result = self.execute_generator_body(&body.body);
 
-        // Restore environment and free the generator's local env
-        let gen_env = self.env;
-        self.env = saved_env;
-        self.env_arena.try_free(gen_env);
+        // Restore environment (env_restore unroots the current env)
+        self.env_restore(saved_env);
 
         // Get the final generator context state and restore outer context
         let ctx = self.generator_context.take();
@@ -996,7 +1144,7 @@ impl Interpreter {
                         .get_property(&key)
                         .unwrap_or(JsValue::Undefined);
                     // String clone - env.define takes ownership
-                    self.env_arena.define(self.env, local.clone(), value, false);
+                    self.env_define(local.clone(), value, false);
                 }
             }
             eval_stack::ImportBindings::Default(local) => {
@@ -1011,13 +1159,12 @@ impl Interpreter {
                     .get_property(&default_key)
                     .unwrap_or(JsValue::Undefined);
                 // String clone - env.define takes ownership
-                self.env_arena.define(self.env, local.clone(), value, false);
+                self.env_define(local.clone(), value, false);
             }
             eval_stack::ImportBindings::Namespace(local) => {
                 // String clone - env.define takes ownership
                 // Bind the entire module object
-                self.env_arena
-                    .define(self.env, local.clone(), module_value, false);
+                self.env_define(local.clone(), module_value, false);
             }
             eval_stack::ImportBindings::SideEffect => {
                 // No bindings needed, just executed for side effects
@@ -1308,17 +1455,17 @@ impl Interpreter {
                             };
 
                             // Bind catch parameter
-                            let prev_env = self.env;
-                            self.env = self.env_arena.alloc(Some(self.env));
+                            let prev_env = self.env.cheap_clone();
+                            self.env = self.env_alloc(Some(self.env.cheap_clone()));
 
                             if let Some(param) = &handler.param {
                                 self.bind_pattern(param, error_value, true)?;
                             }
 
                             let result = self.execute_block(&handler.body);
-                            let catch_env = self.env;
+                            let catch_env = self.env.cheap_clone();
                             self.env = prev_env;
-                            self.env_arena.try_free(catch_env);
+                            self.gc_space.remove_root(&catch_env);
 
                             if let Some(finalizer) = &try_stmt.finalizer {
                                 self.execute_block(finalizer)?;
@@ -1571,9 +1718,8 @@ impl Interpreter {
         match pattern {
             Pattern::Identifier(id) => {
                 // Only hoist if not already defined in this scope
-                if !self.env_arena.has_own_binding(self.env, &id.name) {
-                    self.env_arena
-                        .define(self.env, id.name.clone(), JsValue::Undefined, true);
+                if !self.env_has_own_binding(&id.name) {
+                    self.env_define(id.name.clone(), JsValue::Undefined, true);
                 }
             }
             Pattern::Object(obj_pat) => {
@@ -1607,19 +1753,15 @@ impl Interpreter {
             name: decl.id.as_ref().map(|id| id.name.clone()),
             params: Rc::from(decl.params.as_slice()), // Rc wrap for cheap cloning
             body: Rc::new(FunctionBody::Block(decl.body.clone())), // Rc wrap for cheap cloning
-            closure: self.env,
+            closure: self.env.cheap_clone(),
             source_location: decl.span,
             generator: decl.generator,
             async_: decl.async_,
         };
-        // Mark the closure environment as captured
-        self.env_arena.increment_capture(self.env);
-
         let func_obj = self.create_function(JsFunction::Interpreted(func));
 
         if let Some(id) = &decl.id {
-            self.env_arena
-                .define(self.env, id.name.clone(), JsValue::Object(func_obj), true);
+            self.env_define(id.name.clone(), JsValue::Object(func_obj), true);
         }
 
         Ok(())
@@ -1630,8 +1772,7 @@ impl Interpreter {
 
         // Bind the class name first (so static blocks can reference it)
         if let Some(id) = &class.id {
-            self.env_arena.define(
-                self.env,
+            self.env_define(
                 id.name.clone(),
                 JsValue::Object(constructor_fn.clone()),
                 false,
@@ -1742,14 +1883,11 @@ impl Interpreter {
                 name: Some(method_name.clone()),
                 params: Rc::from(func.params.as_slice()), // Rc wrap for cheap cloning
                 body: Rc::new(FunctionBody::Block(func.body.clone())), // Rc wrap for cheap cloning
-                closure: self.env,
+                closure: self.env.cheap_clone(),
                 source_location: func.span,
                 generator: func.generator,
                 async_: func.async_,
             };
-            // Mark the closure environment as captured
-            self.env_arena.increment_capture(self.env);
-
             let func_obj = self.create_function(JsFunction::Interpreted(interpreted));
 
             // If we have a superclass, store __super__ on the method so super.method() works
@@ -1825,13 +1963,11 @@ impl Interpreter {
         };
 
         // Store field initializers in a special property so evaluate_new can access them
-        // Mark the closure environment as captured
-        self.env_arena.increment_capture(self.env);
         let constructor_fn = self.create_function(JsFunction::Interpreted(InterpretedFunction {
             name: class.id.as_ref().map(|id| id.name.clone()),
             params: Rc::from(ctor_params), // Rc wrap for cheap cloning
             body: Rc::new(FunctionBody::Block(ctor_body)), // Rc wrap for cheap cloning
-            closure: self.env,
+            closure: self.env.cheap_clone(),
             source_location: class.span,
             generator: false, // Constructors cannot be generators
             async_: false,    // Constructors cannot be async
@@ -1909,14 +2045,11 @@ impl Interpreter {
                 name: Some(method_name.clone()),
                 params: Rc::from(func.params.as_slice()), // Rc wrap for cheap cloning
                 body: Rc::new(FunctionBody::Block(func.body.clone())), // Rc wrap for cheap cloning
-                closure: self.env,
+                closure: self.env.cheap_clone(),
                 source_location: func.span,
                 generator: func.generator,
                 async_: func.async_,
             };
-            // Mark the closure environment as captured
-            self.env_arena.increment_capture(self.env);
-
             let func_obj = self.create_function(JsFunction::Interpreted(interpreted));
 
             match method.kind {
@@ -2012,22 +2145,16 @@ impl Interpreter {
 
             // Define each member in current scope so later members can reference it
             // (e.g., ReadWrite = Read | Write)
-            self.env_arena
-                .define(self.env, member.id.name.clone(), value, false);
+            self.env_define(member.id.name.clone(), value, false);
             member_names.push(member.id.name.clone());
         }
 
         // Remove temporary member bindings from scope
         for name in member_names {
-            self.env_arena.delete(self.env, &name);
+            self.env_delete(&name);
         }
 
-        self.env_arena.define(
-            self.env,
-            enum_decl.id.name.clone(),
-            JsValue::Object(obj),
-            false,
-        );
+        self.env_define(enum_decl.id.name.clone(), JsValue::Object(obj), false);
         Ok(())
     }
 
@@ -2035,7 +2162,7 @@ impl Interpreter {
         let name = ns.id.name.clone();
 
         // Check if namespace already exists (for merging)
-        let ns_obj = if let Ok(JsValue::Object(obj)) = self.env_arena.get_binding(self.env, &name) {
+        let ns_obj = if let Ok(JsValue::Object(obj)) = self.env_get_binding(&name) {
             obj
         } else {
             self.create_object()
@@ -2043,8 +2170,8 @@ impl Interpreter {
 
         // Save current exports and create new scope for namespace
         let saved_exports = std::mem::take(&mut self.exports);
-        let saved_env = self.env;
-        self.env = self.env_arena.alloc(Some(self.env));
+        let saved_env = self.env.cheap_clone();
+        self.env = self.env_alloc(Some(self.env.cheap_clone()));
 
         // Execute statements in namespace body
         for stmt in &ns.body {
@@ -2061,8 +2188,7 @@ impl Interpreter {
         self.exports = saved_exports;
 
         // Define the namespace in the current environment
-        self.env_arena
-            .define(self.env, name, JsValue::Object(ns_obj), false);
+        self.env_define(name, JsValue::Object(ns_obj), false);
         Ok(())
     }
 
@@ -2076,7 +2202,7 @@ impl Interpreter {
                 Statement::FunctionDeclaration(func_decl) => {
                     self.execute_function_declaration(func_decl)?;
                     if let Some(id) = &func_decl.id {
-                        let value = self.env_arena.get_binding(self.env, &id.name)?;
+                        let value = self.env_get_binding(&id.name)?;
                         ns_obj
                             .borrow_mut()
                             .set_property(PropertyKey::String(id.name.clone()), value);
@@ -2092,7 +2218,7 @@ impl Interpreter {
                 Statement::ClassDeclaration(class_decl) => {
                     self.execute_class_declaration(class_decl)?;
                     if let Some(id) = &class_decl.id {
-                        let value = self.env_arena.get_binding(self.env, &id.name)?;
+                        let value = self.env_get_binding(&id.name)?;
                         ns_obj
                             .borrow_mut()
                             .set_property(PropertyKey::String(id.name.clone()), value);
@@ -2100,7 +2226,7 @@ impl Interpreter {
                 }
                 Statement::NamespaceDeclaration(inner_ns) => {
                     self.execute_namespace(inner_ns)?;
-                    let value = self.env_arena.get_binding(self.env, &inner_ns.id.name)?;
+                    let value = self.env_get_binding(&inner_ns.id.name)?;
                     ns_obj
                         .borrow_mut()
                         .set_property(PropertyKey::String(inner_ns.id.name.clone()), value);
@@ -2120,7 +2246,7 @@ impl Interpreter {
     ) -> Result<(), JsError> {
         match pattern {
             Pattern::Identifier(id) => {
-                let value = self.env_arena.get_binding(self.env, &id.name)?;
+                let value = self.env_get_binding(&id.name)?;
                 ns_obj
                     .borrow_mut()
                     .set_property(PropertyKey::String(id.name.clone()), value);
@@ -2160,7 +2286,7 @@ impl Interpreter {
                     self.execute_function_declaration(func_decl)?;
                     if let Some(id) = &func_decl.id {
                         let name = id.name.clone();
-                        if let Ok(value) = self.env_arena.get_binding(self.env, &name) {
+                        if let Ok(value) = self.env_get_binding(&name) {
                             self.exports.insert(name, value);
                         }
                     }
@@ -2172,7 +2298,7 @@ impl Interpreter {
                         let names = self.get_pattern_names(&declarator.id);
                         for name in names {
                             let js_name: JsString = name.into();
-                            if let Ok(value) = self.env_arena.get_binding(self.env, &js_name) {
+                            if let Ok(value) = self.env_get_binding(&js_name) {
                                 self.exports.insert(js_name, value);
                             }
                         }
@@ -2182,7 +2308,7 @@ impl Interpreter {
                     self.execute_class_declaration(class_decl)?;
                     if let Some(id) = &class_decl.id {
                         let name = id.name.clone();
-                        if let Ok(value) = self.env_arena.get_binding(self.env, &name) {
+                        if let Ok(value) = self.env_get_binding(&name) {
                             self.exports.insert(name, value);
                         }
                     }
@@ -2193,14 +2319,14 @@ impl Interpreter {
                 Statement::EnumDeclaration(enum_decl) => {
                     self.execute_enum(enum_decl)?;
                     let name = enum_decl.id.name.clone();
-                    if let Ok(value) = self.env_arena.get_binding(self.env, &name) {
+                    if let Ok(value) = self.env_get_binding(&name) {
                         self.exports.insert(name, value);
                     }
                 }
                 Statement::NamespaceDeclaration(ns_decl) => {
                     self.execute_namespace(ns_decl)?;
                     let name = ns_decl.id.name.clone();
-                    if let Ok(value) = self.env_arena.get_binding(self.env, &name) {
+                    if let Ok(value) = self.env_get_binding(&name) {
                         self.exports.insert(name, value);
                     }
                 }
@@ -2214,7 +2340,7 @@ impl Interpreter {
         for spec in &export_decl.specifiers {
             let local_name = &spec.local.name;
             let exported_name = &spec.exported.name;
-            if let Ok(value) = self.env_arena.get_binding(self.env, local_name) {
+            if let Ok(value) = self.env_get_binding(local_name) {
                 self.exports.insert(exported_name.clone(), value);
             }
         }
@@ -2227,7 +2353,7 @@ impl Interpreter {
                     Statement::FunctionDeclaration(func_decl) => {
                         self.execute_function_declaration(func_decl)?;
                         if let Some(id) = &func_decl.id {
-                            if let Ok(value) = self.env_arena.get_binding(self.env, &id.name) {
+                            if let Ok(value) = self.env_get_binding(&id.name) {
                                 self.exports.insert(JsString::from("default"), value);
                             }
                         }
@@ -2236,7 +2362,7 @@ impl Interpreter {
                     Statement::ClassDeclaration(class_decl) => {
                         self.execute_class_declaration(class_decl)?;
                         if let Some(id) = &class_decl.id {
-                            if let Ok(value) = self.env_arena.get_binding(self.env, &id.name) {
+                            if let Ok(value) = self.env_get_binding(&id.name) {
                                 self.exports.insert(JsString::from("default"), value);
                             }
                         }
@@ -2264,8 +2390,8 @@ impl Interpreter {
     }
 
     fn execute_block(&mut self, block: &BlockStatement) -> Result<Completion, JsError> {
-        let prev_env = self.env;
-        self.env = self.env_arena.alloc(Some(self.env));
+        let prev_env = self.env.cheap_clone();
+        self.env = self.env_alloc(Some(self.env.cheap_clone()));
 
         let mut result = Completion::Normal(JsValue::Undefined);
 
@@ -2277,9 +2403,9 @@ impl Interpreter {
             }
         }
 
-        let block_env = self.env;
+        let block_env = self.env.cheap_clone();
         self.env = prev_env;
-        self.env_arena.try_free(block_env);
+        self.gc_space.remove_root(&block_env);
         Ok(result)
     }
 
@@ -2292,8 +2418,8 @@ impl Interpreter {
         for_stmt: &ForStatement,
         label: Option<&JsString>,
     ) -> Result<Completion, JsError> {
-        let prev_env = self.env;
-        self.env = self.env_arena.alloc(Some(self.env));
+        let prev_env = self.env.cheap_clone();
+        self.env = self.env_alloc(Some(self.env.cheap_clone()));
 
         // Track let-declared loop variables for per-iteration binding
         let mut let_var_names: Vec<String> = Vec::new();
@@ -2321,7 +2447,7 @@ impl Interpreter {
             }
         }
 
-        let loop_env = self.env;
+        let loop_env = self.env.cheap_clone();
 
         // Loop
         loop {
@@ -2338,15 +2464,15 @@ impl Interpreter {
 
             // For let/const loops, create per-iteration scope
             let iter_env = if is_let_loop && !let_var_names.is_empty() {
-                let iter_env = self.env_arena.alloc(Some(loop_env));
+                let iter_env = self.env_alloc(Some(loop_env.cheap_clone()));
                 // Copy current values into the per-iteration scope
                 for name in &let_var_names {
                     let js_name: JsString = name.clone().into();
-                    if let Ok(val) = self.env_arena.get_binding(self.env, &js_name) {
-                        self.env_arena.define(iter_env, js_name, val, true);
+                    if let Ok(val) = self.env_get_binding(&js_name) {
+                        self.env_define_in(&iter_env, js_name, val, true);
                     }
                 }
-                self.env = iter_env;
+                self.env = iter_env.cheap_clone();
                 Some(iter_env)
             } else {
                 None
@@ -2356,24 +2482,24 @@ impl Interpreter {
             match self.execute_statement(&for_stmt.body)? {
                 Completion::Break(None) => {
                     if let Some(env) = iter_env {
-                        self.env_arena.try_free(env);
+                        self.gc_space.remove_root(&env);
                     }
-                    self.env = loop_env;
+                    self.env = loop_env.cheap_clone();
                     break;
                 }
                 Completion::Break(Some(ref l)) if label == Some(l) => {
                     if let Some(env) = iter_env {
-                        self.env_arena.try_free(env);
+                        self.gc_space.remove_root(&env);
                     }
-                    self.env_arena.try_free(loop_env);
+                    self.gc_space.remove_root(&loop_env);
                     self.env = prev_env;
                     return Ok(Completion::Normal(JsValue::Undefined));
                 }
                 Completion::Break(lbl) => {
                     if let Some(env) = iter_env {
-                        self.env_arena.try_free(env);
+                        self.gc_space.remove_root(&env);
                     }
-                    self.env_arena.try_free(loop_env);
+                    self.gc_space.remove_root(&loop_env);
                     self.env = prev_env;
                     return Ok(Completion::Break(lbl));
                 }
@@ -2383,17 +2509,17 @@ impl Interpreter {
                 }
                 Completion::Continue(lbl) => {
                     if let Some(env) = iter_env {
-                        self.env_arena.try_free(env);
+                        self.gc_space.remove_root(&env);
                     }
-                    self.env_arena.try_free(loop_env);
+                    self.gc_space.remove_root(&loop_env);
                     self.env = prev_env;
                     return Ok(Completion::Continue(lbl));
                 }
                 Completion::Return(val) => {
                     if let Some(env) = iter_env {
-                        self.env_arena.try_free(env);
+                        self.gc_space.remove_root(&env);
                     }
-                    self.env_arena.try_free(loop_env);
+                    self.gc_space.remove_root(&loop_env);
                     self.env = prev_env;
                     return Ok(Completion::Return(val));
                 }
@@ -2405,15 +2531,15 @@ impl Interpreter {
                 // Copy updated values back to loop env before update
                 for name in &let_var_names {
                     let js_name: JsString = name.clone().into();
-                    if let Ok(val) = self.env_arena.get_binding(self.env, &js_name) {
-                        let _ = self.env_arena.set_binding(loop_env, &js_name, val);
+                    if let Ok(val) = self.env_get_binding(&js_name) {
+                        let _ = self.env_set_binding_in(&loop_env, &js_name, val);
                     }
                 }
                 // Free the per-iteration environment
                 if let Some(env) = iter_env {
-                    self.env_arena.try_free(env);
+                    self.gc_space.remove_root(&env);
                 }
-                self.env = loop_env;
+                self.env = loop_env.cheap_clone();
             }
 
             if let Some(update) = &for_stmt.update {
@@ -2421,7 +2547,7 @@ impl Interpreter {
             }
         }
 
-        self.env_arena.try_free(loop_env);
+        self.gc_space.remove_root(&loop_env);
         self.env = prev_env;
         Ok(Completion::Normal(JsValue::Undefined))
     }
@@ -2479,14 +2605,14 @@ impl Interpreter {
             _ => vec![],
         };
 
-        let prev_env = self.env;
+        let prev_env = self.env.cheap_clone();
 
         for key in keys {
             // Check for timeout at each iteration
             self.check_timeout()?;
 
-            let iter_env = self.env_arena.alloc(Some(prev_env));
-            self.env = iter_env;
+            let iter_env = self.env_alloc(Some(prev_env.cheap_clone()));
+            self.env = iter_env.cheap_clone();
 
             let key_value = JsValue::String(JsString::from(key));
 
@@ -2504,40 +2630,40 @@ impl Interpreter {
 
             match self.execute_statement(&for_in.body)? {
                 Completion::Break(None) => {
-                    self.env_arena.try_free(iter_env);
+                    self.gc_space.remove_root(&iter_env);
                     break;
                 }
                 Completion::Break(Some(ref l)) if label == Some(l) => {
-                    self.env_arena.try_free(iter_env);
+                    self.gc_space.remove_root(&iter_env);
                     self.env = prev_env;
                     return Ok(Completion::Normal(JsValue::Undefined));
                 }
                 Completion::Break(lbl) => {
-                    self.env_arena.try_free(iter_env);
+                    self.gc_space.remove_root(&iter_env);
                     self.env = prev_env;
                     return Ok(Completion::Break(lbl));
                 }
                 Completion::Continue(None) => {
-                    self.env_arena.try_free(iter_env);
+                    self.gc_space.remove_root(&iter_env);
                     continue;
                 }
                 Completion::Continue(Some(ref l)) if label == Some(l) => {
                     // Continue with matching label - continue this loop
-                    self.env_arena.try_free(iter_env);
+                    self.gc_space.remove_root(&iter_env);
                     continue;
                 }
                 Completion::Continue(lbl) => {
-                    self.env_arena.try_free(iter_env);
+                    self.gc_space.remove_root(&iter_env);
                     self.env = prev_env;
                     return Ok(Completion::Continue(lbl));
                 }
                 Completion::Return(val) => {
-                    self.env_arena.try_free(iter_env);
+                    self.gc_space.remove_root(&iter_env);
                     self.env = prev_env;
                     return Ok(Completion::Return(val));
                 }
                 Completion::Normal(_) => {
-                    self.env_arena.try_free(iter_env);
+                    self.gc_space.remove_root(&iter_env);
                 }
             }
         }
@@ -2592,14 +2718,14 @@ impl Interpreter {
             _ => vec![],
         };
 
-        let prev_env = self.env;
+        let prev_env = self.env.cheap_clone();
 
         for item in items {
             // Check for timeout at each iteration
             self.check_timeout()?;
 
-            let iter_env = self.env_arena.alloc(Some(prev_env));
-            self.env = iter_env;
+            let iter_env = self.env_alloc(Some(prev_env.cheap_clone()));
+            self.env = iter_env.cheap_clone();
 
             match &for_of.left {
                 ForInOfLeft::Variable(decl) => {
@@ -2615,40 +2741,40 @@ impl Interpreter {
 
             match self.execute_statement(&for_of.body)? {
                 Completion::Break(None) => {
-                    self.env_arena.try_free(iter_env);
+                    self.gc_space.remove_root(&iter_env);
                     break;
                 }
                 Completion::Break(Some(ref l)) if label == Some(l) => {
-                    self.env_arena.try_free(iter_env);
+                    self.gc_space.remove_root(&iter_env);
                     self.env = prev_env;
                     return Ok(Completion::Normal(JsValue::Undefined));
                 }
                 Completion::Break(lbl) => {
-                    self.env_arena.try_free(iter_env);
+                    self.gc_space.remove_root(&iter_env);
                     self.env = prev_env;
                     return Ok(Completion::Break(lbl));
                 }
                 Completion::Continue(None) => {
-                    self.env_arena.try_free(iter_env);
+                    self.gc_space.remove_root(&iter_env);
                     continue;
                 }
                 Completion::Continue(Some(ref l)) if label == Some(l) => {
                     // Continue with matching label - continue this loop
-                    self.env_arena.try_free(iter_env);
+                    self.gc_space.remove_root(&iter_env);
                     continue;
                 }
                 Completion::Continue(lbl) => {
-                    self.env_arena.try_free(iter_env);
+                    self.gc_space.remove_root(&iter_env);
                     self.env = prev_env;
                     return Ok(Completion::Continue(lbl));
                 }
                 Completion::Return(val) => {
-                    self.env_arena.try_free(iter_env);
+                    self.gc_space.remove_root(&iter_env);
                     self.env = prev_env;
                     return Ok(Completion::Return(val));
                 }
                 Completion::Normal(_) => {
-                    self.env_arena.try_free(iter_env);
+                    self.gc_space.remove_root(&iter_env);
                 }
             }
         }
@@ -2664,7 +2790,7 @@ impl Interpreter {
         label: Option<&JsString>,
         gen_obj: JsObjectRef,
     ) -> Result<Completion, JsError> {
-        let prev_env = self.env;
+        let prev_env = self.env.cheap_clone();
 
         loop {
             // Check for timeout at each iteration
@@ -2699,8 +2825,8 @@ impl Interpreter {
             }
 
             // Bind the value to the loop variable
-            let iter_env = self.env_arena.alloc(Some(prev_env));
-            self.env = iter_env;
+            let iter_env = self.env_alloc(Some(prev_env.cheap_clone()));
+            self.env = iter_env.cheap_clone();
 
             match &for_of.left {
                 ForInOfLeft::Variable(decl) => {
@@ -2717,39 +2843,39 @@ impl Interpreter {
             // Execute the loop body
             match self.execute_statement(&for_of.body)? {
                 Completion::Break(None) => {
-                    self.env_arena.try_free(iter_env);
+                    self.gc_space.remove_root(&iter_env);
                     break;
                 }
                 Completion::Break(Some(ref l)) if label == Some(l) => {
-                    self.env_arena.try_free(iter_env);
+                    self.gc_space.remove_root(&iter_env);
                     self.env = prev_env;
                     return Ok(Completion::Normal(JsValue::Undefined));
                 }
                 Completion::Break(lbl) => {
-                    self.env_arena.try_free(iter_env);
+                    self.gc_space.remove_root(&iter_env);
                     self.env = prev_env;
                     return Ok(Completion::Break(lbl));
                 }
                 Completion::Continue(None) => {
-                    self.env_arena.try_free(iter_env);
+                    self.gc_space.remove_root(&iter_env);
                     continue;
                 }
                 Completion::Continue(Some(ref l)) if label == Some(l) => {
-                    self.env_arena.try_free(iter_env);
+                    self.gc_space.remove_root(&iter_env);
                     continue;
                 }
                 Completion::Continue(lbl) => {
-                    self.env_arena.try_free(iter_env);
+                    self.gc_space.remove_root(&iter_env);
                     self.env = prev_env;
                     return Ok(Completion::Continue(lbl));
                 }
                 Completion::Return(val) => {
-                    self.env_arena.try_free(iter_env);
+                    self.gc_space.remove_root(&iter_env);
                     self.env = prev_env;
                     return Ok(Completion::Return(val));
                 }
                 Completion::Normal(_) => {
-                    self.env_arena.try_free(iter_env);
+                    self.gc_space.remove_root(&iter_env);
                 }
             }
         }
@@ -2832,8 +2958,7 @@ impl Interpreter {
         match pattern {
             Pattern::Identifier(id) => {
                 // String clone - env.define takes ownership
-                self.env_arena
-                    .define(self.env, id.name.clone(), value, mutable);
+                self.env_define(id.name.clone(), value, mutable);
                 Ok(())
             }
 
@@ -2950,13 +3075,12 @@ impl Interpreter {
             Pattern::Identifier(id) => {
                 // For var, the binding was hoisted, so we need to set it
                 // Try to set in existing scope chain; if not found, define in current
-                if self.env_arena.has_binding(self.env, &id.name) {
-                    self.env_arena.set_binding(self.env, &id.name, value)?;
+                if self.env_has_binding(&id.name) {
+                    self.env_set_binding(&id.name, value)?;
                 } else {
                     // Fallback: define if somehow not hoisted
                     // String clone - env.define takes ownership
-                    self.env_arena
-                        .define(self.env, id.name.clone(), value, true);
+                    self.env_define(id.name.clone(), value, true);
                 }
                 Ok(())
             }
@@ -3067,13 +3191,12 @@ impl Interpreter {
         match expr {
             Expression::Literal(lit) => self.evaluate_literal(&lit.value),
 
-            Expression::Identifier(id) => self.env_arena.get_binding(self.env, &id.name),
+            Expression::Identifier(id) => self.env_get_binding(&id.name),
 
             Expression::This(_) => {
                 // Look up 'this' from the environment
                 Ok(self
-                    .env_arena
-                    .get_binding(self.env, &JsString::from("this"))
+                    .env_get_binding(&JsString::from("this"))
                     .unwrap_or(JsValue::Undefined))
             }
 
@@ -3167,13 +3290,11 @@ impl Interpreter {
                     name: func.id.as_ref().map(|id| id.name.clone()),
                     params: Rc::from(func.params.as_slice()), // Rc wrap for cheap cloning
                     body: Rc::new(FunctionBody::Block(func.body.clone())), // Rc wrap for cheap cloning
-                    closure: self.env,
+                    closure: self.env.cheap_clone(),
                     source_location: func.span,
                     generator: func.generator,
                     async_: func.async_,
                 };
-                // Mark the closure environment as captured
-                self.env_arena.increment_capture(self.env);
                 Ok(JsValue::Object(
                     self.create_function(JsFunction::Interpreted(interpreted)),
                 ))
@@ -3184,13 +3305,11 @@ impl Interpreter {
                     name: None,
                     params: Rc::from(arrow.params.as_slice()), // Rc wrap for cheap cloning
                     body: Rc::new(arrow.body.clone().into()),  // Rc wrap for cheap cloning
-                    closure: self.env,
+                    closure: self.env.cheap_clone(),
                     source_location: arrow.span,
                     generator: false, // Arrow functions cannot be generators
                     async_: arrow.async_,
                 };
-                // Mark the closure environment as captured
-                self.env_arena.increment_capture(self.env);
                 Ok(JsValue::Object(
                     self.create_function(JsFunction::Interpreted(interpreted)),
                 ))
@@ -3440,8 +3559,7 @@ impl Interpreter {
                 // Return __super__ from environment so it can be called or have properties accessed
                 // super() calls the parent constructor with current this
                 // super.method() accesses parent prototype method
-                self.env_arena
-                    .get_binding(self.env, &JsString::from("__super__"))
+                self.env_get_binding(&JsString::from("__super__"))
                     .map_err(|_| {
                         JsError::reference_error("'super' keyword is not available in this context")
                     })
@@ -3702,10 +3820,9 @@ impl Interpreter {
 
         let value = if assign.operator != AssignmentOp::Assign {
             let left = match &assign.left {
-                AssignmentTarget::Identifier(id) => self
-                    .env_arena
-                    .get_binding(self.env, &id.name)
-                    .unwrap_or(JsValue::Undefined),
+                AssignmentTarget::Identifier(id) => {
+                    self.env_get_binding(&id.name).unwrap_or(JsValue::Undefined)
+                }
                 AssignmentTarget::Member(member) => self.evaluate_member(member)?,
                 AssignmentTarget::Pattern(_) => {
                     return Err(JsError::syntax_error("Invalid assignment target", 0, 0));
@@ -3779,8 +3896,7 @@ impl Interpreter {
 
         match &assign.left {
             AssignmentTarget::Identifier(id) => {
-                self.env_arena
-                    .set_binding(self.env, &id.name, value.clone())?;
+                self.env_set_binding(&id.name, value.clone())?;
             }
             AssignmentTarget::Member(member) => {
                 self.set_member(member, value.clone())?;
@@ -3805,8 +3921,7 @@ impl Interpreter {
         // Set the new value
         match update.argument.as_ref() {
             Expression::Identifier(id) => {
-                self.env_arena
-                    .set_binding(self.env, &id.name, new_value.clone())?;
+                self.env_set_binding(&id.name, new_value.clone())?;
             }
             Expression::Member(member) => {
                 self.set_member(member, new_value.clone())?;
@@ -3998,14 +4113,12 @@ impl Interpreter {
         // For super.method() calls, also use the current this value
         let this_value = if let Expression::Super(_) = call.callee.as_ref() {
             // super() - call parent constructor with current this
-            self.env_arena
-                .get_binding(self.env, &JsString::from("this"))
+            self.env_get_binding(&JsString::from("this"))
                 .unwrap_or(JsValue::Undefined)
         } else if let Expression::Member(member) = call.callee.as_ref() {
             if let Expression::Super(_) = member.object.as_ref() {
                 // super.method() - call with current this
-                self.env_arena
-                    .get_binding(self.env, &JsString::from("this"))
+                self.env_get_binding(&JsString::from("this"))
                     .unwrap_or(JsValue::Undefined)
             } else {
                 self.evaluate(&member.object)?
@@ -4018,12 +4131,13 @@ impl Interpreter {
         let callee = if let Expression::Member(member) = call.callee.as_ref() {
             if let Expression::Super(_) = member.object.as_ref() {
                 // Get super constructor
-                let super_ctor = self
-                    .env_arena
-                    .get_binding(self.env, &JsString::from("__super__"))
-                    .map_err(|_| {
-                        JsError::reference_error("'super' keyword is not available in this context")
-                    })?;
+                let super_ctor =
+                    self.env_get_binding(&JsString::from("__super__"))
+                        .map_err(|_| {
+                            JsError::reference_error(
+                                "'super' keyword is not available in this context",
+                            )
+                        })?;
                 // Get super prototype
                 if let JsValue::Object(ctor) = super_ctor {
                     let proto_key = self.key("prototype");
@@ -4183,21 +4297,15 @@ impl Interpreter {
             location,
         });
 
-        let prev_env = self.env;
-        self.env = self.env_arena.alloc(Some(interpreted.closure));
+        let prev_env = self.env.cheap_clone();
+        self.env = self.env_alloc(Some(interpreted.closure.cheap_clone()));
 
         // Bind 'this' value
-        self.env_arena
-            .define(self.env, "this".to_string(), this_value, false);
+        self.env_define("this", this_value, false);
 
         // Create and bind 'arguments' object
         let arguments_obj = self.create_array(args.clone());
-        self.env_arena.define(
-            self.env,
-            "arguments".to_string(),
-            JsValue::Object(arguments_obj),
-            false,
-        );
+        self.env_define("arguments", JsValue::Object(arguments_obj), false);
 
         // Hoist var declarations
         if let FunctionBody::Block(block) = interpreted.body.as_ref() {
@@ -4223,9 +4331,9 @@ impl Interpreter {
             FunctionBody::Expression(expr) => self.evaluate(expr).map(Completion::Normal),
         };
 
-        let func_env = self.env;
+        let func_env = self.env.cheap_clone();
         self.env = prev_env;
-        self.env_arena.try_free(func_env);
+        self.gc_space.remove_root(&func_env);
         self.call_stack.pop();
 
         match execution_result {
@@ -4309,28 +4417,21 @@ impl Interpreter {
                     location,
                 });
 
-                let prev_env = self.env;
-                self.env = self.env_arena.alloc(Some(interpreted.closure));
+                let prev_env = self.env.cheap_clone();
+                self.env = self.env_alloc(Some(interpreted.closure.cheap_clone()));
 
                 // Bind 'this' value
-                self.env_arena
-                    .define(self.env, "this".to_string(), this_value.clone(), false);
+                self.env_define("this", this_value.clone(), false);
 
                 // Create and bind 'arguments' object (array-like object with all args)
                 let arguments_obj = self.create_array(args.to_vec());
-                self.env_arena.define(
-                    self.env,
-                    "arguments".to_string(),
-                    JsValue::Object(arguments_obj),
-                    false,
-                );
+                self.env_define("arguments", JsValue::Object(arguments_obj), false);
 
                 // Check if function has __super__ (for class constructors/methods)
                 let super_key = self.key("__super__");
                 let super_ctor = obj.borrow().get_property(&super_key);
                 if let Some(super_val) = super_ctor {
-                    self.env_arena
-                        .define(self.env, "__super__".to_string(), super_val, false);
+                    self.env_define("__super__", super_val, false);
                 }
 
                 // Hoist var declarations before anything else
@@ -4360,9 +4461,9 @@ impl Interpreter {
                 };
 
                 // Always restore environment and clean up, even on error
-                let func_env = self.env;
+                let func_env = self.env.cheap_clone();
                 self.env = prev_env;
-                self.env_arena.try_free(func_env);
+                self.gc_space.remove_root(&func_env);
                 self.call_stack.pop();
 
                 // Now handle the result

@@ -16,12 +16,7 @@ pub fn register_global_functions(interp: &mut Interpreter) {
             arity: 2,
         }),
     );
-    interp.env_arena.define(
-        interp.env,
-        "parseInt".to_string(),
-        JsValue::Object(parseint_fn),
-        false,
-    );
+    interp.env_define("parseInt".to_string(), JsValue::Object(parseint_fn), false);
 
     let name = interp.intern("parseFloat");
     let parsefloat_fn = create_function(
@@ -33,8 +28,7 @@ pub fn register_global_functions(interp: &mut Interpreter) {
             arity: 1,
         }),
     );
-    interp.env_arena.define(
-        interp.env,
+    interp.env_define(
         "parseFloat".to_string(),
         JsValue::Object(parsefloat_fn),
         false,
@@ -50,12 +44,7 @@ pub fn register_global_functions(interp: &mut Interpreter) {
             arity: 1,
         }),
     );
-    interp.env_arena.define(
-        interp.env,
-        "isNaN".to_string(),
-        JsValue::Object(isnan_fn),
-        false,
-    );
+    interp.env_define("isNaN".to_string(), JsValue::Object(isnan_fn), false);
 
     let name = interp.intern("isFinite");
     let isfinite_fn = create_function(
@@ -67,12 +56,7 @@ pub fn register_global_functions(interp: &mut Interpreter) {
             arity: 1,
         }),
     );
-    interp.env_arena.define(
-        interp.env,
-        "isFinite".to_string(),
-        JsValue::Object(isfinite_fn),
-        false,
-    );
+    interp.env_define("isFinite".to_string(), JsValue::Object(isfinite_fn), false);
 
     let name = interp.intern("encodeURI");
     let encodeuri_fn = create_function(
@@ -84,8 +68,7 @@ pub fn register_global_functions(interp: &mut Interpreter) {
             arity: 1,
         }),
     );
-    interp.env_arena.define(
-        interp.env,
+    interp.env_define(
         "encodeURI".to_string(),
         JsValue::Object(encodeuri_fn),
         false,
@@ -101,8 +84,7 @@ pub fn register_global_functions(interp: &mut Interpreter) {
             arity: 1,
         }),
     );
-    interp.env_arena.define(
-        interp.env,
+    interp.env_define(
         "decodeURI".to_string(),
         JsValue::Object(decodeuri_fn),
         false,
@@ -118,8 +100,7 @@ pub fn register_global_functions(interp: &mut Interpreter) {
             arity: 1,
         }),
     );
-    interp.env_arena.define(
-        interp.env,
+    interp.env_define(
         "encodeURIComponent".to_string(),
         JsValue::Object(encodeuricomponent_fn),
         false,
@@ -135,8 +116,7 @@ pub fn register_global_functions(interp: &mut Interpreter) {
             arity: 1,
         }),
     );
-    interp.env_arena.define(
-        interp.env,
+    interp.env_define(
         "decodeURIComponent".to_string(),
         JsValue::Object(decodeuricomponent_fn),
         false,
