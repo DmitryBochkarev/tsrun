@@ -16,12 +16,14 @@ pub mod gc;
 pub mod interpreter;
 pub mod lexer;
 pub mod parser;
+pub mod string_dict;
 pub mod value;
 
 pub use error::JsError;
 pub use gc::{Gc, GcBox, Space, Traceable, Tracer};
 pub use interpreter::Interpreter;
 pub use interpreter::SavedExecutionState;
+pub use string_dict::StringDict;
 pub use value::CheapClone;
 pub use value::EnvId;
 pub use value::EnvironmentArena;
@@ -146,7 +148,7 @@ impl Runtime {
     /// }
     /// ```
     pub fn eval(&mut self, source: &str) -> Result<RuntimeResult, JsError> {
-        let mut parser = parser::Parser::new(source);
+        let mut parser = parser::Parser::new(source, &mut self.interpreter.string_dict);
         let program = parser.parse_program()?;
         self.interpreter.execute(&program)
     }

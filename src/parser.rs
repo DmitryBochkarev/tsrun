@@ -5,6 +5,7 @@
 use crate::ast::*;
 use crate::error::JsError;
 use crate::lexer::{Lexer, Span, Token, TokenKind};
+use crate::string_dict::StringDict;
 use crate::value::JsString;
 
 /// Parser for TypeScript source code
@@ -12,17 +13,25 @@ pub struct Parser<'a> {
     lexer: Lexer<'a>,
     current: Token,
     previous: Token,
+    string_dict: &'a mut StringDict,
 }
 
 impl<'a> Parser<'a> {
-    pub fn new(source: &'a str) -> Self {
+    pub fn new(source: &'a str, string_dict: &'a mut StringDict) -> Self {
         let mut lexer = Lexer::new(source);
         let current = lexer.next_token();
         Self {
             lexer,
             current,
             previous: Token::eof(0, 1, 1),
+            string_dict,
         }
+    }
+
+    /// Helper to intern a string in the dictionary
+    #[inline]
+    fn intern(&mut self, s: &str) -> JsString {
+        self.string_dict.get_or_insert(s)
     }
 
     /// Parse a complete program
@@ -1699,8 +1708,9 @@ impl<'a> Parser<'a> {
             } else if let TokenKind::TemplateHead(s) = self.current.kind.clone() {
                 // Tagged template literal with substitutions: tag`...${...}...`
                 let template_start = self.current.span;
+                let s = self.intern(&s);
                 self.advance(); // consume TemplateHead
-                let template = self.parse_template_literal(JsString::from(s), template_start)?;
+                let template = self.parse_template_literal(s, template_start)?;
                 if let Expression::Template(quasi) = template {
                     let span = self.span_from(start);
                     expr = Expression::TaggedTemplate(TaggedTemplateExpression {
@@ -1712,13 +1722,14 @@ impl<'a> Parser<'a> {
             } else if let TokenKind::TemplateNoSub(s) = self.current.kind.clone() {
                 // Tagged template literal without substitutions: tag`...`
                 let template_start = self.current.span;
+                let interned = self.intern(&s);
                 self.advance(); // consume TemplateNoSub
                 let span = self.span_from(start);
                 expr = Expression::TaggedTemplate(TaggedTemplateExpression {
                     tag: Box::new(expr),
                     quasi: TemplateLiteral {
                         quasis: vec![TemplateElement {
-                            value: JsString::from(s),
+                            value: interned,
                             tail: true,
                             span: template_start,
                         }],
@@ -1848,7 +1859,8 @@ impl<'a> Parser<'a> {
                 }))
             }
             TokenKind::String(s) => {
-                let s = JsString::from(s.as_str());
+                let s = s.clone();
+                let s = self.intern(&s);
                 self.advance();
                 Ok(Expression::Literal(Literal {
                     value: LiteralValue::String(s),
@@ -1948,7 +1960,8 @@ impl<'a> Parser<'a> {
 
             // Template literal
             TokenKind::TemplateNoSub(s) => {
-                let s = JsString::from(s.as_str());
+                let s = s.clone();
+                let s = self.intern(&s);
                 self.advance();
                 Ok(Expression::Template(TemplateLiteral {
                     quasis: vec![TemplateElement {
@@ -1961,7 +1974,8 @@ impl<'a> Parser<'a> {
                 }))
             }
             TokenKind::TemplateHead(s) => {
-                let s = JsString::from(s.as_str());
+                let s = s.clone();
+                let s = self.intern(&s);
                 self.advance();
                 self.parse_template_literal(s, start)
             }
@@ -2511,7 +2525,7 @@ impl<'a> Parser<'a> {
             match cont {
                 TokenKind::TemplateTail(s) => {
                     quasis.push(TemplateElement {
-                        value: JsString::from(s),
+                        value: self.intern(&s),
                         tail: true,
                         span: self.current.span,
                     });
@@ -2519,7 +2533,7 @@ impl<'a> Parser<'a> {
                 }
                 TokenKind::TemplateMiddle(s) => {
                     quasis.push(TemplateElement {
-                        value: JsString::from(s),
+                        value: self.intern(&s),
                         tail: false,
                         span: self.current.span,
                     });
@@ -2838,7 +2852,8 @@ impl<'a> Parser<'a> {
 
             // Literal types
             TokenKind::String(s) => {
-                let s = JsString::from(s.as_str());
+                let s = s.clone();
+                let s = self.intern(&s);
                 self.advance();
                 Ok(TypeAnnotation::Literal(TypeLiteral {
                     value: LiteralValue::String(s),
@@ -3165,7 +3180,8 @@ impl<'a> Parser<'a> {
     fn parse_identifier(&mut self) -> Result<Identifier, JsError> {
         match &self.current.kind {
             TokenKind::Identifier(name) => {
-                let name = JsString::from(name.as_str());
+                let name = name.clone();
+                let name = self.intern(&name);
                 let span = self.current.span;
                 self.advance();
                 Ok(Identifier { name, span })
@@ -3198,7 +3214,8 @@ impl<'a> Parser<'a> {
     fn parse_identifier_name(&mut self) -> Result<Identifier, JsError> {
         // First try as normal identifier
         if let TokenKind::Identifier(name) = &self.current.kind {
-            let name = JsString::from(name.as_str());
+            let name = name.clone();
+            let name = self.intern(&name);
             let span = self.current.span;
             self.advance();
             return Ok(Identifier { name, span });
@@ -3265,7 +3282,8 @@ impl<'a> Parser<'a> {
                 Ok(ObjectPropertyKey::Identifier(id))
             }
             TokenKind::String(s) => {
-                let value = JsString::from(s.as_str());
+                let s = s.clone();
+                let value = self.intern(&s);
                 let span = self.current.span;
                 self.advance();
                 Ok(ObjectPropertyKey::String(StringLiteral { value, span }))
@@ -3293,7 +3311,8 @@ impl<'a> Parser<'a> {
     fn parse_string_literal(&mut self) -> Result<StringLiteral, JsError> {
         match &self.current.kind {
             TokenKind::String(s) => {
-                let value = JsString::from(s.as_str());
+                let s = s.clone();
+                let value = self.intern(&s);
                 let span = self.current.span;
                 self.advance();
                 Ok(StringLiteral { value, span })
@@ -3457,8 +3476,8 @@ impl<'a> Parser<'a> {
         )
     }
 
-    fn keyword_to_js_string(&self) -> JsString {
-        JsString::from(match &self.current.kind {
+    fn keyword_to_js_string(&mut self) -> JsString {
+        self.intern(match &self.current.kind {
             TokenKind::Let => "let",
             TokenKind::Const => "const",
             TokenKind::Var => "var",
@@ -3777,7 +3796,8 @@ mod tests {
     use super::*;
 
     fn parse(source: &str) -> Program {
-        Parser::new(source).parse_program().unwrap()
+        let mut dict = StringDict::new();
+        Parser::new(source, &mut dict).parse_program().unwrap()
     }
 
     #[test]

@@ -22,6 +22,7 @@ use crate::ast::{
 };
 use crate::error::JsError;
 use crate::gc::Space;
+use crate::string_dict::StringDict;
 use crate::value::{
     create_array, create_function, create_object, CheapClone, EnvId, EnvironmentArena,
     ExoticObject, FunctionBody, GeneratorState, GeneratorStatus, InterpretedFunction, JsFunction,
@@ -97,6 +98,8 @@ pub struct Interpreter {
     pub env_arena: EnvironmentArena,
     /// Current environment ID
     pub env: EnvId,
+    /// String dictionary for deduplicating strings
+    pub string_dict: StringDict,
     /// Object.prototype for all objects
     pub object_prototype: JsObjectRef,
     /// Array.prototype for all array instances
@@ -394,6 +397,7 @@ impl Interpreter {
             global,
             env_arena,
             env,
+            string_dict: StringDict::with_common_strings(),
             object_prototype,
             array_prototype,
             string_prototype,
@@ -440,6 +444,23 @@ impl Interpreter {
             }
         }
         trace
+    }
+
+    /// Intern a string in the dictionary, returning a shared JsString.
+    ///
+    /// Use this for frequently-used strings to avoid duplicate allocations.
+    #[inline]
+    pub fn intern(&mut self, s: &str) -> JsString {
+        self.string_dict.get_or_insert(s)
+    }
+
+    /// Create a PropertyKey from an interned string.
+    ///
+    /// This is more efficient than `PropertyKey::from(s)` when the string
+    /// is likely to be reused, as it shares the underlying allocation.
+    #[inline]
+    pub fn key(&mut self, s: &str) -> PropertyKey {
+        PropertyKey::String(self.string_dict.get_or_insert(s))
     }
 
     /// Create an array with the proper prototype
