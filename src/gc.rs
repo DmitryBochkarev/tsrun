@@ -3,6 +3,22 @@
 //! This module provides a mark-and-sweep garbage collector that can detect and break
 //! reference cycles in `Rc`-based object graphs. Users implement the [`Traceable`] trait
 //! on their types to define how the GC should traverse and unlink references.
+//!
+//! # IMPORTANT: GC Safety Contract
+//!
+//! **DO NOT MODIFY** the core GC logic (marking, unlinking, cycle breaking) without
+//! careful consideration. The GC assumes that ALL objects held by Rust code are either:
+//!
+//! 1. **Rooted** via `Space::add_root()`, OR
+//! 2. **Reachable** from a rooted object through traced references
+//!
+//! If you hold a `Gc<T>` reference in Rust code and that object is not rooted or
+//! reachable from roots, the GC will unlink it (clear its properties) during collection.
+//! This causes subtle bugs where objects appear empty/corrupted.
+//!
+//! When allocating objects that will have further evaluation before being stored in
+//! the environment, you MUST temporarily root them. See `Expression::Object` evaluation
+//! in `interpreter/mod.rs` for an example.
 
 use std::{
     cell::RefCell,

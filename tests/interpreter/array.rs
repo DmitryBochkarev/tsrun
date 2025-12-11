@@ -35,6 +35,188 @@ fn test_array_push_multiple() {
 }
 
 #[test]
+fn test_array_push_multiple_element_access() {
+    // Verify each pushed element is accessible
+    assert_eq!(
+        eval("const arr: number[] = []; arr.push(1, 2, 3); arr[0]"),
+        JsValue::Number(1.0)
+    );
+    assert_eq!(
+        eval("const arr: number[] = []; arr.push(1, 2, 3); arr[1]"),
+        JsValue::Number(2.0)
+    );
+    assert_eq!(
+        eval("const arr: number[] = []; arr.push(1, 2, 3); arr[2]"),
+        JsValue::Number(3.0)
+    );
+}
+
+#[test]
+fn test_array_push_multiple_sum() {
+    // Bug reproduction: push multiple, then sum - was returning NaN
+    assert_eq!(
+        eval(
+            r#"
+            const arr: number[] = [];
+            arr.push(1, 2, 3);
+            let sum: number = 0;
+            for (let i = 0; i < arr.length; i++) {
+                sum = sum + arr[i];
+            }
+            sum
+        "#
+        ),
+        JsValue::Number(6.0)
+    );
+}
+
+#[test]
+fn test_array_push_objects_multiple() {
+    // Bug reproduction: push multiple objects, access property - was causing NaN
+    assert_eq!(
+        eval(
+            r#"
+            interface Node { id: number; edges: Node[]; }
+            const n1: Node = { id: 1, edges: [] };
+            const n2: Node = { id: 2, edges: [] };
+            const n3: Node = { id: 3, edges: [] };
+            n1.edges.push(n2, n3);
+            n1.edges[0].id + n1.edges[1].id
+        "#
+        ),
+        JsValue::Number(5.0)
+    );
+}
+
+#[test]
+fn test_gc_cycles_test6_minimal() {
+    // Minimal reproduction of gc-cycles.ts Test 6 which was returning NaN
+    // BUG: The interface declaration is inside the for loop!
+    assert_eq!(
+        eval(
+            r#"
+            let sum: number = 0;
+            for (let i = 0; i < 1000; i++) {
+                interface GraphNode { id: number; edges: GraphNode[]; }
+
+                const n1: GraphNode = { id: 1, edges: [] };
+                const n2: GraphNode = { id: 2, edges: [] };
+                const n3: GraphNode = { id: 3, edges: [] };
+                const n4: GraphNode = { id: 4, edges: [] };
+                const n5: GraphNode = { id: 5, edges: [] };
+
+                n1.edges.push(n2, n3);
+                n2.edges.push(n1, n3, n4);
+                n3.edges.push(n2, n4, n5);
+                n4.edges.push(n3, n5);
+                n5.edges.push(n4, n1);
+
+                sum = sum + n1.id + n2.id + n3.id + n4.id + n5.id;
+            }
+            sum
+        "#
+        ),
+        JsValue::Number(15000.0)
+    );
+}
+
+#[test]
+fn test_gc_cycles_test7_minimal() {
+    // Minimal reproduction of gc-cycles.ts Test 7 which was returning NaN
+    assert_eq!(
+        eval(
+            r#"
+            interface ArrayNode { value: number; refs: ArrayNode[]; }
+            let sum: number = 0;
+            for (let i = 0; i < 2; i++) {
+                const a: ArrayNode = { value: 1, refs: [] };
+                const b: ArrayNode = { value: 2, refs: [] };
+                const c: ArrayNode = { value: 3, refs: [] };
+
+                a.refs.push(b, c);
+                b.refs.push(c, a);
+                c.refs.push(a, b);
+
+                sum = sum + a.value + b.value + c.value;
+            }
+            sum
+        "#
+        ),
+        JsValue::Number(12.0)
+    );
+}
+
+#[test]
+fn test_gc_cycles_all_tests() {
+    // Run all gc-cycles tests in sequence to see if one corrupts state for later ones
+    // Test 1: 100*(0+1+1+2+...+99+100) = sum(2i+1) for i=0..99 = 10000
+    assert_eq!(
+        eval(
+            r#"
+const results: number[] = [];
+
+// Test 1: Two-node cycles
+{
+    let sum: number = 0;
+    for (let i = 0; i < 100; i++) {
+        const a: { id: number; other: any } = { id: i, other: null };
+        const b: { id: number; other: any } = { id: i + 1, other: null };
+        a.other = b;
+        b.other = a;
+        sum = sum + a.id + b.id;
+    }
+    results.push(sum);
+}
+
+// Test 6: Complex graph with multiple cycles
+{
+    let sum: number = 0;
+    for (let i = 0; i < 100; i++) {
+        interface GraphNode { id: number; edges: GraphNode[]; }
+        const n1: GraphNode = { id: 1, edges: [] };
+        const n2: GraphNode = { id: 2, edges: [] };
+        const n3: GraphNode = { id: 3, edges: [] };
+        const n4: GraphNode = { id: 4, edges: [] };
+        const n5: GraphNode = { id: 5, edges: [] };
+
+        n1.edges.push(n2, n3);
+        n2.edges.push(n1, n3, n4);
+        n3.edges.push(n2, n4, n5);
+        n4.edges.push(n3, n5);
+        n5.edges.push(n4, n1);
+
+        sum = sum + n1.id + n2.id + n3.id + n4.id + n5.id;
+    }
+    results.push(sum);
+}
+
+// Test 7: Cycles through arrays
+{
+    let sum: number = 0;
+    for (let i = 0; i < 100; i++) {
+        interface ArrayNode { value: number; refs: ArrayNode[]; }
+        const a: ArrayNode = { value: 1, refs: [] };
+        const b: ArrayNode = { value: 2, refs: [] };
+        const c: ArrayNode = { value: 3, refs: [] };
+
+        a.refs.push(b, c);
+        b.refs.push(c, a);
+        c.refs.push(a, b);
+
+        sum = sum + a.value + b.value + c.value;
+    }
+    results.push(sum);
+}
+
+// Return test 6 result as check (should be 1500)
+results[1]
+        "#
+        ),
+        JsValue::Number(1500.0)
+    );
+}
+
+#[test]
 fn test_array_push_element_access() {
     assert_eq!(
         eval("const arr = [1, 2]; arr.push(3); arr[2]"),

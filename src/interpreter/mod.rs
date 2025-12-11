@@ -3232,6 +3232,13 @@ impl Interpreter {
 
             Expression::Object(obj) => {
                 let result = self.create_object();
+                // IMPORTANT: Temporarily root the object while evaluating property values.
+                // Property value evaluation (e.g., nested arrays/objects) may allocate,
+                // which can trigger GC. Without rooting, `result` would be collected
+                // since it's not yet stored in the environment.
+                // DO NOT REMOVE this rooting - it prevents GC from corrupting objects.
+                self.gc_space.add_root(&result);
+
                 // Set prototype first if __proto__ is specified
                 for prop in &obj.properties {
                     if let ObjectProperty::Property(p) = prop {
@@ -3282,6 +3289,8 @@ impl Interpreter {
                         }
                     }
                 }
+
+                self.gc_space.remove_root(&result);
                 Ok(JsValue::Object(result))
             }
 
@@ -3356,27 +3365,33 @@ impl Interpreter {
                     .iter()
                     .map(|q| JsValue::String(q.value.clone()))
                     .collect();
-                let strings_array = JsValue::Object(self.create_array(strings));
+                let strings_arr_obj = self.create_array(strings);
+                // IMPORTANT: Root the array while we create raw_array and evaluate expressions,
+                // since those operations may allocate and trigger GC.
+                // DO NOT REMOVE this rooting - it prevents GC from corrupting the array.
+                self.gc_space.add_root(&strings_arr_obj);
 
                 // Add 'raw' property to strings array (same as cooked for now)
                 // TODO: properly handle raw strings with escape sequences
-                if let JsValue::Object(ref arr) = strings_array {
-                    let raw: Vec<JsValue> = tagged
-                        .quasi
-                        .quasis
-                        .iter()
-                        .map(|q| JsValue::String(q.value.clone()))
-                        .collect();
-                    let raw_array = JsValue::Object(self.create_array(raw));
-                    let raw_key = self.key("raw");
-                    arr.borrow_mut().set_property(raw_key, raw_array);
-                }
+                let raw: Vec<JsValue> = tagged
+                    .quasi
+                    .quasis
+                    .iter()
+                    .map(|q| JsValue::String(q.value.clone()))
+                    .collect();
+                let raw_array = JsValue::Object(self.create_array(raw));
+                let raw_key = self.key("raw");
+                strings_arr_obj.borrow_mut().set_property(raw_key, raw_array);
+
+                let strings_array = JsValue::Object(strings_arr_obj.cheap_clone());
 
                 // Evaluate all interpolated expressions (remaining arguments)
                 let mut args = vec![strings_array];
                 for expr in &tagged.quasi.expressions {
                     args.push(self.evaluate(expr)?);
                 }
+
+                self.gc_space.remove_root(&strings_arr_obj);
 
                 // Call the tag function
                 self.call_function(tag_fn, JsValue::Undefined, &args)
@@ -4224,6 +4239,11 @@ impl Interpreter {
 
         // Create new object with prototype from constructor
         let new_obj = self.create_object();
+        // IMPORTANT: Root the new object while setting up prototype and calling constructor.
+        // The constructor call allocates (new environment), which can trigger GC.
+        // Without rooting, `new_obj` would be collected since it's not yet in any environment.
+        // DO NOT REMOVE this rooting - it prevents GC from corrupting the new object.
+        self.gc_space.add_root(&new_obj);
 
         // Get prototype from constructor.prototype and set it on the new object
         let proto_key = self.key("prototype");
@@ -4266,6 +4286,8 @@ impl Interpreter {
 
         // Call constructor
         let result = self.call_function(callee, JsValue::Object(new_obj.cheap_clone()), &args)?;
+
+        self.gc_space.remove_root(&new_obj);
 
         // Return result if it's an object, otherwise return new_obj
         match result {

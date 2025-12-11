@@ -293,3 +293,310 @@ fn test_lower_threshold_bounds_memory() {
     // Note: After final GC both should be similar, but DURING execution
     // the high threshold accumulates more garbage
 }
+
+#[test]
+fn test_gc_cycles_graph_with_push_multiple() {
+    // Regression test: gc-cycles.ts Test 6 and Test 7 were returning NaN
+    // because GC was collecting objects that were still reachable through
+    // local variables during loop iterations.
+    //
+    // The bug was triggered when:
+    // 1. GC threshold is reached during execution
+    // 2. Objects inside the current loop iteration were being marked as
+    //    unreachable and unlinked (properties cleared!), even though local
+    //    variables still reference them
+
+    let source = r#"
+        interface GraphNode { id: number; edges: GraphNode[]; }
+        let sum: number = 0;
+        for (let i = 0; i < 100; i++) {
+            const n1: GraphNode = { id: 1, edges: [] };
+            const n2: GraphNode = { id: 2, edges: [] };
+            const n3: GraphNode = { id: 3, edges: [] };
+            const n4: GraphNode = { id: 4, edges: [] };
+            const n5: GraphNode = { id: 5, edges: [] };
+
+            n1.edges.push(n2, n3);
+            n2.edges.push(n1, n3, n4);
+            n3.edges.push(n2, n4, n5);
+            n4.edges.push(n3, n5);
+            n5.edges.push(n4, n1);
+
+            sum = sum + n1.id + n2.id + n3.id + n4.id + n5.id;
+        }
+        sum
+    "#;
+
+    // Test with low GC threshold to trigger the bug
+    let mut runtime = Runtime::new();
+    runtime.set_gc_threshold(100);
+    let result = match runtime.eval(source).unwrap() {
+        RuntimeResult::Complete(value) => value,
+        other => panic!("Expected Complete, got {:?}", other),
+    };
+
+    // Expected: 100 * (1+2+3+4+5) = 100 * 15 = 1500
+    assert_eq!(
+        result,
+        typescript_eval::JsValue::Number(1500.0),
+        "Graph with push multiple should compute correct sum (got NaN due to GC bug)"
+    );
+}
+
+#[test]
+fn test_gc_cycles_array_refs_with_push_multiple() {
+    // Regression test for gc-cycles.ts Test 7
+    let source = r#"
+        interface ArrayNode { value: number; refs: ArrayNode[]; }
+        let sum: number = 0;
+        for (let i = 0; i < 50; i++) {
+            const a: ArrayNode = { value: 1, refs: [] };
+            const b: ArrayNode = { value: 2, refs: [] };
+            const c: ArrayNode = { value: 3, refs: [] };
+
+            a.refs.push(b, c);
+            b.refs.push(c, a);
+            c.refs.push(a, b);
+
+            sum = sum + a.value + b.value + c.value;
+        }
+        sum
+    "#;
+
+    let mut runtime = Runtime::new();
+    runtime.set_gc_threshold(100);
+    let result = match runtime.eval(source).unwrap() {
+        RuntimeResult::Complete(value) => value,
+        other => panic!("Expected Complete, got {:?}", other),
+    };
+
+    // Expected: 50 * 6 = 300
+    assert_eq!(
+        result,
+        typescript_eval::JsValue::Number(300.0),
+        "Array refs with push multiple should compute correct sum (got NaN due to GC bug)"
+    );
+}
+
+#[test]
+fn test_gc_object_cycle_with_property_assignment() {
+    // Regression test: cycles created via property assignment should survive GC
+    let source = r#"
+        let sum: number = 0;
+        for (let i = 0; i < 50; i++) {
+            const a: { id: number; ref: any } = { id: 1, ref: null };
+            const b: { id: number; ref: any } = { id: 2, ref: null };
+            a.ref = b;
+            b.ref = a;  // Creates cycle
+            sum = sum + a.id + b.id;
+        }
+        sum
+    "#;
+
+    let mut runtime = Runtime::new();
+    runtime.set_gc_threshold(50); // Low threshold to trigger GC often
+    let result = match runtime.eval(source).unwrap() {
+        RuntimeResult::Complete(value) => value,
+        other => panic!("Expected Complete, got {:?}", other),
+    };
+
+    // Expected: 50 * 3 = 150
+    assert_eq!(
+        result,
+        typescript_eval::JsValue::Number(150.0),
+        "Object properties should survive GC during cycle creation"
+    );
+}
+
+#[test]
+fn test_gc_object_cycle_with_array_push() {
+    // Regression test: cycles created via array push should survive GC.
+    // This was a bug where object literals with nested arrays would get
+    // unlinked by GC before the arrays were populated.
+    let source = r#"
+        let sum: number = 0;
+        for (let i = 0; i < 50; i++) {
+            const a: { id: number; refs: any[] } = { id: 1, refs: [] };
+            const b: { id: number; refs: any[] } = { id: 2, refs: [] };
+            a.refs.push(b);
+            b.refs.push(a);  // Creates cycle via array
+            sum = sum + a.id + b.id;
+        }
+        sum
+    "#;
+
+    let mut runtime = Runtime::new();
+    runtime.set_gc_threshold(50); // Low threshold to trigger GC often
+    let result = match runtime.eval(source).unwrap() {
+        RuntimeResult::Complete(value) => value,
+        other => panic!("Expected Complete, got {:?}", other),
+    };
+
+    // Expected: 50 * 3 = 150
+    assert_eq!(
+        result,
+        typescript_eval::JsValue::Number(150.0),
+        "Object properties should survive GC when cycles are created via array push"
+    );
+}
+
+#[test]
+fn test_gc_cycles_full_sequence() {
+    // Reduced reproduction of gc-cycles.ts Tests 1 through 7 with lower
+    // iteration counts to run within timeout but still trigger multiple GCs
+    // (SCALE = 0.1 compared to the original)
+    let source = r#"
+const results: number[] = [];
+
+// Test 1: Two-node cycles (1000 iterations)
+{
+    let sum: number = 0;
+    for (let i = 0; i < 1000; i++) {
+        const a: { id: number; other: any } = { id: i, other: null };
+        const b: { id: number; other: any } = { id: i + 1, other: null };
+        a.other = b;
+        b.other = a;
+        sum = sum + a.id + b.id;
+    }
+    results.push(sum);
+}
+
+// Test 2: Triangle cycles (500 iterations)
+{
+    let sum: number = 0;
+    for (let i = 0; i < 500; i++) {
+        const a: { v: number; next: any } = { v: 1, next: null };
+        const b: { v: number; next: any } = { v: 2, next: null };
+        const c: { v: number; next: any } = { v: 3, next: null };
+        a.next = b;
+        b.next = c;
+        c.next = a;
+        sum = sum + a.v + b.v + c.v;
+    }
+    results.push(sum);
+}
+
+// Test 3: Ring cycles (100 iterations)
+{
+    let sum: number = 0;
+    for (let i = 0; i < 100; i++) {
+        const ringSize: number = 5 + (i % 10);
+        interface RingNode { id: number; next: RingNode | null; }
+        const nodes: RingNode[] = [];
+        for (let j = 0; j < ringSize; j++) {
+            nodes.push({ id: j, next: null });
+        }
+        for (let j = 0; j < ringSize; j++) {
+            nodes[j].next = nodes[(j + 1) % ringSize];
+        }
+        for (let j = 0; j < ringSize; j++) {
+            sum = sum + nodes[j].id;
+        }
+    }
+    results.push(sum);
+}
+
+// Test 4: Doubly-linked cycles (200 iterations)
+{
+    let sum: number = 0;
+    for (let i = 0; i < 200; i++) {
+        interface DLNode { id: number; prev: DLNode | null; next: DLNode | null; }
+        const a: DLNode = { id: 1, prev: null, next: null };
+        const b: DLNode = { id: 2, prev: null, next: null };
+        const c: DLNode = { id: 3, prev: null, next: null };
+        const d: DLNode = { id: 4, prev: null, next: null };
+        a.next = b; b.next = c; c.next = d; d.next = a;
+        b.prev = a; c.prev = b; d.prev = c; a.prev = d;
+        sum = sum + a.id + b.id + c.id + d.id;
+    }
+    results.push(sum);
+}
+
+// Test 5: Self-referencing objects (2000 iterations)
+{
+    let sum: number = 0;
+    for (let i = 0; i < 2000; i++) {
+        const obj: { value: number; self: any } = { value: i, self: null };
+        obj.self = obj;
+        sum = sum + obj.value;
+    }
+    results.push(sum);
+}
+
+// Test 6: Complex graph with multiple cycles (100 iterations)
+{
+    let sum: number = 0;
+    for (let i = 0; i < 100; i++) {
+        interface GraphNode { id: number; edges: GraphNode[]; }
+        const n1: GraphNode = { id: 1, edges: [] };
+        const n2: GraphNode = { id: 2, edges: [] };
+        const n3: GraphNode = { id: 3, edges: [] };
+        const n4: GraphNode = { id: 4, edges: [] };
+        const n5: GraphNode = { id: 5, edges: [] };
+        n1.edges.push(n2, n3);
+        n2.edges.push(n1, n3, n4);
+        n3.edges.push(n2, n4, n5);
+        n4.edges.push(n3, n5);
+        n5.edges.push(n4, n1);
+        sum = sum + n1.id + n2.id + n3.id + n4.id + n5.id;
+    }
+    results.push(sum);
+}
+
+// Test 7: Cycles through arrays (300 iterations)
+{
+    let sum: number = 0;
+    for (let i = 0; i < 300; i++) {
+        interface ArrayNode { value: number; refs: ArrayNode[]; }
+        const a: ArrayNode = { value: 1, refs: [] };
+        const b: ArrayNode = { value: 2, refs: [] };
+        const c: ArrayNode = { value: 3, refs: [] };
+        a.refs.push(b, c);
+        b.refs.push(c, a);
+        c.refs.push(a, b);
+        sum = sum + a.value + b.value + c.value;
+    }
+    results.push(sum);
+}
+
+results
+    "#;
+
+    let mut runtime = Runtime::new();
+    // Use lower GC threshold to trigger collection more frequently
+    runtime.set_gc_threshold(100);
+    // Disable timeout for this long-running test
+    runtime.set_timeout_ms(0);
+    let result = match runtime.eval(source).unwrap() {
+        RuntimeResult::Complete(value) => value,
+        other => panic!("Expected Complete, got {:?}", other),
+    };
+
+    if let typescript_eval::JsValue::Object(arr) = result {
+        let arr_ref = arr.borrow();
+        let get = |i: usize| -> f64 {
+            if let Some(typescript_eval::JsValue::Number(n)) = arr_ref.get_property(&typescript_eval::value::PropertyKey::Index(i as u32)) {
+                n
+            } else {
+                f64::NAN
+            }
+        };
+
+        // Test 1: sum(i=0 to 999) of (i + (i+1)) = sum(2i+1) for i=0..999 = 1000^2 = 1000000
+        assert_eq!(get(0), 1000000.0, "Test 1 failed");
+        // Test 2: 500 * 6 = 3000
+        assert_eq!(get(1), 3000.0, "Test 2 failed");
+        // Test 3: 4450 (verified with bun - 1/10 scale of original 44500)
+        assert_eq!(get(2), 4450.0, "Test 3 failed");
+        // Test 4: 200 * 10 = 2000
+        assert_eq!(get(3), 2000.0, "Test 4 failed");
+        // Test 5: sum(i=0 to 1999) of i = 1999*2000/2 = 1999000
+        assert_eq!(get(4), 1999000.0, "Test 5 failed");
+        // Test 6: 100 * 15 = 1500
+        assert_eq!(get(5), 1500.0, "Test 6 (complex graph) failed - got NaN!");
+        // Test 7: 300 * 6 = 1800
+        assert_eq!(get(6), 1800.0, "Test 7 (array cycles) failed - got NaN!");
+    } else {
+        panic!("Expected array result");
+    }
+}
