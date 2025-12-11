@@ -8,6 +8,14 @@ use crate::error::JsError;
 use crate::interpreter::Interpreter;
 use crate::value::{create_object_with_capacity, ExoticObject, JsObjectRef, JsValue, PropertyKey};
 
+/// Format a JsValue for console output (strings without quotes)
+fn format_for_console(value: &JsValue) -> String {
+    match value {
+        JsValue::String(s) => s.to_string(),
+        other => format!("{:?}", other),
+    }
+}
+
 // Thread-local storage for console timers and counters
 lazy_static::lazy_static! {
     static ref CONSOLE_TIMERS: Mutex<HashMap<String, Instant>> = Mutex::new(HashMap::new());
@@ -57,7 +65,7 @@ pub fn console_log(
     _this: JsValue,
     args: &[JsValue],
 ) -> Result<JsValue, JsError> {
-    let output: Vec<String> = args.iter().map(|v| format!("{:?}", v)).collect();
+    let output: Vec<String> = args.iter().map(format_for_console).collect();
     println!("{}", output.join(" "));
     Ok(JsValue::Undefined)
 }
@@ -67,7 +75,7 @@ pub fn console_error(
     _this: JsValue,
     args: &[JsValue],
 ) -> Result<JsValue, JsError> {
-    let output: Vec<String> = args.iter().map(|v| format!("{:?}", v)).collect();
+    let output: Vec<String> = args.iter().map(format_for_console).collect();
     eprintln!("{}", output.join(" "));
     Ok(JsValue::Undefined)
 }
@@ -77,7 +85,7 @@ pub fn console_warn(
     _this: JsValue,
     args: &[JsValue],
 ) -> Result<JsValue, JsError> {
-    let output: Vec<String> = args.iter().map(|v| format!("{:?}", v)).collect();
+    let output: Vec<String> = args.iter().map(format_for_console).collect();
     eprintln!("{}", output.join(" "));
     Ok(JsValue::Undefined)
 }
@@ -87,7 +95,7 @@ pub fn console_info(
     _this: JsValue,
     args: &[JsValue],
 ) -> Result<JsValue, JsError> {
-    let output: Vec<String> = args.iter().map(|v| format!("{:?}", v)).collect();
+    let output: Vec<String> = args.iter().map(format_for_console).collect();
     println!("{}", output.join(" "));
     Ok(JsValue::Undefined)
 }
@@ -97,7 +105,7 @@ pub fn console_debug(
     _this: JsValue,
     args: &[JsValue],
 ) -> Result<JsValue, JsError> {
-    let output: Vec<String> = args.iter().map(|v| format!("{:?}", v)).collect();
+    let output: Vec<String> = args.iter().map(format_for_console).collect();
     println!("{}", output.join(" "));
     Ok(JsValue::Undefined)
 }
