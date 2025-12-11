@@ -26,11 +26,12 @@ pub fn create_set_prototype(interp: &mut Interpreter) -> JsObjectRef {
 
 /// Create Set constructor
 pub fn create_set_constructor(interp: &mut Interpreter) -> JsObjectRef {
+    let name = interp.intern("Set");
     create_function(
         &mut interp.gc_space,
         &mut interp.string_dict,
         JsFunction::Native(NativeFunction {
-            name: "Set".to_string(),
+            name,
             func: set_constructor,
             arity: 0,
         }),

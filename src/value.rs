@@ -1307,7 +1307,7 @@ impl JsFunction {
     pub fn name(&self) -> Option<&str> {
         match self {
             JsFunction::Interpreted(f) => f.name.as_ref().map(|s| s.as_str()),
-            JsFunction::Native(f) => Some(&f.name),
+            JsFunction::Native(f) => Some(f.name.as_ref()),
             JsFunction::Bound(_) => Some("bound"),
             JsFunction::PromiseResolve(_) => Some("resolve"),
             JsFunction::PromiseReject(_) => Some("reject"),
@@ -1371,7 +1371,7 @@ pub type NativeFn =
 /// Native function wrapper
 #[derive(Clone)]
 pub struct NativeFunction {
-    pub name: String,
+    pub name: JsString,
     pub func: NativeFn,
     pub arity: usize,
 }
@@ -1514,7 +1514,7 @@ pub fn create_function(
 /// ```ignore
 /// // Instead of:
 /// let push_fn = create_function(space, JsFunction::Native(NativeFunction {
-///     name: "push".to_string(),
+///     name: dict.get_or_insert("push"),
 ///     func: array_push,
 ///     arity: 1,
 /// }));
@@ -1531,16 +1531,17 @@ pub fn register_method(
     func: NativeFn,
     arity: usize,
 ) {
+    let interned_name = dict.get_or_insert(name);
     let f = create_function(
         space,
         dict,
         JsFunction::Native(NativeFunction {
-            name: name.to_string(),
+            name: interned_name.cheap_clone(),
             func,
             arity,
         }),
     );
-    let key = PropertyKey::String(dict.get_or_insert(name));
+    let key = PropertyKey::String(interned_name);
     obj.borrow_mut().set_property(key, JsValue::Object(f));
 }
 

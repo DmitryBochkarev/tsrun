@@ -27,11 +27,12 @@ pub fn create_object_prototype(interp: &mut Interpreter) -> JsObjectRef {
 
 /// Create Object constructor with static methods (keys, values, entries, assign, etc.)
 pub fn create_object_constructor(interp: &mut Interpreter) -> JsObjectRef {
+    let name = interp.intern("Object");
     let constructor = create_function(
         &mut interp.gc_space,
         &mut interp.string_dict,
         JsFunction::Native(NativeFunction {
-            name: "Object".to_string(),
+            name,
             func: object_constructor,
             arity: 1,
         }),

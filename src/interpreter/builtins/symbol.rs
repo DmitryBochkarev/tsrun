@@ -82,11 +82,12 @@ pub fn create_symbol_constructor(
     well_known: &WellKnownSymbols,
 ) -> JsObjectRef {
     // Create the Symbol function (not a constructor - can't be called with new)
+    let name = interp.intern("Symbol");
     let symbol_fn = create_function(
         &mut interp.gc_space,
         &mut interp.string_dict,
         JsFunction::Native(NativeFunction {
-            name: "Symbol".to_string(),
+            name,
             func: symbol_call,
             arity: 0,
         }),

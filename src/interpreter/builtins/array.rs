@@ -69,11 +69,12 @@ pub fn create_array_prototype(interp: &mut Interpreter) -> JsObjectRef {
 
 /// Create Array constructor with static methods (isArray, of, from)
 pub fn create_array_constructor(interp: &mut Interpreter) -> JsObjectRef {
+    let name = interp.intern("Array");
     let constructor = create_function(
         &mut interp.gc_space,
         &mut interp.string_dict,
         JsFunction::Native(NativeFunction {
-            name: "Array".to_string(),
+            name,
             func: array_constructor_fn,
             arity: 0,
         }),

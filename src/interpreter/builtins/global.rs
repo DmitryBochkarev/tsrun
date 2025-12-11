@@ -6,11 +6,12 @@ use crate::value::{create_function, JsFunction, JsString, JsValue, NativeFunctio
 
 /// Register global functions (parseInt, parseFloat, isNaN, isFinite, URI functions) into environment
 pub fn register_global_functions(interp: &mut Interpreter) {
+    let name = interp.intern("parseInt");
     let parseint_fn = create_function(
         &mut interp.gc_space,
         &mut interp.string_dict,
         JsFunction::Native(NativeFunction {
-            name: "parseInt".to_string(),
+            name,
             func: global_parse_int,
             arity: 2,
         }),
@@ -22,11 +23,12 @@ pub fn register_global_functions(interp: &mut Interpreter) {
         false,
     );
 
+    let name = interp.intern("parseFloat");
     let parsefloat_fn = create_function(
         &mut interp.gc_space,
         &mut interp.string_dict,
         JsFunction::Native(NativeFunction {
-            name: "parseFloat".to_string(),
+            name,
             func: global_parse_float,
             arity: 1,
         }),
@@ -38,11 +40,12 @@ pub fn register_global_functions(interp: &mut Interpreter) {
         false,
     );
 
+    let name = interp.intern("isNaN");
     let isnan_fn = create_function(
         &mut interp.gc_space,
         &mut interp.string_dict,
         JsFunction::Native(NativeFunction {
-            name: "isNaN".to_string(),
+            name,
             func: global_is_nan,
             arity: 1,
         }),
@@ -54,11 +57,12 @@ pub fn register_global_functions(interp: &mut Interpreter) {
         false,
     );
 
+    let name = interp.intern("isFinite");
     let isfinite_fn = create_function(
         &mut interp.gc_space,
         &mut interp.string_dict,
         JsFunction::Native(NativeFunction {
-            name: "isFinite".to_string(),
+            name,
             func: global_is_finite,
             arity: 1,
         }),
@@ -70,11 +74,12 @@ pub fn register_global_functions(interp: &mut Interpreter) {
         false,
     );
 
+    let name = interp.intern("encodeURI");
     let encodeuri_fn = create_function(
         &mut interp.gc_space,
         &mut interp.string_dict,
         JsFunction::Native(NativeFunction {
-            name: "encodeURI".to_string(),
+            name,
             func: global_encode_uri,
             arity: 1,
         }),
@@ -86,11 +91,12 @@ pub fn register_global_functions(interp: &mut Interpreter) {
         false,
     );
 
+    let name = interp.intern("decodeURI");
     let decodeuri_fn = create_function(
         &mut interp.gc_space,
         &mut interp.string_dict,
         JsFunction::Native(NativeFunction {
-            name: "decodeURI".to_string(),
+            name,
             func: global_decode_uri,
             arity: 1,
         }),
@@ -102,11 +108,12 @@ pub fn register_global_functions(interp: &mut Interpreter) {
         false,
     );
 
+    let name = interp.intern("encodeURIComponent");
     let encodeuricomponent_fn = create_function(
         &mut interp.gc_space,
         &mut interp.string_dict,
         JsFunction::Native(NativeFunction {
-            name: "encodeURIComponent".to_string(),
+            name,
             func: global_encode_uri_component,
             arity: 1,
         }),
@@ -118,11 +125,12 @@ pub fn register_global_functions(interp: &mut Interpreter) {
         false,
     );
 
+    let name = interp.intern("decodeURIComponent");
     let decodeuricomponent_fn = create_function(
         &mut interp.gc_space,
         &mut interp.string_dict,
         JsFunction::Native(NativeFunction {
-            name: "decodeURIComponent".to_string(),
+            name,
             func: global_decode_uri_component,
             arity: 1,
         }),

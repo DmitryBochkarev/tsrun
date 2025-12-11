@@ -518,16 +518,17 @@ impl Interpreter {
     /// This is a helper for builtin registration that uses the string dictionary
     /// for property key interning.
     pub fn register_method(&mut self, obj: &JsObjectRef, name: &str, func: NativeFn, arity: usize) {
+        let interned_name = self.intern(name);
         let f = create_function(
             &mut self.gc_space,
             &mut self.string_dict,
             JsFunction::Native(NativeFunction {
-                name: name.to_string(),
+                name: interned_name.cheap_clone(),
                 func,
                 arity,
             }),
         );
-        let key = self.key(name);
+        let key = PropertyKey::String(interned_name);
         obj.borrow_mut().set_property(key, JsValue::Object(f));
     }
 
@@ -4359,7 +4360,7 @@ impl Interpreter {
             JsFunction::Native(native) => {
                 // Push stack frame for native functions too
                 self.call_stack.push(StackFrame {
-                    function_name: native.name.clone(),
+                    function_name: native.name.to_string(),
                     location: None,
                 });
                 let result = (native.func)(self, this_value, args);

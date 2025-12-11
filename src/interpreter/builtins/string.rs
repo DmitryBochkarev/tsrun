@@ -86,11 +86,12 @@ pub fn string_constructor_fn(
 
 /// Create String constructor with static methods (fromCharCode, fromCodePoint)
 pub fn create_string_constructor(interp: &mut Interpreter) -> JsObjectRef {
+    let name = interp.intern("String");
     let constructor = create_function(
         &mut interp.gc_space,
         &mut interp.string_dict,
         JsFunction::Native(NativeFunction {
-            name: "String".to_string(),
+            name,
             func: string_constructor_fn,
             arity: 1,
         }),

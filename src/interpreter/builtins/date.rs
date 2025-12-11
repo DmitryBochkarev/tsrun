@@ -130,11 +130,12 @@ pub fn create_date_prototype(interp: &mut Interpreter) -> JsObjectRef {
 
 /// Create Date constructor with static methods (now, UTC, parse)
 pub fn create_date_constructor(interp: &mut Interpreter) -> JsObjectRef {
+    let name = interp.intern("Date");
     let constructor = create_function(
         &mut interp.gc_space,
         &mut interp.string_dict,
         JsFunction::Native(NativeFunction {
-            name: "Date".to_string(),
+            name,
             func: date_constructor,
             arity: 0,
         }),

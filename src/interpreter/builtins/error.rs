@@ -57,11 +57,12 @@ pub fn create_error_constructors(interp: &mut Interpreter) -> ErrorConstructors 
     let proto_key = interp.key("prototype");
     let error_prototype = interp.error_prototype.clone();
 
+    let name = interp.intern("Error");
     let error_fn = create_function(
         &mut interp.gc_space,
         &mut interp.string_dict,
         JsFunction::Native(NativeFunction {
-            name: "Error".to_string(),
+            name,
             func: error_constructor,
             arity: 1,
         }),
@@ -72,11 +73,12 @@ pub fn create_error_constructors(interp: &mut Interpreter) -> ErrorConstructors 
 
     // Create separate prototypes for each error type that inherit from Error.prototype
     let type_error_proto = create_error_subtype_prototype(interp, &error_prototype, "TypeError");
+    let name = interp.intern("TypeError");
     let type_error_fn = create_function(
         &mut interp.gc_space,
         &mut interp.string_dict,
         JsFunction::Native(NativeFunction {
-            name: "TypeError".to_string(),
+            name,
             func: type_error_constructor,
             arity: 1,
         }),
@@ -88,11 +90,12 @@ pub fn create_error_constructors(interp: &mut Interpreter) -> ErrorConstructors 
 
     let reference_error_proto =
         create_error_subtype_prototype(interp, &error_prototype, "ReferenceError");
+    let name = interp.intern("ReferenceError");
     let reference_error_fn = create_function(
         &mut interp.gc_space,
         &mut interp.string_dict,
         JsFunction::Native(NativeFunction {
-            name: "ReferenceError".to_string(),
+            name,
             func: reference_error_constructor,
             arity: 1,
         }),
@@ -104,11 +107,12 @@ pub fn create_error_constructors(interp: &mut Interpreter) -> ErrorConstructors 
 
     let syntax_error_proto =
         create_error_subtype_prototype(interp, &error_prototype, "SyntaxError");
+    let name = interp.intern("SyntaxError");
     let syntax_error_fn = create_function(
         &mut interp.gc_space,
         &mut interp.string_dict,
         JsFunction::Native(NativeFunction {
-            name: "SyntaxError".to_string(),
+            name,
             func: syntax_error_constructor,
             arity: 1,
         }),
@@ -119,11 +123,12 @@ pub fn create_error_constructors(interp: &mut Interpreter) -> ErrorConstructors 
         .set_property(proto_key, JsValue::Object(syntax_error_proto));
 
     let range_error_proto = create_error_subtype_prototype(interp, &error_prototype, "RangeError");
+    let name = interp.intern("RangeError");
     let range_error_fn = create_function(
         &mut interp.gc_space,
         &mut interp.string_dict,
         JsFunction::Native(NativeFunction {
-            name: "RangeError".to_string(),
+            name,
             func: range_error_constructor,
             arity: 1,
         }),
@@ -134,11 +139,12 @@ pub fn create_error_constructors(interp: &mut Interpreter) -> ErrorConstructors 
         .set_property(proto_key, JsValue::Object(range_error_proto));
 
     let uri_error_proto = create_error_subtype_prototype(interp, &error_prototype, "URIError");
+    let name = interp.intern("URIError");
     let uri_error_fn = create_function(
         &mut interp.gc_space,
         &mut interp.string_dict,
         JsFunction::Native(NativeFunction {
-            name: "URIError".to_string(),
+            name,
             func: uri_error_constructor,
             arity: 1,
         }),
@@ -149,11 +155,12 @@ pub fn create_error_constructors(interp: &mut Interpreter) -> ErrorConstructors 
         .set_property(proto_key, JsValue::Object(uri_error_proto));
 
     let eval_error_proto = create_error_subtype_prototype(interp, &error_prototype, "EvalError");
+    let name = interp.intern("EvalError");
     let eval_error_fn = create_function(
         &mut interp.gc_space,
         &mut interp.string_dict,
         JsFunction::Native(NativeFunction {
-            name: "EvalError".to_string(),
+            name,
             func: eval_error_constructor,
             arity: 1,
         }),

@@ -23,11 +23,12 @@ pub fn create_promise_prototype(interp: &mut Interpreter) -> JsObjectRef {
 
 /// Create Promise constructor with static methods
 pub fn create_promise_constructor(interp: &mut Interpreter) -> JsObjectRef {
+    let name = interp.intern("Promise");
     let ctor = create_function(
         &mut interp.gc_space,
         &mut interp.string_dict,
         JsFunction::Native(NativeFunction {
-            name: "Promise".to_string(),
+            name,
             func: promise_constructor,
             arity: 1,
         }),

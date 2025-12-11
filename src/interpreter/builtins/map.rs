@@ -26,11 +26,12 @@ pub fn create_map_prototype(interp: &mut Interpreter) -> JsObjectRef {
 
 /// Create Map constructor
 pub fn create_map_constructor(interp: &mut Interpreter) -> JsObjectRef {
+    let name = interp.intern("Map");
     create_function(
         &mut interp.gc_space,
         &mut interp.string_dict,
         JsFunction::Native(NativeFunction {
-            name: "Map".to_string(),
+            name,
             func: map_constructor,
             arity: 0,
         }),

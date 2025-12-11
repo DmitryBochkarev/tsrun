@@ -19,11 +19,12 @@ pub fn create_regexp_prototype(interp: &mut Interpreter) -> JsObjectRef {
 
 /// Create RegExp constructor
 pub fn create_regexp_constructor(interp: &mut Interpreter) -> JsObjectRef {
+    let name = interp.intern("RegExp");
     let constructor = create_function(
         &mut interp.gc_space,
         &mut interp.string_dict,
         JsFunction::Native(NativeFunction {
-            name: "RegExp".to_string(),
+            name,
             func: regexp_constructor,
             arity: 2,
         }),
