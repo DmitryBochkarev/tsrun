@@ -25,8 +25,8 @@ fn eval_with_gc_stats(source: &str) -> (typescript_eval::JsValue, typescript_eva
 fn test_gc_stats_available() {
     let runtime = Runtime::new();
     let stats = runtime.gc_stats();
-    // Should have some roots (global, prototypes)
-    assert!(stats.roots_count > 0, "Should have roots");
+    // Should have some guards (global, global_env, prototypes)
+    assert!(stats.guards_count > 0, "Should have guards");
 }
 
 #[test]

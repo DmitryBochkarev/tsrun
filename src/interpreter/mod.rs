@@ -85,7 +85,7 @@ enum FrameResult {
 pub struct GcStats {
     pub alive_count: usize,
     pub tracked_count: usize,
-    pub roots_count: usize,
+    pub guards_count: usize,
     pub free_count: usize,
     pub gc_threshold: usize,
     pub allocs_since_gc: usize,
@@ -215,6 +215,12 @@ pub struct Interpreter {
     escaped_values: Vec<JsValue>,
     /// Guards for escaped object values - keeps objects alive until released
     escaped_guards: Vec<GuardedGc<JsObject>>,
+
+    // ═══════════════════════════════════════════════════════════════
+    // GC guards for permanent objects (prototypes, global, global_env)
+    // ═══════════════════════════════════════════════════════════════
+    /// Guards for permanent objects that must survive GC for the interpreter's lifetime
+    permanent_guards: Vec<GuardedGc<JsObject>>,
 }
 
 /// A static import declaration to be resolved
@@ -247,13 +253,13 @@ impl Interpreter {
         let mut gc_space = Space::with_capacity(4096);
         let string_dict = StringDict::with_common_strings();
 
-        // Create global object and root it - also used as placeholder for prototypes
+        // Create global object and guard it - also used as placeholder for prototypes
         let global = create_object(&mut gc_space);
-        gc_space.add_root(&global);
+        let global_guard = gc_space.guard(&global);
 
-        // Create global environment and root it
+        // Create global environment and guard it
         let global_env = create_environment(&mut gc_space, None);
-        gc_space.add_root(&global_env);
+        let global_env_guard = gc_space.guard(&global_env);
 
         // Add basic global values to the global environment
         {
@@ -324,6 +330,7 @@ impl Interpreter {
             timeout_ms: 3000,
             escaped_values: Vec::new(),
             escaped_guards: Vec::new(),
+            permanent_guards: vec![global_guard, global_env_guard],
         };
 
         // Now initialize prototypes using &mut self
@@ -333,57 +340,70 @@ impl Interpreter {
 
     /// Initialize all builtin prototypes and constructors
     fn init_prototypes(&mut self) {
-        // Create prototypes using builtin module functions (all rooted)
+        // Create prototypes using builtin module functions (all guarded)
         let object_prototype = create_object_prototype(self);
-        self.gc_space.add_root(&object_prototype);
+        self.permanent_guards
+            .push(self.gc_space.guard(&object_prototype));
         self.object_prototype = object_prototype;
 
         let array_prototype = create_array_prototype(self);
-        self.gc_space.add_root(&array_prototype);
+        self.permanent_guards
+            .push(self.gc_space.guard(&array_prototype));
         self.array_prototype = array_prototype;
 
         let string_prototype = create_string_prototype(self);
-        self.gc_space.add_root(&string_prototype);
+        self.permanent_guards
+            .push(self.gc_space.guard(&string_prototype));
         self.string_prototype = string_prototype;
 
         let number_prototype = create_number_prototype(self);
-        self.gc_space.add_root(&number_prototype);
+        self.permanent_guards
+            .push(self.gc_space.guard(&number_prototype));
         self.number_prototype = number_prototype;
 
         let function_prototype = create_function_prototype(self);
-        self.gc_space.add_root(&function_prototype);
+        self.permanent_guards
+            .push(self.gc_space.guard(&function_prototype));
         self.function_prototype = function_prototype;
 
         let map_prototype = create_map_prototype(self);
-        self.gc_space.add_root(&map_prototype);
+        self.permanent_guards
+            .push(self.gc_space.guard(&map_prototype));
         self.map_prototype = map_prototype;
 
         let set_prototype = create_set_prototype(self);
-        self.gc_space.add_root(&set_prototype);
+        self.permanent_guards
+            .push(self.gc_space.guard(&set_prototype));
         self.set_prototype = set_prototype;
 
         let date_prototype = create_date_prototype(self);
-        self.gc_space.add_root(&date_prototype);
+        self.permanent_guards
+            .push(self.gc_space.guard(&date_prototype));
         self.date_prototype = date_prototype;
 
         let regexp_prototype = create_regexp_prototype(self);
-        self.gc_space.add_root(&regexp_prototype);
+        self.permanent_guards
+            .push(self.gc_space.guard(&regexp_prototype));
         self.regexp_prototype = regexp_prototype;
 
         let error_prototype = create_error_prototype(self);
-        self.gc_space.add_root(&error_prototype);
+        self.permanent_guards
+            .push(self.gc_space.guard(&error_prototype));
         self.error_prototype = error_prototype;
 
         let symbol_prototype = create_symbol_prototype(self);
-        self.gc_space.add_root(&symbol_prototype);
+        self.permanent_guards
+            .push(self.gc_space.guard(&symbol_prototype));
         self.symbol_prototype = symbol_prototype;
 
         let generator_prototype = create_generator_prototype(self);
-        self.gc_space.add_root(&generator_prototype);
+        self.permanent_guards
+            .push(self.gc_space.guard(&generator_prototype));
         self.generator_prototype = generator_prototype;
 
         let promise_prototype = create_promise_prototype(self);
-        self.gc_space.add_root(&promise_prototype);
+        self.permanent_guards
+            .push(self.gc_space.guard(&promise_prototype));
         self.promise_prototype = promise_prototype;
 
         // Create and register constructors
@@ -637,7 +657,7 @@ impl Interpreter {
         GcStats {
             alive_count: self.gc_space.alive_count(),
             tracked_count: self.gc_space.tracked_count(),
-            roots_count: self.gc_space.roots_count(),
+            guards_count: self.gc_space.guards_count(),
             free_count: self.gc_space.free_count(),
             gc_threshold: self.gc_space.gc_threshold(),
             allocs_since_gc: self.gc_space.allocs_since_gc(),
@@ -686,12 +706,11 @@ impl Interpreter {
 
     /// Allocate a new environment with the given outer scope
     ///
-    /// The new environment is automatically rooted to prevent GC collection.
-    /// Use `env_alloc_guarded` for scope-based protection instead.
+    /// **Note**: The returned environment is NOT automatically protected from GC.
+    /// You should use `env_alloc_guarded` for scope-based protection, or ensure
+    /// the environment is stored in a guarded structure before any allocation.
     pub fn env_alloc(&mut self, outer: Option<EnvRef>) -> EnvRef {
-        let env = create_environment(&mut self.gc_space, outer);
-        self.gc_space.add_root(&env);
-        env
+        create_environment(&mut self.gc_space, outer)
     }
 
     /// Allocate a new environment with GC protection via a guard
@@ -714,20 +733,6 @@ impl Interpreter {
         let env = create_environment(&mut self.gc_space, outer);
         let guard = self.gc_space.guard(&env);
         (env, guard)
-    }
-
-    /// Restore a previous environment, unrooting the current one
-    ///
-    /// Call this when exiting a scope to allow GC to collect the environment.
-    ///
-    /// **Deprecated**: Use `env_alloc_guarded` with RAII-style guards instead.
-    /// This method is kept for backward compatibility but should not be used
-    /// in new code.
-    #[allow(dead_code)]
-    #[deprecated(note = "Use env_alloc_guarded with RAII-style guards instead")]
-    pub fn env_restore(&mut self, old_env: EnvRef) {
-        self.gc_space.remove_root(&self.env);
-        self.env = old_env;
     }
 
     /// Define a binding in the current environment

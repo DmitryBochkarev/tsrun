@@ -340,10 +340,9 @@ impl<T: Traceable> Drop for GuardedScope<T> {
 }
 
 struct SpaceInternal<T: Traceable> {
-    roots: FxHashMap<usize, Rc<GcData<T>>>,
-    /// Guards are temporary roots that protect objects during Rust code execution.
+    /// Guards protect objects during Rust code execution.
     /// Each guard has a unique ID and holds a strong reference to the GC data.
-    /// When a GuardedGc is dropped, its entry is removed from this map.
+    /// When a GuardedGc or GuardedScope is dropped, its entries are removed from this map.
     guards: FxHashMap<usize, Rc<GcData<T>>>,
     /// Counter for generating unique guard IDs
     next_guard_id: usize,
@@ -358,16 +357,16 @@ struct SpaceInternal<T: Traceable> {
 
 /// A memory space that manages garbage-collected objects of type `T`.
 ///
-/// `Space` is the central manager for GC objects. It tracks all allocated objects,
-/// maintains a set of root objects, and performs mark-and-sweep collection to
-/// identify and break unreachable cycles.
+/// `Space` is the central manager for GC objects. It tracks all allocated objects
+/// and performs mark-and-sweep collection to identify and break unreachable cycles.
+/// Objects are kept alive by guards ([`GuardedGc`] or [`GuardedScope`]).
 pub struct Space<T: Traceable> {
     internal: Rc<RefCell<SpaceInternal<T>>>,
 }
 
 /// Default GC threshold - collect after this many allocations
-/// Set to 1024 to balance collection frequency vs overhead
-pub const DEFAULT_GC_THRESHOLD: usize = 1024;
+/// Set to 100 to balance collection frequency vs overhead
+pub const DEFAULT_GC_THRESHOLD: usize = 100;
 
 impl<T: Traceable> Space<T> {
     /// Create a new space with default capacity (1024 slots) and default GC threshold.
@@ -540,69 +539,10 @@ impl<T: Traceable> Space<T> {
         }
     }
 
-    /// Add an object as a root, preventing it and everything reachable from it
-    /// from being collected.
-    ///
-    /// Adding the same object multiple times has no effect (roots are stored in a set).
-    ///
-    /// Note: This is an internal API. External users should use `GuardedGc` or
-    /// `GuardedScope` to protect objects from collection.
-    pub(crate) fn add_root(&mut self, gc: &Gc<T>) {
-        let id = gc.id();
-        debug_assert!(
-            self.internal
-                .borrow()
-                .objects
-                .get(id)
-                .and_then(|slot| slot.as_ref())
-                .and_then(|w| w.upgrade())
-                .is_some(),
-            "Cannot add dead object {} as root",
-            id
-        );
-        debug_assert_eq!(
-            self.internal
-                .borrow()
-                .objects
-                .get(id)
-                .and_then(|slot| slot.as_ref())
-                .and_then(|w| w.upgrade())
-                .map(|o| o.id),
-            Some(id),
-            "Object id doesn't match slot {}",
-            id,
-        );
-        self.internal
-            .borrow_mut()
-            .roots
-            .insert(id, Rc::clone(&gc.ptr));
-    }
-
-    /// Remove an object from the roots.
-    ///
-    /// Returns `true` if the object was found and removed.
-    ///
-    /// Note: This is an internal API. External users should use `GuardedGc` or
-    /// `GuardedScope` to protect objects from collection.
-    pub(crate) fn remove_root(&mut self, gc: &Gc<T>) -> bool {
-        self.internal.borrow_mut().roots.remove(&gc.id()).is_some()
-    }
-
-    /// Remove all roots.
-    ///
-    /// After calling this, all objects become eligible for collection
-    /// unless they are held by local `Gc` references.
-    ///
-    /// Note: This is an internal API.
-    #[allow(dead_code)]
-    pub(crate) fn clear_roots(&mut self) {
-        self.internal.borrow_mut().roots.clear();
-    }
-
     /// Run garbage collection.
     ///
     /// This performs a mark-and-sweep collection:
-    /// 1. Mark all objects reachable from roots
+    /// 1. Mark all objects reachable from guards
     /// 2. For unmarked objects, call `unlink()` to break cycles
     /// 3. Reclaim memory from unreachable objects
     pub fn collect(&mut self) {
@@ -634,9 +574,9 @@ impl<T: Traceable> Space<T> {
             .count()
     }
 
-    /// Returns the number of root objects.
-    pub fn roots_count(&self) -> usize {
-        self.internal.borrow().roots.len()
+    /// Returns the number of guarded objects.
+    pub fn guards_count(&self) -> usize {
+        self.internal.borrow().guards.len()
     }
 
     /// Get the current GC threshold.
@@ -684,7 +624,6 @@ impl<T: Traceable> Drop for Space<T> {
 impl<T: Traceable> SpaceInternal<T> {
     fn new(capacity: usize, gc_threshold: usize) -> Self {
         SpaceInternal {
-            roots: FxHashMap::default(),
             guards: FxHashMap::default(),
             next_guard_id: 0,
             objects: (0..capacity).map(|_| None).collect(),
@@ -779,20 +718,13 @@ impl<T: Traceable> SpaceInternal<T> {
     fn mark_reachable(&mut self) {
         self.marked.clear();
 
-        let roots = mem::take(&mut self.roots);
         let guards = mem::take(&mut self.guards);
 
-        // Mark from each root
-        for id in roots.keys() {
-            self.mark_from(*id);
-        }
-
-        // Mark from each guard (guards act as temporary roots)
+        // Mark from each guard (guards are the roots)
         for gc_data in guards.values() {
             self.mark_from(gc_data.id);
         }
 
-        self.roots = roots;
         self.guards = guards;
     }
 
@@ -844,7 +776,7 @@ impl<T: Traceable> SpaceInternal<T> {
                 if let Some(obj) = weak.upgrade() {
                     debug_assert_eq!(obj.id, id, "Object id {} doesn't match slot {}", obj.id, id);
                     // Unlink ALL unmarked objects to break cycles.
-                    // If an object is unmarked, it's unreachable from roots.
+                    // If an object is unmarked, it's unreachable from guards.
                     // Any external references (strong_count > 1) indicate a bug in the
                     // interpreter - objects held externally must be rooted.
                     obj.unlink_object();
@@ -902,9 +834,13 @@ impl<T: Traceable> SpaceInternal<T> {
             );
         }
 
-        // Verify all roots are marked
-        for &id in self.roots.keys() {
-            debug_assert!(self.marked.contains(&id), "Root {} should be marked", id);
+        // Verify all guards are marked
+        for gc_data in self.guards.values() {
+            debug_assert!(
+                self.marked.contains(&gc_data.id),
+                "Guarded object {} should be marked",
+                gc_data.id
+            );
         }
     }
 }
@@ -1051,7 +987,7 @@ mod tests {
     }
 
     #[test]
-    fn test_rooted_objects_preserved() {
+    fn test_guarded_objects_preserved() {
         let mut space = Space::with_capacity(8);
 
         let root = space.alloc(Node {
@@ -1064,14 +1000,14 @@ mod tests {
         });
 
         root.borrow_mut().next = Some(child.clone());
-        space.add_root(&root);
+        let _guard = space.guard(&root);
 
         drop(root);
         drop(child);
 
         space.collect();
 
-        // Root and child should still be alive
+        // Root and child should still be alive (guarded)
         assert_eq!(space.alive_count(), 2);
     }
 
@@ -1105,18 +1041,18 @@ mod tests {
     }
 
     #[test]
-    fn test_remove_root() {
+    fn test_guard_and_take() {
         let mut space = Space::with_capacity(8);
 
         let node = space.alloc(Node {
             value: 1,
             next: None,
         });
-        space.add_root(&node);
+        let guard = space.guard(&node);
 
-        assert_eq!(space.roots_count(), 1);
-        assert!(space.remove_root(&node));
-        assert_eq!(space.roots_count(), 0);
+        assert_eq!(space.guards_count(), 1);
+        let _gc = guard.take(); // Remove protection
+        assert_eq!(space.guards_count(), 0);
 
         drop(node);
         space.collect();
@@ -1128,7 +1064,7 @@ mod tests {
     fn test_mixed_scenario() {
         let mut space = Space::with_capacity(16);
 
-        // Create a rooted chain: root -> A -> B
+        // Create a guarded chain: root -> A -> B
         let root = space.alloc(Node {
             value: 0,
             next: None,
@@ -1144,7 +1080,7 @@ mod tests {
 
         root.borrow_mut().next = Some(obj_a.clone());
         obj_a.borrow_mut().next = Some(obj_b.clone());
-        space.add_root(&root);
+        let _guard = space.guard(&root);
 
         // Create an unreachable cycle: X -> Y -> X
         let obj_x = space.alloc(Node {
@@ -1169,7 +1105,7 @@ mod tests {
 
         space.collect();
 
-        // Only rooted chain survives
+        // Only guarded chain survives
         assert_eq!(space.alive_count(), 3);
     }
 
@@ -1213,7 +1149,7 @@ mod tests {
         // Create cycle through children
         child3.borrow_mut().children.push(parent.clone());
 
-        space.add_root(&parent);
+        let _guard = space.guard(&parent);
 
         drop(parent);
         drop(child1);
@@ -1222,7 +1158,7 @@ mod tests {
 
         space.collect();
 
-        // All 4 should survive (reachable from root)
+        // All 4 should survive (reachable from guarded parent)
         assert_eq!(space.alive_count(), 4);
     }
 
