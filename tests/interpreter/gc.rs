@@ -1239,3 +1239,40 @@ fn test_gc_threshold_1_map_foreach() {
     // (10+1) + (20+2) + (30+3) = 11 + 22 + 33 = 66
     assert_eq!(result, typescript_eval::JsValue::Number(66.0));
 }
+
+#[test]
+fn test_gc_threshold_1_try_catch_no_throw() {
+    // Test try without throw - accessing outer var after try block
+    let result = eval_with_threshold_1(
+        r#"
+        let result = 1;
+        try {
+            result = 2;
+        } catch (e) {
+            result = 3;
+        }
+        result
+    "#,
+    );
+    assert_eq!(result, typescript_eval::JsValue::Number(2.0));
+}
+
+#[test]
+fn test_gc_threshold_1_try_catch_with_throw() {
+    // Test try with throw
+    let result = eval_with_threshold_1(
+        r#"
+        let result: string = "";
+        try {
+            throw "error message";
+        } catch (e: any) {
+            result = e;
+        }
+        result
+    "#,
+    );
+    assert_eq!(
+        result,
+        typescript_eval::JsValue::String(typescript_eval::JsString::from("error message"))
+    );
+}

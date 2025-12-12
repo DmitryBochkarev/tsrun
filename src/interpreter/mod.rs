@@ -1595,8 +1595,10 @@ impl Interpreter {
                             // Guard error_value during env allocation which can trigger GC
                             let _error_guard = self.guard_value(&error_value);
 
-                            // Bind catch parameter with guarded environment
+                            // Guard the previous environment before creating catch env
+                            // This ensures it survives any GC triggered during catch execution
                             let prev_env = self.env.cheap_clone();
+                            let _prev_env_guard = self.gc_space.guard(&prev_env);
                             let (catch_env, _env_guard) =
                                 self.env_alloc_guarded(Some(self.env.cheap_clone()));
                             self.env = catch_env;
@@ -2559,7 +2561,9 @@ impl Interpreter {
     }
 
     fn execute_block(&mut self, block: &BlockStatement) -> Result<Completion, JsError> {
+        // Guard the previous environment to ensure it survives GC during block execution
         let prev_env = self.env.cheap_clone();
+        let _prev_env_guard = self.gc_space.guard(&prev_env);
         let (block_env, _guard) = self.env_alloc_guarded(Some(self.env.cheap_clone()));
         self.env = block_env;
 
@@ -2574,7 +2578,7 @@ impl Interpreter {
         }
 
         self.env = prev_env;
-        // _guard dropped here automatically, allowing block_env to be collected
+        // Guards dropped here automatically, allowing environments to be collected
         Ok(result)
     }
 
