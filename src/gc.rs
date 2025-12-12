@@ -216,6 +216,8 @@ pub struct GuardedGc<T: Traceable> {
     gc: Gc<T>,
     guard_id: usize,
     space: WeakSpace<T>,
+    /// Flag to track if `take()` was called. When true, Drop should not remove the guard.
+    taken: bool,
 }
 
 impl<T: Traceable> GuardedGc<T> {
@@ -223,15 +225,12 @@ impl<T: Traceable> GuardedGc<T> {
     ///
     /// After calling this, the object is immediately eligible for collection
     /// if it's not stored in the environment or another rooted structure.
-    pub fn take(self) -> Gc<T> {
+    pub fn take(mut self) -> Gc<T> {
         // Remove from guards before returning
         self.space.remove_guard(self.guard_id);
-        let gc = Gc {
-            ptr: Rc::clone(&self.gc.ptr),
-        };
-        // Prevent Drop from running (it would try to remove guard again)
-        mem::forget(self);
-        gc
+        // Mark as taken so Drop doesn't try to remove guard again
+        self.taken = true;
+        self.gc.clone()
     }
 
     /// Get the unique ID of the underlying GC object.
@@ -277,7 +276,10 @@ impl<T: Traceable> AsRef<Gc<T>> for GuardedGc<T> {
 
 impl<T: Traceable> Drop for GuardedGc<T> {
     fn drop(&mut self) {
-        self.space.remove_guard(self.guard_id);
+        // Only remove guard if take() wasn't called (take() already removed it)
+        if !self.taken {
+            self.space.remove_guard(self.guard_id);
+        }
     }
 }
 
@@ -484,6 +486,7 @@ impl<T: Traceable> Space<T> {
             space: WeakSpace {
                 internal: Rc::downgrade(&self.internal),
             },
+            taken: false,
         }
     }
 
@@ -506,6 +509,7 @@ impl<T: Traceable> Space<T> {
             space: WeakSpace {
                 internal: Rc::downgrade(&self.internal),
             },
+            taken: false,
         }
     }
 

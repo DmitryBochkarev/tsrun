@@ -864,6 +864,26 @@ fn test_gc_threshold_1_multiple_objects_in_loop() {
 }
 
 #[test]
+fn test_gc_threshold_1_cycles_in_loop() {
+    // This test simulates the gc-cycles.ts script behavior
+    let result = eval_with_threshold_1(
+        r#"
+        let sum = 0;
+        for (let i = 0; i < 100; i++) {
+            const a: { id: number; other: any } = { id: i, other: null };
+            const b: { id: number; other: any } = { id: i + 1, other: null };
+            a.other = b;
+            b.other = a;
+            sum = sum + a.id + b.id;
+        }
+        sum
+    "#,
+    );
+    // sum = 0+1 + 1+2 + 2+3 + ... + 99+100 = 2*(0+1+...+99) + 100 = 2*4950 + 100 = 10000
+    assert_eq!(result, typescript_eval::JsValue::Number(10000.0));
+}
+
+#[test]
 fn test_gc_threshold_1_array_foreach() {
     let result = eval_with_threshold_1(
         r#"

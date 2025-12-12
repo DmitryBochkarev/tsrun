@@ -246,4 +246,5 @@ if (( $(echo "$ACTUAL > $BASELINE * 1.2" | bc -l) )); then
 fi
 ```
 
+cargo build --profile=profiling
 valgrind --leak-check=full ./target/profiling/typescript-eval-runner examples/memory-management/gc-cycles.ts
