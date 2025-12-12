@@ -405,14 +405,49 @@ Based on allocation patterns, check these in order:
 
 ## Testing Strategy
 
-1. First, run all tests with default threshold to ensure no regressions
-2. Then enable threshold=1 and run tests one module at a time:
+### Using GC_THRESHOLD Environment Variable
+
+The test suite supports the `GC_THRESHOLD` environment variable to override the default GC threshold for all tests:
+
+```bash
+# Most aggressive - GC on every allocation (finds most bugs)
+GC_THRESHOLD=1 cargo test
+
+# Run specific test module with threshold=1
+GC_THRESHOLD=1 cargo test --test interpreter array::
+
+# Run with moderate GC frequency
+GC_THRESHOLD=100 cargo test
+
+# Run single test with output
+GC_THRESHOLD=1 cargo test test_name -- --nocapture
+```
+
+**Recommended workflow:**
+
+1. First, run all tests with default threshold to ensure no regressions:
    ```bash
-   # Set threshold in test setup or use a helper
-   runtime.set_gc_threshold(1);
+   cargo test
    ```
-3. Fix failures systematically using the patterns above
-4. Re-run full test suite with both default and threshold=1
+
+2. Then run with `GC_THRESHOLD=1` to find GC bugs:
+   ```bash
+   GC_THRESHOLD=1 cargo test 2>&1 | tee gc_test_results.txt
+   ```
+
+3. Fix failures one by one using patterns from this guide
+
+4. Re-run full test suite with both default and threshold=1:
+   ```bash
+   cargo test && GC_THRESHOLD=1 cargo test
+   ```
+
+### Manual Threshold Setting
+
+For tests that need explicit threshold control (like the gc.rs tests), use:
+```rust
+runtime.set_gc_threshold(1);
+```
 
 ## Notes
 
