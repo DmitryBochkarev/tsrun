@@ -1,8 +1,9 @@
 //! Console built-in methods
 
-use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::Instant;
+
+use rustc_hash::FxHashMap;
 
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
@@ -18,8 +19,8 @@ fn format_for_console(value: &JsValue) -> String {
 
 // Thread-local storage for console timers and counters
 lazy_static::lazy_static! {
-    static ref CONSOLE_TIMERS: Mutex<HashMap<String, Instant>> = Mutex::new(HashMap::new());
-    static ref CONSOLE_COUNTERS: Mutex<HashMap<String, u64>> = Mutex::new(HashMap::new());
+    static ref CONSOLE_TIMERS: Mutex<FxHashMap<String, Instant>> = Mutex::new(FxHashMap::default());
+    static ref CONSOLE_COUNTERS: Mutex<FxHashMap<String, u64>> = Mutex::new(FxHashMap::default());
 }
 
 /// Create console object with log, error, warn, info, debug methods

@@ -1861,10 +1861,10 @@ impl Interpreter {
 
         // Collect getters, setters, and regular methods separately
         // We need to combine getters and setters with the same name into one accessor property
-        let mut accessors: std::collections::HashMap<
+        let mut accessors: rustc_hash::FxHashMap<
             JsString,
             (Option<JsObjectRef>, Option<JsObjectRef>),
-        > = std::collections::HashMap::new();
+        > = rustc_hash::FxHashMap::default();
         let mut regular_methods: Vec<(JsString, JsObjectRef)> = Vec::new();
 
         for method in &instance_methods {
@@ -2023,10 +2023,10 @@ impl Interpreter {
         }
 
         // Collect static getters, setters, and regular methods separately
-        let mut static_accessors: std::collections::HashMap<
+        let mut static_accessors: rustc_hash::FxHashMap<
             JsString,
             (Option<JsObjectRef>, Option<JsObjectRef>),
-        > = std::collections::HashMap::new();
+        > = rustc_hash::FxHashMap::default();
         let mut static_regular_methods: Vec<(JsString, JsObjectRef)> = Vec::new();
 
         for method in &static_methods {

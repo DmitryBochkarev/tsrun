@@ -22,10 +22,11 @@
 
 use std::{
     cell::RefCell,
-    collections::{HashMap, HashSet},
     mem,
     rc::{Rc, Weak},
 };
+
+use rustc_hash::{FxHashMap, FxHashSet};
 
 /// A trait for types that can be traced by the garbage collector.
 ///
@@ -158,10 +159,10 @@ impl<T: Traceable> WeakSpace<T> {
 }
 
 struct SpaceInternal<T: Traceable> {
-    roots: HashMap<usize, Rc<GcData<T>>>,
+    roots: FxHashMap<usize, Rc<GcData<T>>>,
     objects: Vec<Option<Weak<GcData<T>>>>,
     free_list: Vec<usize>,
-    marked: HashSet<usize>,
+    marked: FxHashSet<usize>,
     /// Number of allocations since last GC
     allocs_since_gc: usize,
     /// Threshold for triggering GC (0 = disabled, only trigger when free_list empty)
@@ -389,10 +390,10 @@ impl<T: Traceable> Drop for Space<T> {
 impl<T: Traceable> SpaceInternal<T> {
     fn new(capacity: usize, gc_threshold: usize) -> Self {
         SpaceInternal {
-            roots: HashMap::new(),
+            roots: FxHashMap::default(),
             objects: (0..capacity).map(|_| None).collect(),
             free_list: (0..capacity).rev().collect(),
-            marked: HashSet::new(),
+            marked: FxHashSet::default(),
             allocs_since_gc: 0,
             gc_threshold,
         }

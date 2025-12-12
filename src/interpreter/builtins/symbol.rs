@@ -1,8 +1,9 @@
 //! Symbol built-in object implementation
 
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
+
+use rustc_hash::FxHashMap;
 
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
@@ -22,7 +23,7 @@ pub fn next_symbol_id() -> u64 {
 // Symbol registry - maps string keys to symbols for Symbol.for()
 // This is a thread-local registry to avoid requiring synchronization
 thread_local! {
-    static SYMBOL_REGISTRY: RefCell<HashMap<String, JsSymbol>> = RefCell::new(HashMap::new());
+    static SYMBOL_REGISTRY: RefCell<FxHashMap<String, JsSymbol>> = RefCell::new(FxHashMap::default());
 }
 
 /// Well-known symbol IDs (reserved during initialization)
