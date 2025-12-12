@@ -156,10 +156,121 @@ impl<T: Traceable> WeakSpace<T> {
             }
         }
     }
+
+    fn remove_guard(&self, guard_id: usize) {
+        if let Some(internal) = self.internal.upgrade() {
+            if let Ok(mut internal) = internal.try_borrow_mut() {
+                internal.guards.remove(&guard_id);
+            }
+        }
+    }
+}
+
+/// A guarded GC pointer that temporarily protects an object from collection.
+///
+/// `GuardedGc<T>` wraps a [`Gc<T>`] and registers itself as a temporary root in the
+/// [`Space`]. This ensures the wrapped object won't be collected by GC while the
+/// guard exists, even if no other references to it exist.
+///
+/// This is useful when allocating objects during Rust code execution where the
+/// object isn't yet stored in the environment or another rooted structure.
+///
+/// # Usage
+///
+/// ```ignore
+/// // Allocate with protection
+/// let guarded = space.alloc_guarded(MyObject::new());
+///
+/// // Use the object (still protected)
+/// guarded.borrow_mut().do_something();
+///
+/// // Extract the inner Gc when done (removes protection)
+/// let gc = guarded.take();
+/// // gc is now eligible for collection if not stored elsewhere
+/// ```
+///
+/// # Drop Behavior
+///
+/// When a `GuardedGc` is dropped, it automatically removes itself from the
+/// space's guards list, making the object eligible for collection (if not
+/// otherwise reachable).
+pub struct GuardedGc<T: Traceable> {
+    gc: Gc<T>,
+    guard_id: usize,
+    space: WeakSpace<T>,
+}
+
+impl<T: Traceable> GuardedGc<T> {
+    /// Extract the inner [`Gc`], removing GC protection.
+    ///
+    /// After calling this, the object is immediately eligible for collection
+    /// if it's not stored in the environment or another rooted structure.
+    pub fn take(self) -> Gc<T> {
+        // Remove from guards before returning
+        self.space.remove_guard(self.guard_id);
+        let gc = Gc {
+            ptr: Rc::clone(&self.gc.ptr),
+        };
+        // Prevent Drop from running (it would try to remove guard again)
+        mem::forget(self);
+        gc
+    }
+
+    /// Get the unique ID of the underlying GC object.
+    pub fn id(&self) -> usize {
+        self.gc.id()
+    }
+
+    /// Borrow the contained value immutably.
+    pub fn borrow(&self) -> std::cell::Ref<'_, T> {
+        self.gc.borrow()
+    }
+
+    /// Borrow the contained value mutably.
+    pub fn borrow_mut(&self) -> std::cell::RefMut<'_, T> {
+        self.gc.borrow_mut()
+    }
+
+    /// Get a reference to the inner [`Gc`] without removing protection.
+    pub fn as_gc(&self) -> &Gc<T> {
+        &self.gc
+    }
+}
+
+impl<T: Traceable> std::ops::Deref for GuardedGc<T> {
+    type Target = Gc<T>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.gc
+    }
+}
+
+impl<T: Traceable> From<GuardedGc<T>> for Gc<T> {
+    fn from(guarded: GuardedGc<T>) -> Self {
+        guarded.take()
+    }
+}
+
+impl<T: Traceable> AsRef<Gc<T>> for GuardedGc<T> {
+    fn as_ref(&self) -> &Gc<T> {
+        &self.gc
+    }
+}
+
+impl<T: Traceable> Drop for GuardedGc<T> {
+    fn drop(&mut self) {
+        self.space.remove_guard(self.guard_id);
+    }
 }
 
 struct SpaceInternal<T: Traceable> {
     roots: FxHashMap<usize, Rc<GcData<T>>>,
+    /// Guards are temporary roots that protect objects during Rust code execution.
+    /// Each guard has a unique ID and holds a strong reference to the GC data.
+    /// When a GuardedGc is dropped, its entry is removed from this map.
+    guards: FxHashMap<usize, Rc<GcData<T>>>,
+    /// Counter for generating unique guard IDs
+    next_guard_id: usize,
     objects: Vec<Option<Weak<GcData<T>>>>,
     free_list: Vec<usize>,
     marked: FxHashSet<usize>,
@@ -258,6 +369,70 @@ impl<T: Traceable> Space<T> {
         );
 
         Gc { ptr: gc_data }
+    }
+
+    /// Allocate a new GC-managed object with temporary protection from collection.
+    ///
+    /// Returns a [`GuardedGc`] that keeps the object alive until the guard is
+    /// dropped or [`GuardedGc::take`] is called. This is useful when allocating
+    /// objects during Rust code execution where the object isn't yet stored in
+    /// the environment or another rooted structure.
+    pub fn alloc_guarded(&mut self, value: T) -> GuardedGc<T> {
+        let (id, guard_id) = {
+            let mut internal = self.internal.borrow_mut();
+            internal.prepare_for_alloc();
+            let id = internal.allocate_id();
+            let guard_id = internal.next_guard_id;
+            internal.next_guard_id += 1;
+            (id, guard_id)
+        };
+
+        let gc_data: Rc<GcData<T>> = Rc::new(GcData {
+            id,
+            space: WeakSpace {
+                internal: Rc::downgrade(&self.internal),
+            },
+            value: RefCell::new(value),
+        });
+
+        {
+            let mut internal = self.internal.borrow_mut();
+            if let Some(slot) = internal.objects.get_mut(id) {
+                *slot = Some(Rc::downgrade(&gc_data));
+            }
+            // Register the guard
+            internal.guards.insert(guard_id, Rc::clone(&gc_data));
+        }
+
+        GuardedGc {
+            gc: Gc { ptr: gc_data },
+            guard_id,
+            space: WeakSpace {
+                internal: Rc::downgrade(&self.internal),
+            },
+        }
+    }
+
+    /// Create a guard for an existing [`Gc`] object.
+    ///
+    /// This is useful when you need to protect an object that was allocated
+    /// without a guard but needs temporary protection during further operations.
+    pub fn guard(&mut self, gc: &Gc<T>) -> GuardedGc<T> {
+        let guard_id = {
+            let mut internal = self.internal.borrow_mut();
+            let guard_id = internal.next_guard_id;
+            internal.next_guard_id += 1;
+            internal.guards.insert(guard_id, Rc::clone(&gc.ptr));
+            guard_id
+        };
+
+        GuardedGc {
+            gc: gc.clone(),
+            guard_id,
+            space: WeakSpace {
+                internal: Rc::downgrade(&self.internal),
+            },
+        }
     }
 
     /// Add an object as a root, preventing it and everything reachable from it
@@ -391,6 +566,8 @@ impl<T: Traceable> SpaceInternal<T> {
     fn new(capacity: usize, gc_threshold: usize) -> Self {
         SpaceInternal {
             roots: FxHashMap::default(),
+            guards: FxHashMap::default(),
+            next_guard_id: 0,
             objects: (0..capacity).map(|_| None).collect(),
             free_list: (0..capacity).rev().collect(),
             marked: FxHashSet::default(),
@@ -484,13 +661,20 @@ impl<T: Traceable> SpaceInternal<T> {
         self.marked.clear();
 
         let roots = mem::take(&mut self.roots);
+        let guards = mem::take(&mut self.guards);
 
         // Mark from each root
         for id in roots.keys() {
             self.mark_from(*id);
         }
 
+        // Mark from each guard (guards act as temporary roots)
+        for gc_data in guards.values() {
+            self.mark_from(gc_data.id);
+        }
+
         self.roots = roots;
+        self.guards = guards;
     }
 
     fn mark_from(&mut self, id: usize) {
@@ -1130,5 +1314,232 @@ mod tests {
             "Threshold should keep alive count low: {}",
             alive_with
         );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // GuardedGc Tests
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_guarded_gc_basic() {
+        let mut space = Space::new();
+        let guarded = space.alloc_guarded(Node {
+            value: 42,
+            next: None,
+        });
+        assert_eq!(guarded.borrow().value, 42);
+    }
+
+    #[test]
+    fn test_guarded_gc_survives_collection() {
+        // With threshold=1, GC runs on every allocation
+        let mut space: Space<Node> = Space::with_capacity_and_threshold(100, 1);
+
+        let guarded = space.alloc_guarded(Node {
+            value: 42,
+            next: None,
+        });
+
+        // Allocate more objects to trigger GC multiple times
+        for i in 0..10 {
+            let _temp = space.alloc(Node {
+                value: i,
+                next: None,
+            });
+        }
+
+        // Guarded object should still be alive and have correct value
+        assert_eq!(guarded.borrow().value, 42);
+    }
+
+    #[test]
+    fn test_guarded_gc_take_removes_protection() {
+        let mut space: Space<Node> = Space::with_capacity_and_threshold(100, 0);
+
+        let guarded = space.alloc_guarded(Node {
+            value: 42,
+            next: None,
+        });
+
+        // Extract the Gc and drop the guard
+        let gc = guarded.take();
+
+        // Object should still be alive (we hold it)
+        assert_eq!(gc.borrow().value, 42);
+
+        // Drop the Gc reference
+        drop(gc);
+
+        // Now the object should be collectable
+        space.collect();
+        assert_eq!(space.alive_count(), 0);
+    }
+
+    #[test]
+    fn test_guarded_gc_drop_removes_protection() {
+        let mut space: Space<Node> = Space::with_capacity_and_threshold(100, 0);
+
+        {
+            let guarded = space.alloc_guarded(Node {
+                value: 42,
+                next: None,
+            });
+            assert_eq!(guarded.borrow().value, 42);
+            // guarded dropped here
+        }
+
+        // Object should be collectable after guard dropped
+        space.collect();
+        assert_eq!(space.alive_count(), 0);
+    }
+
+    #[test]
+    fn test_guarded_gc_multiple_guards_same_object() {
+        let mut space: Space<Node> = Space::with_capacity_and_threshold(100, 1);
+
+        let guarded1 = space.alloc_guarded(Node {
+            value: 42,
+            next: None,
+        });
+        let gc = guarded1.as_gc().clone();
+
+        // Create second guard for the same object
+        let guarded2 = space.guard(&gc);
+
+        // Both guards protect the same object
+        assert_eq!(guarded1.borrow().value, 42);
+        assert_eq!(guarded2.borrow().value, 42);
+        assert!(Gc::ptr_eq(guarded1.as_gc(), guarded2.as_gc()));
+
+        // Allocate more to trigger GC
+        for i in 0..10 {
+            let _temp = space.alloc(Node {
+                value: i,
+                next: None,
+            });
+        }
+
+        // Object should still be alive with both guards
+        assert_eq!(guarded1.borrow().value, 42);
+        assert_eq!(guarded2.borrow().value, 42);
+
+        // Drop first guard
+        drop(guarded1);
+
+        // Trigger GC again
+        for i in 0..10 {
+            let _temp = space.alloc(Node {
+                value: i,
+                next: None,
+            });
+        }
+
+        // Object should still be alive with second guard
+        assert_eq!(guarded2.borrow().value, 42);
+    }
+
+    #[test]
+    fn test_guarded_gc_deref() {
+        let mut space = Space::new();
+        let guarded = space.alloc_guarded(Node {
+            value: 42,
+            next: None,
+        });
+
+        // Test Deref - can call Gc methods directly
+        assert_eq!(guarded.id(), guarded.as_gc().id());
+        assert_eq!(guarded.strong_count(), guarded.as_gc().strong_count());
+    }
+
+    #[test]
+    fn test_guarded_gc_from_conversion() {
+        let mut space = Space::new();
+        let guarded = space.alloc_guarded(Node {
+            value: 42,
+            next: None,
+        });
+
+        // Test From<GuardedGc<T>> for Gc<T>
+        let gc: Gc<Node> = guarded.into();
+        assert_eq!(gc.borrow().value, 42);
+    }
+
+    #[test]
+    fn test_guarded_gc_protects_during_nested_alloc() {
+        // Simulate the pattern: allocate object, then allocate children
+        // that may trigger GC
+        let mut space: Space<Node> = Space::with_capacity_and_threshold(100, 1);
+
+        let parent = space.alloc_guarded(Node {
+            value: 1,
+            next: None,
+        });
+
+        // Allocate children (may trigger GC due to threshold=1)
+        let child1 = space.alloc_guarded(Node {
+            value: 2,
+            next: None,
+        });
+        let child2 = space.alloc_guarded(Node {
+            value: 3,
+            next: None,
+        });
+
+        // Link them together
+        parent.borrow_mut().next = Some(child1.as_gc().clone());
+        child1.borrow_mut().next = Some(child2.as_gc().clone());
+
+        // All should still have correct values
+        assert_eq!(parent.borrow().value, 1);
+        assert_eq!(child1.borrow().value, 2);
+        assert_eq!(child2.borrow().value, 3);
+
+        // Extract and verify chain is intact
+        let parent_gc = parent.take();
+        let _child1_gc = child1.take();
+        let _child2_gc = child2.take();
+
+        assert_eq!(parent_gc.borrow().value, 1);
+        assert_eq!(parent_gc.borrow().next.as_ref().unwrap().borrow().value, 2);
+        assert_eq!(
+            parent_gc
+                .borrow()
+                .next
+                .as_ref()
+                .unwrap()
+                .borrow()
+                .next
+                .as_ref()
+                .unwrap()
+                .borrow()
+                .value,
+            3
+        );
+    }
+
+    #[test]
+    fn test_guard_existing_gc() {
+        let mut space: Space<Node> = Space::with_capacity_and_threshold(100, 1);
+
+        // Allocate without guard
+        let gc = space.alloc(Node {
+            value: 42,
+            next: None,
+        });
+
+        // Create guard for existing Gc
+        let guarded = space.guard(&gc);
+
+        // Allocate more to trigger GC
+        for i in 0..10 {
+            let _temp = space.alloc(Node {
+                value: i,
+                next: None,
+            });
+        }
+
+        // Object should still be alive (protected by guard)
+        assert_eq!(guarded.borrow().value, 42);
+        assert_eq!(gc.borrow().value, 42);
     }
 }

@@ -21,7 +21,7 @@ use crate::ast::{
     WhileStatement,
 };
 use crate::error::JsError;
-use crate::gc::Space;
+use crate::gc::{GuardedGc, Space};
 use crate::string_dict::StringDict;
 use crate::value::{
     create_array, create_environment, create_function, create_object, Binding, CheapClone, EnvRef,
@@ -456,6 +456,35 @@ impl Interpreter {
         let obj = create_object(&mut self.gc_space);
         obj.borrow_mut().prototype = Some(self.object_prototype.clone());
         obj
+    }
+
+    /// Create a plain object with GC protection during construction.
+    ///
+    /// Use this when the object needs to survive GC while evaluating property
+    /// values or other operations that may trigger allocation.
+    pub fn create_object_guarded(&mut self) -> GuardedGc<JsObject> {
+        let guarded = self.gc_space.alloc_guarded(JsObject::default());
+        guarded.borrow_mut().prototype = Some(self.object_prototype.clone());
+        guarded
+    }
+
+    /// Create an array object with GC protection during construction.
+    ///
+    /// Use this when the array needs to survive GC while additional
+    /// operations may trigger allocation.
+    pub fn create_array_guarded(&mut self, elements: Vec<JsValue>) -> GuardedGc<JsObject> {
+        let len = elements.len() as u32;
+        let mut obj = JsObject {
+            exotic: ExoticObject::Array { length: len },
+            prototype: Some(self.array_prototype.clone()),
+            ..Default::default()
+        };
+        for (i, elem) in elements.into_iter().enumerate() {
+            obj.set_property(PropertyKey::Index(i as u32), elem);
+        }
+        let length_key = self.key("length");
+        obj.set_property(length_key, JsValue::Number(len as f64));
+        self.gc_space.alloc_guarded(obj)
     }
 
     /// Create a function object with the proper prototype
@@ -3235,13 +3264,10 @@ impl Interpreter {
             }
 
             Expression::Object(obj) => {
-                let result = self.create_object();
-                // IMPORTANT: Temporarily root the object while evaluating property values.
+                // Use GuardedGc to protect the object during property evaluation.
                 // Property value evaluation (e.g., nested arrays/objects) may allocate,
-                // which can trigger GC. Without rooting, `result` would be collected
-                // since it's not yet stored in the environment.
-                // DO NOT REMOVE this rooting - it prevents GC from corrupting objects.
-                self.gc_space.add_root(&result);
+                // which can trigger GC. The guard keeps the object alive until we're done.
+                let result = self.create_object_guarded();
 
                 // Set prototype first if __proto__ is specified
                 for prop in &obj.properties {
@@ -3294,8 +3320,8 @@ impl Interpreter {
                     }
                 }
 
-                self.gc_space.remove_root(&result);
-                Ok(JsValue::Object(result))
+                // Guard is dropped here, protection removed
+                Ok(JsValue::Object(result.take()))
             }
 
             Expression::Function(func) => {
@@ -3362,18 +3388,15 @@ impl Interpreter {
                 // Evaluate the tag function
                 let tag_fn = self.evaluate(&tagged.tag)?;
 
-                // Build the strings array (first argument)
+                // Build the strings array (first argument) with guard protection.
+                // Creating raw_array and evaluating expressions may trigger GC.
                 let strings: Vec<JsValue> = tagged
                     .quasi
                     .quasis
                     .iter()
                     .map(|q| JsValue::String(q.value.clone()))
                     .collect();
-                let strings_arr_obj = self.create_array(strings);
-                // IMPORTANT: Root the array while we create raw_array and evaluate expressions,
-                // since those operations may allocate and trigger GC.
-                // DO NOT REMOVE this rooting - it prevents GC from corrupting the array.
-                self.gc_space.add_root(&strings_arr_obj);
+                let strings_arr_obj = self.create_array_guarded(strings);
 
                 // Add 'raw' property to strings array (same as cooked for now)
                 // TODO: properly handle raw strings with escape sequences
@@ -3389,7 +3412,7 @@ impl Interpreter {
                     .borrow_mut()
                     .set_property(raw_key, raw_array);
 
-                let strings_array = JsValue::Object(strings_arr_obj.cheap_clone());
+                let strings_array = JsValue::Object(strings_arr_obj.as_gc().clone());
 
                 // Evaluate all interpolated expressions (remaining arguments)
                 let mut args = vec![strings_array];
@@ -3397,9 +3420,8 @@ impl Interpreter {
                     args.push(self.evaluate(expr)?);
                 }
 
-                self.gc_space.remove_root(&strings_arr_obj);
-
-                // Call the tag function
+                // Drop guard, then call the tag function
+                drop(strings_arr_obj);
                 self.call_function(tag_fn, JsValue::Undefined, &args)
             }
 
@@ -4244,12 +4266,9 @@ impl Interpreter {
         }
 
         // Create new object with prototype from constructor
-        let new_obj = self.create_object();
-        // IMPORTANT: Root the new object while setting up prototype and calling constructor.
+        // Use GuardedGc to protect the new object during prototype setup and constructor call.
         // The constructor call allocates (new environment), which can trigger GC.
-        // Without rooting, `new_obj` would be collected since it's not yet in any environment.
-        // DO NOT REMOVE this rooting - it prevents GC from corrupting the new object.
-        self.gc_space.add_root(&new_obj);
+        let new_obj = self.create_object_guarded();
 
         // Get prototype from constructor.prototype and set it on the new object
         let proto_key = self.key("prototype");
@@ -4290,15 +4309,16 @@ impl Interpreter {
             }
         }
 
-        // Call constructor
-        let result = self.call_function(callee, JsValue::Object(new_obj.cheap_clone()), &args)?;
+        // Call constructor (guard still active)
+        let result = self.call_function(callee, JsValue::Object(new_obj.as_gc().clone()), &args)?;
 
-        self.gc_space.remove_root(&new_obj);
+        // Extract the unguarded Gc for return
+        let new_obj_gc = new_obj.take();
 
         // Return result if it's an object, otherwise return new_obj
         match result {
             JsValue::Object(_) => Ok(result),
-            _ => Ok(JsValue::Object(new_obj)),
+            _ => Ok(JsValue::Object(new_obj_gc)),
         }
     }
 
