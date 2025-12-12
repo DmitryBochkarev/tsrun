@@ -218,6 +218,102 @@ let value = self.evaluate(expr)?;
 drop(guard);  // Now gc can be collected if unreachable
 ```
 
+### Pattern 7: Guarding Multiple Values in a Loop (GuardedScope)
+
+When evaluating multiple expressions in a loop where each result needs to be collected, use `JsGuardedScope` to manage all guards together:
+
+**Before (broken):**
+```rust
+let mut elements = Vec::new();
+for expr in expressions {
+    let val = self.evaluate(expr)?;  // May trigger GC
+    elements.push(val);  // Previous elements may be corrupted!
+}
+```
+
+**After (using GuardedScope):**
+```rust
+let mut scope = self.guarded_scope();
+let mut elements = Vec::new();
+for expr in expressions {
+    let val = self.evaluate(expr)?;
+    scope.add_value(&val);  // Guard if it's an object
+    elements.push(val);
+}
+// All guards released when scope drops
+```
+
+This is more ergonomic than manually managing a `Vec<GuardedGc>`:
+
+```rust
+// Old pattern - verbose
+let mut guards = Vec::new();
+for expr in expressions {
+    let val = self.evaluate(expr)?;
+    if let JsValue::Object(obj) = &val {
+        guards.push(self.gc_space.guard(obj));
+    }
+    elements.push(val);
+}
+
+// New pattern - cleaner
+let mut scope = self.guarded_scope();
+for expr in expressions {
+    let val = self.evaluate(expr)?;
+    scope.add_value(&val);
+    elements.push(val);
+}
+```
+
+## GuardedScope API
+
+`GuardedScope` (and `JsGuardedScope` for the interpreter) provides a scope-based API for managing multiple guards:
+
+### Creating a Scope
+
+```rust
+// In interpreter context
+let mut scope = interp.guarded_scope();
+
+// In GC space context (low-level)
+let mut scope = space.guarded_scope();
+```
+
+### Adding Guards
+
+```rust
+// Guard a JsObjectRef
+scope.add(&obj);
+
+// Guard a JsValue (no-op for primitives)
+scope.add_value(&value);
+
+// Low-level: guard a Gc<T>
+scope.guard(&gc);
+```
+
+### Scope Lifetime
+
+Guards are automatically released when the scope is dropped:
+
+```rust
+{
+    let mut scope = interp.guarded_scope();
+    scope.add(&obj1);
+    scope.add(&obj2);
+    // Both obj1 and obj2 are protected
+}  // Both guards released here
+```
+
+### When to Use GuardedScope vs GuardedGc
+
+| Scenario | Use |
+|----------|-----|
+| Single object needs protection | `create_object_guarded()` or `guard()` |
+| Multiple objects in a loop | `guarded_scope()` |
+| Result object with evaluated properties | `create_object_guarded()` |
+| Collecting evaluated values into Vec | `guarded_scope()` |
+
 ## Systematic Fix Process
 
 When enabling `threshold=1` and tests fail:
@@ -304,6 +400,8 @@ Based on allocation patterns, check these in order:
 | Access (keep guard) | - | `guarded.as_gc().clone()` |
 | Borrow | `gc.borrow()` | `guarded.borrow()` |
 | Borrow mut | `gc.borrow_mut()` | `guarded.borrow_mut()` |
+| Create scope | - | `interp.guarded_scope()` |
+| Guard in scope | - | `scope.add(&obj)` or `scope.add_value(&val)` |
 
 ## Testing Strategy
 

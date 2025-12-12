@@ -290,13 +290,12 @@ pub fn set_entries(
 
     // For Set, entries returns [value, value] pairs
     // Guard each entry array as it's created to prevent GC from corrupting them
+    let mut scope = interp.guarded_scope();
     let mut entries = Vec::with_capacity(raw_entries.len());
-    let mut _entry_guards = Vec::with_capacity(raw_entries.len());
     for v in raw_entries {
         let arr = interp.create_array(vec![v.clone(), v]);
-        let guard = interp.gc_space.guard(&arr);
+        scope.add(&arr);
         entries.push(JsValue::Object(arr));
-        _entry_guards.push(guard);
     }
 
     Ok(JsValue::Object(interp.create_array(entries)))

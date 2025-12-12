@@ -263,6 +263,62 @@ impl<T: Traceable> Drop for GuardedGc<T> {
     }
 }
 
+/// A scope that manages multiple GC guards together.
+///
+/// `GuardedScope` provides an ergonomic way to protect multiple GC objects during
+/// Rust code execution. Instead of manually managing a `Vec<GuardedGc<T>>`, you can
+/// create a scope and add guards to it. All guards are automatically released when
+/// the scope is dropped.
+///
+/// # Usage
+///
+/// ```ignore
+/// let mut scope = space.guarded_scope();
+///
+/// for item in items {
+///     let obj = space.alloc(MyObject::new());
+///     scope.guard(&obj);  // Object is now protected
+///     results.push(obj);
+/// }
+/// // All guards released when scope drops
+/// ```
+///
+/// # Note
+///
+/// The scope holds references to the objects via guard IDs. You should ensure
+/// the scope outlives any operations that might trigger GC.
+pub struct GuardedScope<T: Traceable> {
+    space: WeakSpace<T>,
+    guard_ids: Vec<usize>,
+}
+
+impl<T: Traceable> GuardedScope<T> {
+    /// Guard a GC object within this scope.
+    ///
+    /// The object will be protected from GC collection until this scope is dropped.
+    pub fn guard(&mut self, gc: &Gc<T>) {
+        if let Some(internal) = self.space.internal.upgrade() {
+            let mut internal = internal.borrow_mut();
+            let guard_id = internal.next_guard_id;
+            internal.next_guard_id += 1;
+            internal.guards.insert(guard_id, Rc::clone(&gc.ptr));
+            self.guard_ids.push(guard_id);
+        }
+    }
+}
+
+impl<T: Traceable> Drop for GuardedScope<T> {
+    fn drop(&mut self) {
+        if let Some(internal) = self.space.internal.upgrade() {
+            if let Ok(mut internal) = internal.try_borrow_mut() {
+                for guard_id in &self.guard_ids {
+                    internal.guards.remove(guard_id);
+                }
+            }
+        }
+    }
+}
+
 struct SpaceInternal<T: Traceable> {
     roots: FxHashMap<usize, Rc<GcData<T>>>,
     /// Guards are temporary roots that protect objects during Rust code execution.
@@ -432,6 +488,33 @@ impl<T: Traceable> Space<T> {
             space: WeakSpace {
                 internal: Rc::downgrade(&self.internal),
             },
+        }
+    }
+
+    /// Create a new [`GuardedScope`] for managing multiple guards together.
+    ///
+    /// This is more ergonomic than managing individual [`GuardedGc`] values when
+    /// you need to protect multiple objects during a sequence of operations.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let mut scope = space.guarded_scope();
+    /// let mut results = Vec::new();
+    ///
+    /// for item in items {
+    ///     let obj = space.alloc(MyObject::new());
+    ///     scope.guard(&obj);
+    ///     results.push(JsValue::Object(obj));
+    /// }
+    /// // scope dropped here, all guards released
+    /// ```
+    pub fn guarded_scope(&self) -> GuardedScope<T> {
+        GuardedScope {
+            space: WeakSpace {
+                internal: Rc::downgrade(&self.internal),
+            },
+            guard_ids: Vec::new(),
         }
     }
 

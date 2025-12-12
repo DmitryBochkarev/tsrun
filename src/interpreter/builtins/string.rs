@@ -978,8 +978,8 @@ pub fn string_match_all(
 
     // Collect all matches with their capture groups
     // Guard each match array as it's created to prevent GC from corrupting them
+    let mut scope = interp.guarded_scope();
     let mut all_matches = Vec::new();
-    let mut _match_guards = Vec::new();
     for caps in re.captures_iter(&s) {
         let mut result = Vec::new();
         for cap in caps.iter() {
@@ -989,8 +989,7 @@ pub fn string_match_all(
             }
         }
         let arr = interp.create_array(result);
-        // Guard this array before setting properties (which may trigger GC)
-        let guard = interp.gc_space.guard(&arr);
+        scope.add(&arr);
         // Add index property
         if let Some(m) = caps.get(0) {
             arr.borrow_mut()
@@ -1001,7 +1000,6 @@ pub fn string_match_all(
             JsValue::String(JsString::from(s.clone())),
         );
         all_matches.push(JsValue::Object(arr));
-        _match_guards.push(guard);
     }
 
     Ok(JsValue::Object(interp.create_array(all_matches)))

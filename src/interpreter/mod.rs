@@ -21,7 +21,7 @@ use crate::ast::{
     WhileStatement,
 };
 use crate::error::JsError;
-use crate::gc::{GuardedGc, Space};
+use crate::gc::{GuardedGc, GuardedScope, Space};
 use crate::string_dict::StringDict;
 use crate::value::{
     create_array, create_environment, create_function, create_object, Binding, CheapClone, EnvRef,
@@ -89,6 +89,48 @@ pub struct GcStats {
     pub free_count: usize,
     pub gc_threshold: usize,
     pub allocs_since_gc: usize,
+}
+
+/// A scope for guarding multiple JS values during operations that may trigger GC.
+///
+/// This wraps [`GuardedScope`] and provides convenient methods for guarding
+/// [`JsValue`]s and [`JsObjectRef`]s.
+///
+/// # Example
+///
+/// ```ignore
+/// let mut scope = interp.guarded_scope();
+/// let mut results = Vec::new();
+///
+/// for expr in expressions {
+///     let val = interp.evaluate(expr)?;
+///     scope.add_value(&val);  // Guard if it's an object
+///     results.push(val);
+/// }
+/// // Guards released when scope drops
+/// ```
+pub struct JsGuardedScope {
+    scope: GuardedScope<JsObject>,
+}
+
+impl JsGuardedScope {
+    /// Guard a JsObjectRef within this scope.
+    ///
+    /// The object will be protected from GC until this scope is dropped.
+    #[inline]
+    pub fn add(&mut self, obj: &JsObjectRef) {
+        self.scope.guard(obj);
+    }
+
+    /// Guard a JsValue if it contains an object.
+    ///
+    /// Does nothing if the value is not an object (primitives don't need guarding).
+    #[inline]
+    pub fn add_value(&mut self, value: &JsValue) {
+        if let JsValue::Object(obj) = value {
+            self.scope.guard(obj);
+        }
+    }
 }
 
 /// The interpreter state
@@ -496,6 +538,30 @@ impl Interpreter {
             Some(self.gc_space.guard(obj))
         } else {
             None
+        }
+    }
+
+    /// Create a new [`GuardedScope`] for managing multiple guards together.
+    ///
+    /// This is more ergonomic than managing individual guards when you need to
+    /// protect multiple objects during a sequence of operations.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let mut scope = interp.guarded_scope();
+    /// let mut results = Vec::new();
+    ///
+    /// for item in items {
+    ///     let obj = interp.create_array(vec![]);
+    ///     scope.add(&obj);
+    ///     results.push(JsValue::Object(obj));
+    /// }
+    /// // scope dropped here, all guards released
+    /// ```
+    pub fn guarded_scope(&self) -> JsGuardedScope {
+        JsGuardedScope {
+            scope: self.gc_space.guarded_scope(),
         }
     }
 
@@ -3255,15 +3321,13 @@ impl Interpreter {
 
             Expression::Array(arr) => {
                 // Guard elements as they're evaluated to prevent GC from corrupting them
+                let mut scope = self.guarded_scope();
                 let mut elements = vec![];
-                let mut _element_guards = vec![];
                 for elem in &arr.elements {
                     match elem {
                         Some(ArrayElement::Expression(e)) => {
                             let val = self.evaluate(e)?;
-                            if let Some(guard) = self.guard_value(&val) {
-                                _element_guards.push(guard);
-                            }
+                            scope.add_value(&val);
                             elements.push(val);
                         }
                         Some(ArrayElement::Spread(spread)) => {
@@ -3275,9 +3339,7 @@ impl Interpreter {
                                         if let Some(v) =
                                             obj_ref.get_property(&PropertyKey::Index(i))
                                         {
-                                            if let Some(guard) = self.guard_value(&v) {
-                                                _element_guards.push(guard);
-                                            }
+                                            scope.add_value(&v);
                                             elements.push(v);
                                         }
                                     }
@@ -4250,20 +4312,17 @@ impl Interpreter {
             self.evaluate(&call.callee)?
         };
 
-        // Guard callee to prevent GC from collecting it during argument evaluation
-        let _callee_guard = self.guard_value(&callee);
+        // Guard callee and arguments during evaluation to prevent GC corruption
+        let mut scope = self.guarded_scope();
+        scope.add_value(&callee);
 
-        // Evaluate arguments. We need to guard each argument as it's evaluated
-        // to prevent GC from collecting them during subsequent evaluations.
+        // Evaluate arguments, guarding each as it's evaluated
         let mut args = vec![];
-        let mut _arg_guards = vec![];
         for arg in &call.arguments {
             match arg {
                 Argument::Expression(expr) => {
                     let val = self.evaluate(expr)?;
-                    if let Some(guard) = self.guard_value(&val) {
-                        _arg_guards.push(guard);
-                    }
+                    scope.add_value(&val);
                     args.push(val);
                 }
                 Argument::Spread(spread) => {
@@ -4273,9 +4332,7 @@ impl Interpreter {
                         if let ExoticObject::Array { length } = &obj_ref.exotic {
                             for i in 0..*length {
                                 if let Some(v) = obj_ref.get_property(&PropertyKey::Index(i)) {
-                                    if let Some(guard) = self.guard_value(&v) {
-                                        _arg_guards.push(guard);
-                                    }
+                                    scope.add_value(&v);
                                     args.push(v);
                                 }
                             }
@@ -4291,19 +4348,17 @@ impl Interpreter {
     fn evaluate_new(&mut self, new_expr: &NewExpression) -> Result<JsValue, JsError> {
         let callee = self.evaluate(&new_expr.callee)?;
 
-        // Guard callee during argument evaluation
-        let _callee_guard = self.guard_value(&callee);
+        // Guard callee and arguments during evaluation to prevent GC corruption
+        let mut scope = self.guarded_scope();
+        scope.add_value(&callee);
 
-        // Evaluate arguments with guards to prevent GC from collecting them
+        // Evaluate arguments, guarding each as it's evaluated
         let mut args = vec![];
-        let mut _arg_guards = vec![];
         for arg in &new_expr.arguments {
             match arg {
                 Argument::Expression(expr) => {
                     let val = self.evaluate(expr)?;
-                    if let Some(guard) = self.guard_value(&val) {
-                        _arg_guards.push(guard);
-                    }
+                    scope.add_value(&val);
                     args.push(val);
                 }
                 Argument::Spread(spread) => {
@@ -4313,9 +4368,7 @@ impl Interpreter {
                         if let ExoticObject::Array { length } = &obj_ref.exotic {
                             for i in 0..*length {
                                 if let Some(v) = obj_ref.get_property(&PropertyKey::Index(i)) {
-                                    if let Some(guard) = self.guard_value(&v) {
-                                        _arg_guards.push(guard);
-                                    }
+                                    scope.add_value(&v);
                                     args.push(v);
                                 }
                             }

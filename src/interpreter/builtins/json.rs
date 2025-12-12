@@ -168,8 +168,6 @@ pub fn json_to_js_value_with_interp(
     interp: &mut Interpreter,
     json: &serde_json::Value,
 ) -> Result<JsValue, JsError> {
-    use crate::gc::GuardedGc;
-
     Ok(match json {
         serde_json::Value::Null => JsValue::Null,
         serde_json::Value::Bool(b) => JsValue::Boolean(*b),
@@ -177,14 +175,11 @@ pub fn json_to_js_value_with_interp(
         serde_json::Value::String(s) => JsValue::String(JsString::from(s.clone())),
         serde_json::Value::Array(arr) => {
             // Guard each element as it's created to prevent GC from corrupting them
+            let mut scope = interp.guarded_scope();
             let mut elements = Vec::with_capacity(arr.len());
-            let mut _element_guards: Vec<GuardedGc<crate::value::JsObject>> =
-                Vec::with_capacity(arr.len());
             for item in arr {
                 let val = json_to_js_value_with_interp(interp, item)?;
-                if let Some(guard) = interp.guard_value(&val) {
-                    _element_guards.push(guard);
-                }
+                scope.add_value(&val);
                 elements.push(val);
             }
             JsValue::Object(interp.create_array(elements))
