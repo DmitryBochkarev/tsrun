@@ -3,26 +3,18 @@
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
 use crate::value::{
-    create_function, create_object_with_capacity, ExoticObject, JsFunction, JsObjectRef, JsString,
+    create_function, ExoticObject, JsFunction, JsObjectRef, JsString,
     JsValue, NativeFunction, Property, PropertyKey,
 };
 
-/// Create Object.prototype with hasOwnProperty, toString, valueOf
-pub fn create_object_prototype(interp: &mut Interpreter) -> JsObjectRef {
-    let proto = create_object_with_capacity(&mut interp.gc_space, 4);
+/// Initialize Object.prototype with hasOwnProperty, toString, valueOf methods.
+/// The prototype object must already exist in `interp.object_prototype`.
+pub fn init_object_prototype(interp: &mut Interpreter) {
+    let proto = interp.object_prototype.clone();
 
     interp.register_method(&proto, "hasOwnProperty", object_has_own_property, 1);
     interp.register_method(&proto, "toString", object_to_string, 0);
     interp.register_method(&proto, "valueOf", object_value_of, 0);
-
-    debug_assert_eq!(
-        proto.borrow().properties.len(),
-        3,
-        "Object.prototype capacity mismatch: expected 3, got {}",
-        proto.borrow().properties.len()
-    );
-
-    proto
 }
 
 /// Create Object constructor with static methods (keys, values, entries, assign, etc.)

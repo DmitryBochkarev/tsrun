@@ -3,18 +3,16 @@
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
 use crate::value::{
-    create_object, BoundFunctionData, ExoticObject, JsFunction, JsObjectRef, JsValue, PropertyKey,
+    BoundFunctionData, ExoticObject, JsFunction, JsValue, PropertyKey,
 };
 
-/// Create Function.prototype with call, apply, bind methods
-pub fn create_function_prototype(interp: &mut Interpreter) -> JsObjectRef {
-    let proto = create_object(&mut interp.gc_space);
+/// Initialize Function.prototype with call, apply, bind methods
+pub fn init_function_prototype(interp: &mut Interpreter) {
+    let proto = interp.function_prototype.clone();
 
     interp.register_method(&proto, "call", function_call, 1);
     interp.register_method(&proto, "apply", function_apply, 2);
     interp.register_method(&proto, "bind", function_bind, 1);
-
-    proto
 }
 
 // Function.prototype.call - call function with specified this value and arguments

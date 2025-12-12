@@ -3,13 +3,14 @@
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
 use crate::value::{
-    create_function, create_object_with_capacity, ExoticObject, JsFunction, JsObjectRef, JsString,
+    create_function, ExoticObject, JsFunction, JsObjectRef, JsString,
     JsValue, NativeFunction, Property, PropertyKey,
 };
 
-/// Create Array.prototype with all array methods
-pub fn create_array_prototype(interp: &mut Interpreter) -> JsObjectRef {
-    let proto = create_object_with_capacity(&mut interp.gc_space, 36);
+/// Initialize Array.prototype with all array methods.
+/// The prototype object must already exist in `interp.array_prototype`.
+pub fn init_array_prototype(interp: &mut Interpreter) {
+    let proto = interp.array_prototype.clone();
 
     // Mutating methods
     interp.register_method(&proto, "push", array_push, 1);
@@ -56,15 +57,6 @@ pub fn create_array_prototype(interp: &mut Interpreter) -> JsObjectRef {
     interp.register_method(&proto, "keys", array_keys, 0);
     interp.register_method(&proto, "values", array_values, 0);
     interp.register_method(&proto, "entries", array_entries, 0);
-
-    debug_assert_eq!(
-        proto.borrow().properties.len(),
-        36,
-        "Array.prototype capacity mismatch: expected 36, got {}",
-        proto.borrow().properties.len()
-    );
-
-    proto
 }
 
 /// Create Array constructor with static methods (isArray, of, from)

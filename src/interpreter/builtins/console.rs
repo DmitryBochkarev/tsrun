@@ -7,7 +7,7 @@ use rustc_hash::FxHashMap;
 
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
-use crate::value::{create_object_with_capacity, ExoticObject, JsObjectRef, JsValue, PropertyKey};
+use crate::value::{ExoticObject, JsObjectRef, JsValue, PropertyKey};
 
 /// Format a JsValue for console output (strings without quotes)
 fn format_for_console(value: &JsValue) -> String {
@@ -25,7 +25,9 @@ lazy_static::lazy_static! {
 
 /// Create console object with log, error, warn, info, debug methods
 pub fn create_console_object(interp: &mut Interpreter) -> JsObjectRef {
-    let console = create_object_with_capacity(&mut interp.gc_space, 14);
+    // Use guarded allocation to protect the console object during method registration
+    let console_guarded = interp.gc_space.alloc_guarded(crate::value::JsObject::new());
+    let console = console_guarded.as_gc().clone();
 
     // Logging methods
     interp.register_method(&console, "log", console_log, 0);
@@ -51,13 +53,7 @@ pub fn create_console_object(interp: &mut Interpreter) -> JsObjectRef {
     interp.register_method(&console, "group", console_group, 0);
     interp.register_method(&console, "groupEnd", console_group_end, 0);
 
-    debug_assert_eq!(
-        console.borrow().properties.len(),
-        14,
-        "console object capacity mismatch: expected 14, got {}",
-        console.borrow().properties.len()
-    );
-
+    // Guard is dropped here, but console is stored in env so it stays alive
     console
 }
 

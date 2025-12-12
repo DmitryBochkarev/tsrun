@@ -6,16 +6,14 @@ use crate::value::{create_object, JsObjectRef, JsString, JsValue};
 
 use super::global::{global_parse_float, global_parse_int};
 
-/// Create Number.prototype with toFixed, toString, toPrecision, toExponential
-pub fn create_number_prototype(interp: &mut Interpreter) -> JsObjectRef {
-    let proto = create_object(&mut interp.gc_space);
+/// Initialize Number.prototype with toFixed, toString, toPrecision, toExponential
+pub fn init_number_prototype(interp: &mut Interpreter) {
+    let proto = interp.number_prototype.clone();
 
     interp.register_method(&proto, "toFixed", number_to_fixed, 1);
     interp.register_method(&proto, "toString", number_to_string, 1);
     interp.register_method(&proto, "toPrecision", number_to_precision, 1);
     interp.register_method(&proto, "toExponential", number_to_exponential, 1);
-
-    proto
 }
 
 /// Create Number constructor with static methods and constants

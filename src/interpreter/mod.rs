@@ -340,71 +340,66 @@ impl Interpreter {
 
     /// Initialize all builtin prototypes and constructors
     fn init_prototypes(&mut self) {
-        // Create prototypes using builtin module functions (all guarded)
-        let object_prototype = create_object_prototype(self);
-        self.permanent_guards
-            .push(self.gc_space.guard(&object_prototype));
-        self.object_prototype = object_prototype;
+        // Phase 1: Allocate all prototype objects and guard them BEFORE any methods are added.
+        // This prevents GC from collecting prototypes while methods are being registered.
+        let object_prototype = self.gc_space.alloc_guarded(JsObject::new());
+        let array_prototype = self.gc_space.alloc_guarded(JsObject::new());
+        let string_prototype = self.gc_space.alloc_guarded(JsObject::new());
+        let number_prototype = self.gc_space.alloc_guarded(JsObject::new());
+        let function_prototype = self.gc_space.alloc_guarded(JsObject::new());
+        let map_prototype = self.gc_space.alloc_guarded(JsObject::new());
+        let set_prototype = self.gc_space.alloc_guarded(JsObject::new());
+        let date_prototype = self.gc_space.alloc_guarded(JsObject::new());
+        let regexp_prototype = self.gc_space.alloc_guarded(JsObject::new());
+        let error_prototype = self.gc_space.alloc_guarded(JsObject::new());
+        let symbol_prototype = self.gc_space.alloc_guarded(JsObject::new());
+        let generator_prototype = self.gc_space.alloc_guarded(JsObject::new());
+        let promise_prototype = self.gc_space.alloc_guarded(JsObject::new());
 
-        let array_prototype = create_array_prototype(self);
-        self.permanent_guards
-            .push(self.gc_space.guard(&array_prototype));
-        self.array_prototype = array_prototype;
+        // Store references to prototypes (they're guarded so safe to store)
+        self.object_prototype = object_prototype.as_gc().clone();
+        self.array_prototype = array_prototype.as_gc().clone();
+        self.string_prototype = string_prototype.as_gc().clone();
+        self.number_prototype = number_prototype.as_gc().clone();
+        self.function_prototype = function_prototype.as_gc().clone();
+        self.map_prototype = map_prototype.as_gc().clone();
+        self.set_prototype = set_prototype.as_gc().clone();
+        self.date_prototype = date_prototype.as_gc().clone();
+        self.regexp_prototype = regexp_prototype.as_gc().clone();
+        self.error_prototype = error_prototype.as_gc().clone();
+        self.symbol_prototype = symbol_prototype.as_gc().clone();
+        self.generator_prototype = generator_prototype.as_gc().clone();
+        self.promise_prototype = promise_prototype.as_gc().clone();
 
-        let string_prototype = create_string_prototype(self);
-        self.permanent_guards
-            .push(self.gc_space.guard(&string_prototype));
-        self.string_prototype = string_prototype;
+        // Phase 2: Register methods on each prototype (prototypes are already guarded)
+        init_object_prototype(self);
+        init_array_prototype(self);
+        init_string_prototype(self);
+        init_number_prototype(self);
+        init_function_prototype(self);
+        init_map_prototype(self);
+        init_set_prototype(self);
+        init_date_prototype(self);
+        init_regexp_prototype(self);
+        init_error_prototype(self);
+        init_symbol_prototype(self);
+        init_generator_prototype(self);
+        init_promise_prototype(self);
 
-        let number_prototype = create_number_prototype(self);
-        self.permanent_guards
-            .push(self.gc_space.guard(&number_prototype));
-        self.number_prototype = number_prototype;
-
-        let function_prototype = create_function_prototype(self);
-        self.permanent_guards
-            .push(self.gc_space.guard(&function_prototype));
-        self.function_prototype = function_prototype;
-
-        let map_prototype = create_map_prototype(self);
-        self.permanent_guards
-            .push(self.gc_space.guard(&map_prototype));
-        self.map_prototype = map_prototype;
-
-        let set_prototype = create_set_prototype(self);
-        self.permanent_guards
-            .push(self.gc_space.guard(&set_prototype));
-        self.set_prototype = set_prototype;
-
-        let date_prototype = create_date_prototype(self);
-        self.permanent_guards
-            .push(self.gc_space.guard(&date_prototype));
-        self.date_prototype = date_prototype;
-
-        let regexp_prototype = create_regexp_prototype(self);
-        self.permanent_guards
-            .push(self.gc_space.guard(&regexp_prototype));
-        self.regexp_prototype = regexp_prototype;
-
-        let error_prototype = create_error_prototype(self);
-        self.permanent_guards
-            .push(self.gc_space.guard(&error_prototype));
-        self.error_prototype = error_prototype;
-
-        let symbol_prototype = create_symbol_prototype(self);
-        self.permanent_guards
-            .push(self.gc_space.guard(&symbol_prototype));
-        self.symbol_prototype = symbol_prototype;
-
-        let generator_prototype = create_generator_prototype(self);
-        self.permanent_guards
-            .push(self.gc_space.guard(&generator_prototype));
-        self.generator_prototype = generator_prototype;
-
-        let promise_prototype = create_promise_prototype(self);
-        self.permanent_guards
-            .push(self.gc_space.guard(&promise_prototype));
-        self.promise_prototype = promise_prototype;
+        // Convert guards to permanent storage
+        self.permanent_guards.push(object_prototype);
+        self.permanent_guards.push(array_prototype);
+        self.permanent_guards.push(string_prototype);
+        self.permanent_guards.push(number_prototype);
+        self.permanent_guards.push(function_prototype);
+        self.permanent_guards.push(map_prototype);
+        self.permanent_guards.push(set_prototype);
+        self.permanent_guards.push(date_prototype);
+        self.permanent_guards.push(regexp_prototype);
+        self.permanent_guards.push(error_prototype);
+        self.permanent_guards.push(symbol_prototype);
+        self.permanent_guards.push(generator_prototype);
+        self.permanent_guards.push(promise_prototype);
 
         // Create and register constructors
         let object_constructor = create_object_constructor(self);
@@ -2335,16 +2330,20 @@ impl Interpreter {
         let name = ns.id.name.clone();
 
         // Check if namespace already exists (for merging)
-        let ns_obj = if let Ok(JsValue::Object(obj)) = self.env_get_binding(&name) {
-            obj
+        // Use guarded allocation to protect the namespace object during execution
+        let ns_obj_guarded = if let Ok(JsValue::Object(obj)) = self.env_get_binding(&name) {
+            self.gc_space.guard(&obj)
         } else {
-            self.create_object()
+            self.gc_space.alloc_guarded(JsObject::new())
         };
+        let ns_obj = ns_obj_guarded.as_gc().clone();
 
         // Save current exports and create new scope for namespace
+        // Use guarded allocation for the namespace environment to protect it during execution
         let saved_exports = std::mem::take(&mut self.exports);
         let saved_env = self.env.cheap_clone();
-        self.env = self.env_alloc(Some(self.env.cheap_clone()));
+        let (new_env, _env_guard) = self.env_alloc_guarded(Some(self.env.cheap_clone()));
+        self.env = new_env;
 
         // Execute statements in namespace body
         for stmt in &ns.body {

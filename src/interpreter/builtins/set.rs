@@ -4,13 +4,13 @@ use super::map::same_value_zero;
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
 use crate::value::{
-    create_function, create_object, ExoticObject, JsFunction, JsObjectRef, JsValue, NativeFunction,
+    create_function, ExoticObject, JsFunction, JsObjectRef, JsValue, NativeFunction,
     PropertyKey,
 };
 
-/// Create Set.prototype with add, has, delete, clear, forEach methods
-pub fn create_set_prototype(interp: &mut Interpreter) -> JsObjectRef {
-    let proto = create_object(&mut interp.gc_space);
+/// Initialize Set.prototype with add, has, delete, clear, forEach methods
+pub fn init_set_prototype(interp: &mut Interpreter) {
+    let proto = interp.set_prototype.clone();
 
     interp.register_method(&proto, "add", set_add, 1);
     interp.register_method(&proto, "has", set_has, 1);
@@ -20,8 +20,6 @@ pub fn create_set_prototype(interp: &mut Interpreter) -> JsObjectRef {
     interp.register_method(&proto, "keys", set_keys, 0);
     interp.register_method(&proto, "values", set_values, 0);
     interp.register_method(&proto, "entries", set_entries, 0);
-
-    proto
 }
 
 /// Create Set constructor

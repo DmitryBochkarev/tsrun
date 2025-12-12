@@ -6,19 +6,17 @@ use std::rc::Rc;
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
 use crate::value::{
-    create_function, create_object, CheapClone, ExoticObject, JsFunction, JsObjectRef, JsValue,
+    create_function, CheapClone, ExoticObject, JsFunction, JsObjectRef, JsValue,
     NativeFunction, PromiseHandler, PromiseState, PromiseStatus, PropertyKey,
 };
 
-/// Create Promise.prototype with then, catch, finally methods
-pub fn create_promise_prototype(interp: &mut Interpreter) -> JsObjectRef {
-    let proto = create_object(&mut interp.gc_space);
+/// Initialize Promise.prototype with then, catch, finally methods
+pub fn init_promise_prototype(interp: &mut Interpreter) {
+    let proto = interp.promise_prototype.clone();
 
     interp.register_method(&proto, "then", promise_then, 2);
     interp.register_method(&proto, "catch", promise_catch, 1);
     interp.register_method(&proto, "finally", promise_finally, 1);
-
-    proto
 }
 
 /// Create Promise constructor with static methods
@@ -699,7 +697,10 @@ pub fn promise_allsettled(
     let mut results: Vec<JsValue> = Vec::with_capacity(status_info.len());
 
     for (status, result) in status_info {
-        let result_obj = interp.create_object();
+        // Use guarded allocation to prevent GC from collecting the object during creation
+        let result_obj_guarded = interp.create_object_guarded();
+        let result_obj = result_obj_guarded.as_gc().clone();
+        // Add the object to the scope to keep it alive until create_array is called
         scope.add(&result_obj);
         {
             let mut result_ref = result_obj.borrow_mut();

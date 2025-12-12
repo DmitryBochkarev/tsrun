@@ -3,18 +3,16 @@
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
 use crate::value::{
-    create_function, create_object, ExoticObject, JsFunction, JsObjectRef, JsString, JsValue,
+    create_function, ExoticObject, JsFunction, JsObjectRef, JsString, JsValue,
     NativeFunction,
 };
 
-/// Create RegExp.prototype with test and exec methods
-pub fn create_regexp_prototype(interp: &mut Interpreter) -> JsObjectRef {
-    let proto = create_object(&mut interp.gc_space);
+/// Initialize RegExp.prototype with test and exec methods
+pub fn init_regexp_prototype(interp: &mut Interpreter) {
+    let proto = interp.regexp_prototype.clone();
 
     interp.register_method(&proto, "test", regexp_test, 1);
     interp.register_method(&proto, "exec", regexp_exec, 1);
-
-    proto
 }
 
 /// Create RegExp constructor

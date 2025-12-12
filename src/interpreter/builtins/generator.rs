@@ -6,12 +6,12 @@ use std::rc::Rc;
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
 use crate::value::{
-    create_object, ExoticObject, GeneratorState, GeneratorStatus, JsObjectRef, JsString, JsValue,
+    ExoticObject, GeneratorState, GeneratorStatus, JsObjectRef, JsString, JsValue,
 };
 
-/// Create Generator.prototype
-pub fn create_generator_prototype(interp: &mut Interpreter) -> JsObjectRef {
-    let proto = create_object(&mut interp.gc_space);
+/// Initialize Generator.prototype
+pub fn init_generator_prototype(interp: &mut Interpreter) {
+    let proto = interp.generator_prototype.clone();
 
     // Set Symbol.toStringTag
     let tag_key = interp.key("@@toStringTag");
@@ -22,8 +22,6 @@ pub fn create_generator_prototype(interp: &mut Interpreter) -> JsObjectRef {
     interp.register_method(&proto, "next", generator_next, 1);
     interp.register_method(&proto, "return", generator_return, 1);
     interp.register_method(&proto, "throw", generator_throw, 1);
-
-    proto
 }
 
 /// Create a generator result object { value, done }

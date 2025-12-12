@@ -5,7 +5,7 @@ use chrono::{Datelike, TimeZone, Timelike, Utc};
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
 use crate::value::{
-    create_function, create_object_with_capacity, ExoticObject, JsFunction, JsObjectRef, JsString,
+    create_function, ExoticObject, JsFunction, JsObjectRef, JsString,
     JsValue, NativeFunction,
 };
 
@@ -75,9 +75,9 @@ fn parse_date_string(s: &str) -> f64 {
     f64::NAN
 }
 
-/// Create Date.prototype with getTime, getFullYear, getMonth, etc.
-pub fn create_date_prototype(interp: &mut Interpreter) -> JsObjectRef {
-    let proto = create_object_with_capacity(&mut interp.gc_space, 31);
+/// Initialize Date.prototype with getTime, getFullYear, getMonth, etc.
+pub fn init_date_prototype(interp: &mut Interpreter) {
+    let proto = interp.date_prototype.clone();
 
     // Getter methods (local time = UTC in our implementation)
     interp.register_method(&proto, "getTime", date_get_time, 0);
@@ -117,15 +117,6 @@ pub fn create_date_prototype(interp: &mut Interpreter) -> JsObjectRef {
     interp.register_method(&proto, "toString", date_to_string, 0);
     interp.register_method(&proto, "toDateString", date_to_date_string, 0);
     interp.register_method(&proto, "toTimeString", date_to_time_string, 0);
-
-    debug_assert_eq!(
-        proto.borrow().properties.len(),
-        31,
-        "Date.prototype capacity mismatch: expected 31, got {}",
-        proto.borrow().properties.len()
-    );
-
-    proto
 }
 
 /// Create Date constructor with static methods (now, UTC, parse)

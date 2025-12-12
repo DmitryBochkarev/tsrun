@@ -8,7 +8,7 @@ use rustc_hash::FxHashMap;
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
 use crate::value::{
-    create_function, create_object, JsFunction, JsObjectRef, JsString, JsSymbol, JsValue,
+    create_function, JsFunction, JsObjectRef, JsString, JsSymbol, JsValue,
     NativeFunction,
 };
 
@@ -203,9 +203,9 @@ pub fn create_symbol_constructor(
     symbol_fn
 }
 
-/// Create Symbol.prototype
-pub fn create_symbol_prototype(interp: &mut Interpreter) -> JsObjectRef {
-    let proto = create_object(&mut interp.gc_space);
+/// Initialize Symbol.prototype
+pub fn init_symbol_prototype(interp: &mut Interpreter) {
+    let proto = interp.symbol_prototype.clone();
 
     // Symbol.prototype.toString()
     interp.register_method(&proto, "toString", symbol_to_string, 0);
@@ -216,8 +216,6 @@ pub fn create_symbol_prototype(interp: &mut Interpreter) -> JsObjectRef {
     // Symbol.prototype.description (getter)
     // Note: In full JS this is an accessor property. For simplicity we implement
     // description access directly in member expression evaluation.
-
-    proto
 }
 
 /// Symbol() - create a new unique symbol

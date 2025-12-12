@@ -6,9 +6,9 @@ use crate::value::{
     create_function, create_object, JsFunction, JsObjectRef, JsString, JsValue, NativeFunction,
 };
 
-/// Create Error.prototype with toString
-pub fn create_error_prototype(interp: &mut Interpreter) -> JsObjectRef {
-    let proto = create_object(&mut interp.gc_space);
+/// Initialize Error.prototype with toString
+pub fn init_error_prototype(interp: &mut Interpreter) {
+    let proto = interp.error_prototype.clone();
 
     // Set default name and message
     let name_key = interp.key("name");
@@ -20,8 +20,6 @@ pub fn create_error_prototype(interp: &mut Interpreter) -> JsObjectRef {
     }
 
     interp.register_method(&proto, "toString", error_to_string, 0);
-
-    proto
 }
 
 /// Error constructors tuple type

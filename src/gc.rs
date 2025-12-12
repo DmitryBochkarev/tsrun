@@ -721,11 +721,32 @@ impl<T: Traceable> SpaceInternal<T> {
         let guards = mem::take(&mut self.guards);
 
         // Mark from each guard (guards are the roots)
+        // We mark directly using the GcData from the guard, not by looking up in objects,
+        // because the guard holds a strong reference that's always valid.
         for gc_data in guards.values() {
-            self.mark_from(gc_data.id);
+            self.mark_from_gc_data(gc_data);
         }
 
         self.guards = guards;
+    }
+
+    /// Mark an object and its children as reachable, starting from a GcData reference.
+    /// Used for guards which hold strong references to GcData.
+    fn mark_from_gc_data(&mut self, gc_data: &Rc<GcData<T>>) {
+        let id = gc_data.id;
+
+        // Skip if already marked
+        if self.marked.contains(&id) {
+            return;
+        }
+
+        // Mark this object
+        self.marked.insert(id);
+
+        // Trace children and mark them recursively
+        gc_data.trace_object(&mut |child_id| {
+            self.mark_from(child_id);
+        });
     }
 
     fn mark_from(&mut self, id: usize) {
@@ -763,6 +784,14 @@ impl<T: Traceable> SpaceInternal<T> {
 
         for (id, slot) in self.objects.iter_mut().enumerate() {
             if self.marked.contains(&id) {
+                // If slot is empty but object is marked (guarded), restore the slot.
+                // This can happen if the object's slot was cleared in a previous GC cycle
+                // before its guard was added.
+                if slot.is_none() {
+                    if let Some(gc_data) = self.guards.values().find(|g| g.id == id) {
+                        *slot = Some(Rc::downgrade(gc_data));
+                    }
+                }
                 debug_assert!(slot.is_some(), "Marked slot {} should not be empty", id);
                 debug_assert!(
                     !self.free_list.contains(&id),
@@ -773,12 +802,19 @@ impl<T: Traceable> SpaceInternal<T> {
             }
 
             if let Some(weak) = slot {
+                // Check if this object is guarded (guard added after marking phase)
+                // If so, don't unlink - the guard wants to keep this object alive.
+                let is_guarded = self.guards.values().any(|g| g.id == id);
+                if is_guarded {
+                    // Mark the object since it's guarded and should survive
+                    self.marked.insert(id);
+                    continue;
+                }
+
                 if let Some(obj) = weak.upgrade() {
                     debug_assert_eq!(obj.id, id, "Object id {} doesn't match slot {}", obj.id, id);
-                    // Unlink ALL unmarked objects to break cycles.
-                    // If an object is unmarked, it's unreachable from guards.
-                    // Any external references (strong_count > 1) indicate a bug in the
-                    // interpreter - objects held externally must be rooted.
+
+                    // Unlink unmarked unguarded objects to break cycles.
                     obj.unlink_object();
                 }
                 // Clear the slot but DON'T add to free_list yet.

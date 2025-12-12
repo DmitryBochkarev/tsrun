@@ -3,13 +3,13 @@
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
 use crate::value::{
-    create_function, create_object, ExoticObject, JsFunction, JsObjectRef, JsValue, NativeFunction,
+    create_function, ExoticObject, JsFunction, JsObjectRef, JsValue, NativeFunction,
     PropertyKey,
 };
 
-/// Create Map.prototype with get, set, has, delete, clear, forEach methods
-pub fn create_map_prototype(interp: &mut Interpreter) -> JsObjectRef {
-    let proto = create_object(&mut interp.gc_space);
+/// Initialize Map.prototype with get, set, has, delete, clear, forEach methods
+pub fn init_map_prototype(interp: &mut Interpreter) {
+    let proto = interp.map_prototype.clone();
 
     interp.register_method(&proto, "get", map_get, 1);
     interp.register_method(&proto, "set", map_set, 2);
@@ -20,8 +20,6 @@ pub fn create_map_prototype(interp: &mut Interpreter) -> JsObjectRef {
     interp.register_method(&proto, "keys", map_keys, 0);
     interp.register_method(&proto, "values", map_values, 0);
     interp.register_method(&proto, "entries", map_entries, 0);
-
-    proto
 }
 
 /// Create Map constructor
