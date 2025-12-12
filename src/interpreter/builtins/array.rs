@@ -1969,15 +1969,24 @@ pub fn array_entries(
         }
     };
 
-    let entries: Vec<JsValue> = (0..length)
-        .map(|i| {
-            let value = arr
-                .borrow()
-                .get_property(&PropertyKey::Index(i))
-                .unwrap_or(JsValue::Undefined);
-            let pair = vec![JsValue::Number(i as f64), value];
-            JsValue::Object(interp.create_array(pair))
-        })
-        .collect();
-    Ok(JsValue::Object(interp.create_array(entries)))
+    // Guard each entry array as it's created to prevent GC from collecting them
+    // before they are stored in the result array. The scope must remain alive
+    // until after create_array(entries) completes, since that allocation may
+    // trigger GC.
+    let mut scope = interp.guarded_scope();
+    let mut entries = Vec::with_capacity(length as usize);
+    for i in 0..length {
+        let value = arr
+            .borrow()
+            .get_property(&PropertyKey::Index(i))
+            .unwrap_or(JsValue::Undefined);
+        let pair = vec![JsValue::Number(i as f64), value];
+        let entry_arr = interp.create_array(pair);
+        scope.add(&entry_arr);
+        entries.push(JsValue::Object(entry_arr));
+    }
+
+    let result = interp.create_array(entries);
+    drop(scope); // Safe to drop now - entries are stored in result array
+    Ok(JsValue::Object(result))
 }

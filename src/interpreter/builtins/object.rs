@@ -166,14 +166,18 @@ pub fn object_entries(
         .collect();
 
     // Create entry arrays with proper prototype
-    let entries: Vec<JsValue> = pairs
-        .into_iter()
-        .map(|(key, value)| {
-            JsValue::Object(interp.create_array(vec![JsValue::String(JsString::from(key)), value]))
-        })
-        .collect();
+    // Guard each entry array as it's created to prevent GC from collecting them
+    let mut scope = interp.guarded_scope();
+    let mut entries: Vec<JsValue> = Vec::with_capacity(pairs.len());
+    for (key, value) in pairs {
+        let arr = interp.create_array(vec![JsValue::String(JsString::from(key)), value]);
+        scope.add(&arr);
+        entries.push(JsValue::Object(arr));
+    }
 
-    Ok(JsValue::Object(interp.create_array(entries)))
+    let result = interp.create_array(entries);
+    drop(scope);
+    Ok(JsValue::Object(result))
 }
 
 pub fn object_assign(

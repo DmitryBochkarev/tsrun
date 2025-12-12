@@ -977,7 +977,8 @@ pub fn string_match_all(
     let input_key = interp.key("input");
 
     // Collect all matches with their capture groups
-    // Guard each match array as it's created to prevent GC from corrupting them
+    // Guard each match array as it's created to prevent GC from corrupting them.
+    // The scope must remain alive until after create_array(all_matches) completes.
     let mut scope = interp.guarded_scope();
     let mut all_matches = Vec::new();
     for caps in re.captures_iter(&s) {
@@ -1002,7 +1003,9 @@ pub fn string_match_all(
         all_matches.push(JsValue::Object(arr));
     }
 
-    Ok(JsValue::Object(interp.create_array(all_matches)))
+    let result = interp.create_array(all_matches);
+    drop(scope);
+    Ok(JsValue::Object(result))
 }
 
 /// String.prototype.search(regexp)

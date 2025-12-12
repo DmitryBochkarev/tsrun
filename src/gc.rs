@@ -640,6 +640,11 @@ impl<T: Traceable> Default for Space<T> {
 
 impl<T: Traceable> Drop for Space<T> {
     fn drop(&mut self) {
+        // Skip collection during panic unwinding since the object graph may be inconsistent.
+        // The Rc references will still be dropped, which will free the memory.
+        if std::thread::panicking() {
+            return;
+        }
         // Run final collection to break cycles before dropping.
         self.internal.borrow_mut().collect();
     }
@@ -761,20 +766,26 @@ impl<T: Traceable> SpaceInternal<T> {
     }
 
     fn mark_from(&mut self, id: usize) {
-        if !self.marked.insert(id) {
+        // Skip if already marked
+        if self.marked.contains(&id) {
             return;
         }
 
-        // Get strong reference to object so we can trace it
+        // Get strong reference to object so we can trace it.
+        // If the object is dead (slot is None), skip it silently.
+        // This can happen when a live object holds a stale Gc reference to an object
+        // that was unlinked in a previous GC cycle. The reference is stale but harmless.
         let Some(obj) = self
             .objects
             .get(id)
             .and_then(|slot| slot.as_ref())
             .and_then(|w| w.upgrade())
         else {
-            debug_assert!(false, "dead objects should not be marked as mark_from are called from valid roots and guards");
             return;
         };
+
+        // Only mark live objects
+        self.marked.insert(id);
 
         // Trace children and mark them recursively
         obj.trace_object(&mut |child_id| {
@@ -807,13 +818,11 @@ impl<T: Traceable> SpaceInternal<T> {
                     // interpreter - objects held externally must be rooted.
                     obj.unlink_object();
                 }
+                // Clear the slot but DON'T add to free_list yet.
+                // The ID will be freed when GcData::drop is called (when Rc refcount hits 0).
+                // Adding to free_list here would allow ID reuse while old Gc references
+                // still exist, causing ID collisions during tracing.
                 *slot = None;
-                debug_assert!(
-                    !self.free_list.contains(&id),
-                    "Slot {} already in free list before adding",
-                    id
-                );
-                self.free_list.push(id);
             }
         }
 
@@ -850,16 +859,8 @@ impl<T: Traceable> SpaceInternal<T> {
             }
         }
 
-        // Verify all empty slots are in free_list
-        for (id, slot) in self.objects.iter().enumerate() {
-            if slot.is_none() {
-                debug_assert!(
-                    self.free_list.contains(&id),
-                    "Empty slot {} should be in free_list",
-                    id
-                );
-            }
-        }
+        // Note: Empty slots may NOT be in free_list if GcData still exists (Rc alive).
+        // The ID is only added to free_list when GcData::drop is called.
 
         // Verify free list contains only empty slots
         for &id in &self.free_list {

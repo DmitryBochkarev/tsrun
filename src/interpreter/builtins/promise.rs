@@ -71,8 +71,33 @@ pub fn create_promise(interp: &mut Interpreter) -> JsObjectRef {
     create_promise_object(interp)
 }
 
+/// Create a pending promise with GC protection.
+/// Use this when the promise needs to survive allocations before being stored.
+pub fn create_promise_guarded(
+    interp: &mut Interpreter,
+) -> crate::gc::GuardedGc<crate::value::JsObject> {
+    let state = Rc::new(RefCell::new(PromiseState {
+        status: PromiseStatus::Pending,
+        result: None,
+        handlers: Vec::new(),
+    }));
+
+    let obj = interp.create_object_guarded();
+    {
+        let mut o = obj.borrow_mut();
+        o.prototype = Some(interp.promise_prototype.cheap_clone());
+        o.exotic = ExoticObject::Promise(state);
+    }
+    obj
+}
+
 /// Create a fulfilled promise using the interpreter's GC space
 pub fn create_fulfilled_promise(interp: &mut Interpreter, value: JsValue) -> JsObjectRef {
+    // Guard the value during object creation since create_object can trigger GC
+    // and the value would otherwise only be referenced by the PromiseState which
+    // isn't rooted until it's attached to the object.
+    let _guard = interp.guard_value(&value);
+
     let state = Rc::new(RefCell::new(PromiseState {
         status: PromiseStatus::Fulfilled,
         result: Some(value),
@@ -90,6 +115,9 @@ pub fn create_fulfilled_promise(interp: &mut Interpreter, value: JsValue) -> JsO
 
 /// Create a rejected promise using the interpreter's GC space
 pub fn create_rejected_promise(interp: &mut Interpreter, reason: JsValue) -> JsObjectRef {
+    // Guard the reason during object creation since create_object can trigger GC
+    let _guard = interp.guard_value(&reason);
+
     let state = Rc::new(RefCell::new(PromiseState {
         status: PromiseStatus::Rejected,
         result: Some(reason),
@@ -232,6 +260,10 @@ fn trigger_handler(
     value: &JsValue,
     is_fulfilled: bool,
 ) -> Result<(), JsError> {
+    // Guard the result_promise since it's been removed from the traced promise state
+    // and the callback may trigger GC before we can resolve/reject it.
+    let _result_guard = interp.gc_space.guard(&handler.result_promise);
+
     let callback = if is_fulfilled {
         handler.on_fulfilled.clone()
     } else {
@@ -285,11 +317,16 @@ pub fn promise_constructor(
 
     let promise = create_promise_object(interp);
 
+    // Guard the promise during the executor call
+    let _promise_guard = interp.gc_space.guard(&promise);
+
     // Create resolve function using the new PromiseResolve variant
     let resolve_fn = interp.create_function(JsFunction::PromiseResolve(promise.cheap_clone()));
+    let _resolve_guard = interp.gc_space.guard(&resolve_fn);
 
     // Create reject function using the new PromiseReject variant
     let reject_fn = interp.create_function(JsFunction::PromiseReject(promise.cheap_clone()));
+    let _reject_guard = interp.gc_space.guard(&reject_fn);
 
     // Call executor(resolve, reject)
     match interp.call_function(
@@ -319,6 +356,9 @@ pub fn promise_then(
             "Promise.prototype.then called on non-object",
         ));
     };
+
+    // Guard the promise to prevent GC from corrupting it during result_promise creation
+    let _promise_guard = interp.gc_space.guard(&promise);
 
     let on_fulfilled = args.first().cloned();
     let on_rejected = args.get(1).cloned();
@@ -625,6 +665,9 @@ pub fn promise_allsettled(
         )));
     }
 
+    // Guard values during the entire allSettled operation since key() and create_object() can trigger GC
+    let mut scope = interp.guarded_scope();
+
     // Collect status info first without borrowing interp
     let mut status_info: Vec<(PromiseStatus, Option<JsValue>)> = Vec::with_capacity(promises.len());
 
@@ -642,6 +685,10 @@ pub fn promise_allsettled(
             // Primitive value - treat as fulfilled with that value
             (PromiseStatus::Fulfilled, Some(promise_value.clone()))
         };
+        // Guard any result value that contains an object
+        if let Some(ref v) = result {
+            scope.add_value(v);
+        }
         status_info.push((status, result));
     }
 
@@ -649,12 +696,11 @@ pub fn promise_allsettled(
     let status_key = interp.key("status");
     let value_key = interp.key("value");
     let reason_key = interp.key("reason");
-
-    // Now create result objects using interp
     let mut results: Vec<JsValue> = Vec::with_capacity(status_info.len());
 
     for (status, result) in status_info {
         let result_obj = interp.create_object();
+        scope.add(&result_obj);
         {
             let mut result_ref = result_obj.borrow_mut();
             result_ref.prototype = Some(interp.object_prototype.cheap_clone());
@@ -679,8 +725,12 @@ pub fn promise_allsettled(
         results.push(JsValue::Object(result_obj));
     }
 
-    let array = JsValue::Object(interp.create_array(results));
-    Ok(JsValue::Object(create_fulfilled_promise(interp, array)))
+    let array = interp.create_array(results);
+    drop(scope);
+    Ok(JsValue::Object(create_fulfilled_promise(
+        interp,
+        JsValue::Object(array),
+    )))
 }
 
 /// Promise.any(iterable)

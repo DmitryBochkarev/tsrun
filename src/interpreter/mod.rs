@@ -1562,6 +1562,9 @@ impl Interpreter {
                                 _ => JsValue::from(err.to_string()),
                             };
 
+                            // Guard error_value during env allocation which can trigger GC
+                            let _error_guard = self.guard_value(&error_value);
+
                             // Bind catch parameter
                             let prev_env = self.env.cheap_clone();
                             self.env = self.env_alloc(Some(self.env.cheap_clone()));
@@ -1975,6 +1978,10 @@ impl Interpreter {
         > = rustc_hash::FxHashMap::default();
         let mut regular_methods: Vec<(JsString, JsObjectRef)> = Vec::new();
 
+        // Guard all method functions as they're created to prevent GC from collecting them
+        // before they're added to the prototype
+        let mut method_scope = self.guarded_scope();
+
         for method in &instance_methods {
             let method_name: JsString = match &method.key {
                 ObjectPropertyKey::Identifier(id) => id.name.clone(),
@@ -1998,6 +2005,7 @@ impl Interpreter {
                 async_: func.async_,
             };
             let func_obj = self.create_function(JsFunction::Interpreted(interpreted));
+            method_scope.add(&func_obj);
 
             // If we have a superclass, store __super__ on the method so super.method() works
             if let Some(ref super_ctor) = super_constructor {
@@ -2036,6 +2044,9 @@ impl Interpreter {
                 .borrow_mut()
                 .set_property(PropertyKey::String(name), JsValue::Object(func_obj));
         }
+
+        // Methods are now stored in prototype, safe to drop the guard scope
+        drop(method_scope);
 
         // Build constructor body that initializes instance fields then runs user constructor
         // We store instance fields info in the constructor function
@@ -2112,13 +2123,17 @@ impl Interpreter {
             }
 
             // Then create the fields array
+            // Guard intermediate arrays to prevent GC from collecting them
+            let mut field_scope = self.guarded_scope();
             let mut field_pairs: Vec<JsValue> = Vec::new();
             for (name, value) in field_values {
                 let pair = self.create_array(vec![JsValue::String(name), value]);
+                field_scope.add(&pair);
                 field_pairs.push(JsValue::Object(pair));
             }
 
             let fields_array = self.create_array(field_pairs);
+            drop(field_scope);
             let fields_key = self.key("__fields__");
             constructor_fn
                 .borrow_mut()
@@ -2139,6 +2154,9 @@ impl Interpreter {
             (Option<JsObjectRef>, Option<JsObjectRef>),
         > = rustc_hash::FxHashMap::default();
         let mut static_regular_methods: Vec<(JsString, JsObjectRef)> = Vec::new();
+
+        // Guard static method functions as they're created
+        let mut static_method_scope = self.guarded_scope();
 
         for method in &static_methods {
             let method_name: JsString = match &method.key {
@@ -2163,6 +2181,7 @@ impl Interpreter {
                 async_: func.async_,
             };
             let func_obj = self.create_function(JsFunction::Interpreted(interpreted));
+            static_method_scope.add(&func_obj);
 
             match method.kind {
                 MethodKind::Get => {
@@ -2837,6 +2856,12 @@ impl Interpreter {
             _ => vec![],
         };
 
+        // Guard all items during iteration since env_alloc can trigger GC
+        let mut item_scope = self.guarded_scope();
+        for item in &items {
+            item_scope.add_value(item);
+        }
+
         let prev_env = self.env.cheap_clone();
 
         for item in items {
@@ -2909,6 +2934,8 @@ impl Interpreter {
         label: Option<&JsString>,
         gen_obj: JsObjectRef,
     ) -> Result<Completion, JsError> {
+        // Guard the generator object during iteration
+        let _gen_guard = self.gc_space.guard(&gen_obj);
         let prev_env = self.env.cheap_clone();
 
         loop {
@@ -3479,15 +3506,19 @@ impl Interpreter {
                 // Evaluate the tag function
                 let tag_fn = self.evaluate(&tagged.tag)?;
 
-                // Build the strings array (first argument) with guard protection.
-                // Creating raw_array and evaluating expressions may trigger GC.
+                // Guard all intermediate values until the function call completes
+                let mut scope = self.guarded_scope();
+                scope.add_value(&tag_fn);
+
+                // Build the strings array (first argument)
                 let strings: Vec<JsValue> = tagged
                     .quasi
                     .quasis
                     .iter()
                     .map(|q| JsValue::String(q.value.clone()))
                     .collect();
-                let strings_arr_obj = self.create_array_guarded(strings);
+                let strings_arr = self.create_array(strings);
+                scope.add(&strings_arr);
 
                 // Add 'raw' property to strings array (same as cooked for now)
                 // TODO: properly handle raw strings with escape sequences
@@ -3497,22 +3528,24 @@ impl Interpreter {
                     .iter()
                     .map(|q| JsValue::String(q.value.clone()))
                     .collect();
-                let raw_array = JsValue::Object(self.create_array(raw));
+                let raw_array = self.create_array(raw);
+                scope.add(&raw_array);
                 let raw_key = self.key("raw");
-                strings_arr_obj
+                strings_arr
                     .borrow_mut()
-                    .set_property(raw_key, raw_array);
+                    .set_property(raw_key, JsValue::Object(raw_array));
 
-                let strings_array = JsValue::Object(strings_arr_obj.as_gc().clone());
+                let strings_array = JsValue::Object(strings_arr);
 
                 // Evaluate all interpolated expressions (remaining arguments)
                 let mut args = vec![strings_array];
                 for expr in &tagged.quasi.expressions {
-                    args.push(self.evaluate(expr)?);
+                    let val = self.evaluate(expr)?;
+                    scope.add_value(&val);
+                    args.push(val);
                 }
 
-                // Drop guard, then call the tag function
-                drop(strings_arr_obj);
+                // Call the tag function (scope is still alive)
                 self.call_function(tag_fn, JsValue::Undefined, &args)
             }
 
@@ -4070,21 +4103,13 @@ impl Interpreter {
         })
     }
 
-    fn evaluate_member(&mut self, member: &MemberExpression) -> Result<JsValue, JsError> {
-        let object = self.evaluate(&member.object)?;
-
-        let key = match &member.property {
-            MemberProperty::Identifier(id) => PropertyKey::String(id.name.clone()),
-            MemberProperty::Expression(expr) => {
-                let val = self.evaluate(expr)?;
-                PropertyKey::from_value(&val)
-            }
-            MemberProperty::PrivateIdentifier(id) => {
-                // Private fields are stored with # prefix
-                self.key(&format!("#{}", id.name))
-            }
-        };
-
+    /// Get a property value from a JsValue by key.
+    /// This is the core property lookup logic used by both evaluate_member and evaluate_call.
+    fn get_property_value(
+        &mut self,
+        object: &JsValue,
+        key: &PropertyKey,
+    ) -> Result<JsValue, JsError> {
         // JsValue clone - needed because we match on it but also use object later for getters
         match object.clone() {
             JsValue::Object(obj) => {
@@ -4101,7 +4126,7 @@ impl Interpreter {
                 // First, try own properties and prototype chain with accessor support
                 // We need to drop the borrow before calling the getter
                 let property_result = {
-                    if let Some((prop, _)) = obj.borrow().get_property_descriptor(&key) {
+                    if let Some((prop, _)) = obj.borrow().get_property_descriptor(key) {
                         // If this is an accessor property with a getter, return the getter
                         if let Some(ref getter) = prop.getter {
                             Some((true, Some(getter.cheap_clone()), JsValue::Undefined))
@@ -4120,7 +4145,11 @@ impl Interpreter {
                 if let Some((is_getter, getter, value)) = property_result {
                     if is_getter {
                         if let Some(getter_fn) = getter {
-                            return self.call_function(JsValue::Object(getter_fn), object, &[]);
+                            return self.call_function(
+                                JsValue::Object(getter_fn),
+                                object.clone(),
+                                &[],
+                            );
                         }
                     }
                     return Ok(value);
@@ -4128,14 +4157,14 @@ impl Interpreter {
 
                 // For functions, check Function.prototype
                 if obj.borrow().is_callable() {
-                    if let Some(method) = self.function_prototype.borrow().get_property(&key) {
+                    if let Some(method) = self.function_prototype.borrow().get_property(key) {
                         return Ok(method);
                     }
                 }
                 // Fall back to Object.prototype for ordinary objects
                 // (but not for objects created with Object.create(null))
                 if !obj.borrow().null_prototype {
-                    if let Some(method) = self.object_prototype.borrow().get_property(&key) {
+                    if let Some(method) = self.object_prototype.borrow().get_property(key) {
                         return Ok(method);
                     }
                 }
@@ -4144,7 +4173,7 @@ impl Interpreter {
             JsValue::String(s) => {
                 // String indexing
                 if let crate::value::PropertyKey::Index(i) = key {
-                    if let Some(ch) = s.as_str().chars().nth(i as usize) {
+                    if let Some(ch) = s.as_str().chars().nth(*i as usize) {
                         return Ok(JsValue::String(JsString::from(ch.to_string())));
                     }
                 }
@@ -4152,14 +4181,14 @@ impl Interpreter {
                     return Ok(JsValue::Number(s.len() as f64));
                 }
                 // Look up on String.prototype
-                if let Some(method) = self.string_prototype.borrow().get_property(&key) {
+                if let Some(method) = self.string_prototype.borrow().get_property(key) {
                     return Ok(method);
                 }
                 Ok(JsValue::Undefined)
             }
             JsValue::Number(_) => {
                 // Look up on Number.prototype
-                if let Some(method) = self.number_prototype.borrow().get_property(&key) {
+                if let Some(method) = self.number_prototype.borrow().get_property(key) {
                     return Ok(method);
                 }
                 Ok(JsValue::Undefined)
@@ -4173,13 +4202,31 @@ impl Interpreter {
                     });
                 }
                 // Look up on Symbol.prototype
-                if let Some(method) = self.symbol_prototype.borrow().get_property(&key) {
+                if let Some(method) = self.symbol_prototype.borrow().get_property(key) {
                     return Ok(method);
                 }
                 Ok(JsValue::Undefined)
             }
             _ => Ok(JsValue::Undefined),
         }
+    }
+
+    fn evaluate_member(&mut self, member: &MemberExpression) -> Result<JsValue, JsError> {
+        let object = self.evaluate(&member.object)?;
+
+        let key = match &member.property {
+            MemberProperty::Identifier(id) => PropertyKey::String(id.name.clone()),
+            MemberProperty::Expression(expr) => {
+                let val = self.evaluate(expr)?;
+                PropertyKey::from_value(&val)
+            }
+            MemberProperty::PrivateIdentifier(id) => {
+                // Private fields are stored with # prefix
+                self.key(&format!("#{}", id.name))
+            }
+        };
+
+        self.get_property_value(&object, &key)
     }
 
     fn set_member(&mut self, member: &MemberExpression, value: JsValue) -> Result<(), JsError> {
@@ -4245,33 +4292,28 @@ impl Interpreter {
     }
 
     fn evaluate_call(&mut self, call: &CallExpression) -> Result<JsValue, JsError> {
-        // Determine 'this' binding
-        // For super() calls, use the current this value
-        // For super.method() calls, also use the current this value
-        let this_value = if let Expression::Super(_) = call.callee.as_ref() {
+        // Guard callee, this_value, and arguments during evaluation to prevent GC corruption.
+        // Create the scope early so all values are protected throughout the function.
+        let mut scope = self.guarded_scope();
+
+        // Determine 'this' binding and callee together for member expressions
+        // to avoid evaluating the object twice (e.g., foo().then() should only call foo() once)
+        let (this_value, callee) = if let Expression::Super(_) = call.callee.as_ref() {
             // super() - call parent constructor with current this
-            self.env_get_binding(&JsString::from("this"))
-                .unwrap_or(JsValue::Undefined)
+            let this = self
+                .env_get_binding(&JsString::from("this"))
+                .unwrap_or(JsValue::Undefined);
+            let callee = self.evaluate(&call.callee)?;
+            scope.add_value(&this);
+            scope.add_value(&callee);
+            (this, callee)
         } else if let Expression::Member(member) = call.callee.as_ref() {
             if let Expression::Super(_) = member.object.as_ref() {
-                // super.method() - call with current this
-                self.env_get_binding(&JsString::from("this"))
-                    .unwrap_or(JsValue::Undefined)
-            } else {
-                self.evaluate(&member.object)?
-            }
-        } else {
-            JsValue::Undefined
-        };
-
-        // Guard this_value to prevent GC from collecting it during
-        // callee evaluation and argument evaluation
-        let _this_guard = self.guard_value(&this_value);
-
-        // For super.method(), we need to look up the method on the super prototype
-        let callee = if let Expression::Member(member) = call.callee.as_ref() {
-            if let Expression::Super(_) = member.object.as_ref() {
-                // Get super constructor
+                // super.method() - call with current this, lookup method on super prototype
+                let this = self
+                    .env_get_binding(&JsString::from("this"))
+                    .unwrap_or(JsValue::Undefined);
+                scope.add_value(&this);
                 let super_ctor =
                     self.env_get_binding(&JsString::from("__super__"))
                         .map_err(|_| {
@@ -4279,12 +4321,10 @@ impl Interpreter {
                                 "'super' keyword is not available in this context",
                             )
                         })?;
-                // Get super prototype
-                if let JsValue::Object(ctor) = super_ctor {
+                let callee = if let JsValue::Object(ctor) = super_ctor {
                     let proto_key = self.key("prototype");
                     let proto = ctor.borrow().get_property(&proto_key);
                     if let Some(JsValue::Object(proto_obj)) = proto {
-                        // Get the method from prototype
                         let key = match &member.property {
                             MemberProperty::Identifier(id) => PropertyKey::String(id.name.clone()),
                             MemberProperty::Expression(expr) => {
@@ -4304,17 +4344,36 @@ impl Interpreter {
                     }
                 } else {
                     return Err(JsError::type_error("Super is not an object"));
-                }
+                };
+                scope.add_value(&callee);
+                (this, callee)
             } else {
-                self.evaluate(&call.callee)?
+                // Regular member call like obj.method() or foo().then()
+                // Evaluate the object ONCE and use it for both 'this' and property lookup
+                let this = self.evaluate(&member.object)?;
+
+                // Guard this_value immediately to prevent GC collection during property lookup
+                scope.add_value(&this);
+
+                // Look up the property on the already-evaluated object
+                let key = match &member.property {
+                    MemberProperty::Identifier(id) => PropertyKey::String(id.name.clone()),
+                    MemberProperty::Expression(expr) => {
+                        let val = self.evaluate(expr)?;
+                        PropertyKey::from_value(&val)
+                    }
+                    MemberProperty::PrivateIdentifier(id) => self.key(&format!("#{}", id.name)),
+                };
+                let callee = self.get_property_value(&this, &key)?;
+                scope.add_value(&callee);
+                (this, callee)
             }
         } else {
-            self.evaluate(&call.callee)?
+            // Non-member call (e.g., foo())
+            let callee = self.evaluate(&call.callee)?;
+            scope.add_value(&callee);
+            (JsValue::Undefined, callee)
         };
-
-        // Guard callee and arguments during evaluation to prevent GC corruption
-        let mut scope = self.guarded_scope();
-        scope.add_value(&callee);
 
         // Evaluate arguments, guarding each as it's evaluated
         let mut args = vec![];
@@ -4462,8 +4521,9 @@ impl Interpreter {
         this_value: JsValue,
         args: Vec<JsValue>,
     ) -> Result<JsValue, JsError> {
-        // Create a promise to return
-        let promise = builtins::promise::create_promise(self);
+        // Create a promise to return. Must be guarded since many allocations follow
+        // that may trigger GC before the promise is returned/stored.
+        let promise = builtins::promise::create_promise_guarded(self);
 
         // Push stack frame
         let func_name = interpreted
@@ -4524,15 +4584,15 @@ impl Interpreter {
                     Completion::Normal(val) => val,
                     _ => JsValue::Undefined,
                 };
-                builtins::promise::resolve_promise_value(self, &promise, value)?;
+                builtins::promise::resolve_promise_value(self, promise.as_gc(), value)?;
             }
             Err(e) => {
                 let error_value = e.to_value();
-                builtins::promise::reject_promise_value(self, &promise, error_value)?;
+                builtins::promise::reject_promise_value(self, promise.as_gc(), error_value)?;
             }
         }
 
-        Ok(JsValue::Object(promise))
+        Ok(JsValue::Object(promise.take()))
     }
 
     pub fn call_function(

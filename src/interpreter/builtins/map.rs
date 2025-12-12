@@ -375,7 +375,8 @@ pub fn map_entries(
         }
     }
 
-    // Guard each entry array as it's created to prevent GC from corrupting them
+    // Guard each entry array as it's created to prevent GC from corrupting them.
+    // The scope must remain alive until after create_array(entries) completes.
     let mut scope = interp.guarded_scope();
     let mut entries = Vec::with_capacity(raw_entries.len());
     for (k, v) in raw_entries {
@@ -384,5 +385,7 @@ pub fn map_entries(
         entries.push(JsValue::Object(arr));
     }
 
-    Ok(JsValue::Object(interp.create_array(entries)))
+    let result = interp.create_array(entries);
+    drop(scope);
+    Ok(JsValue::Object(result))
 }

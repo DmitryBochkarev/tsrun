@@ -174,7 +174,8 @@ pub fn json_to_js_value_with_interp(
         serde_json::Value::Number(n) => JsValue::Number(n.as_f64().unwrap_or(0.0)),
         serde_json::Value::String(s) => JsValue::String(JsString::from(s.clone())),
         serde_json::Value::Array(arr) => {
-            // Guard each element as it's created to prevent GC from corrupting them
+            // Guard each element as it's created to prevent GC from corrupting them.
+            // The scope must remain alive until after create_array(elements) completes.
             let mut scope = interp.guarded_scope();
             let mut elements = Vec::with_capacity(arr.len());
             for item in arr {
@@ -182,7 +183,9 @@ pub fn json_to_js_value_with_interp(
                 scope.add_value(&val);
                 elements.push(val);
             }
-            JsValue::Object(interp.create_array(elements))
+            let result = interp.create_array(elements);
+            drop(scope);
+            JsValue::Object(result)
         }
         serde_json::Value::Object(map) => {
             // Guard the result object during property setup
