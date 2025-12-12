@@ -762,7 +762,7 @@ impl<T: Traceable> SpaceInternal<T> {
 
     fn mark_from(&mut self, id: usize) {
         if !self.marked.insert(id) {
-            return; // Already marked
+            return;
         }
 
         // Get strong reference to object so we can trace it
@@ -772,16 +772,7 @@ impl<T: Traceable> SpaceInternal<T> {
             .and_then(|slot| slot.as_ref())
             .and_then(|w| w.upgrade())
         else {
-            // Object is dead, free the slot now
-            if let Some(slot) = self.objects.get_mut(id) {
-                *slot = None;
-                debug_assert!(
-                    !self.free_list.contains(&id),
-                    "Dead object slot {} should not be in free list",
-                    id
-                );
-                self.free_list.push(id);
-            }
+            debug_assert!(false, "dead objects should not be marked as mark_from are called from valid roots and guards");
             return;
         };
 
