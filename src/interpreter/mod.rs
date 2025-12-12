@@ -213,6 +213,8 @@ pub struct Interpreter {
     // ═══════════════════════════════════════════════════════════════
     /// Values returned from eval() that need to stay rooted until released
     escaped_values: Vec<JsValue>,
+    /// Guards for escaped object values - keeps objects alive until released
+    escaped_guards: Vec<GuardedGc<JsObject>>,
 }
 
 /// A static import declaration to be resolved
@@ -321,6 +323,7 @@ impl Interpreter {
             execution_start: None,
             timeout_ms: 3000,
             escaped_values: Vec::new(),
+            escaped_guards: Vec::new(),
         };
 
         // Now initialize prototypes using &mut self
@@ -658,12 +661,12 @@ impl Interpreter {
 
     /// Capture an escaping value to keep it rooted until released
     ///
-    /// Values returned from eval() are added as GC roots to prevent collection.
+    /// Values returned from eval() are protected via GC guards to prevent collection.
     /// Call release_escaped_values() when you're done with them.
     pub fn capture_escaping_value(&mut self, value: &JsValue) {
-        // Add any objects in the value as GC roots
+        // Guard any objects in the value to keep them alive
         if let JsValue::Object(obj) = value {
-            self.gc_space.add_root(obj);
+            self.escaped_guards.push(self.gc_space.guard(obj));
         }
         self.escaped_values.push(value.clone());
     }
@@ -672,12 +675,8 @@ impl Interpreter {
     ///
     /// Call this when you're done with all values returned from eval().
     pub fn release_escaped_values(&mut self) {
-        // Remove GC roots for all escaped objects
-        for value in &self.escaped_values {
-            if let JsValue::Object(obj) = value {
-                self.gc_space.remove_root(obj);
-            }
-        }
+        // Clear guards - objects can now be collected
+        self.escaped_guards.clear();
         self.escaped_values.clear();
     }
 
@@ -688,15 +687,44 @@ impl Interpreter {
     /// Allocate a new environment with the given outer scope
     ///
     /// The new environment is automatically rooted to prevent GC collection.
+    /// Use `env_alloc_guarded` for scope-based protection instead.
     pub fn env_alloc(&mut self, outer: Option<EnvRef>) -> EnvRef {
         let env = create_environment(&mut self.gc_space, outer);
         self.gc_space.add_root(&env);
         env
     }
 
+    /// Allocate a new environment with GC protection via a guard
+    ///
+    /// Returns `(EnvRef, GuardedGc)` - the guard keeps the environment rooted
+    /// until it is dropped. This is the preferred way to allocate environments
+    /// for scope-based lifetimes (blocks, loops, function calls).
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let prev_env = self.env.cheap_clone();
+    /// let (new_env, _guard) = self.env_alloc_guarded(Some(prev_env.cheap_clone()));
+    /// self.env = new_env;
+    /// // ... execute scope ...
+    /// self.env = prev_env;
+    /// // _guard dropped here, environment can be collected
+    /// ```
+    pub fn env_alloc_guarded(&mut self, outer: Option<EnvRef>) -> (EnvRef, GuardedGc<JsObject>) {
+        let env = create_environment(&mut self.gc_space, outer);
+        let guard = self.gc_space.guard(&env);
+        (env, guard)
+    }
+
     /// Restore a previous environment, unrooting the current one
     ///
     /// Call this when exiting a scope to allow GC to collect the environment.
+    ///
+    /// **Deprecated**: Use `env_alloc_guarded` with RAII-style guards instead.
+    /// This method is kept for backward compatibility but should not be used
+    /// in new code.
+    #[allow(dead_code)]
+    #[deprecated(note = "Use env_alloc_guarded with RAII-style guards instead")]
     pub fn env_restore(&mut self, old_env: EnvRef) {
         self.gc_space.remove_root(&self.env);
         self.env = old_env;
@@ -903,9 +931,10 @@ impl Interpreter {
             throw_value: false,
         });
 
-        // Save current environment and set up generator environment
+        // Save current environment and set up generator environment with guard
         let saved_env = self.env.cheap_clone();
-        self.env = self.env_alloc(Some(closure.cheap_clone()));
+        let (gen_env, _env_guard) = self.env_alloc_guarded(Some(closure.cheap_clone()));
+        self.env = gen_env;
 
         // Bind parameters
         for (i, param) in params.iter().enumerate() {
@@ -916,8 +945,8 @@ impl Interpreter {
         // Execute the generator body
         let result = self.execute_generator_body(&body.body);
 
-        // Restore environment (env_restore unroots the current env)
-        self.env_restore(saved_env);
+        // Restore environment (_env_guard dropped automatically)
+        self.env = saved_env;
 
         // Get the final generator context state and restore outer context
         let ctx = self.generator_context.take();
@@ -985,9 +1014,10 @@ impl Interpreter {
             throw_value: true,
         });
 
-        // Save current environment and set up generator environment
+        // Save current environment and set up generator environment with guard
         let saved_env = self.env.cheap_clone();
-        self.env = self.env_alloc(Some(closure.cheap_clone()));
+        let (gen_env, _env_guard) = self.env_alloc_guarded(Some(closure.cheap_clone()));
+        self.env = gen_env;
 
         // Bind parameters
         for (i, param) in params.iter().enumerate() {
@@ -998,8 +1028,8 @@ impl Interpreter {
         // Execute the generator body
         let result = self.execute_generator_body(&body.body);
 
-        // Restore environment (env_restore unroots the current env)
-        self.env_restore(saved_env);
+        // Restore environment (_env_guard dropped automatically)
+        self.env = saved_env;
 
         // Get the final generator context state and restore outer context
         let ctx = self.generator_context.take();
@@ -1565,18 +1595,19 @@ impl Interpreter {
                             // Guard error_value during env allocation which can trigger GC
                             let _error_guard = self.guard_value(&error_value);
 
-                            // Bind catch parameter
+                            // Bind catch parameter with guarded environment
                             let prev_env = self.env.cheap_clone();
-                            self.env = self.env_alloc(Some(self.env.cheap_clone()));
+                            let (catch_env, _env_guard) =
+                                self.env_alloc_guarded(Some(self.env.cheap_clone()));
+                            self.env = catch_env;
 
                             if let Some(param) = &handler.param {
                                 self.bind_pattern(param, error_value, true)?;
                             }
 
                             let result = self.execute_block(&handler.body);
-                            let catch_env = self.env.cheap_clone();
                             self.env = prev_env;
-                            self.gc_space.remove_root(&catch_env);
+                            // _env_guard dropped here automatically
 
                             if let Some(finalizer) = &try_stmt.finalizer {
                                 self.execute_block(finalizer)?;
@@ -2529,7 +2560,8 @@ impl Interpreter {
 
     fn execute_block(&mut self, block: &BlockStatement) -> Result<Completion, JsError> {
         let prev_env = self.env.cheap_clone();
-        self.env = self.env_alloc(Some(self.env.cheap_clone()));
+        let (block_env, _guard) = self.env_alloc_guarded(Some(self.env.cheap_clone()));
+        self.env = block_env;
 
         let mut result = Completion::Normal(JsValue::Undefined);
 
@@ -2541,9 +2573,8 @@ impl Interpreter {
             }
         }
 
-        let block_env = self.env.cheap_clone();
         self.env = prev_env;
-        self.gc_space.remove_root(&block_env);
+        // _guard dropped here automatically, allowing block_env to be collected
         Ok(result)
     }
 
@@ -2557,7 +2588,8 @@ impl Interpreter {
         label: Option<&JsString>,
     ) -> Result<Completion, JsError> {
         let prev_env = self.env.cheap_clone();
-        self.env = self.env_alloc(Some(self.env.cheap_clone()));
+        let (loop_env, _loop_guard) = self.env_alloc_guarded(Some(self.env.cheap_clone()));
+        self.env = loop_env.cheap_clone();
 
         // Track let-declared loop variables for per-iteration binding
         let mut let_var_names: Vec<String> = Vec::new();
@@ -2585,8 +2617,6 @@ impl Interpreter {
             }
         }
 
-        let loop_env = self.env.cheap_clone();
-
         // Loop
         loop {
             // Check for timeout at each iteration
@@ -2600,9 +2630,10 @@ impl Interpreter {
                 }
             }
 
-            // For let/const loops, create per-iteration scope
-            let iter_env = if is_let_loop && !let_var_names.is_empty() {
-                let iter_env = self.env_alloc(Some(loop_env.cheap_clone()));
+            // For let/const loops, create per-iteration scope with guard
+            // The guard is automatically dropped at end of iteration or on early exit
+            let _iter_guard = if is_let_loop && !let_var_names.is_empty() {
+                let (iter_env, guard) = self.env_alloc_guarded(Some(loop_env.cheap_clone()));
                 // Copy current values into the per-iteration scope
                 for name in &let_var_names {
                     let js_name: JsString = name.clone().into();
@@ -2610,34 +2641,23 @@ impl Interpreter {
                         self.env_define_in(&iter_env, js_name, val, true);
                     }
                 }
-                self.env = iter_env.cheap_clone();
-                Some(iter_env)
+                self.env = iter_env;
+                Some(guard)
             } else {
                 None
             };
 
-            // Body
+            // Body - guards are automatically dropped on any exit path
             match self.execute_statement(&for_stmt.body)? {
                 Completion::Break(None) => {
-                    if let Some(env) = iter_env {
-                        self.gc_space.remove_root(&env);
-                    }
                     self.env = loop_env.cheap_clone();
                     break;
                 }
                 Completion::Break(Some(ref l)) if label == Some(l) => {
-                    if let Some(env) = iter_env {
-                        self.gc_space.remove_root(&env);
-                    }
-                    self.gc_space.remove_root(&loop_env);
                     self.env = prev_env;
                     return Ok(Completion::Normal(JsValue::Undefined));
                 }
                 Completion::Break(lbl) => {
-                    if let Some(env) = iter_env {
-                        self.gc_space.remove_root(&env);
-                    }
-                    self.gc_space.remove_root(&loop_env);
                     self.env = prev_env;
                     return Ok(Completion::Break(lbl));
                 }
@@ -2646,18 +2666,10 @@ impl Interpreter {
                     // Continue with matching label - continue this loop
                 }
                 Completion::Continue(lbl) => {
-                    if let Some(env) = iter_env {
-                        self.gc_space.remove_root(&env);
-                    }
-                    self.gc_space.remove_root(&loop_env);
                     self.env = prev_env;
                     return Ok(Completion::Continue(lbl));
                 }
                 Completion::Return(val) => {
-                    if let Some(env) = iter_env {
-                        self.gc_space.remove_root(&env);
-                    }
-                    self.gc_space.remove_root(&loop_env);
                     self.env = prev_env;
                     return Ok(Completion::Return(val));
                 }
@@ -2673,20 +2685,17 @@ impl Interpreter {
                         let _ = self.env_set_binding_in(&loop_env, &js_name, val);
                     }
                 }
-                // Free the per-iteration environment
-                if let Some(env) = iter_env {
-                    self.gc_space.remove_root(&env);
-                }
                 self.env = loop_env.cheap_clone();
             }
+            // _iter_guard dropped at end of iteration
 
             if let Some(update) = &for_stmt.update {
                 self.evaluate(update)?;
             }
         }
 
-        self.gc_space.remove_root(&loop_env);
         self.env = prev_env;
+        // _loop_guard dropped here automatically
         Ok(Completion::Normal(JsValue::Undefined))
     }
 
@@ -2749,8 +2758,9 @@ impl Interpreter {
             // Check for timeout at each iteration
             self.check_timeout()?;
 
-            let iter_env = self.env_alloc(Some(prev_env.cheap_clone()));
-            self.env = iter_env.cheap_clone();
+            // Per-iteration environment with guard - automatically dropped at end of iteration
+            let (iter_env, _guard) = self.env_alloc_guarded(Some(prev_env.cheap_clone()));
+            self.env = iter_env;
 
             let key_value = JsValue::String(JsString::from(key));
 
@@ -2766,44 +2776,37 @@ impl Interpreter {
                 }
             }
 
+            // Guards are automatically dropped on any exit path
             match self.execute_statement(&for_in.body)? {
                 Completion::Break(None) => {
-                    self.gc_space.remove_root(&iter_env);
                     break;
                 }
                 Completion::Break(Some(ref l)) if label == Some(l) => {
-                    self.gc_space.remove_root(&iter_env);
                     self.env = prev_env;
                     return Ok(Completion::Normal(JsValue::Undefined));
                 }
                 Completion::Break(lbl) => {
-                    self.gc_space.remove_root(&iter_env);
                     self.env = prev_env;
                     return Ok(Completion::Break(lbl));
                 }
                 Completion::Continue(None) => {
-                    self.gc_space.remove_root(&iter_env);
                     continue;
                 }
                 Completion::Continue(Some(ref l)) if label == Some(l) => {
                     // Continue with matching label - continue this loop
-                    self.gc_space.remove_root(&iter_env);
                     continue;
                 }
                 Completion::Continue(lbl) => {
-                    self.gc_space.remove_root(&iter_env);
                     self.env = prev_env;
                     return Ok(Completion::Continue(lbl));
                 }
                 Completion::Return(val) => {
-                    self.gc_space.remove_root(&iter_env);
                     self.env = prev_env;
                     return Ok(Completion::Return(val));
                 }
-                Completion::Normal(_) => {
-                    self.gc_space.remove_root(&iter_env);
-                }
+                Completion::Normal(_) => {}
             }
+            // _guard dropped at end of iteration
         }
 
         self.env = prev_env;
@@ -2868,8 +2871,9 @@ impl Interpreter {
             // Check for timeout at each iteration
             self.check_timeout()?;
 
-            let iter_env = self.env_alloc(Some(prev_env.cheap_clone()));
-            self.env = iter_env.cheap_clone();
+            // Per-iteration environment with guard - automatically dropped at end of iteration
+            let (iter_env, _guard) = self.env_alloc_guarded(Some(prev_env.cheap_clone()));
+            self.env = iter_env;
 
             match &for_of.left {
                 ForInOfLeft::Variable(decl) => {
@@ -2883,44 +2887,37 @@ impl Interpreter {
                 }
             }
 
+            // Guards are automatically dropped on any exit path
             match self.execute_statement(&for_of.body)? {
                 Completion::Break(None) => {
-                    self.gc_space.remove_root(&iter_env);
                     break;
                 }
                 Completion::Break(Some(ref l)) if label == Some(l) => {
-                    self.gc_space.remove_root(&iter_env);
                     self.env = prev_env;
                     return Ok(Completion::Normal(JsValue::Undefined));
                 }
                 Completion::Break(lbl) => {
-                    self.gc_space.remove_root(&iter_env);
                     self.env = prev_env;
                     return Ok(Completion::Break(lbl));
                 }
                 Completion::Continue(None) => {
-                    self.gc_space.remove_root(&iter_env);
                     continue;
                 }
                 Completion::Continue(Some(ref l)) if label == Some(l) => {
                     // Continue with matching label - continue this loop
-                    self.gc_space.remove_root(&iter_env);
                     continue;
                 }
                 Completion::Continue(lbl) => {
-                    self.gc_space.remove_root(&iter_env);
                     self.env = prev_env;
                     return Ok(Completion::Continue(lbl));
                 }
                 Completion::Return(val) => {
-                    self.gc_space.remove_root(&iter_env);
                     self.env = prev_env;
                     return Ok(Completion::Return(val));
                 }
-                Completion::Normal(_) => {
-                    self.gc_space.remove_root(&iter_env);
-                }
+                Completion::Normal(_) => {}
             }
+            // _guard dropped at end of iteration
         }
 
         self.env = prev_env;
@@ -2971,8 +2968,9 @@ impl Interpreter {
             }
 
             // Bind the value to the loop variable
-            let iter_env = self.env_alloc(Some(prev_env.cheap_clone()));
-            self.env = iter_env.cheap_clone();
+            // Per-iteration environment with guard - automatically dropped at end of iteration
+            let (iter_env, _guard) = self.env_alloc_guarded(Some(prev_env.cheap_clone()));
+            self.env = iter_env;
 
             match &for_of.left {
                 ForInOfLeft::Variable(decl) => {
@@ -2986,44 +2984,36 @@ impl Interpreter {
                 }
             }
 
-            // Execute the loop body
+            // Execute the loop body - guards are automatically dropped on any exit path
             match self.execute_statement(&for_of.body)? {
                 Completion::Break(None) => {
-                    self.gc_space.remove_root(&iter_env);
                     break;
                 }
                 Completion::Break(Some(ref l)) if label == Some(l) => {
-                    self.gc_space.remove_root(&iter_env);
                     self.env = prev_env;
                     return Ok(Completion::Normal(JsValue::Undefined));
                 }
                 Completion::Break(lbl) => {
-                    self.gc_space.remove_root(&iter_env);
                     self.env = prev_env;
                     return Ok(Completion::Break(lbl));
                 }
                 Completion::Continue(None) => {
-                    self.gc_space.remove_root(&iter_env);
                     continue;
                 }
                 Completion::Continue(Some(ref l)) if label == Some(l) => {
-                    self.gc_space.remove_root(&iter_env);
                     continue;
                 }
                 Completion::Continue(lbl) => {
-                    self.gc_space.remove_root(&iter_env);
                     self.env = prev_env;
                     return Ok(Completion::Continue(lbl));
                 }
                 Completion::Return(val) => {
-                    self.gc_space.remove_root(&iter_env);
                     self.env = prev_env;
                     return Ok(Completion::Return(val));
                 }
-                Completion::Normal(_) => {
-                    self.gc_space.remove_root(&iter_env);
-                }
+                Completion::Normal(_) => {}
             }
+            // _guard dropped at end of iteration
         }
 
         self.env = prev_env;
@@ -4539,7 +4529,8 @@ impl Interpreter {
         });
 
         let prev_env = self.env.cheap_clone();
-        self.env = self.env_alloc(Some(interpreted.closure.cheap_clone()));
+        let (func_env, _guard) = self.env_alloc_guarded(Some(interpreted.closure.cheap_clone()));
+        self.env = func_env;
 
         // Bind 'this' value
         self.env_define("this", this_value, false);
@@ -4572,10 +4563,9 @@ impl Interpreter {
             FunctionBody::Expression(expr) => self.evaluate(expr).map(Completion::Normal),
         };
 
-        let func_env = self.env.cheap_clone();
         self.env = prev_env;
-        self.gc_space.remove_root(&func_env);
         self.call_stack.pop();
+        // _guard dropped here automatically
 
         match execution_result {
             Ok(completion) => {
@@ -4659,7 +4649,9 @@ impl Interpreter {
                 });
 
                 let prev_env = self.env.cheap_clone();
-                self.env = self.env_alloc(Some(interpreted.closure.cheap_clone()));
+                let (func_env, _guard) =
+                    self.env_alloc_guarded(Some(interpreted.closure.cheap_clone()));
+                self.env = func_env;
 
                 // Bind 'this' value
                 self.env_define("this", this_value.clone(), false);
@@ -4702,10 +4694,9 @@ impl Interpreter {
                 };
 
                 // Always restore environment and clean up, even on error
-                let func_env = self.env.cheap_clone();
                 self.env = prev_env;
-                self.gc_space.remove_root(&func_env);
                 self.call_stack.pop();
+                // _guard dropped here automatically
 
                 // Now handle the result
                 match result {

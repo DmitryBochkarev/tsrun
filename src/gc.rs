@@ -9,16 +9,34 @@
 //! **DO NOT MODIFY** the core GC logic (marking, unlinking, cycle breaking) without
 //! careful consideration. The GC assumes that ALL objects held by Rust code are either:
 //!
-//! 1. **Rooted** via `Space::add_root()`, OR
-//! 2. **Reachable** from a rooted object through traced references
+//! 1. **Guarded** via [`GuardedGc`] or [`GuardedScope`], OR
+//! 2. **Reachable** from a guarded/rooted object through traced references
 //!
-//! If you hold a `Gc<T>` reference in Rust code and that object is not rooted or
-//! reachable from roots, the GC will unlink it (clear its properties) during collection.
-//! This causes subtle bugs where objects appear empty/corrupted.
+//! If you hold a `Gc<T>` reference in Rust code and that object is not guarded or
+//! reachable from guarded objects, the GC will unlink it (clear its properties) during
+//! collection. This causes subtle bugs where objects appear empty/corrupted.
 //!
-//! When allocating objects that will have further evaluation before being stored in
-//! the environment, you MUST temporarily root them. See `Expression::Object` evaluation
-//! in `interpreter/mod.rs` for an example.
+//! # Usage
+//!
+//! Use [`GuardedGc`] for single objects that need protection during allocations:
+//!
+//! ```ignore
+//! let guarded = space.alloc_guarded(MyObject::new());
+//! // guarded object survives GC until guard is dropped
+//! let gc = guarded.take(); // remove protection when done
+//! ```
+//!
+//! Use [`GuardedScope`] for protecting multiple objects during a sequence of operations:
+//!
+//! ```ignore
+//! let mut scope = space.guarded_scope();
+//! for item in items {
+//!     let obj = space.alloc(MyObject::new());
+//!     scope.guard(&obj); // protect from GC
+//!     results.push(obj);
+//! }
+//! // all guards released when scope drops
+//! ```
 
 use std::{
     cell::RefCell,
@@ -522,7 +540,10 @@ impl<T: Traceable> Space<T> {
     /// from being collected.
     ///
     /// Adding the same object multiple times has no effect (roots are stored in a set).
-    pub fn add_root(&mut self, gc: &Gc<T>) {
+    ///
+    /// Note: This is an internal API. External users should use `GuardedGc` or
+    /// `GuardedScope` to protect objects from collection.
+    pub(crate) fn add_root(&mut self, gc: &Gc<T>) {
         let id = gc.id();
         debug_assert!(
             self.internal
@@ -556,7 +577,10 @@ impl<T: Traceable> Space<T> {
     /// Remove an object from the roots.
     ///
     /// Returns `true` if the object was found and removed.
-    pub fn remove_root(&mut self, gc: &Gc<T>) -> bool {
+    ///
+    /// Note: This is an internal API. External users should use `GuardedGc` or
+    /// `GuardedScope` to protect objects from collection.
+    pub(crate) fn remove_root(&mut self, gc: &Gc<T>) -> bool {
         self.internal.borrow_mut().roots.remove(&gc.id()).is_some()
     }
 
@@ -564,7 +588,10 @@ impl<T: Traceable> Space<T> {
     ///
     /// After calling this, all objects become eligible for collection
     /// unless they are held by local `Gc` references.
-    pub fn clear_roots(&mut self) {
+    ///
+    /// Note: This is an internal API.
+    #[allow(dead_code)]
+    pub(crate) fn clear_roots(&mut self) {
         self.internal.borrow_mut().roots.clear();
     }
 

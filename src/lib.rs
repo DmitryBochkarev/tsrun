@@ -20,7 +20,7 @@ pub mod string_dict;
 pub mod value;
 
 pub use error::JsError;
-pub use gc::{Gc, GcBox, GuardedGc, Space, Traceable, Tracer, DEFAULT_GC_THRESHOLD};
+pub use gc::{Gc, GcBox, GuardedGc, GuardedScope, Space, Traceable, Tracer, DEFAULT_GC_THRESHOLD};
 pub use interpreter::GcStats;
 pub use interpreter::Interpreter;
 pub use interpreter::SavedExecutionState;
