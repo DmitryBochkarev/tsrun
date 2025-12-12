@@ -549,6 +549,10 @@ pub fn string_replace(
     let search_arg = args.first().cloned().unwrap_or(JsValue::Undefined);
     let replacement_arg = args.get(1).cloned().unwrap_or(JsValue::Undefined);
 
+    // Guard values to prevent GC from collecting them during callback invocations
+    let _search_guard = interp.guard_value(&search_arg);
+    let _replacement_guard = interp.guard_value(&replacement_arg);
+
     // Check if search is a RegExp
     if let Ok((pattern, flags)) = get_regexp_data(&search_arg) {
         let is_global = flags.contains('g');
@@ -973,7 +977,9 @@ pub fn string_match_all(
     let input_key = interp.key("input");
 
     // Collect all matches with their capture groups
+    // Guard each match array as it's created to prevent GC from corrupting them
     let mut all_matches = Vec::new();
+    let mut _match_guards = Vec::new();
     for caps in re.captures_iter(&s) {
         let mut result = Vec::new();
         for cap in caps.iter() {
@@ -983,6 +989,8 @@ pub fn string_match_all(
             }
         }
         let arr = interp.create_array(result);
+        // Guard this array before setting properties (which may trigger GC)
+        let guard = interp.gc_space.guard(&arr);
         // Add index property
         if let Some(m) = caps.get(0) {
             arr.borrow_mut()
@@ -993,6 +1001,7 @@ pub fn string_match_all(
             JsValue::String(JsString::from(s.clone())),
         );
         all_matches.push(JsValue::Object(arr));
+        _match_guards.push(guard);
     }
 
     Ok(JsValue::Object(interp.create_array(all_matches)))

@@ -217,7 +217,11 @@ pub fn object_from_entries(
         ));
     };
 
-    let result = interp.create_object();
+    // Guard the input array to prevent GC from collecting it during iteration
+    let _arr_guard = interp.gc_space.guard(&arr);
+
+    // Create result object with guard - key interning may trigger GC
+    let result = interp.create_object_guarded();
 
     let length = {
         let arr_ref = arr.borrow();
@@ -253,7 +257,7 @@ pub fn object_from_entries(
         }
     }
 
-    Ok(JsValue::Object(result))
+    Ok(JsValue::Object(result.take()))
 }
 
 pub fn object_has_own(

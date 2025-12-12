@@ -602,3 +602,620 @@ results
         panic!("Expected array result");
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Tests with gc_threshold=1 to stress test GC safety
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Helper to evaluate with gc_threshold=1 (most aggressive GC)
+fn eval_with_threshold_1(source: &str) -> typescript_eval::JsValue {
+    let mut runtime = Runtime::new();
+    runtime.set_gc_threshold(1);
+    runtime.set_timeout_ms(0); // Disable timeout for GC stress tests
+    match runtime.eval(source).unwrap() {
+        RuntimeResult::Complete(value) => value,
+        other => panic!("Expected Complete, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_gc_threshold_1_simple_object() {
+    let result = eval_with_threshold_1("const obj = { a: 1, b: 2 }; obj.a + obj.b");
+    assert_eq!(result, typescript_eval::JsValue::Number(3.0));
+}
+
+#[test]
+fn test_gc_threshold_1_object_with_computed_props() {
+    let result = eval_with_threshold_1(
+        r#"
+        const x = 10;
+        const y = 20;
+        const obj = { a: x + 1, b: y + 2 };
+        obj.a + obj.b
+    "#,
+    );
+    assert_eq!(result, typescript_eval::JsValue::Number(33.0));
+}
+
+#[test]
+fn test_gc_threshold_1_array_literal() {
+    let result = eval_with_threshold_1("const arr = [1, 2, 3]; arr[0] + arr[1] + arr[2]");
+    assert_eq!(result, typescript_eval::JsValue::Number(6.0));
+}
+
+#[test]
+fn test_gc_threshold_1_array_with_computed_elements() {
+    let result = eval_with_threshold_1(
+        r#"
+        const x = 10;
+        const y = 20;
+        const arr = [x + 1, y + 2, x + y];
+        arr[0] + arr[1] + arr[2]
+    "#,
+    );
+    assert_eq!(result, typescript_eval::JsValue::Number(63.0));
+}
+
+#[test]
+fn test_gc_threshold_1_nested_objects() {
+    let result = eval_with_threshold_1(
+        r#"
+        const inner = { x: 5 };
+        const outer = { inner: inner, y: 10 };
+        outer.inner.x + outer.y
+    "#,
+    );
+    assert_eq!(result, typescript_eval::JsValue::Number(15.0));
+}
+
+#[test]
+fn test_gc_threshold_1_array_map() {
+    let result = eval_with_threshold_1(
+        r#"
+        const arr = [1, 2, 3];
+        const mapped = arr.map(x => x * 2);
+        mapped[0] + mapped[1] + mapped[2]
+    "#,
+    );
+    assert_eq!(result, typescript_eval::JsValue::Number(12.0));
+}
+
+#[test]
+fn test_gc_threshold_1_array_filter() {
+    let result = eval_with_threshold_1(
+        r#"
+        const arr = [1, 2, 3, 4, 5];
+        const filtered = arr.filter(x => x > 2);
+        filtered.length
+    "#,
+    );
+    assert_eq!(result, typescript_eval::JsValue::Number(3.0));
+}
+
+#[test]
+fn test_gc_threshold_1_object_keys() {
+    let result = eval_with_threshold_1(
+        r#"
+        const obj = { a: 1, b: 2, c: 3 };
+        const keys = Object.keys(obj);
+        keys.length
+    "#,
+    );
+    assert_eq!(result, typescript_eval::JsValue::Number(3.0));
+}
+
+#[test]
+fn test_gc_threshold_1_object_values() {
+    let result = eval_with_threshold_1(
+        r#"
+        const obj = { a: 1, b: 2, c: 3 };
+        const values = Object.values(obj);
+        values[0] + values[1] + values[2]
+    "#,
+    );
+    assert_eq!(result, typescript_eval::JsValue::Number(6.0));
+}
+
+#[test]
+fn test_gc_threshold_1_object_entries() {
+    let result = eval_with_threshold_1(
+        r#"
+        const obj = { a: 1, b: 2 };
+        const entries = Object.entries(obj);
+        entries.length
+    "#,
+    );
+    assert_eq!(result, typescript_eval::JsValue::Number(2.0));
+}
+
+#[test]
+fn test_gc_threshold_1_string_split() {
+    let result = eval_with_threshold_1(
+        r#"
+        const str = "a,b,c";
+        const parts = str.split(",");
+        parts.length
+    "#,
+    );
+    assert_eq!(result, typescript_eval::JsValue::Number(3.0));
+}
+
+#[test]
+fn test_gc_threshold_1_array_concat() {
+    let result = eval_with_threshold_1(
+        r#"
+        const a = [1, 2];
+        const b = [3, 4];
+        const c = a.concat(b);
+        c.length
+    "#,
+    );
+    assert_eq!(result, typescript_eval::JsValue::Number(4.0));
+}
+
+#[test]
+fn test_gc_threshold_1_array_slice() {
+    let result = eval_with_threshold_1(
+        r#"
+        const arr = [1, 2, 3, 4, 5];
+        const sliced = arr.slice(1, 4);
+        sliced[0] + sliced[1] + sliced[2]
+    "#,
+    );
+    assert_eq!(result, typescript_eval::JsValue::Number(9.0));
+}
+
+#[test]
+fn test_gc_threshold_1_constructor_call() {
+    let result = eval_with_threshold_1(
+        r#"
+        class Point {
+            x: number;
+            y: number;
+            constructor(x: number, y: number) {
+                this.x = x;
+                this.y = y;
+            }
+        }
+        const p = new Point(3, 4);
+        p.x + p.y
+    "#,
+    );
+    assert_eq!(result, typescript_eval::JsValue::Number(7.0));
+}
+
+#[test]
+fn test_gc_threshold_1_loop_with_objects() {
+    let result = eval_with_threshold_1(
+        r#"
+        let sum = 0;
+        for (let i = 0; i < 10; i++) {
+            const obj = { value: i };
+            sum = sum + obj.value;
+        }
+        sum
+    "#,
+    );
+    assert_eq!(result, typescript_eval::JsValue::Number(45.0));
+}
+
+#[test]
+fn test_gc_threshold_1_json_parse() {
+    let result = eval_with_threshold_1(
+        r#"
+        const obj = JSON.parse('{"a": 1, "b": 2}');
+        obj.a + obj.b
+    "#,
+    );
+    assert_eq!(result, typescript_eval::JsValue::Number(3.0));
+}
+
+#[test]
+fn test_gc_threshold_1_array_from() {
+    let result = eval_with_threshold_1(
+        r#"
+        const arr = Array.from([1, 2, 3]);
+        arr[0] + arr[1] + arr[2]
+    "#,
+    );
+    assert_eq!(result, typescript_eval::JsValue::Number(6.0));
+}
+
+#[test]
+fn test_gc_threshold_1_array_of() {
+    let result = eval_with_threshold_1(
+        r#"
+        const arr = Array.of(1, 2, 3);
+        arr[0] + arr[1] + arr[2]
+    "#,
+    );
+    assert_eq!(result, typescript_eval::JsValue::Number(6.0));
+}
+
+#[test]
+fn test_gc_threshold_1_function_returning_object() {
+    let result = eval_with_threshold_1(
+        r#"
+        function makeObj(x: number): { value: number } {
+            return { value: x * 2 };
+        }
+        const obj = makeObj(5);
+        obj.value
+    "#,
+    );
+    assert_eq!(result, typescript_eval::JsValue::Number(10.0));
+}
+
+#[test]
+fn test_gc_threshold_1_multiple_objects_in_loop() {
+    let result = eval_with_threshold_1(
+        r#"
+        let sum = 0;
+        for (let i = 0; i < 20; i++) {
+            const a = { v: 1 };
+            const b = { v: 2 };
+            const c = { v: 3 };
+            sum = sum + a.v + b.v + c.v;
+        }
+        sum
+    "#,
+    );
+    assert_eq!(result, typescript_eval::JsValue::Number(120.0));
+}
+
+#[test]
+fn test_gc_threshold_1_array_foreach() {
+    let result = eval_with_threshold_1(
+        r#"
+        let sum = 0;
+        [1, 2, 3].forEach(x => { sum = sum + x; });
+        sum
+    "#,
+    );
+    assert_eq!(result, typescript_eval::JsValue::Number(6.0));
+}
+
+#[test]
+fn test_gc_threshold_1_array_reduce() {
+    let result = eval_with_threshold_1(
+        r#"
+        const sum = [1, 2, 3, 4, 5].reduce((acc, x) => acc + x, 0);
+        sum
+    "#,
+    );
+    assert_eq!(result, typescript_eval::JsValue::Number(15.0));
+}
+
+#[test]
+fn test_gc_threshold_1_array_find() {
+    let result = eval_with_threshold_1(
+        r#"
+        const arr = [1, 2, 3, 4, 5];
+        const found = arr.find(x => x > 3);
+        found
+    "#,
+    );
+    assert_eq!(result, typescript_eval::JsValue::Number(4.0));
+}
+
+#[test]
+fn test_gc_threshold_1_array_findindex() {
+    let result = eval_with_threshold_1(
+        r#"
+        const arr = [1, 2, 3, 4, 5];
+        const idx = arr.findIndex(x => x > 3);
+        idx
+    "#,
+    );
+    assert_eq!(result, typescript_eval::JsValue::Number(3.0));
+}
+
+#[test]
+fn test_gc_threshold_1_array_every() {
+    let result = eval_with_threshold_1(
+        r#"
+        const arr = [2, 4, 6];
+        arr.every(x => x % 2 === 0)
+    "#,
+    );
+    assert_eq!(result, typescript_eval::JsValue::Boolean(true));
+}
+
+#[test]
+fn test_gc_threshold_1_array_some() {
+    let result = eval_with_threshold_1(
+        r#"
+        const arr = [1, 2, 3];
+        arr.some(x => x > 2)
+    "#,
+    );
+    assert_eq!(result, typescript_eval::JsValue::Boolean(true));
+}
+
+#[test]
+fn test_gc_threshold_1_array_sort_with_comparator() {
+    let result = eval_with_threshold_1(
+        r#"
+        const arr = [3, 1, 4, 1, 5, 9, 2, 6];
+        arr.sort((a, b) => b - a);
+        arr[0]
+    "#,
+    );
+    assert_eq!(result, typescript_eval::JsValue::Number(9.0));
+}
+
+#[test]
+fn test_gc_threshold_1_array_flatmap() {
+    let result = eval_with_threshold_1(
+        r#"
+        const arr = [1, 2, 3];
+        const flat = arr.flatMap(x => [x, x * 2]);
+        flat.length
+    "#,
+    );
+    assert_eq!(result, typescript_eval::JsValue::Number(6.0));
+}
+
+#[test]
+fn test_gc_threshold_1_nested_class() {
+    let result = eval_with_threshold_1(
+        r#"
+        class Outer {
+            inner: { value: number };
+            constructor() {
+                this.inner = { value: 42 };
+            }
+        }
+        const o = new Outer();
+        o.inner.value
+    "#,
+    );
+    assert_eq!(result, typescript_eval::JsValue::Number(42.0));
+}
+
+#[test]
+fn test_gc_threshold_1_simple_class_assignment() {
+    // Simpler test - just check if this.x = y works
+    let result = eval_with_threshold_1(
+        r#"
+        class Test {
+            val: number;
+            constructor() {
+                this.val = 42;
+            }
+        }
+        const t = new Test();
+        t.val
+    "#,
+    );
+    assert_eq!(result, typescript_eval::JsValue::Number(42.0));
+}
+
+#[test]
+fn test_gc_threshold_1_assignment_with_object() {
+    // Check assignment with object literal without class
+    let result = eval_with_threshold_1(
+        r#"
+        const obj = {};
+        obj.inner = { value: 42 };
+        obj.inner.value
+    "#,
+    );
+    assert_eq!(result, typescript_eval::JsValue::Number(42.0));
+}
+
+// Test various constructor patterns with GC stress
+#[test]
+fn test_gc_threshold_1_constructor_patterns() {
+    // Object assignment as last statement (was the failing case)
+    let result = eval_with_threshold_1(
+        r#"
+        class Test1 {
+            constructor() {
+                this.inner = { value: 42 };
+            }
+        }
+        const t = new Test1();
+        t.inner.value
+    "#,
+    );
+    assert_eq!(result, typescript_eval::JsValue::Number(42.0));
+
+    // Constructor saved to variable matches returned instance
+    let result2 = eval_with_threshold_1(
+        r#"
+        let savedThis: any = null;
+        class Test2 {
+            constructor() {
+                this.inner = { value: 42 };
+                savedThis = this;
+            }
+        }
+        const t = new Test2();
+        t === savedThis && t.inner.value === 42
+    "#,
+    );
+    assert_eq!(result2, typescript_eval::JsValue::Boolean(true));
+
+    // With explicit return statement
+    let result3 = eval_with_threshold_1(
+        r#"
+        class Test3 {
+            constructor() {
+                this.inner = { value: 42 };
+                return;
+            }
+        }
+        const t = new Test3();
+        t.inner.value
+    "#,
+    );
+    assert_eq!(result3, typescript_eval::JsValue::Number(42.0));
+
+    // With field type annotation
+    let result4 = eval_with_threshold_1(
+        r#"
+        class Test4 {
+            inner: { value: number };
+            constructor() {
+                this.inner = { value: 42 };
+            }
+        }
+        const t = new Test4();
+        t.inner.value
+    "#,
+    );
+    assert_eq!(result4, typescript_eval::JsValue::Number(42.0));
+}
+
+#[test]
+fn test_gc_threshold_1_string_replace_callback() {
+    // First verify callback is callable - simpler test
+    let result_simple = eval_with_threshold_1(
+        r#"
+        const fn = (x: string) => x.toUpperCase();
+        typeof fn === "function"
+    "#,
+    );
+    assert_eq!(
+        result_simple,
+        typescript_eval::JsValue::Boolean(true),
+        "callback should be a function"
+    );
+
+    // Test that replace with string replacement works
+    let result_string = eval_with_threshold_1(
+        r#"
+        "hello world".replace(/\w+/g, "X")
+    "#,
+    );
+    assert_eq!(
+        result_string,
+        typescript_eval::JsValue::String(typescript_eval::JsString::from("X X")),
+        "string replacement should work"
+    );
+
+    // Test that replace with pre-assigned callback works
+    let result_preassigned = eval_with_threshold_1(
+        r#"
+        const cb = (m: string) => m.toUpperCase();
+        "hello".replace(/\w+/g, cb)
+    "#,
+    );
+    assert_eq!(
+        result_preassigned,
+        typescript_eval::JsValue::String(typescript_eval::JsString::from("HELLO")),
+        "pre-assigned callback should work"
+    );
+
+    // Test that replace with inline callback works
+    let result = eval_with_threshold_1(
+        r#"
+        const str = "hello world";
+        const result = str.replace(/\w+/g, (match: string) => match.toUpperCase());
+        result
+    "#,
+    );
+    assert_eq!(
+        result,
+        typescript_eval::JsValue::String(typescript_eval::JsString::from("HELLO WORLD"))
+    );
+}
+
+#[test]
+fn test_gc_threshold_1_string_match_all() {
+    let result = eval_with_threshold_1(
+        r#"
+        const str = "test1 test2 test3";
+        const matches = [...str.matchAll(/test(\d)/g)];
+        matches.length
+    "#,
+    );
+    assert_eq!(result, typescript_eval::JsValue::Number(3.0));
+}
+
+#[test]
+fn test_gc_threshold_1_object_from_entries() {
+    // First test: verify entries array is correct
+    let entries_test = eval_with_threshold_1(
+        r#"
+        const entries = [["a", 1], ["b", 2], ["c", 3]];
+        entries[0][0] + entries[0][1] + entries[1][0] + entries[1][1]
+    "#,
+    );
+    // "a" + 1 + "b" + 2 = "a1b2"
+    assert_eq!(
+        entries_test,
+        typescript_eval::JsValue::String(typescript_eval::JsString::from("a1b2")),
+        "entries array should be intact"
+    );
+
+    let result = eval_with_threshold_1(
+        r#"
+        const entries = [["a", 1], ["b", 2], ["c", 3]];
+        const obj = Object.fromEntries(entries);
+        obj.a + obj.b + obj.c
+    "#,
+    );
+    assert_eq!(result, typescript_eval::JsValue::Number(6.0));
+}
+
+#[test]
+fn test_gc_threshold_1_json_parse_nested() {
+    // Test deeply nested JSON parsing
+    // obj.a.b.c = 1, obj.d = [1, 2, 3], so 1 + 1 + 2 + 3 = 7
+    let result = eval_with_threshold_1(
+        r#"
+        const obj = JSON.parse('{"a": {"b": {"c": 1}}, "d": [1, 2, 3]}');
+        obj.a.b.c + obj.d[0] + obj.d[1] + obj.d[2]
+    "#,
+    );
+    assert_eq!(result, typescript_eval::JsValue::Number(7.0));
+}
+
+#[test]
+fn test_gc_threshold_1_regexp_exec() {
+    // Test regexp exec with index and input properties
+    let result = eval_with_threshold_1(
+        r#"
+        const re = /test(\d)/g;
+        const str = "test1 test2";
+        const match = re.exec(str);
+        match.index + match[0].length + match[1].length
+    "#,
+    );
+    // index = 0, match[0] = "test1" (length 5), match[1] = "1" (length 1) => 0 + 5 + 1 = 6
+    assert_eq!(result, typescript_eval::JsValue::Number(6.0));
+}
+
+#[test]
+fn test_gc_threshold_1_map_entries() {
+    // Test Map.entries() creates arrays correctly
+    let result = eval_with_threshold_1(
+        r#"
+        const m = new Map([["a", 1], ["b", 2], ["c", 3]]);
+        const entries = [...m.entries()];
+        entries[0][0] + entries[0][1] + entries[1][0] + entries[1][1]
+    "#,
+    );
+    // "a" + 1 + "b" + 2 = "a1b2"
+    assert_eq!(
+        result,
+        typescript_eval::JsValue::String(typescript_eval::JsString::from("a1b2"))
+    );
+}
+
+#[test]
+fn test_gc_threshold_1_map_foreach() {
+    // Test Map.forEach() with callback
+    let result = eval_with_threshold_1(
+        r#"
+        const m = new Map([[1, 10], [2, 20], [3, 30]]);
+        let sum = 0;
+        m.forEach((v: number, k: number) => { sum += v + k; });
+        sum
+    "#,
+    );
+    // (10+1) + (20+2) + (30+3) = 11 + 22 + 33 = 66
+    assert_eq!(result, typescript_eval::JsValue::Number(66.0));
+}

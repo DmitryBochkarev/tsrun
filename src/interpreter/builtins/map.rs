@@ -375,10 +375,15 @@ pub fn map_entries(
         }
     }
 
-    let entries: Vec<JsValue> = raw_entries
-        .into_iter()
-        .map(|(k, v)| JsValue::Object(interp.create_array(vec![k, v])))
-        .collect();
+    // Guard each entry array as it's created to prevent GC from corrupting them
+    let mut entries = Vec::with_capacity(raw_entries.len());
+    let mut _entry_guards = Vec::with_capacity(raw_entries.len());
+    for (k, v) in raw_entries {
+        let arr = interp.create_array(vec![k, v]);
+        let guard = interp.gc_space.guard(&arr);
+        entries.push(JsValue::Object(arr));
+        _entry_guards.push(guard);
+    }
 
     Ok(JsValue::Object(interp.create_array(entries)))
 }

@@ -235,6 +235,12 @@ pub fn array_map(
 
     let this_arg = args.get(1).cloned().unwrap_or(JsValue::Undefined);
 
+    // Guard the callback and this_arg to prevent GC from collecting them
+    // during the loop iterations which may trigger allocations.
+    let _callback_guard = interp.guard_value(&callback);
+    let _this_arg_guard = interp.guard_value(&this_arg);
+    let _arr_guard = interp.guard_value(&this);
+
     let length = {
         let arr_ref = arr.borrow();
         match &arr_ref.exotic {
@@ -281,6 +287,12 @@ pub fn array_filter(
     }
 
     let this_arg = args.get(1).cloned().unwrap_or(JsValue::Undefined);
+
+    // Guard the callback and this_arg to prevent GC from collecting them
+    // during the loop iterations which may trigger allocations.
+    let _callback_guard = interp.guard_value(&callback);
+    let _this_arg_guard = interp.guard_value(&this_arg);
+    let _arr_guard = interp.guard_value(&this);
 
     let length = {
         let arr_ref = arr.borrow();
@@ -331,6 +343,11 @@ pub fn array_foreach(
 
     let this_arg = args.get(1).cloned().unwrap_or(JsValue::Undefined);
 
+    // Guard values to prevent GC from collecting them during iterations
+    let _callback_guard = interp.guard_value(&callback);
+    let _this_arg_guard = interp.guard_value(&this_arg);
+    let _arr_guard = interp.guard_value(&this);
+
     let length = {
         let arr_ref = arr.borrow();
         match &arr_ref.exotic {
@@ -372,6 +389,10 @@ pub fn array_reduce(
             "Array.prototype.reduce callback is not a function",
         ));
     }
+
+    // Guard values to prevent GC from collecting them during iterations
+    let _callback_guard = interp.guard_value(&callback);
+    let _arr_guard = interp.guard_value(&this);
 
     let length = {
         let arr_ref = arr.borrow();
@@ -432,6 +453,11 @@ pub fn array_find(
 
     let this_arg = args.get(1).cloned().unwrap_or(JsValue::Undefined);
 
+    // Guard values to prevent GC from collecting them during iterations
+    let _callback_guard = interp.guard_value(&callback);
+    let _this_arg_guard = interp.guard_value(&this_arg);
+    let _arr_guard = interp.guard_value(&this);
+
     let length = {
         let arr_ref = arr.borrow();
         match &arr_ref.exotic {
@@ -479,6 +505,11 @@ pub fn array_find_index(
     }
 
     let this_arg = args.get(1).cloned().unwrap_or(JsValue::Undefined);
+
+    // Guard values to prevent GC from collecting them during iterations
+    let _callback_guard = interp.guard_value(&callback);
+    let _this_arg_guard = interp.guard_value(&this_arg);
+    let _arr_guard = interp.guard_value(&this);
 
     let length = {
         let arr_ref = arr.borrow();
@@ -745,6 +776,11 @@ pub fn array_every(
 
     let this_arg = args.get(1).cloned().unwrap_or(JsValue::Undefined);
 
+    // Guard values to prevent GC from collecting them during iterations
+    let _callback_guard = interp.guard_value(&callback);
+    let _this_arg_guard = interp.guard_value(&this_arg);
+    let _arr_guard = interp.guard_value(&this);
+
     let length = {
         let arr_ref = arr.borrow();
         match &arr_ref.exotic {
@@ -792,6 +828,11 @@ pub fn array_some(
     }
 
     let this_arg = args.get(1).cloned().unwrap_or(JsValue::Undefined);
+
+    // Guard values to prevent GC from collecting them during iterations
+    let _callback_guard = interp.guard_value(&callback);
+    let _this_arg_guard = interp.guard_value(&this_arg);
+    let _arr_guard = interp.guard_value(&this);
 
     let length = {
         let arr_ref = arr.borrow();
@@ -959,6 +1000,10 @@ pub fn array_sort(
     };
 
     let compare_fn = args.first().cloned();
+
+    // Guard the compare function and array to prevent GC from collecting them
+    let _cmp_guard = compare_fn.as_ref().and_then(|c| interp.guard_value(c));
+    let _arr_guard = interp.guard_value(&this);
 
     let length = {
         let arr_ref = arr.borrow();
@@ -1240,6 +1285,11 @@ pub fn array_from(
     let source = args.first().cloned().unwrap_or(JsValue::Undefined);
     let map_fn = args.get(1).cloned();
 
+    // Guard the source and map_fn to prevent GC from collecting them
+    // during the loop iterations which may trigger allocations.
+    let _source_guard = interp.guard_value(&source);
+    let _map_fn_guard = map_fn.as_ref().and_then(|m| interp.guard_value(m));
+
     let mut elements = Vec::new();
 
     match source {
@@ -1508,6 +1558,11 @@ pub fn array_flat_map(
     }
 
     let this_arg = args.get(1).cloned().unwrap_or(JsValue::Undefined);
+
+    // Guard values to prevent GC from collecting them during iterations
+    let _callback_guard = interp.guard_value(&callback);
+    let _this_arg_guard = interp.guard_value(&this_arg);
+    let _arr_guard = interp.guard_value(&this);
 
     let length = {
         let arr_ref = arr.borrow();

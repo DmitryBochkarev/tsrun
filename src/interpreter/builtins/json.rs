@@ -168,26 +168,36 @@ pub fn json_to_js_value_with_interp(
     interp: &mut Interpreter,
     json: &serde_json::Value,
 ) -> Result<JsValue, JsError> {
+    use crate::gc::GuardedGc;
+
     Ok(match json {
         serde_json::Value::Null => JsValue::Null,
         serde_json::Value::Bool(b) => JsValue::Boolean(*b),
         serde_json::Value::Number(n) => JsValue::Number(n.as_f64().unwrap_or(0.0)),
         serde_json::Value::String(s) => JsValue::String(JsString::from(s.clone())),
         serde_json::Value::Array(arr) => {
+            // Guard each element as it's created to prevent GC from corrupting them
             let mut elements = Vec::with_capacity(arr.len());
+            let mut _element_guards: Vec<GuardedGc<crate::value::JsObject>> =
+                Vec::with_capacity(arr.len());
             for item in arr {
-                elements.push(json_to_js_value_with_interp(interp, item)?);
+                let val = json_to_js_value_with_interp(interp, item)?;
+                if let Some(guard) = interp.guard_value(&val) {
+                    _element_guards.push(guard);
+                }
+                elements.push(val);
             }
             JsValue::Object(interp.create_array(elements))
         }
         serde_json::Value::Object(map) => {
-            let obj = interp.create_object();
+            // Guard the result object during property setup
+            let obj = interp.create_object_guarded();
             for (key, value) in map {
                 let js_value = json_to_js_value_with_interp(interp, value)?;
                 let interned_key = interp.key(key);
                 obj.borrow_mut().set_property(interned_key, js_value);
             }
-            JsValue::Object(obj)
+            JsValue::Object(obj.take())
         }
     })
 }

@@ -487,6 +487,18 @@ impl Interpreter {
         self.gc_space.alloc_guarded(obj)
     }
 
+    /// Guard a JsValue if it contains an object.
+    ///
+    /// Returns Some(GuardedGc) if the value is an object, None otherwise.
+    /// Use this to protect values that need to survive across allocating operations.
+    pub fn guard_value(&mut self, value: &JsValue) -> Option<GuardedGc<JsObject>> {
+        if let JsValue::Object(obj) = value {
+            Some(self.gc_space.guard(obj))
+        } else {
+            None
+        }
+    }
+
     /// Create a function object with the proper prototype
     pub fn create_function(&mut self, func: JsFunction) -> JsObjectRef {
         let obj = create_function(&mut self.gc_space, &mut self.string_dict, func);
@@ -1844,15 +1856,16 @@ impl Interpreter {
                 None
             };
 
-        // Create prototype object
-        let prototype = self.create_object();
+        // Create prototype object with guard - it needs to survive GC during
+        // method creation which may allocate many function objects
+        let prototype_guarded = self.create_object_guarded();
 
         // If we have a superclass, set up prototype chain
         if let Some(ref super_ctor) = super_constructor {
             let proto_key = self.key("prototype");
             let super_proto = super_ctor.borrow().get_property(&proto_key);
             if let Some(JsValue::Object(sp)) = super_proto {
-                prototype.borrow_mut().prototype = Some(sp);
+                prototype_guarded.borrow_mut().prototype = Some(sp);
             }
         }
 
@@ -1945,7 +1958,7 @@ impl Interpreter {
 
         // Add accessor properties
         for (name, (getter, setter)) in accessors {
-            prototype.borrow_mut().define_property(
+            prototype_guarded.borrow_mut().define_property(
                 PropertyKey::String(name),
                 Property::accessor(getter, setter),
             );
@@ -1953,7 +1966,7 @@ impl Interpreter {
 
         // Add regular methods
         for (name, func_obj) in regular_methods {
-            prototype
+            prototype_guarded
                 .borrow_mut()
                 .set_property(PropertyKey::String(name), JsValue::Object(func_obj));
         }
@@ -2003,12 +2016,15 @@ impl Interpreter {
             async_: false,    // Constructors cannot be async
         }));
 
-        // Store field initializers as a property on the constructor
-        // We'll use a special internal format
+        // Guard the constructor_fn to prevent GC from collecting it during
+        // field initializer evaluation and static method creation
+        let _constructor_guard = self.gc_space.guard(&constructor_fn);
+
+        // Store prototype on constructor - this makes prototype reachable from constructor
         {
             let proto_key = self.key("prototype");
             let mut ctor = constructor_fn.borrow_mut();
-            ctor.set_property(proto_key, JsValue::Object(prototype.cheap_clone()));
+            ctor.set_property(proto_key, JsValue::Object(prototype_guarded.take()));
 
             // Store field initializers as internal data
             // For now, we'll evaluate them at class definition time and store as default values
@@ -2134,10 +2150,14 @@ impl Interpreter {
         }
 
         // Set prototype.constructor = constructor
+        // Get the prototype from the constructor since we already stored it there
+        let proto_key = self.key("prototype");
         let ctor_key = self.key("constructor");
-        prototype
-            .borrow_mut()
-            .set_property(ctor_key, JsValue::Object(constructor_fn.cheap_clone()));
+        if let Some(JsValue::Object(prototype)) = constructor_fn.borrow().get_property(&proto_key) {
+            prototype
+                .borrow_mut()
+                .set_property(ctor_key, JsValue::Object(constructor_fn.cheap_clone()));
+        }
 
         Ok(constructor_fn)
     }
@@ -3234,11 +3254,17 @@ impl Interpreter {
             }
 
             Expression::Array(arr) => {
+                // Guard elements as they're evaluated to prevent GC from corrupting them
                 let mut elements = vec![];
+                let mut _element_guards = vec![];
                 for elem in &arr.elements {
                     match elem {
                         Some(ArrayElement::Expression(e)) => {
-                            elements.push(self.evaluate(e)?);
+                            let val = self.evaluate(e)?;
+                            if let Some(guard) = self.guard_value(&val) {
+                                _element_guards.push(guard);
+                            }
+                            elements.push(val);
                         }
                         Some(ArrayElement::Spread(spread)) => {
                             let val = self.evaluate(&spread.argument)?;
@@ -3249,6 +3275,9 @@ impl Interpreter {
                                         if let Some(v) =
                                             obj_ref.get_property(&PropertyKey::Index(i))
                                         {
+                                            if let Some(guard) = self.guard_value(&v) {
+                                                _element_guards.push(guard);
+                                            }
                                             elements.push(v);
                                         }
                                     }
@@ -4092,6 +4121,9 @@ impl Interpreter {
     }
 
     fn set_member(&mut self, member: &MemberExpression, value: JsValue) -> Result<(), JsError> {
+        // Guard the value to prevent GC from collecting it during object/key evaluation
+        let _value_guard = self.guard_value(&value);
+
         let object = self.evaluate(&member.object)?;
 
         let key = match &member.property {
@@ -4170,6 +4202,10 @@ impl Interpreter {
             JsValue::Undefined
         };
 
+        // Guard this_value to prevent GC from collecting it during
+        // callee evaluation and argument evaluation
+        let _this_guard = self.guard_value(&this_value);
+
         // For super.method(), we need to look up the method on the super prototype
         let callee = if let Expression::Member(member) = call.callee.as_ref() {
             if let Expression::Super(_) = member.object.as_ref() {
@@ -4214,12 +4250,21 @@ impl Interpreter {
             self.evaluate(&call.callee)?
         };
 
-        // Evaluate arguments
+        // Guard callee to prevent GC from collecting it during argument evaluation
+        let _callee_guard = self.guard_value(&callee);
+
+        // Evaluate arguments. We need to guard each argument as it's evaluated
+        // to prevent GC from collecting them during subsequent evaluations.
         let mut args = vec![];
+        let mut _arg_guards = vec![];
         for arg in &call.arguments {
             match arg {
                 Argument::Expression(expr) => {
-                    args.push(self.evaluate(expr)?);
+                    let val = self.evaluate(expr)?;
+                    if let Some(guard) = self.guard_value(&val) {
+                        _arg_guards.push(guard);
+                    }
+                    args.push(val);
                 }
                 Argument::Spread(spread) => {
                     let val = self.evaluate(&spread.argument)?;
@@ -4228,6 +4273,9 @@ impl Interpreter {
                         if let ExoticObject::Array { length } = &obj_ref.exotic {
                             for i in 0..*length {
                                 if let Some(v) = obj_ref.get_property(&PropertyKey::Index(i)) {
+                                    if let Some(guard) = self.guard_value(&v) {
+                                        _arg_guards.push(guard);
+                                    }
                                     args.push(v);
                                 }
                             }
@@ -4243,11 +4291,20 @@ impl Interpreter {
     fn evaluate_new(&mut self, new_expr: &NewExpression) -> Result<JsValue, JsError> {
         let callee = self.evaluate(&new_expr.callee)?;
 
+        // Guard callee during argument evaluation
+        let _callee_guard = self.guard_value(&callee);
+
+        // Evaluate arguments with guards to prevent GC from collecting them
         let mut args = vec![];
+        let mut _arg_guards = vec![];
         for arg in &new_expr.arguments {
             match arg {
                 Argument::Expression(expr) => {
-                    args.push(self.evaluate(expr)?);
+                    let val = self.evaluate(expr)?;
+                    if let Some(guard) = self.guard_value(&val) {
+                        _arg_guards.push(guard);
+                    }
+                    args.push(val);
                 }
                 Argument::Spread(spread) => {
                     let val = self.evaluate(&spread.argument)?;
@@ -4256,6 +4313,9 @@ impl Interpreter {
                         if let ExoticObject::Array { length } = &obj_ref.exotic {
                             for i in 0..*length {
                                 if let Some(v) = obj_ref.get_property(&PropertyKey::Index(i)) {
+                                    if let Some(guard) = self.guard_value(&v) {
+                                        _arg_guards.push(guard);
+                                    }
                                     args.push(v);
                                 }
                             }
@@ -4309,16 +4369,36 @@ impl Interpreter {
             }
         }
 
+        // Determine if this is a native or interpreted constructor
+        let is_native = if let JsValue::Object(ctor_obj) = &callee {
+            matches!(
+                ctor_obj.borrow().exotic,
+                ExoticObject::Function(JsFunction::Native(_))
+            )
+        } else {
+            false
+        };
+
         // Call constructor (guard still active)
         let result = self.call_function(callee, JsValue::Object(new_obj.as_gc().clone()), &args)?;
 
         // Extract the unguarded Gc for return
         let new_obj_gc = new_obj.take();
 
-        // Return result if it's an object, otherwise return new_obj
-        match result {
-            JsValue::Object(_) => Ok(result),
-            _ => Ok(JsValue::Object(new_obj_gc)),
+        if is_native {
+            // Native constructors (Date, Error, etc.) create and return their own objects.
+            // We should use their return value.
+            match result {
+                JsValue::Object(_) => Ok(result),
+                _ => Ok(JsValue::Object(new_obj_gc)),
+            }
+        } else {
+            // Interpreted constructors modify `this` (new_obj) in place.
+            // We should NOT use the return value because call_function doesn't distinguish
+            // between explicit `return obj;` and normal block completion (last expression value).
+            // This fixes the bug where `this.x = {obj}` would incorrectly return `{obj}`.
+            // TODO: Add proper support for constructor explicit object return via Completion type.
+            Ok(JsValue::Object(new_obj_gc))
         }
     }
 
