@@ -13,18 +13,17 @@
 pub mod ast;
 pub mod error;
 pub mod gc;
-pub mod old_gc;
-// pub mod interpreter;  // TODO: re-enable after GC migration
+pub mod interpreter;
 pub mod lexer;
+pub mod old_gc;
 pub mod parser;
 pub mod string_dict;
 pub mod value;
 
 pub use error::JsError;
-pub use old_gc::{Gc, GcBox, GuardedGc, GuardedScope, Space, Traceable, Tracer, DEFAULT_GC_THRESHOLD};
-// pub use interpreter::GcStats;
-// pub use interpreter::Interpreter;
-// pub use interpreter::SavedExecutionState;
+pub use gc::{Gc, Guard, Heap, Reset};
+pub use interpreter::GcStats;
+pub use interpreter::Interpreter;
 pub use string_dict::StringDict;
 pub use value::CheapClone;
 pub use value::EnvRef;
@@ -107,9 +106,27 @@ impl PendingSlot {
     }
 }
 
-// TODO: Re-enable Runtime after GC migration
-// /// The main runtime for executing TypeScript code
-// pub struct Runtime {
-//     interpreter: Interpreter,
-// }
-// ... (commented out for now)
+/// The main runtime for executing TypeScript code
+pub struct Runtime {
+    interpreter: Interpreter,
+}
+
+impl Runtime {
+    /// Create a new runtime instance
+    pub fn new() -> Self {
+        Self {
+            interpreter: Interpreter::new(),
+        }
+    }
+
+    /// Evaluate simple TypeScript/JavaScript code
+    pub fn eval_simple(&mut self, source: &str) -> Result<JsValue, JsError> {
+        self.interpreter.eval_simple(source)
+    }
+}
+
+impl Default for Runtime {
+    fn default() -> Self {
+        Self::new()
+    }
+}

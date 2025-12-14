@@ -2,11 +2,10 @@
 //!
 //! Usage: typescript-eval-runner <entry-point.ts>
 
-use std::collections::HashMap;
 use std::env;
 use std::fs;
-use std::path::{Path, PathBuf};
-use typescript_eval::{JsValue, Runtime, RuntimeResult};
+use std::path::PathBuf;
+use typescript_eval::{JsValue, Runtime};
 
 fn main() {
     if let Err(e) = run() {
@@ -31,127 +30,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let entry_path = PathBuf::from(entry_arg);
-    let entry_dir = entry_path
-        .parent()
-        .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| PathBuf::from("."));
-
     let source = fs::read_to_string(&entry_path)?;
 
     let mut runtime = Runtime::new();
-    // Disable timeout for CLI runner - useful for stress tests and profiling
-    runtime.set_timeout_ms(0);
-    let mut module_cache: HashMap<PathBuf, JsValue> = HashMap::new();
-    let mut result = runtime.eval(&source)?;
+    let result = runtime.eval_simple(&source)?;
 
-    loop {
-        match result {
-            RuntimeResult::Complete(value) => {
-                print_value(&value);
-                return Ok(());
-            }
-            RuntimeResult::ImportAwaited { slot, specifier } => {
-                let module_path = resolve_module(&entry_dir, &specifier)?;
-
-                // Check cache first
-                if let Some(cached) = module_cache.get(&module_path) {
-                    slot.set_success(cached.clone());
-                } else {
-                    // Save main program state, load module, then restore
-                    let saved_state = runtime.save_execution_state();
-                    let module = load_module(&mut runtime, &module_path, &mut module_cache)?;
-                    runtime.restore_execution_state(saved_state);
-                    slot.set_success(module);
-                }
-            }
-            RuntimeResult::AsyncAwaited { slot, .. } => {
-                // For demo purposes: resolve immediately with undefined
-                slot.set_success(JsValue::Undefined);
-            }
-        }
-        result = runtime.continue_eval()?;
-    }
-}
-
-fn resolve_module(base_dir: &Path, specifier: &str) -> Result<PathBuf, Box<dyn std::error::Error>> {
-    // Handle relative imports
-    if specifier.starts_with("./") || specifier.starts_with("../") {
-        let mut path = base_dir.join(specifier);
-
-        // Try adding .ts extension if needed
-        if !path.exists() {
-            let with_ts = path.with_extension("ts");
-            if with_ts.exists() {
-                path = with_ts;
-            } else {
-                // Try .ts.ts in case the specifier already had .ts
-                let specifier_ts = format!("{}.ts", specifier);
-                let alt_path = base_dir.join(&specifier_ts);
-                if alt_path.exists() {
-                    path = alt_path;
-                }
-            }
-        }
-
-        Ok(path.canonicalize()?)
-    } else {
-        Err(format!(
-            "Unsupported module specifier: {} (only relative imports supported)",
-            specifier
-        )
-        .into())
-    }
-}
-
-fn load_module(
-    runtime: &mut Runtime,
-    path: &Path,
-    cache: &mut HashMap<PathBuf, JsValue>,
-) -> Result<JsValue, Box<dyn std::error::Error>> {
-    let source = fs::read_to_string(path)?;
-    let module_dir = path
-        .parent()
-        .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| PathBuf::from("."));
-
-    // Use the SAME runtime for all modules to ensure consistent prototypes
-    // The runtime handles module isolation through separate environments
-    let mut result = runtime.eval(&source)?;
-
-    loop {
-        match result {
-            RuntimeResult::Complete(_) => {
-                // Get module exports from the runtime
-                let exports: Vec<(String, JsValue)> = runtime
-                    .get_exports()
-                    .iter()
-                    .map(|(k, v)| (k.to_string(), v.clone()))
-                    .collect();
-
-                // Create module object
-                let module = runtime.create_module_object(exports);
-                cache.insert(path.to_path_buf(), module.clone());
-                return Ok(module);
-            }
-            RuntimeResult::ImportAwaited { slot, specifier } => {
-                let nested_path = resolve_module(&module_dir, &specifier)?;
-
-                if let Some(cached) = cache.get(&nested_path) {
-                    slot.set_success(cached.clone());
-                } else {
-                    // Save current module state, load nested module, then restore
-                    let saved_state = runtime.save_execution_state();
-                    let nested_module = load_module(runtime, &nested_path, cache)?;
-                    runtime.restore_execution_state(saved_state);
-                    slot.set_success(nested_module);
-                }
-            }
-            RuntimeResult::AsyncAwaited { slot, .. } => {
-                slot.set_success(JsValue::Undefined);
-            }
-        }
-        result = runtime.continue_eval()?;
-    }
+    print_value(&result);
+    Ok(())
 }
 
 fn print_value(value: &JsValue) {

@@ -9,8 +9,7 @@ use std::rc::Rc;
 use rustc_hash::FxHashMap;
 
 use crate::ast::{ArrowFunctionBody, BlockStatement, FunctionParam};
-use crate::error::JsError;
-use crate::old_gc::{Gc, Space, Traceable, Tracer};
+use crate::gc::{Gc, Guard, Heap, Reset};
 use crate::lexer::Span;
 use crate::string_dict::StringDict;
 
@@ -172,7 +171,7 @@ impl JsValue {
             }
             (JsValue::String(a), JsValue::String(b)) => a == b,
             (JsValue::Symbol(a), JsValue::Symbol(b)) => a == b, // Symbols compare by id
-            (JsValue::Object(a), JsValue::Object(b)) => crate::old_gc::Gc::ptr_eq(a, b),
+            (JsValue::Object(a), JsValue::Object(b)) => Gc::ptr_eq(a, b),
             _ => false,
         }
     }
@@ -400,144 +399,22 @@ impl std::hash::Hash for JsSymbol {
 /// from `borrow()` calls, matching the old `Rc<RefCell<JsObject>>` API.
 pub type JsObjectRef = Gc<JsObject>;
 
-// Implement CheapClone for Gc<T> (clone is just Rc increment)
-impl<T: Traceable> CheapClone for Gc<T> {}
+// Implement CheapClone for Gc<T> (clone is just Copy)
+impl<T> CheapClone for Gc<T> {}
 
-impl Traceable for JsObject {
-    fn trace(&self, tracer: &mut Tracer<'_>) {
-        // Trace prototype reference
-        if let Some(ref proto) = self.prototype {
-            tracer.trace(proto);
-        }
-
-        // Trace all property values
-        for prop in self.properties.values() {
-            trace_property(prop, tracer);
-        }
-
-        // Trace exotic object data
-        trace_exotic(&self.exotic, tracer);
-    }
-
-    fn unlink(&mut self) {
-        // Clear prototype
+/// Reset implementation for JsObject - used by new GC for object pooling.
+///
+/// When an object is collected, it can be reset and reused instead of
+/// being dropped. This is more efficient than allocating new objects.
+impl Reset for JsObject {
+    fn reset(&mut self) {
         self.prototype = None;
-
-        // Clear all properties
+        self.extensible = true;
+        self.frozen = false;
+        self.sealed = false;
+        self.null_prototype = false;
         self.properties.clear();
-
-        // Clear exotic data
         self.exotic = ExoticObject::Ordinary;
-    }
-}
-
-fn trace_property(prop: &Property, tracer: &mut Tracer<'_>) {
-    trace_jsvalue(&prop.value, tracer);
-
-    if let Some(ref getter) = prop.getter {
-        tracer.trace(getter);
-    }
-    if let Some(ref setter) = prop.setter {
-        tracer.trace(setter);
-    }
-}
-
-fn trace_jsvalue(value: &JsValue, tracer: &mut Tracer<'_>) {
-    if let JsValue::Object(ref obj_ref) = value {
-        tracer.trace(obj_ref);
-    }
-}
-
-fn trace_exotic(exotic: &ExoticObject, tracer: &mut Tracer<'_>) {
-    match exotic {
-        ExoticObject::Ordinary => {}
-
-        ExoticObject::Array { .. } => {
-            // Array elements are stored as properties, already traced
-        }
-
-        ExoticObject::Function(func) => {
-            trace_function(func, tracer);
-        }
-
-        ExoticObject::Map { entries } => {
-            for (key, value) in entries {
-                trace_jsvalue(key, tracer);
-                trace_jsvalue(value, tracer);
-            }
-        }
-
-        ExoticObject::Set { entries } => {
-            for value in entries {
-                trace_jsvalue(value, tracer);
-            }
-        }
-
-        ExoticObject::Date { .. } => {}
-
-        ExoticObject::RegExp { .. } => {}
-
-        ExoticObject::Generator(state) => {
-            if let Ok(state) = state.try_borrow() {
-                // Trace the closure environment
-                tracer.trace(&state.closure);
-                for arg in &state.args {
-                    trace_jsvalue(arg, tracer);
-                }
-                trace_jsvalue(&state.sent_value, tracer);
-            }
-        }
-
-        ExoticObject::Promise(state) => {
-            if let Ok(state) = state.try_borrow() {
-                if let Some(ref result) = state.result {
-                    trace_jsvalue(result, tracer);
-                }
-                for handler in &state.handlers {
-                    if let Some(ref on_fulfilled) = handler.on_fulfilled {
-                        trace_jsvalue(on_fulfilled, tracer);
-                    }
-                    if let Some(ref on_rejected) = handler.on_rejected {
-                        trace_jsvalue(on_rejected, tracer);
-                    }
-                    tracer.trace(&handler.result_promise);
-                }
-            }
-        }
-
-        ExoticObject::Environment(env_data) => {
-            // Trace all binding values
-            for binding in env_data.bindings.values() {
-                trace_jsvalue(&binding.value, tracer);
-            }
-            // Trace outer environment reference
-            if let Some(ref outer) = env_data.outer {
-                tracer.trace(outer);
-            }
-        }
-    }
-}
-
-fn trace_function(func: &JsFunction, tracer: &mut Tracer<'_>) {
-    match func {
-        JsFunction::Interpreted(interpreted) => {
-            // Trace the closure environment (now GC-managed)
-            tracer.trace(&interpreted.closure);
-        }
-        JsFunction::Native(_) => {}
-        JsFunction::Bound(bound) => {
-            tracer.trace(&bound.target);
-            trace_jsvalue(&bound.this_arg, tracer);
-            for arg in &bound.bound_args {
-                trace_jsvalue(arg, tracer);
-            }
-        }
-        JsFunction::PromiseResolve(promise) => {
-            tracer.trace(promise);
-        }
-        JsFunction::PromiseReject(promise) => {
-            tracer.trace(promise);
-        }
     }
 }
 
@@ -1084,97 +961,84 @@ pub struct Binding {
     pub initialized: bool,
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
 // Helper functions for creating GC-managed objects
+//
+// These functions use the temporary guard pattern:
+// - Allocate with a temporary guard
+// - Return both the object and the guard
+// - Caller transfers ownership, then drops the guard
+// ═══════════════════════════════════════════════════════════════════════════════
 
-/// Create a new ordinary object in the GC space
-pub fn create_object(space: &mut Space<JsObject>) -> JsObjectRef {
-    space.alloc(JsObject::new())
-}
-
-/// Create a new ordinary object with pre-allocated property capacity
+/// Create a new ordinary object with a temporary guard.
 ///
-/// Use this for prototype objects where you know the number of methods upfront.
-pub fn create_object_with_capacity(space: &mut Space<JsObject>, capacity: usize) -> JsObjectRef {
-    space.alloc(JsObject::with_capacity(capacity))
+/// Returns `(object, temp_guard)`. The caller should:
+/// 1. Establish ownership: `parent.own(&object, &heap)`
+/// 2. Drop or let the temp_guard go out of scope
+pub fn create_object_with_guard(guard: &Guard<JsObject>) -> JsObjectRef {
+    // Object is default-initialized by Reset trait
+    guard.alloc()
 }
 
-/// Create a new array object in the GC space
-pub fn create_array(
-    space: &mut Space<JsObject>,
+/// Create a new array object with a temporary guard.
+///
+/// Returns the array object. Caller is responsible for ownership transfer.
+pub fn create_array_with_guard(
+    guard: &Guard<JsObject>,
     dict: &mut StringDict,
     elements: Vec<JsValue>,
 ) -> JsObjectRef {
     let len = elements.len() as u32;
-    let mut obj = JsObject {
-        prototype: None, // Should be Array.prototype
-        extensible: true,
-        frozen: false,
-        sealed: false,
-        null_prototype: false,
-        properties: FxHashMap::default(),
-        exotic: ExoticObject::Array { length: len },
-    };
+    let arr = guard.alloc();
+    {
+        let mut arr_ref = arr.borrow_mut();
+        arr_ref.exotic = ExoticObject::Array { length: len };
 
-    for (i, elem) in elements.into_iter().enumerate() {
-        obj.properties
-            .insert(PropertyKey::Index(i as u32), Property::data(elem));
+        for (i, elem) in elements.into_iter().enumerate() {
+            arr_ref
+                .properties
+                .insert(PropertyKey::Index(i as u32), Property::data(elem));
+        }
+
+        let length_key = PropertyKey::String(dict.get_or_insert("length"));
+        arr_ref.properties.insert(
+            length_key,
+            Property::with_attributes(JsValue::Number(len as f64), true, false, false),
+        );
     }
-
-    let length_key = PropertyKey::String(dict.get_or_insert("length"));
-    obj.properties.insert(
-        length_key,
-        Property::with_attributes(JsValue::Number(len as f64), true, false, false),
-    );
-
-    space.alloc(obj)
+    arr
 }
 
-/// Create a function object in the GC space
-pub fn create_function(
-    space: &mut Space<JsObject>,
+/// Create a function object with a temporary guard.
+///
+/// Returns the function object. Caller is responsible for ownership transfer.
+pub fn create_function_with_guard(
+    guard: &Guard<JsObject>,
     dict: &mut StringDict,
     func: JsFunction,
 ) -> JsObjectRef {
-    let mut obj = JsObject {
-        prototype: None, // Should be Function.prototype
-        extensible: true,
-        frozen: false,
-        sealed: false,
-        null_prototype: false,
-        properties: FxHashMap::default(),
-        exotic: ExoticObject::Function(func),
-    };
+    let f = guard.alloc();
+    {
+        let mut f_ref = f.borrow_mut();
+        f_ref.exotic = ExoticObject::Function(func);
 
-    // Add length and name properties
-    let length_key = PropertyKey::String(dict.get_or_insert("length"));
-    obj.properties.insert(
-        length_key,
-        Property::with_attributes(JsValue::Number(0.0), false, false, true),
-    );
-
-    space.alloc(obj)
+        // Add length property
+        let length_key = PropertyKey::String(dict.get_or_insert("length"));
+        f_ref.properties.insert(
+            length_key,
+            Property::with_attributes(JsValue::Number(0.0), false, false, true),
+        );
+    }
+    f
 }
 
 /// Register a native method on a prototype object.
 ///
-/// This is a helper function to reduce code duplication when registering
-/// builtin methods. Instead of repeating the full registration pattern,
-/// use this function:
-///
-/// ```ignore
-/// // Instead of:
-/// let push_fn = create_function(space, JsFunction::Native(NativeFunction {
-///     name: dict.get_or_insert("push"),
-///     func: array_push,
-///     arity: 1,
-/// }));
-/// p.borrow_mut().set_property(PropertyKey::from("push"), JsValue::Object(push_fn));
-///
-/// // Use:
-/// register_method(space, dict, &proto, "push", array_push, 1);
-/// ```
-pub fn register_method(
-    space: &mut Space<JsObject>,
+/// Uses the given guard for allocation. The function object is owned by the
+/// prototype through the property assignment.
+pub fn register_method_with_guard(
+    guard: &Guard<JsObject>,
+    heap: &Heap<JsObject>,
     dict: &mut StringDict,
     obj: &JsObjectRef,
     name: &str,
@@ -1182,8 +1046,8 @@ pub fn register_method(
     arity: usize,
 ) {
     let interned_name = dict.get_or_insert(name);
-    let f = create_function(
-        space,
+    let f = create_function_with_guard(
+        guard,
         dict,
         JsFunction::Native(NativeFunction {
             name: interned_name.cheap_clone(),
@@ -1191,6 +1055,8 @@ pub fn register_method(
             arity,
         }),
     );
+    // Prototype owns the function
+    obj.own(&f, heap);
     let key = PropertyKey::String(interned_name);
     obj.borrow_mut().set_property(key, JsValue::Object(f));
 }
@@ -1205,20 +1071,26 @@ pub fn register_method(
 /// Using this type makes it clear when a reference is expected to be an environment.
 pub type EnvRef = JsObjectRef;
 
-/// Create a new environment object in the GC space.
+/// Create a new environment object with a temporary guard.
 ///
 /// The environment is created with an optional outer environment reference.
-pub fn create_environment(space: &mut Space<JsObject>, outer: Option<EnvRef>) -> EnvRef {
-    let obj = JsObject {
-        prototype: None,
-        extensible: true,
-        frozen: false,
-        sealed: false,
-        null_prototype: true,
-        properties: FxHashMap::default(),
-        exotic: ExoticObject::Environment(EnvironmentData::with_outer(outer)),
-    };
-    space.alloc(obj)
+/// Returns the environment object. Caller is responsible for ownership transfer.
+pub fn create_environment_with_guard(
+    guard: &Guard<JsObject>,
+    heap: &Heap<JsObject>,
+    outer: Option<EnvRef>,
+) -> EnvRef {
+    let env = guard.alloc();
+    {
+        let mut env_ref = env.borrow_mut();
+        env_ref.null_prototype = true;
+        env_ref.exotic = ExoticObject::Environment(EnvironmentData::with_outer(outer));
+    }
+    // If there's an outer environment, it owns this one
+    if let Some(ref outer_env) = outer {
+        outer_env.own(&env, heap);
+    }
+    env
 }
 
 impl JsObject {
