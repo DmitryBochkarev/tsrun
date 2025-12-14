@@ -10,7 +10,7 @@ use rustc_hash::FxHashMap;
 
 use crate::ast::{ArrowFunctionBody, BlockStatement, FunctionParam};
 use crate::error::JsError;
-use crate::gc::{Gc, Space, Traceable, Tracer};
+use crate::old_gc::{Gc, Space, Traceable, Tracer};
 use crate::lexer::Span;
 use crate::string_dict::StringDict;
 
@@ -172,7 +172,7 @@ impl JsValue {
             }
             (JsValue::String(a), JsValue::String(b)) => a == b,
             (JsValue::Symbol(a), JsValue::Symbol(b)) => a == b, // Symbols compare by id
-            (JsValue::Object(a), JsValue::Object(b)) => crate::gc::Gc::ptr_eq(a, b),
+            (JsValue::Object(a), JsValue::Object(b)) => crate::old_gc::Gc::ptr_eq(a, b),
             _ => false,
         }
     }
@@ -1053,9 +1053,11 @@ impl From<ArrowFunctionBody> for FunctionBody {
     }
 }
 
-/// Native function signature
-pub type NativeFn =
-    fn(&mut crate::interpreter::Interpreter, JsValue, &[JsValue]) -> Result<JsValue, JsError>;
+// TODO: Re-enable after GC migration
+// /// Native function signature
+// pub type NativeFn =
+//     fn(&mut crate::interpreter::Interpreter, JsValue, &[JsValue]) -> Result<JsValue, JsError>;
+pub type NativeFn = fn();
 
 /// Native function wrapper
 #[derive(Clone)]
