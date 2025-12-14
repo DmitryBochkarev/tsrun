@@ -1,3 +1,5 @@
+// THIS IS PREVIOS IMPLEMENTATION, ONLY USE IT TO UNDERSTAND HOW IT WORKS BEFORE, DO NOT COPY CODE FROM HERE
+
 //! Interpreter for executing TypeScript AST
 
 // Builtin function implementations (split into separate files)

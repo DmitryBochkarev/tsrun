@@ -1,3 +1,5 @@
+// THIS IS PREVIOS IMPLEMENTATION, ONLY USE IT TO UNDERSTAND HOW IT WORKS BEFORE, DO NOT COPY CODE FROM HERE
+
 //! A cycle-breaking garbage collector for Rc-based object graphs.
 //!
 //! This module provides a mark-and-sweep garbage collector that can detect and break
