@@ -12,12 +12,13 @@
 // pub mod eval_stack;
 
 use crate::ast::{
-    ArrayElement, AssignmentExpression, AssignmentOp, AssignmentTarget, BinaryExpression, BinaryOp,
-    BlockStatement, CallExpression, ConditionalExpression, Expression, ForInit, ForStatement,
-    FunctionDeclaration, FunctionParam, IfStatement, LiteralValue, LogicalExpression, LogicalOp,
-    MemberExpression, MemberProperty, ObjectExpression, ObjectProperty, ObjectPropertyKey, Pattern,
-    Program, Statement, UnaryExpression, UnaryOp, VariableDeclaration, VariableKind,
-    WhileStatement,
+    ArrayElement, ArrayPattern, AssignmentExpression, AssignmentOp, AssignmentTarget,
+    BinaryExpression, BinaryOp, BlockStatement, CallExpression, ConditionalExpression, Expression,
+    ForInit, ForStatement, FunctionDeclaration, FunctionParam, IfStatement, LiteralValue,
+    LogicalExpression, LogicalOp, MemberExpression, MemberProperty, ObjectExpression,
+    ObjectPatternProperty, ObjectProperty, ObjectPropertyKey, Pattern, Program, Statement,
+    TaggedTemplateExpression, TemplateLiteral, UnaryExpression, UnaryOp, VariableDeclaration,
+    VariableKind, WhileStatement,
 };
 use crate::error::JsError;
 use crate::gc::{Gc, Guard, Heap};
@@ -545,10 +546,127 @@ impl Interpreter {
                 self.env_define(name, value, mutable);
                 Ok(())
             }
-            _ => Err(JsError::internal_error(
-                "Destructuring patterns not yet implemented",
-            )),
+
+            Pattern::Object(obj_pattern) => {
+                let obj = match &value {
+                    JsValue::Object(o) => *o,
+                    _ => return Err(JsError::type_error("Cannot destructure non-object")),
+                };
+
+                for prop in &obj_pattern.properties {
+                    match prop {
+                        ObjectPatternProperty::KeyValue {
+                            key,
+                            value: pat,
+                            shorthand,
+                            ..
+                        } => {
+                            let key_str: JsString = match key {
+                                ObjectPropertyKey::Identifier(id) => id.name.cheap_clone(),
+                                ObjectPropertyKey::String(s) => s.value.cheap_clone(),
+                                ObjectPropertyKey::Number(l) => {
+                                    if let LiteralValue::Number(n) = &l.value {
+                                        n.to_string().into()
+                                    } else {
+                                        continue;
+                                    }
+                                }
+                                ObjectPropertyKey::Computed(_) => continue,
+                                ObjectPropertyKey::PrivateIdentifier(id) => {
+                                    format!("#{}", id.name).into()
+                                }
+                            };
+
+                            let prop_value = obj
+                                .borrow()
+                                .get_property(&PropertyKey::String(key_str.cheap_clone()))
+                                .unwrap_or(JsValue::Undefined);
+
+                            // For shorthand { x }, the pattern is just the identifier
+                            if *shorthand {
+                                self.env_define(key_str, prop_value, mutable);
+                            } else {
+                                self.bind_pattern(pat, prop_value, mutable)?;
+                            }
+                        }
+                        ObjectPatternProperty::Rest(_rest) => {
+                            // Rest patterns in object destructuring not yet implemented
+                            return Err(JsError::internal_error(
+                                "Object rest patterns not yet implemented",
+                            ));
+                        }
+                    }
+                }
+
+                Ok(())
+            }
+
+            Pattern::Array(arr_pattern) => self.bind_array_pattern(arr_pattern, &value, mutable),
+
+            Pattern::Rest(rest) => {
+                // Rest at top level in bind_pattern means we have an identifier to bind
+                self.bind_pattern(&rest.argument, value, mutable)
+            }
+
+            Pattern::Assignment(assign_pat) => {
+                // Assignment pattern: { x = defaultValue }
+                let val = if matches!(value, JsValue::Undefined) {
+                    // Use default value
+                    self.evaluate_expression(&assign_pat.right)?.take()
+                } else {
+                    value
+                };
+                self.bind_pattern(&assign_pat.left, val, mutable)
+            }
         }
+    }
+
+    fn bind_array_pattern(
+        &mut self,
+        arr_pattern: &ArrayPattern,
+        value: &JsValue,
+        mutable: bool,
+    ) -> Result<(), JsError> {
+        let items: Vec<JsValue> = match value {
+            JsValue::Object(obj) => {
+                let obj_ref = obj.borrow();
+                if let ExoticObject::Array { length } = &obj_ref.exotic {
+                    let mut items = Vec::with_capacity(*length as usize);
+                    for i in 0..*length {
+                        items.push(
+                            obj_ref
+                                .get_property(&PropertyKey::Index(i))
+                                .unwrap_or(JsValue::Undefined),
+                        );
+                    }
+                    items
+                } else {
+                    vec![]
+                }
+            }
+            _ => vec![],
+        };
+
+        for (i, elem) in arr_pattern.elements.iter().enumerate() {
+            if let Some(pat) = elem {
+                match pat {
+                    Pattern::Rest(rest) => {
+                        // Collect remaining items into an array
+                        let remaining: Vec<JsValue> = items.get(i..).unwrap_or(&[]).to_vec();
+                        let (rest_array, _guard) = self.create_array_with_guard(remaining);
+                        self.env.own(&rest_array, &self.heap);
+                        self.bind_pattern(&rest.argument, JsValue::Object(rest_array), mutable)?;
+                        break; // Rest must be last
+                    }
+                    _ => {
+                        let item = items.get(i).cloned().unwrap_or(JsValue::Undefined);
+                        self.bind_pattern(pat, item, mutable)?;
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 
     fn execute_block(&mut self, block: &BlockStatement) -> Result<Completion, JsError> {
@@ -747,8 +865,77 @@ impl Interpreter {
             Expression::TypeAssertion(ta) => self.evaluate_expression(&ta.expression),
             Expression::NonNull(nn) => self.evaluate_expression(&nn.expression),
 
+            // Template literals
+            Expression::Template(template) => self.evaluate_template_literal(template),
+            Expression::TaggedTemplate(tagged) => self.evaluate_tagged_template(tagged),
+
             _ => Ok(Guarded::unguarded(JsValue::Undefined)),
         }
+    }
+
+    /// Evaluate a template literal (e.g., `hello ${name}`)
+    fn evaluate_template_literal(
+        &mut self,
+        template: &TemplateLiteral,
+    ) -> Result<Guarded, JsError> {
+        let mut result = String::new();
+        for (i, quasi) in template.quasis.iter().enumerate() {
+            result.push_str(quasi.value.as_ref());
+            if let Some(expr) = template.expressions.get(i) {
+                let val = self.evaluate_expression(expr)?.take();
+                result.push_str(val.to_js_string().as_ref());
+            }
+        }
+        Ok(Guarded::unguarded(JsValue::String(JsString::from(result))))
+    }
+
+    /// Evaluate a tagged template expression (e.g., tag`hello ${name}`)
+    fn evaluate_tagged_template(
+        &mut self,
+        tagged: &TaggedTemplateExpression,
+    ) -> Result<Guarded, JsError> {
+        // Evaluate the tag function
+        let tag_fn = self.evaluate_expression(&tagged.tag)?.take();
+
+        // Build the strings array (first argument)
+        let strings: Vec<JsValue> = tagged
+            .quasi
+            .quasis
+            .iter()
+            .map(|q| JsValue::String(q.value.cheap_clone()))
+            .collect();
+        let (strings_arr, strings_guard) = self.create_array_with_guard(strings.clone());
+
+        // Add 'raw' property to strings array
+        let raw: Vec<JsValue> = tagged
+            .quasi
+            .quasis
+            .iter()
+            .map(|q| JsValue::String(q.value.cheap_clone()))
+            .collect();
+        let (raw_array, _raw_guard) = self.create_array_with_guard(raw);
+
+        // Set raw property and transfer ownership
+        let raw_key = PropertyKey::String(self.string_dict.get_or_insert("raw"));
+        strings_arr.own(&raw_array, &self.heap);
+        strings_arr
+            .borrow_mut()
+            .set_property(raw_key, JsValue::Object(raw_array));
+
+        // Evaluate all interpolated expressions (remaining arguments)
+        let mut args = vec![JsValue::Object(strings_arr)];
+        let mut _arg_guards = vec![strings_guard];
+        for expr in &tagged.quasi.expressions {
+            let Guarded { value, guard } = self.evaluate_expression(expr)?;
+            args.push(value);
+            if let Some(g) = guard {
+                _arg_guards.push(g);
+            }
+        }
+
+        // Call the tag function
+        let result = self.call_function(tag_fn, JsValue::Undefined, args)?;
+        Ok(Guarded::unguarded(result))
     }
 
     fn evaluate_literal(&self, lit: &LiteralValue) -> Result<JsValue, JsError> {
@@ -988,8 +1175,140 @@ impl Interpreter {
 
                 Ok(Guarded::unguarded(value))
             }
-            _ => Err(JsError::internal_error("Unsupported assignment target")),
+            AssignmentTarget::Pattern(pattern) => {
+                // Destructuring assignment: [a, b] = [1, 2] or { x, y } = obj
+                // Only simple assignment is supported (not compound like +=)
+                if assign.operator != AssignmentOp::Assign {
+                    return Err(JsError::syntax_error_simple(
+                        "Destructuring assignment only supports = operator",
+                    ));
+                }
+                self.assign_pattern(pattern, value.clone())?;
+                Ok(Guarded::unguarded(value))
+            }
         }
+    }
+
+    /// Assign values to an existing pattern (for destructuring assignment)
+    /// Unlike bind_pattern, this sets existing variables rather than defining new ones
+    fn assign_pattern(&mut self, pattern: &Pattern, value: JsValue) -> Result<(), JsError> {
+        match pattern {
+            Pattern::Identifier(id) => {
+                self.env_set(&id.name, value)?;
+                Ok(())
+            }
+
+            Pattern::Array(arr_pattern) => self.assign_array_pattern(arr_pattern, &value),
+
+            Pattern::Object(obj_pattern) => {
+                let obj = match &value {
+                    JsValue::Object(o) => *o,
+                    _ => return Err(JsError::type_error("Cannot destructure non-object")),
+                };
+
+                for prop in &obj_pattern.properties {
+                    match prop {
+                        ObjectPatternProperty::KeyValue {
+                            key,
+                            value: pat,
+                            shorthand,
+                            ..
+                        } => {
+                            let key_str: JsString = match key {
+                                ObjectPropertyKey::Identifier(id) => id.name.cheap_clone(),
+                                ObjectPropertyKey::String(s) => s.value.cheap_clone(),
+                                ObjectPropertyKey::Number(l) => {
+                                    if let LiteralValue::Number(n) = &l.value {
+                                        n.to_string().into()
+                                    } else {
+                                        continue;
+                                    }
+                                }
+                                ObjectPropertyKey::Computed(_) => continue,
+                                ObjectPropertyKey::PrivateIdentifier(id) => {
+                                    format!("#{}", id.name).into()
+                                }
+                            };
+
+                            let prop_value = obj
+                                .borrow()
+                                .get_property(&PropertyKey::String(key_str.cheap_clone()))
+                                .unwrap_or(JsValue::Undefined);
+
+                            if *shorthand {
+                                self.env_set(&key_str, prop_value)?;
+                            } else {
+                                self.assign_pattern(pat, prop_value)?;
+                            }
+                        }
+                        ObjectPatternProperty::Rest(_) => {
+                            return Err(JsError::internal_error(
+                                "Object rest patterns not yet implemented",
+                            ));
+                        }
+                    }
+                }
+
+                Ok(())
+            }
+
+            Pattern::Rest(rest) => self.assign_pattern(&rest.argument, value),
+
+            Pattern::Assignment(assign_pat) => {
+                let val = if matches!(value, JsValue::Undefined) {
+                    self.evaluate_expression(&assign_pat.right)?.take()
+                } else {
+                    value
+                };
+                self.assign_pattern(&assign_pat.left, val)
+            }
+        }
+    }
+
+    fn assign_array_pattern(
+        &mut self,
+        arr_pattern: &ArrayPattern,
+        value: &JsValue,
+    ) -> Result<(), JsError> {
+        let items: Vec<JsValue> = match value {
+            JsValue::Object(obj) => {
+                let obj_ref = obj.borrow();
+                if let ExoticObject::Array { length } = &obj_ref.exotic {
+                    let mut items = Vec::with_capacity(*length as usize);
+                    for i in 0..*length {
+                        items.push(
+                            obj_ref
+                                .get_property(&PropertyKey::Index(i))
+                                .unwrap_or(JsValue::Undefined),
+                        );
+                    }
+                    items
+                } else {
+                    vec![]
+                }
+            }
+            _ => vec![],
+        };
+
+        for (i, elem) in arr_pattern.elements.iter().enumerate() {
+            if let Some(pat) = elem {
+                match pat {
+                    Pattern::Rest(rest) => {
+                        let remaining: Vec<JsValue> = items.get(i..).unwrap_or(&[]).to_vec();
+                        let (rest_array, _guard) = self.create_array_with_guard(remaining);
+                        self.env.own(&rest_array, &self.heap);
+                        self.assign_pattern(&rest.argument, JsValue::Object(rest_array))?;
+                        break;
+                    }
+                    _ => {
+                        let item = items.get(i).cloned().unwrap_or(JsValue::Undefined);
+                        self.assign_pattern(pat, item)?;
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 
     fn evaluate_call(&mut self, call: &CallExpression) -> Result<Guarded, JsError> {
@@ -1066,31 +1385,61 @@ impl Interpreter {
 
                 // Bind parameters
                 for (i, param) in interp.params.iter().enumerate() {
-                    let arg_val = args.get(i).cloned().unwrap_or(JsValue::Undefined);
-                    let name = match &param.pattern {
-                        Pattern::Identifier(id) => id.name.cheap_clone(),
+                    match &param.pattern {
+                        Pattern::Identifier(id) => {
+                            let arg_val = args.get(i).cloned().unwrap_or(JsValue::Undefined);
+                            let name = id.name.cheap_clone();
+
+                            if let JsValue::Object(ref obj) = arg_val {
+                                func_env.own(obj, &self.heap);
+                            }
+
+                            if let Some(data) = func_env.borrow_mut().as_environment_mut() {
+                                data.bindings.insert(
+                                    name,
+                                    Binding {
+                                        value: arg_val,
+                                        mutable: true,
+                                        initialized: true,
+                                    },
+                                );
+                            }
+                        }
+                        Pattern::Rest(rest) => {
+                            // Collect remaining arguments into an array
+                            let rest_args: Vec<JsValue> =
+                                args.get(i..).unwrap_or_default().to_vec();
+                            let (rest_array, _guard) = self.create_array_with_guard(rest_args);
+                            func_env.own(&rest_array, &self.heap);
+
+                            // Get the name from the rest pattern (must be an identifier)
+                            if let Pattern::Identifier(id) = &*rest.argument {
+                                let name = id.name.cheap_clone();
+                                if let Some(data) = func_env.borrow_mut().as_environment_mut() {
+                                    data.bindings.insert(
+                                        name,
+                                        Binding {
+                                            value: JsValue::Object(rest_array),
+                                            mutable: true,
+                                            initialized: true,
+                                        },
+                                    );
+                                }
+                            }
+                            break; // Rest param must be last
+                        }
                         _ => continue,
-                    };
-
-                    if let JsValue::Object(ref obj) = arg_val {
-                        func_env.own(obj, &self.heap);
-                    }
-
-                    if let Some(data) = func_env.borrow_mut().as_environment_mut() {
-                        data.bindings.insert(
-                            name,
-                            Binding {
-                                value: arg_val,
-                                mutable: true,
-                                initialized: true,
-                            },
-                        );
                     }
                 }
 
                 // Execute function body
                 let saved_env = self.env;
                 self.env = func_env;
+
+                // Hoist var declarations before executing body
+                if let FunctionBody::Block(block) = &*interp.body {
+                    self.hoist_var_declarations(&block.body);
+                }
 
                 let result = match &*interp.body {
                     FunctionBody::Block(block) => match self.execute_block(block)? {
@@ -1238,6 +1587,97 @@ impl Interpreter {
         }
 
         Ok(Guarded::with_guard(JsValue::Object(obj), obj_guard))
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Var Hoisting
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// Hoist var declarations to the current scope (function-scoped hoisting)
+    /// This defines all var-declared variables as undefined before execution
+    fn hoist_var_declarations(&mut self, statements: &[Statement]) {
+        for stmt in statements {
+            self.hoist_var_in_statement(stmt);
+        }
+    }
+
+    fn hoist_var_in_statement(&mut self, stmt: &Statement) {
+        match stmt {
+            Statement::VariableDeclaration(decl) if decl.kind == VariableKind::Var => {
+                for declarator in &decl.declarations {
+                    self.hoist_pattern_names(&declarator.id);
+                }
+            }
+            Statement::Block(block) => {
+                // Var declarations inside blocks are still hoisted to function scope
+                self.hoist_var_declarations(&block.body);
+            }
+            Statement::If(if_stmt) => {
+                self.hoist_var_in_statement(&if_stmt.consequent);
+                if let Some(alt) = &if_stmt.alternate {
+                    self.hoist_var_in_statement(alt);
+                }
+            }
+            Statement::For(for_stmt) => {
+                if let Some(ForInit::Variable(decl)) = &for_stmt.init {
+                    if decl.kind == VariableKind::Var {
+                        for declarator in &decl.declarations {
+                            self.hoist_pattern_names(&declarator.id);
+                        }
+                    }
+                }
+                self.hoist_var_in_statement(&for_stmt.body);
+            }
+            Statement::While(while_stmt) => {
+                self.hoist_var_in_statement(&while_stmt.body);
+            }
+            _ => {}
+        }
+    }
+
+    /// Extract variable names from a pattern and define them as undefined (hoisted)
+    fn hoist_pattern_names(&mut self, pattern: &Pattern) {
+        match pattern {
+            Pattern::Identifier(id) => {
+                // Only hoist if not already defined in this scope
+                if !self.env_has_own_binding(&id.name) {
+                    self.env_define(id.name.cheap_clone(), JsValue::Undefined, true);
+                }
+            }
+            Pattern::Object(obj_pat) => {
+                for prop in &obj_pat.properties {
+                    match prop {
+                        ObjectPatternProperty::KeyValue { value, .. } => {
+                            self.hoist_pattern_names(value);
+                        }
+                        ObjectPatternProperty::Rest(rest) => {
+                            self.hoist_pattern_names(&rest.argument);
+                        }
+                    }
+                }
+            }
+            Pattern::Array(arr_pat) => {
+                for pat in arr_pat.elements.iter().flatten() {
+                    self.hoist_pattern_names(pat);
+                }
+            }
+            Pattern::Rest(rest) => {
+                self.hoist_pattern_names(&rest.argument);
+            }
+            Pattern::Assignment(assign) => {
+                self.hoist_pattern_names(&assign.left);
+            }
+        }
+    }
+
+    /// Check if a binding exists in the current scope (not parent scopes)
+    fn env_has_own_binding(&self, name: &JsString) -> bool {
+        let env_ref = self.env.borrow();
+        if let Some(data) = env_ref.as_environment() {
+            data.bindings.contains_key(name)
+        } else {
+            false
+        }
     }
 }
 
