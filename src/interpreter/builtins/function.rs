@@ -2,9 +2,7 @@
 
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
-use crate::value::{
-    BoundFunctionData, ExoticObject, JsFunction, JsValue, PropertyKey,
-};
+use crate::value::{BoundFunctionData, ExoticObject, JsFunction, JsValue, PropertyKey};
 
 /// Initialize Function.prototype with call, apply, bind methods
 pub fn init_function_prototype(interp: &mut Interpreter) {

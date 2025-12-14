@@ -6,8 +6,8 @@ use std::rc::Rc;
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
 use crate::value::{
-    create_function, CheapClone, ExoticObject, JsFunction, JsObjectRef, JsValue,
-    NativeFunction, PromiseHandler, PromiseState, PromiseStatus, PropertyKey,
+    create_function, CheapClone, ExoticObject, JsFunction, JsObjectRef, JsValue, NativeFunction,
+    PromiseHandler, PromiseState, PromiseStatus, PropertyKey,
 };
 
 /// Initialize Promise.prototype with then, catch, finally methods

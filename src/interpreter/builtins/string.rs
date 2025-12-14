@@ -6,8 +6,7 @@ use super::regexp::build_regex;
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
 use crate::value::{
-    create_function, ExoticObject, JsFunction, JsObjectRef, JsString,
-    JsValue, NativeFunction,
+    create_function, ExoticObject, JsFunction, JsObjectRef, JsString, JsValue, NativeFunction,
 };
 
 /// Initialize String.prototype with all string methods.

@@ -5,9 +5,7 @@ use std::rc::Rc;
 
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
-use crate::value::{
-    ExoticObject, GeneratorState, GeneratorStatus, JsObjectRef, JsString, JsValue,
-};
+use crate::value::{ExoticObject, GeneratorState, GeneratorStatus, JsObjectRef, JsString, JsValue};
 
 /// Initialize Generator.prototype
 pub fn init_generator_prototype(interp: &mut Interpreter) {

@@ -5,8 +5,7 @@ use chrono::{Datelike, TimeZone, Timelike, Utc};
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
 use crate::value::{
-    create_function, ExoticObject, JsFunction, JsObjectRef, JsString,
-    JsValue, NativeFunction,
+    create_function, ExoticObject, JsFunction, JsObjectRef, JsString, JsValue, NativeFunction,
 };
 
 /// Create a date from components, handling JavaScript-style overflow

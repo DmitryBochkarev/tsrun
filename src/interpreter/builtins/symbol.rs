@@ -8,8 +8,7 @@ use rustc_hash::FxHashMap;
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
 use crate::value::{
-    create_function, JsFunction, JsObjectRef, JsString, JsSymbol, JsValue,
-    NativeFunction,
+    create_function, JsFunction, JsObjectRef, JsString, JsSymbol, JsValue, NativeFunction,
 };
 
 /// Global symbol ID counter for generating unique symbol IDs

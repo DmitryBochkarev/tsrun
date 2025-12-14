@@ -3,8 +3,8 @@
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
 use crate::value::{
-    create_function, ExoticObject, JsFunction, JsObjectRef, JsString,
-    JsValue, NativeFunction, Property, PropertyKey,
+    create_function, ExoticObject, JsFunction, JsObjectRef, JsString, JsValue, NativeFunction,
+    Property, PropertyKey,
 };
 
 /// Initialize Object.prototype with hasOwnProperty, toString, valueOf methods.

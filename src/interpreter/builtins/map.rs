@@ -3,8 +3,7 @@
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
 use crate::value::{
-    create_function, ExoticObject, JsFunction, JsObjectRef, JsValue, NativeFunction,
-    PropertyKey,
+    create_function, ExoticObject, JsFunction, JsObjectRef, JsValue, NativeFunction, PropertyKey,
 };
 
 /// Initialize Map.prototype with get, set, has, delete, clear, forEach methods

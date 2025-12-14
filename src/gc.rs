@@ -351,7 +351,10 @@ struct SpaceInternal<T: Traceable> {
     marked: FxHashSet<usize>,
     /// Number of allocations since last GC
     allocs_since_gc: usize,
+    /// Number of frees since last GC
+    frees_since_gc: usize,
     /// Threshold for triggering GC (0 = disabled, only trigger when free_list empty)
+    /// GC triggers when (allocs_since_gc - frees_since_gc) >= threshold
     gc_threshold: usize,
 }
 
@@ -601,6 +604,20 @@ impl<T: Traceable> Space<T> {
     pub fn allocs_since_gc(&self) -> usize {
         self.internal.borrow().allocs_since_gc
     }
+
+    /// Returns the number of frees since the last GC.
+    pub fn frees_since_gc(&self) -> usize {
+        self.internal.borrow().frees_since_gc
+    }
+
+    /// Returns the net allocations since last GC (allocs - frees).
+    /// This is the value compared against the threshold.
+    pub fn net_allocs_since_gc(&self) -> usize {
+        let internal = self.internal.borrow();
+        internal
+            .allocs_since_gc
+            .saturating_sub(internal.frees_since_gc)
+    }
 }
 
 impl<T: Traceable> Default for Space<T> {
@@ -630,14 +647,19 @@ impl<T: Traceable> SpaceInternal<T> {
             free_list: (0..capacity).rev().collect(),
             marked: FxHashSet::default(),
             allocs_since_gc: 0,
+            frees_since_gc: 0,
             gc_threshold,
         }
     }
 
     fn prepare_for_alloc(&mut self) {
-        // Trigger GC if threshold exceeded (and threshold is enabled)
-        if self.gc_threshold > 0 && self.allocs_since_gc >= self.gc_threshold {
-            self.collect();
+        // Trigger GC if net allocations (allocs - frees) exceeds threshold
+        // This only triggers when memory pressure is actually building up
+        if self.gc_threshold > 0 {
+            let net_allocs = self.allocs_since_gc.saturating_sub(self.frees_since_gc);
+            if net_allocs >= self.gc_threshold {
+                self.collect();
+            }
         }
         // Also trigger if free_list is empty (must have space to allocate)
         if self.free_list.is_empty() {
@@ -704,6 +726,8 @@ impl<T: Traceable> SpaceInternal<T> {
                     id
                 );
                 self.free_list.push(id);
+                // Track the free for threshold calculation
+                self.frees_since_gc += 1;
             }
         }
     }
@@ -711,8 +735,9 @@ impl<T: Traceable> SpaceInternal<T> {
     fn collect(&mut self) {
         self.mark_reachable();
         self.break_cycles();
-        // Reset allocation counter after collection
+        // Reset counters after collection
         self.allocs_since_gc = 0;
+        self.frees_since_gc = 0;
     }
 
     fn mark_reachable(&mut self) {
@@ -1310,26 +1335,100 @@ mod tests {
 
     #[test]
     fn test_threshold_resets_after_collection() {
-        let mut space: Space<Node> = Space::with_capacity_and_threshold(100, 5);
+        // Use threshold of 10 so we can allocate more objects before GC triggers
+        let mut space: Space<Node> = Space::with_capacity_and_threshold(100, 10);
 
-        // Allocate 5 objects to reach threshold
-        for i in 0..5 {
-            let _node = space.alloc(Node {
+        // Create cycles to keep objects alive (not freed automatically)
+        // We'll create 4 cycles (8 objects) so net_allocs is below threshold
+        let mut nodes = Vec::new();
+        for i in 0..4 {
+            let a = space.alloc(Node {
                 value: i,
                 next: None,
             });
+            let b = space.alloc(Node {
+                value: i + 100,
+                next: None,
+            });
+            // Create cycle to keep alive
+            a.borrow_mut().next = Some(b.clone());
+            b.borrow_mut().next = Some(a.clone());
+            nodes.push(a);
+            nodes.push(b);
         }
-        // Counter is 5 (threshold reached but GC hasn't run yet)
-        assert_eq!(space.allocs_since_gc(), 5);
+        // 8 allocations, 0 frees (cycles keep them alive), below threshold of 10
+        assert_eq!(space.allocs_since_gc(), 8);
+        assert_eq!(space.frees_since_gc(), 0);
+        assert_eq!(space.net_allocs_since_gc(), 8);
 
-        // 6th allocation: check finds counter >= threshold, runs GC, resets to 0, then increments
-        let _node = space.alloc(Node {
-            value: 99,
+        // Drop local refs - cycles still keep objects alive
+        drop(nodes);
+        assert_eq!(space.allocs_since_gc(), 8);
+        assert_eq!(space.frees_since_gc(), 0);
+
+        // Allocate 2 more cycles (4 objects) to push net_allocs to 12 >= threshold (10)
+        // First alloc of next cycle: net_allocs = 9, no GC
+        // Second alloc: check at start sees net_allocs = 9, no GC, then alloc makes it 10
+        // Third alloc: check at start sees net_allocs = 10 >= threshold, GC runs!
+        let c = space.alloc(Node {
+            value: 200,
+            next: None,
+        });
+        let d = space.alloc(Node {
+            value: 201,
+            next: None,
+        });
+        c.borrow_mut().next = Some(d.clone());
+        d.borrow_mut().next = Some(c.clone());
+
+        // net_allocs = 10, threshold = 10, GC hasn't run yet (check is >= so 10 triggers)
+        // Actually, the check happens at the START of alloc, so:
+        // - After alloc #9: net = 9
+        // - Start of alloc #10: check net = 9 < 10, continue
+        // - After alloc #10: net = 10
+        // GC will trigger on next allocation
+        assert_eq!(space.allocs_since_gc(), 10);
+        assert_eq!(space.frees_since_gc(), 0);
+        assert_eq!(space.net_allocs_since_gc(), 10);
+
+        // Drop refs - cycles keep them alive
+        drop(c);
+        drop(d);
+
+        // Next allocation triggers GC because net_allocs (10) >= threshold (10)
+        let node = space.alloc(Node {
+            value: 999,
             next: None,
         });
 
-        // Counter should be 1 (GC ran at start of alloc, reset to 0, then incremented)
+        // GC ran and broke cycles, counters reset, then 1 new alloc
         assert_eq!(space.allocs_since_gc(), 1);
+        assert_eq!(space.frees_since_gc(), 0);
+
+        // Keep node alive to prevent spurious free
+        drop(node);
+    }
+
+    #[test]
+    fn test_net_allocs_threshold() {
+        // Test that frees cancel out allocations for threshold calculation
+        let mut space: Space<Node> = Space::with_capacity_and_threshold(100, 10);
+
+        // Allocate and immediately free objects (no cycles, so they get freed)
+        for i in 0..20 {
+            let node = space.alloc(Node {
+                value: i,
+                next: None,
+            });
+            // node goes out of scope immediately and gets freed
+            drop(node);
+        }
+
+        // 20 allocations, 20 frees -> net_allocs = 0
+        // GC should NOT have been triggered because net_allocs never reached threshold
+        assert_eq!(space.allocs_since_gc(), 20);
+        assert_eq!(space.frees_since_gc(), 20);
+        assert_eq!(space.net_allocs_since_gc(), 0);
     }
 
     #[test]

@@ -4,8 +4,7 @@ use super::map::same_value_zero;
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
 use crate::value::{
-    create_function, ExoticObject, JsFunction, JsObjectRef, JsValue, NativeFunction,
-    PropertyKey,
+    create_function, ExoticObject, JsFunction, JsObjectRef, JsValue, NativeFunction, PropertyKey,
 };
 
 /// Initialize Set.prototype with add, has, delete, clear, forEach methods
