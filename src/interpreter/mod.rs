@@ -3666,8 +3666,36 @@ impl Interpreter {
 
                     obj.borrow_mut().set_property(prop_key, prop_val);
                 }
-                ObjectProperty::Spread(_) => {
-                    return Err(JsError::internal_error("Spread not implemented"));
+                ObjectProperty::Spread(spread) => {
+                    // Evaluate the spread argument
+                    let Guarded {
+                        value: spread_val,
+                        guard: spread_guard,
+                    } = self.evaluate_expression(&spread.argument)?;
+
+                    // Keep guard alive
+                    if let Some(g) = spread_guard {
+                        _prop_guards.push(g);
+                    }
+
+                    // If it's an object, copy all its enumerable own properties
+                    if let JsValue::Object(spread_obj) = spread_val {
+                        let spread_ref = spread_obj.borrow();
+                        // Copy all string properties (not symbol keys for now)
+                        for (key, prop) in spread_ref.properties.iter() {
+                            // Skip non-enumerable properties
+                            if !prop.enumerable {
+                                continue;
+                            }
+                            // Transfer ownership if value is an object
+                            if let JsValue::Object(ref val_obj) = prop.value {
+                                obj.own(val_obj, &self.heap);
+                            }
+                            obj.borrow_mut().set_property(key.clone(), prop.value.clone());
+                        }
+                    }
+                    // If it's null or undefined, just skip (like JS does)
+                    // Other primitives are also skipped
                 }
             }
         }
