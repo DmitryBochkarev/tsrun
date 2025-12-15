@@ -5,19 +5,22 @@
 // Old implementation kept for reference in old_mod.rs (not compiled)
 // mod old_mod;
 
-// Builtin function implementations (disabled - needs migration to new GC)
-// pub mod builtins;
+// Builtin function implementations
+pub mod builtins;
 
 // Evaluation stack for suspendable execution (disabled - needs migration)
 // pub mod eval_stack;
 
 use crate::ast::{
-    ArrayElement, ArrayPattern, AssignmentExpression, AssignmentOp, AssignmentTarget,
-    BinaryExpression, BinaryOp, BlockStatement, CallExpression, ConditionalExpression, Expression,
-    ForInit, ForStatement, FunctionDeclaration, FunctionParam, IfStatement, LiteralValue,
-    LogicalExpression, LogicalOp, MemberExpression, MemberProperty, ObjectExpression,
-    ObjectPatternProperty, ObjectProperty, ObjectPropertyKey, Pattern, Program, Statement,
-    TaggedTemplateExpression, TemplateLiteral, UnaryExpression, UnaryOp, VariableDeclaration,
+    Argument, ArrayElement, ArrayPattern, AssignmentExpression, AssignmentOp, AssignmentTarget,
+    BinaryExpression, BinaryOp, BlockStatement, CallExpression, ClassConstructor, ClassDeclaration,
+    ClassExpression, ClassMember, ClassMethod, ClassProperty, ConditionalExpression,
+    DoWhileStatement, Expression, ForInOfLeft, ForInStatement, ForInit, ForOfStatement,
+    ForStatement, FunctionDeclaration, FunctionParam, IfStatement, LabeledStatement, LiteralValue,
+    LogicalExpression, LogicalOp, MemberExpression, MemberProperty, MethodKind, NewExpression,
+    ObjectExpression, ObjectPatternProperty, ObjectProperty, ObjectPropertyKey, Pattern, Program,
+    SequenceExpression, Statement, SwitchStatement, TaggedTemplateExpression, TemplateLiteral,
+    TryStatement, UnaryExpression, UnaryOp, UpdateExpression, UpdateOp, VariableDeclaration,
     VariableKind, WhileStatement,
 };
 use crate::error::JsError;
@@ -27,7 +30,8 @@ use crate::parser::Parser;
 use crate::string_dict::StringDict;
 use crate::value::{
     create_environment_with_guard, Binding, CheapClone, EnvRef, EnvironmentData, ExoticObject,
-    FunctionBody, InterpretedFunction, JsFunction, JsObject, JsString, JsValue, PropertyKey,
+    FunctionBody, InterpretedFunction, JsFunction, JsObject, JsString, JsValue, NativeFunction,
+    Property, PropertyKey,
 };
 use rustc_hash::FxHashMap;
 use std::rc::Rc;
@@ -235,6 +239,18 @@ impl Interpreter {
 
         let infinity_name = self.string_dict.get_or_insert("Infinity");
         self.env_define(infinity_name, JsValue::Number(f64::INFINITY), false);
+
+        // Initialize Array builtin methods
+        builtins::init_array_prototype(self);
+
+        // Initialize Math global object
+        builtins::init_math(self);
+
+        // Initialize Number prototype methods
+        builtins::init_number_prototype(self);
+
+        // Initialize Error constructor
+        builtins::init_error(self);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -383,9 +399,11 @@ impl Interpreter {
                 arr_ref.set_property(PropertyKey::Index(i as u32), elem.clone());
             }
 
-            arr_ref.set_property(
-                PropertyKey::String(self.string_dict.get_or_insert("length")),
-                JsValue::Number(len as f64),
+            // length should be writable but not enumerable
+            let length_key = PropertyKey::String(self.string_dict.get_or_insert("length"));
+            arr_ref.properties.insert(
+                length_key,
+                Property::with_attributes(JsValue::Number(len as f64), true, false, false),
             );
         }
         arr.own(&self.array_prototype, &self.heap);
@@ -433,6 +451,104 @@ impl Interpreter {
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
+    // Builtin Helper Methods
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// Intern a string
+    pub fn intern(&mut self, s: &str) -> JsString {
+        self.string_dict.get_or_insert(s)
+    }
+
+    /// Create a PropertyKey from a string
+    pub fn key(&mut self, s: &str) -> PropertyKey {
+        PropertyKey::String(self.string_dict.get_or_insert(s))
+    }
+
+    /// Create a rooted array (for use during initialization)
+    pub fn create_array(&mut self, elements: Vec<JsValue>) -> Gc<JsObject> {
+        let len = elements.len() as u32;
+        let arr = self.root_guard.alloc();
+        {
+            let mut arr_ref = arr.borrow_mut();
+            arr_ref.prototype = Some(self.array_prototype);
+            arr_ref.exotic = ExoticObject::Array { length: len };
+
+            for (i, elem) in elements.iter().enumerate() {
+                arr_ref.set_property(PropertyKey::Index(i as u32), elem.clone());
+            }
+
+            arr_ref.set_property(
+                PropertyKey::String(self.string_dict.get_or_insert("length")),
+                JsValue::Number(len as f64),
+            );
+        }
+        arr.own(&self.array_prototype, &self.heap);
+
+        // Array owns its element objects
+        for elem in &elements {
+            if let JsValue::Object(elem_obj) = elem {
+                arr.own(elem_obj, &self.heap);
+            }
+        }
+
+        arr
+    }
+
+    /// Create a rooted native function (for use during initialization)
+    pub fn create_native_function(
+        &mut self,
+        name: &str,
+        func: fn(&mut Interpreter, JsValue, &[JsValue]) -> Result<JsValue, JsError>,
+        arity: usize,
+    ) -> Gc<JsObject> {
+        let name_str = self.string_dict.get_or_insert(name);
+        let func_obj = self.root_guard.alloc();
+        {
+            let mut f_ref = func_obj.borrow_mut();
+            f_ref.prototype = Some(self.function_prototype);
+            f_ref.exotic = ExoticObject::Function(JsFunction::Native(NativeFunction {
+                name: name_str,
+                func,
+                arity,
+            }));
+        }
+        func_obj.own(&self.function_prototype, &self.heap);
+        func_obj
+    }
+
+    /// Register a method on an object (for builtin initialization)
+    pub fn register_method(
+        &mut self,
+        obj: &Gc<JsObject>,
+        name: &str,
+        func: fn(&mut Interpreter, JsValue, &[JsValue]) -> Result<JsValue, JsError>,
+        arity: usize,
+    ) {
+        let func_obj = self.create_native_function(name, func, arity);
+        let key = self.key(name);
+        obj.borrow_mut()
+            .set_property(key, JsValue::Object(func_obj));
+        obj.own(&func_obj, &self.heap);
+    }
+
+    /// Guard a value to prevent it from being garbage collected.
+    /// Returns Some(guard) if the value is an object, None otherwise.
+    pub fn guard_value(&mut self, value: &JsValue) -> Option<Guard<JsObject>> {
+        if let JsValue::Object(obj) = value {
+            let guard = self.heap.create_guard();
+            guard.guard(obj);
+            Some(guard)
+        } else {
+            None
+        }
+    }
+
+    /// Create a guarded scope for multiple objects
+    pub fn guarded_scope(&mut self) -> Guard<JsObject> {
+        self.heap.create_guard()
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
     // Evaluation Entry Point
     // ═══════════════════════════════════════════════════════════════════════════
 
@@ -451,10 +567,11 @@ impl Interpreter {
             match self.execute_statement(stmt)? {
                 Completion::Normal(val) => result = val,
                 Completion::Return(val) => return Ok(val),
-                Completion::Break(_) | Completion::Continue(_) => {
-                    return Err(JsError::syntax_error_simple(
-                        "Illegal break/continue statement",
-                    ));
+                Completion::Break(_) => {
+                    return Err(JsError::syntax_error_simple("Illegal break statement"));
+                }
+                Completion::Continue(_) => {
+                    return Err(JsError::syntax_error_simple("Illegal continue statement"));
                 }
             }
         }
@@ -492,20 +609,61 @@ impl Interpreter {
                     Some(expr) => self.evaluate_expression(expr)?,
                     None => Guarded::unguarded(JsValue::Undefined),
                 };
-                // Note: _return_guard keeps the value alive; caller should establish ownership
+                // Root the returned object to keep it alive until caller can establish ownership
+                if let JsValue::Object(ref obj) = value {
+                    self.root_guard.guard(obj);
+                }
                 Ok(Completion::Return(value))
             }
 
+            Statement::Labeled(labeled) => self.execute_labeled(labeled),
+
             Statement::While(while_stmt) => self.execute_while(while_stmt),
 
+            Statement::DoWhile(do_while_stmt) => self.execute_do_while(do_while_stmt),
+
             Statement::For(for_stmt) => self.execute_for(for_stmt),
+
+            Statement::ForIn(for_in) => self.execute_for_in(for_in),
+
+            Statement::ForOf(for_of) => self.execute_for_of(for_of),
 
             Statement::FunctionDeclaration(func) => {
                 self.execute_function_declaration(func)?;
                 Ok(Completion::Normal(JsValue::Undefined))
             }
 
+            Statement::Switch(switch_stmt) => self.execute_switch(switch_stmt),
+
+            Statement::Try(try_stmt) => self.execute_try(try_stmt),
+
+            Statement::Throw(throw) => {
+                let Guarded {
+                    value,
+                    guard: _guard,
+                } = self.evaluate_expression(&throw.argument)?;
+                // If throwing an object, root it to keep it alive until caught
+                if let JsValue::Object(ref obj) = value {
+                    self.root_guard.guard(obj);
+                }
+                self.thrown_value = Some(value);
+                Err(JsError::Thrown)
+            }
+
+            Statement::Break(brk) => Ok(Completion::Break(
+                brk.label.as_ref().map(|l| l.name.cheap_clone()),
+            )),
+
+            Statement::Continue(cont) => Ok(Completion::Continue(
+                cont.label.as_ref().map(|l| l.name.cheap_clone()),
+            )),
+
             Statement::Empty => Ok(Completion::Normal(JsValue::Undefined)),
+
+            Statement::ClassDeclaration(class) => {
+                self.execute_class_declaration(class)?;
+                Ok(Completion::Normal(JsValue::Undefined))
+            }
 
             // For now, skip unimplemented statements
             _ => Ok(Completion::Normal(JsValue::Undefined)),
@@ -716,13 +874,44 @@ impl Interpreter {
     }
 
     fn execute_for(&mut self, for_stmt: &ForStatement) -> Result<Completion, JsError> {
+        // Handle var declarations BEFORE creating loop scope (var is function-scoped)
+        let has_var_init =
+            matches!(&for_stmt.init, Some(ForInit::Variable(d)) if d.kind == VariableKind::Var);
+        if has_var_init {
+            if let Some(ForInit::Variable(decl)) = &for_stmt.init {
+                self.execute_variable_declaration(decl)?;
+            }
+        }
+
         let saved_env = self.push_scope();
 
-        // Init
+        // Extract loop variable names for let/const (for per-iteration binding)
+        let loop_vars: Vec<(JsString, bool)> = match &for_stmt.init {
+            Some(ForInit::Variable(decl)) if decl.kind != VariableKind::Var => {
+                let mutable = decl.kind == VariableKind::Let;
+                decl.declarations
+                    .iter()
+                    .filter_map(|d| {
+                        if let Pattern::Identifier(id) = &d.id {
+                            Some((JsString::from(id.name.as_str()), mutable))
+                        } else {
+                            None // Skip destructuring patterns for now
+                        }
+                    })
+                    .collect()
+            }
+            _ => vec![],
+        };
+        let has_per_iteration_binding = !loop_vars.is_empty();
+
+        // Init (let/const declarations go in loop scope, or handle expressions)
         if let Some(ref init) = for_stmt.init {
             match init {
                 ForInit::Variable(decl) => {
-                    self.execute_variable_declaration(decl)?;
+                    // Only execute non-var declarations here (var already handled above)
+                    if decl.kind != VariableKind::Var {
+                        self.execute_variable_declaration(decl)?;
+                    }
                 }
                 ForInit::Expression(expr) => {
                     // Init expression - value discarded
@@ -731,9 +920,38 @@ impl Interpreter {
             }
         }
 
+        // Per ES spec, create initial per-iteration environment before loop starts
+        // This is where the initial values live
+        if has_per_iteration_binding {
+            let loop_scope_env = self.env;
+            let iter_env =
+                create_environment_with_guard(&self.root_guard, &self.heap, Some(saved_env));
+            for (name, mutable) in &loop_vars {
+                let value = self.env_get(name)?;
+                if let JsValue::Object(ref obj) = value {
+                    iter_env.own(obj, &self.heap);
+                }
+                let mut env_ref = iter_env.borrow_mut();
+                if let Some(data) = env_ref.as_environment_mut() {
+                    data.bindings.insert(
+                        name.cheap_clone(),
+                        Binding {
+                            value,
+                            mutable: *mutable,
+                            initialized: true,
+                        },
+                    );
+                }
+                drop(env_ref);
+            }
+            // Discard loop_scope_env - from now on we use per-iteration environments
+            let _ = loop_scope_env;
+            self.env = iter_env;
+        }
+
         // Loop
         loop {
-            // Test
+            // Test (runs in current per-iteration environment)
             if let Some(ref test) = for_stmt.test {
                 let condition = self.evaluate_expression(test)?.take();
                 if !condition.to_boolean() {
@@ -741,8 +959,11 @@ impl Interpreter {
                 }
             }
 
-            // Body
-            match self.execute_statement(&for_stmt.body)? {
+            // Body (runs in current per-iteration environment)
+            let body_result = self.execute_statement(&for_stmt.body)?;
+
+            // Handle control flow
+            match body_result {
                 Completion::Normal(_) | Completion::Continue(None) => {}
                 Completion::Break(None) => break,
                 Completion::Return(v) => {
@@ -755,14 +976,982 @@ impl Interpreter {
                 }
             }
 
-            // Update
+            // Per ES spec: Create NEW per-iteration env BEFORE update
+            // This preserves the body's captured values while update modifies new env
+            if has_per_iteration_binding {
+                let current_env = self.env;
+                let new_iter_env =
+                    create_environment_with_guard(&self.root_guard, &self.heap, Some(saved_env));
+                for (name, mutable) in &loop_vars {
+                    // Copy value from current iteration environment
+                    let value = {
+                        let env_ref = current_env.borrow();
+                        if let Some(data) = env_ref.as_environment() {
+                            data.bindings
+                                .get(name)
+                                .map(|b| b.value.clone())
+                                .unwrap_or(JsValue::Undefined)
+                        } else {
+                            JsValue::Undefined
+                        }
+                    };
+                    if let JsValue::Object(ref obj) = value {
+                        new_iter_env.own(obj, &self.heap);
+                    }
+                    let mut env_ref = new_iter_env.borrow_mut();
+                    if let Some(data) = env_ref.as_environment_mut() {
+                        data.bindings.insert(
+                            name.cheap_clone(),
+                            Binding {
+                                value,
+                                mutable: *mutable,
+                                initialized: true,
+                            },
+                        );
+                    }
+                }
+                self.env = new_iter_env;
+            }
+
+            // Update (runs in NEW per-iteration environment, not the one body used)
             if let Some(ref update) = for_stmt.update {
-                // Update expression - value discarded
                 self.evaluate_expression(update)?.take();
             }
         }
 
         self.pop_scope(saved_env);
+        Ok(Completion::Normal(JsValue::Undefined))
+    }
+
+    fn execute_do_while(&mut self, do_while: &DoWhileStatement) -> Result<Completion, JsError> {
+        loop {
+            match self.execute_statement(&do_while.body)? {
+                Completion::Normal(_) | Completion::Continue(None) => {}
+                Completion::Break(None) => break,
+                Completion::Return(v) => return Ok(Completion::Return(v)),
+                c @ (Completion::Break(_) | Completion::Continue(_)) => return Ok(c),
+            }
+
+            let condition = self.evaluate_expression(&do_while.test)?.take();
+            if !condition.to_boolean() {
+                break;
+            }
+        }
+
+        Ok(Completion::Normal(JsValue::Undefined))
+    }
+
+    fn execute_for_in(&mut self, for_in: &ForInStatement) -> Result<Completion, JsError> {
+        let right = self.evaluate_expression(&for_in.right)?.take();
+
+        let keys = match &right {
+            JsValue::Object(obj) => {
+                let obj_ref = obj.borrow();
+                obj_ref
+                    .properties
+                    .iter()
+                    .filter(|(key, prop)| prop.enumerable && !key.is_symbol())
+                    .map(|(key, _)| key.to_string())
+                    .collect::<Vec<_>>()
+            }
+            _ => vec![],
+        };
+
+        let prev_env = self.env;
+
+        for key in keys {
+            // Per-iteration environment
+            let iter_env =
+                create_environment_with_guard(&self.root_guard, &self.heap, Some(prev_env));
+            self.env = iter_env;
+
+            let key_value = JsValue::String(JsString::from(key));
+
+            match &for_in.left {
+                ForInOfLeft::Variable(decl) => {
+                    let mutable = decl.kind != VariableKind::Const;
+                    if let Some(declarator) = decl.declarations.first() {
+                        self.bind_pattern(&declarator.id, key_value, mutable)?;
+                    }
+                }
+                ForInOfLeft::Pattern(pattern) => {
+                    self.assign_pattern(pattern, key_value)?;
+                }
+            }
+
+            match self.execute_statement(&for_in.body)? {
+                Completion::Break(None) => {
+                    self.env = prev_env;
+                    return Ok(Completion::Normal(JsValue::Undefined));
+                }
+                Completion::Break(lbl) => {
+                    self.env = prev_env;
+                    return Ok(Completion::Break(lbl));
+                }
+                Completion::Continue(None) => continue,
+                Completion::Continue(lbl) => {
+                    self.env = prev_env;
+                    return Ok(Completion::Continue(lbl));
+                }
+                Completion::Return(val) => {
+                    self.env = prev_env;
+                    return Ok(Completion::Return(val));
+                }
+                Completion::Normal(_) => {}
+            }
+        }
+
+        self.env = prev_env;
+        Ok(Completion::Normal(JsValue::Undefined))
+    }
+
+    fn execute_for_of(&mut self, for_of: &ForOfStatement) -> Result<Completion, JsError> {
+        let right = self.evaluate_expression(&for_of.right)?.take();
+
+        // Collect items to iterate over
+        let items = match &right {
+            JsValue::Object(obj) => {
+                let obj_ref = obj.borrow();
+                match &obj_ref.exotic {
+                    ExoticObject::Array { length } => {
+                        let mut items = Vec::with_capacity(*length as usize);
+                        for i in 0..*length {
+                            items.push(
+                                obj_ref
+                                    .get_property(&PropertyKey::Index(i))
+                                    .unwrap_or(JsValue::Undefined),
+                            );
+                        }
+                        items
+                    }
+                    _ => vec![],
+                }
+            }
+            JsValue::String(s) => s
+                .as_str()
+                .chars()
+                .map(|c| JsValue::from(c.to_string()))
+                .collect(),
+            _ => vec![],
+        };
+
+        let prev_env = self.env;
+
+        for item in items {
+            // Per-iteration environment
+            let iter_env =
+                create_environment_with_guard(&self.root_guard, &self.heap, Some(prev_env));
+            self.env = iter_env;
+
+            match &for_of.left {
+                ForInOfLeft::Variable(decl) => {
+                    let mutable = decl.kind != VariableKind::Const;
+                    if let Some(declarator) = decl.declarations.first() {
+                        self.bind_pattern(&declarator.id, item, mutable)?;
+                    }
+                }
+                ForInOfLeft::Pattern(pattern) => {
+                    self.assign_pattern(pattern, item)?;
+                }
+            }
+
+            match self.execute_statement(&for_of.body)? {
+                Completion::Break(None) => {
+                    self.env = prev_env;
+                    return Ok(Completion::Normal(JsValue::Undefined));
+                }
+                Completion::Break(lbl) => {
+                    self.env = prev_env;
+                    return Ok(Completion::Break(lbl));
+                }
+                Completion::Continue(None) => continue,
+                Completion::Continue(lbl) => {
+                    self.env = prev_env;
+                    return Ok(Completion::Continue(lbl));
+                }
+                Completion::Return(val) => {
+                    self.env = prev_env;
+                    return Ok(Completion::Return(val));
+                }
+                Completion::Normal(_) => {}
+            }
+        }
+
+        self.env = prev_env;
+        Ok(Completion::Normal(JsValue::Undefined))
+    }
+
+    fn execute_switch(&mut self, switch: &SwitchStatement) -> Result<Completion, JsError> {
+        let discriminant = self.evaluate_expression(&switch.discriminant)?.take();
+        let mut matched = false;
+        let mut default_index = None;
+
+        // Find matching case or default
+        for (i, case) in switch.cases.iter().enumerate() {
+            if case.test.is_none() {
+                default_index = Some(i);
+                continue;
+            }
+
+            if !matched {
+                if let Some(test_expr) = &case.test {
+                    let test = self.evaluate_expression(test_expr)?.take();
+                    if discriminant.strict_equals(&test) {
+                        matched = true;
+                    }
+                }
+            }
+
+            if matched {
+                for stmt in &case.consequent {
+                    match self.execute_statement(stmt)? {
+                        Completion::Break(None) => {
+                            return Ok(Completion::Normal(JsValue::Undefined))
+                        }
+                        Completion::Return(val) => return Ok(Completion::Return(val)),
+                        Completion::Continue(label) => return Ok(Completion::Continue(label)),
+                        Completion::Break(label) => return Ok(Completion::Break(label)),
+                        Completion::Normal(_) => {}
+                    }
+                }
+            }
+        }
+
+        // Fall through to default if no match
+        if !matched {
+            if let Some(idx) = default_index {
+                for case in switch.cases.iter().skip(idx) {
+                    for stmt in &case.consequent {
+                        match self.execute_statement(stmt)? {
+                            Completion::Break(None) => {
+                                return Ok(Completion::Normal(JsValue::Undefined))
+                            }
+                            Completion::Return(val) => return Ok(Completion::Return(val)),
+                            Completion::Continue(label) => return Ok(Completion::Continue(label)),
+                            Completion::Break(label) => return Ok(Completion::Break(label)),
+                            Completion::Normal(_) => {}
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(Completion::Normal(JsValue::Undefined))
+    }
+
+    fn execute_try(&mut self, try_stmt: &TryStatement) -> Result<Completion, JsError> {
+        let result = self.execute_block(&try_stmt.block);
+
+        match result {
+            Ok(completion) => {
+                // No error thrown, run finalizer if present
+                if let Some(ref finalizer) = try_stmt.finalizer {
+                    self.execute_block(finalizer)?;
+                }
+                Ok(completion)
+            }
+            Err(err) => {
+                if let Some(ref handler) = try_stmt.handler {
+                    // Get the error value
+                    let error_value = match &err {
+                        JsError::Thrown => self.thrown_value.take().unwrap_or(JsValue::Undefined),
+                        JsError::ThrownValue { value } => value.clone(),
+                        _ => JsValue::from(err.to_string()),
+                    };
+
+                    // Create catch scope
+                    let prev_env = self.env;
+                    let catch_env =
+                        create_environment_with_guard(&self.root_guard, &self.heap, Some(prev_env));
+                    self.env = catch_env;
+
+                    // Bind error parameter if present
+                    if let Some(ref param) = handler.param {
+                        self.bind_pattern(param, error_value, true)?;
+                    }
+
+                    let catch_result = self.execute_block(&handler.body);
+                    self.env = prev_env;
+
+                    // Run finalizer if present
+                    if let Some(ref finalizer) = try_stmt.finalizer {
+                        self.execute_block(finalizer)?;
+                    }
+
+                    catch_result
+                } else if let Some(ref finalizer) = try_stmt.finalizer {
+                    // No handler, just run finalizer and re-throw
+                    self.execute_block(finalizer)?;
+                    Err(err)
+                } else {
+                    // No handler or finalizer
+                    Err(err)
+                }
+            }
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Class Implementation
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    fn execute_class_declaration(&mut self, class: &ClassDeclaration) -> Result<(), JsError> {
+        let constructor_fn = self.create_class_constructor(class)?;
+
+        // Bind the class name first (so static blocks can reference it)
+        if let Some(id) = &class.id {
+            self.env_define(
+                JsString::from(id.name.as_str()),
+                JsValue::Object(constructor_fn.cheap_clone()),
+                false,
+            );
+        }
+
+        // Execute static blocks - they can reference the class name
+        for member in &class.body.members {
+            if let ClassMember::StaticBlock(block) = member {
+                for stmt in &block.body {
+                    if let Completion::Return(_) = self.execute_statement(stmt)? {
+                        break;
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn create_class_constructor(
+        &mut self,
+        class: &ClassDeclaration,
+    ) -> Result<Gc<JsObject>, JsError> {
+        // Handle extends - evaluate superclass first
+        let super_constructor: Option<Gc<JsObject>> =
+            if let Some(super_class_expr) = &class.super_class {
+                let super_val = self.evaluate_expression(super_class_expr)?.take();
+                if let JsValue::Object(sc) = super_val {
+                    Some(sc)
+                } else {
+                    return Err(JsError::type_error(
+                        "Class extends value is not a constructor",
+                    ));
+                }
+            } else {
+                None
+            };
+
+        // Create prototype object
+        let (prototype, _proto_guard) = self.create_object_with_guard();
+        self.root_guard.guard(&prototype);
+
+        // If we have a superclass, set up prototype chain
+        if let Some(ref super_ctor) = super_constructor {
+            let proto_key = self.key("prototype");
+            let super_proto = super_ctor.borrow().get_property(&proto_key);
+            if let Some(JsValue::Object(sp)) = super_proto {
+                prototype.borrow_mut().prototype = Some(sp.cheap_clone());
+                prototype.own(&sp, &self.heap);
+            }
+        }
+
+        // Find constructor and collect methods/properties
+        let mut constructor: Option<&ClassConstructor> = None;
+        let mut instance_fields: Vec<&ClassProperty> = Vec::new();
+        let mut static_fields: Vec<&ClassProperty> = Vec::new();
+        let mut instance_methods: Vec<&ClassMethod> = Vec::new();
+        let mut static_methods: Vec<&ClassMethod> = Vec::new();
+
+        for member in &class.body.members {
+            match member {
+                ClassMember::Constructor(ctor) => {
+                    constructor = Some(ctor);
+                }
+                ClassMember::Method(method) => {
+                    if method.static_ {
+                        static_methods.push(method);
+                    } else {
+                        instance_methods.push(method);
+                    }
+                }
+                ClassMember::Property(prop) => {
+                    if prop.static_ {
+                        static_fields.push(prop);
+                    } else {
+                        instance_fields.push(prop);
+                    }
+                }
+                ClassMember::StaticBlock(_) => {
+                    // Static blocks are collected and executed later
+                }
+            }
+        }
+
+        // Collect getters, setters, and regular methods separately
+        let mut accessors: FxHashMap<JsString, (Option<Gc<JsObject>>, Option<Gc<JsObject>>)> =
+            FxHashMap::default();
+        let mut regular_methods: Vec<(JsString, Gc<JsObject>)> = Vec::new();
+
+        for method in &instance_methods {
+            let method_name: JsString = match &method.key {
+                ObjectPropertyKey::Identifier(id) => JsString::from(id.name.as_str()),
+                ObjectPropertyKey::String(s) => s.value.cheap_clone(),
+                ObjectPropertyKey::Number(lit) => match &lit.value {
+                    LiteralValue::Number(n) => JsString::from(n.to_string()),
+                    _ => continue,
+                },
+                ObjectPropertyKey::Computed(_) => continue,
+                ObjectPropertyKey::PrivateIdentifier(id) => JsString::from(format!("#{}", id.name)),
+            };
+
+            let func = &method.value;
+            let (func_obj, _func_guard) = self.create_function_with_guard(
+                Some(method_name.cheap_clone()),
+                Rc::from(func.params.as_slice()),
+                Rc::new(FunctionBody::Block(func.body.clone())),
+                self.env,
+                func.span,
+                func.generator,
+                func.async_,
+            );
+            self.root_guard.guard(&func_obj);
+
+            // Store __super__ on method so super.method() works
+            if let Some(ref super_ctor) = super_constructor {
+                let super_key = self.key("__super__");
+                func_obj.own(super_ctor, &self.heap);
+                func_obj
+                    .borrow_mut()
+                    .set_property(super_key, JsValue::Object(super_ctor.cheap_clone()));
+            }
+
+            match method.kind {
+                MethodKind::Get => {
+                    let entry = accessors.entry(method_name).or_insert((None, None));
+                    entry.0 = Some(func_obj);
+                }
+                MethodKind::Set => {
+                    let entry = accessors.entry(method_name).or_insert((None, None));
+                    entry.1 = Some(func_obj);
+                }
+                MethodKind::Method => {
+                    regular_methods.push((method_name, func_obj));
+                }
+            }
+        }
+
+        // Add accessor properties to prototype
+        for (name, (getter, setter)) in accessors {
+            prototype.borrow_mut().define_property(
+                PropertyKey::String(name),
+                Property::accessor(getter, setter),
+            );
+        }
+
+        // Add regular methods to prototype
+        for (name, func_obj) in regular_methods {
+            prototype.own(&func_obj, &self.heap);
+            prototype
+                .borrow_mut()
+                .set_property(PropertyKey::String(name), JsValue::Object(func_obj));
+        }
+
+        // Build constructor body that initializes instance fields then runs user constructor
+        let field_initializers: Vec<(JsString, Option<Expression>)> = instance_fields
+            .iter()
+            .filter_map(|prop| {
+                let name: JsString = match &prop.key {
+                    ObjectPropertyKey::Identifier(id) => JsString::from(id.name.as_str()),
+                    ObjectPropertyKey::String(s) => s.value.cheap_clone(),
+                    ObjectPropertyKey::PrivateIdentifier(id) => {
+                        JsString::from(format!("#{}", id.name))
+                    }
+                    _ => return None,
+                };
+                Some((name, prop.value.clone()))
+            })
+            .collect();
+
+        // Create the constructor function
+        let ctor_body = if let Some(ctor) = constructor {
+            ctor.body.clone()
+        } else {
+            BlockStatement {
+                body: vec![],
+                span: class.span,
+            }
+        };
+
+        let ctor_params = if let Some(ctor) = constructor {
+            ctor.params.clone()
+        } else {
+            vec![]
+        };
+
+        let (constructor_fn, _ctor_guard) = self.create_function_with_guard(
+            class.id.as_ref().map(|id| JsString::from(id.name.as_str())),
+            Rc::from(ctor_params),
+            Rc::new(FunctionBody::Block(ctor_body)),
+            self.env,
+            class.span,
+            false,
+            false,
+        );
+        self.root_guard.guard(&constructor_fn);
+
+        // Store prototype on constructor
+        {
+            let proto_key = self.key("prototype");
+            constructor_fn.own(&prototype, &self.heap);
+            constructor_fn
+                .borrow_mut()
+                .set_property(proto_key, JsValue::Object(prototype.cheap_clone()));
+        }
+
+        // Store field initializers in __fields__ if there are any
+        if !field_initializers.is_empty() {
+            let mut field_values: Vec<(JsString, JsValue)> = Vec::new();
+            for (name, value_expr) in field_initializers {
+                let value = if let Some(expr) = value_expr {
+                    self.evaluate_expression(&expr)
+                        .map(|g| g.take())
+                        .unwrap_or(JsValue::Undefined)
+                } else {
+                    JsValue::Undefined
+                };
+                field_values.push((name, value));
+            }
+
+            // Create the fields array
+            let mut field_pairs: Vec<JsValue> = Vec::new();
+            for (name, value) in field_values {
+                let (pair, _pair_guard) =
+                    self.create_array_with_guard(vec![JsValue::String(name), value]);
+                self.root_guard.guard(&pair);
+                field_pairs.push(JsValue::Object(pair));
+            }
+
+            let (fields_array, _fields_guard) = self.create_array_with_guard(field_pairs);
+            self.root_guard.guard(&fields_array);
+
+            let fields_key = self.key("__fields__");
+            constructor_fn.own(&fields_array, &self.heap);
+            constructor_fn
+                .borrow_mut()
+                .set_property(fields_key, JsValue::Object(fields_array));
+        }
+
+        // Store super constructor if we have one
+        if let Some(ref super_ctor) = super_constructor {
+            let super_key = self.key("__super__");
+            constructor_fn.own(super_ctor, &self.heap);
+            constructor_fn
+                .borrow_mut()
+                .set_property(super_key, JsValue::Object(super_ctor.cheap_clone()));
+        }
+
+        // Handle static methods
+        let mut static_accessors: FxHashMap<
+            JsString,
+            (Option<Gc<JsObject>>, Option<Gc<JsObject>>),
+        > = FxHashMap::default();
+        let mut static_regular_methods: Vec<(JsString, Gc<JsObject>)> = Vec::new();
+
+        for method in &static_methods {
+            let method_name: JsString = match &method.key {
+                ObjectPropertyKey::Identifier(id) => JsString::from(id.name.as_str()),
+                ObjectPropertyKey::String(s) => s.value.cheap_clone(),
+                ObjectPropertyKey::Number(lit) => match &lit.value {
+                    LiteralValue::Number(n) => JsString::from(n.to_string()),
+                    _ => continue,
+                },
+                ObjectPropertyKey::Computed(_) => continue,
+                ObjectPropertyKey::PrivateIdentifier(id) => JsString::from(format!("#{}", id.name)),
+            };
+
+            let func = &method.value;
+            let (func_obj, _func_guard) = self.create_function_with_guard(
+                Some(method_name.cheap_clone()),
+                Rc::from(func.params.as_slice()),
+                Rc::new(FunctionBody::Block(func.body.clone())),
+                self.env,
+                func.span,
+                func.generator,
+                func.async_,
+            );
+            self.root_guard.guard(&func_obj);
+
+            match method.kind {
+                MethodKind::Get => {
+                    let entry = static_accessors.entry(method_name).or_insert((None, None));
+                    entry.0 = Some(func_obj);
+                }
+                MethodKind::Set => {
+                    let entry = static_accessors.entry(method_name).or_insert((None, None));
+                    entry.1 = Some(func_obj);
+                }
+                MethodKind::Method => {
+                    static_regular_methods.push((method_name, func_obj));
+                }
+            }
+        }
+
+        // Add static accessor properties
+        for (name, (getter, setter)) in static_accessors {
+            constructor_fn.borrow_mut().define_property(
+                PropertyKey::String(name),
+                Property::accessor(getter, setter),
+            );
+        }
+
+        // Add static regular methods
+        for (name, func_obj) in static_regular_methods {
+            constructor_fn.own(&func_obj, &self.heap);
+            constructor_fn
+                .borrow_mut()
+                .set_property(PropertyKey::String(name), JsValue::Object(func_obj));
+        }
+
+        // Initialize static fields
+        for prop in &static_fields {
+            let name = match &prop.key {
+                ObjectPropertyKey::Identifier(id) => JsString::from(id.name.as_str()),
+                ObjectPropertyKey::String(s) => s.value.cheap_clone(),
+                ObjectPropertyKey::PrivateIdentifier(id) => JsString::from(format!("#{}", id.name)),
+                _ => continue,
+            };
+
+            let value = if let Some(expr) = &prop.value {
+                self.evaluate_expression(expr)?.take()
+            } else {
+                JsValue::Undefined
+            };
+
+            if let JsValue::Object(ref obj) = value {
+                constructor_fn.own(obj, &self.heap);
+            }
+            constructor_fn
+                .borrow_mut()
+                .set_property(PropertyKey::String(name), value);
+        }
+
+        // Set prototype.constructor = constructor
+        {
+            let ctor_key = self.key("constructor");
+            prototype.own(&constructor_fn, &self.heap);
+            prototype
+                .borrow_mut()
+                .set_property(ctor_key, JsValue::Object(constructor_fn.cheap_clone()));
+        }
+
+        Ok(constructor_fn)
+    }
+
+    fn create_class_from_expression(
+        &mut self,
+        class_expr: &ClassExpression,
+    ) -> Result<Gc<JsObject>, JsError> {
+        // Convert ClassExpression to ClassDeclaration
+        let class_decl = ClassDeclaration {
+            id: class_expr.id.clone(),
+            type_parameters: class_expr.type_parameters.clone(),
+            super_class: class_expr.super_class.clone(),
+            implements: class_expr.implements.clone(),
+            body: class_expr.body.clone(),
+            decorators: class_expr.decorators.clone(),
+            abstract_: false,
+            span: class_expr.span,
+        };
+        self.create_class_constructor(&class_decl)
+    }
+
+    fn execute_labeled(&mut self, labeled: &LabeledStatement) -> Result<Completion, JsError> {
+        let label_name = labeled.label.name.cheap_clone();
+
+        // Execute loop statements with the label so they can handle labeled break/continue
+        match labeled.body.as_ref() {
+            Statement::For(for_stmt) => self.execute_for_labeled(for_stmt, Some(&label_name)),
+            Statement::ForIn(for_in) => self.execute_for_in_labeled(for_in, Some(&label_name)),
+            Statement::ForOf(for_of) => self.execute_for_of_labeled(for_of, Some(&label_name)),
+            Statement::While(while_stmt) => {
+                self.execute_while_labeled(while_stmt, Some(&label_name))
+            }
+            Statement::DoWhile(do_while) => {
+                self.execute_do_while_labeled(do_while, Some(&label_name))
+            }
+            _ => {
+                // Non-loop statements - just handle break with matching label
+                match self.execute_statement(&labeled.body)? {
+                    Completion::Break(Some(ref l)) if l == &label_name => {
+                        Ok(Completion::Normal(JsValue::Undefined))
+                    }
+                    other => Ok(other),
+                }
+            }
+        }
+    }
+
+    fn execute_while_labeled(
+        &mut self,
+        while_stmt: &WhileStatement,
+        label: Option<&JsString>,
+    ) -> Result<Completion, JsError> {
+        loop {
+            let condition = self.evaluate_expression(&while_stmt.test)?.take();
+            if !condition.to_boolean() {
+                break;
+            }
+
+            match self.execute_statement(&while_stmt.body)? {
+                Completion::Normal(_) | Completion::Continue(None) => {}
+                Completion::Continue(Some(ref l)) if label == Some(l) => continue,
+                c @ Completion::Continue(_) => return Ok(c),
+                Completion::Break(None) => break,
+                Completion::Break(Some(ref l)) if label == Some(l) => break,
+                c @ Completion::Break(_) => return Ok(c),
+                Completion::Return(v) => return Ok(Completion::Return(v)),
+            }
+        }
+
+        Ok(Completion::Normal(JsValue::Undefined))
+    }
+
+    fn execute_do_while_labeled(
+        &mut self,
+        do_while: &DoWhileStatement,
+        label: Option<&JsString>,
+    ) -> Result<Completion, JsError> {
+        loop {
+            match self.execute_statement(&do_while.body)? {
+                Completion::Normal(_) | Completion::Continue(None) => {}
+                Completion::Continue(Some(ref l)) if label == Some(l) => {}
+                c @ Completion::Continue(_) => return Ok(c),
+                Completion::Break(None) => break,
+                Completion::Break(Some(ref l)) if label == Some(l) => break,
+                c @ Completion::Break(_) => return Ok(c),
+                Completion::Return(v) => return Ok(Completion::Return(v)),
+            }
+
+            let condition = self.evaluate_expression(&do_while.test)?.take();
+            if !condition.to_boolean() {
+                break;
+            }
+        }
+
+        Ok(Completion::Normal(JsValue::Undefined))
+    }
+
+    fn execute_for_labeled(
+        &mut self,
+        for_stmt: &ForStatement,
+        label: Option<&JsString>,
+    ) -> Result<Completion, JsError> {
+        // Create new scope for the for loop variables
+        let saved_env = self.push_scope();
+
+        // Initialize
+        if let Some(ref init) = for_stmt.init {
+            match init {
+                ForInit::Variable(decl) => self.execute_variable_declaration(decl)?,
+                ForInit::Expression(expr) => {
+                    self.evaluate_expression(expr)?;
+                }
+            }
+        }
+
+        loop {
+            // Test
+            if let Some(ref test) = for_stmt.test {
+                let condition = self.evaluate_expression(test)?.take();
+                if !condition.to_boolean() {
+                    break;
+                }
+            }
+
+            // Body
+            match self.execute_statement(&for_stmt.body)? {
+                Completion::Normal(_) | Completion::Continue(None) => {}
+                Completion::Continue(Some(ref l)) if label == Some(l) => {}
+                c @ Completion::Continue(_) => {
+                    self.pop_scope(saved_env);
+                    return Ok(c);
+                }
+                Completion::Break(None) => break,
+                Completion::Break(Some(ref l)) if label == Some(l) => break,
+                c @ Completion::Break(_) => {
+                    self.pop_scope(saved_env);
+                    return Ok(c);
+                }
+                Completion::Return(v) => {
+                    self.pop_scope(saved_env);
+                    return Ok(Completion::Return(v));
+                }
+            }
+
+            // Update
+            if let Some(ref update) = for_stmt.update {
+                self.evaluate_expression(update)?.take();
+            }
+        }
+
+        self.pop_scope(saved_env);
+        Ok(Completion::Normal(JsValue::Undefined))
+    }
+
+    fn execute_for_in_labeled(
+        &mut self,
+        for_in: &ForInStatement,
+        label: Option<&JsString>,
+    ) -> Result<Completion, JsError> {
+        let right = self.evaluate_expression(&for_in.right)?.take();
+
+        let keys = match &right {
+            JsValue::Object(obj) => {
+                let obj_ref = obj.borrow();
+                obj_ref
+                    .properties
+                    .iter()
+                    .filter(|(key, prop)| prop.enumerable && !key.is_symbol())
+                    .map(|(key, _)| key.to_string())
+                    .collect::<Vec<_>>()
+            }
+            _ => vec![],
+        };
+
+        let prev_env = self.env;
+
+        for key in keys {
+            // Per-iteration environment
+            let iter_env =
+                create_environment_with_guard(&self.root_guard, &self.heap, Some(prev_env));
+            self.env = iter_env;
+
+            let key_value = JsValue::String(JsString::from(key));
+
+            match &for_in.left {
+                ForInOfLeft::Variable(decl) => {
+                    let mutable = decl.kind != VariableKind::Const;
+                    if let Some(declarator) = decl.declarations.first() {
+                        self.bind_pattern(&declarator.id, key_value, mutable)?;
+                    }
+                }
+                ForInOfLeft::Pattern(pattern) => {
+                    self.assign_pattern(pattern, key_value)?;
+                }
+            }
+
+            match self.execute_statement(&for_in.body)? {
+                Completion::Break(None) => {
+                    self.env = prev_env;
+                    return Ok(Completion::Normal(JsValue::Undefined));
+                }
+                Completion::Break(Some(ref l)) if label == Some(l) => {
+                    self.env = prev_env;
+                    return Ok(Completion::Normal(JsValue::Undefined));
+                }
+                Completion::Break(lbl) => {
+                    self.env = prev_env;
+                    return Ok(Completion::Break(lbl));
+                }
+                Completion::Continue(None) => continue,
+                Completion::Continue(Some(ref l)) if label == Some(l) => continue,
+                Completion::Continue(lbl) => {
+                    self.env = prev_env;
+                    return Ok(Completion::Continue(lbl));
+                }
+                Completion::Return(val) => {
+                    self.env = prev_env;
+                    return Ok(Completion::Return(val));
+                }
+                Completion::Normal(_) => {}
+            }
+        }
+
+        self.env = prev_env;
+        Ok(Completion::Normal(JsValue::Undefined))
+    }
+
+    fn execute_for_of_labeled(
+        &mut self,
+        for_of: &ForOfStatement,
+        label: Option<&JsString>,
+    ) -> Result<Completion, JsError> {
+        let right = self.evaluate_expression(&for_of.right)?.take();
+
+        // Collect items to iterate over
+        let items = match &right {
+            JsValue::Object(obj) => {
+                let obj_ref = obj.borrow();
+                match &obj_ref.exotic {
+                    ExoticObject::Array { length } => {
+                        let mut items = Vec::with_capacity(*length as usize);
+                        for i in 0..*length {
+                            items.push(
+                                obj_ref
+                                    .get_property(&PropertyKey::Index(i))
+                                    .unwrap_or(JsValue::Undefined),
+                            );
+                        }
+                        items
+                    }
+                    _ => vec![],
+                }
+            }
+            JsValue::String(s) => s
+                .as_str()
+                .chars()
+                .map(|c| JsValue::from(c.to_string()))
+                .collect(),
+            _ => vec![],
+        };
+
+        let prev_env = self.env;
+
+        for item in items {
+            // Per-iteration environment
+            let iter_env =
+                create_environment_with_guard(&self.root_guard, &self.heap, Some(prev_env));
+            self.env = iter_env;
+
+            match &for_of.left {
+                ForInOfLeft::Variable(decl) => {
+                    let mutable = decl.kind != VariableKind::Const;
+                    if let Some(declarator) = decl.declarations.first() {
+                        self.bind_pattern(&declarator.id, item, mutable)?;
+                    }
+                }
+                ForInOfLeft::Pattern(pattern) => {
+                    self.assign_pattern(pattern, item)?;
+                }
+            }
+
+            match self.execute_statement(&for_of.body)? {
+                Completion::Break(None) => {
+                    self.env = prev_env;
+                    return Ok(Completion::Normal(JsValue::Undefined));
+                }
+                Completion::Break(Some(ref l)) if label == Some(l) => {
+                    self.env = prev_env;
+                    return Ok(Completion::Normal(JsValue::Undefined));
+                }
+                Completion::Break(lbl) => {
+                    self.env = prev_env;
+                    return Ok(Completion::Break(lbl));
+                }
+                Completion::Continue(None) => continue,
+                Completion::Continue(Some(ref l)) if label == Some(l) => continue,
+                Completion::Continue(lbl) => {
+                    self.env = prev_env;
+                    return Ok(Completion::Continue(lbl));
+                }
+                Completion::Return(val) => {
+                    self.env = prev_env;
+                    return Ok(Completion::Return(val));
+                }
+                Completion::Normal(_) => {}
+            }
+        }
+
+        self.env = prev_env;
         Ok(Completion::Normal(JsValue::Undefined))
     }
 
@@ -869,7 +2058,146 @@ impl Interpreter {
             Expression::Template(template) => self.evaluate_template_literal(template),
             Expression::TaggedTemplate(tagged) => self.evaluate_tagged_template(tagged),
 
+            // Update expressions (++i, i++, --i, i--)
+            Expression::Update(update) => self.evaluate_update(update),
+
+            // Sequence expressions (a, b, c)
+            Expression::Sequence(seq) => self.evaluate_sequence(seq),
+
+            // New expression (constructor call)
+            Expression::New(new_expr) => self.evaluate_new(new_expr),
+
+            // This expression
+            Expression::This(_) => {
+                let this_name = JsString::from("this");
+                Ok(Guarded::unguarded(
+                    self.env_get(&this_name).unwrap_or(JsValue::Undefined),
+                ))
+            }
+
+            // Class expression
+            Expression::Class(class_expr) => {
+                let constructor_fn = self.create_class_from_expression(class_expr)?;
+                // Create guard for the returned object
+                let (_, guard) = self.create_object_with_guard();
+                guard.guard(&constructor_fn);
+                Ok(Guarded::with_guard(JsValue::Object(constructor_fn), guard))
+            }
+
             _ => Ok(Guarded::unguarded(JsValue::Undefined)),
+        }
+    }
+
+    fn evaluate_new(&mut self, new_expr: &NewExpression) -> Result<Guarded, JsError> {
+        // Evaluate the constructor
+        let constructor = self.evaluate_expression(&new_expr.callee)?.take();
+
+        // Evaluate arguments, collecting guards
+        let mut args = Vec::new();
+        let mut _arg_guards = Vec::new();
+        for arg in &new_expr.arguments {
+            match arg {
+                Argument::Expression(expr) => {
+                    let Guarded { value, guard } = self.evaluate_expression(expr)?;
+                    args.push(value);
+                    if let Some(g) = guard {
+                        _arg_guards.push(g);
+                    }
+                }
+                Argument::Spread(_) => {
+                    return Err(JsError::type_error("Spread in new not yet supported"));
+                }
+            }
+        }
+
+        // Create a new object
+        let (new_obj, new_guard) = self.create_object_with_guard();
+
+        // Get the constructor's prototype and __fields__ properties
+        let (proto_opt, fields_opt) = if let JsValue::Object(ctor) = &constructor {
+            let ctor_ref = ctor.borrow();
+            let proto = ctor_ref
+                .get_property(&PropertyKey::from("prototype"))
+                .and_then(|v| {
+                    if let JsValue::Object(p) = v {
+                        Some(p)
+                    } else {
+                        None
+                    }
+                });
+            let fields = ctor_ref
+                .get_property(&PropertyKey::from("__fields__"))
+                .and_then(|v| {
+                    if let JsValue::Object(f) = v {
+                        Some(f)
+                    } else {
+                        None
+                    }
+                });
+            (proto, fields)
+        } else {
+            (None, None)
+        };
+
+        // Set prototype
+        if let Some(proto) = proto_opt {
+            new_obj.borrow_mut().prototype = Some(proto.cheap_clone());
+            new_obj.own(&proto, &self.heap);
+        }
+
+        // Initialize instance fields from __fields__
+        if let Some(fields_array) = fields_opt {
+            // Get length property
+            let len = {
+                let fields_ref = fields_array.borrow();
+                match fields_ref.get_property(&PropertyKey::from("length")) {
+                    Some(JsValue::Number(n)) => n as usize,
+                    _ => 0,
+                }
+            };
+
+            for i in 0..len {
+                let pair_opt = {
+                    let fields_ref = fields_array.borrow();
+                    fields_ref.get_property(&PropertyKey::from(i.to_string()))
+                };
+
+                if let Some(JsValue::Object(pair)) = pair_opt {
+                    let (name_opt, value_opt) = {
+                        let pair_ref = pair.borrow();
+                        // Each pair is [name, value]
+                        (
+                            pair_ref.get_property(&PropertyKey::from("0")),
+                            pair_ref.get_property(&PropertyKey::from("1")),
+                        )
+                    };
+
+                    if let (Some(JsValue::String(name)), Some(value)) = (name_opt, value_opt) {
+                        // Clone the value to store on the new instance
+                        if let JsValue::Object(ref obj) = value {
+                            new_obj.own(obj, &self.heap);
+                        }
+                        new_obj
+                            .borrow_mut()
+                            .set_property(PropertyKey::String(name), value);
+                    }
+                }
+            }
+        }
+
+        // Call the constructor with `this` set to the new object
+        let this = JsValue::Object(new_obj);
+        let result = self.call_function(constructor, this.clone(), &args)?;
+
+        // If constructor returns an object, use that; otherwise use the created object
+        match result {
+            JsValue::Object(obj) => {
+                // Create new guard for returned object
+                let (_, result_guard) = self.create_object_with_guard();
+                result_guard.guard(&obj);
+                Ok(Guarded::with_guard(JsValue::Object(obj), result_guard))
+            }
+            _ => Ok(Guarded::with_guard(this, new_guard)),
         }
     }
 
@@ -934,7 +2262,7 @@ impl Interpreter {
         }
 
         // Call the tag function
-        let result = self.call_function(tag_fn, JsValue::Undefined, args)?;
+        let result = self.call_function(tag_fn, JsValue::Undefined, &args)?;
         Ok(Guarded::unguarded(result))
     }
 
@@ -1160,20 +2488,112 @@ impl Interpreter {
             }
             AssignmentTarget::Member(member) => {
                 let obj_val = self.evaluate_expression(&member.object)?.take();
-                let JsValue::Object(obj) = obj_val else {
+                let JsValue::Object(ref obj) = obj_val else {
                     return Err(JsError::type_error("Cannot set property of non-object"));
                 };
 
                 let key = self.get_member_key(&member.property)?;
 
+                // For compound assignments, get current value (using getter if present)
+                let final_value = if assign.operator != AssignmentOp::Assign {
+                    let current = {
+                        let prop_desc = obj.borrow().get_property_descriptor(&key);
+                        match prop_desc {
+                            Some((prop, _)) if prop.is_accessor() => {
+                                if let Some(getter) = prop.getter {
+                                    self.call_function(
+                                        JsValue::Object(getter),
+                                        obj_val.clone(),
+                                        &[],
+                                    )?
+                                } else {
+                                    JsValue::Undefined
+                                }
+                            }
+                            Some((prop, _)) => prop.value,
+                            None => JsValue::Undefined,
+                        }
+                    };
+
+                    // Apply compound operator
+                    match assign.operator {
+                        AssignmentOp::AddAssign => match (&current, &value) {
+                            (JsValue::String(a), _) => {
+                                JsValue::String(a.cheap_clone() + &value.to_js_string())
+                            }
+                            _ => JsValue::Number(current.to_number() + value.to_number()),
+                        },
+                        AssignmentOp::SubAssign => {
+                            JsValue::Number(current.to_number() - value.to_number())
+                        }
+                        AssignmentOp::MulAssign => {
+                            JsValue::Number(current.to_number() * value.to_number())
+                        }
+                        AssignmentOp::DivAssign => {
+                            JsValue::Number(current.to_number() / value.to_number())
+                        }
+                        AssignmentOp::ModAssign => {
+                            JsValue::Number(current.to_number() % value.to_number())
+                        }
+                        AssignmentOp::ExpAssign => {
+                            JsValue::Number(current.to_number().powf(value.to_number()))
+                        }
+                        AssignmentOp::BitAndAssign => JsValue::Number(
+                            (current.to_number() as i32 & value.to_number() as i32) as f64,
+                        ),
+                        AssignmentOp::BitOrAssign => JsValue::Number(
+                            (current.to_number() as i32 | value.to_number() as i32) as f64,
+                        ),
+                        AssignmentOp::BitXorAssign => JsValue::Number(
+                            (current.to_number() as i32 ^ value.to_number() as i32) as f64,
+                        ),
+                        AssignmentOp::LShiftAssign => {
+                            let lhs = current.to_number() as i32;
+                            let rhs = (value.to_number() as u32) & 0x1f;
+                            JsValue::Number((lhs << rhs) as f64)
+                        }
+                        AssignmentOp::RShiftAssign => {
+                            let lhs = current.to_number() as i32;
+                            let rhs = (value.to_number() as u32) & 0x1f;
+                            JsValue::Number((lhs >> rhs) as f64)
+                        }
+                        AssignmentOp::URShiftAssign => {
+                            let lhs = (current.to_number() as i32) as u32;
+                            let rhs = ((value.to_number() as i32) as u32) & 0x1f;
+                            JsValue::Number((lhs >> rhs) as f64)
+                        }
+                        _ => value,
+                    }
+                } else {
+                    value
+                };
+
+                // Check for setter before setting property
+                let prop_desc = obj.borrow().get_property_descriptor(&key);
+                if let Some((prop, _)) = prop_desc {
+                    if prop.is_accessor() {
+                        if let Some(setter) = prop.setter {
+                            // Call the setter with the value
+                            self.call_function(
+                                JsValue::Object(setter),
+                                obj_val.clone(),
+                                &[final_value.clone()],
+                            )?;
+                        }
+                        // If no setter, silently ignore in strict mode would throw, but we're lenient
+                        return Ok(Guarded::unguarded(final_value));
+                    }
+                }
+
+                // Not an accessor - set property directly
                 // Establish ownership before setting property
-                if let JsValue::Object(ref val_obj) = value {
+                if let JsValue::Object(ref val_obj) = final_value {
                     obj.own(val_obj, &self.heap);
                 }
-                obj.borrow_mut().set_property(key, value.clone());
+                obj.borrow_mut().set_property(key, final_value.clone());
                 // _rhs_guard dropped here, but ownership transferred to obj
 
-                Ok(Guarded::unguarded(value))
+                Ok(Guarded::unguarded(final_value))
             }
             AssignmentTarget::Pattern(pattern) => {
                 // Destructuring assignment: [a, b] = [1, 2] or { x, y } = obj
@@ -1311,14 +2731,119 @@ impl Interpreter {
         Ok(())
     }
 
+    /// Evaluate update expression (++i, i++, --i, i--)
+    fn evaluate_update(&mut self, update: &UpdateExpression) -> Result<Guarded, JsError> {
+        // Get the current value and update target
+        match update.argument.as_ref() {
+            Expression::Identifier(id) => {
+                let current = self.env_get(&id.name)?;
+                let num = current.to_number();
+                let new_val = match update.operator {
+                    UpdateOp::Increment => JsValue::Number(num + 1.0),
+                    UpdateOp::Decrement => JsValue::Number(num - 1.0),
+                };
+                self.env_set(&id.name, new_val.clone())?;
+                // Prefix returns new value, postfix returns old value
+                if update.prefix {
+                    Ok(Guarded::unguarded(new_val))
+                } else {
+                    Ok(Guarded::unguarded(JsValue::Number(num)))
+                }
+            }
+            Expression::Member(member) => {
+                let obj_val = self.evaluate_expression(&member.object)?.take();
+                let JsValue::Object(obj) = obj_val else {
+                    return Err(JsError::type_error("Cannot update property of non-object"));
+                };
+                let key = self.get_member_key(&member.property)?;
+                let current = obj
+                    .borrow()
+                    .get_property(&key)
+                    .unwrap_or(JsValue::Undefined);
+                let num = current.to_number();
+                let new_val = match update.operator {
+                    UpdateOp::Increment => JsValue::Number(num + 1.0),
+                    UpdateOp::Decrement => JsValue::Number(num - 1.0),
+                };
+                obj.borrow_mut().set_property(key, new_val.clone());
+                // Prefix returns new value, postfix returns old value
+                if update.prefix {
+                    Ok(Guarded::unguarded(new_val))
+                } else {
+                    Ok(Guarded::unguarded(JsValue::Number(num)))
+                }
+            }
+            _ => Err(JsError::syntax_error_simple(
+                "Invalid left-hand side in update expression",
+            )),
+        }
+    }
+
+    /// Evaluate sequence expression (a, b, c) - returns the last value
+    fn evaluate_sequence(&mut self, seq: &SequenceExpression) -> Result<Guarded, JsError> {
+        let mut result = Guarded::unguarded(JsValue::Undefined);
+        for expr in &seq.expressions {
+            result = self.evaluate_expression(expr)?;
+        }
+        Ok(result)
+    }
+
     fn evaluate_call(&mut self, call: &CallExpression) -> Result<Guarded, JsError> {
         let (callee, this_value) = match &*call.callee {
+            // super(args) - call parent constructor
+            Expression::Super(_) => {
+                let super_name = JsString::from("__super__");
+                let super_constructor = self.env_get(&super_name)?;
+                let this_name = JsString::from("this");
+                let this_val = self.env_get(&this_name)?;
+                (super_constructor, this_val)
+            }
+            // super.method() - call parent method
+            Expression::Member(member) if matches!(&*member.object, Expression::Super(_)) => {
+                let super_name = JsString::from("__super__");
+                let super_constructor = self.env_get(&super_name)?;
+                let this_name = JsString::from("this");
+                let this_val = self.env_get(&this_name)?;
+
+                // Get the method from super's prototype
+                let key = self.get_member_key(&member.property)?;
+                let func = if let JsValue::Object(super_obj) = &super_constructor {
+                    let proto_key = self.key("prototype");
+                    if let Some(JsValue::Object(proto)) =
+                        super_obj.borrow().get_property(&proto_key)
+                    {
+                        proto.borrow().get_property(&key)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                match func {
+                    Some(f) => (f, this_val),
+                    None => return Err(JsError::type_error(format!("{} is not a function", key))),
+                }
+            }
             Expression::Member(member) => {
                 let obj = self.evaluate_expression(&member.object)?.take();
                 let key = self.get_member_key(&member.property)?;
 
                 let func = match &obj {
                     JsValue::Object(o) => o.borrow().get_property(&key),
+                    JsValue::Number(_) => self.number_prototype.borrow().get_property(&key),
+                    JsValue::String(_) => {
+                        // First check string-specific properties
+                        if let PropertyKey::String(ref k) = key {
+                            if k.as_str() == "length" {
+                                None // length is not a function
+                            } else {
+                                self.string_prototype.borrow().get_property(&key)
+                            }
+                        } else {
+                            None
+                        }
+                    }
                     _ => None,
                 };
 
@@ -1352,15 +2877,15 @@ impl Interpreter {
         }
 
         // Call function - result ownership will be handled by caller
-        let result = self.call_function(callee, this_value, args)?;
+        let result = self.call_function(callee, this_value, &args)?;
         Ok(Guarded::unguarded(result))
     }
 
-    fn call_function(
+    pub fn call_function(
         &mut self,
         callee: JsValue,
-        _this_value: JsValue,
-        args: Vec<JsValue>,
+        this_value: JsValue,
+        args: &[JsValue],
     ) -> Result<JsValue, JsError> {
         let JsValue::Object(func_obj) = callee else {
             return Err(JsError::type_error("Not a function"));
@@ -1382,6 +2907,45 @@ impl Interpreter {
                     &self.heap,
                     Some(interp.closure),
                 );
+
+                // Bind `this` in the function environment
+                {
+                    let this_name = JsString::from("this");
+                    if let JsValue::Object(ref obj) = this_value {
+                        func_env.own(obj, &self.heap);
+                    }
+                    if let Some(data) = func_env.borrow_mut().as_environment_mut() {
+                        data.bindings.insert(
+                            this_name,
+                            Binding {
+                                value: this_value.clone(),
+                                mutable: false,
+                                initialized: true,
+                            },
+                        );
+                    }
+                }
+
+                // Bind `__super__` if this is a class constructor with inheritance
+                {
+                    let super_key = self.key("__super__");
+                    if let Some(super_val) = func_obj.borrow().get_property(&super_key) {
+                        let super_name = JsString::from("__super__");
+                        if let JsValue::Object(ref obj) = super_val {
+                            func_env.own(obj, &self.heap);
+                        }
+                        if let Some(data) = func_env.borrow_mut().as_environment_mut() {
+                            data.bindings.insert(
+                                super_name,
+                                Binding {
+                                    value: super_val,
+                                    mutable: false,
+                                    initialized: true,
+                                },
+                            );
+                        }
+                    }
+                }
 
                 // Bind parameters
                 for (i, param) in interp.params.iter().enumerate() {
@@ -1453,9 +3017,9 @@ impl Interpreter {
                 Ok(result)
             }
 
-            JsFunction::Native(_native) => {
-                // Native functions are not implemented yet
-                Ok(JsValue::Undefined)
+            JsFunction::Native(native) => {
+                // Call native function
+                (native.func)(self, this_value, args)
             }
 
             _ => Err(JsError::internal_error("Unsupported function type")),
@@ -1467,7 +3031,22 @@ impl Interpreter {
         let key = self.get_member_key(&member.property)?;
 
         match &obj {
-            JsValue::Object(o) => Ok(o.borrow().get_property(&key).unwrap_or(JsValue::Undefined)),
+            JsValue::Object(o) => {
+                // Get the property descriptor to check for getters
+                let prop_desc = o.borrow().get_property_descriptor(&key);
+                match prop_desc {
+                    Some((prop, _)) if prop.is_accessor() => {
+                        // Property has a getter - invoke it
+                        if let Some(getter) = prop.getter {
+                            self.call_function(JsValue::Object(getter), obj.clone(), &[])
+                        } else {
+                            Ok(JsValue::Undefined)
+                        }
+                    }
+                    Some((prop, _)) => Ok(prop.value),
+                    None => Ok(JsValue::Undefined),
+                }
+            }
             JsValue::String(s) => {
                 if let PropertyKey::Index(i) = key {
                     let chars: Vec<char> = s.as_str().chars().collect();
@@ -1479,6 +3058,17 @@ impl Interpreter {
                     if k.as_str() == "length" {
                         return Ok(JsValue::Number(s.as_str().chars().count() as f64));
                     }
+                    // Look up methods on String.prototype
+                    if let Some(method) = self.string_prototype.borrow().get_property(&key) {
+                        return Ok(method);
+                    }
+                }
+                Ok(JsValue::Undefined)
+            }
+            JsValue::Number(_) => {
+                // Look up methods on Number.prototype
+                if let Some(method) = self.number_prototype.borrow().get_property(&key) {
+                    return Ok(method);
                 }
                 Ok(JsValue::Undefined)
             }
@@ -1628,8 +3218,48 @@ impl Interpreter {
                 }
                 self.hoist_var_in_statement(&for_stmt.body);
             }
+            Statement::ForIn(for_in) => {
+                if let ForInOfLeft::Variable(decl) = &for_in.left {
+                    if decl.kind == VariableKind::Var {
+                        for declarator in &decl.declarations {
+                            self.hoist_pattern_names(&declarator.id);
+                        }
+                    }
+                }
+                self.hoist_var_in_statement(&for_in.body);
+            }
+            Statement::ForOf(for_of) => {
+                if let ForInOfLeft::Variable(decl) = &for_of.left {
+                    if decl.kind == VariableKind::Var {
+                        for declarator in &decl.declarations {
+                            self.hoist_pattern_names(&declarator.id);
+                        }
+                    }
+                }
+                self.hoist_var_in_statement(&for_of.body);
+            }
             Statement::While(while_stmt) => {
                 self.hoist_var_in_statement(&while_stmt.body);
+            }
+            Statement::DoWhile(do_while) => {
+                self.hoist_var_in_statement(&do_while.body);
+            }
+            Statement::Try(try_stmt) => {
+                self.hoist_var_declarations(&try_stmt.block.body);
+                if let Some(catch) = &try_stmt.handler {
+                    self.hoist_var_declarations(&catch.body.body);
+                }
+                if let Some(finally) = &try_stmt.finalizer {
+                    self.hoist_var_declarations(&finally.body);
+                }
+            }
+            Statement::Switch(switch_stmt) => {
+                for case in &switch_stmt.cases {
+                    self.hoist_var_declarations(&case.consequent);
+                }
+            }
+            Statement::Labeled(labeled) => {
+                self.hoist_var_in_statement(&labeled.body);
             }
             _ => {}
         }
@@ -1713,5 +3343,33 @@ mod tests {
         assert_eq!(interp.eval_simple("1 + 2").unwrap(), JsValue::Number(3.0));
         assert_eq!(interp.eval_simple("3 * 4").unwrap(), JsValue::Number(12.0));
         assert_eq!(interp.eval_simple("10 / 2").unwrap(), JsValue::Number(5.0));
+    }
+
+    #[test]
+    fn test_continue_outside_loop_error() {
+        let mut interp = Interpreter::new();
+        let result = interp.eval_simple("continue;");
+        assert!(result.is_err(), "continue outside loop should error");
+        let err = result.unwrap_err();
+        let err_str = format!("{:?}", err);
+        assert!(
+            err_str.contains("Illegal"),
+            "Error should mention 'Illegal': {}",
+            err_str
+        );
+    }
+
+    #[test]
+    fn test_break_outside_loop_error() {
+        let mut interp = Interpreter::new();
+        let result = interp.eval_simple("break;");
+        assert!(result.is_err(), "break outside loop should error");
+        let err = result.unwrap_err();
+        let err_str = format!("{:?}", err);
+        assert!(
+            err_str.contains("Illegal"),
+            "Error should mention 'Illegal': {}",
+            err_str
+        );
     }
 }

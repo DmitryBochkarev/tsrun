@@ -17,9 +17,9 @@
 // mod array;
 // mod async_await;
 mod basics;
-// mod class;
+mod class;
 // mod console;
-// mod control_flow;
+mod control_flow;
 // mod date;
 // mod dynamic_import;
 // mod error;

@@ -9,6 +9,7 @@ use std::rc::Rc;
 use rustc_hash::FxHashMap;
 
 use crate::ast::{ArrowFunctionBody, BlockStatement, FunctionParam};
+use crate::error::JsError;
 use crate::gc::{Gc, Guard, Heap, Reset};
 use crate::lexer::Span;
 use crate::string_dict::StringDict;
@@ -932,9 +933,9 @@ impl From<ArrowFunctionBody> for FunctionBody {
 
 // TODO: Re-enable after GC migration
 // /// Native function signature
-// pub type NativeFn =
-//     fn(&mut crate::interpreter::Interpreter, JsValue, &[JsValue]) -> Result<JsValue, JsError>;
-pub type NativeFn = fn();
+/// Native function signature type
+pub type NativeFn =
+    fn(&mut crate::interpreter::Interpreter, JsValue, &[JsValue]) -> Result<JsValue, JsError>;
 
 /// Native function wrapper
 #[derive(Clone)]

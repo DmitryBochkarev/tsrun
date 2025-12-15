@@ -113,6 +113,63 @@ fn test_unsigned_right_shift_assignment() {
     );
 }
 
+// Update expressions (++, --)
+#[test]
+fn test_update_prefix_increment() {
+    assert_eq!(eval("let x: number = 5; ++x"), JsValue::Number(6.0));
+    assert_eq!(eval("let x: number = 5; ++x; x"), JsValue::Number(6.0));
+}
+
+#[test]
+fn test_update_postfix_increment() {
+    assert_eq!(eval("let x: number = 5; x++"), JsValue::Number(5.0)); // Returns old value
+    assert_eq!(eval("let x: number = 5; x++; x"), JsValue::Number(6.0)); // But x is updated
+}
+
+#[test]
+fn test_update_prefix_decrement() {
+    assert_eq!(eval("let x: number = 5; --x"), JsValue::Number(4.0));
+    assert_eq!(eval("let x: number = 5; --x; x"), JsValue::Number(4.0));
+}
+
+#[test]
+fn test_update_postfix_decrement() {
+    assert_eq!(eval("let x: number = 5; x--"), JsValue::Number(5.0)); // Returns old value
+    assert_eq!(eval("let x: number = 5; x--; x"), JsValue::Number(4.0)); // But x is updated
+}
+
+#[test]
+fn test_update_in_for_loop() {
+    // Classic for loop with i++
+    assert_eq!(
+        eval("let sum: number = 0; for (let i: number = 0; i < 5; i++) { sum = sum + i; } sum"),
+        JsValue::Number(10.0) // 0 + 1 + 2 + 3 + 4 = 10
+    );
+}
+
+#[test]
+fn test_update_member_expression() {
+    assert_eq!(
+        eval("let obj: any = { x: 5 }; obj.x++; obj.x"),
+        JsValue::Number(6.0)
+    );
+    assert_eq!(
+        eval("let arr: number[] = [1, 2, 3]; arr[0]++; arr[0]"),
+        JsValue::Number(2.0)
+    );
+}
+
+// Sequence expressions (comma operator)
+#[test]
+fn test_sequence_expression() {
+    // Sequence expression returns the last value
+    assert_eq!(eval("(1, 2, 3)"), JsValue::Number(3.0));
+    assert_eq!(
+        eval("let x: number = 0; (x = 1, x = 2, x = 3); x"),
+        JsValue::Number(3.0)
+    );
+}
+
 // BigInt literals (parsed and converted to Number for now)
 #[test]
 fn test_bigint_literal() {
@@ -467,4 +524,57 @@ fn test_bitwise_operations() {
     assert_eq!(eval("20 >> 2"), JsValue::Number(5.0));
     assert_eq!(eval("~5"), JsValue::Number(-6.0));
     assert_eq!(eval("-20 >>> 2"), JsValue::Number(1073741819.0));
+}
+
+#[test]
+fn test_array_function_call() {
+    // Test storing function via push
+    assert_eq!(
+        eval(
+            r#"
+            let funcs: any[] = [];
+            funcs.push(function(): number { return 42; });
+            typeof funcs[0]
+        "#
+        ),
+        JsValue::String("function".into())
+    );
+}
+
+#[test]
+fn test_array_function_call_simple() {
+    // Simpler test: direct assignment and call
+    assert_eq!(
+        eval(
+            r#"
+            let fn = function(): number { return 42; };
+            let funcs: any[] = [fn];
+            funcs[0]()
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+#[test]
+fn test_closure_object_method() {
+    // Test that closures with method properties work
+    assert_eq!(
+        eval(
+            r#"
+            function makeCounter(): any {
+                let count: number = 0;
+                return {
+                    inc: function(): number {
+                        count = count + 1;
+                        return count;
+                    }
+                };
+            }
+            let c: any = makeCounter();
+            c.inc() + c.inc()
+        "#
+        ),
+        JsValue::Number(3.0) // 1 + 2
+    );
 }

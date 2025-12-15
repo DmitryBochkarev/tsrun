@@ -2,13 +2,11 @@
 
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
-use crate::value::{create_object, JsObjectRef, JsString, JsValue};
-
-use super::global::{global_parse_float, global_parse_int};
+use crate::value::{JsString, JsValue};
 
 /// Initialize Number.prototype with toFixed, toString, toPrecision, toExponential
 pub fn init_number_prototype(interp: &mut Interpreter) {
-    let proto = interp.number_prototype.clone();
+    let proto = interp.number_prototype;
 
     interp.register_method(&proto, "toFixed", number_to_fixed, 1);
     interp.register_method(&proto, "toString", number_to_string, 1);
@@ -16,43 +14,8 @@ pub fn init_number_prototype(interp: &mut Interpreter) {
     interp.register_method(&proto, "toExponential", number_to_exponential, 1);
 }
 
-/// Create Number constructor with static methods and constants
-pub fn create_number_constructor(interp: &mut Interpreter) -> JsObjectRef {
-    let constructor = create_object(&mut interp.gc_space);
-
-    // Static methods
-    interp.register_method(&constructor, "isNaN", number_is_nan, 1);
-    interp.register_method(&constructor, "isFinite", number_is_finite, 1);
-    interp.register_method(&constructor, "isInteger", number_is_integer, 1);
-    interp.register_method(&constructor, "isSafeInteger", number_is_safe_integer, 1);
-    interp.register_method(&constructor, "parseInt", global_parse_int, 2);
-    interp.register_method(&constructor, "parseFloat", global_parse_float, 1);
-
-    // Constants - create keys first
-    let pos_inf_key = interp.key("POSITIVE_INFINITY");
-    let neg_inf_key = interp.key("NEGATIVE_INFINITY");
-    let max_val_key = interp.key("MAX_VALUE");
-    let min_val_key = interp.key("MIN_VALUE");
-    let max_safe_key = interp.key("MAX_SAFE_INTEGER");
-    let min_safe_key = interp.key("MIN_SAFE_INTEGER");
-    let epsilon_key = interp.key("EPSILON");
-    let nan_key = interp.key("NaN");
-    let proto_key = interp.key("prototype");
-
-    {
-        let mut num = constructor.borrow_mut();
-        num.set_property(pos_inf_key, JsValue::Number(f64::INFINITY));
-        num.set_property(neg_inf_key, JsValue::Number(f64::NEG_INFINITY));
-        num.set_property(max_val_key, JsValue::Number(f64::MAX));
-        num.set_property(min_val_key, JsValue::Number(f64::MIN_POSITIVE));
-        num.set_property(max_safe_key, JsValue::Number(9007199254740991.0));
-        num.set_property(min_safe_key, JsValue::Number(-9007199254740991.0));
-        num.set_property(epsilon_key, JsValue::Number(f64::EPSILON));
-        num.set_property(nan_key, JsValue::Number(f64::NAN));
-        num.set_property(proto_key, JsValue::Object(interp.number_prototype.clone()));
-    }
-    constructor
-}
+// TODO: Port Number constructor with static methods once needed
+// pub fn create_number_constructor(interp: &mut Interpreter) -> Gc<JsObject> { ... }
 
 // Number.isNaN - stricter, no type coercion
 pub fn number_is_nan(

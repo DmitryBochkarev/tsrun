@@ -2,15 +2,12 @@
 
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
-use crate::value::{
-    create_function, ExoticObject, JsFunction, JsObjectRef, JsString, JsValue, NativeFunction,
-    Property, PropertyKey,
-};
+use crate::value::{ExoticObject, JsObjectRef, JsString, JsValue, Property, PropertyKey};
 
 /// Initialize Array.prototype with all array methods.
 /// The prototype object must already exist in `interp.array_prototype`.
 pub fn init_array_prototype(interp: &mut Interpreter) {
-    let proto = interp.array_prototype.clone();
+    let proto = interp.array_prototype;
 
     // Mutating methods
     interp.register_method(&proto, "push", array_push, 1);
@@ -61,16 +58,7 @@ pub fn init_array_prototype(interp: &mut Interpreter) {
 
 /// Create Array constructor with static methods (isArray, of, from)
 pub fn create_array_constructor(interp: &mut Interpreter) -> JsObjectRef {
-    let name = interp.intern("Array");
-    let constructor = create_function(
-        &mut interp.gc_space,
-        &mut interp.string_dict,
-        JsFunction::Native(NativeFunction {
-            name,
-            func: array_constructor_fn,
-            arity: 0,
-        }),
-    );
+    let constructor = interp.create_native_function("Array", array_constructor_fn, 0);
 
     interp.register_method(&constructor, "isArray", array_is_array, 1);
     interp.register_method(&constructor, "of", array_of, 0);
@@ -79,7 +67,7 @@ pub fn create_array_constructor(interp: &mut Interpreter) -> JsObjectRef {
     let proto_key = interp.key("prototype");
     constructor
         .borrow_mut()
-        .set_property(proto_key, JsValue::Object(interp.array_prototype.clone()));
+        .set_property(proto_key, JsValue::Object(interp.array_prototype));
 
     constructor
 }
@@ -127,6 +115,13 @@ pub fn array_push(
     };
 
     let length_key = interp.key("length");
+
+    // Establish ownership for any object values before borrowing arr mutably
+    for arg in args {
+        if let JsValue::Object(ref obj) = arg {
+            arr.own(obj, &interp.heap);
+        }
+    }
 
     let mut arr_ref = arr.borrow_mut();
 
@@ -1965,7 +1960,7 @@ pub fn array_entries(
     // before they are stored in the result array. The scope must remain alive
     // until after create_array(entries) completes, since that allocation may
     // trigger GC.
-    let mut scope = interp.guarded_scope();
+    let scope = interp.guarded_scope();
     let mut entries = Vec::with_capacity(length as usize);
     for i in 0..length {
         let value = arr
@@ -1974,7 +1969,7 @@ pub fn array_entries(
             .unwrap_or(JsValue::Undefined);
         let pair = vec![JsValue::Number(i as f64), value];
         let entry_arr = interp.create_array(pair);
-        scope.add(&entry_arr);
+        scope.guard(&entry_arr);
         entries.push(JsValue::Object(entry_arr));
     }
 

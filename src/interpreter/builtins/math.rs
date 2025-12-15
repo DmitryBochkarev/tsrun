@@ -1,14 +1,16 @@
 //! Math built-in methods
 
 use crate::error::JsError;
+use crate::gc::Gc;
 use crate::interpreter::Interpreter;
-use crate::value::{create_object_with_capacity, JsObjectRef, JsValue};
+use crate::value::{JsObject, JsValue};
 
-/// Create Math object with all math methods and constants
-pub fn create_math_object(interp: &mut Interpreter) -> JsObjectRef {
-    let math_obj = create_object_with_capacity(&mut interp.gc_space, 40);
+/// Initialize Math object and bind it to global scope.
+/// Returns the Math object for rooting.
+pub fn init_math(interp: &mut Interpreter) -> Gc<JsObject> {
+    let (math_obj, _guard) = interp.create_object_with_guard();
 
-    // Constants - create keys first
+    // Constants
     let pi_key = interp.key("PI");
     let e_key = interp.key("E");
     let ln2_key = interp.key("LN2");
@@ -79,12 +81,14 @@ pub fn create_math_object(interp: &mut Interpreter) -> JsObjectRef {
     // Random
     interp.register_method(&math_obj, "random", math_random, 0);
 
-    debug_assert_eq!(
-        math_obj.borrow().properties.len(),
-        40,
-        "Math object capacity mismatch: expected 40, got {}",
-        math_obj.borrow().properties.len()
-    );
+    // Root Math object and bind to global
+    interp.root_guard.guard(&math_obj);
+    let math_key = interp.key("Math");
+    interp.global.own(&math_obj, &interp.heap);
+    interp
+        .global
+        .borrow_mut()
+        .set_property(math_key, JsValue::Object(math_obj));
 
     math_obj
 }
