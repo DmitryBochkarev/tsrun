@@ -123,6 +123,32 @@ let slice = s.get(start..end).unwrap_or("");
 let value = opt.ok_or_else(|| JsError::internal_error("expected value"))?;
 ```
 
+### Guarded Destructuring Rule
+
+The `Guarded` struct (from `interpreter/mod.rs`) must **ALWAYS** be accessed through destructuring:
+
+```rust
+// CORRECT: Always use destructuring to keep guard alive
+let Guarded { value, guard: _guard } = self.evaluate_expression(expr)?;
+// _guard keeps the object alive until end of scope
+// Now use `value` safely
+
+// WRONG: Never access .value directly (drops guard prematurely!)
+let val = self.evaluate_expression(expr)?.value;  // BUG: GC may collect the object!
+```
+
+**Why this matters:** The guard keeps newly created objects alive in the GC. If you drop the guard before you're done using the value, the garbage collector may reclaim the object (and its prototype chain), causing "is not a function" errors or other GC-related bugs.
+
+**Pattern for conditional evaluation:**
+```rust
+let (val, _guard) = if some_condition {
+    let Guarded { value, guard } = self.evaluate_expression(expr)?;
+    (value, guard)
+} else {
+    (JsValue::Undefined, None)
+};
+```
+
 ## Development Workflow
 
 Use TDD (Test-Driven Development) for new features:

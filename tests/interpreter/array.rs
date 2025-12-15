@@ -1088,3 +1088,71 @@ fn test_array_spread_sort() {
         JsValue::String("1,2,3".into())
     );
 }
+
+#[test]
+fn test_debug_array_method_lookup() {
+    use super::eval_result;
+
+    // Test 1: Check if map method exists on array
+    let result = eval_result("const arr = [1, 2, 3]; typeof arr.map");
+    println!("typeof arr.map: {:?}", result);
+
+    // Test 2: Check if push method exists on array
+    let result2 = eval_result("const arr = [1, 2, 3]; typeof arr.push");
+    println!("typeof arr.push: {:?}", result2);
+
+    // Test 3: Try calling map with a simple function
+    let result3 = eval_result("[1, 2, 3].map(function(x) { return x * 2; })");
+    println!("map with function: {:?}", result3);
+
+    // Test 4: Try calling map with arrow function
+    let result4 = eval_result("[1, 2, 3].map(x => x * 2)");
+    println!("map with arrow: {:?}", result4);
+
+    // Test 5: Check what arr.map actually is
+    let result5 = eval_result("const arr = [1, 2, 3]; arr.map");
+    println!("arr.map value: {:?}", result5);
+
+    // Test 6: Check hasOwnProperty for map
+    let result6 = eval_result("const arr = [1, 2, 3]; arr.hasOwnProperty('map')");
+    println!("arr.hasOwnProperty('map'): {:?}", result6);
+
+    // Test 7: Check hasOwnProperty for push
+    let result7 = eval_result("const arr = [1, 2, 3]; arr.hasOwnProperty('push')");
+    println!("arr.hasOwnProperty('push'): {:?}", result7);
+
+    // Test 8: Check Object.keys on array
+    let result8 = eval_result("const arr = [1, 2, 3]; Object.keys(arr).length");
+    println!("Object.keys(arr).length: {:?}", result8);
+
+    // Test 9: Test with stored reference vs literal
+    let result9 = eval_result("const arr = [1, 2, 3]; const m = arr.map; typeof m");
+    println!("stored method typeof: {:?}", result9);
+
+    // Test 10: Try calling stored reference
+    let result10 = eval_result("const arr = [1, 2, 3]; const m = arr.map; m.call(arr, x => x * 2)");
+    println!("m.call(arr, fn): {:?}", result10);
+
+    // Test 11: Check prototype explicitly
+    let result11 = eval_result("const arr = [1, 2, 3]; Object.getPrototypeOf(arr) !== null");
+    println!("has prototype: {:?}", result11);
+
+    // Test 12: push works via direct call
+    let result12 = eval_result("const arr = [1, 2, 3]; arr.push(4)");
+    println!("arr.push(4): {:?}", result12);
+
+    // Test 13: Literal array direct method call
+    let result13 = eval_result("[1, 2, 3].push(4)");
+    println!("[1, 2, 3].push(4): {:?}", result13);
+
+    // Test 14: Literal array direct method call with map
+    let result14 = eval_result("[1, 2, 3].push");
+    println!("[1, 2, 3].push: {:?}", result14);
+
+    // Test 15: Simplest possible callback
+    let result15 = eval_result("const arr = [1]; arr.map(function(x) { return x; })");
+    println!("arr.map with simplest callback: {:?}", result15);
+
+    // Assert something to make test visible
+    assert!(result.is_ok() || result.is_err(), "This test is for debugging");
+}

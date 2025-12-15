@@ -55,6 +55,17 @@ pub enum Completion {
 /// - The value is stored in a variable (env_define establishes ownership)
 /// - The value is assigned to an object property (parent.own establishes ownership)
 /// - The value is returned from a function (caller takes ownership)
+///
+/// **IMPORTANT**: Always use destructuring to access both value and guard:
+/// ```ignore
+/// let Guarded { value, guard: _guard } = self.evaluate_expression(expr)?;
+/// // _guard keeps the object alive until end of scope
+/// ```
+/// Never extract just the value without keeping the guard - the object may be
+/// garbage collected before you're done using it!
+///
+/// The fields are public to allow struct destructuring pattern, which is the
+/// ONLY approved way to access the contents.
 pub struct Guarded {
     pub value: JsValue,
     pub guard: Option<Guard<JsObject>>,
@@ -72,12 +83,6 @@ impl Guarded {
     /// Create an unguarded value (for primitives or already-owned objects)
     pub fn unguarded(value: JsValue) -> Self {
         Self { value, guard: None }
-    }
-
-    /// Take just the value, dropping any guard.
-    /// Use this only when ownership has been transferred elsewhere.
-    pub fn take(self) -> JsValue {
-        self.value
     }
 }
 
@@ -152,6 +157,15 @@ pub struct Interpreter {
 
     /// Call stack for stack traces
     pub call_stack: Vec<StackFrame>,
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Timeout Control
+    // ═══════════════════════════════════════════════════════════════════════════
+    /// Execution timeout in milliseconds (0 = no timeout)
+    timeout_ms: u64,
+
+    /// When execution started (for timeout checking)
+    execution_start: Option<std::time::Instant>,
 }
 
 impl Interpreter {
@@ -220,6 +234,8 @@ impl Interpreter {
             thrown_value: None,
             exports: FxHashMap::default(),
             call_stack: Vec::new(),
+            timeout_ms: 3000, // Default 3 second timeout
+            execution_start: None,
         };
 
         // Initialize built-in globals
@@ -254,6 +270,51 @@ impl Interpreter {
 
         // Initialize Error constructor
         builtins::init_error(self);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Timeout Control
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// Set the execution timeout in milliseconds
+    ///
+    /// Default is 3000ms (3 seconds). Set to 0 to disable timeout.
+    pub fn set_timeout_ms(&mut self, timeout_ms: u64) {
+        self.timeout_ms = timeout_ms;
+    }
+
+    /// Get the current execution timeout in milliseconds
+    pub fn timeout_ms(&self) -> u64 {
+        self.timeout_ms
+    }
+
+    /// Start the execution timer
+    fn start_execution(&mut self) {
+        if self.timeout_ms > 0 && self.execution_start.is_none() {
+            self.execution_start = Some(std::time::Instant::now());
+        }
+    }
+
+    /// Check if execution has exceeded the timeout
+    ///
+    /// Returns an error if the timeout has been exceeded, otherwise Ok(()).
+    /// If timeout_ms is 0, the timeout is disabled.
+    fn check_timeout(&self) -> Result<(), JsError> {
+        // Skip check if timeout is disabled
+        if self.timeout_ms == 0 {
+            return Ok(());
+        }
+        if let Some(start) = self.execution_start {
+            let elapsed = start.elapsed();
+            let elapsed_ms = elapsed.as_millis() as u64;
+            if elapsed_ms > self.timeout_ms {
+                return Err(JsError::Timeout {
+                    timeout_ms: self.timeout_ms,
+                    elapsed_ms,
+                });
+            }
+        }
+        Ok(())
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -576,6 +637,9 @@ impl Interpreter {
 
     /// Execute a program
     fn execute_program(&mut self, program: &Program) -> Result<JsValue, JsError> {
+        // Start execution timer for timeout checking
+        self.start_execution();
+
         let mut result = JsValue::Undefined;
 
         for stmt in &program.body {
@@ -601,8 +665,8 @@ impl Interpreter {
     fn execute_statement(&mut self, stmt: &Statement) -> Result<Completion, JsError> {
         match stmt {
             Statement::Expression(expr_stmt) => {
-                // Expression statement - value is discarded, guard dropped
-                let val = self.evaluate_expression(&expr_stmt.expression)?.take();
+                // Expression statement - value is discarded, guard dropped at end of scope
+                let Guarded { value: val, guard: _guard } = self.evaluate_expression(&expr_stmt.expression)?;
                 Ok(Completion::Normal(val))
             }
 
@@ -789,11 +853,12 @@ impl Interpreter {
 
             Pattern::Assignment(assign_pat) => {
                 // Assignment pattern: { x = defaultValue }
-                let val = if matches!(value, JsValue::Undefined) {
+                let (val, _guard) = if matches!(value, JsValue::Undefined) {
                     // Use default value
-                    self.evaluate_expression(&assign_pat.right)?.take()
+                    let Guarded { value: v, guard: g } = self.evaluate_expression(&assign_pat.right)?;
+                    (v, g)
                 } else {
-                    value
+                    (value, None)
                 };
                 self.bind_pattern(&assign_pat.left, val, mutable)
             }
@@ -865,7 +930,7 @@ impl Interpreter {
     }
 
     fn execute_if(&mut self, if_stmt: &IfStatement) -> Result<Completion, JsError> {
-        let condition = self.evaluate_expression(&if_stmt.test)?.take();
+        let Guarded { value: condition, guard: _guard } = self.evaluate_expression(&if_stmt.test)?;
 
         if condition.to_boolean() {
             self.execute_statement(&if_stmt.consequent)
@@ -878,7 +943,9 @@ impl Interpreter {
 
     fn execute_while(&mut self, while_stmt: &WhileStatement) -> Result<Completion, JsError> {
         loop {
-            let condition = self.evaluate_expression(&while_stmt.test)?.take();
+            // Check for timeout at each iteration
+            self.check_timeout()?;
+            let Guarded { value: condition, guard: _guard } = self.evaluate_expression(&while_stmt.test)?;
             if !condition.to_boolean() {
                 break;
             }
@@ -936,7 +1003,7 @@ impl Interpreter {
                 }
                 ForInit::Expression(expr) => {
                     // Init expression - value discarded
-                    self.evaluate_expression(expr)?.take();
+                    let Guarded { value: _, guard: _guard } = self.evaluate_expression(expr)?;
                 }
             }
         }
@@ -972,9 +1039,12 @@ impl Interpreter {
 
         // Loop
         loop {
+            // Check for timeout at each iteration
+            self.check_timeout()?;
+
             // Test (runs in current per-iteration environment)
             if let Some(ref test) = for_stmt.test {
-                let condition = self.evaluate_expression(test)?.take();
+                let Guarded { value: condition, guard: _guard } = self.evaluate_expression(test)?;
                 if !condition.to_boolean() {
                     break;
                 }
@@ -1036,7 +1106,7 @@ impl Interpreter {
 
             // Update (runs in NEW per-iteration environment, not the one body used)
             if let Some(ref update) = for_stmt.update {
-                self.evaluate_expression(update)?.take();
+                let Guarded { value: _, guard: _guard } = self.evaluate_expression(update)?;
             }
         }
 
@@ -1046,6 +1116,9 @@ impl Interpreter {
 
     fn execute_do_while(&mut self, do_while: &DoWhileStatement) -> Result<Completion, JsError> {
         loop {
+            // Check for timeout at each iteration
+            self.check_timeout()?;
+
             match self.execute_statement(&do_while.body)? {
                 Completion::Normal(_) | Completion::Continue(None) => {}
                 Completion::Break(None) => break,
@@ -1053,7 +1126,7 @@ impl Interpreter {
                 c @ (Completion::Break(_) | Completion::Continue(_)) => return Ok(c),
             }
 
-            let condition = self.evaluate_expression(&do_while.test)?.take();
+            let Guarded { value: condition, guard: _guard } = self.evaluate_expression(&do_while.test)?;
             if !condition.to_boolean() {
                 break;
             }
@@ -1063,7 +1136,7 @@ impl Interpreter {
     }
 
     fn execute_for_in(&mut self, for_in: &ForInStatement) -> Result<Completion, JsError> {
-        let right = self.evaluate_expression(&for_in.right)?.take();
+        let Guarded { value: right, guard: _right_guard } = self.evaluate_expression(&for_in.right)?;
 
         let keys = match &right {
             JsValue::Object(obj) => {
@@ -1081,6 +1154,9 @@ impl Interpreter {
         let prev_env = self.env;
 
         for key in keys {
+            // Check for timeout at each iteration
+            self.check_timeout()?;
+
             // Per-iteration environment
             let iter_env =
                 create_environment_with_guard(&self.root_guard, &self.heap, Some(prev_env));
@@ -1127,7 +1203,7 @@ impl Interpreter {
     }
 
     fn execute_for_of(&mut self, for_of: &ForOfStatement) -> Result<Completion, JsError> {
-        let right = self.evaluate_expression(&for_of.right)?.take();
+        let Guarded { value: right, guard: _right_guard } = self.evaluate_expression(&for_of.right)?;
 
         // Collect items to iterate over
         let items = match &right {
@@ -1159,6 +1235,9 @@ impl Interpreter {
         let prev_env = self.env;
 
         for item in items {
+            // Check for timeout at each iteration
+            self.check_timeout()?;
+
             // Per-iteration environment
             let iter_env =
                 create_environment_with_guard(&self.root_guard, &self.heap, Some(prev_env));
@@ -1203,7 +1282,7 @@ impl Interpreter {
     }
 
     fn execute_switch(&mut self, switch: &SwitchStatement) -> Result<Completion, JsError> {
-        let discriminant = self.evaluate_expression(&switch.discriminant)?.take();
+        let Guarded { value: discriminant, guard: _disc_guard } = self.evaluate_expression(&switch.discriminant)?;
         let mut matched = false;
         let mut default_index = None;
 
@@ -1216,7 +1295,7 @@ impl Interpreter {
 
             if !matched {
                 if let Some(test_expr) = &case.test {
-                    let test = self.evaluate_expression(test_expr)?.take();
+                    let Guarded { value: test, guard: _test_guard } = self.evaluate_expression(test_expr)?;
                     if discriminant.strict_equals(&test) {
                         matched = true;
                     }
@@ -1347,18 +1426,18 @@ impl Interpreter {
         class: &ClassDeclaration,
     ) -> Result<Gc<JsObject>, JsError> {
         // Handle extends - evaluate superclass first
-        let super_constructor: Option<Gc<JsObject>> =
+        let (super_constructor, _super_guard): (Option<Gc<JsObject>>, Option<Guard<JsObject>>) =
             if let Some(super_class_expr) = &class.super_class {
-                let super_val = self.evaluate_expression(super_class_expr)?.take();
+                let Guarded { value: super_val, guard } = self.evaluate_expression(super_class_expr)?;
                 if let JsValue::Object(sc) = super_val {
-                    Some(sc)
+                    (Some(sc), guard)
                 } else {
                     return Err(JsError::type_error(
                         "Class extends value is not a constructor",
                     ));
                 }
             } else {
-                None
+                (None, None)
             };
 
         // Create prototype object
@@ -1534,7 +1613,7 @@ impl Interpreter {
             for (name, value_expr) in field_initializers {
                 let value = if let Some(expr) = value_expr {
                     self.evaluate_expression(&expr)
-                        .map(|g| g.take())
+                        .map(|g| g.value)
                         .unwrap_or(JsValue::Undefined)
                 } else {
                     JsValue::Undefined
@@ -1641,10 +1720,11 @@ impl Interpreter {
                 _ => continue,
             };
 
-            let value = if let Some(expr) = &prop.value {
-                self.evaluate_expression(expr)?.take()
+            let (value, _value_guard) = if let Some(expr) = &prop.value {
+                let Guarded { value: v, guard: g } = self.evaluate_expression(expr)?;
+                (v, g)
             } else {
-                JsValue::Undefined
+                (JsValue::Undefined, None)
             };
 
             if let JsValue::Object(ref obj) = value {
@@ -1717,7 +1797,9 @@ impl Interpreter {
         label: Option<&JsString>,
     ) -> Result<Completion, JsError> {
         loop {
-            let condition = self.evaluate_expression(&while_stmt.test)?.take();
+            // Check for timeout at each iteration
+            self.check_timeout()?;
+            let Guarded { value: condition, guard: _guard } = self.evaluate_expression(&while_stmt.test)?;
             if !condition.to_boolean() {
                 break;
             }
@@ -1742,6 +1824,9 @@ impl Interpreter {
         label: Option<&JsString>,
     ) -> Result<Completion, JsError> {
         loop {
+            // Check for timeout at each iteration
+            self.check_timeout()?;
+
             match self.execute_statement(&do_while.body)? {
                 Completion::Normal(_) | Completion::Continue(None) => {}
                 Completion::Continue(Some(ref l)) if label == Some(l) => {}
@@ -1752,7 +1837,7 @@ impl Interpreter {
                 Completion::Return(v) => return Ok(Completion::Return(v)),
             }
 
-            let condition = self.evaluate_expression(&do_while.test)?.take();
+            let Guarded { value: condition, guard: _guard } = self.evaluate_expression(&do_while.test)?;
             if !condition.to_boolean() {
                 break;
             }
@@ -1774,15 +1859,18 @@ impl Interpreter {
             match init {
                 ForInit::Variable(decl) => self.execute_variable_declaration(decl)?,
                 ForInit::Expression(expr) => {
-                    self.evaluate_expression(expr)?;
+                    let Guarded { value: _, guard: _guard } = self.evaluate_expression(expr)?;
                 }
             }
         }
 
         loop {
+            // Check for timeout at each iteration
+            self.check_timeout()?;
+
             // Test
             if let Some(ref test) = for_stmt.test {
-                let condition = self.evaluate_expression(test)?.take();
+                let Guarded { value: condition, guard: _guard } = self.evaluate_expression(test)?;
                 if !condition.to_boolean() {
                     break;
                 }
@@ -1810,7 +1898,7 @@ impl Interpreter {
 
             // Update
             if let Some(ref update) = for_stmt.update {
-                self.evaluate_expression(update)?.take();
+                let Guarded { value: _, guard: _guard } = self.evaluate_expression(update)?;
             }
         }
 
@@ -1823,7 +1911,7 @@ impl Interpreter {
         for_in: &ForInStatement,
         label: Option<&JsString>,
     ) -> Result<Completion, JsError> {
-        let right = self.evaluate_expression(&for_in.right)?.take();
+        let Guarded { value: right, guard: _right_guard } = self.evaluate_expression(&for_in.right)?;
 
         let keys = match &right {
             JsValue::Object(obj) => {
@@ -1841,6 +1929,9 @@ impl Interpreter {
         let prev_env = self.env;
 
         for key in keys {
+            // Check for timeout at each iteration
+            self.check_timeout()?;
+
             // Per-iteration environment
             let iter_env =
                 create_environment_with_guard(&self.root_guard, &self.heap, Some(prev_env));
@@ -1896,7 +1987,7 @@ impl Interpreter {
         for_of: &ForOfStatement,
         label: Option<&JsString>,
     ) -> Result<Completion, JsError> {
-        let right = self.evaluate_expression(&for_of.right)?.take();
+        let Guarded { value: right, guard: _right_guard } = self.evaluate_expression(&for_of.right)?;
 
         // Collect items to iterate over
         let items = match &right {
@@ -1928,6 +2019,9 @@ impl Interpreter {
         let prev_env = self.env;
 
         for item in items {
+            // Check for timeout at each iteration
+            self.check_timeout()?;
+
             // Per-iteration environment
             let iter_env =
                 create_environment_with_guard(&self.root_guard, &self.heap, Some(prev_env));
@@ -2110,8 +2204,11 @@ impl Interpreter {
     }
 
     fn evaluate_new(&mut self, new_expr: &NewExpression) -> Result<Guarded, JsError> {
-        // Evaluate the constructor
-        let constructor = self.evaluate_expression(&new_expr.callee)?.take();
+        // Evaluate the constructor, keeping guard alive during the call
+        let Guarded {
+            value: constructor,
+            guard: _ctor_guard,
+        } = self.evaluate_expression(&new_expr.callee)?;
 
         // Evaluate arguments, collecting guards
         let mut args = Vec::new();
@@ -2231,7 +2328,7 @@ impl Interpreter {
         for (i, quasi) in template.quasis.iter().enumerate() {
             result.push_str(quasi.value.as_ref());
             if let Some(expr) = template.expressions.get(i) {
-                let val = self.evaluate_expression(expr)?.take();
+                let Guarded { value: val, guard: _guard } = self.evaluate_expression(expr)?;
                 result.push_str(val.to_js_string().as_ref());
             }
         }
@@ -2244,7 +2341,7 @@ impl Interpreter {
         tagged: &TaggedTemplateExpression,
     ) -> Result<Guarded, JsError> {
         // Evaluate the tag function
-        let tag_fn = self.evaluate_expression(&tagged.tag)?.take();
+        let Guarded { value: tag_fn, guard: _tag_guard } = self.evaluate_expression(&tagged.tag)?;
 
         // Build the strings array (first argument)
         let strings: Vec<JsValue> = tagged
@@ -2303,8 +2400,8 @@ impl Interpreter {
     }
 
     fn evaluate_binary(&mut self, bin: &BinaryExpression) -> Result<Guarded, JsError> {
-        let left = self.evaluate_expression(&bin.left)?.take();
-        let right = self.evaluate_expression(&bin.right)?.take();
+        let Guarded { value: left, guard: _left_guard } = self.evaluate_expression(&bin.left)?;
+        let Guarded { value: right, guard: _right_guard } = self.evaluate_expression(&bin.right)?;
 
         Ok(Guarded::unguarded(match bin.operator {
             // Arithmetic
@@ -2373,7 +2470,7 @@ impl Interpreter {
     }
 
     fn evaluate_unary(&mut self, un: &UnaryExpression) -> Result<Guarded, JsError> {
-        let operand = self.evaluate_expression(&un.argument)?.take();
+        let Guarded { value: operand, guard: _guard } = self.evaluate_expression(&un.argument)?;
 
         Ok(Guarded::unguarded(match un.operator {
             UnaryOp::Minus => JsValue::Number(-operand.to_number()),
@@ -2415,7 +2512,7 @@ impl Interpreter {
     }
 
     fn evaluate_conditional(&mut self, cond: &ConditionalExpression) -> Result<Guarded, JsError> {
-        let test = self.evaluate_expression(&cond.test)?.take();
+        let Guarded { value: test, guard: _guard } = self.evaluate_expression(&cond.test)?;
 
         if test.to_boolean() {
             self.evaluate_expression(&cond.consequent)
@@ -2508,7 +2605,10 @@ impl Interpreter {
                 Ok(Guarded::unguarded(final_value))
             }
             AssignmentTarget::Member(member) => {
-                let obj_val = self.evaluate_expression(&member.object)?.take();
+                let Guarded {
+                    value: obj_val,
+                    guard: _obj_guard,
+                } = self.evaluate_expression(&member.object)?;
                 let JsValue::Object(ref obj) = obj_val else {
                     return Err(JsError::type_error("Cannot set property of non-object"));
                 };
@@ -2696,10 +2796,11 @@ impl Interpreter {
             Pattern::Rest(rest) => self.assign_pattern(&rest.argument, value),
 
             Pattern::Assignment(assign_pat) => {
-                let val = if matches!(value, JsValue::Undefined) {
-                    self.evaluate_expression(&assign_pat.right)?.take()
+                let (val, _guard) = if matches!(value, JsValue::Undefined) {
+                    let Guarded { value: v, guard: g } = self.evaluate_expression(&assign_pat.right)?;
+                    (v, g)
                 } else {
-                    value
+                    (value, None)
                 };
                 self.assign_pattern(&assign_pat.left, val)
             }
@@ -2772,7 +2873,7 @@ impl Interpreter {
                 }
             }
             Expression::Member(member) => {
-                let obj_val = self.evaluate_expression(&member.object)?.take();
+                let Guarded { value: obj_val, guard: _obj_guard } = self.evaluate_expression(&member.object)?;
                 let JsValue::Object(obj) = obj_val else {
                     return Err(JsError::type_error("Cannot update property of non-object"));
                 };
@@ -2810,14 +2911,14 @@ impl Interpreter {
     }
 
     fn evaluate_call(&mut self, call: &CallExpression) -> Result<Guarded, JsError> {
-        let (callee, this_value) = match &*call.callee {
+        let (callee, this_value, obj_guard) = match &*call.callee {
             // super(args) - call parent constructor
             Expression::Super(_) => {
                 let super_name = JsString::from("__super__");
                 let super_constructor = self.env_get(&super_name)?;
                 let this_name = JsString::from("this");
                 let this_val = self.env_get(&this_name)?;
-                (super_constructor, this_val)
+                (super_constructor, this_val, None)
             }
             // super.method() - call parent method
             Expression::Member(member) if matches!(&*member.object, Expression::Super(_)) => {
@@ -2842,12 +2943,15 @@ impl Interpreter {
                 };
 
                 match func {
-                    Some(f) => (f, this_val),
+                    Some(f) => (f, this_val, None),
                     None => return Err(JsError::type_error(format!("{} is not a function", key))),
                 }
             }
             Expression::Member(member) => {
-                let obj = self.evaluate_expression(&member.object)?.take();
+                let Guarded {
+                    value: obj,
+                    guard: obj_guard,
+                } = self.evaluate_expression(&member.object)?;
                 let key = self.get_member_key(&member.property)?;
 
                 let func = match &obj {
@@ -2869,15 +2973,18 @@ impl Interpreter {
                 };
 
                 match func {
-                    Some(f) => (f, obj),
+                    Some(f) => (f, obj, obj_guard),
                     None => return Err(JsError::type_error(format!("{} is not a function", key))),
                 }
             }
             _ => {
-                let callee = self.evaluate_expression(&call.callee)?.take();
-                (callee, JsValue::Undefined)
+                let Guarded { value: callee, guard } = self.evaluate_expression(&call.callee)?;
+                (callee, JsValue::Undefined, guard)
             }
         };
+
+        // Keep the object guard alive during the call
+        let _obj_guard = obj_guard;
 
         // Evaluate arguments, keeping guards alive until call completes
         let mut args = Vec::new();
@@ -3010,7 +3117,10 @@ impl Interpreter {
                         Completion::Return(v) => v,
                         _ => JsValue::Undefined,
                     },
-                    FunctionBody::Expression(expr) => self.evaluate_expression(expr)?.take(),
+                    FunctionBody::Expression(expr) => {
+                        let Guarded { value, guard: _guard } = self.evaluate_expression(expr)?;
+                        value
+                    }
                 };
 
                 self.env = saved_env;
@@ -3040,7 +3150,10 @@ impl Interpreter {
     }
 
     fn evaluate_member(&mut self, member: &MemberExpression) -> Result<JsValue, JsError> {
-        let obj = self.evaluate_expression(&member.object)?.take();
+        let Guarded {
+            value: obj,
+            guard: _obj_guard,
+        } = self.evaluate_expression(&member.object)?;
         let key = self.get_member_key(&member.property)?;
 
         match &obj {
@@ -3093,7 +3206,10 @@ impl Interpreter {
         match property {
             MemberProperty::Identifier(id) => Ok(PropertyKey::String(id.name.cheap_clone())),
             MemberProperty::Expression(expr) => {
-                let val = self.evaluate_expression(expr)?.take();
+                let Guarded {
+                    value: val,
+                    guard: _val_guard,
+                } = self.evaluate_expression(expr)?;
                 Ok(PropertyKey::from_value(&val))
             }
             MemberProperty::PrivateIdentifier(id) => {
@@ -3150,7 +3266,10 @@ impl Interpreter {
                             }
                         }
                         ObjectPropertyKey::Computed(expr) => {
-                            let k = self.evaluate_expression(expr)?.take();
+                            let Guarded {
+                                value: k,
+                                guard: _k_guard,
+                            } = self.evaluate_expression(expr)?;
                             PropertyKey::from_value(&k)
                         }
                         ObjectPropertyKey::PrivateIdentifier(id) => {
