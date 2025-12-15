@@ -4,9 +4,10 @@
 //! Each object tracks *why* it's guarded via `GuardSource`.
 
 use std::cell::{Cell, Ref, RefCell, RefMut};
-use std::collections::HashSet;
 use std::ptr::NonNull;
 use std::rc::{Rc, Weak};
+
+use rustc_hash::{FxHashMap, FxHashSet};
 
 // ============================================================================
 // GuardSource - tracks why an object is guarded
@@ -60,7 +61,7 @@ struct GcBox<T> {
 
     /// Set of reasons why this object is guarded.
     /// Empty set means object can be collected.
-    guard_sources: RefCell<HashSet<GuardSource>>,
+    guard_sources: RefCell<FxHashSet<GuardSource>>,
 
     /// Whether this object is in the pool (dead)
     pooled: Cell<bool>,
@@ -71,7 +72,7 @@ impl<T> GcBox<T> {
         Self {
             id,
             data: RefCell::new(data),
-            guard_sources: RefCell::new(HashSet::new()),
+            guard_sources: RefCell::new(FxHashSet::default()),
             pooled: Cell::new(false),
         }
     }
@@ -99,14 +100,14 @@ struct Space<T> {
 
     /// Active guards: guard_id → set of object indices
     /// Used for fast lookup when a guard is dropped
-    guards: std::collections::HashMap<usize, HashSet<usize>>,
+    guards: FxHashMap<usize, FxHashSet<usize>>,
 
     /// Ownership edges: (owner_id, owned_id) pairs
     /// Used to propagate guard changes through ownership graph
-    ownership_edges: HashSet<(usize, usize)>,
+    ownership_edges: FxHashSet<(usize, usize)>,
 
     /// Object ID to index mapping (for looking up objects by ID)
-    id_to_index: std::collections::HashMap<usize, usize>,
+    id_to_index: FxHashMap<usize, usize>,
 }
 
 impl<T: Default + Reset> Space<T> {
@@ -116,9 +117,9 @@ impl<T: Default + Reset> Space<T> {
             pool: Vec::new(),
             next_guard_id: 0,
             next_object_id: 0,
-            guards: std::collections::HashMap::new(),
-            ownership_edges: HashSet::new(),
-            id_to_index: std::collections::HashMap::new(),
+            guards: FxHashMap::default(),
+            ownership_edges: FxHashSet::default(),
+            id_to_index: FxHashMap::default(),
         }
     }
 
@@ -185,7 +186,7 @@ impl<T: Default + Reset> Space<T> {
     fn create_guard_id(&mut self) -> usize {
         let id = self.next_guard_id;
         self.next_guard_id += 1;
-        self.guards.insert(id, HashSet::new());
+        self.guards.insert(id, FxHashSet::default());
         id
     }
 
@@ -223,7 +224,7 @@ impl<T: Default + Reset> Space<T> {
         };
 
         // Check if object still has this guard through a valid (non-circular) path
-        let still_has_guard = self.has_valid_guard_path(object_id, guard_id, &mut HashSet::new());
+        let still_has_guard = self.has_valid_guard_path(object_id, guard_id, &mut FxHashSet::default());
 
         // Only propagate if the object completely lost this guard
         if !still_has_guard {
@@ -250,7 +251,7 @@ impl<T: Default + Reset> Space<T> {
         &self,
         object_id: usize,
         guard_id: usize,
-        visited: &mut HashSet<usize>,
+        visited: &mut FxHashSet<usize>,
     ) -> bool {
         // Cycle detection
         if !visited.insert(object_id) {
@@ -316,7 +317,7 @@ impl<T: Default + Reset> Space<T> {
 
     /// Propagate guard addition through ownership graph
     fn propagate_guard_add(&mut self, owner_id: usize, guard_id: usize) {
-        let mut visited = HashSet::new();
+        let mut visited = FxHashSet::default();
         self.propagate_guard_add_inner(owner_id, guard_id, &mut visited);
     }
 
@@ -324,7 +325,7 @@ impl<T: Default + Reset> Space<T> {
         &mut self,
         owner_id: usize,
         guard_id: usize,
-        visited: &mut HashSet<usize>,
+        visited: &mut FxHashSet<usize>,
     ) {
         // Avoid infinite recursion in cycles
         if !visited.insert(owner_id) {
@@ -360,7 +361,7 @@ impl<T: Default + Reset> Space<T> {
 
     /// Propagate guard removal through ownership graph
     fn propagate_guard_remove(&mut self, owner_id: usize, guard_id: usize) {
-        let mut visited = HashSet::new();
+        let mut visited = FxHashSet::default();
         self.propagate_guard_remove_inner(owner_id, guard_id, &mut visited);
     }
 
@@ -368,7 +369,7 @@ impl<T: Default + Reset> Space<T> {
         &mut self,
         owner_id: usize,
         guard_id: usize,
-        visited: &mut HashSet<usize>,
+        visited: &mut FxHashSet<usize>,
     ) {
         // Avoid infinite recursion in cycles
         if !visited.insert(owner_id) {
