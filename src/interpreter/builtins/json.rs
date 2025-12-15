@@ -14,7 +14,6 @@ pub fn init_json(interp: &mut Interpreter) {
     interp.register_method(&json, "parse", json_parse, 1);
 
     let json_key = interp.key("JSON");
-    interp.global.own(&json, &interp.heap);
     interp
         .global
         .borrow_mut()
@@ -210,19 +209,11 @@ fn json_to_js_value_guarded(
         serde_json::Value::Array(arr) => {
             // First build all elements with guards collected
             let mut elements = Vec::with_capacity(arr.len());
-            let mut nested_objects: Vec<Gc<JsObject>> = Vec::new();
             for item in arr {
                 let val = json_to_js_value_guarded(interp, item, guards)?;
-                if let JsValue::Object(ref nested) = val {
-                    nested_objects.push(*nested);
-                }
                 elements.push(val);
             }
             let (result, guard) = interp.create_array(elements);
-            // Own nested objects
-            for nested in nested_objects {
-                result.own(&nested, &interp.heap);
-            }
             guards.push(guard);
             JsValue::Object(result)
         }
@@ -231,10 +222,6 @@ fn json_to_js_value_guarded(
             for (key, value) in map {
                 let js_value = json_to_js_value_guarded(interp, value, guards)?;
                 let interned_key = interp.key(key);
-                // Own nested objects before setting property
-                if let JsValue::Object(ref nested) = js_value {
-                    obj.own(nested, &interp.heap);
-                }
                 obj.borrow_mut().set_property(interned_key, js_value);
             }
             guards.push(guard);

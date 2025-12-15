@@ -7,7 +7,7 @@ use crate::value::{ExoticObject, Guarded, JsObject, JsString, JsValue};
 
 /// Initialize RegExp.prototype with test and exec methods
 pub fn init_regexp_prototype(interp: &mut Interpreter) {
-    let proto = interp.regexp_prototype;
+    let proto = interp.regexp_prototype.clone();
 
     interp.register_method(&proto, "test", regexp_test, 1);
     interp.register_method(&proto, "exec", regexp_exec, 1);
@@ -20,7 +20,7 @@ pub fn create_regexp_constructor(interp: &mut Interpreter) -> Gc<JsObject> {
     let proto_key = interp.key("prototype");
     constructor
         .borrow_mut()
-        .set_property(proto_key, JsValue::Object(interp.regexp_prototype));
+        .set_property(proto_key, JsValue::Object(interp.regexp_prototype.clone()));
 
     constructor
 }
@@ -61,7 +61,7 @@ pub fn regexp_constructor(
             pattern: pattern.clone(),
             flags: flags.clone(),
         };
-        obj.prototype = Some(interp.regexp_prototype);
+        obj.prototype = Some(interp.regexp_prototype.clone());
         obj.set_property(source_key, JsValue::String(JsString::from(pattern)));
         obj.set_property(flags_key, JsValue::String(JsString::from(flags.clone())));
         obj.set_property(global_key, JsValue::Boolean(flags.contains('g')));

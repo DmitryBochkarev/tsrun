@@ -6,7 +6,7 @@ use crate::value::{BoundFunctionData, ExoticObject, Guarded, JsFunction, JsValue
 
 /// Initialize Function.prototype with call, apply, bind methods
 pub fn init_function_prototype(interp: &mut Interpreter) {
-    let proto = interp.function_prototype;
+    let proto = interp.function_prototype.clone();
 
     interp.register_method(&proto, "call", function_call, 1);
     interp.register_method(&proto, "apply", function_apply, 2);
@@ -91,17 +91,6 @@ pub fn function_bind(
         this_arg: this_arg.clone(),
         bound_args: bound_args.clone(),
     })));
-
-    // Establish GC ownership for objects referenced by the bound function
-    bound_fn.own(&target_fn, &interp.heap);
-    if let JsValue::Object(ref this_obj) = this_arg {
-        bound_fn.own(this_obj, &interp.heap);
-    }
-    for arg in &bound_args {
-        if let JsValue::Object(ref obj) = arg {
-            bound_fn.own(obj, &interp.heap);
-        }
-    }
 
     Ok(Guarded::unguarded(JsValue::Object(bound_fn)))
 }

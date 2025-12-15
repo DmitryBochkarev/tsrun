@@ -84,13 +84,13 @@ pub fn init_math(interp: &mut Interpreter) -> Gc<JsObject> {
     // Root Math object and bind to global
     interp.root_guard.guard(&math_obj);
     let math_key = interp.key("Math");
-    interp.global.own(&math_obj, &interp.heap);
+    let result = math_obj.clone();
     interp
         .global
         .borrow_mut()
         .set_property(math_key, JsValue::Object(math_obj));
 
-    math_obj
+    result
 }
 
 pub fn math_abs(

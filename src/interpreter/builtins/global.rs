@@ -10,7 +10,6 @@ pub fn init_global_functions(interp: &mut Interpreter) {
     let parseint_fn = interp.create_native_function("parseInt", global_parse_int, 2);
     interp.root_guard.guard(&parseint_fn);
     let key = interp.key("parseInt");
-    interp.global.own(&parseint_fn, &interp.heap);
     interp
         .global
         .borrow_mut()
@@ -20,7 +19,6 @@ pub fn init_global_functions(interp: &mut Interpreter) {
     let parsefloat_fn = interp.create_native_function("parseFloat", global_parse_float, 1);
     interp.root_guard.guard(&parsefloat_fn);
     let key = interp.key("parseFloat");
-    interp.global.own(&parsefloat_fn, &interp.heap);
     interp
         .global
         .borrow_mut()
@@ -30,7 +28,6 @@ pub fn init_global_functions(interp: &mut Interpreter) {
     let isnan_fn = interp.create_native_function("isNaN", global_is_nan, 1);
     interp.root_guard.guard(&isnan_fn);
     let key = interp.key("isNaN");
-    interp.global.own(&isnan_fn, &interp.heap);
     interp
         .global
         .borrow_mut()
@@ -40,7 +37,6 @@ pub fn init_global_functions(interp: &mut Interpreter) {
     let isfinite_fn = interp.create_native_function("isFinite", global_is_finite, 1);
     interp.root_guard.guard(&isfinite_fn);
     let key = interp.key("isFinite");
-    interp.global.own(&isfinite_fn, &interp.heap);
     interp
         .global
         .borrow_mut()
@@ -50,7 +46,6 @@ pub fn init_global_functions(interp: &mut Interpreter) {
     let encodeuri_fn = interp.create_native_function("encodeURI", global_encode_uri, 1);
     interp.root_guard.guard(&encodeuri_fn);
     let key = interp.key("encodeURI");
-    interp.global.own(&encodeuri_fn, &interp.heap);
     interp
         .global
         .borrow_mut()
@@ -60,7 +55,6 @@ pub fn init_global_functions(interp: &mut Interpreter) {
     let decodeuri_fn = interp.create_native_function("decodeURI", global_decode_uri, 1);
     interp.root_guard.guard(&decodeuri_fn);
     let key = interp.key("decodeURI");
-    interp.global.own(&decodeuri_fn, &interp.heap);
     interp
         .global
         .borrow_mut()
@@ -71,7 +65,6 @@ pub fn init_global_functions(interp: &mut Interpreter) {
         interp.create_native_function("encodeURIComponent", global_encode_uri_component, 1);
     interp.root_guard.guard(&encodeuricomponent_fn);
     let key = interp.key("encodeURIComponent");
-    interp.global.own(&encodeuricomponent_fn, &interp.heap);
     interp
         .global
         .borrow_mut()
@@ -82,7 +75,6 @@ pub fn init_global_functions(interp: &mut Interpreter) {
         interp.create_native_function("decodeURIComponent", global_decode_uri_component, 1);
     interp.root_guard.guard(&decodeuricomponent_fn);
     let key = interp.key("decodeURIComponent");
-    interp.global.own(&decodeuricomponent_fn, &interp.heap);
     interp
         .global
         .borrow_mut()

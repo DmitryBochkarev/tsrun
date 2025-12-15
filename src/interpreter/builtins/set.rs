@@ -2,13 +2,12 @@
 
 use super::map::same_value_zero;
 use crate::error::JsError;
-use crate::gc::Gc;
 use crate::interpreter::Interpreter;
-use crate::value::{ExoticObject, Guarded, JsObject, JsValue, PropertyKey};
+use crate::value::{ExoticObject, Guarded, JsValue, PropertyKey};
 
 /// Initialize Set.prototype with add, has, delete, clear, forEach methods
 pub fn init_set_prototype(interp: &mut Interpreter) {
-    let proto = interp.set_prototype;
+    let proto = interp.set_prototype.clone();
 
     interp.register_method(&proto, "add", set_add, 1);
     interp.register_method(&proto, "has", set_has, 1);
@@ -29,14 +28,12 @@ pub fn init_set(interp: &mut Interpreter) {
 
     // Set prototype property on constructor
     let proto_key = interp.key("prototype");
-    constructor.own(&interp.set_prototype, &interp.heap);
     constructor
         .borrow_mut()
-        .set_property(proto_key, JsValue::Object(interp.set_prototype));
+        .set_property(proto_key, JsValue::Object(interp.set_prototype.clone()));
 
     // Register globally
     let set_key = interp.key("Set");
-    interp.global.own(&constructor, &interp.heap);
     interp
         .global
         .borrow_mut()
@@ -56,10 +53,9 @@ pub fn set_constructor(
         obj.exotic = ExoticObject::Set {
             entries: Vec::new(),
         };
-        obj.prototype = Some(interp.set_prototype);
+        obj.prototype = Some(interp.set_prototype.clone());
         obj.set_property(size_key, JsValue::Number(0.0));
     }
-    set_obj.own(&interp.set_prototype, &interp.heap);
 
     // If an iterable (array) is passed, add its elements
     if let Some(JsValue::Object(arr)) = args.first() {
@@ -77,10 +73,6 @@ pub fn set_constructor(
             let mut set = set_obj.borrow_mut();
             if let ExoticObject::Set { ref mut entries } = set.exotic {
                 for value in items {
-                    // Own any object values
-                    if let JsValue::Object(ref obj) = value {
-                        set_obj.own(obj, &interp.heap);
-                    }
                     // Only add if not already present
                     let exists = entries.iter().any(|e| same_value_zero(e, &value));
                     if !exists {
@@ -110,11 +102,6 @@ pub fn set_add(
     let size_key = interp.key("size");
 
     let value = args.first().cloned().unwrap_or(JsValue::Undefined);
-
-    // Own any object values
-    if let JsValue::Object(ref obj) = value {
-        set_obj.own(obj, &interp.heap);
-    }
 
     let mut set = set_obj.borrow_mut();
 
@@ -307,20 +294,14 @@ pub fn set_entries(
     }
 
     // For Set, entries returns [value, value] pairs
-    // Build entry arrays and collect nested objects for ownership
+    // Build entry arrays
     let mut entries = Vec::with_capacity(raw_entries.len());
-    let mut nested_arrays: Vec<Gc<JsObject>> = Vec::new();
     for v in raw_entries {
         let (arr, _guard) = interp.create_array(vec![v.clone(), v]);
         interp.root_guard.guard(&arr);
-        nested_arrays.push(arr);
         entries.push(JsValue::Object(arr));
     }
 
     let (result, guard) = interp.create_array(entries);
-    // Own all nested arrays
-    for nested in nested_arrays {
-        result.own(&nested, &interp.heap);
-    }
     Ok(Guarded::with_guard(JsValue::Object(result), guard))
 }

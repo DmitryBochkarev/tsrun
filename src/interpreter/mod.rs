@@ -193,57 +193,20 @@ impl Interpreter {
         let date_prototype = root_guard.alloc();
         let symbol_prototype = root_guard.alloc();
 
-        // Set up prototype chain
-        {
-            let proto = object_prototype;
-            array_prototype.borrow_mut().prototype = Some(proto);
-            array_prototype.own(&proto, &heap);
-        }
-        {
-            let proto = object_prototype;
-            function_prototype.borrow_mut().prototype = Some(proto);
-            function_prototype.own(&proto, &heap);
-        }
-        {
-            let proto = object_prototype;
-            string_prototype.borrow_mut().prototype = Some(proto);
-            string_prototype.own(&proto, &heap);
-        }
-        {
-            let proto = object_prototype;
-            number_prototype.borrow_mut().prototype = Some(proto);
-            number_prototype.own(&proto, &heap);
-        }
-        {
-            let proto = object_prototype;
-            regexp_prototype.borrow_mut().prototype = Some(proto);
-            regexp_prototype.own(&proto, &heap);
-        }
-        {
-            let proto = object_prototype;
-            map_prototype.borrow_mut().prototype = Some(proto);
-            map_prototype.own(&proto, &heap);
-        }
-        {
-            let proto = object_prototype;
-            set_prototype.borrow_mut().prototype = Some(proto);
-            set_prototype.own(&proto, &heap);
-        }
-        {
-            let proto = object_prototype;
-            date_prototype.borrow_mut().prototype = Some(proto);
-            date_prototype.own(&proto, &heap);
-        }
-        {
-            let proto = object_prototype;
-            symbol_prototype.borrow_mut().prototype = Some(proto);
-            symbol_prototype.own(&proto, &heap);
-        }
+        // Set up prototype chain - all prototypes inherit from object_prototype
+        array_prototype.borrow_mut().prototype = Some(object_prototype.clone());
+        function_prototype.borrow_mut().prototype = Some(object_prototype.clone());
+        string_prototype.borrow_mut().prototype = Some(object_prototype.clone());
+        number_prototype.borrow_mut().prototype = Some(object_prototype.clone());
+        regexp_prototype.borrow_mut().prototype = Some(object_prototype.clone());
+        map_prototype.borrow_mut().prototype = Some(object_prototype.clone());
+        set_prototype.borrow_mut().prototype = Some(object_prototype.clone());
+        date_prototype.borrow_mut().prototype = Some(object_prototype.clone());
+        symbol_prototype.borrow_mut().prototype = Some(object_prototype.clone());
 
         // Create global object (rooted)
         let global = root_guard.alloc();
-        global.borrow_mut().prototype = Some(object_prototype);
-        global.own(&object_prototype, &heap);
+        global.borrow_mut().prototype = Some(object_prototype.clone());
 
         // Create global environment (rooted, owned by global)
         let global_env = root_guard.alloc();
@@ -252,7 +215,6 @@ impl Interpreter {
             env_ref.null_prototype = true;
             env_ref.exotic = ExoticObject::Environment(EnvironmentData::new());
         }
-        global.own(&global_env, &heap);
 
         let string_dict = StringDict::new();
 
@@ -260,7 +222,7 @@ impl Interpreter {
             heap,
             root_guard,
             global,
-            global_env,
+            global_env: global_env.clone(),
             env: global_env,
             string_dict,
             object_prototype,
@@ -490,7 +452,7 @@ impl Interpreter {
         let program = parser.parse_program()?;
 
         // Save current environment
-        let saved_env = self.env;
+        let saved_env = self.env.clone();
 
         // Create module environment
         let module_env = self.create_module_environment();
@@ -513,9 +475,6 @@ impl Interpreter {
         // Copy exports to module object
         for (name, value) in exports {
             let key = self.key(name.as_str());
-            if let JsValue::Object(ref obj) = value {
-                module_obj.own(obj, &self.heap);
-            }
             module_obj.borrow_mut().set_property(key, value);
         }
 
@@ -577,10 +536,10 @@ impl Interpreter {
         {
             let mut env_ref = env.borrow_mut();
             env_ref.null_prototype = true;
-            env_ref.exotic =
-                ExoticObject::Environment(EnvironmentData::with_outer(Some(self.global_env)));
+            env_ref.exotic = ExoticObject::Environment(EnvironmentData::with_outer(Some(
+                self.global_env.clone(),
+            )));
         }
-        self.global_env.own(&env, &self.heap);
         env
     }
 
@@ -614,11 +573,6 @@ impl Interpreter {
 
     /// Define a variable in the current environment
     pub fn env_define(&mut self, name: JsString, value: JsValue, mutable: bool) {
-        // If value is an object, env owns it
-        if let JsValue::Object(ref obj) = value {
-            self.env.own(obj, &self.heap);
-        }
-
         let mut env_ref = self.env.borrow_mut();
         if let Some(data) = env_ref.as_environment_mut() {
             data.bindings.insert(
@@ -634,7 +588,7 @@ impl Interpreter {
 
     /// Get a variable from the environment chain
     pub fn env_get(&self, name: &JsString) -> Result<JsValue, JsError> {
-        let mut current = Some(self.env);
+        let mut current = Some(self.env.clone());
 
         while let Some(env) = current {
             let env_ref = env.borrow();
@@ -648,7 +602,7 @@ impl Interpreter {
                     }
                     return Ok(binding.value.clone());
                 }
-                current = data.outer;
+                current = data.outer.clone();
             } else {
                 break;
             }
@@ -665,7 +619,7 @@ impl Interpreter {
 
     /// Set a variable in the environment chain
     pub fn env_set(&mut self, name: &JsString, value: JsValue) -> Result<(), JsError> {
-        let mut current = Some(self.env);
+        let mut current = Some(self.env.clone());
 
         while let Some(env) = current {
             let mut env_ref = env.borrow_mut();
@@ -677,17 +631,11 @@ impl Interpreter {
                             name
                         )));
                     }
-                    // Update ownership
-                    if let JsValue::Object(ref old_obj) = binding.value {
-                        env.disown(old_obj, &self.heap);
-                    }
-                    if let JsValue::Object(ref new_obj) = value {
-                        env.own(new_obj, &self.heap);
-                    }
+                    // Update binding value - Gc clone/drop handles ref_count automatically
                     binding.value = value;
                     return Ok(());
                 }
-                let outer = data.outer;
+                let outer = data.outer.clone();
                 drop(env_ref);
                 current = outer;
             } else {
@@ -700,9 +648,9 @@ impl Interpreter {
 
     /// Push a new scope and return the saved environment
     pub fn push_scope(&mut self) -> EnvRef {
-        let new_env = create_environment_with_guard(&self.root_guard, &self.heap, Some(self.env));
+        let new_env = create_environment_with_guard(&self.root_guard, Some(self.env.clone()));
 
-        let old_env = self.env;
+        let old_env = self.env.clone();
         self.env = new_env;
         old_env
     }
@@ -722,7 +670,6 @@ impl Interpreter {
     //
     // Pattern:
     //   let (obj, _temp) = self.create_object_with_guard();
-    //   parent.own(&obj, &self.heap);  // Transfer ownership
     //   // _temp is dropped here, but obj is still alive via parent
     // ═══════════════════════════════════════════════════════════════════════════
 
@@ -731,8 +678,7 @@ impl Interpreter {
     pub fn create_object_with_guard(&mut self) -> (Gc<JsObject>, Guard<JsObject>) {
         let temp = self.heap.create_guard();
         let obj = temp.alloc();
-        obj.borrow_mut().prototype = Some(self.object_prototype);
-        obj.own(&self.object_prototype, &self.heap);
+        obj.borrow_mut().prototype = Some(self.object_prototype.clone());
         (obj, temp)
     }
 
@@ -757,7 +703,7 @@ impl Interpreter {
                 pattern: pattern.to_string(),
                 flags: flags.to_string(),
             };
-            obj.prototype = Some(self.regexp_prototype);
+            obj.prototype = Some(self.regexp_prototype.clone());
             obj.set_property(source_key, JsValue::String(JsString::from(pattern)));
             obj.set_property(flags_key, JsValue::String(JsString::from(flags)));
             obj.set_property(global_key, JsValue::Boolean(flags.contains('g')));
@@ -769,7 +715,6 @@ impl Interpreter {
             obj.set_property(last_index_key, JsValue::Number(0.0));
         }
         // Update ownership
-        regexp_obj.own(&self.regexp_prototype, &self.heap);
         Ok(Guarded::with_guard(JsValue::Object(regexp_obj), guard))
     }
 
@@ -784,7 +729,7 @@ impl Interpreter {
         let arr = temp.alloc();
         {
             let mut arr_ref = arr.borrow_mut();
-            arr_ref.prototype = Some(self.array_prototype);
+            arr_ref.prototype = Some(self.array_prototype.clone());
             arr_ref.exotic = ExoticObject::Array { length: len };
 
             for (i, elem) in elements.iter().enumerate() {
@@ -797,14 +742,6 @@ impl Interpreter {
                 length_key,
                 Property::with_attributes(JsValue::Number(len as f64), true, false, false),
             );
-        }
-        arr.own(&self.array_prototype, &self.heap);
-
-        // Array owns its element objects
-        for elem in &elements {
-            if let JsValue::Object(elem_obj) = elem {
-                arr.own(elem_obj, &self.heap);
-            }
         }
 
         (arr, temp)
@@ -826,7 +763,7 @@ impl Interpreter {
         let func_obj = temp.alloc();
         {
             let mut f_ref = func_obj.borrow_mut();
-            f_ref.prototype = Some(self.function_prototype);
+            f_ref.prototype = Some(self.function_prototype.clone());
             f_ref.exotic = ExoticObject::Function(JsFunction::Interpreted(InterpretedFunction {
                 name,
                 params,
@@ -837,8 +774,6 @@ impl Interpreter {
                 async_,
             }));
         }
-        func_obj.own(&self.function_prototype, &self.heap);
-        func_obj.own(&closure, &self.heap);
         (func_obj, temp)
     }
 
@@ -864,7 +799,7 @@ impl Interpreter {
         let arr = temp.alloc();
         {
             let mut arr_ref = arr.borrow_mut();
-            arr_ref.prototype = Some(self.array_prototype);
+            arr_ref.prototype = Some(self.array_prototype.clone());
             arr_ref.exotic = ExoticObject::Array { length: len };
 
             for (i, elem) in elements.iter().enumerate() {
@@ -875,14 +810,6 @@ impl Interpreter {
                 PropertyKey::String(self.string_dict.get_or_insert("length")),
                 JsValue::Number(len as f64),
             );
-        }
-        arr.own(&self.array_prototype, &self.heap);
-
-        // Array owns its element objects
-        for elem in &elements {
-            if let JsValue::Object(elem_obj) = elem {
-                arr.own(elem_obj, &self.heap);
-            }
         }
 
         (arr, temp)
@@ -899,14 +826,13 @@ impl Interpreter {
         let func_obj = self.root_guard.alloc();
         {
             let mut f_ref = func_obj.borrow_mut();
-            f_ref.prototype = Some(self.function_prototype);
+            f_ref.prototype = Some(self.function_prototype.clone());
             f_ref.exotic = ExoticObject::Function(JsFunction::Native(NativeFunction {
                 name: name_str,
                 func,
                 arity,
             }));
         }
-        func_obj.own(&self.function_prototype, &self.heap);
         func_obj
     }
 
@@ -915,10 +841,9 @@ impl Interpreter {
         let func_obj = self.root_guard.alloc();
         {
             let mut f_ref = func_obj.borrow_mut();
-            f_ref.prototype = Some(self.function_prototype);
+            f_ref.prototype = Some(self.function_prototype.clone());
             f_ref.exotic = ExoticObject::Function(func);
         }
-        func_obj.own(&self.function_prototype, &self.heap);
         func_obj
     }
 
@@ -934,7 +859,6 @@ impl Interpreter {
         let key = self.key(name);
         obj.borrow_mut()
             .set_property(key, JsValue::Object(func_obj));
-        obj.own(&func_obj, &self.heap);
     }
 
     /// Guard a value to prevent it from being garbage collected.
@@ -1129,7 +1053,7 @@ impl Interpreter {
 
             Pattern::Object(obj_pattern) => {
                 let obj = match &value {
-                    JsValue::Object(o) => *o,
+                    JsValue::Object(o) => o.clone(),
                     _ => return Err(JsError::type_error("Cannot destructure non-object")),
                 };
 
@@ -1242,7 +1166,6 @@ impl Interpreter {
                         // Collect remaining items into an array
                         let remaining: Vec<JsValue> = items.get(i..).unwrap_or(&[]).to_vec();
                         let (rest_array, _guard) = self.create_array_with_guard(remaining);
-                        self.env.own(&rest_array, &self.heap);
                         self.bind_pattern(&rest.argument, JsValue::Object(rest_array), mutable)?;
                         break; // Rest must be last
                     }
@@ -1364,14 +1287,10 @@ impl Interpreter {
         // Per ES spec, create initial per-iteration environment before loop starts
         // This is where the initial values live
         if has_per_iteration_binding {
-            let loop_scope_env = self.env;
-            let iter_env =
-                create_environment_with_guard(&self.root_guard, &self.heap, Some(saved_env));
+            let loop_scope_env = self.env.clone();
+            let iter_env = create_environment_with_guard(&self.root_guard, Some(saved_env.clone()));
             for (name, mutable) in &loop_vars {
                 let value = self.env_get(name)?;
-                if let JsValue::Object(ref obj) = value {
-                    iter_env.own(obj, &self.heap);
-                }
                 let mut env_ref = iter_env.borrow_mut();
                 if let Some(data) = env_ref.as_environment_mut() {
                     data.bindings.insert(
@@ -1426,9 +1345,9 @@ impl Interpreter {
             // Per ES spec: Create NEW per-iteration env BEFORE update
             // This preserves the body's captured values while update modifies new env
             if has_per_iteration_binding {
-                let current_env = self.env;
+                let current_env = self.env.clone();
                 let new_iter_env =
-                    create_environment_with_guard(&self.root_guard, &self.heap, Some(saved_env));
+                    create_environment_with_guard(&self.root_guard, Some(saved_env.clone()));
                 for (name, mutable) in &loop_vars {
                     // Copy value from current iteration environment
                     let value = {
@@ -1442,9 +1361,6 @@ impl Interpreter {
                             JsValue::Undefined
                         }
                     };
-                    if let JsValue::Object(ref obj) = value {
-                        new_iter_env.own(obj, &self.heap);
-                    }
                     let mut env_ref = new_iter_env.borrow_mut();
                     if let Some(data) = env_ref.as_environment_mut() {
                         data.bindings.insert(
@@ -1516,15 +1432,14 @@ impl Interpreter {
             _ => vec![],
         };
 
-        let prev_env = self.env;
+        let prev_env = self.env.clone();
 
         for key in keys {
             // Check for timeout at each iteration
             self.check_timeout()?;
 
             // Per-iteration environment
-            let iter_env =
-                create_environment_with_guard(&self.root_guard, &self.heap, Some(prev_env));
+            let iter_env = create_environment_with_guard(&self.root_guard, Some(prev_env.clone()));
             self.env = iter_env;
 
             let key_value = JsValue::String(JsString::from(key));
@@ -1600,15 +1515,14 @@ impl Interpreter {
             _ => vec![],
         };
 
-        let prev_env = self.env;
+        let prev_env = self.env.clone();
 
         for item in items {
             // Check for timeout at each iteration
             self.check_timeout()?;
 
             // Per-iteration environment
-            let iter_env =
-                create_environment_with_guard(&self.root_guard, &self.heap, Some(prev_env));
+            let iter_env = create_environment_with_guard(&self.root_guard, Some(prev_env.clone()));
             self.env = iter_env;
 
             match &for_of.left {
@@ -1734,9 +1648,9 @@ impl Interpreter {
                     };
 
                     // Create catch scope
-                    let prev_env = self.env;
+                    let prev_env = self.env.clone();
                     let catch_env =
-                        create_environment_with_guard(&self.root_guard, &self.heap, Some(prev_env));
+                        create_environment_with_guard(&self.root_guard, Some(prev_env.clone()));
                     self.env = catch_env;
 
                     // Bind error parameter if present
@@ -1800,7 +1714,11 @@ impl Interpreter {
                 }
                 crate::ast::ImportSpecifier::Namespace { local, .. } => {
                     // import * as foo from "module"
-                    self.env_define(local.name.cheap_clone(), JsValue::Object(module_obj), false);
+                    self.env_define(
+                        local.name.cheap_clone(),
+                        JsValue::Object(module_obj.clone()),
+                        false,
+                    );
                 }
             }
         }
@@ -1879,8 +1797,8 @@ impl Interpreter {
         }
 
         // Check loaded external modules
-        if let Some(&module) = self.loaded_modules.get(specifier) {
-            return Ok(module);
+        if let Some(module) = self.loaded_modules.get(specifier) {
+            return Ok(module.clone());
         }
 
         Err(JsError::reference_error(format!(
@@ -1895,8 +1813,8 @@ impl Interpreter {
         specifier: &str,
     ) -> Result<Option<Gc<JsObject>>, JsError> {
         // Return cached if exists
-        if let Some(&cached) = self.internal_module_cache.get(specifier) {
-            return Ok(Some(cached));
+        if let Some(cached) = self.internal_module_cache.get(specifier) {
+            return Ok(Some(cached.clone()));
         }
 
         // Check if it's a registered internal module
@@ -1929,7 +1847,7 @@ impl Interpreter {
 
         // Cache it
         self.internal_module_cache
-            .insert(specifier.to_string(), module_obj);
+            .insert(specifier.to_string(), module_obj.clone());
 
         Ok(Some(module_obj))
     }
@@ -1950,7 +1868,6 @@ impl Interpreter {
                     arity,
                 } => {
                     let fn_obj = self.create_internal_function(fn_name, *func, *arity);
-                    module_obj.own(&fn_obj, &self.heap);
                     JsValue::Object(fn_obj)
                 }
                 crate::InternalExport::Value(v) => v.clone(),
@@ -1972,7 +1889,7 @@ impl Interpreter {
         let program = parser.parse_program()?;
 
         // Save current environment and exports
-        let saved_env = self.env;
+        let saved_env = self.env.clone();
         let saved_exports = std::mem::take(&mut self.exports);
 
         // Create module environment
@@ -1997,9 +1914,6 @@ impl Interpreter {
         // Copy exports to module object
         for (name, value) in exports {
             let key = self.key(name.as_str());
-            if let JsValue::Object(ref obj) = value {
-                module_obj.own(obj, &self.heap);
-            }
             module_obj.borrow_mut().set_property(key, value);
         }
 
@@ -2082,7 +1996,6 @@ impl Interpreter {
             let super_proto = super_ctor.borrow().get_property(&proto_key);
             if let Some(JsValue::Object(sp)) = super_proto {
                 prototype.borrow_mut().prototype = Some(sp.cheap_clone());
-                prototype.own(&sp, &self.heap);
             }
         }
 
@@ -2140,7 +2053,7 @@ impl Interpreter {
                 Some(method_name.cheap_clone()),
                 Rc::from(func.params.as_slice()),
                 Rc::new(FunctionBody::Block(func.body.clone())),
-                self.env,
+                self.env.clone(),
                 func.span,
                 func.generator,
                 func.async_,
@@ -2150,7 +2063,6 @@ impl Interpreter {
             // Store __super__ on method so super.method() works
             if let Some(ref super_ctor) = super_constructor {
                 let super_key = self.key("__super__");
-                func_obj.own(super_ctor, &self.heap);
                 func_obj
                     .borrow_mut()
                     .set_property(super_key, JsValue::Object(super_ctor.cheap_clone()));
@@ -2181,7 +2093,6 @@ impl Interpreter {
 
         // Add regular methods to prototype
         for (name, func_obj) in regular_methods {
-            prototype.own(&func_obj, &self.heap);
             prototype
                 .borrow_mut()
                 .set_property(PropertyKey::String(name), JsValue::Object(func_obj));
@@ -2223,7 +2134,7 @@ impl Interpreter {
             class.id.as_ref().map(|id| JsString::from(id.name.as_str())),
             Rc::from(ctor_params),
             Rc::new(FunctionBody::Block(ctor_body)),
-            self.env,
+            self.env.clone(),
             class.span,
             false,
             false,
@@ -2233,7 +2144,6 @@ impl Interpreter {
         // Store prototype on constructor
         {
             let proto_key = self.key("prototype");
-            constructor_fn.own(&prototype, &self.heap);
             constructor_fn
                 .borrow_mut()
                 .set_property(proto_key, JsValue::Object(prototype.cheap_clone()));
@@ -2266,7 +2176,6 @@ impl Interpreter {
             self.root_guard.guard(&fields_array);
 
             let fields_key = self.key("__fields__");
-            constructor_fn.own(&fields_array, &self.heap);
             constructor_fn
                 .borrow_mut()
                 .set_property(fields_key, JsValue::Object(fields_array));
@@ -2275,7 +2184,6 @@ impl Interpreter {
         // Store super constructor if we have one
         if let Some(ref super_ctor) = super_constructor {
             let super_key = self.key("__super__");
-            constructor_fn.own(super_ctor, &self.heap);
             constructor_fn
                 .borrow_mut()
                 .set_property(super_key, JsValue::Object(super_ctor.cheap_clone()));
@@ -2305,7 +2213,7 @@ impl Interpreter {
                 Some(method_name.cheap_clone()),
                 Rc::from(func.params.as_slice()),
                 Rc::new(FunctionBody::Block(func.body.clone())),
-                self.env,
+                self.env.clone(),
                 func.span,
                 func.generator,
                 func.async_,
@@ -2337,7 +2245,6 @@ impl Interpreter {
 
         // Add static regular methods
         for (name, func_obj) in static_regular_methods {
-            constructor_fn.own(&func_obj, &self.heap);
             constructor_fn
                 .borrow_mut()
                 .set_property(PropertyKey::String(name), JsValue::Object(func_obj));
@@ -2359,9 +2266,6 @@ impl Interpreter {
                 (JsValue::Undefined, None)
             };
 
-            if let JsValue::Object(ref obj) = value {
-                constructor_fn.own(obj, &self.heap);
-            }
             constructor_fn
                 .borrow_mut()
                 .set_property(PropertyKey::String(name), value);
@@ -2370,7 +2274,6 @@ impl Interpreter {
         // Set prototype.constructor = constructor
         {
             let ctor_key = self.key("constructor");
-            prototype.own(&constructor_fn, &self.heap);
             prototype
                 .borrow_mut()
                 .set_property(ctor_key, JsValue::Object(constructor_fn.cheap_clone()));
@@ -2576,15 +2479,14 @@ impl Interpreter {
             _ => vec![],
         };
 
-        let prev_env = self.env;
+        let prev_env = self.env.clone();
 
         for key in keys {
             // Check for timeout at each iteration
             self.check_timeout()?;
 
             // Per-iteration environment
-            let iter_env =
-                create_environment_with_guard(&self.root_guard, &self.heap, Some(prev_env));
+            let iter_env = create_environment_with_guard(&self.root_guard, Some(prev_env.clone()));
             self.env = iter_env;
 
             let key_value = JsValue::String(JsString::from(key));
@@ -2669,15 +2571,14 @@ impl Interpreter {
             _ => vec![],
         };
 
-        let prev_env = self.env;
+        let prev_env = self.env.clone();
 
         for item in items {
             // Check for timeout at each iteration
             self.check_timeout()?;
 
             // Per-iteration environment
-            let iter_env =
-                create_environment_with_guard(&self.root_guard, &self.heap, Some(prev_env));
+            let iter_env = create_environment_with_guard(&self.root_guard, Some(prev_env.clone()));
             self.env = iter_env;
 
             match &for_of.left {
@@ -2733,7 +2634,7 @@ impl Interpreter {
             name.clone(),
             params,
             body,
-            self.env,
+            self.env.clone(),
             func.span,
             func.generator,
             func.async_,
@@ -2741,7 +2642,6 @@ impl Interpreter {
 
         // Transfer ownership to environment before temp guard is dropped
         if let Some(js_name) = name {
-            // env_define will establish ownership via env.own()
             self.env_define(js_name, JsValue::Object(func_obj), true);
         }
         // _temp is dropped here, but func_obj is alive via env ownership
@@ -2795,7 +2695,7 @@ impl Interpreter {
                     None,
                     params,
                     body,
-                    self.env,
+                    self.env.clone(),
                     arrow.span,
                     false,
                     arrow.async_,
@@ -2813,7 +2713,7 @@ impl Interpreter {
                     name,
                     params,
                     body,
-                    self.env,
+                    self.env.clone(),
                     func.span,
                     func.generator,
                     func.async_,
@@ -2919,7 +2819,6 @@ impl Interpreter {
         // Set prototype
         if let Some(proto) = proto_opt {
             new_obj.borrow_mut().prototype = Some(proto.cheap_clone());
-            new_obj.own(&proto, &self.heap);
         }
 
         // Initialize instance fields from __fields__
@@ -2950,10 +2849,6 @@ impl Interpreter {
                     };
 
                     if let (Some(JsValue::String(name)), Some(value)) = (name_opt, value_opt) {
-                        // Clone the value to store on the new instance
-                        if let JsValue::Object(ref obj) = value {
-                            new_obj.own(obj, &self.heap);
-                        }
                         new_obj
                             .borrow_mut()
                             .set_property(PropertyKey::String(name), value);
@@ -3029,7 +2924,6 @@ impl Interpreter {
 
         // Set raw property and transfer ownership
         let raw_key = PropertyKey::String(self.string_dict.get_or_insert("raw"));
-        strings_arr.own(&raw_array, &self.heap);
         strings_arr
             .borrow_mut()
             .set_property(raw_key, JsValue::Object(raw_array));
@@ -3151,13 +3045,13 @@ impl Interpreter {
                     return Ok(Guarded::unguarded(JsValue::Boolean(false)));
                 };
 
-                let mut current = left_obj.borrow().prototype;
+                let mut current = left_obj.borrow().prototype.clone();
                 let target_id = right_proto_obj.id();
                 while let Some(proto) = current {
                     if proto.id() == target_id {
                         return Ok(Guarded::unguarded(JsValue::Boolean(true)));
                     }
-                    current = proto.borrow().prototype;
+                    current = proto.borrow().prototype.clone();
                 }
                 JsValue::Boolean(false)
             }
@@ -3435,25 +3329,18 @@ impl Interpreter {
                 // Handle __proto__ special property - set prototype instead of property
                 if key.eq_str("__proto__") {
                     let new_proto = match &final_value {
-                        JsValue::Object(proto_obj) => Some(*proto_obj),
+                        JsValue::Object(proto_obj) => Some(proto_obj.clone()),
                         JsValue::Null => None,
                         _ => {
                             // Non-object, non-null values are ignored for __proto__ set
                             return Ok(Guarded::unguarded(final_value));
                         }
                     };
-                    if let Some(proto_obj) = new_proto {
-                        obj.own(&proto_obj, &self.heap);
-                    }
                     obj.borrow_mut().prototype = new_proto;
                     return Ok(Guarded::unguarded(final_value));
                 }
 
                 // Not an accessor - set property directly
-                // Establish ownership before setting property
-                if let JsValue::Object(ref val_obj) = final_value {
-                    obj.own(val_obj, &self.heap);
-                }
                 obj.borrow_mut().set_property(key, final_value.clone());
                 // _rhs_guard dropped here, but ownership transferred to obj
 
@@ -3486,7 +3373,7 @@ impl Interpreter {
 
             Pattern::Object(obj_pattern) => {
                 let obj = match &value {
-                    JsValue::Object(o) => *o,
+                    JsValue::Object(o) => o.clone(),
                     _ => return Err(JsError::type_error("Cannot destructure non-object")),
                 };
 
@@ -3582,7 +3469,6 @@ impl Interpreter {
                     Pattern::Rest(rest) => {
                         let remaining: Vec<JsValue> = items.get(i..).unwrap_or(&[]).to_vec();
                         let (rest_array, _guard) = self.create_array_with_guard(remaining);
-                        self.env.own(&rest_array, &self.heap);
                         self.assign_pattern(&rest.argument, JsValue::Object(rest_array))?;
                         break;
                     }
@@ -3795,18 +3681,12 @@ impl Interpreter {
         match func {
             JsFunction::Interpreted(interp) => {
                 // Create new environment
-                let func_env = create_environment_with_guard(
-                    &self.root_guard,
-                    &self.heap,
-                    Some(interp.closure),
-                );
+                let func_env =
+                    create_environment_with_guard(&self.root_guard, Some(interp.closure));
 
                 // Bind `this` in the function environment
                 {
                     let this_name = JsString::from("this");
-                    if let JsValue::Object(ref obj) = this_value {
-                        func_env.own(obj, &self.heap);
-                    }
                     if let Some(data) = func_env.borrow_mut().as_environment_mut() {
                         data.bindings.insert(
                             this_name,
@@ -3824,9 +3704,6 @@ impl Interpreter {
                     let super_key = self.key("__super__");
                     if let Some(super_val) = func_obj.borrow().get_property(&super_key) {
                         let super_name = JsString::from("__super__");
-                        if let JsValue::Object(ref obj) = super_val {
-                            func_env.own(obj, &self.heap);
-                        }
                         if let Some(data) = func_env.borrow_mut().as_environment_mut() {
                             data.bindings.insert(
                                 super_name,
@@ -3841,7 +3718,7 @@ impl Interpreter {
                 }
 
                 // Execute function body - set up environment first so bind_pattern works
-                let saved_env = self.env;
+                let saved_env = self.env.clone();
                 self.env = func_env;
 
                 // Create and bind the `arguments` object (array-like)
@@ -3938,7 +3815,7 @@ impl Interpreter {
             JsValue::Object(o) => {
                 // Handle __proto__ special property
                 if key.eq_str("__proto__") {
-                    let proto = o.borrow().prototype;
+                    let proto = o.borrow().prototype.clone();
                     match proto {
                         Some(p) => (JsValue::Object(p), None),
                         None => (JsValue::Null, None),
@@ -4130,29 +4007,22 @@ impl Interpreter {
                     // Handle __proto__ special property in object literals
                     if prop_key.eq_str("__proto__") {
                         let new_proto = match &prop_val {
-                            JsValue::Object(proto_obj) => Some(*proto_obj),
+                            JsValue::Object(proto_obj) => Some(proto_obj.clone()),
                             JsValue::Null => None,
                             _ => {
                                 // Non-object, non-null values are ignored for __proto__
                                 continue;
                             }
                         };
-                        if let Some(proto_obj) = new_proto {
-                            obj.own(&proto_obj, &self.heap);
-                        }
                         obj.borrow_mut().prototype = new_proto;
-                        // Keep prop_guard alive until after own() call
+                        // Keep prop_guard alive
                         if let Some(g) = prop_guard {
                             _prop_guards.push(g);
                         }
                         continue;
                     }
 
-                    // Transfer ownership from prop_guard to obj
-                    if let JsValue::Object(ref val_obj) = prop_val {
-                        obj.own(val_obj, &self.heap);
-                    }
-                    // Keep prop_guard alive until after own() call
+                    // Keep prop_guard alive
                     if let Some(g) = prop_guard {
                         _prop_guards.push(g);
                     }
@@ -4179,10 +4049,6 @@ impl Interpreter {
                             // Skip non-enumerable properties
                             if !prop.enumerable {
                                 continue;
-                            }
-                            // Transfer ownership if value is an object
-                            if let JsValue::Object(ref val_obj) = prop.value {
-                                obj.own(val_obj, &self.heap);
                             }
                             obj.borrow_mut()
                                 .set_property(key.clone(), prop.value.clone());

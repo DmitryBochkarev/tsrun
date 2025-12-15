@@ -1,13 +1,12 @@
 //! Map built-in methods
 
 use crate::error::JsError;
-use crate::gc::Gc;
 use crate::interpreter::Interpreter;
-use crate::value::{ExoticObject, Guarded, JsObject, JsValue, PropertyKey};
+use crate::value::{ExoticObject, Guarded, JsValue, PropertyKey};
 
 /// Initialize Map.prototype with get, set, has, delete, clear, forEach methods
 pub fn init_map_prototype(interp: &mut Interpreter) {
-    let proto = interp.map_prototype;
+    let proto = interp.map_prototype.clone();
 
     interp.register_method(&proto, "get", map_get, 1);
     interp.register_method(&proto, "set", map_set, 2);
@@ -29,14 +28,12 @@ pub fn init_map(interp: &mut Interpreter) {
 
     // Set prototype property on constructor
     let proto_key = interp.key("prototype");
-    constructor.own(&interp.map_prototype, &interp.heap);
     constructor
         .borrow_mut()
-        .set_property(proto_key, JsValue::Object(interp.map_prototype));
+        .set_property(proto_key, JsValue::Object(interp.map_prototype.clone()));
 
     // Register globally
     let map_key = interp.key("Map");
-    interp.global.own(&constructor, &interp.heap);
     interp
         .global
         .borrow_mut()
@@ -75,10 +72,9 @@ pub fn map_constructor(
         obj.exotic = ExoticObject::Map {
             entries: Vec::new(),
         };
-        obj.prototype = Some(interp.map_prototype);
+        obj.prototype = Some(interp.map_prototype.clone());
         obj.set_property(size_key, JsValue::Number(0.0));
     }
-    map_obj.own(&interp.map_prototype, &interp.heap);
 
     // If an iterable is passed, add its entries
     // First collect all pairs from the array, then add them to the map
@@ -112,13 +108,6 @@ pub fn map_constructor(
         let mut map = map_obj.borrow_mut();
         if let ExoticObject::Map { ref mut entries } = map.exotic {
             for (key, value) in pairs {
-                // Own any object keys/values
-                if let JsValue::Object(ref obj) = key {
-                    map_obj.own(obj, &interp.heap);
-                }
-                if let JsValue::Object(ref obj) = value {
-                    map_obj.own(obj, &interp.heap);
-                }
                 // Check if key already exists
                 let mut found = false;
                 for entry in entries.iter_mut() {
@@ -180,14 +169,6 @@ pub fn map_set(
 
     let key = args.first().cloned().unwrap_or(JsValue::Undefined);
     let value = args.get(1).cloned().unwrap_or(JsValue::Undefined);
-
-    // Own any object keys/values
-    if let JsValue::Object(ref obj) = key {
-        map_obj.own(obj, &interp.heap);
-    }
-    if let JsValue::Object(ref obj) = value {
-        map_obj.own(obj, &interp.heap);
-    }
 
     let mut map = map_obj.borrow_mut();
 
@@ -399,20 +380,14 @@ pub fn map_entries(
         }
     }
 
-    // Build entry arrays and collect nested objects for ownership
+    // Build entry arrays
     let mut entries = Vec::with_capacity(raw_entries.len());
-    let mut nested_arrays: Vec<Gc<JsObject>> = Vec::new();
     for (k, v) in raw_entries {
         let (arr, _guard) = interp.create_array(vec![k, v]);
         interp.root_guard.guard(&arr);
-        nested_arrays.push(arr);
         entries.push(JsValue::Object(arr));
     }
 
     let (result, guard) = interp.create_array(entries);
-    // Own all nested arrays
-    for nested in nested_arrays {
-        result.own(&nested, &interp.heap);
-    }
     Ok(Guarded::with_guard(JsValue::Object(result), guard))
 }

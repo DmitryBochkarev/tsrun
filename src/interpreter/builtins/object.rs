@@ -7,7 +7,7 @@ use crate::value::{ExoticObject, Guarded, JsObjectRef, JsString, JsValue, Proper
 /// Initialize Object.prototype with hasOwnProperty, toString, valueOf methods.
 /// The prototype object must already exist in `interp.object_prototype`.
 pub fn init_object_prototype(interp: &mut Interpreter) {
-    let proto = interp.object_prototype;
+    let proto = interp.object_prototype.clone();
 
     interp.register_method(&proto, "hasOwnProperty", object_has_own_property, 1);
     interp.register_method(&proto, "toString", object_to_string, 0);
@@ -212,7 +212,7 @@ pub fn object_from_entries(
     };
 
     // Guard the input array to prevent GC from collecting it during iteration
-    let _arr_guard = interp.guard_value(&JsValue::Object(arr));
+    let _arr_guard = interp.guard_value(&JsValue::Object(arr.clone()));
 
     // Create result object with guard - key interning may trigger GC
     let (result, result_guard) = interp.create_object_with_guard();
@@ -292,7 +292,6 @@ pub fn object_create(
         JsValue::Object(proto_ref) => {
             result.borrow_mut().prototype = Some(proto_ref);
             // Establish GC ownership so prototype isn't collected
-            result.own(&proto_ref, &interp.heap);
         }
         _ => {
             return Err(JsError::type_error(
@@ -503,12 +502,12 @@ pub fn object_get_own_property_descriptor(
             if property.is_accessor() {
                 // Accessor descriptor
                 if let Some(ref getter) = property.getter {
-                    desc_ref.set_property(get_key, JsValue::Object(*getter));
+                    desc_ref.set_property(get_key, JsValue::Object(getter.clone()));
                 } else {
                     desc_ref.set_property(get_key, JsValue::Undefined);
                 }
                 if let Some(ref setter) = property.setter {
-                    desc_ref.set_property(set_key, JsValue::Object(*setter));
+                    desc_ref.set_property(set_key, JsValue::Object(setter.clone()));
                 } else {
                     desc_ref.set_property(set_key, JsValue::Undefined);
                 }
@@ -779,7 +778,7 @@ pub fn object_get_prototype_of(
 
     let obj_borrowed = obj_ref.borrow();
     match &obj_borrowed.prototype {
-        Some(proto) => Ok(Guarded::unguarded(JsValue::Object(*proto))),
+        Some(proto) => Ok(Guarded::unguarded(JsValue::Object(proto.clone()))),
         None => Ok(Guarded::unguarded(JsValue::Null)),
     }
 }

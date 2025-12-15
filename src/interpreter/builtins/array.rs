@@ -7,7 +7,7 @@ use crate::value::{ExoticObject, Guarded, JsObjectRef, JsString, JsValue, Proper
 /// Initialize Array.prototype with all array methods.
 /// The prototype object must already exist in `interp.array_prototype`.
 pub fn init_array_prototype(interp: &mut Interpreter) {
-    let proto = interp.array_prototype;
+    let proto = interp.array_prototype.clone();
 
     // Mutating methods
     interp.register_method(&proto, "push", array_push, 1);
@@ -67,7 +67,7 @@ pub fn create_array_constructor(interp: &mut Interpreter) -> JsObjectRef {
     let proto_key = interp.key("prototype");
     constructor
         .borrow_mut()
-        .set_property(proto_key, JsValue::Object(interp.array_prototype));
+        .set_property(proto_key, JsValue::Object(interp.array_prototype.clone()));
 
     constructor
 }
@@ -117,13 +117,6 @@ pub fn array_push(
     };
 
     let length_key = interp.key("length");
-
-    // Establish ownership for any object values before borrowing arr mutably
-    for arg in args {
-        if let JsValue::Object(ref obj) = arg {
-            arr.own(obj, &interp.heap);
-        }
-    }
 
     let mut arr_ref = arr.borrow_mut();
 

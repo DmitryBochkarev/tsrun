@@ -54,7 +54,6 @@ pub fn init_console(interp: &mut Interpreter) {
     interp.register_method(&console, "groupEnd", console_group_end, 0);
 
     let console_key = interp.key("console");
-    interp.global.own(&console, &interp.heap);
     interp
         .global
         .borrow_mut()

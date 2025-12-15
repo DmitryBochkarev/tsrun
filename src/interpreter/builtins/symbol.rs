@@ -76,7 +76,7 @@ pub fn get_well_known_symbols() -> WellKnownSymbols {
 
 /// Initialize Symbol.prototype with toString and valueOf methods
 pub fn init_symbol_prototype(interp: &mut Interpreter) {
-    let proto = interp.symbol_prototype;
+    let proto = interp.symbol_prototype.clone();
 
     // Symbol.prototype.toString()
     interp.register_method(&proto, "toString", symbol_to_string, 0);
@@ -208,7 +208,6 @@ pub fn init_symbol(interp: &mut Interpreter) {
 
     // Register globally
     let symbol_key = interp.key("Symbol");
-    interp.global.own(&symbol_fn, &interp.heap);
     interp
         .global
         .borrow_mut()

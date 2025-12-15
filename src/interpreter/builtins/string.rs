@@ -9,7 +9,7 @@ use crate::value::{Guarded, JsObjectRef, JsString, JsValue};
 /// Initialize String.prototype with all string methods.
 /// The prototype object must already exist in `interp.string_prototype`.
 pub fn init_string_prototype(interp: &mut Interpreter) {
-    let proto = interp.string_prototype;
+    let proto = interp.string_prototype.clone();
 
     // Character access
     interp.register_method(&proto, "charAt", string_char_at, 1);
@@ -80,7 +80,7 @@ pub fn create_string_constructor(interp: &mut Interpreter) -> JsObjectRef {
     let proto_key = interp.key("prototype");
     constructor
         .borrow_mut()
-        .set_property(proto_key, JsValue::Object(interp.string_prototype));
+        .set_property(proto_key, JsValue::Object(interp.string_prototype.clone()));
 
     constructor
 }

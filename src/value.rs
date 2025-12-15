@@ -10,7 +10,7 @@ use rustc_hash::FxHashMap;
 
 use crate::ast::{ArrowFunctionBody, BlockStatement, FunctionParam};
 use crate::error::JsError;
-use crate::gc::{Gc, Guard, Heap, Reset, Traceable, Unlink};
+use crate::gc::{Gc, GcPtr, Guard, Reset, Traceable, Unlink};
 use crate::lexer::Span;
 use crate::string_dict::StringDict;
 
@@ -458,16 +458,16 @@ impl Reset for JsObject {
 }
 
 impl Traceable for JsObject {
-    fn trace<F: FnMut(Gc<Self>)>(&self, mut visitor: F) {
-        // Trace prototype
+    fn trace<F: FnMut(GcPtr<Self>)>(&self, mut visitor: F) {
+        // Trace prototype - use copy_ref to avoid incrementing ref_count during tracing
         if let Some(proto) = &self.prototype {
-            visitor(*proto);
+            visitor(proto.copy_ref());
         }
 
         // Trace properties
         for prop in self.properties.values() {
             if let JsValue::Object(obj) = &prop.value {
-                visitor(*obj);
+                visitor(obj.copy_ref());
             }
         }
 
@@ -476,22 +476,22 @@ impl Traceable for JsObject {
             ExoticObject::Function(func) => {
                 match func {
                     JsFunction::Bound(bound) => {
-                        visitor(bound.target);
+                        visitor(bound.target.copy_ref());
                         if let JsValue::Object(obj) = &bound.this_arg {
-                            visitor(*obj);
+                            visitor(obj.copy_ref());
                         }
                         for arg in &bound.bound_args {
                             if let JsValue::Object(obj) = arg {
-                                visitor(*obj);
+                                visitor(obj.copy_ref());
                             }
                         }
                     }
                     JsFunction::PromiseResolve(promise) | JsFunction::PromiseReject(promise) => {
-                        visitor(*promise);
+                        visitor(promise.copy_ref());
                     }
                     JsFunction::Interpreted(interp) => {
                         // Trace the closure environment
-                        visitor(interp.closure);
+                        visitor(interp.closure.copy_ref());
                     }
                     JsFunction::Native(_) => {}
                 }
@@ -499,60 +499,60 @@ impl Traceable for JsObject {
             ExoticObject::Map { entries } => {
                 for (k, v) in entries {
                     if let JsValue::Object(obj) = k {
-                        visitor(*obj);
+                        visitor(obj.copy_ref());
                     }
                     if let JsValue::Object(obj) = v {
-                        visitor(*obj);
+                        visitor(obj.copy_ref());
                     }
                 }
             }
             ExoticObject::Set { entries } => {
                 for entry in entries {
                     if let JsValue::Object(obj) = entry {
-                        visitor(*obj);
+                        visitor(obj.copy_ref());
                     }
                 }
             }
             ExoticObject::Promise(state) => {
                 let state = state.borrow();
                 if let Some(JsValue::Object(obj)) = &state.result {
-                    visitor(*obj);
+                    visitor(obj.copy_ref());
                 }
                 for handler in &state.handlers {
                     if let Some(JsValue::Object(obj)) = &handler.on_fulfilled {
-                        visitor(*obj);
+                        visitor(obj.copy_ref());
                     }
                     if let Some(JsValue::Object(obj)) = &handler.on_rejected {
-                        visitor(*obj);
+                        visitor(obj.copy_ref());
                     }
-                    visitor(handler.result_promise);
+                    visitor(handler.result_promise.copy_ref());
                 }
             }
             ExoticObject::Generator(state) => {
                 let state = state.borrow();
                 // Trace closure environment
-                visitor(state.closure);
+                visitor(state.closure.copy_ref());
                 // Trace arguments that might be objects
                 for arg in &state.args {
                     if let JsValue::Object(obj) = arg {
-                        visitor(*obj);
+                        visitor(obj.copy_ref());
                     }
                 }
                 // Trace sent value if it's an object
                 if let JsValue::Object(obj) = &state.sent_value {
-                    visitor(*obj);
+                    visitor(obj.copy_ref());
                 }
             }
             ExoticObject::Environment(env_data) => {
                 // Trace all bindings in the environment
                 for binding in env_data.bindings.values() {
                     if let JsValue::Object(obj) = &binding.value {
-                        visitor(*obj);
+                        visitor(obj.copy_ref());
                     }
                 }
                 // Trace outer environment if any
                 if let Some(outer) = &env_data.outer {
-                    visitor(*outer);
+                    visitor(outer.copy_ref());
                 }
             }
             ExoticObject::Ordinary
@@ -564,108 +564,59 @@ impl Traceable for JsObject {
 }
 
 impl Unlink for JsObject {
-    fn unlink<F: FnMut(Gc<Self>)>(&mut self, mut unlinker: F) {
-        // Unlink prototype
-        if let Some(proto) = self.prototype.take() {
-            unlinker(proto);
-        }
+    fn unlink(&mut self) {
+        // Clear prototype - dropping Gc decrements ref_count automatically
+        self.prototype = None;
 
-        // Unlink properties
-        for prop in self.properties.values_mut() {
-            if let JsValue::Object(obj) = std::mem::replace(&mut prop.value, JsValue::Undefined) {
-                unlinker(obj);
-            }
-        }
+        // Clear properties - dropping JsValue::Object decrements ref_count
         self.properties.clear();
 
-        // Unlink exotic object references
+        // Clear exotic object references
         match &mut self.exotic {
             ExoticObject::Function(func) => match func {
                 JsFunction::Bound(bound) => {
-                    unlinker(bound.target);
-                    if let JsValue::Object(obj) =
-                        std::mem::replace(&mut bound.this_arg, JsValue::Undefined)
-                    {
-                        unlinker(obj);
-                    }
-                    for arg in bound.bound_args.drain(..) {
-                        if let JsValue::Object(obj) = arg {
-                            unlinker(obj);
-                        }
-                    }
+                    // Clearing these drops the Gc values, decrementing ref_counts
+                    bound.this_arg = JsValue::Undefined;
+                    bound.bound_args.clear();
+                    // bound.target will be dropped when exotic is reset
                 }
-                JsFunction::PromiseResolve(promise) | JsFunction::PromiseReject(promise) => {
-                    unlinker(*promise);
+                JsFunction::PromiseResolve(_) | JsFunction::PromiseReject(_) => {
+                    // Promise reference will be dropped when exotic is reset
                 }
-                JsFunction::Interpreted(interp) => {
-                    unlinker(interp.closure);
+                JsFunction::Interpreted(_) => {
+                    // Closure reference will be dropped when exotic is reset
                 }
                 JsFunction::Native(_) => {}
             },
             ExoticObject::Map { entries } => {
-                for (k, v) in entries.drain(..) {
-                    if let JsValue::Object(obj) = k {
-                        unlinker(obj);
-                    }
-                    if let JsValue::Object(obj) = v {
-                        unlinker(obj);
-                    }
-                }
+                entries.clear();
             }
             ExoticObject::Set { entries } => {
-                for entry in entries.drain(..) {
-                    if let JsValue::Object(obj) = entry {
-                        unlinker(obj);
-                    }
-                }
+                entries.clear();
             }
             ExoticObject::Promise(state) => {
                 let mut state = state.borrow_mut();
-                if let Some(JsValue::Object(obj)) = state.result.replace(JsValue::Undefined) {
-                    unlinker(obj);
-                }
-                for handler in state.handlers.drain(..) {
-                    if let Some(JsValue::Object(obj)) = handler.on_fulfilled {
-                        unlinker(obj);
-                    }
-                    if let Some(JsValue::Object(obj)) = handler.on_rejected {
-                        unlinker(obj);
-                    }
-                    unlinker(handler.result_promise);
-                }
+                state.result = None;
+                state.handlers.clear();
             }
             ExoticObject::Generator(state) => {
                 let mut state = state.borrow_mut();
-                unlinker(state.closure);
-                for arg in state.args.drain(..) {
-                    if let JsValue::Object(obj) = arg {
-                        unlinker(obj);
-                    }
-                }
-                if let JsValue::Object(obj) =
-                    std::mem::replace(&mut state.sent_value, JsValue::Undefined)
-                {
-                    unlinker(obj);
-                }
+                state.args.clear();
+                state.sent_value = JsValue::Undefined;
+                // closure will be dropped when exotic is reset
             }
             ExoticObject::Environment(env_data) => {
-                for binding in env_data.bindings.values_mut() {
-                    if let JsValue::Object(obj) =
-                        std::mem::replace(&mut binding.value, JsValue::Undefined)
-                    {
-                        unlinker(obj);
-                    }
-                }
                 env_data.bindings.clear();
-                if let Some(outer) = env_data.outer.take() {
-                    unlinker(outer);
-                }
+                env_data.outer = None;
             }
             ExoticObject::Ordinary
             | ExoticObject::Array { .. }
             | ExoticObject::Date { .. }
             | ExoticObject::RegExp { .. } => {}
         }
+
+        // Reset exotic to Ordinary to drop any remaining references
+        self.exotic = ExoticObject::Ordinary;
     }
 }
 
@@ -1223,7 +1174,6 @@ pub struct Binding {
 /// Create a new ordinary object with a temporary guard.
 ///
 /// Returns `(object, temp_guard)`. The caller should:
-/// 1. Establish ownership: `parent.own(&object, &heap)`
 /// 2. Drop or let the temp_guard go out of scope
 pub fn create_object_with_guard(guard: &Guard<JsObject>) -> JsObjectRef {
     // Object is default-initialized by Reset trait
@@ -1285,10 +1235,9 @@ pub fn create_function_with_guard(
 /// Register a native method on a prototype object.
 ///
 /// Uses the given guard for allocation. The function object is owned by the
-/// prototype through the property assignment.
+/// prototype through the property assignment (clone increments ref_count).
 pub fn register_method_with_guard(
     guard: &Guard<JsObject>,
-    heap: &Heap<JsObject>,
     dict: &mut StringDict,
     obj: &JsObjectRef,
     name: &str,
@@ -1305,8 +1254,7 @@ pub fn register_method_with_guard(
             arity,
         }),
     );
-    // Prototype owns the function
-    obj.own(&f, heap);
+    // Prototype owns the function via property assignment (clone increments ref_count)
     let key = PropertyKey::String(interned_name);
     obj.borrow_mut().set_property(key, JsValue::Object(f));
 }
@@ -1324,21 +1272,16 @@ pub type EnvRef = JsObjectRef;
 /// Create a new environment object with a temporary guard.
 ///
 /// The environment is created with an optional outer environment reference.
+/// The outer environment holds a reference to the new env via EnvironmentData::outer,
+/// which increments ref_count via clone.
 /// Returns the environment object. Caller is responsible for ownership transfer.
-pub fn create_environment_with_guard(
-    guard: &Guard<JsObject>,
-    heap: &Heap<JsObject>,
-    outer: Option<EnvRef>,
-) -> EnvRef {
+pub fn create_environment_with_guard(guard: &Guard<JsObject>, outer: Option<EnvRef>) -> EnvRef {
     let env = guard.alloc();
     {
         let mut env_ref = env.borrow_mut();
         env_ref.null_prototype = true;
+        // The outer clone (if any) in EnvironmentData automatically increments ref_count
         env_ref.exotic = ExoticObject::Environment(EnvironmentData::with_outer(outer));
-    }
-    // If there's an outer environment, it owns this one
-    if let Some(ref outer_env) = outer {
-        outer_env.own(&env, heap);
     }
     env
 }

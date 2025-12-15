@@ -74,7 +74,7 @@ fn parse_date_string(s: &str) -> f64 {
 
 /// Initialize Date.prototype with getTime, getFullYear, getMonth, etc.
 pub fn init_date_prototype(interp: &mut Interpreter) {
-    let proto = interp.date_prototype;
+    let proto = interp.date_prototype.clone();
 
     // Getter methods (local time = UTC in our implementation)
     interp.register_method(&proto, "getTime", date_get_time, 0);
@@ -130,14 +130,12 @@ pub fn init_date(interp: &mut Interpreter) {
 
     // Set prototype property on constructor
     let proto_key = interp.key("prototype");
-    constructor.own(&interp.date_prototype, &interp.heap);
     constructor
         .borrow_mut()
-        .set_property(proto_key, JsValue::Object(interp.date_prototype));
+        .set_property(proto_key, JsValue::Object(interp.date_prototype.clone()));
 
     // Register globally
     let date_key = interp.key("Date");
-    interp.global.own(&constructor, &interp.heap);
     interp
         .global
         .borrow_mut()
@@ -178,9 +176,8 @@ pub fn date_constructor(
     {
         let mut obj = date_obj.borrow_mut();
         obj.exotic = ExoticObject::Date { timestamp };
-        obj.prototype = Some(interp.date_prototype);
+        obj.prototype = Some(interp.date_prototype.clone());
     }
-    date_obj.own(&interp.date_prototype, &interp.heap);
 
     Ok(Guarded::with_guard(JsValue::Object(date_obj), date_guard))
 }

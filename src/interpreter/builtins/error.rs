@@ -29,21 +29,16 @@ pub fn init_error(interp: &mut Interpreter) {
 
     // Set up prototype chain
     let proto_key = interp.key("prototype");
-    error_fn.own(&error_proto, &interp.heap);
     error_fn
         .borrow_mut()
-        .set_property(proto_key, JsValue::Object(error_proto));
+        .set_property(proto_key, JsValue::Object(error_proto.clone()));
 
     // Register Error globally
     let error_key = interp.key("Error");
-    interp.global.own(&error_fn, &interp.heap);
     interp
         .global
         .borrow_mut()
         .set_property(error_key, JsValue::Object(error_fn));
-
-    // Store error_proto for derived error types
-    let error_proto_for_derived = error_proto;
 
     // Create derived error types
     let derived_errors: &[(&str, NativeFn)] = &[
@@ -56,7 +51,7 @@ pub fn init_error(interp: &mut Interpreter) {
     ];
 
     for (name, constructor_fn) in derived_errors {
-        create_derived_error(interp, name, *constructor_fn, error_proto_for_derived);
+        create_derived_error(interp, name, *constructor_fn, &error_proto);
     }
 }
 
@@ -65,15 +60,14 @@ fn create_derived_error(
     interp: &mut Interpreter,
     name: &str,
     constructor_fn: NativeFn,
-    error_proto: Gc<JsObject>,
+    error_proto: &Gc<JsObject>,
 ) {
     // Create prototype that inherits from Error.prototype
     let (derived_proto, _proto_guard) = interp.create_object_with_guard();
     interp.root_guard.guard(&derived_proto);
 
     // Set prototype chain to Error.prototype
-    derived_proto.borrow_mut().prototype = Some(error_proto);
-    derived_proto.own(&error_proto, &interp.heap);
+    derived_proto.borrow_mut().prototype = Some(error_proto.clone());
 
     // Set name on prototype
     let name_key = interp.key("name");
@@ -90,14 +84,12 @@ fn create_derived_error(
 
     // Set up prototype chain
     let proto_key = interp.key("prototype");
-    constructor.own(&derived_proto, &interp.heap);
     constructor
         .borrow_mut()
         .set_property(proto_key, JsValue::Object(derived_proto));
 
     // Register globally
     let key = interp.key(name);
-    interp.global.own(&constructor, &interp.heap);
     interp
         .global
         .borrow_mut()

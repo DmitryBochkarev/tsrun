@@ -12,6 +12,9 @@ use std::rc::{Rc, Weak};
 // ============================================================================
 
 /// A smart pointer to a GC-managed object.
+///
+/// Works like `Rc<T>` - cloning increments ref_count, dropping decrements it.
+/// Objects are collected by the GC when unreachable (not when ref_count hits 0).
 pub struct Gc<T> {
     /// Unique object ID (for ownership tracking)
     id: usize,
@@ -43,15 +46,70 @@ impl<T> Gc<T> {
     pub fn ptr_eq(a: &Gc<T>, b: &Gc<T>) -> bool {
         a.id == b.id
     }
+
+    /// Create a copy of this Gc without incrementing ref_count.
+    /// Used during tracing where we don't want to affect ref_counts,
+    /// and internally during allocation before the object is fully set up.
+    ///
+    /// SAFETY: Returns a GcPtr that does NOT have Drop. The caller must ensure
+    /// the GcPtr doesn't outlive the original Gc.
+    pub fn copy_ref(&self) -> GcPtr<T> {
+        GcPtr {
+            id: self.id,
+            ptr: self.ptr,
+        }
+    }
+}
+
+// ============================================================================
+// GcPtr - a Copy pointer without Drop (for tracing)
+// ============================================================================
+
+/// A raw pointer to a GC-managed object. Copy and no Drop.
+/// Used during tracing to avoid affecting ref_counts.
+#[derive(Copy, Clone)]
+pub struct GcPtr<T> {
+    /// Unique object ID
+    pub(crate) id: usize,
+    /// Pointer to the GcBox
+    pub(crate) ptr: NonNull<GcBox<T>>,
+}
+
+impl<T> GcPtr<T> {
+    /// Get the object's unique ID
+    pub fn id(&self) -> usize {
+        self.id
+    }
 }
 
 impl<T> Clone for Gc<T> {
     fn clone(&self) -> Self {
-        *self
+        // Increment ref_count
+        let gc_box = unsafe { self.ptr.as_ref() };
+        if !gc_box.pooled.get() {
+            gc_box.ref_count.set(gc_box.ref_count.get() + 1);
+        }
+        Self {
+            id: self.id,
+            ptr: self.ptr,
+            _marker: std::marker::PhantomData,
+        }
     }
 }
 
-impl<T> Copy for Gc<T> {}
+impl<T> Drop for Gc<T> {
+    fn drop(&mut self) {
+        // Decrement ref_count
+        let gc_box = unsafe { self.ptr.as_ref() };
+        if !gc_box.pooled.get() {
+            let count = gc_box.ref_count.get();
+            if count > 0 {
+                gc_box.ref_count.set(count - 1);
+            }
+        }
+        // Note: We don't pool here - GC will collect unreachable objects
+    }
+}
 
 impl<T> std::fmt::Debug for Gc<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -65,29 +123,26 @@ impl<T> std::fmt::Debug for Gc<T> {
 
 /// Trait for types that can be traced by the garbage collector.
 ///
-/// Objects implement this to yield their `Gc<T>` references during mark phase.
+/// Objects implement this to yield their `GcPtr<T>` references during mark phase.
 /// The GC calls `trace()` to discover reachable objects.
 pub trait Traceable: Sized {
     /// Visit all `Gc<Self>` references held by this object.
     ///
-    /// The implementation should call `visitor` for each `Gc<T>` stored in fields.
-    fn trace<F: FnMut(Gc<Self>)>(&self, visitor: F);
+    /// The implementation should call `visitor` for each `Gc<T>` stored in fields,
+    /// using `gc.copy_ref()` to get a `GcPtr` (which has no Drop to avoid ref_count changes).
+    fn trace<F: FnMut(GcPtr<Self>)>(&self, visitor: F);
 }
 
 /// Trait for unlinking object references during garbage collection.
 ///
-/// When an object is collected, `unlink` is called to clear all references
-/// and decrement ref_counts. This enables cascading collection where objects
-/// with ref_count reaching 0 are immediately pooled.
+/// When an object is collected, `unlink` is called to clear all references.
+/// Dropping `Gc<T>` values automatically decrements their ref_count.
 pub trait Unlink: Sized {
-    /// Unlink all references held by this object.
+    /// Clear all `Gc<Self>` references held by this object.
     ///
-    /// The implementation should:
-    /// 1. Call `unlinker(gc_ref)` for each `Gc<Self>` stored in fields
-    /// 2. Clear/reset the fields that held those references
-    ///
-    /// The unlinker callback handles decrementing ref_count and pooling.
-    fn unlink<F: FnMut(Gc<Self>)>(&mut self, unlinker: F);
+    /// The implementation should clear/drop all fields containing `Gc<T>`.
+    /// The `Drop` impl on `Gc<T>` will automatically decrement ref_counts.
+    fn unlink(&mut self);
 }
 
 // ============================================================================
@@ -301,7 +356,10 @@ impl<T: Default + Reset + Traceable + Unlink> Space<T> {
         gc_box.guard_count.set(gc_box.guard_count.get() + 1);
     }
 
-    /// Decrement guard_count for an object, pool if both counts reach 0
+    /// Decrement guard_count for an object.
+    /// Note: We don't pool immediately even when both counts reach 0, because
+    /// the object might be reachable through other Gc values stored in environments
+    /// or other objects. GC will collect unreachable objects during mark-and-sweep.
     fn dec_guard(&mut self, object_id: usize) {
         let Some(&ptr) = self.id_to_ptr.get(&object_id) else {
             return;
@@ -315,44 +373,6 @@ impl<T: Default + Reset + Traceable + Unlink> Space<T> {
         let count = gc_box.guard_count.get();
         if count > 0 {
             gc_box.guard_count.set(count - 1);
-            if count == 1 && gc_box.ref_count.get() == 0 {
-                // Both guard_count and ref_count are 0, pool immediately
-                self.pool_object(object_id, ptr);
-            }
-        }
-    }
-
-    /// Increment ref_count for an object (used by ownership)
-    fn inc_ref(&mut self, object_id: usize) {
-        let Some(&ptr) = self.id_to_ptr.get(&object_id) else {
-            return;
-        };
-        // Safety: ptr from id_to_ptr is valid
-        let gc_box = unsafe { ptr.as_ref() };
-        if gc_box.pooled.get() {
-            return;
-        }
-        gc_box.ref_count.set(gc_box.ref_count.get() + 1);
-    }
-
-    /// Decrement ref_count for an object, pool if both counts reach 0
-    fn dec_ref(&mut self, object_id: usize) {
-        let Some(&ptr) = self.id_to_ptr.get(&object_id) else {
-            return;
-        };
-        // Safety: ptr from id_to_ptr is valid
-        let gc_box = unsafe { ptr.as_ref() };
-        if gc_box.pooled.get() {
-            return;
-        }
-
-        let count = gc_box.ref_count.get();
-        if count > 0 {
-            gc_box.ref_count.set(count - 1);
-            if count == 1 && gc_box.guard_count.get() == 0 {
-                // Both guard_count and ref_count are 0, pool immediately
-                self.pool_object(object_id, ptr);
-            }
         }
     }
 
@@ -402,7 +422,7 @@ impl<T: Default + Reset + Traceable + Unlink> Space<T> {
             // Trace references via Traceable trait
             // Panics if data is already borrowed (indicates bug - GC during borrow)
             let data = gc_box.data.borrow();
-            data.trace(|child: Gc<T>| {
+            data.trace(|child: GcPtr<T>| {
                 // Only push if not already marked to avoid redundant work
                 let child_box = unsafe { child.ptr.as_ref() };
                 if !child_box.marked.get() && !child_box.pooled.get() {
@@ -431,25 +451,18 @@ impl<T: Default + Reset + Traceable + Unlink> Space<T> {
 
         let collected = to_unlink.len();
 
-        // First pass: unlink all unmarked objects and collect their references
-        let mut refs_to_decrement: Vec<usize> = Vec::new();
+        // First pass: unlink all unmarked objects
+        // Dropping Gc<T> values automatically decrements ref_counts
         for &(_, ptr) in &to_unlink {
             let gc_box = unsafe { ptr.as_ref() };
-            // Skip if already pooled (could happen via cascading)
+            // Skip if already pooled
             if gc_box.pooled.get() {
                 continue;
             }
 
-            // Call unlink to clear references, collecting IDs to decrement
+            // Call unlink to clear/drop references
             let mut data = gc_box.data.borrow_mut();
-            data.unlink(|child: Gc<T>| {
-                refs_to_decrement.push(child.id);
-            });
-        }
-
-        // Decrement ref_counts (may cause cascading collection)
-        for child_id in refs_to_decrement {
-            self.dec_ref(child_id);
+            data.unlink();
         }
 
         // Second pass: pool all unmarked objects that weren't already pooled
@@ -634,24 +647,6 @@ impl<T: Default + Reset + Traceable + Unlink> Drop for Guard<T> {
 }
 
 // ============================================================================
-// Gc methods that require Heap (own/disown)
-// ============================================================================
-
-impl<T: Default + Reset + Traceable + Unlink> Gc<T> {
-    /// Establish ownership: increment other's ref_count.
-    /// Call this when storing a Gc<T> reference in a field.
-    pub fn own(&self, other: &Gc<T>, heap: &Heap<T>) {
-        heap.inner.borrow_mut().inc_ref(other.id);
-    }
-
-    /// Release ownership: decrement other's ref_count.
-    /// Call this when removing/overwriting a Gc<T> reference from a field.
-    pub fn disown(&self, other: &Gc<T>, heap: &Heap<T>) {
-        heap.inner.borrow_mut().dec_ref(other.id);
-    }
-}
-
-// ============================================================================
 // GcStats - statistics about the GC
 // ============================================================================
 
@@ -690,18 +685,17 @@ mod tests {
     }
 
     impl Traceable for TestObj {
-        fn trace<F: FnMut(Gc<Self>)>(&self, mut visitor: F) {
-            for &r in &self.refs {
-                visitor(r);
+        fn trace<F: FnMut(GcPtr<Self>)>(&self, mut visitor: F) {
+            for r in &self.refs {
+                visitor(r.copy_ref());
             }
         }
     }
 
     impl Unlink for TestObj {
-        fn unlink<F: FnMut(Gc<Self>)>(&mut self, mut unlinker: F) {
-            for r in self.refs.drain(..) {
-                unlinker(r);
-            }
+        fn unlink(&mut self) {
+            // Dropping refs will automatically decrement ref_counts
+            self.refs.clear();
         }
     }
 
@@ -773,11 +767,10 @@ mod tests {
         a.borrow_mut().value = 1;
         b.borrow_mut().value = 2;
 
-        // A owns B: store reference and increment ref_count
-        a.borrow_mut().refs.push(b);
-        a.own(&b, &heap);
+        // A owns B: clone increments ref_count automatically
+        a.borrow_mut().refs.push(b.clone());
 
-        // Drop guard2 - B should survive because A owns it
+        // Drop guard2 - B should survive because A owns it (via clone in refs)
         drop(guard2);
 
         assert_eq!(heap.stats().live_objects, 2);
@@ -793,17 +786,16 @@ mod tests {
         let a = guard1.alloc();
         let b = guard2.alloc();
 
-        // A owns B
-        a.borrow_mut().refs.push(b);
-        a.own(&b, &heap);
+        // A owns B: clone increments ref_count
+        a.borrow_mut().refs.push(b.clone());
         drop(guard2);
+        drop(b); // Drop our reference too
 
         heap.collect(); // Force collection
         assert_eq!(heap.stats().live_objects, 2);
 
-        // Disown B - remove reference and decrement ref_count
+        // Clear refs - dropping clones decrements ref_count
         a.borrow_mut().refs.clear();
-        a.disown(&b, &heap);
         heap.collect(); // Force collection
 
         assert_eq!(heap.stats().live_objects, 1);
@@ -821,25 +813,22 @@ mod tests {
         let b = guard2.alloc();
         let c = guard3.alloc();
 
-        // Both A and B own C
-        a.borrow_mut().refs.push(c);
-        a.own(&c, &heap);
-        b.borrow_mut().refs.push(c);
-        b.own(&c, &heap);
+        // Both A and B own C (via clones)
+        a.borrow_mut().refs.push(c.clone());
+        b.borrow_mut().refs.push(c.clone());
 
         drop(guard3);
+        drop(c); // Drop our reference
         heap.collect();
         assert_eq!(heap.stats().live_objects, 3); // C alive via A and B
 
-        // A disowns C
+        // A releases C
         a.borrow_mut().refs.clear();
-        a.disown(&c, &heap);
         heap.collect();
         assert_eq!(heap.stats().live_objects, 3); // C still alive via B
 
-        // B disowns C
+        // B releases C
         b.borrow_mut().refs.clear();
-        b.disown(&c, &heap);
         heap.collect();
         assert_eq!(heap.stats().live_objects, 2); // C collected
     }
@@ -855,11 +844,9 @@ mod tests {
         a.borrow_mut().value = 1;
         b.borrow_mut().value = 2;
 
-        // Create cycle: A owns B, B owns A
-        a.borrow_mut().refs.push(b);
-        a.own(&b, &heap);
-        b.borrow_mut().refs.push(a);
-        b.own(&a, &heap);
+        // Create cycle: A owns B, B owns A (via clones)
+        a.borrow_mut().refs.push(b.clone());
+        b.borrow_mut().refs.push(a.clone());
 
         assert_eq!(heap.stats().live_objects, 2);
 
@@ -887,9 +874,8 @@ mod tests {
         let a = guard1.alloc();
         let b = guard1.alloc();
 
-        // A owns B
-        a.borrow_mut().refs.push(b);
-        a.own(&b, &heap);
+        // A owns B (clone increments ref_count)
+        a.borrow_mut().refs.push(b.clone());
 
         // Add guard2 to A - B should survive via A even if guard1 is dropped
         guard2.guard(&a);
@@ -910,11 +896,9 @@ mod tests {
         let b = guard.alloc();
         let c = guard.alloc();
 
-        // A → B → C
-        a.borrow_mut().refs.push(b);
-        a.own(&b, &heap);
-        b.borrow_mut().refs.push(c);
-        b.own(&c, &heap);
+        // A → B → C (clone increments ref_count)
+        a.borrow_mut().refs.push(b.clone());
+        b.borrow_mut().refs.push(c.clone());
 
         // Unguard B and C from direct guard
         guard.unguard(&b);
@@ -942,16 +926,12 @@ mod tests {
         let c = guard.alloc();
         let d = guard.alloc();
 
-        // A owns B and C
-        a.borrow_mut().refs.push(b);
-        a.own(&b, &heap);
-        a.borrow_mut().refs.push(c);
-        a.own(&c, &heap);
-        // B and C both own D
-        b.borrow_mut().refs.push(d);
-        b.own(&d, &heap);
-        c.borrow_mut().refs.push(d);
-        c.own(&d, &heap);
+        // A owns B and C (clone increments ref_count)
+        a.borrow_mut().refs.push(b.clone());
+        a.borrow_mut().refs.push(c.clone());
+        // B and C both own D (clone increments ref_count)
+        b.borrow_mut().refs.push(d.clone());
+        c.borrow_mut().refs.push(d.clone());
 
         // Unguard all except A
         guard.unguard(&b);
@@ -962,9 +942,8 @@ mod tests {
         // All should still be alive via A
         assert_eq!(heap.stats().live_objects, 4);
 
-        // Remove one path to D (B → D)
+        // Remove one path to D (B → D) - clearing refs drops clone, decrementing ref_count
         b.borrow_mut().refs.retain(|r| !Gc::ptr_eq(r, &d));
-        b.disown(&d, &heap);
         heap.collect();
 
         // D should still be alive via C
@@ -972,7 +951,6 @@ mod tests {
 
         // Remove other path to D (C → D)
         c.borrow_mut().refs.retain(|r| !Gc::ptr_eq(r, &d));
-        c.disown(&d, &heap);
         heap.collect();
 
         // D should now be collected
@@ -997,5 +975,26 @@ mod tests {
         drop(guard2);
         heap.collect();
         assert_eq!(heap.stats().live_objects, 0); // Now collected
+    }
+
+    #[test]
+    fn test_deep_chain_no_stack_overflow() {
+        let heap: Heap<TestObj> = Heap::new();
+        heap.set_gc_threshold(0); // Disable auto-GC for this test
+        let guard = heap.create_guard();
+
+        // Create a chain of 10000 objects
+        let mut prev = guard.alloc();
+        for _ in 0..10000 {
+            let next = guard.alloc();
+            prev.borrow_mut().refs.push(next.clone());
+            prev = next;
+        }
+
+        // Collect - should not stack overflow
+        drop(guard);
+        heap.collect();
+
+        assert_eq!(heap.stats().live_objects, 0);
     }
 }

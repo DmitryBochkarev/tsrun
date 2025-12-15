@@ -7,7 +7,7 @@ use crate::value::{Guarded, JsObject, JsString, JsValue};
 
 /// Initialize Number.prototype with toFixed, toString, toPrecision, toExponential
 pub fn init_number_prototype(interp: &mut Interpreter) {
-    let proto = interp.number_prototype;
+    let proto = interp.number_prototype.clone();
 
     interp.register_method(&proto, "toFixed", number_to_fixed, 1);
     interp.register_method(&proto, "toString", number_to_string, 1);
@@ -67,7 +67,7 @@ pub fn create_number_constructor(interp: &mut Interpreter) -> Gc<JsObject> {
     let proto_key = interp.key("prototype");
     constructor
         .borrow_mut()
-        .set_property(proto_key, JsValue::Object(interp.number_prototype));
+        .set_property(proto_key, JsValue::Object(interp.number_prototype.clone()));
 
     constructor
 }
