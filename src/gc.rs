@@ -237,14 +237,14 @@ struct Space<T: Default + Reset + Traceable> {
     chunk_capacity: usize,
 
     /// Free list of pooled object pointers
-    pool: Vec<NonNull<GcBox<T>>>,
+    free_list: Vec<NonNull<GcBox<T>>>,
 
     /// Next object ID
     next_object_id: usize,
 
     /// Mark set for mark-and-sweep collection (stores object IDs)
     /// Stored in Space rather than GcBox for better cache locality during marking.
-    marked: rustc_hash::FxHashSet<usize>,
+    marked: FxHashSet<usize>,
 
     /// Reusable buffer for sweep phase (avoids allocation each GC cycle)
     to_unlink: Vec<NonNull<GcBox<T>>>,
@@ -279,7 +279,7 @@ impl<T: Default + Reset + Traceable> Space<T> {
         Self {
             chunks: Vec::new(),
             chunk_capacity,
-            pool: Vec::new(),
+            free_list: Vec::new(),
             next_object_id: 0,
             marked: rustc_hash::FxHashSet::default(),
             to_unlink: Vec::new(),
@@ -307,7 +307,7 @@ impl<T: Default + Reset + Traceable> Space<T> {
 
     /// Allocate a new object (starts with ref_count = 1 for the allocating guard)
     fn alloc_internal(&mut self) -> Gc<T> {
-        let (id, ptr) = if let Some(ptr) = self.pool.pop() {
+        let (id, ptr) = if let Some(ptr) = self.free_list.pop() {
             // Reuse from pool - safe because pool contains valid pointers
             // Safety: ptr came from our chunks which have stable addresses
             let gc_box = unsafe { ptr.as_ptr().as_mut() };
@@ -409,7 +409,7 @@ impl<T: Default + Reset + Traceable> Space<T> {
         gc_box.pooled.set(true);
 
         // Add pointer to pool for reuse
-        self.pool.push(ptr);
+        self.free_list.push(ptr);
     }
 
     /// Mark phase: trace from roots to find all reachable objects
@@ -525,8 +525,8 @@ impl<T: Default + Reset + Traceable> Space<T> {
 
         GcStats {
             total_objects,
-            pooled_objects: self.pool.len(),
-            live_objects: total_objects - self.pool.len(),
+            pooled_objects: self.free_list.len(),
+            live_objects: total_objects - self.free_list.len(),
         }
     }
 
