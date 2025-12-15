@@ -749,6 +749,7 @@ impl Interpreter {
 
     /// Create a function object with a temporary guard.
     /// Returns (function, temp_guard). Caller must transfer ownership before guard is dropped.
+    #[allow(clippy::too_many_arguments)]
     fn create_function_with_guard(
         &mut self,
         name: Option<JsString>,
@@ -1769,7 +1770,7 @@ impl Interpreter {
 
         // Handle re-exports: export { foo } from "module"
         if let Some(source) = &export.source {
-            let module_obj = self.resolve_module(&source.value.to_string())?;
+            let module_obj = self.resolve_module(source.value.as_ref())?;
             for spec in &export.specifiers {
                 let import_key = self.key(spec.local.name.as_str());
                 let value = module_obj
@@ -2032,6 +2033,7 @@ impl Interpreter {
         }
 
         // Collect getters, setters, and regular methods separately
+        #[allow(clippy::type_complexity)]
         let mut accessors: FxHashMap<JsString, (Option<Gc<JsObject>>, Option<Gc<JsObject>>)> =
             FxHashMap::default();
         let mut regular_methods: Vec<(JsString, Gc<JsObject>)> = Vec::new();
@@ -2190,6 +2192,7 @@ impl Interpreter {
         }
 
         // Handle static methods
+        #[allow(clippy::type_complexity)]
         let mut static_accessors: FxHashMap<
             JsString,
             (Option<Gc<JsObject>>, Option<Gc<JsObject>>),
@@ -3318,7 +3321,7 @@ impl Interpreter {
                             self.call_function(
                                 JsValue::Object(setter),
                                 obj_val.clone(),
-                                &[final_value.clone()],
+                                std::slice::from_ref(&final_value),
                             )?;
                         }
                         // If no setter, silently ignore in strict mode would throw, but we're lenient

@@ -197,6 +197,7 @@ pub struct RuntimeConfig {
 
 /// A slot that can be filled with a value or error (internal use)
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub(crate) struct PendingSlot {
     id: u64,
     value: Rc<RefCell<Option<Result<JsValue, JsError>>>>,
@@ -205,6 +206,7 @@ pub(crate) struct PendingSlot {
 // PendingSlot is cheap to clone - just u64 + Rc increment
 impl CheapClone for PendingSlot {}
 
+#[allow(dead_code)]
 impl PendingSlot {
     /// Create a new pending slot
     pub fn new(id: u64) -> Self {
@@ -235,7 +237,6 @@ impl PendingSlot {
     }
 
     /// Get the slot's unique ID
-    #[allow(dead_code)]
     pub fn id(&self) -> u64 {
         self.id
     }

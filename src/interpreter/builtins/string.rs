@@ -620,7 +620,7 @@ pub fn string_replace(
                         JsValue::Undefined,
                         &call_args,
                     )?;
-                    result.push_str(&replace_result.value.to_js_string().to_string());
+                    result.push_str(replace_result.value.to_js_string().as_ref());
 
                     last_end = m.end();
                 }

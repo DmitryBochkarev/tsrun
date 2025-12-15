@@ -193,7 +193,7 @@ pub trait Reset: Default {
 // ============================================================================
 
 /// Internal storage for a GC-managed object.
-struct GcBox<T: Default + Reset + Traceable> {
+pub(crate) struct GcBox<T: Default + Reset + Traceable> {
     /// Unique object ID (stable across lifetime, unlike index)
     id: usize,
 
@@ -388,30 +388,6 @@ impl<T: Default + Reset + Traceable> Space<T> {
             id,
             ptr,
             _marker: std::marker::PhantomData,
-        }
-    }
-
-    /// Increment ref_count for an object (used by guard)
-    fn inc_ref(ptr: NonNull<GcBox<T>>) {
-        // Safety: ptr came from our chunks which are stable
-        let gc_box = unsafe { ptr.as_ref() };
-        if gc_box.pooled.get() {
-            return;
-        }
-        gc_box.ref_count.set(gc_box.ref_count.get() + 1);
-    }
-
-    /// Decrement ref_count for an object (used by guard).
-    fn dec_ref(ptr: NonNull<GcBox<T>>) {
-        // Safety: ptr came from our chunks which are stable
-        let gc_box = unsafe { ptr.as_ref() };
-        if gc_box.pooled.get() {
-            return;
-        }
-
-        let count = gc_box.ref_count.get();
-        if count > 0 {
-            gc_box.ref_count.set(count - 1);
         }
     }
 
