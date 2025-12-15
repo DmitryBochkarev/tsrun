@@ -7,7 +7,7 @@ use std::cell::{Cell, Ref, RefCell, RefMut};
 use std::ptr::NonNull;
 use std::rc::{Rc, Weak};
 
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 
 // ============================================================================
 // Reset trait - for pooling objects
@@ -79,24 +79,24 @@ struct Space<T> {
     /// Next object ID
     next_object_id: usize,
 
-    /// Root objects (objects with guard_count > 0) - for fast mark phase
-    roots: FxHashSet<usize>,
-
-    /// Ownership edges: owner_id → set of owned_ids
-    /// Used during mark phase to traverse the object graph
-    ownership_edges: FxHashMap<usize, FxHashSet<usize>>,
+    /// Ownership edges: owner_id → Vec of (owned_id, owned_ptr)
+    /// Stores pointers directly to avoid HashMap lookups during mark phase.
+    ownership_edges: FxHashMap<usize, Vec<(usize, NonNull<GcBox<T>>)>>,
 
     /// Object ID to pointer mapping (for looking up objects by ID)
+    /// Also serves as the set of all live (non-pooled) objects.
     id_to_ptr: FxHashMap<usize, NonNull<GcBox<T>>>,
 
-    /// Number of allocations since last collection
-    allocs_since_gc: usize,
+    /// Net allocations: incremented on alloc, decremented on dealloc
+    /// GC triggers when this exceeds threshold
+    net_allocs: isize,
 
     /// Threshold for triggering collection (0 = never auto-collect)
-    gc_threshold: usize,
+    gc_threshold: isize,
 }
 
-/// Default threshold: collect after this many allocations
+/// Default threshold: collect after this many net allocations
+/// Higher threshold = less frequent GC = better throughput but more memory
 const DEFAULT_GC_THRESHOLD: usize = 100;
 
 /// Default chunk capacity: objects per chunk
@@ -113,11 +113,10 @@ impl<T: Default + Reset> Space<T> {
             chunk_capacity,
             pool: Vec::new(),
             next_object_id: 0,
-            roots: FxHashSet::default(),
             ownership_edges: FxHashMap::default(),
             id_to_ptr: FxHashMap::default(),
-            allocs_since_gc: 0,
-            gc_threshold: DEFAULT_GC_THRESHOLD,
+            net_allocs: 0,
+            gc_threshold: DEFAULT_GC_THRESHOLD as isize,
         }
     }
 
@@ -199,12 +198,10 @@ impl<T: Default + Reset> Space<T> {
             (id, ptr)
         };
 
-        // New object is a root (guard_count = 1)
-        self.roots.insert(id);
-
-        // Track allocations and maybe collect
-        self.allocs_since_gc += 1;
-        if self.gc_threshold > 0 && self.allocs_since_gc >= self.gc_threshold {
+        // Track allocations since last GC
+        self.net_allocs += 1;
+        // Trigger GC when net allocations since last GC exceeds threshold
+        if self.gc_threshold > 0 && self.net_allocs >= self.gc_threshold {
             self.collect();
         }
 
@@ -225,12 +222,7 @@ impl<T: Default + Reset> Space<T> {
         if gc_box.pooled.get() {
             return;
         }
-        let old_count = gc_box.guard_count.get();
-        gc_box.guard_count.set(old_count + 1);
-        // If transitioning from 0 to 1, add to roots
-        if old_count == 0 {
-            self.roots.insert(object_id);
-        }
+        gc_box.guard_count.set(gc_box.guard_count.get() + 1);
     }
 
     /// Decrement guard_count for an object, pool if both counts reach 0
@@ -247,13 +239,9 @@ impl<T: Default + Reset> Space<T> {
         let count = gc_box.guard_count.get();
         if count > 0 {
             gc_box.guard_count.set(count - 1);
-            if count == 1 {
-                // guard_count just became 0, remove from roots
-                self.roots.remove(&object_id);
-                if gc_box.ref_count.get() == 0 {
-                    // Both guard_count and ref_count are 0, pool immediately
-                    self.pool_object(object_id, ptr);
-                }
+            if count == 1 && gc_box.ref_count.get() == 0 {
+                // Both guard_count and ref_count are 0, pool immediately
+                self.pool_object(object_id, ptr);
             }
         }
     }
@@ -294,24 +282,25 @@ impl<T: Default + Reset> Space<T> {
 
     /// Move an object to the pool (internal helper)
     fn pool_object(&mut self, object_id: usize, ptr: NonNull<GcBox<T>>) {
-        // Remove from id_to_ptr and roots
+        // Remove from id_to_ptr
         self.id_to_ptr.remove(&object_id);
-        self.roots.remove(&object_id);
+
+        // Decrement net allocations (object is being deallocated)
+        self.net_allocs -= 1;
 
         // Safety: ptr is valid
         let gc_box = unsafe { ptr.as_ref() };
 
         // Remove all ownership edges FROM this object and decrement their ref_counts
-        if let Some(owned_ids) = self.ownership_edges.remove(&object_id) {
-            for owned_id in owned_ids {
+        if let Some(owned_edges) = self.ownership_edges.remove(&object_id) {
+            for (owned_id, _) in owned_edges {
                 self.dec_ref(owned_id);
             }
         }
 
-        // Remove ownership edges TO this object (from other objects)
-        for owned_set in self.ownership_edges.values_mut() {
-            owned_set.remove(&object_id);
-        }
+        // Note: We don't remove edges TO this object here - they will be
+        // naturally cleaned up when those owners are collected, or ignored
+        // during mark phase (pooled objects are skipped).
 
         // Mark as pooled and reset
         gc_box.pooled.set(true);
@@ -321,64 +310,76 @@ impl<T: Default + Reset> Space<T> {
         self.pool.push(ptr);
     }
 
-    /// Mark phase: mark all objects reachable from roots
+    /// Mark phase: mark all objects reachable from roots (guard_count > 0)
     fn mark(&mut self) {
-        // Use iterative approach with explicit stack to avoid recursion overhead
-        // and Vec allocation per call
-        let mut stack: Vec<usize> = self.roots.iter().copied().collect();
+        // Collect roots from id_to_ptr (all live objects with guard_count > 0)
+        let mut stack: Vec<NonNull<GcBox<T>>> = Vec::with_capacity(64);
+        for &ptr in self.id_to_ptr.values() {
+            let gc_box = unsafe { ptr.as_ref() };
+            if gc_box.guard_count.get() > 0 {
+                stack.push(ptr);
+            }
+        }
 
-        while let Some(object_id) = stack.pop() {
-            let Some(&ptr) = self.id_to_ptr.get(&object_id) else {
-                continue;
-            };
-
-            // Safety: ptr from id_to_ptr is valid
+        // Iterative mark traversal using pointers directly
+        while let Some(ptr) = stack.pop() {
+            // Safety: ptr came from our chunks which are stable
             let gc_box = unsafe { ptr.as_ref() };
 
-            // Already marked or pooled - skip
-            if gc_box.marked.get() || gc_box.pooled.get() {
+            // Already marked - skip
+            if gc_box.marked.get() {
                 continue;
             }
 
             // Mark this object
             gc_box.marked.set(true);
 
-            // Push owned objects onto stack
-            if let Some(owned_ids) = self.ownership_edges.get(&object_id) {
-                stack.extend(owned_ids.iter().copied());
+            // Push owned objects onto stack - pointers are stored directly
+            if let Some(owned_edges) = self.ownership_edges.get(&gc_box.id) {
+                for &(_owned_id, owned_ptr) in owned_edges {
+                    stack.push(owned_ptr);
+                }
             }
         }
     }
 
     /// Sweep phase: collect all unmarked objects and clear marks
-    fn sweep(&mut self) {
+    /// Returns number of objects collected
+    fn sweep(&mut self) -> usize {
         let mut to_collect = Vec::new();
 
-        for chunk in &self.chunks {
-            for gc_box in chunk {
-                if gc_box.pooled.get() {
-                    continue;
-                }
-                if gc_box.marked.get() {
-                    // Clear mark for next collection
-                    gc_box.marked.set(false);
-                } else {
-                    // Unmarked = unreachable, collect it
-                    to_collect.push(gc_box.id);
-                }
+        // Iterate over live objects only (id_to_ptr contains only non-pooled objects)
+        for (&id, &ptr) in &self.id_to_ptr {
+            let gc_box = unsafe { ptr.as_ref() };
+            if gc_box.marked.get() {
+                // Clear mark for next collection
+                gc_box.marked.set(false);
+            } else {
+                // Unmarked = unreachable, collect it
+                to_collect.push(id);
             }
         }
 
+        let collected = to_collect.len();
         for object_id in to_collect {
             self.collect_object_by_id(object_id);
         }
+        collected
     }
 
     /// Run mark-and-sweep collection
     fn collect(&mut self) {
         self.mark();
-        self.sweep();
-        self.allocs_since_gc = 0;
+        let collected = self.sweep();
+        // Only reset net_allocs if we collected something
+        // This prevents frequent GC when cycles prevent collection
+        if collected > 0 {
+            self.net_allocs = 0;
+        } else {
+            // No objects collected - double the threshold temporarily
+            // to avoid spinning on futile GC attempts
+            self.gc_threshold = self.gc_threshold.saturating_mul(2);
+        }
     }
 
     /// Force a collection (for testing or explicit cleanup)
@@ -409,25 +410,35 @@ impl<T: Default + Reset> Space<T> {
             return;
         }
 
-        // Verify both objects exist and are alive
-        let owner_alive = self.id_to_ptr.get(&owner_id).is_some_and(|&ptr| {
-            // Safety: ptr from id_to_ptr is valid
-            let gc_box = unsafe { ptr.as_ref() };
-            !gc_box.pooled.get()
-        });
-        let owned_alive = self.id_to_ptr.get(&owned_id).is_some_and(|&ptr| {
-            // Safety: ptr from id_to_ptr is valid
-            let gc_box = unsafe { ptr.as_ref() };
-            !gc_box.pooled.get()
-        });
+        // Get pointers and verify both objects exist and are alive
+        let owner_ptr = match self.id_to_ptr.get(&owner_id) {
+            Some(&ptr) => {
+                let gc_box = unsafe { ptr.as_ref() };
+                if gc_box.pooled.get() {
+                    return;
+                }
+                ptr
+            }
+            None => return,
+        };
+        let owned_ptr = match self.id_to_ptr.get(&owned_id) {
+            Some(&ptr) => {
+                let gc_box = unsafe { ptr.as_ref() };
+                if gc_box.pooled.get() {
+                    return;
+                }
+                ptr
+            }
+            None => return,
+        };
 
-        if !owner_alive || !owned_alive {
-            return;
-        }
+        // Silence unused warning - owner_ptr not needed for ownership tracking
+        let _ = owner_ptr;
 
         // Check if this edge already exists (don't double-increment)
         let edges = self.ownership_edges.entry(owner_id).or_default();
-        if edges.insert(owned_id) {
+        if !edges.iter().any(|(id, _)| *id == owned_id) {
+            edges.push((owned_id, owned_ptr));
             // New edge - increment ref_count of owned object
             self.inc_ref(owned_id);
         }
@@ -435,12 +446,17 @@ impl<T: Default + Reset> Space<T> {
 
     /// Release ownership: owner no longer owns owned (decrements owned's ref_count)
     fn disown(&mut self, owner_id: usize, owned_id: usize) {
-        let removed = if let Some(owned_set) = self.ownership_edges.get_mut(&owner_id) {
-            let removed = owned_set.remove(&owned_id);
-            if owned_set.is_empty() {
-                self.ownership_edges.remove(&owner_id);
+        let removed = if let Some(owned_vec) = self.ownership_edges.get_mut(&owner_id) {
+            // Find and remove the owned_id (swap_remove is O(1))
+            if let Some(pos) = owned_vec.iter().position(|(id, _)| *id == owned_id) {
+                owned_vec.swap_remove(pos);
+                if owned_vec.is_empty() {
+                    self.ownership_edges.remove(&owner_id);
+                }
+                true
+            } else {
+                false
             }
-            removed
         } else {
             false
         };
@@ -466,7 +482,7 @@ impl<T: Default + Reset> Space<T> {
 
     /// Set the GC threshold (0 = disable automatic collection)
     fn set_gc_threshold(&mut self, threshold: usize) {
-        self.gc_threshold = threshold;
+        self.gc_threshold = threshold as isize;
     }
 }
 
