@@ -121,7 +121,7 @@ pub fn init_date(interp: &mut Interpreter) {
     init_date_prototype(interp);
 
     let constructor = interp.create_native_function("Date", date_constructor, 0);
-    interp.root_guard.guard(&constructor);
+    interp.root_guard.guard(constructor.clone());
 
     // Add static methods
     interp.register_method(&constructor, "now", date_now, 0);

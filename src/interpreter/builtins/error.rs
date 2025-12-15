@@ -9,7 +9,7 @@ use crate::value::{CheapClone, Guarded, JsObject, JsString, JsValue, NativeFn, P
 pub fn init_error(interp: &mut Interpreter) {
     // Create Error.prototype first (base for all error prototypes)
     let (error_proto, _proto_guard) = interp.create_object_with_guard();
-    interp.root_guard.guard(&error_proto);
+    interp.root_guard.guard(error_proto.clone());
 
     // Set default name and message on prototype
     let name_key = interp.key("name");
@@ -25,7 +25,7 @@ pub fn init_error(interp: &mut Interpreter) {
 
     // Create Error constructor function
     let error_fn = interp.create_native_function("Error", error_constructor, 1);
-    interp.root_guard.guard(&error_fn);
+    interp.root_guard.guard(error_fn.clone());
 
     // Set up prototype chain
     let proto_key = interp.key("prototype");
@@ -64,7 +64,7 @@ fn create_derived_error(
 ) {
     // Create prototype that inherits from Error.prototype
     let (derived_proto, _proto_guard) = interp.create_object_with_guard();
-    interp.root_guard.guard(&derived_proto);
+    interp.root_guard.guard(derived_proto.clone());
 
     // Set prototype chain to Error.prototype
     derived_proto.borrow_mut().prototype = Some(error_proto.clone());
@@ -80,7 +80,7 @@ fn create_derived_error(
 
     // Create constructor function
     let constructor = interp.create_native_function(name, constructor_fn, 1);
-    interp.root_guard.guard(&constructor);
+    interp.root_guard.guard(constructor.clone());
 
     // Set up prototype chain
     let proto_key = interp.key("prototype");

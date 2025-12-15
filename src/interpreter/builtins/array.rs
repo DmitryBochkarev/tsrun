@@ -2055,7 +2055,7 @@ pub fn array_entries(
             .unwrap_or(JsValue::Undefined);
         let pair = vec![JsValue::Number(i as f64), value];
         let (entry_arr, _entry_guard) = interp.create_array(pair);
-        scope.guard(&entry_arr);
+        scope.guard(entry_arr.clone());
         entries.push(JsValue::Object(entry_arr));
     }
 

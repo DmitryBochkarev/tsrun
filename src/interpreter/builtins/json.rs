@@ -8,7 +8,7 @@ use crate::value::{ExoticObject, Guarded, JsObject, JsString, JsValue, PropertyK
 /// Initialize JSON object and add it to globals
 pub fn init_json(interp: &mut Interpreter) {
     let (json, _json_guard) = interp.create_object_with_guard();
-    interp.root_guard.guard(&json);
+    interp.root_guard.guard(json.clone());
 
     interp.register_method(&json, "stringify", json_stringify, 1);
     interp.register_method(&json, "parse", json_parse, 1);
@@ -23,7 +23,7 @@ pub fn init_json(interp: &mut Interpreter) {
 /// Create JSON object with stringify and parse methods (for compatibility)
 pub fn create_json_object(interp: &mut Interpreter) -> Gc<JsObject> {
     let (json, _json_guard) = interp.create_object_with_guard();
-    interp.root_guard.guard(&json);
+    interp.root_guard.guard(json.clone());
 
     interp.register_method(&json, "stringify", json_stringify, 1);
     interp.register_method(&json, "parse", json_parse, 1);
@@ -123,7 +123,7 @@ pub fn json_parse(
             return Ok(Guarded::with_guard(value, guard));
         }
         // If no guard, use the root guard to protect it
-        interp.root_guard.guard(obj);
+        interp.root_guard.guard(obj.clone());
     }
     Ok(Guarded::unguarded(value))
 }

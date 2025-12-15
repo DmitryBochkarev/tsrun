@@ -43,7 +43,7 @@ fn order_syscall(
     // If payload is an object, guard it to keep it alive until fulfilled
     if let JsValue::Object(ref obj) = payload {
         let guard = interp.heap.create_guard();
-        guard.guard(obj);
+        guard.guard(obj.clone());
         interp.pending_order_guards.push(guard);
     }
 

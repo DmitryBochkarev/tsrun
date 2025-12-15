@@ -160,7 +160,7 @@ pub fn object_entries(
     for (key, value) in pairs {
         let (arr, _entry_guard) =
             interp.create_array(vec![JsValue::String(JsString::from(key)), value]);
-        scope.guard(&arr);
+        scope.guard(arr.clone());
         entries.push(JsValue::Object(arr));
     }
 

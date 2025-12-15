@@ -24,7 +24,7 @@ pub fn init_map(interp: &mut Interpreter) {
     init_map_prototype(interp);
 
     let constructor = interp.create_native_function("Map", map_constructor, 0);
-    interp.root_guard.guard(&constructor);
+    interp.root_guard.guard(constructor.clone());
 
     // Set prototype property on constructor
     let proto_key = interp.key("prototype");
@@ -384,7 +384,7 @@ pub fn map_entries(
     let mut entries = Vec::with_capacity(raw_entries.len());
     for (k, v) in raw_entries {
         let (arr, _guard) = interp.create_array(vec![k, v]);
-        interp.root_guard.guard(&arr);
+        interp.root_guard.guard(arr.clone());
         entries.push(JsValue::Object(arr));
     }
 

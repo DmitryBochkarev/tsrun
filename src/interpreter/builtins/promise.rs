@@ -260,7 +260,7 @@ fn trigger_handler(
 ) -> Result<(), JsError> {
     // Guard the result_promise since it's been removed from the traced promise state
     // and the callback may trigger GC before we can resolve/reject it.
-    let _result_guard = interp.gc_space.guard(&handler.result_promise);
+    let _result_guard = interp.gc_space.guard(handler.result_promise.clone());
 
     let callback = if is_fulfilled {
         handler.on_fulfilled.clone()
@@ -316,15 +316,15 @@ pub fn promise_constructor(
     let promise = create_promise_object(interp);
 
     // Guard the promise during the executor call
-    let _promise_guard = interp.gc_space.guard(&promise);
+    let _promise_guard = interp.gc_space.guard(promise.clone());
 
     // Create resolve function using the new PromiseResolve variant
     let resolve_fn = interp.create_function(JsFunction::PromiseResolve(promise.cheap_clone()));
-    let _resolve_guard = interp.gc_space.guard(&resolve_fn);
+    let _resolve_guard = interp.gc_space.guard(resolve_fn.clone());
 
     // Create reject function using the new PromiseReject variant
     let reject_fn = interp.create_function(JsFunction::PromiseReject(promise.cheap_clone()));
-    let _reject_guard = interp.gc_space.guard(&reject_fn);
+    let _reject_guard = interp.gc_space.guard(reject_fn.clone());
 
     // Call executor(resolve, reject)
     match interp.call_function(
@@ -356,7 +356,7 @@ pub fn promise_then(
     };
 
     // Guard the promise to prevent GC from corrupting it during result_promise creation
-    let _promise_guard = interp.gc_space.guard(&promise);
+    let _promise_guard = interp.gc_space.guard(promise.clone());
 
     let on_fulfilled = args.first().cloned();
     let on_rejected = args.get(1).cloned();

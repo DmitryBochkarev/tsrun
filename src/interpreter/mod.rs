@@ -479,7 +479,7 @@ impl Interpreter {
         }
 
         // Root the module (lives forever)
-        self.root_guard.guard(&module_obj);
+        self.root_guard.guard(module_obj.clone());
 
         // Cache it
         self.loaded_modules
@@ -866,7 +866,7 @@ impl Interpreter {
     pub fn guard_value(&mut self, value: &JsValue) -> Option<Guard<JsObject>> {
         if let JsValue::Object(obj) = value {
             let guard = self.heap.create_guard();
-            guard.guard(obj);
+            guard.guard(obj.clone());
             Some(guard)
         } else {
             None
@@ -947,7 +947,7 @@ impl Interpreter {
                 };
                 // Root the returned object to keep it alive until caller can establish ownership
                 if let JsValue::Object(ref obj) = value {
-                    self.root_guard.guard(obj);
+                    self.root_guard.guard(obj.clone());
                 }
                 Ok(Completion::Return(value))
             }
@@ -980,7 +980,7 @@ impl Interpreter {
                 } = self.evaluate_expression(&throw.argument)?;
                 // If throwing an object, root it to keep it alive until caught
                 if let JsValue::Object(ref obj) = value {
-                    self.root_guard.guard(obj);
+                    self.root_guard.guard(obj.clone());
                 }
                 self.thrown_value = Some(value);
                 Err(JsError::Thrown)
@@ -1843,7 +1843,7 @@ impl Interpreter {
         };
 
         // Root the module (lives forever) - must happen before _temp_guard is dropped
-        self.root_guard.guard(&module_obj);
+        self.root_guard.guard(module_obj.clone());
 
         // Cache it
         self.internal_module_cache
@@ -1988,7 +1988,7 @@ impl Interpreter {
 
         // Create prototype object
         let (prototype, _proto_guard) = self.create_object_with_guard();
-        self.root_guard.guard(&prototype);
+        self.root_guard.guard(prototype.clone());
 
         // If we have a superclass, set up prototype chain
         if let Some(ref super_ctor) = super_constructor {
@@ -2058,7 +2058,7 @@ impl Interpreter {
                 func.generator,
                 func.async_,
             );
-            self.root_guard.guard(&func_obj);
+            self.root_guard.guard(func_obj.clone());
 
             // Store __super__ on method so super.method() works
             if let Some(ref super_ctor) = super_constructor {
@@ -2139,7 +2139,7 @@ impl Interpreter {
             false,
             false,
         );
-        self.root_guard.guard(&constructor_fn);
+        self.root_guard.guard(constructor_fn.clone());
 
         // Store prototype on constructor
         {
@@ -2168,12 +2168,12 @@ impl Interpreter {
             for (name, value) in field_values {
                 let (pair, _pair_guard) =
                     self.create_array_with_guard(vec![JsValue::String(name), value]);
-                self.root_guard.guard(&pair);
+                self.root_guard.guard(pair.clone());
                 field_pairs.push(JsValue::Object(pair));
             }
 
             let (fields_array, _fields_guard) = self.create_array_with_guard(field_pairs);
-            self.root_guard.guard(&fields_array);
+            self.root_guard.guard(fields_array.clone());
 
             let fields_key = self.key("__fields__");
             constructor_fn
@@ -2218,7 +2218,7 @@ impl Interpreter {
                 func.generator,
                 func.async_,
             );
-            self.root_guard.guard(&func_obj);
+            self.root_guard.guard(func_obj.clone());
 
             match method.kind {
                 MethodKind::Get => {
@@ -2754,7 +2754,7 @@ impl Interpreter {
                 let constructor_fn = self.create_class_from_expression(class_expr)?;
                 // Create guard for the returned object
                 let (_, guard) = self.create_object_with_guard();
-                guard.guard(&constructor_fn);
+                guard.guard(constructor_fn.clone());
                 Ok(Guarded::with_guard(JsValue::Object(constructor_fn), guard))
             }
 

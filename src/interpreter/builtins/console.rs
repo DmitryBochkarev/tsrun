@@ -27,7 +27,7 @@ lazy_static::lazy_static! {
 /// Initialize console global object
 pub fn init_console(interp: &mut Interpreter) {
     let (console, _console_guard) = interp.create_object_with_guard();
-    interp.root_guard.guard(&console);
+    interp.root_guard.guard(console.clone());
 
     // Logging methods
     interp.register_method(&console, "log", console_log, 0);
@@ -63,7 +63,7 @@ pub fn init_console(interp: &mut Interpreter) {
 /// Create console object with log, error, warn, info, debug methods (for compatibility)
 pub fn create_console_object(interp: &mut Interpreter) -> Gc<JsObject> {
     let (console, _console_guard) = interp.create_object_with_guard();
-    interp.root_guard.guard(&console);
+    interp.root_guard.guard(console.clone());
 
     // Logging methods
     interp.register_method(&console, "log", console_log, 0);

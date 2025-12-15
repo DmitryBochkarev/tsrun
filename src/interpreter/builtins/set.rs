@@ -24,7 +24,7 @@ pub fn init_set(interp: &mut Interpreter) {
     init_set_prototype(interp);
 
     let constructor = interp.create_native_function("Set", set_constructor, 0);
-    interp.root_guard.guard(&constructor);
+    interp.root_guard.guard(constructor.clone());
 
     // Set prototype property on constructor
     let proto_key = interp.key("prototype");
@@ -298,7 +298,7 @@ pub fn set_entries(
     let mut entries = Vec::with_capacity(raw_entries.len());
     for v in raw_entries {
         let (arr, _guard) = interp.create_array(vec![v.clone(), v]);
-        interp.root_guard.guard(&arr);
+        interp.root_guard.guard(arr.clone());
         entries.push(JsValue::Object(arr));
     }
 

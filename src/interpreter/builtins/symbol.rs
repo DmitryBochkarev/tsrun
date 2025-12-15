@@ -97,7 +97,7 @@ pub fn init_symbol(interp: &mut Interpreter) {
 
     // Create the Symbol function (not a constructor - can't be called with new)
     let symbol_fn = interp.create_native_function("Symbol", symbol_call, 0);
-    interp.root_guard.guard(&symbol_fn);
+    interp.root_guard.guard(symbol_fn.clone());
 
     // Symbol.for(key) and Symbol.keyFor(sym)
     interp.register_method(&symbol_fn, "for", symbol_for, 1);

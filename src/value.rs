@@ -10,7 +10,7 @@ use rustc_hash::FxHashMap;
 
 use crate::ast::{ArrowFunctionBody, BlockStatement, FunctionParam};
 use crate::error::JsError;
-use crate::gc::{Gc, GcPtr, Guard, Reset, Traceable, Unlink};
+use crate::gc::{Gc, GcPtr, Guard, Reset, Traceable};
 use crate::lexer::Span;
 use crate::string_dict::StringDict;
 
@@ -439,7 +439,7 @@ impl std::hash::Hash for JsSymbol {
 pub type JsObjectRef = Gc<JsObject>;
 
 // Implement CheapClone for Gc<T> (clone is just Copy)
-impl<T> CheapClone for Gc<T> {}
+impl<T: Default + Reset + Traceable> CheapClone for Gc<T> {}
 
 /// Reset implementation for JsObject - used by new GC for object pooling.
 ///
@@ -560,63 +560,6 @@ impl Traceable for JsObject {
             | ExoticObject::Date { .. }
             | ExoticObject::RegExp { .. } => {}
         }
-    }
-}
-
-impl Unlink for JsObject {
-    fn unlink(&mut self) {
-        // Clear prototype - dropping Gc decrements ref_count automatically
-        self.prototype = None;
-
-        // Clear properties - dropping JsValue::Object decrements ref_count
-        self.properties.clear();
-
-        // Clear exotic object references
-        match &mut self.exotic {
-            ExoticObject::Function(func) => match func {
-                JsFunction::Bound(bound) => {
-                    // Clearing these drops the Gc values, decrementing ref_counts
-                    bound.this_arg = JsValue::Undefined;
-                    bound.bound_args.clear();
-                    // bound.target will be dropped when exotic is reset
-                }
-                JsFunction::PromiseResolve(_) | JsFunction::PromiseReject(_) => {
-                    // Promise reference will be dropped when exotic is reset
-                }
-                JsFunction::Interpreted(_) => {
-                    // Closure reference will be dropped when exotic is reset
-                }
-                JsFunction::Native(_) => {}
-            },
-            ExoticObject::Map { entries } => {
-                entries.clear();
-            }
-            ExoticObject::Set { entries } => {
-                entries.clear();
-            }
-            ExoticObject::Promise(state) => {
-                let mut state = state.borrow_mut();
-                state.result = None;
-                state.handlers.clear();
-            }
-            ExoticObject::Generator(state) => {
-                let mut state = state.borrow_mut();
-                state.args.clear();
-                state.sent_value = JsValue::Undefined;
-                // closure will be dropped when exotic is reset
-            }
-            ExoticObject::Environment(env_data) => {
-                env_data.bindings.clear();
-                env_data.outer = None;
-            }
-            ExoticObject::Ordinary
-            | ExoticObject::Array { .. }
-            | ExoticObject::Date { .. }
-            | ExoticObject::RegExp { .. } => {}
-        }
-
-        // Reset exotic to Ordinary to drop any remaining references
-        self.exotic = ExoticObject::Ordinary;
     }
 }
 

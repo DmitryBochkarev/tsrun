@@ -82,7 +82,7 @@ pub fn init_math(interp: &mut Interpreter) -> Gc<JsObject> {
     interp.register_method(&math_obj, "random", math_random, 0);
 
     // Root Math object and bind to global
-    interp.root_guard.guard(&math_obj);
+    interp.root_guard.guard(math_obj.clone());
     let math_key = interp.key("Math");
     let result = math_obj.clone();
     interp

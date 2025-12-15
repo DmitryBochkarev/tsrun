@@ -8,7 +8,7 @@ use crate::value::{Guarded, JsString, JsValue};
 pub fn init_global_functions(interp: &mut Interpreter) {
     // parseInt
     let parseint_fn = interp.create_native_function("parseInt", global_parse_int, 2);
-    interp.root_guard.guard(&parseint_fn);
+    interp.root_guard.guard(parseint_fn.clone());
     let key = interp.key("parseInt");
     interp
         .global
@@ -17,7 +17,7 @@ pub fn init_global_functions(interp: &mut Interpreter) {
 
     // parseFloat
     let parsefloat_fn = interp.create_native_function("parseFloat", global_parse_float, 1);
-    interp.root_guard.guard(&parsefloat_fn);
+    interp.root_guard.guard(parsefloat_fn.clone());
     let key = interp.key("parseFloat");
     interp
         .global
@@ -26,7 +26,7 @@ pub fn init_global_functions(interp: &mut Interpreter) {
 
     // isNaN
     let isnan_fn = interp.create_native_function("isNaN", global_is_nan, 1);
-    interp.root_guard.guard(&isnan_fn);
+    interp.root_guard.guard(isnan_fn.clone());
     let key = interp.key("isNaN");
     interp
         .global
@@ -35,7 +35,7 @@ pub fn init_global_functions(interp: &mut Interpreter) {
 
     // isFinite
     let isfinite_fn = interp.create_native_function("isFinite", global_is_finite, 1);
-    interp.root_guard.guard(&isfinite_fn);
+    interp.root_guard.guard(isfinite_fn.clone());
     let key = interp.key("isFinite");
     interp
         .global
@@ -44,7 +44,7 @@ pub fn init_global_functions(interp: &mut Interpreter) {
 
     // encodeURI
     let encodeuri_fn = interp.create_native_function("encodeURI", global_encode_uri, 1);
-    interp.root_guard.guard(&encodeuri_fn);
+    interp.root_guard.guard(encodeuri_fn.clone());
     let key = interp.key("encodeURI");
     interp
         .global
@@ -53,7 +53,7 @@ pub fn init_global_functions(interp: &mut Interpreter) {
 
     // decodeURI
     let decodeuri_fn = interp.create_native_function("decodeURI", global_decode_uri, 1);
-    interp.root_guard.guard(&decodeuri_fn);
+    interp.root_guard.guard(decodeuri_fn.clone());
     let key = interp.key("decodeURI");
     interp
         .global
@@ -63,7 +63,7 @@ pub fn init_global_functions(interp: &mut Interpreter) {
     // encodeURIComponent
     let encodeuricomponent_fn =
         interp.create_native_function("encodeURIComponent", global_encode_uri_component, 1);
-    interp.root_guard.guard(&encodeuricomponent_fn);
+    interp.root_guard.guard(encodeuricomponent_fn.clone());
     let key = interp.key("encodeURIComponent");
     interp
         .global
@@ -73,7 +73,7 @@ pub fn init_global_functions(interp: &mut Interpreter) {
     // decodeURIComponent
     let decodeuricomponent_fn =
         interp.create_native_function("decodeURIComponent", global_decode_uri_component, 1);
-    interp.root_guard.guard(&decodeuricomponent_fn);
+    interp.root_guard.guard(decodeuricomponent_fn.clone());
     let key = interp.key("decodeURIComponent");
     interp
         .global
