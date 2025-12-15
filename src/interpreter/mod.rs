@@ -1426,7 +1426,7 @@ impl Interpreter {
                 obj_ref
                     .properties
                     .iter()
-                    .filter(|(key, prop)| prop.enumerable && !key.is_symbol())
+                    .filter(|(key, prop)| prop.enumerable() && !key.is_symbol())
                     .map(|(key, _)| key.to_string())
                     .collect::<Vec<_>>()
             }
@@ -2475,7 +2475,7 @@ impl Interpreter {
                 obj_ref
                     .properties
                     .iter()
-                    .filter(|(key, prop)| prop.enumerable && !key.is_symbol())
+                    .filter(|(key, prop)| prop.enumerable() && !key.is_symbol())
                     .map(|(key, _)| key.to_string())
                     .collect::<Vec<_>>()
             }
@@ -3240,12 +3240,12 @@ impl Interpreter {
                         let prop_desc = obj.borrow().get_property_descriptor(&key);
                         match prop_desc {
                             Some((prop, _)) if prop.is_accessor() => {
-                                if let Some(getter) = prop.getter {
+                                if let Some(getter) = prop.getter() {
                                     let Guarded {
                                         value: getter_val,
                                         guard: _getter_guard,
                                     } = self.call_function(
-                                        JsValue::Object(getter),
+                                        JsValue::Object(getter.clone()),
                                         obj_val.clone(),
                                         &[],
                                     )?;
@@ -3316,10 +3316,10 @@ impl Interpreter {
                 let prop_desc = obj.borrow().get_property_descriptor(&key);
                 if let Some((prop, _)) = prop_desc {
                     if prop.is_accessor() {
-                        if let Some(setter) = prop.setter {
+                        if let Some(setter) = prop.setter() {
                             // Call the setter with the value
                             self.call_function(
-                                JsValue::Object(setter),
+                                JsValue::Object(setter.clone()),
                                 obj_val.clone(),
                                 std::slice::from_ref(&final_value),
                             )?;
@@ -3829,12 +3829,12 @@ impl Interpreter {
                     match prop_desc {
                         Some((prop, _)) if prop.is_accessor() => {
                             // Property has a getter - invoke it
-                            if let Some(getter) = prop.getter {
+                            if let Some(getter) = prop.getter() {
                                 let Guarded {
                                     value: getter_val,
                                     guard: getter_guard,
                                 } =
-                                    self.call_function(JsValue::Object(getter), obj.clone(), &[])?;
+                                    self.call_function(JsValue::Object(getter.clone()), obj.clone(), &[])?;
                                 (getter_val, getter_guard)
                             } else {
                                 (JsValue::Undefined, None)
@@ -4050,7 +4050,7 @@ impl Interpreter {
                         // Copy all string properties (not symbol keys for now)
                         for (key, prop) in spread_ref.properties.iter() {
                             // Skip non-enumerable properties
-                            if !prop.enumerable {
+                            if !prop.enumerable() {
                                 continue;
                             }
                             obj.borrow_mut()

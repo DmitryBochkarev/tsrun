@@ -178,7 +178,7 @@ pub fn js_value_to_json(value: &JsValue) -> Result<serde_json::Value, JsError> {
                 ExoticObject::Ordinary => {
                     let mut map = serde_json::Map::new();
                     for (key, prop) in obj_ref.properties.iter() {
-                        if prop.enumerable {
+                        if prop.enumerable() {
                             let json_val = js_value_to_json(&prop.value)?;
                             // Skip undefined values in objects
                             if json_val != serde_json::Value::Null

@@ -669,7 +669,7 @@ impl JsObject {
         }
         if let Some(prop) = self.properties.get_mut(&key) {
             // Only set if writable
-            if prop.writable {
+            if prop.writable() {
                 prop.value = value;
             }
         } else if self.extensible && !self.sealed {
@@ -809,39 +809,50 @@ impl fmt::Display for PropertyKey {
     }
 }
 
-/// Object property descriptor
+/// Property attribute flags (packed into a single byte)
+mod property_flags {
+    pub const WRITABLE: u8 = 0b001;
+    pub const ENUMERABLE: u8 = 0b010;
+    pub const CONFIGURABLE: u8 = 0b100;
+    pub const ALL: u8 = WRITABLE | ENUMERABLE | CONFIGURABLE;
+}
+
+/// Accessor functions (getter and/or setter) - boxed to save space for data properties
 #[derive(Debug, Clone)]
-pub struct Property {
-    pub value: JsValue,
-    pub writable: bool,
-    pub enumerable: bool,
-    pub configurable: bool,
-    /// Getter function (for accessor properties)
+pub struct Accessor {
     pub getter: Option<JsObjectRef>,
-    /// Setter function (for accessor properties)
     pub setter: Option<JsObjectRef>,
 }
 
+/// A property descriptor - optimized for size.
+/// Most properties are simple data properties, so we optimize for that case.
+#[derive(Debug, Clone)]
+pub struct Property {
+    pub value: JsValue,
+    /// Packed flags: bit 0 = writable, bit 1 = enumerable, bit 2 = configurable
+    flags: u8,
+    /// Accessor functions (boxed, rarely used) - None for data properties
+    accessor: Option<Box<Accessor>>,
+}
+
 impl Property {
+    /// Create a data property with default attributes (writable, enumerable, configurable)
+    #[inline]
     pub fn data(value: JsValue) -> Self {
         Self {
             value,
-            writable: true,
-            enumerable: true,
-            configurable: true,
-            getter: None,
-            setter: None,
+            flags: property_flags::ALL,
+            accessor: None,
         }
     }
 
+    /// Create a read-only data property (enumerable, configurable, but not writable)
+    #[inline]
     pub fn data_readonly(value: JsValue) -> Self {
         Self {
             value,
-            writable: false,
-            enumerable: true,
-            configurable: true,
-            getter: None,
-            setter: None,
+            flags: property_flags::ENUMERABLE | property_flags::CONFIGURABLE,
+            accessor: None,
         }
     }
 
@@ -849,33 +860,119 @@ impl Property {
     pub fn accessor(getter: Option<JsObjectRef>, setter: Option<JsObjectRef>) -> Self {
         Self {
             value: JsValue::Undefined,
-            writable: false,
-            enumerable: true,
-            configurable: true,
-            getter,
-            setter,
+            flags: property_flags::ENUMERABLE | property_flags::CONFIGURABLE,
+            accessor: Some(Box::new(Accessor { getter, setter })),
         }
     }
 
     /// Check if this is an accessor property (has getter or setter)
+    #[inline]
     pub fn is_accessor(&self) -> bool {
-        self.getter.is_some() || self.setter.is_some()
+        self.accessor.is_some()
     }
 
     /// Create a property with custom attributes
+    #[inline]
     pub fn with_attributes(
         value: JsValue,
         writable: bool,
         enumerable: bool,
         configurable: bool,
     ) -> Self {
+        let mut flags = 0;
+        if writable {
+            flags |= property_flags::WRITABLE;
+        }
+        if enumerable {
+            flags |= property_flags::ENUMERABLE;
+        }
+        if configurable {
+            flags |= property_flags::CONFIGURABLE;
+        }
         Self {
             value,
-            writable,
-            enumerable,
-            configurable,
-            getter: None,
-            setter: None,
+            flags,
+            accessor: None,
+        }
+    }
+
+    // Attribute getters
+    #[inline]
+    pub fn writable(&self) -> bool {
+        (self.flags & property_flags::WRITABLE) != 0
+    }
+
+    #[inline]
+    pub fn enumerable(&self) -> bool {
+        (self.flags & property_flags::ENUMERABLE) != 0
+    }
+
+    #[inline]
+    pub fn configurable(&self) -> bool {
+        (self.flags & property_flags::CONFIGURABLE) != 0
+    }
+
+    // Attribute setters
+    #[inline]
+    pub fn set_writable(&mut self, writable: bool) {
+        if writable {
+            self.flags |= property_flags::WRITABLE;
+        } else {
+            self.flags &= !property_flags::WRITABLE;
+        }
+    }
+
+    #[inline]
+    pub fn set_enumerable(&mut self, enumerable: bool) {
+        if enumerable {
+            self.flags |= property_flags::ENUMERABLE;
+        } else {
+            self.flags &= !property_flags::ENUMERABLE;
+        }
+    }
+
+    #[inline]
+    pub fn set_configurable(&mut self, configurable: bool) {
+        if configurable {
+            self.flags |= property_flags::CONFIGURABLE;
+        } else {
+            self.flags &= !property_flags::CONFIGURABLE;
+        }
+    }
+
+    /// Get the getter function (if this is an accessor property)
+    #[inline]
+    pub fn getter(&self) -> Option<&JsObjectRef> {
+        self.accessor.as_ref().and_then(|a| a.getter.as_ref())
+    }
+
+    /// Get the setter function (if this is an accessor property)
+    #[inline]
+    pub fn setter(&self) -> Option<&JsObjectRef> {
+        self.accessor.as_ref().and_then(|a| a.setter.as_ref())
+    }
+
+    /// Set the getter function
+    pub fn set_getter(&mut self, getter: Option<JsObjectRef>) {
+        if let Some(ref mut acc) = self.accessor {
+            acc.getter = getter;
+        } else if getter.is_some() {
+            self.accessor = Some(Box::new(Accessor {
+                getter,
+                setter: None,
+            }));
+        }
+    }
+
+    /// Set the setter function
+    pub fn set_setter(&mut self, setter: Option<JsObjectRef>) {
+        if let Some(ref mut acc) = self.accessor {
+            acc.setter = setter;
+        } else if setter.is_some() {
+            self.accessor = Some(Box::new(Accessor {
+                getter: None,
+                setter,
+            }));
         }
     }
 }

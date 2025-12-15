@@ -104,7 +104,7 @@ pub fn object_keys(
         .borrow()
         .properties
         .iter()
-        .filter(|(_, prop)| prop.enumerable)
+        .filter(|(_, prop)| prop.enumerable())
         .map(|(key, _)| JsValue::String(JsString::from(key.to_string())))
         .collect();
 
@@ -126,7 +126,7 @@ pub fn object_values(
         .borrow()
         .properties
         .iter()
-        .filter(|(_, prop)| prop.enumerable)
+        .filter(|(_, prop)| prop.enumerable())
         .map(|(_, prop)| prop.value.clone())
         .collect();
 
@@ -149,7 +149,7 @@ pub fn object_entries(
         .borrow()
         .properties
         .iter()
-        .filter(|(_, prop)| prop.enumerable)
+        .filter(|(_, prop)| prop.enumerable())
         .map(|(key, prop)| (key.to_string(), prop.value.clone()))
         .collect();
 
@@ -185,7 +185,7 @@ pub fn object_assign(
         if let JsValue::Object(src_ref) = source {
             let src = src_ref.borrow();
             for (key, prop) in src.properties.iter() {
-                if prop.enumerable {
+                if prop.enumerable() {
                     target_ref
                         .borrow_mut()
                         .set_property(key.clone(), prop.value.clone());
@@ -315,8 +315,8 @@ pub fn object_freeze(
         obj_mut.frozen = true;
         // Mark all properties as non-writable and non-configurable
         for (_, prop) in obj_mut.properties.iter_mut() {
-            prop.writable = false;
-            prop.configurable = false;
+            prop.set_writable(false);
+            prop.set_configurable(false);
         }
     }
 
@@ -355,7 +355,7 @@ pub fn object_seal(
         obj_mut.sealed = true;
         // Mark all properties as non-configurable (but still writable)
         for (_, prop) in obj_mut.properties.iter_mut() {
-            prop.configurable = false;
+            prop.set_configurable(false);
         }
     }
 
@@ -501,12 +501,12 @@ pub fn object_get_own_property_descriptor(
 
             if property.is_accessor() {
                 // Accessor descriptor
-                if let Some(ref getter) = property.getter {
+                if let Some(getter) = property.getter() {
                     desc_ref.set_property(get_key, JsValue::Object(getter.clone()));
                 } else {
                     desc_ref.set_property(get_key, JsValue::Undefined);
                 }
-                if let Some(ref setter) = property.setter {
+                if let Some(setter) = property.setter() {
                     desc_ref.set_property(set_key, JsValue::Object(setter.clone()));
                 } else {
                     desc_ref.set_property(set_key, JsValue::Undefined);
@@ -514,11 +514,11 @@ pub fn object_get_own_property_descriptor(
             } else {
                 // Data descriptor
                 desc_ref.set_property(value_key, property.value.clone());
-                desc_ref.set_property(writable_key, JsValue::Boolean(property.writable));
+                desc_ref.set_property(writable_key, JsValue::Boolean(property.writable()));
             }
 
-            desc_ref.set_property(enumerable_key, JsValue::Boolean(property.enumerable));
-            desc_ref.set_property(configurable_key, JsValue::Boolean(property.configurable));
+            desc_ref.set_property(enumerable_key, JsValue::Boolean(property.enumerable()));
+            desc_ref.set_property(configurable_key, JsValue::Boolean(property.configurable()));
         }
         Ok(Guarded::with_guard(JsValue::Object(desc), desc_guard))
     } else {
@@ -651,8 +651,8 @@ pub fn object_define_property(
             _ => None,
         };
         let mut prop = Property::accessor(getter_ref, setter_ref);
-        prop.enumerable = enumerable;
-        prop.configurable = configurable;
+        prop.set_enumerable(enumerable);
+        prop.set_configurable(configurable);
         obj_ref.borrow_mut().define_property(key, prop);
     } else {
         // Data descriptor
@@ -748,8 +748,8 @@ pub fn object_define_properties(
                 _ => None,
             };
             let mut prop = Property::accessor(getter_ref, setter_ref);
-            prop.enumerable = enumerable;
-            prop.configurable = configurable;
+            prop.set_enumerable(enumerable);
+            prop.set_configurable(configurable);
             obj_ref.borrow_mut().define_property(key, prop);
         } else {
             // Data descriptor
