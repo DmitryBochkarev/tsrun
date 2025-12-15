@@ -10,7 +10,7 @@ use rustc_hash::FxHashMap;
 
 use crate::ast::{ArrowFunctionBody, BlockStatement, FunctionParam};
 use crate::error::JsError;
-use crate::gc::{Gc, Guard, Heap, Reset};
+use crate::gc::{Gc, Guard, Heap, Reset, Traceable};
 use crate::lexer::Span;
 use crate::string_dict::StringDict;
 
@@ -454,6 +454,112 @@ impl Reset for JsObject {
         self.null_prototype = false;
         self.properties.clear();
         self.exotic = ExoticObject::Ordinary;
+    }
+}
+
+impl Traceable for JsObject {
+    fn trace<F: FnMut(Gc<Self>)>(&self, mut visitor: F) {
+        // Trace prototype
+        if let Some(proto) = &self.prototype {
+            visitor(*proto);
+        }
+
+        // Trace properties
+        for prop in self.properties.values() {
+            if let JsValue::Object(obj) = &prop.value {
+                visitor(*obj);
+            }
+        }
+
+        // Trace exotic object references
+        match &self.exotic {
+            ExoticObject::Function(func) => {
+                match func {
+                    JsFunction::Bound(bound) => {
+                        visitor(bound.target);
+                        if let JsValue::Object(obj) = &bound.this_arg {
+                            visitor(*obj);
+                        }
+                        for arg in &bound.bound_args {
+                            if let JsValue::Object(obj) = arg {
+                                visitor(*obj);
+                            }
+                        }
+                    }
+                    JsFunction::PromiseResolve(promise) | JsFunction::PromiseReject(promise) => {
+                        visitor(*promise);
+                    }
+                    JsFunction::Interpreted(interp) => {
+                        // Trace the closure environment
+                        visitor(interp.closure);
+                    }
+                    JsFunction::Native(_) => {}
+                }
+            }
+            ExoticObject::Map { entries } => {
+                for (k, v) in entries {
+                    if let JsValue::Object(obj) = k {
+                        visitor(*obj);
+                    }
+                    if let JsValue::Object(obj) = v {
+                        visitor(*obj);
+                    }
+                }
+            }
+            ExoticObject::Set { entries } => {
+                for entry in entries {
+                    if let JsValue::Object(obj) = entry {
+                        visitor(*obj);
+                    }
+                }
+            }
+            ExoticObject::Promise(state) => {
+                let state = state.borrow();
+                if let Some(JsValue::Object(obj)) = &state.result {
+                    visitor(*obj);
+                }
+                for handler in &state.handlers {
+                    if let Some(JsValue::Object(obj)) = &handler.on_fulfilled {
+                        visitor(*obj);
+                    }
+                    if let Some(JsValue::Object(obj)) = &handler.on_rejected {
+                        visitor(*obj);
+                    }
+                    visitor(handler.result_promise);
+                }
+            }
+            ExoticObject::Generator(state) => {
+                let state = state.borrow();
+                // Trace closure environment
+                visitor(state.closure);
+                // Trace arguments that might be objects
+                for arg in &state.args {
+                    if let JsValue::Object(obj) = arg {
+                        visitor(*obj);
+                    }
+                }
+                // Trace sent value if it's an object
+                if let JsValue::Object(obj) = &state.sent_value {
+                    visitor(*obj);
+                }
+            }
+            ExoticObject::Environment(env_data) => {
+                // Trace all bindings in the environment
+                for binding in env_data.bindings.values() {
+                    if let JsValue::Object(obj) = &binding.value {
+                        visitor(*obj);
+                    }
+                }
+                // Trace outer environment if any
+                if let Some(outer) = &env_data.outer {
+                    visitor(*outer);
+                }
+            }
+            ExoticObject::Ordinary
+            | ExoticObject::Array { .. }
+            | ExoticObject::Date { .. }
+            | ExoticObject::RegExp { .. } => {}
+        }
     }
 }
 

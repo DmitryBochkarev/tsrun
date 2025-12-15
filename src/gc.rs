@@ -7,7 +7,72 @@ use std::cell::{Cell, Ref, RefCell, RefMut};
 use std::ptr::NonNull;
 use std::rc::{Rc, Weak};
 
-use rustc_hash::FxHashMap;
+// ============================================================================
+// Gc - smart pointer to GC-managed object (defined early for Traceable trait)
+// ============================================================================
+
+/// A smart pointer to a GC-managed object.
+pub struct Gc<T> {
+    /// Unique object ID (for ownership tracking)
+    id: usize,
+
+    /// Pointer to the GcBox for fast access
+    ptr: NonNull<GcBox<T>>,
+
+    /// Marker for the type
+    _marker: std::marker::PhantomData<T>,
+}
+
+impl<T> Gc<T> {
+    /// Borrow the inner data immutably
+    pub fn borrow(&self) -> Ref<'_, T> {
+        unsafe { self.ptr.as_ref().data.borrow() }
+    }
+
+    /// Borrow the inner data mutably
+    pub fn borrow_mut(&self) -> RefMut<'_, T> {
+        unsafe { self.ptr.as_ref().data.borrow_mut() }
+    }
+
+    /// Get the object's unique ID
+    pub fn id(&self) -> usize {
+        self.id
+    }
+
+    /// Check if two Gc pointers point to the same object
+    pub fn ptr_eq(a: &Gc<T>, b: &Gc<T>) -> bool {
+        a.id == b.id
+    }
+}
+
+impl<T> Clone for Gc<T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<T> Copy for Gc<T> {}
+
+impl<T> std::fmt::Debug for Gc<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Gc").field("id", &self.id).finish()
+    }
+}
+
+// ============================================================================
+// Traceable trait - for discovering object references
+// ============================================================================
+
+/// Trait for types that can be traced by the garbage collector.
+///
+/// Objects implement this to yield their `Gc<T>` references during mark phase.
+/// The GC calls `trace()` to discover reachable objects.
+pub trait Traceable: Sized {
+    /// Visit all `Gc<Self>` references held by this object.
+    ///
+    /// The implementation should call `visitor` for each `Gc<T>` stored in fields.
+    fn trace<F: FnMut(Gc<Self>)>(&self, visitor: F);
+}
 
 // ============================================================================
 // Reset trait - for pooling objects
@@ -79,13 +144,9 @@ struct Space<T> {
     /// Next object ID
     next_object_id: usize,
 
-    /// Ownership edges: owner_id → Vec of (owned_id, owned_ptr)
-    /// Stores pointers directly to avoid HashMap lookups during mark phase.
-    ownership_edges: FxHashMap<usize, Vec<(usize, NonNull<GcBox<T>>)>>,
-
     /// Object ID to pointer mapping (for looking up objects by ID)
     /// Also serves as the set of all live (non-pooled) objects.
-    id_to_ptr: FxHashMap<usize, NonNull<GcBox<T>>>,
+    id_to_ptr: rustc_hash::FxHashMap<usize, NonNull<GcBox<T>>>,
 
     /// Net allocations: incremented on alloc, decremented on dealloc
     /// GC triggers when this exceeds threshold
@@ -102,7 +163,7 @@ const DEFAULT_GC_THRESHOLD: usize = 100;
 /// Default chunk capacity: objects per chunk
 const DEFAULT_CHUNK_CAPACITY: usize = 256;
 
-impl<T: Default + Reset> Space<T> {
+impl<T: Default + Reset + Traceable> Space<T> {
     fn new() -> Self {
         Self::with_chunk_capacity(DEFAULT_CHUNK_CAPACITY)
     }
@@ -113,8 +174,7 @@ impl<T: Default + Reset> Space<T> {
             chunk_capacity,
             pool: Vec::new(),
             next_object_id: 0,
-            ownership_edges: FxHashMap::default(),
-            id_to_ptr: FxHashMap::default(),
+            id_to_ptr: rustc_hash::FxHashMap::default(),
             net_allocs: 0,
             gc_threshold: DEFAULT_GC_THRESHOLD as isize,
         }
@@ -291,17 +351,6 @@ impl<T: Default + Reset> Space<T> {
         // Safety: ptr is valid
         let gc_box = unsafe { ptr.as_ref() };
 
-        // Remove all ownership edges FROM this object and decrement their ref_counts
-        if let Some(owned_edges) = self.ownership_edges.remove(&object_id) {
-            for (owned_id, _) in owned_edges {
-                self.dec_ref(owned_id);
-            }
-        }
-
-        // Note: We don't remove edges TO this object here - they will be
-        // naturally cleaned up when those owners are collected, or ignored
-        // during mark phase (pooled objects are skipped).
-
         // Mark as pooled and reset
         gc_box.pooled.set(true);
         gc_box.data.borrow_mut().reset();
@@ -321,7 +370,7 @@ impl<T: Default + Reset> Space<T> {
             }
         }
 
-        // Iterative mark traversal using pointers directly
+        // Iterative mark traversal using Traceable::trace()
         while let Some(ptr) = stack.pop() {
             // Safety: ptr came from our chunks which are stable
             let gc_box = unsafe { ptr.as_ref() };
@@ -334,12 +383,16 @@ impl<T: Default + Reset> Space<T> {
             // Mark this object
             gc_box.marked.set(true);
 
-            // Push owned objects onto stack - pointers are stored directly
-            if let Some(owned_edges) = self.ownership_edges.get(&gc_box.id) {
-                for &(_owned_id, owned_ptr) in owned_edges {
-                    stack.push(owned_ptr);
+            // Trace references via Traceable trait
+            // Panics if data is already borrowed (indicates bug - GC during borrow)
+            let data = gc_box.data.borrow();
+            data.trace(|child: Gc<T>| {
+                // Only push if not already marked to avoid redundant work
+                let child_box = unsafe { child.ptr.as_ref() };
+                if !child_box.marked.get() && !child_box.pooled.get() {
+                    stack.push(child.ptr);
                 }
-            }
+            });
         }
     }
 
@@ -403,80 +456,14 @@ impl<T: Default + Reset> Space<T> {
         self.pool_object(object_id, ptr);
     }
 
-    /// Establish ownership: owner owns owned (increments owned's ref_count)
-    fn own(&mut self, owner_id: usize, owned_id: usize) {
-        // Don't allow self-ownership
-        if owner_id == owned_id {
-            return;
-        }
-
-        // Get pointers and verify both objects exist and are alive
-        let owner_ptr = match self.id_to_ptr.get(&owner_id) {
-            Some(&ptr) => {
-                let gc_box = unsafe { ptr.as_ref() };
-                if gc_box.pooled.get() {
-                    return;
-                }
-                ptr
-            }
-            None => return,
-        };
-        let owned_ptr = match self.id_to_ptr.get(&owned_id) {
-            Some(&ptr) => {
-                let gc_box = unsafe { ptr.as_ref() };
-                if gc_box.pooled.get() {
-                    return;
-                }
-                ptr
-            }
-            None => return,
-        };
-
-        // Silence unused warning - owner_ptr not needed for ownership tracking
-        let _ = owner_ptr;
-
-        // Check if this edge already exists (don't double-increment)
-        let edges = self.ownership_edges.entry(owner_id).or_default();
-        if !edges.iter().any(|(id, _)| *id == owned_id) {
-            edges.push((owned_id, owned_ptr));
-            // New edge - increment ref_count of owned object
-            self.inc_ref(owned_id);
-        }
-    }
-
-    /// Release ownership: owner no longer owns owned (decrements owned's ref_count)
-    fn disown(&mut self, owner_id: usize, owned_id: usize) {
-        let removed = if let Some(owned_vec) = self.ownership_edges.get_mut(&owner_id) {
-            // Find and remove the owned_id (swap_remove is O(1))
-            if let Some(pos) = owned_vec.iter().position(|(id, _)| *id == owned_id) {
-                owned_vec.swap_remove(pos);
-                if owned_vec.is_empty() {
-                    self.ownership_edges.remove(&owner_id);
-                }
-                true
-            } else {
-                false
-            }
-        } else {
-            false
-        };
-
-        if removed {
-            // Edge was removed - decrement ref_count (may pool if 0)
-            self.dec_ref(owned_id);
-        }
-    }
-
     /// Get statistics
     fn stats(&self) -> GcStats {
-        let ownership_edge_count: usize = self.ownership_edges.values().map(|s| s.len()).sum();
         let total_objects: usize = self.chunks.iter().map(|c| c.len()).sum();
 
         GcStats {
             total_objects,
             pooled_objects: self.pool.len(),
             live_objects: total_objects - self.pool.len(),
-            ownership_edges: ownership_edge_count,
         }
     }
 
@@ -496,7 +483,7 @@ pub struct Heap<T> {
     inner: Rc<RefCell<Space<T>>>,
 }
 
-impl<T: Default + Reset> Heap<T> {
+impl<T: Default + Reset + Traceable> Heap<T> {
     /// Create a new heap with default chunk capacity
     pub fn new() -> Self {
         Self {
@@ -535,7 +522,7 @@ impl<T: Default + Reset> Heap<T> {
     }
 }
 
-impl<T: Default + Reset> Default for Heap<T> {
+impl<T: Default + Reset + Traceable> Default for Heap<T> {
     fn default() -> Self {
         Self::new()
     }
@@ -557,7 +544,7 @@ impl<T> Clone for Heap<T> {
 ///
 /// Objects allocated through a guard have guard_count incremented.
 /// Uses Vec instead of HashSet for faster append-only tracking.
-pub struct Guard<T: Default + Reset> {
+pub struct Guard<T: Default + Reset + Traceable> {
     /// Object IDs guarded by this guard (append-only, may have duplicates)
     guarded_objects: RefCell<Vec<usize>>,
 
@@ -565,7 +552,7 @@ pub struct Guard<T: Default + Reset> {
     space: Weak<RefCell<Space<T>>>,
 }
 
-impl<T: Default + Reset> Guard<T> {
+impl<T: Default + Reset + Traceable> Guard<T> {
     /// Allocate a new object guarded by this guard.
     /// Returns a default T (either fresh or reset from pool).
     ///
@@ -606,7 +593,7 @@ impl<T: Default + Reset> Guard<T> {
     }
 }
 
-impl<T: Default + Reset> Drop for Guard<T> {
+impl<T: Default + Reset + Traceable> Drop for Guard<T> {
     fn drop(&mut self) {
         // Decrement guard_count for all guarded objects
         if let Some(space) = self.space.upgrade() {
@@ -620,68 +607,20 @@ impl<T: Default + Reset> Drop for Guard<T> {
 }
 
 // ============================================================================
-// Gc - smart pointer to GC-managed object
+// Gc methods that require Heap (own/disown)
 // ============================================================================
 
-/// A smart pointer to a GC-managed object.
-pub struct Gc<T> {
-    /// Unique object ID (for ownership tracking)
-    id: usize,
-
-    /// Pointer to the GcBox for fast access
-    ptr: NonNull<GcBox<T>>,
-
-    /// Marker for the type
-    _marker: std::marker::PhantomData<T>,
-}
-
-impl<T> Gc<T> {
-    /// Borrow the inner data immutably
-    pub fn borrow(&self) -> Ref<'_, T> {
-        unsafe { self.ptr.as_ref().data.borrow() }
-    }
-
-    /// Borrow the inner data mutably
-    pub fn borrow_mut(&self) -> RefMut<'_, T> {
-        unsafe { self.ptr.as_ref().data.borrow_mut() }
-    }
-
-    /// Get the object's unique ID
-    pub fn id(&self) -> usize {
-        self.id
-    }
-
-    /// Check if two Gc pointers point to the same object
-    pub fn ptr_eq(a: &Gc<T>, b: &Gc<T>) -> bool {
-        a.id == b.id
-    }
-}
-
-impl<T: Default + Reset> Gc<T> {
-    /// Establish ownership: self owns other.
-    /// Other becomes reachable through self.
+impl<T: Default + Reset + Traceable> Gc<T> {
+    /// Establish ownership: increment other's ref_count.
+    /// Call this when storing a Gc<T> reference in a field.
     pub fn own(&self, other: &Gc<T>, heap: &Heap<T>) {
-        heap.inner.borrow_mut().own(self.id, other.id);
+        heap.inner.borrow_mut().inc_ref(other.id);
     }
 
-    /// Release ownership: self no longer owns other.
-    /// Other may be collected if no longer reachable.
+    /// Release ownership: decrement other's ref_count.
+    /// Call this when removing/overwriting a Gc<T> reference from a field.
     pub fn disown(&self, other: &Gc<T>, heap: &Heap<T>) {
-        heap.inner.borrow_mut().disown(self.id, other.id);
-    }
-}
-
-impl<T> Clone for Gc<T> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<T> Copy for Gc<T> {}
-
-impl<T> std::fmt::Debug for Gc<T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Gc").field("id", &self.id).finish()
+        heap.inner.borrow_mut().dec_ref(other.id);
     }
 }
 
@@ -698,8 +637,6 @@ pub struct GcStats {
     pub pooled_objects: usize,
     /// Number of live objects
     pub live_objects: usize,
-    /// Number of ownership edges
-    pub ownership_edges: usize,
 }
 
 // ============================================================================
@@ -710,15 +647,26 @@ pub struct GcStats {
 mod tests {
     use super::*;
 
-    // Simple test type
-    #[derive(Default, Debug, PartialEq)]
+    // Test type that can hold references to other TestObjs
+    #[derive(Default, Debug)]
     struct TestObj {
         value: i32,
+        /// References to other objects (for testing ownership/tracing)
+        refs: Vec<Gc<TestObj>>,
     }
 
     impl Reset for TestObj {
         fn reset(&mut self) {
             self.value = 0;
+            self.refs.clear();
+        }
+    }
+
+    impl Traceable for TestObj {
+        fn trace<F: FnMut(Gc<Self>)>(&self, mut visitor: F) {
+            for &r in &self.refs {
+                visitor(r);
+            }
         }
     }
 
@@ -790,7 +738,8 @@ mod tests {
         a.borrow_mut().value = 1;
         b.borrow_mut().value = 2;
 
-        // A owns B
+        // A owns B: store reference and increment ref_count
+        a.borrow_mut().refs.push(b);
         a.own(&b, &heap);
 
         // Drop guard2 - B should survive because A owns it
@@ -809,13 +758,16 @@ mod tests {
         let a = guard1.alloc();
         let b = guard2.alloc();
 
+        // A owns B
+        a.borrow_mut().refs.push(b);
         a.own(&b, &heap);
         drop(guard2);
 
         heap.collect(); // Force collection
         assert_eq!(heap.stats().live_objects, 2);
 
-        // Disown B - it should be collected after GC
+        // Disown B - remove reference and decrement ref_count
+        a.borrow_mut().refs.clear();
         a.disown(&b, &heap);
         heap.collect(); // Force collection
 
@@ -835,17 +787,23 @@ mod tests {
         let c = guard3.alloc();
 
         // Both A and B own C
+        a.borrow_mut().refs.push(c);
         a.own(&c, &heap);
+        b.borrow_mut().refs.push(c);
         b.own(&c, &heap);
 
         drop(guard3);
         heap.collect();
         assert_eq!(heap.stats().live_objects, 3); // C alive via A and B
 
+        // A disowns C
+        a.borrow_mut().refs.clear();
         a.disown(&c, &heap);
         heap.collect();
         assert_eq!(heap.stats().live_objects, 3); // C still alive via B
 
+        // B disowns C
+        b.borrow_mut().refs.clear();
         b.disown(&c, &heap);
         heap.collect();
         assert_eq!(heap.stats().live_objects, 2); // C collected
@@ -863,11 +821,12 @@ mod tests {
         b.borrow_mut().value = 2;
 
         // Create cycle: A owns B, B owns A
+        a.borrow_mut().refs.push(b);
         a.own(&b, &heap);
+        b.borrow_mut().refs.push(a);
         b.own(&a, &heap);
 
         assert_eq!(heap.stats().live_objects, 2);
-        assert_eq!(heap.stats().ownership_edges, 2);
 
         // Unguard A from guard
         guard.unguard(&a);
@@ -893,6 +852,8 @@ mod tests {
         let a = guard1.alloc();
         let b = guard1.alloc();
 
+        // A owns B
+        a.borrow_mut().refs.push(b);
         a.own(&b, &heap);
 
         // Add guard2 to A - B should survive via A even if guard1 is dropped
@@ -915,7 +876,9 @@ mod tests {
         let c = guard.alloc();
 
         // A → B → C
+        a.borrow_mut().refs.push(b);
         a.own(&b, &heap);
+        b.borrow_mut().refs.push(c);
         b.own(&c, &heap);
 
         // Unguard B and C from direct guard
@@ -944,9 +907,15 @@ mod tests {
         let c = guard.alloc();
         let d = guard.alloc();
 
+        // A owns B and C
+        a.borrow_mut().refs.push(b);
         a.own(&b, &heap);
+        a.borrow_mut().refs.push(c);
         a.own(&c, &heap);
+        // B and C both own D
+        b.borrow_mut().refs.push(d);
         b.own(&d, &heap);
+        c.borrow_mut().refs.push(d);
         c.own(&d, &heap);
 
         // Unguard all except A
@@ -959,6 +928,7 @@ mod tests {
         assert_eq!(heap.stats().live_objects, 4);
 
         // Remove one path to D (B → D)
+        b.borrow_mut().refs.retain(|r| !Gc::ptr_eq(r, &d));
         b.disown(&d, &heap);
         heap.collect();
 
@@ -966,6 +936,7 @@ mod tests {
         assert_eq!(heap.stats().live_objects, 4);
 
         // Remove other path to D (C → D)
+        c.borrow_mut().refs.retain(|r| !Gc::ptr_eq(r, &d));
         c.disown(&d, &heap);
         heap.collect();
 
