@@ -34,7 +34,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut runtime = Runtime::new();
     runtime.set_gc_threshold(100);
-    runtime.set_timeout_ms(180*1000);
+    runtime.set_timeout_ms(300*1000);
     let result = runtime.eval_simple(&source)?;
 
     print_value(&result);
