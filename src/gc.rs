@@ -175,9 +175,6 @@ struct GcBox<T> {
     /// Reference count (ownership edges pointing to this object)
     ref_count: Cell<usize>,
 
-    /// Mark bit for mark-and-sweep collection (for cycle detection)
-    marked: Cell<bool>,
-
     /// Whether this object is in the pool (dead)
     pooled: Cell<bool>,
 }
@@ -189,7 +186,6 @@ impl<T> GcBox<T> {
             data: RefCell::new(data),
             guard_count: Cell::new(0),
             ref_count: Cell::new(0),
-            marked: Cell::new(false),
             pooled: Cell::new(false),
         }
     }
@@ -219,6 +215,10 @@ struct Space<T> {
     /// Also serves as the set of all live (non-pooled) objects.
     id_to_ptr: rustc_hash::FxHashMap<usize, NonNull<GcBox<T>>>,
 
+    /// Mark set for mark-and-sweep collection (stores object IDs)
+    /// Stored in Space rather than GcBox for better cache locality during marking.
+    marked: rustc_hash::FxHashSet<usize>,
+
     /// Net allocations: incremented on alloc, decremented on dealloc
     /// GC triggers when this exceeds threshold
     net_allocs: isize,
@@ -246,6 +246,7 @@ impl<T: Default + Reset + Traceable + Unlink> Space<T> {
             pool: Vec::new(),
             next_object_id: 0,
             id_to_ptr: rustc_hash::FxHashMap::default(),
+            marked: rustc_hash::FxHashSet::default(),
             net_allocs: 0,
             gc_threshold: DEFAULT_GC_THRESHOLD as isize,
         }
@@ -269,7 +270,6 @@ impl<T: Default + Reset + Traceable + Unlink> Space<T> {
             gc_box.data.borrow_mut().reset();
             gc_box.guard_count.set(1); // Start with guard_count = 1 for the allocating guard
             gc_box.ref_count.set(0);
-            gc_box.marked.set(false);
             gc_box.pooled.set(false);
 
             // Assign new ID for reused object
@@ -397,53 +397,58 @@ impl<T: Default + Reset + Traceable + Unlink> Space<T> {
 
     /// Mark phase: mark all objects reachable from roots (guard_count > 0)
     fn mark(&mut self) {
+        // Clear mark set from previous collection
+        self.marked.clear();
+
         // Collect roots from id_to_ptr (all live objects with guard_count > 0)
-        let mut stack: Vec<NonNull<GcBox<T>>> = Vec::with_capacity(64);
-        for &ptr in self.id_to_ptr.values() {
+        let mut stack: Vec<usize> = Vec::with_capacity(64);
+        for (&id, &ptr) in &self.id_to_ptr {
             let gc_box = unsafe { ptr.as_ref() };
             if gc_box.guard_count.get() > 0 {
-                stack.push(ptr);
+                stack.push(id);
             }
         }
 
         // Iterative mark traversal using Traceable::trace()
-        while let Some(ptr) = stack.pop() {
-            // Safety: ptr came from our chunks which are stable
-            let gc_box = unsafe { ptr.as_ref() };
-
+        while let Some(id) = stack.pop() {
             // Already marked - skip
-            if gc_box.marked.get() {
+            if self.marked.contains(&id) {
                 continue;
             }
 
             // Mark this object
-            gc_box.marked.set(true);
+            self.marked.insert(id);
+
+            // Get the object pointer
+            let Some(&ptr) = self.id_to_ptr.get(&id) else {
+                continue;
+            };
+
+            // Safety: ptr came from our chunks which are stable
+            let gc_box = unsafe { ptr.as_ref() };
 
             // Trace references via Traceable trait
             // Panics if data is already borrowed (indicates bug - GC during borrow)
             let data = gc_box.data.borrow();
             data.trace(|child: GcPtr<T>| {
-                // Only push if not already marked to avoid redundant work
+                let child_id = child.id;
+                // Only push if not already marked and not pooled
                 let child_box = unsafe { child.ptr.as_ref() };
-                if !child_box.marked.get() && !child_box.pooled.get() {
-                    stack.push(child.ptr);
+                if !self.marked.contains(&child_id) && !child_box.pooled.get() {
+                    stack.push(child_id);
                 }
             });
         }
     }
 
-    /// Sweep phase: collect all unmarked objects and clear marks
+    /// Sweep phase: collect all unmarked objects
     /// Returns number of objects collected
     fn sweep(&mut self) -> usize {
         let mut to_unlink: Vec<(usize, NonNull<GcBox<T>>)> = Vec::new();
 
         // Iterate over live objects only (id_to_ptr contains only non-pooled objects)
         for (&id, &ptr) in &self.id_to_ptr {
-            let gc_box = unsafe { ptr.as_ref() };
-            if gc_box.marked.get() {
-                // Clear mark for next collection
-                gc_box.marked.set(false);
-            } else {
+            if !self.marked.contains(&id) {
                 // Unmarked = unreachable, will unlink and collect
                 to_unlink.push((id, ptr));
             }
