@@ -2,14 +2,13 @@
 
 use super::map::same_value_zero;
 use crate::error::JsError;
+use crate::gc::Gc;
 use crate::interpreter::Interpreter;
-use crate::value::{
-    create_function, ExoticObject, JsFunction, JsObjectRef, JsValue, NativeFunction, PropertyKey,
-};
+use crate::value::{ExoticObject, Guarded, JsObject, JsValue, PropertyKey};
 
 /// Initialize Set.prototype with add, has, delete, clear, forEach methods
 pub fn init_set_prototype(interp: &mut Interpreter) {
-    let proto = interp.set_prototype.clone();
+    let proto = interp.set_prototype;
 
     interp.register_method(&proto, "add", set_add, 1);
     interp.register_method(&proto, "has", set_has, 1);
@@ -21,36 +20,46 @@ pub fn init_set_prototype(interp: &mut Interpreter) {
     interp.register_method(&proto, "entries", set_entries, 0);
 }
 
-/// Create Set constructor
-pub fn create_set_constructor(interp: &mut Interpreter) -> JsObjectRef {
-    let name = interp.intern("Set");
-    create_function(
-        &mut interp.gc_space,
-        &mut interp.string_dict,
-        JsFunction::Native(NativeFunction {
-            name,
-            func: set_constructor,
-            arity: 0,
-        }),
-    )
+/// Create Set constructor and register it globally
+pub fn init_set(interp: &mut Interpreter) {
+    init_set_prototype(interp);
+
+    let constructor = interp.create_native_function("Set", set_constructor, 0);
+    interp.root_guard.guard(&constructor);
+
+    // Set prototype property on constructor
+    let proto_key = interp.key("prototype");
+    constructor.own(&interp.set_prototype, &interp.heap);
+    constructor
+        .borrow_mut()
+        .set_property(proto_key, JsValue::Object(interp.set_prototype));
+
+    // Register globally
+    let set_key = interp.key("Set");
+    interp.global.own(&constructor, &interp.heap);
+    interp
+        .global
+        .borrow_mut()
+        .set_property(set_key, JsValue::Object(constructor));
 }
 
 pub fn set_constructor(
     interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let size_key = interp.key("size");
 
-    let set_obj = interp.create_object();
+    let (set_obj, set_guard) = interp.create_object_with_guard();
     {
         let mut obj = set_obj.borrow_mut();
         obj.exotic = ExoticObject::Set {
             entries: Vec::new(),
         };
-        obj.prototype = Some(interp.set_prototype.clone());
-        obj.set_property(size_key.clone(), JsValue::Number(0.0));
+        obj.prototype = Some(interp.set_prototype);
+        obj.set_property(size_key, JsValue::Number(0.0));
     }
+    set_obj.own(&interp.set_prototype, &interp.heap);
 
     // If an iterable (array) is passed, add its elements
     if let Some(JsValue::Object(arr)) = args.first() {
@@ -64,9 +73,14 @@ pub fn set_constructor(
             }
             drop(arr_ref);
 
+            let size_key = interp.key("size");
             let mut set = set_obj.borrow_mut();
             if let ExoticObject::Set { ref mut entries } = set.exotic {
                 for value in items {
+                    // Own any object values
+                    if let JsValue::Object(ref obj) = value {
+                        set_obj.own(obj, &interp.heap);
+                    }
                     // Only add if not already present
                     let exists = entries.iter().any(|e| same_value_zero(e, &value));
                     if !exists {
@@ -79,14 +93,14 @@ pub fn set_constructor(
         }
     }
 
-    Ok(JsValue::Object(set_obj))
+    Ok(Guarded::with_guard(JsValue::Object(set_obj), set_guard))
 }
 
 pub fn set_add(
     interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let JsValue::Object(set_obj) = this.clone() else {
         return Err(JsError::type_error(
             "Set.prototype.add called on non-object",
@@ -96,6 +110,12 @@ pub fn set_add(
     let size_key = interp.key("size");
 
     let value = args.first().cloned().unwrap_or(JsValue::Undefined);
+
+    // Own any object values
+    if let JsValue::Object(ref obj) = value {
+        set_obj.own(obj, &interp.heap);
+    }
+
     let mut set = set_obj.borrow_mut();
 
     if let ExoticObject::Set { ref mut entries } = set.exotic {
@@ -109,14 +129,14 @@ pub fn set_add(
     }
 
     drop(set);
-    Ok(this) // Return the set for chaining
+    Ok(Guarded::unguarded(this)) // Return the set for chaining
 }
 
 pub fn set_has(
     _interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let JsValue::Object(set_obj) = this else {
         return Err(JsError::type_error(
             "Set.prototype.has called on non-object",
@@ -129,19 +149,19 @@ pub fn set_has(
     if let ExoticObject::Set { ref entries } = set.exotic {
         for e in entries {
             if same_value_zero(e, &value) {
-                return Ok(JsValue::Boolean(true));
+                return Ok(Guarded::unguarded(JsValue::Boolean(true)));
             }
         }
     }
 
-    Ok(JsValue::Boolean(false))
+    Ok(Guarded::unguarded(JsValue::Boolean(false)))
 }
 
 pub fn set_delete(
     interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let JsValue::Object(set_obj) = this else {
         return Err(JsError::type_error(
             "Set.prototype.delete called on non-object",
@@ -158,18 +178,18 @@ pub fn set_delete(
             entries.remove(i);
             let len = entries.len();
             set.set_property(size_key, JsValue::Number(len as f64));
-            return Ok(JsValue::Boolean(true));
+            return Ok(Guarded::unguarded(JsValue::Boolean(true)));
         }
     }
 
-    Ok(JsValue::Boolean(false))
+    Ok(Guarded::unguarded(JsValue::Boolean(false)))
 }
 
 pub fn set_clear(
     interp: &mut Interpreter,
     this: JsValue,
     _args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let JsValue::Object(set_obj) = this else {
         return Err(JsError::type_error(
             "Set.prototype.clear called on non-object",
@@ -185,14 +205,14 @@ pub fn set_clear(
         set.set_property(size_key, JsValue::Number(0.0));
     }
 
-    Ok(JsValue::Undefined)
+    Ok(Guarded::unguarded(JsValue::Undefined))
 }
 
 pub fn set_foreach(
     interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let JsValue::Object(set_obj) = this.clone() else {
         return Err(JsError::type_error(
             "Set.prototype.forEach called on non-object",
@@ -224,23 +244,23 @@ pub fn set_foreach(
         )?;
     }
 
-    Ok(JsValue::Undefined)
+    Ok(Guarded::unguarded(JsValue::Undefined))
 }
 
 pub fn set_keys(
     interp: &mut Interpreter,
     this: JsValue,
-    _args: &[JsValue],
-) -> Result<JsValue, JsError> {
+    args: &[JsValue],
+) -> Result<Guarded, JsError> {
     // For Set, keys() returns the same as values()
-    set_values(interp, this, _args)
+    set_values(interp, this, args)
 }
 
 pub fn set_values(
     interp: &mut Interpreter,
     this: JsValue,
     _args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let JsValue::Object(set_obj) = this else {
         return Err(JsError::type_error(
             "Set.prototype.values called on non-object",
@@ -259,14 +279,15 @@ pub fn set_values(
         }
     }
 
-    Ok(JsValue::Object(interp.create_array(values)))
+    let (arr, guard) = interp.create_array(values);
+    Ok(Guarded::with_guard(JsValue::Object(arr), guard))
 }
 
 pub fn set_entries(
     interp: &mut Interpreter,
     this: JsValue,
     _args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let JsValue::Object(set_obj) = this else {
         return Err(JsError::type_error(
             "Set.prototype.entries called on non-object",
@@ -286,17 +307,20 @@ pub fn set_entries(
     }
 
     // For Set, entries returns [value, value] pairs
-    // Guard each entry array as it's created to prevent GC from corrupting them.
-    // The scope must remain alive until after create_array(entries) completes.
-    let mut scope = interp.guarded_scope();
+    // Build entry arrays and collect nested objects for ownership
     let mut entries = Vec::with_capacity(raw_entries.len());
+    let mut nested_arrays: Vec<Gc<JsObject>> = Vec::new();
     for v in raw_entries {
-        let arr = interp.create_array(vec![v.clone(), v]);
-        scope.add(&arr);
+        let (arr, _guard) = interp.create_array(vec![v.clone(), v]);
+        interp.root_guard.guard(&arr);
+        nested_arrays.push(arr);
         entries.push(JsValue::Object(arr));
     }
 
-    let result = interp.create_array(entries);
-    drop(scope);
-    Ok(JsValue::Object(result))
+    let (result, guard) = interp.create_array(entries);
+    // Own all nested arrays
+    for nested in nested_arrays {
+        result.own(&nested, &interp.heap);
+    }
+    Ok(Guarded::with_guard(JsValue::Object(result), guard))
 }

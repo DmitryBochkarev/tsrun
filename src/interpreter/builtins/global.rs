@@ -2,132 +2,98 @@
 
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
-use crate::value::{create_function, JsFunction, JsString, JsValue, NativeFunction};
+use crate::value::{Guarded, JsString, JsValue};
 
-/// Register global functions (parseInt, parseFloat, isNaN, isFinite, URI functions) into environment
-pub fn register_global_functions(interp: &mut Interpreter) {
-    let name = interp.intern("parseInt");
-    let parseint_fn = create_function(
-        &mut interp.gc_space,
-        &mut interp.string_dict,
-        JsFunction::Native(NativeFunction {
-            name,
-            func: global_parse_int,
-            arity: 2,
-        }),
-    );
-    interp.env_define("parseInt".to_string(), JsValue::Object(parseint_fn), false);
+/// Register global functions (parseInt, parseFloat, isNaN, isFinite, URI functions)
+pub fn init_global_functions(interp: &mut Interpreter) {
+    // parseInt
+    let parseint_fn = interp.create_native_function("parseInt", global_parse_int, 2);
+    interp.root_guard.guard(&parseint_fn);
+    let key = interp.key("parseInt");
+    interp.global.own(&parseint_fn, &interp.heap);
+    interp
+        .global
+        .borrow_mut()
+        .set_property(key, JsValue::Object(parseint_fn));
 
-    let name = interp.intern("parseFloat");
-    let parsefloat_fn = create_function(
-        &mut interp.gc_space,
-        &mut interp.string_dict,
-        JsFunction::Native(NativeFunction {
-            name,
-            func: global_parse_float,
-            arity: 1,
-        }),
-    );
-    interp.env_define(
-        "parseFloat".to_string(),
-        JsValue::Object(parsefloat_fn),
-        false,
-    );
+    // parseFloat
+    let parsefloat_fn = interp.create_native_function("parseFloat", global_parse_float, 1);
+    interp.root_guard.guard(&parsefloat_fn);
+    let key = interp.key("parseFloat");
+    interp.global.own(&parsefloat_fn, &interp.heap);
+    interp
+        .global
+        .borrow_mut()
+        .set_property(key, JsValue::Object(parsefloat_fn));
 
-    let name = interp.intern("isNaN");
-    let isnan_fn = create_function(
-        &mut interp.gc_space,
-        &mut interp.string_dict,
-        JsFunction::Native(NativeFunction {
-            name,
-            func: global_is_nan,
-            arity: 1,
-        }),
-    );
-    interp.env_define("isNaN".to_string(), JsValue::Object(isnan_fn), false);
+    // isNaN
+    let isnan_fn = interp.create_native_function("isNaN", global_is_nan, 1);
+    interp.root_guard.guard(&isnan_fn);
+    let key = interp.key("isNaN");
+    interp.global.own(&isnan_fn, &interp.heap);
+    interp
+        .global
+        .borrow_mut()
+        .set_property(key, JsValue::Object(isnan_fn));
 
-    let name = interp.intern("isFinite");
-    let isfinite_fn = create_function(
-        &mut interp.gc_space,
-        &mut interp.string_dict,
-        JsFunction::Native(NativeFunction {
-            name,
-            func: global_is_finite,
-            arity: 1,
-        }),
-    );
-    interp.env_define("isFinite".to_string(), JsValue::Object(isfinite_fn), false);
+    // isFinite
+    let isfinite_fn = interp.create_native_function("isFinite", global_is_finite, 1);
+    interp.root_guard.guard(&isfinite_fn);
+    let key = interp.key("isFinite");
+    interp.global.own(&isfinite_fn, &interp.heap);
+    interp
+        .global
+        .borrow_mut()
+        .set_property(key, JsValue::Object(isfinite_fn));
 
-    let name = interp.intern("encodeURI");
-    let encodeuri_fn = create_function(
-        &mut interp.gc_space,
-        &mut interp.string_dict,
-        JsFunction::Native(NativeFunction {
-            name,
-            func: global_encode_uri,
-            arity: 1,
-        }),
-    );
-    interp.env_define(
-        "encodeURI".to_string(),
-        JsValue::Object(encodeuri_fn),
-        false,
-    );
+    // encodeURI
+    let encodeuri_fn = interp.create_native_function("encodeURI", global_encode_uri, 1);
+    interp.root_guard.guard(&encodeuri_fn);
+    let key = interp.key("encodeURI");
+    interp.global.own(&encodeuri_fn, &interp.heap);
+    interp
+        .global
+        .borrow_mut()
+        .set_property(key, JsValue::Object(encodeuri_fn));
 
-    let name = interp.intern("decodeURI");
-    let decodeuri_fn = create_function(
-        &mut interp.gc_space,
-        &mut interp.string_dict,
-        JsFunction::Native(NativeFunction {
-            name,
-            func: global_decode_uri,
-            arity: 1,
-        }),
-    );
-    interp.env_define(
-        "decodeURI".to_string(),
-        JsValue::Object(decodeuri_fn),
-        false,
-    );
+    // decodeURI
+    let decodeuri_fn = interp.create_native_function("decodeURI", global_decode_uri, 1);
+    interp.root_guard.guard(&decodeuri_fn);
+    let key = interp.key("decodeURI");
+    interp.global.own(&decodeuri_fn, &interp.heap);
+    interp
+        .global
+        .borrow_mut()
+        .set_property(key, JsValue::Object(decodeuri_fn));
 
-    let name = interp.intern("encodeURIComponent");
-    let encodeuricomponent_fn = create_function(
-        &mut interp.gc_space,
-        &mut interp.string_dict,
-        JsFunction::Native(NativeFunction {
-            name,
-            func: global_encode_uri_component,
-            arity: 1,
-        }),
-    );
-    interp.env_define(
-        "encodeURIComponent".to_string(),
-        JsValue::Object(encodeuricomponent_fn),
-        false,
-    );
+    // encodeURIComponent
+    let encodeuricomponent_fn =
+        interp.create_native_function("encodeURIComponent", global_encode_uri_component, 1);
+    interp.root_guard.guard(&encodeuricomponent_fn);
+    let key = interp.key("encodeURIComponent");
+    interp.global.own(&encodeuricomponent_fn, &interp.heap);
+    interp
+        .global
+        .borrow_mut()
+        .set_property(key, JsValue::Object(encodeuricomponent_fn));
 
-    let name = interp.intern("decodeURIComponent");
-    let decodeuricomponent_fn = create_function(
-        &mut interp.gc_space,
-        &mut interp.string_dict,
-        JsFunction::Native(NativeFunction {
-            name,
-            func: global_decode_uri_component,
-            arity: 1,
-        }),
-    );
-    interp.env_define(
-        "decodeURIComponent".to_string(),
-        JsValue::Object(decodeuricomponent_fn),
-        false,
-    );
+    // decodeURIComponent
+    let decodeuricomponent_fn =
+        interp.create_native_function("decodeURIComponent", global_decode_uri_component, 1);
+    interp.root_guard.guard(&decodeuricomponent_fn);
+    let key = interp.key("decodeURIComponent");
+    interp.global.own(&decodeuricomponent_fn, &interp.heap);
+    interp
+        .global
+        .borrow_mut()
+        .set_property(key, JsValue::Object(decodeuricomponent_fn));
 }
 
 pub fn global_parse_int(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let string = args
         .first()
         .map(|v| v.to_js_string())
@@ -139,13 +105,13 @@ pub fn global_parse_int(
     let s = string.trim();
 
     if s.is_empty() {
-        return Ok(JsValue::Number(f64::NAN));
+        return Ok(Guarded::unguarded(JsValue::Number(f64::NAN)));
     }
 
     // Handle radix
     let radix = if radix == 0 { 10 } else { radix };
     if !(2..=36).contains(&radix) {
-        return Ok(JsValue::Number(f64::NAN));
+        return Ok(Guarded::unguarded(JsValue::Number(f64::NAN)));
     }
 
     // Handle sign
@@ -180,18 +146,18 @@ pub fn global_parse_int(
     }
 
     if !found_digit {
-        return Ok(JsValue::Number(f64::NAN));
+        return Ok(Guarded::unguarded(JsValue::Number(f64::NAN)));
     }
 
     let result = if negative { -result } else { result };
-    Ok(JsValue::Number(result as f64))
+    Ok(Guarded::unguarded(JsValue::Number(result as f64)))
 }
 
 pub fn global_parse_float(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let string = args
         .first()
         .map(|v| v.to_js_string())
@@ -200,7 +166,7 @@ pub fn global_parse_float(
     let s = string.trim();
 
     if s.is_empty() {
-        return Ok(JsValue::Number(f64::NAN));
+        return Ok(Guarded::unguarded(JsValue::Number(f64::NAN)));
     }
 
     // Find the longest valid float prefix
@@ -243,8 +209,8 @@ pub fn global_parse_float(
         }
     }
     match num_str.parse::<f64>() {
-        Ok(n) => Ok(JsValue::Number(n)),
-        Err(_) => Ok(JsValue::Number(f64::NAN)),
+        Ok(n) => Ok(Guarded::unguarded(JsValue::Number(n))),
+        Err(_) => Ok(Guarded::unguarded(JsValue::Number(f64::NAN))),
     }
 }
 
@@ -253,9 +219,9 @@ pub fn global_is_nan(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let n = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
-    Ok(JsValue::Boolean(n.is_nan()))
+    Ok(Guarded::unguarded(JsValue::Boolean(n.is_nan())))
 }
 
 // Global isFinite - converts argument to number first
@@ -263,9 +229,9 @@ pub fn global_is_finite(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let n = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
-    Ok(JsValue::Boolean(n.is_finite()))
+    Ok(Guarded::unguarded(JsValue::Boolean(n.is_finite())))
 }
 
 // Characters that encodeURI should NOT encode (RFC 3986 + extra URI chars)
@@ -277,7 +243,7 @@ pub fn global_encode_uri(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let s = args
         .first()
         .map(|v| v.to_js_string())
@@ -294,27 +260,27 @@ pub fn global_encode_uri(
             }
         }
     }
-    Ok(JsValue::String(JsString::from(result)))
+    Ok(Guarded::unguarded(JsValue::String(JsString::from(result))))
 }
 
 pub fn global_decode_uri(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let s = args
         .first()
         .map(|v| v.to_js_string())
         .unwrap_or_else(|| JsString::from(""));
     let result = percent_decode(s.as_str(), true);
-    Ok(JsValue::String(JsString::from(result)))
+    Ok(Guarded::unguarded(JsValue::String(JsString::from(result))))
 }
 
 pub fn global_encode_uri_component(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let s = args
         .first()
         .map(|v| v.to_js_string())
@@ -331,20 +297,20 @@ pub fn global_encode_uri_component(
             }
         }
     }
-    Ok(JsValue::String(JsString::from(result)))
+    Ok(Guarded::unguarded(JsValue::String(JsString::from(result))))
 }
 
 pub fn global_decode_uri_component(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let s = args
         .first()
         .map(|v| v.to_js_string())
         .unwrap_or_else(|| JsString::from(""));
     let result = percent_decode(s.as_str(), false);
-    Ok(JsValue::String(JsString::from(result)))
+    Ok(Guarded::unguarded(JsValue::String(JsString::from(result))))
 }
 
 fn percent_decode(s: &str, preserve_reserved: bool) -> String {

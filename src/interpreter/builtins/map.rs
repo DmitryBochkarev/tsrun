@@ -1,14 +1,13 @@
 //! Map built-in methods
 
 use crate::error::JsError;
+use crate::gc::Gc;
 use crate::interpreter::Interpreter;
-use crate::value::{
-    create_function, ExoticObject, JsFunction, JsObjectRef, JsValue, NativeFunction, PropertyKey,
-};
+use crate::value::{ExoticObject, Guarded, JsObject, JsValue, PropertyKey};
 
 /// Initialize Map.prototype with get, set, has, delete, clear, forEach methods
 pub fn init_map_prototype(interp: &mut Interpreter) {
-    let proto = interp.map_prototype.clone();
+    let proto = interp.map_prototype;
 
     interp.register_method(&proto, "get", map_get, 1);
     interp.register_method(&proto, "set", map_set, 2);
@@ -21,18 +20,27 @@ pub fn init_map_prototype(interp: &mut Interpreter) {
     interp.register_method(&proto, "entries", map_entries, 0);
 }
 
-/// Create Map constructor
-pub fn create_map_constructor(interp: &mut Interpreter) -> JsObjectRef {
-    let name = interp.intern("Map");
-    create_function(
-        &mut interp.gc_space,
-        &mut interp.string_dict,
-        JsFunction::Native(NativeFunction {
-            name,
-            func: map_constructor,
-            arity: 0,
-        }),
-    )
+/// Create Map constructor and register it globally
+pub fn init_map(interp: &mut Interpreter) {
+    init_map_prototype(interp);
+
+    let constructor = interp.create_native_function("Map", map_constructor, 0);
+    interp.root_guard.guard(&constructor);
+
+    // Set prototype property on constructor
+    let proto_key = interp.key("prototype");
+    constructor.own(&interp.map_prototype, &interp.heap);
+    constructor
+        .borrow_mut()
+        .set_property(proto_key, JsValue::Object(interp.map_prototype));
+
+    // Register globally
+    let map_key = interp.key("Map");
+    interp.global.own(&constructor, &interp.heap);
+    interp
+        .global
+        .borrow_mut()
+        .set_property(map_key, JsValue::Object(constructor));
 }
 
 // Helper to check SameValueZero equality for Map/Set keys
@@ -58,18 +66,19 @@ pub fn map_constructor(
     interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let size_key = interp.key("size");
 
-    let map_obj = interp.create_object();
+    let (map_obj, map_guard) = interp.create_object_with_guard();
     {
         let mut obj = map_obj.borrow_mut();
         obj.exotic = ExoticObject::Map {
             entries: Vec::new(),
         };
-        obj.prototype = Some(interp.map_prototype.clone());
-        obj.set_property(size_key.clone(), JsValue::Number(0.0));
+        obj.prototype = Some(interp.map_prototype);
+        obj.set_property(size_key, JsValue::Number(0.0));
     }
+    map_obj.own(&interp.map_prototype, &interp.heap);
 
     // If an iterable is passed, add its entries
     // First collect all pairs from the array, then add them to the map
@@ -99,9 +108,17 @@ pub fn map_constructor(
         };
 
         // Now add all pairs to the map
+        let size_key = interp.key("size");
         let mut map = map_obj.borrow_mut();
         if let ExoticObject::Map { ref mut entries } = map.exotic {
             for (key, value) in pairs {
+                // Own any object keys/values
+                if let JsValue::Object(ref obj) = key {
+                    map_obj.own(obj, &interp.heap);
+                }
+                if let JsValue::Object(ref obj) = value {
+                    map_obj.own(obj, &interp.heap);
+                }
                 // Check if key already exists
                 let mut found = false;
                 for entry in entries.iter_mut() {
@@ -120,14 +137,14 @@ pub fn map_constructor(
         }
     }
 
-    Ok(JsValue::Object(map_obj))
+    Ok(Guarded::with_guard(JsValue::Object(map_obj), map_guard))
 }
 
 pub fn map_get(
     _interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let JsValue::Object(map_obj) = this else {
         return Err(JsError::type_error(
             "Map.prototype.get called on non-object",
@@ -140,19 +157,19 @@ pub fn map_get(
     if let ExoticObject::Map { ref entries } = map.exotic {
         for (k, v) in entries {
             if same_value_zero(k, &key) {
-                return Ok(v.clone());
+                return Ok(Guarded::unguarded(v.clone()));
             }
         }
     }
 
-    Ok(JsValue::Undefined)
+    Ok(Guarded::unguarded(JsValue::Undefined))
 }
 
 pub fn map_set(
     interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let JsValue::Object(map_obj) = this.clone() else {
         return Err(JsError::type_error(
             "Map.prototype.set called on non-object",
@@ -164,6 +181,14 @@ pub fn map_set(
     let key = args.first().cloned().unwrap_or(JsValue::Undefined);
     let value = args.get(1).cloned().unwrap_or(JsValue::Undefined);
 
+    // Own any object keys/values
+    if let JsValue::Object(ref obj) = key {
+        map_obj.own(obj, &interp.heap);
+    }
+    if let JsValue::Object(ref obj) = value {
+        map_obj.own(obj, &interp.heap);
+    }
+
     let mut map = map_obj.borrow_mut();
 
     if let ExoticObject::Map { ref mut entries } = map.exotic {
@@ -172,7 +197,7 @@ pub fn map_set(
             if same_value_zero(&entry.0, &key) {
                 entry.1 = value;
                 drop(map);
-                return Ok(this); // Return the map for chaining
+                return Ok(Guarded::unguarded(this)); // Return the map for chaining
             }
         }
         entries.push((key, value));
@@ -182,14 +207,14 @@ pub fn map_set(
     }
 
     drop(map);
-    Ok(this) // Return the map for chaining
+    Ok(Guarded::unguarded(this)) // Return the map for chaining
 }
 
 pub fn map_has(
     _interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let JsValue::Object(map_obj) = this else {
         return Err(JsError::type_error(
             "Map.prototype.has called on non-object",
@@ -202,19 +227,19 @@ pub fn map_has(
     if let ExoticObject::Map { ref entries } = map.exotic {
         for (k, _) in entries {
             if same_value_zero(k, &key) {
-                return Ok(JsValue::Boolean(true));
+                return Ok(Guarded::unguarded(JsValue::Boolean(true)));
             }
         }
     }
 
-    Ok(JsValue::Boolean(false))
+    Ok(Guarded::unguarded(JsValue::Boolean(false)))
 }
 
 pub fn map_delete(
     interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let JsValue::Object(map_obj) = this else {
         return Err(JsError::type_error(
             "Map.prototype.delete called on non-object",
@@ -231,18 +256,18 @@ pub fn map_delete(
             entries.remove(i);
             let len = entries.len();
             map.set_property(size_key, JsValue::Number(len as f64));
-            return Ok(JsValue::Boolean(true));
+            return Ok(Guarded::unguarded(JsValue::Boolean(true)));
         }
     }
 
-    Ok(JsValue::Boolean(false))
+    Ok(Guarded::unguarded(JsValue::Boolean(false)))
 }
 
 pub fn map_clear(
     interp: &mut Interpreter,
     this: JsValue,
     _args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let JsValue::Object(map_obj) = this else {
         return Err(JsError::type_error(
             "Map.prototype.clear called on non-object",
@@ -258,14 +283,14 @@ pub fn map_clear(
         map.set_property(size_key, JsValue::Number(0.0));
     }
 
-    Ok(JsValue::Undefined)
+    Ok(Guarded::unguarded(JsValue::Undefined))
 }
 
 pub fn map_foreach(
     interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let JsValue::Object(map_obj) = this.clone() else {
         return Err(JsError::type_error(
             "Map.prototype.forEach called on non-object",
@@ -296,14 +321,14 @@ pub fn map_foreach(
         )?;
     }
 
-    Ok(JsValue::Undefined)
+    Ok(Guarded::unguarded(JsValue::Undefined))
 }
 
 pub fn map_keys(
     interp: &mut Interpreter,
     this: JsValue,
     _args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let JsValue::Object(map_obj) = this else {
         return Err(JsError::type_error(
             "Map.prototype.keys called on non-object",
@@ -320,14 +345,15 @@ pub fn map_keys(
         }
     }
 
-    Ok(JsValue::Object(interp.create_array(keys)))
+    let (arr, guard) = interp.create_array(keys);
+    Ok(Guarded::with_guard(JsValue::Object(arr), guard))
 }
 
 pub fn map_values(
     interp: &mut Interpreter,
     this: JsValue,
     _args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let JsValue::Object(map_obj) = this else {
         return Err(JsError::type_error(
             "Map.prototype.values called on non-object",
@@ -346,14 +372,15 @@ pub fn map_values(
         }
     }
 
-    Ok(JsValue::Object(interp.create_array(values)))
+    let (arr, guard) = interp.create_array(values);
+    Ok(Guarded::with_guard(JsValue::Object(arr), guard))
 }
 
 pub fn map_entries(
     interp: &mut Interpreter,
     this: JsValue,
     _args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let JsValue::Object(map_obj) = this else {
         return Err(JsError::type_error(
             "Map.prototype.entries called on non-object",
@@ -372,17 +399,20 @@ pub fn map_entries(
         }
     }
 
-    // Guard each entry array as it's created to prevent GC from corrupting them.
-    // The scope must remain alive until after create_array(entries) completes.
-    let mut scope = interp.guarded_scope();
+    // Build entry arrays and collect nested objects for ownership
     let mut entries = Vec::with_capacity(raw_entries.len());
+    let mut nested_arrays: Vec<Gc<JsObject>> = Vec::new();
     for (k, v) in raw_entries {
-        let arr = interp.create_array(vec![k, v]);
-        scope.add(&arr);
+        let (arr, _guard) = interp.create_array(vec![k, v]);
+        interp.root_guard.guard(&arr);
+        nested_arrays.push(arr);
         entries.push(JsValue::Object(arr));
     }
 
-    let result = interp.create_array(entries);
-    drop(scope);
-    Ok(JsValue::Object(result))
+    let (result, guard) = interp.create_array(entries);
+    // Own all nested arrays
+    for nested in nested_arrays {
+        result.own(&nested, &interp.heap);
+    }
+    Ok(Guarded::with_guard(JsValue::Object(result), guard))
 }

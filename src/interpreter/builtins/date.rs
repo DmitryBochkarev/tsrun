@@ -4,9 +4,7 @@ use chrono::{Datelike, TimeZone, Timelike, Utc};
 
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
-use crate::value::{
-    create_function, ExoticObject, JsFunction, JsObjectRef, JsString, JsValue, NativeFunction,
-};
+use crate::value::{ExoticObject, Guarded, JsString, JsValue};
 
 /// Create a date from components, handling JavaScript-style overflow
 /// (e.g., month 12 becomes January of next year, day 0 becomes last day of previous month)
@@ -76,7 +74,7 @@ fn parse_date_string(s: &str) -> f64 {
 
 /// Initialize Date.prototype with getTime, getFullYear, getMonth, etc.
 pub fn init_date_prototype(interp: &mut Interpreter) {
-    let proto = interp.date_prototype.clone();
+    let proto = interp.date_prototype;
 
     // Getter methods (local time = UTC in our implementation)
     interp.register_method(&proto, "getTime", date_get_time, 0);
@@ -118,36 +116,39 @@ pub fn init_date_prototype(interp: &mut Interpreter) {
     interp.register_method(&proto, "toTimeString", date_to_time_string, 0);
 }
 
-/// Create Date constructor with static methods (now, UTC, parse)
-pub fn create_date_constructor(interp: &mut Interpreter) -> JsObjectRef {
-    let name = interp.intern("Date");
-    let constructor = create_function(
-        &mut interp.gc_space,
-        &mut interp.string_dict,
-        JsFunction::Native(NativeFunction {
-            name,
-            func: date_constructor,
-            arity: 0,
-        }),
-    );
+/// Create Date constructor and register it globally
+pub fn init_date(interp: &mut Interpreter) {
+    init_date_prototype(interp);
 
+    let constructor = interp.create_native_function("Date", date_constructor, 0);
+    interp.root_guard.guard(&constructor);
+
+    // Add static methods
     interp.register_method(&constructor, "now", date_now, 0);
     interp.register_method(&constructor, "UTC", date_utc, 7);
     interp.register_method(&constructor, "parse", date_parse, 1);
 
+    // Set prototype property on constructor
     let proto_key = interp.key("prototype");
+    constructor.own(&interp.date_prototype, &interp.heap);
     constructor
         .borrow_mut()
-        .set_property(proto_key, JsValue::Object(interp.date_prototype.clone()));
+        .set_property(proto_key, JsValue::Object(interp.date_prototype));
 
-    constructor
+    // Register globally
+    let date_key = interp.key("Date");
+    interp.global.own(&constructor, &interp.heap);
+    interp
+        .global
+        .borrow_mut()
+        .set_property(date_key, JsValue::Object(constructor));
 }
 
 pub fn date_constructor(
     interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let timestamp = if args.is_empty() {
         // new Date() - current time
         Utc::now().timestamp_millis() as f64
@@ -173,28 +174,32 @@ pub fn date_constructor(
         make_date_from_components(year, month, day, hours, minutes, seconds, ms)
     };
 
-    let date_obj = interp.create_object();
+    let (date_obj, date_guard) = interp.create_object_with_guard();
     {
         let mut obj = date_obj.borrow_mut();
         obj.exotic = ExoticObject::Date { timestamp };
-        obj.prototype = Some(interp.date_prototype.clone());
+        obj.prototype = Some(interp.date_prototype);
     }
-    Ok(JsValue::Object(date_obj))
+    date_obj.own(&interp.date_prototype, &interp.heap);
+
+    Ok(Guarded::with_guard(JsValue::Object(date_obj), date_guard))
 }
 
 pub fn date_now(
     _interp: &mut Interpreter,
     _this: JsValue,
     _args: &[JsValue],
-) -> Result<JsValue, JsError> {
-    Ok(JsValue::Number(Utc::now().timestamp_millis() as f64))
+) -> Result<Guarded, JsError> {
+    Ok(Guarded::unguarded(JsValue::Number(
+        Utc::now().timestamp_millis() as f64,
+    )))
 }
 
 pub fn date_utc(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let year = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN) as i32;
     let month = args.get(1).map(|v| v.to_number()).unwrap_or(0.0) as i32;
     let day = args.get(2).map(|v| v.to_number()).unwrap_or(1.0) as i32;
@@ -204,14 +209,14 @@ pub fn date_utc(
     let ms = args.get(6).map(|v| v.to_number()).unwrap_or(0.0) as u32;
 
     let timestamp = make_date_from_components(year, month, day, hours, minutes, seconds, ms);
-    Ok(JsValue::Number(timestamp))
+    Ok(Guarded::unguarded(JsValue::Number(timestamp)))
 }
 
 pub fn date_parse(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let s = args
         .first()
         .cloned()
@@ -219,7 +224,7 @@ pub fn date_parse(
         .to_js_string()
         .to_string();
     let timestamp = parse_date_string(&s);
-    Ok(JsValue::Number(timestamp))
+    Ok(Guarded::unguarded(JsValue::Number(timestamp)))
 }
 
 fn get_date_timestamp(this: &JsValue) -> Result<f64, JsError> {
@@ -238,134 +243,140 @@ pub fn date_get_time(
     _interp: &mut Interpreter,
     this: JsValue,
     _args: &[JsValue],
-) -> Result<JsValue, JsError> {
-    Ok(JsValue::Number(get_date_timestamp(&this)?))
+) -> Result<Guarded, JsError> {
+    Ok(Guarded::unguarded(JsValue::Number(get_date_timestamp(
+        &this,
+    )?)))
 }
 
 pub fn date_get_full_year(
     _interp: &mut Interpreter,
     this: JsValue,
     _args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let ts = get_date_timestamp(&this)?;
     if ts.is_nan() {
-        return Ok(JsValue::Number(f64::NAN));
+        return Ok(Guarded::unguarded(JsValue::Number(f64::NAN)));
     }
     let dt =
         chrono::DateTime::from_timestamp_millis(ts as i64).unwrap_or(chrono::DateTime::UNIX_EPOCH);
-    Ok(JsValue::Number(dt.year() as f64))
+    Ok(Guarded::unguarded(JsValue::Number(dt.year() as f64)))
 }
 
 pub fn date_get_month(
     _interp: &mut Interpreter,
     this: JsValue,
     _args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let ts = get_date_timestamp(&this)?;
     if ts.is_nan() {
-        return Ok(JsValue::Number(f64::NAN));
+        return Ok(Guarded::unguarded(JsValue::Number(f64::NAN)));
     }
     let dt =
         chrono::DateTime::from_timestamp_millis(ts as i64).unwrap_or(chrono::DateTime::UNIX_EPOCH);
-    Ok(JsValue::Number((dt.month() - 1) as f64)) // 0-indexed
+    Ok(Guarded::unguarded(JsValue::Number((dt.month() - 1) as f64))) // 0-indexed
 }
 
 pub fn date_get_date(
     _interp: &mut Interpreter,
     this: JsValue,
     _args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let ts = get_date_timestamp(&this)?;
     if ts.is_nan() {
-        return Ok(JsValue::Number(f64::NAN));
+        return Ok(Guarded::unguarded(JsValue::Number(f64::NAN)));
     }
     let dt =
         chrono::DateTime::from_timestamp_millis(ts as i64).unwrap_or(chrono::DateTime::UNIX_EPOCH);
-    Ok(JsValue::Number(dt.day() as f64))
+    Ok(Guarded::unguarded(JsValue::Number(dt.day() as f64)))
 }
 
 pub fn date_get_day(
     _interp: &mut Interpreter,
     this: JsValue,
     _args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let ts = get_date_timestamp(&this)?;
     if ts.is_nan() {
-        return Ok(JsValue::Number(f64::NAN));
+        return Ok(Guarded::unguarded(JsValue::Number(f64::NAN)));
     }
     let dt =
         chrono::DateTime::from_timestamp_millis(ts as i64).unwrap_or(chrono::DateTime::UNIX_EPOCH);
-    Ok(JsValue::Number(dt.weekday().num_days_from_sunday() as f64))
+    Ok(Guarded::unguarded(JsValue::Number(
+        dt.weekday().num_days_from_sunday() as f64,
+    )))
 }
 
 pub fn date_get_hours(
     _interp: &mut Interpreter,
     this: JsValue,
     _args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let ts = get_date_timestamp(&this)?;
     if ts.is_nan() {
-        return Ok(JsValue::Number(f64::NAN));
+        return Ok(Guarded::unguarded(JsValue::Number(f64::NAN)));
     }
     let dt =
         chrono::DateTime::from_timestamp_millis(ts as i64).unwrap_or(chrono::DateTime::UNIX_EPOCH);
-    Ok(JsValue::Number(dt.hour() as f64))
+    Ok(Guarded::unguarded(JsValue::Number(dt.hour() as f64)))
 }
 
 pub fn date_get_minutes(
     _interp: &mut Interpreter,
     this: JsValue,
     _args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let ts = get_date_timestamp(&this)?;
     if ts.is_nan() {
-        return Ok(JsValue::Number(f64::NAN));
+        return Ok(Guarded::unguarded(JsValue::Number(f64::NAN)));
     }
     let dt =
         chrono::DateTime::from_timestamp_millis(ts as i64).unwrap_or(chrono::DateTime::UNIX_EPOCH);
-    Ok(JsValue::Number(dt.minute() as f64))
+    Ok(Guarded::unguarded(JsValue::Number(dt.minute() as f64)))
 }
 
 pub fn date_get_seconds(
     _interp: &mut Interpreter,
     this: JsValue,
     _args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let ts = get_date_timestamp(&this)?;
     if ts.is_nan() {
-        return Ok(JsValue::Number(f64::NAN));
+        return Ok(Guarded::unguarded(JsValue::Number(f64::NAN)));
     }
     let dt =
         chrono::DateTime::from_timestamp_millis(ts as i64).unwrap_or(chrono::DateTime::UNIX_EPOCH);
-    Ok(JsValue::Number(dt.second() as f64))
+    Ok(Guarded::unguarded(JsValue::Number(dt.second() as f64)))
 }
 
 pub fn date_get_milliseconds(
     _interp: &mut Interpreter,
     this: JsValue,
     _args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let ts = get_date_timestamp(&this)?;
     if ts.is_nan() {
-        return Ok(JsValue::Number(f64::NAN));
+        return Ok(Guarded::unguarded(JsValue::Number(f64::NAN)));
     }
-    Ok(JsValue::Number((ts as i64 % 1000) as f64))
+    Ok(Guarded::unguarded(JsValue::Number(
+        (ts as i64 % 1000) as f64,
+    )))
 }
 
 pub fn date_to_iso_string(
     _interp: &mut Interpreter,
     this: JsValue,
     _args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let ts = get_date_timestamp(&this)?;
     if ts.is_nan() {
         return Err(JsError::range_error("Invalid Date"));
     }
     let dt =
         chrono::DateTime::from_timestamp_millis(ts as i64).unwrap_or(chrono::DateTime::UNIX_EPOCH);
-    Ok(JsValue::String(JsString::from(
+    Ok(Guarded::unguarded(JsValue::String(JsString::from(
         dt.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
-    )))
+    ))))
 }
 
 // Setter methods - they modify the date and return the new timestamp
@@ -387,20 +398,20 @@ pub fn date_set_time(
     _interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let new_time = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
     let ts = set_date_timestamp(&this, new_time)?;
-    Ok(JsValue::Number(ts))
+    Ok(Guarded::unguarded(JsValue::Number(ts)))
 }
 
 pub fn date_set_full_year(
     _interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let current_ts = get_date_timestamp(&this)?;
     if current_ts.is_nan() {
-        return Ok(JsValue::Number(f64::NAN));
+        return Ok(Guarded::unguarded(JsValue::Number(f64::NAN)));
     }
 
     let dt = chrono::DateTime::from_timestamp_millis(current_ts as i64)
@@ -433,17 +444,17 @@ pub fn date_set_full_year(
         .unwrap_or(f64::NAN);
 
     let ts = set_date_timestamp(&this, new_dt)?;
-    Ok(JsValue::Number(ts))
+    Ok(Guarded::unguarded(JsValue::Number(ts)))
 }
 
 pub fn date_set_month(
     _interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let current_ts = get_date_timestamp(&this)?;
     if current_ts.is_nan() {
-        return Ok(JsValue::Number(f64::NAN));
+        return Ok(Guarded::unguarded(JsValue::Number(f64::NAN)));
     }
 
     let dt = chrono::DateTime::from_timestamp_millis(current_ts as i64)
@@ -472,17 +483,17 @@ pub fn date_set_month(
         .unwrap_or(f64::NAN);
 
     let ts = set_date_timestamp(&this, new_dt)?;
-    Ok(JsValue::Number(ts))
+    Ok(Guarded::unguarded(JsValue::Number(ts)))
 }
 
 pub fn date_set_date(
     _interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let current_ts = get_date_timestamp(&this)?;
     if current_ts.is_nan() {
-        return Ok(JsValue::Number(f64::NAN));
+        return Ok(Guarded::unguarded(JsValue::Number(f64::NAN)));
     }
 
     let dt = chrono::DateTime::from_timestamp_millis(current_ts as i64)
@@ -507,17 +518,17 @@ pub fn date_set_date(
         .unwrap_or(f64::NAN);
 
     let ts = set_date_timestamp(&this, new_dt)?;
-    Ok(JsValue::Number(ts))
+    Ok(Guarded::unguarded(JsValue::Number(ts)))
 }
 
 pub fn date_set_hours(
     _interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let current_ts = get_date_timestamp(&this)?;
     if current_ts.is_nan() {
-        return Ok(JsValue::Number(f64::NAN));
+        return Ok(Guarded::unguarded(JsValue::Number(f64::NAN)));
     }
 
     let dt = chrono::DateTime::from_timestamp_millis(current_ts as i64)
@@ -547,17 +558,17 @@ pub fn date_set_hours(
         .unwrap_or(f64::NAN);
 
     let ts = set_date_timestamp(&this, new_dt)?;
-    Ok(JsValue::Number(ts))
+    Ok(Guarded::unguarded(JsValue::Number(ts)))
 }
 
 pub fn date_set_minutes(
     _interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let current_ts = get_date_timestamp(&this)?;
     if current_ts.is_nan() {
-        return Ok(JsValue::Number(f64::NAN));
+        return Ok(Guarded::unguarded(JsValue::Number(f64::NAN)));
     }
 
     let dt = chrono::DateTime::from_timestamp_millis(current_ts as i64)
@@ -583,17 +594,17 @@ pub fn date_set_minutes(
         .unwrap_or(f64::NAN);
 
     let ts = set_date_timestamp(&this, new_dt)?;
-    Ok(JsValue::Number(ts))
+    Ok(Guarded::unguarded(JsValue::Number(ts)))
 }
 
 pub fn date_set_seconds(
     _interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let current_ts = get_date_timestamp(&this)?;
     if current_ts.is_nan() {
-        return Ok(JsValue::Number(f64::NAN));
+        return Ok(Guarded::unguarded(JsValue::Number(f64::NAN)));
     }
 
     let dt = chrono::DateTime::from_timestamp_millis(current_ts as i64)
@@ -622,17 +633,17 @@ pub fn date_set_seconds(
         .unwrap_or(f64::NAN);
 
     let ts = set_date_timestamp(&this, new_dt)?;
-    Ok(JsValue::Number(ts))
+    Ok(Guarded::unguarded(JsValue::Number(ts)))
 }
 
 pub fn date_set_milliseconds(
     _interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let current_ts = get_date_timestamp(&this)?;
     if current_ts.is_nan() {
-        return Ok(JsValue::Number(f64::NAN));
+        return Ok(Guarded::unguarded(JsValue::Number(f64::NAN)));
     }
 
     let new_ms = args
@@ -645,7 +656,7 @@ pub fn date_set_milliseconds(
     let new_ts = base_ts as f64 + new_ms as f64;
 
     let ts = set_date_timestamp(&this, new_ts)?;
-    Ok(JsValue::Number(ts))
+    Ok(Guarded::unguarded(JsValue::Number(ts)))
 }
 
 /// Date.prototype.toString()
@@ -654,16 +665,20 @@ pub fn date_to_string(
     _interp: &mut Interpreter,
     this: JsValue,
     _args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let ts = get_date_timestamp(&this)?;
     if ts.is_nan() {
-        return Ok(JsValue::String(JsString::from("Invalid Date")));
+        return Ok(Guarded::unguarded(JsValue::String(JsString::from(
+            "Invalid Date",
+        ))));
     }
     let dt =
         chrono::DateTime::from_timestamp_millis(ts as i64).unwrap_or(chrono::DateTime::UNIX_EPOCH);
     // Format like "Thu Jan 01 1970 00:00:00 GMT+0000 (UTC)"
     let formatted = dt.format("%a %b %d %Y %H:%M:%S GMT+0000 (UTC)").to_string();
-    Ok(JsValue::String(JsString::from(formatted)))
+    Ok(Guarded::unguarded(JsValue::String(JsString::from(
+        formatted,
+    ))))
 }
 
 /// Date.prototype.toDateString()
@@ -672,16 +687,20 @@ pub fn date_to_date_string(
     _interp: &mut Interpreter,
     this: JsValue,
     _args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let ts = get_date_timestamp(&this)?;
     if ts.is_nan() {
-        return Ok(JsValue::String(JsString::from("Invalid Date")));
+        return Ok(Guarded::unguarded(JsValue::String(JsString::from(
+            "Invalid Date",
+        ))));
     }
     let dt =
         chrono::DateTime::from_timestamp_millis(ts as i64).unwrap_or(chrono::DateTime::UNIX_EPOCH);
     // Format like "Thu Jan 01 1970"
     let formatted = dt.format("%a %b %d %Y").to_string();
-    Ok(JsValue::String(JsString::from(formatted)))
+    Ok(Guarded::unguarded(JsValue::String(JsString::from(
+        formatted,
+    ))))
 }
 
 /// Date.prototype.toTimeString()
@@ -690,14 +709,18 @@ pub fn date_to_time_string(
     _interp: &mut Interpreter,
     this: JsValue,
     _args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let ts = get_date_timestamp(&this)?;
     if ts.is_nan() {
-        return Ok(JsValue::String(JsString::from("Invalid Date")));
+        return Ok(Guarded::unguarded(JsValue::String(JsString::from(
+            "Invalid Date",
+        ))));
     }
     let dt =
         chrono::DateTime::from_timestamp_millis(ts as i64).unwrap_or(chrono::DateTime::UNIX_EPOCH);
     // Format like "00:00:00 GMT+0000 (UTC)"
     let formatted = dt.format("%H:%M:%S GMT+0000 (UTC)").to_string();
-    Ok(JsValue::String(JsString::from(formatted)))
+    Ok(Guarded::unguarded(JsValue::String(JsString::from(
+        formatted,
+    ))))
 }

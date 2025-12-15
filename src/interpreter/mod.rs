@@ -111,6 +111,15 @@ pub struct Interpreter {
     /// RegExp.prototype (for regexp methods)
     pub regexp_prototype: Gc<JsObject>,
 
+    /// Map.prototype (for Map methods)
+    pub map_prototype: Gc<JsObject>,
+
+    /// Set.prototype (for Set methods)
+    pub set_prototype: Gc<JsObject>,
+
+    /// Date.prototype (for Date methods)
+    pub date_prototype: Gc<JsObject>,
+
     // ═══════════════════════════════════════════════════════════════════════════
     // Execution State
     // ═══════════════════════════════════════════════════════════════════════════
@@ -146,6 +155,9 @@ impl Interpreter {
         let string_prototype = root_guard.alloc();
         let number_prototype = root_guard.alloc();
         let regexp_prototype = root_guard.alloc();
+        let map_prototype = root_guard.alloc();
+        let set_prototype = root_guard.alloc();
+        let date_prototype = root_guard.alloc();
 
         // Set up prototype chain
         {
@@ -172,6 +184,21 @@ impl Interpreter {
             let proto = object_prototype;
             regexp_prototype.borrow_mut().prototype = Some(proto);
             regexp_prototype.own(&proto, &heap);
+        }
+        {
+            let proto = object_prototype;
+            map_prototype.borrow_mut().prototype = Some(proto);
+            map_prototype.own(&proto, &heap);
+        }
+        {
+            let proto = object_prototype;
+            set_prototype.borrow_mut().prototype = Some(proto);
+            set_prototype.own(&proto, &heap);
+        }
+        {
+            let proto = object_prototype;
+            date_prototype.borrow_mut().prototype = Some(proto);
+            date_prototype.own(&proto, &heap);
         }
 
         // Create global object (rooted)
@@ -203,6 +230,9 @@ impl Interpreter {
             string_prototype,
             number_prototype,
             regexp_prototype,
+            map_prototype,
+            set_prototype,
+            date_prototype,
             thrown_value: None,
             exports: FxHashMap::default(),
             call_stack: Vec::new(),
@@ -251,6 +281,18 @@ impl Interpreter {
 
         // Initialize Error constructor
         builtins::init_error(self);
+
+        // Initialize global functions (parseInt, parseFloat, isNaN, isFinite, URI functions)
+        builtins::init_global_functions(self);
+
+        // Initialize Map constructor and prototype
+        builtins::init_map(self);
+
+        // Initialize Set constructor and prototype
+        builtins::init_set(self);
+
+        // Initialize Date constructor and prototype
+        builtins::init_date(self);
 
         // Initialize String constructor (global String function)
         let string_constructor = builtins::create_string_constructor(self);
