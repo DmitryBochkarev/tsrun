@@ -33,7 +33,13 @@ struct GcBox<T> {
     /// The actual data
     data: RefCell<T>,
 
-    /// Mark bit for mark-and-sweep collection
+    /// Guard count (number of guards directly protecting this object)
+    guard_count: Cell<usize>,
+
+    /// Reference count (ownership edges pointing to this object)
+    ref_count: Cell<usize>,
+
+    /// Mark bit for mark-and-sweep collection (for cycle detection)
     marked: Cell<bool>,
 
     /// Whether this object is in the pool (dead)
@@ -45,6 +51,8 @@ impl<T> GcBox<T> {
         Self {
             id,
             data: RefCell::new(data),
+            guard_count: Cell::new(0),
+            ref_count: Cell::new(0),
             marked: Cell::new(false),
             pooled: Cell::new(false),
         }
@@ -68,14 +76,11 @@ struct Space<T> {
     /// Free list of pooled object pointers
     pool: Vec<NonNull<GcBox<T>>>,
 
-    /// Next guard ID
-    next_guard_id: usize,
-
     /// Next object ID
     next_object_id: usize,
 
-    /// Active guards: guard_id → set of directly guarded object IDs
-    guards: FxHashMap<usize, FxHashSet<usize>>,
+    /// Root objects (objects with guard_count > 0) - for fast mark phase
+    roots: FxHashSet<usize>,
 
     /// Ownership edges: owner_id → set of owned_ids
     /// Used during mark phase to traverse the object graph
@@ -107,9 +112,8 @@ impl<T: Default + Reset> Space<T> {
             chunks: Vec::new(),
             chunk_capacity,
             pool: Vec::new(),
-            next_guard_id: 0,
             next_object_id: 0,
-            guards: FxHashMap::default(),
+            roots: FxHashSet::default(),
             ownership_edges: FxHashMap::default(),
             id_to_ptr: FxHashMap::default(),
             allocs_since_gc: 0,
@@ -117,8 +121,8 @@ impl<T: Default + Reset> Space<T> {
         }
     }
 
-    /// Allocate a new object with the given guard
-    fn alloc_internal(&mut self, guard_id: usize) -> Gc<T> {
+    /// Allocate a new object (starts with ref_count = 1 for the allocating guard)
+    fn alloc_internal(&mut self) -> Gc<T> {
         let (id, ptr) = if let Some(ptr) = self.pool.pop() {
             // Reuse from pool - safe because pool contains valid pointers
             // Safety: ptr came from our chunks which have stable addresses
@@ -133,6 +137,8 @@ impl<T: Default + Reset> Space<T> {
                 }
             };
             gc_box.data.borrow_mut().reset();
+            gc_box.guard_count.set(1); // Start with guard_count = 1 for the allocating guard
+            gc_box.ref_count.set(0);
             gc_box.marked.set(false);
             gc_box.pooled.set(false);
 
@@ -185,6 +191,7 @@ impl<T: Default + Reset> Space<T> {
                     }
                 }
             };
+            gc_box.guard_count.set(1); // Start with guard_count = 1 for the allocating guard
             let ptr = NonNull::from(gc_box);
 
             self.id_to_ptr.insert(id, ptr);
@@ -192,8 +199,8 @@ impl<T: Default + Reset> Space<T> {
             (id, ptr)
         };
 
-        // Register object with guard (directly guarded) - now using object ID
-        self.guards.entry(guard_id).or_default().insert(id);
+        // New object is a root (guard_count = 1)
+        self.roots.insert(id);
 
         // Track allocations and maybe collect
         self.allocs_since_gc += 1;
@@ -208,24 +215,26 @@ impl<T: Default + Reset> Space<T> {
         }
     }
 
-    /// Create a new guard ID
-    fn create_guard_id(&mut self) -> usize {
-        let id = self.next_guard_id;
-        self.next_guard_id += 1;
-        self.guards.insert(id, FxHashSet::default());
-        id
+    /// Increment guard_count for an object (used by guard)
+    fn inc_guard(&mut self, object_id: usize) {
+        let Some(&ptr) = self.id_to_ptr.get(&object_id) else {
+            return;
+        };
+        // Safety: ptr from id_to_ptr is valid
+        let gc_box = unsafe { ptr.as_ref() };
+        if gc_box.pooled.get() {
+            return;
+        }
+        let old_count = gc_box.guard_count.get();
+        gc_box.guard_count.set(old_count + 1);
+        // If transitioning from 0 to 1, add to roots
+        if old_count == 0 {
+            self.roots.insert(object_id);
+        }
     }
 
-    /// Remove a guard (collection happens lazily via threshold)
-    fn remove_guard(&mut self, guard_id: usize) {
-        self.guards.remove(&guard_id);
-        // Don't collect immediately - let threshold handle it
-        // This avoids O(n) work on every guard drop
-    }
-
-    /// Add a guard to an existing object (make it directly guarded by this guard)
-    fn guard_object(&mut self, object_id: usize, guard_id: usize) {
-        // Verify object exists and is alive
+    /// Decrement guard_count for an object, pool if both counts reach 0
+    fn dec_guard(&mut self, object_id: usize) {
         let Some(&ptr) = self.id_to_ptr.get(&object_id) else {
             return;
         };
@@ -235,77 +244,126 @@ impl<T: Default + Reset> Space<T> {
             return;
         }
 
-        // Register object with guard (using object ID)
-        self.guards.entry(guard_id).or_default().insert(object_id);
+        let count = gc_box.guard_count.get();
+        if count > 0 {
+            gc_box.guard_count.set(count - 1);
+            if count == 1 {
+                // guard_count just became 0, remove from roots
+                self.roots.remove(&object_id);
+                if gc_box.ref_count.get() == 0 {
+                    // Both guard_count and ref_count are 0, pool immediately
+                    self.pool_object(object_id, ptr);
+                }
+            }
+        }
     }
 
-    /// Remove a guard from a specific object
-    fn unguard_object(&mut self, object_id: usize, guard_id: usize) {
-        if let Some(guarded_objects) = self.guards.get_mut(&guard_id) {
-            guarded_objects.remove(&object_id);
+    /// Increment ref_count for an object (used by ownership)
+    fn inc_ref(&mut self, object_id: usize) {
+        let Some(&ptr) = self.id_to_ptr.get(&object_id) else {
+            return;
+        };
+        // Safety: ptr from id_to_ptr is valid
+        let gc_box = unsafe { ptr.as_ref() };
+        if gc_box.pooled.get() {
+            return;
         }
-        // Collection will happen when a guard is dropped
-        // No immediate collection for performance
+        gc_box.ref_count.set(gc_box.ref_count.get() + 1);
+    }
+
+    /// Decrement ref_count for an object, pool if both counts reach 0
+    fn dec_ref(&mut self, object_id: usize) {
+        let Some(&ptr) = self.id_to_ptr.get(&object_id) else {
+            return;
+        };
+        // Safety: ptr from id_to_ptr is valid
+        let gc_box = unsafe { ptr.as_ref() };
+        if gc_box.pooled.get() {
+            return;
+        }
+
+        let count = gc_box.ref_count.get();
+        if count > 0 {
+            gc_box.ref_count.set(count - 1);
+            if count == 1 && gc_box.guard_count.get() == 0 {
+                // Both guard_count and ref_count are 0, pool immediately
+                self.pool_object(object_id, ptr);
+            }
+        }
+    }
+
+    /// Move an object to the pool (internal helper)
+    fn pool_object(&mut self, object_id: usize, ptr: NonNull<GcBox<T>>) {
+        // Remove from id_to_ptr and roots
+        self.id_to_ptr.remove(&object_id);
+        self.roots.remove(&object_id);
+
+        // Safety: ptr is valid
+        let gc_box = unsafe { ptr.as_ref() };
+
+        // Remove all ownership edges FROM this object and decrement their ref_counts
+        if let Some(owned_ids) = self.ownership_edges.remove(&object_id) {
+            for owned_id in owned_ids {
+                self.dec_ref(owned_id);
+            }
+        }
+
+        // Remove ownership edges TO this object (from other objects)
+        for owned_set in self.ownership_edges.values_mut() {
+            owned_set.remove(&object_id);
+        }
+
+        // Mark as pooled and reset
+        gc_box.pooled.set(true);
+        gc_box.data.borrow_mut().reset();
+
+        // Add pointer to pool for reuse
+        self.pool.push(ptr);
     }
 
     /// Mark phase: mark all objects reachable from roots
     fn mark(&mut self) {
-        // Clear all marks first
-        for chunk in &self.chunks {
-            for gc_box in chunk {
-                gc_box.marked.set(false);
+        // Use iterative approach with explicit stack to avoid recursion overhead
+        // and Vec allocation per call
+        let mut stack: Vec<usize> = self.roots.iter().copied().collect();
+
+        while let Some(object_id) = stack.pop() {
+            let Some(&ptr) = self.id_to_ptr.get(&object_id) else {
+                continue;
+            };
+
+            // Safety: ptr from id_to_ptr is valid
+            let gc_box = unsafe { ptr.as_ref() };
+
+            // Already marked or pooled - skip
+            if gc_box.marked.get() || gc_box.pooled.get() {
+                continue;
+            }
+
+            // Mark this object
+            gc_box.marked.set(true);
+
+            // Push owned objects onto stack
+            if let Some(owned_ids) = self.ownership_edges.get(&object_id) {
+                stack.extend(owned_ids.iter().copied());
             }
         }
-
-        // Collect all root object IDs from all guards
-        let roots: Vec<usize> = self
-            .guards
-            .values()
-            .flat_map(|ids| ids.iter().copied())
-            .collect();
-
-        // Mark from each root
-        for object_id in roots {
-            self.mark_from_id(object_id);
-        }
     }
 
-    /// Recursively mark an object and all objects it owns (by object ID)
-    fn mark_from_id(&mut self, object_id: usize) {
-        let Some(&ptr) = self.id_to_ptr.get(&object_id) else {
-            return;
-        };
-
-        // Safety: ptr from id_to_ptr is valid
-        let gc_box = unsafe { ptr.as_ref() };
-
-        // Already marked or pooled - stop
-        if gc_box.marked.get() || gc_box.pooled.get() {
-            return;
-        }
-
-        // Mark this object
-        gc_box.marked.set(true);
-
-        // Get owned objects and mark them recursively
-        let owned_ids: Vec<usize> = self
-            .ownership_edges
-            .get(&object_id)
-            .map(|set| set.iter().copied().collect())
-            .unwrap_or_default();
-
-        for owned_id in owned_ids {
-            self.mark_from_id(owned_id);
-        }
-    }
-
-    /// Sweep phase: collect all unmarked objects
+    /// Sweep phase: collect all unmarked objects and clear marks
     fn sweep(&mut self) {
         let mut to_collect = Vec::new();
 
         for chunk in &self.chunks {
             for gc_box in chunk {
-                if !gc_box.pooled.get() && !gc_box.marked.get() {
+                if gc_box.pooled.get() {
+                    continue;
+                }
+                if gc_box.marked.get() {
+                    // Clear mark for next collection
+                    gc_box.marked.set(false);
+                } else {
+                    // Unmarked = unreachable, collect it
                     to_collect.push(gc_box.id);
                 }
             }
@@ -328,9 +386,9 @@ impl<T: Default + Reset> Space<T> {
         self.collect();
     }
 
-    /// Collect a single object by ID (move to pool)
+    /// Collect a single object by ID (move to pool) - used by sweep for cycles
     fn collect_object_by_id(&mut self, object_id: usize) {
-        let Some(ptr) = self.id_to_ptr.remove(&object_id) else {
+        let Some(&ptr) = self.id_to_ptr.get(&object_id) else {
             return;
         };
 
@@ -341,21 +399,10 @@ impl<T: Default + Reset> Space<T> {
             return;
         }
 
-        // Remove all ownership edges involving this object
-        self.ownership_edges.remove(&object_id);
-        for owned_set in self.ownership_edges.values_mut() {
-            owned_set.remove(&object_id);
-        }
-
-        // Mark as pooled and reset
-        gc_box.pooled.set(true);
-        gc_box.data.borrow_mut().reset();
-
-        // Add pointer to pool for reuse
-        self.pool.push(ptr);
+        self.pool_object(object_id, ptr);
     }
 
-    /// Establish ownership: owner owns owned
+    /// Establish ownership: owner owns owned (increments owned's ref_count)
     fn own(&mut self, owner_id: usize, owned_id: usize) {
         // Don't allow self-ownership
         if owner_id == owned_id {
@@ -378,23 +425,30 @@ impl<T: Default + Reset> Space<T> {
             return;
         }
 
-        // Add ownership edge
-        self.ownership_edges
-            .entry(owner_id)
-            .or_default()
-            .insert(owned_id);
+        // Check if this edge already exists (don't double-increment)
+        let edges = self.ownership_edges.entry(owner_id).or_default();
+        if edges.insert(owned_id) {
+            // New edge - increment ref_count of owned object
+            self.inc_ref(owned_id);
+        }
     }
 
-    /// Release ownership: owner no longer owns owned
+    /// Release ownership: owner no longer owns owned (decrements owned's ref_count)
     fn disown(&mut self, owner_id: usize, owned_id: usize) {
-        if let Some(owned_set) = self.ownership_edges.get_mut(&owner_id) {
-            owned_set.remove(&owned_id);
+        let removed = if let Some(owned_set) = self.ownership_edges.get_mut(&owner_id) {
+            let removed = owned_set.remove(&owned_id);
             if owned_set.is_empty() {
                 self.ownership_edges.remove(&owner_id);
             }
+            removed
+        } else {
+            false
+        };
+
+        if removed {
+            // Edge was removed - decrement ref_count (may pool if 0)
+            self.dec_ref(owned_id);
         }
-        // Collection will happen when a guard is dropped
-        // No immediate collection for performance
     }
 
     /// Get statistics
@@ -406,7 +460,6 @@ impl<T: Default + Reset> Space<T> {
             total_objects,
             pooled_objects: self.pool.len(),
             live_objects: total_objects - self.pool.len(),
-            active_guards: self.guards.len(),
             ownership_edges: ownership_edge_count,
         }
     }
@@ -444,9 +497,8 @@ impl<T: Default + Reset> Heap<T> {
 
     /// Create a new guard (root)
     pub fn create_guard(&self) -> Guard<T> {
-        let id = self.inner.borrow_mut().create_guard_id();
         Guard {
-            id,
+            guarded_objects: RefCell::new(FxHashSet::default()),
             space: Rc::downgrade(&self.inner),
         }
     }
@@ -487,11 +539,11 @@ impl<T> Clone for Heap<T> {
 
 /// A root anchor that keeps objects alive.
 ///
-/// Objects are kept alive as long as they are reachable from at least one guard
-/// (directly or through ownership).
+/// Objects are kept alive as long as they have ref_count > 0.
+/// Guards increment ref_count when guarding objects.
 pub struct Guard<T: Default + Reset> {
-    /// Unique identifier
-    id: usize,
+    /// Object IDs guarded by this guard (so we can dec_ref on drop)
+    guarded_objects: RefCell<FxHashSet<usize>>,
 
     /// Weak reference back to space for allocation and cleanup
     space: Weak<RefCell<Space<T>>>,
@@ -511,38 +563,43 @@ impl<T: Default + Reset> Guard<T> {
                 panic!("GC error: Heap dropped while guard is still alive")
             }
         });
-        let result = space.borrow_mut().alloc_internal(self.id);
+        let result = space.borrow_mut().alloc_internal();
+        // Track this object in the guard (ref_count already set to 1 by alloc_internal)
+        self.guarded_objects.borrow_mut().insert(result.id);
         result
     }
 
     /// Add this guard to an existing object.
     /// Makes the object directly reachable from this guard.
     pub fn guard(&self, obj: &Gc<T>) {
-        if let Some(space) = self.space.upgrade() {
-            space.borrow_mut().guard_object(obj.id, self.id);
+        // Only guard if not already guarded by this guard
+        if self.guarded_objects.borrow_mut().insert(obj.id) {
+            if let Some(space) = self.space.upgrade() {
+                space.borrow_mut().inc_guard(obj.id);
+            }
         }
     }
 
     /// Remove this guard from an object.
     /// Object may be collected if it's no longer reachable.
     pub fn unguard(&self, obj: &Gc<T>) {
-        if let Some(space) = self.space.upgrade() {
-            space.borrow_mut().unguard_object(obj.id, self.id);
+        if self.guarded_objects.borrow_mut().remove(&obj.id) {
+            if let Some(space) = self.space.upgrade() {
+                space.borrow_mut().dec_guard(obj.id);
+            }
         }
-    }
-
-    /// Get the guard's unique ID
-    pub fn id(&self) -> usize {
-        self.id
     }
 }
 
 impl<T: Default + Reset> Drop for Guard<T> {
     fn drop(&mut self) {
-        // Notify space to remove this guard and run collection
-        // If space is already dropped, nothing to do
+        // Decrement guard_count for all guarded objects
         if let Some(space) = self.space.upgrade() {
-            space.borrow_mut().remove_guard(self.id);
+            let guarded = std::mem::take(self.guarded_objects.get_mut());
+            let mut space_ref = space.borrow_mut();
+            for object_id in guarded {
+                space_ref.dec_guard(object_id);
+            }
         }
     }
 }
@@ -626,8 +683,6 @@ pub struct GcStats {
     pub pooled_objects: usize,
     /// Number of live objects
     pub live_objects: usize,
-    /// Number of active guards
-    pub active_guards: usize,
     /// Number of ownership edges
     pub ownership_edges: usize,
 }
