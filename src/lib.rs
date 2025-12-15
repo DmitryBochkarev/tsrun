@@ -314,6 +314,10 @@ impl Runtime {
         self.interpreter.heap.set_gc_threshold(threshold);
     }
 
+    pub fn set_timeout_ms(&mut self, timeout_ms: u64) {
+        self.interpreter.set_timeout_ms(timeout_ms);
+    }
+
     /// Force a garbage collection cycle
     pub fn collect(&self) {
         self.interpreter.heap.collect();

@@ -8,6 +8,7 @@ use std::ptr::NonNull;
 use std::rc::{Rc, Weak};
 
 use rustc_hash::FxHashSet;
+use smallvec::SmallVec;
 
 // ============================================================================
 // ChunkBitmask - 256-bit bitmask for marking objects within a chunk
@@ -23,23 +24,33 @@ struct ChunkBitmask {
 
 impl ChunkBitmask {
     /// Set a bit at the given index (0-255)
+    ///
+    /// # Safety
+    /// Caller must ensure index < 256. In debug builds this is checked via assert.
     #[inline]
     fn set(&mut self, index: usize) {
         debug_assert!(index < 256);
-        let word = index / 64;
-        let bit = index % 64;
-        if let Some(w) = self.bits.get_mut(word) {
-            *w |= 1 << bit;
+        // Safety: index < 256 means word < 4, which is always in bounds for bits[4]
+        // We use unchecked access to avoid bounds check in hot path
+        let word = index >> 6; // index / 64
+        let bit = index & 63; // index % 64
+        unsafe {
+            *self.bits.get_unchecked_mut(word) |= 1 << bit;
         }
     }
 
     /// Check if a bit is set at the given index (0-255)
+    ///
+    /// # Safety
+    /// Caller must ensure index < 256. In debug builds this is checked via assert.
     #[inline]
     fn get(&self, index: usize) -> bool {
         debug_assert!(index < 256);
-        let word = index / 64;
-        let bit = index % 64;
-        self.bits.get(word).is_some_and(|w| (w & (1 << bit)) != 0)
+        // Safety: index < 256 means word < 4, which is always in bounds for bits[4]
+        // We use unchecked access to avoid bounds check in hot path
+        let word = index >> 6; // index / 64
+        let bit = index & 63; // index % 64
+        unsafe { (*self.bits.get_unchecked(word) & (1 << bit)) != 0 }
     }
 
     /// Clear all bits
@@ -55,7 +66,8 @@ impl ChunkBitmask {
             bitmask: self,
             len,
             current_word: 0,
-            current_bits: !self.bits.first().copied().unwrap_or(0),
+            // Safety: bits[0] always exists (array of 4)
+            current_bits: unsafe { !*self.bits.get_unchecked(0) },
             base_index: 0,
         }
     }
@@ -66,7 +78,7 @@ struct UnmarkedIter<'a> {
     bitmask: &'a ChunkBitmask,
     len: usize,
     current_word: usize,
-    current_bits: u64,  // Inverted bits (1 = unmarked)
+    current_bits: u64, // Inverted bits (1 = unmarked)
     base_index: usize,
 }
 
@@ -96,13 +108,14 @@ impl Iterator for UnmarkedIter<'_> {
                 return None;
             }
 
-            self.base_index = self.current_word * 64;
+            self.base_index = self.current_word << 6; // * 64
             if self.base_index >= self.len {
                 return None;
             }
 
             // Get inverted bits for this word (1 = unmarked)
-            self.current_bits = !self.bitmask.bits.get(self.current_word).copied().unwrap_or(0);
+            // Safety: current_word < 4 checked above, so always in bounds
+            self.current_bits = unsafe { !*self.bitmask.bits.get_unchecked(self.current_word) };
         }
     }
 }
@@ -504,8 +517,12 @@ impl<T: Default + Reset + Traceable> Space<T> {
             bitmask.clear();
         }
 
+        // Use SmallVec to avoid heap allocation for typical small object graphs.
+        // 64 pointers * 8 bytes = 512 bytes inline storage.
+        // Falls back to heap allocation if more space needed.
+        let mut stack: SmallVec<[NonNull<GcBox<T>>; 64]> = SmallVec::new();
+
         // Remove inactive guards and collect roots from active guards
-        let mut stack: Vec<NonNull<GcBox<T>>> = Vec::with_capacity(64);
         self.guards.retain(|guard| {
             let guard_inner = guard.borrow();
             if guard_inner.active {
@@ -522,23 +539,31 @@ impl<T: Default + Reset + Traceable> Space<T> {
             }
         });
 
+        // Get raw pointer to marked_chunks for use in closure (avoids borrow issues)
+        let marked_chunks_ptr = self.marked_chunks.as_mut_ptr();
+        let marked_chunks_len = self.marked_chunks.len();
+
         // Iterative mark traversal using Traceable::trace()
         while let Some(ptr) = stack.pop() {
             let gc_box = unsafe { ptr.as_ref() };
             let chunk_idx = gc_box.index / CHUNK_CAPACITY;
             let index_in_chunk = gc_box.index % CHUNK_CAPACITY;
 
-            // Already marked - skip (check bitmask)
-            if let Some(bitmask) = self.marked_chunks.get(chunk_idx) {
-                if bitmask.get(index_in_chunk) {
-                    continue;
-                }
+            // Bounds check once, then use unchecked access
+            if chunk_idx >= marked_chunks_len {
+                continue;
             }
 
-            // Mark this object in the bitmask
-            if let Some(bitmask) = self.marked_chunks.get_mut(chunk_idx) {
-                bitmask.set(index_in_chunk);
+            // Safety: chunk_idx < marked_chunks_len checked above
+            let bitmask = unsafe { &mut *marked_chunks_ptr.add(chunk_idx) };
+
+            // Already marked - skip
+            if bitmask.get(index_in_chunk) {
+                continue;
             }
+
+            // Mark this object
+            bitmask.set(index_in_chunk);
 
             // Trace references via Traceable trait
             let data = gc_box.data.borrow();
@@ -546,13 +571,14 @@ impl<T: Default + Reset + Traceable> Space<T> {
                 let child_box = unsafe { child.ptr.as_ref() };
                 let child_chunk_idx = child_box.index / CHUNK_CAPACITY;
                 let child_index_in_chunk = child_box.index % CHUNK_CAPACITY;
-                // Check if already marked or pooled
-                let already_marked = self
-                    .marked_chunks
-                    .get(child_chunk_idx)
-                    .is_some_and(|bm| bm.get(child_index_in_chunk));
-                if !already_marked && !child_box.pooled.get() {
-                    stack.push(child.ptr);
+
+                // Check bounds and if already marked or pooled
+                if child_chunk_idx < marked_chunks_len {
+                    // Safety: child_chunk_idx < marked_chunks_len checked above
+                    let child_bitmask = unsafe { &*marked_chunks_ptr.add(child_chunk_idx) };
+                    if !child_bitmask.get(child_index_in_chunk) && !child_box.pooled.get() {
+                        stack.push(child.ptr);
+                    }
                 }
             });
         }
@@ -562,39 +588,34 @@ impl<T: Default + Reset + Traceable> Space<T> {
     /// Returns number of objects collected
     fn sweep(&mut self) -> usize {
         let mut collected = 0;
+        // Collect pointers to unmarked objects for pooling check after all resets.
+        // Use SmallVec to avoid heap allocation for small collection counts.
+        let mut unmarked: SmallVec<[NonNull<GcBox<T>>; 64]> = SmallVec::new();
 
-        // Take ownership of chunks and bitmasks to avoid borrow issues
-        let chunks = std::mem::take(&mut self.chunks);
-        let bitmasks = std::mem::take(&mut self.marked_chunks);
-
-        // First pass: reset all unmarked objects to clear references
-        // This must happen before pooling because reset() triggers Gc::drop
-        // which decrements ref_counts of referenced objects
-        for (chunk, bitmask) in chunks.iter().zip(bitmasks.iter()) {
+        // First pass: reset all unmarked objects and collect their pointers
+        // We must reset ALL objects before checking ref_counts because reset()
+        // decrements ref_counts of referenced objects (important for cycles)
+        for (chunk, bitmask) in self.chunks.iter().zip(self.marked_chunks.iter()) {
             for index_in_chunk in bitmask.iter_unmarked(chunk.len()) {
                 if let Some(gc_box) = chunk.get(index_in_chunk) {
                     if !gc_box.pooled.get() {
+                        // Reset clears references, which may decrement ref_counts of other objects
                         gc_box.data.borrow_mut().reset();
                         collected += 1;
+                        unmarked.push(NonNull::from(gc_box));
                     }
                 }
             }
         }
 
-        // Second pass: pool objects with ref_count == 0
-        for (chunk, bitmask) in chunks.iter().zip(bitmasks.iter()) {
-            for index_in_chunk in bitmask.iter_unmarked(chunk.len()) {
-                if let Some(gc_box) = chunk.get(index_in_chunk) {
-                    if !gc_box.pooled.get() && gc_box.ref_count.get() == 0 {
-                        self.pool_object(gc_box.index, NonNull::from(gc_box));
-                    }
-                }
+        // Second pass: pool objects with ref_count == 0 (after all resets complete)
+        // This ensures cycles are fully broken before we check ref_counts
+        for ptr in unmarked {
+            let gc_box = unsafe { ptr.as_ref() };
+            if gc_box.ref_count.get() == 0 {
+                self.pool_object(gc_box.index, ptr);
             }
         }
-
-        // Restore chunks and bitmasks
-        self.chunks = chunks;
-        self.marked_chunks = bitmasks;
 
         collected
     }
