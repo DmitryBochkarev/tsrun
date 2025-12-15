@@ -31,6 +31,7 @@ mod global;
 mod json;
 mod map;
 mod math;
+mod modules;
 // mod namespace;
 mod number;
 mod object;

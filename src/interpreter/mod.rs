@@ -143,6 +143,36 @@ pub struct Interpreter {
 
     /// When execution started (for timeout checking)
     execution_start: Option<std::time::Instant>,
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Internal Module System
+    // ═══════════════════════════════════════════════════════════════════════════
+    /// Registered internal modules (specifier -> module definition)
+    internal_modules: FxHashMap<String, crate::InternalModule>,
+
+    /// Instantiated internal module objects (cached after first import)
+    internal_module_cache: FxHashMap<String, Gc<JsObject>>,
+
+    /// Loaded external modules (specifier -> module namespace)
+    loaded_modules: FxHashMap<String, Gc<JsObject>>,
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Order System
+    // ═══════════════════════════════════════════════════════════════════════════
+    /// Counter for generating unique order IDs
+    next_order_id: u64,
+
+    /// Pending orders waiting for host fulfillment
+    pending_orders: Vec<crate::Order>,
+
+    /// Guards keeping pending order payloads alive
+    pending_order_guards: Vec<Guard<JsObject>>,
+
+    /// Map from OrderId -> (resolve_fn, reject_fn) for pending promises
+    order_callbacks: FxHashMap<crate::OrderId, (Gc<JsObject>, Gc<JsObject>)>,
+
+    /// Cancelled order IDs (from Promise.race losing, etc.)
+    cancelled_orders: Vec<crate::OrderId>,
 }
 
 impl Interpreter {
@@ -248,6 +278,16 @@ impl Interpreter {
             call_stack: Vec::new(),
             timeout_ms: 3000, // Default 3 second timeout
             execution_start: None,
+            // Internal module system
+            internal_modules: FxHashMap::default(),
+            internal_module_cache: FxHashMap::default(),
+            loaded_modules: FxHashMap::default(),
+            // Order system
+            next_order_id: 1,
+            pending_orders: Vec::new(),
+            pending_order_guards: Vec::new(),
+            order_callbacks: FxHashMap::default(),
+            cancelled_orders: Vec::new(),
         };
 
         // Initialize built-in globals
@@ -378,6 +418,193 @@ impl Interpreter {
             }
         }
         Ok(())
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Internal Module System
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// Register an internal module for import
+    pub fn register_internal_module(&mut self, module: crate::InternalModule) {
+        self.internal_modules.insert(module.specifier.clone(), module);
+    }
+
+    /// Check if a specifier is an internal module
+    pub fn is_internal_module(&self, specifier: &str) -> bool {
+        self.internal_modules.contains_key(specifier)
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Full Runtime API (imports + orders)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// Evaluate TypeScript/JavaScript code with full runtime support
+    ///
+    /// Returns RuntimeResult which may indicate:
+    /// - Complete: execution finished with a value
+    /// - NeedImports: modules need to be provided before continuing
+    /// - Suspended: waiting for orders to be fulfilled
+    pub fn eval(&mut self, source: &str) -> Result<crate::RuntimeResult, JsError> {
+        // Parse the source
+        let mut parser = Parser::new(source, &mut self.string_dict);
+        let program = parser.parse_program()?;
+
+        // Collect all import specifiers
+        let imports = self.collect_imports(&program);
+
+        // Check which imports are missing (not internal and not already loaded)
+        let missing: Vec<String> = imports
+            .into_iter()
+            .filter(|spec| {
+                !self.is_internal_module(spec) && !self.loaded_modules.contains_key(spec)
+            })
+            .collect();
+
+        if !missing.is_empty() {
+            return Ok(crate::RuntimeResult::NeedImports(missing));
+        }
+
+        // All imports satisfied - execute
+        let result = self.execute_program(&program);
+
+        match result {
+            Ok(value) => {
+                // Check if there are pending orders
+                if !self.pending_orders.is_empty() {
+                    let pending = std::mem::take(&mut self.pending_orders);
+                    let cancelled = std::mem::take(&mut self.cancelled_orders);
+                    Ok(crate::RuntimeResult::Suspended { pending, cancelled })
+                } else {
+                    Ok(crate::RuntimeResult::Complete(value))
+                }
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Provide a module source for a pending import
+    pub fn provide_module(&mut self, specifier: &str, source: &str) -> Result<(), JsError> {
+        // Parse and execute the module
+        let mut parser = Parser::new(source, &mut self.string_dict);
+        let program = parser.parse_program()?;
+
+        // Save current environment
+        let saved_env = self.env;
+
+        // Create module environment
+        let module_env = self.create_module_environment();
+        self.env = module_env;
+
+        // Execute module
+        let result = self.execute_program(&program);
+
+        // Restore environment
+        self.env = saved_env;
+
+        result?;
+
+        // Create module namespace object from exports
+        let (module_obj, _guard) = self.create_object_with_guard();
+
+        // Drain exports to a vector to avoid borrow conflict
+        let exports: Vec<_> = self.exports.drain().collect();
+
+        // Copy exports to module object
+        for (name, value) in exports {
+            let key = self.key(name.as_str());
+            if let JsValue::Object(ref obj) = value {
+                module_obj.own(obj, &self.heap);
+            }
+            module_obj.borrow_mut().set_property(key, value);
+        }
+
+        // Root the module (lives forever)
+        self.root_guard.guard(&module_obj);
+
+        // Cache it
+        self.loaded_modules
+            .insert(specifier.to_string(), module_obj);
+
+        Ok(())
+    }
+
+    /// Continue evaluation after providing modules or fulfilling orders
+    pub fn continue_eval(&mut self) -> Result<crate::RuntimeResult, JsError> {
+        // Check if there are pending orders
+        if !self.pending_orders.is_empty() {
+            let pending = std::mem::take(&mut self.pending_orders);
+            let cancelled = std::mem::take(&mut self.cancelled_orders);
+            return Ok(crate::RuntimeResult::Suspended { pending, cancelled });
+        }
+
+        // Otherwise, execution is complete
+        Ok(crate::RuntimeResult::Complete(JsValue::Undefined))
+    }
+
+    /// Fulfill orders with responses from the host
+    pub fn fulfill_orders(
+        &mut self,
+        responses: Vec<crate::OrderResponse>,
+    ) -> Result<(), JsError> {
+        for response in responses {
+            if let Some((resolve_fn, reject_fn)) = self.order_callbacks.remove(&response.id) {
+                match response.result {
+                    Ok(value) => {
+                        // Call resolve(value)
+                        self.call_function(JsValue::Object(resolve_fn), JsValue::Undefined, &[value])?;
+                    }
+                    Err(error) => {
+                        // Create error object and call reject
+                        let error_msg = JsValue::String(JsString::from(error.to_string()));
+                        self.call_function(
+                            JsValue::Object(reject_fn),
+                            JsValue::Undefined,
+                            &[error_msg],
+                        )?;
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Create a module environment (for executing modules)
+    fn create_module_environment(&mut self) -> Gc<JsObject> {
+        let env = self.root_guard.alloc();
+        {
+            let mut env_ref = env.borrow_mut();
+            env_ref.null_prototype = true;
+            env_ref.exotic = ExoticObject::Environment(EnvironmentData::with_outer(Some(
+                self.global_env,
+            )));
+        }
+        self.global_env.own(&env, &self.heap);
+        env
+    }
+
+    /// Collect all import specifiers from a program
+    fn collect_imports(&self, program: &Program) -> Vec<String> {
+        use crate::ast::Statement;
+
+        let mut imports = Vec::new();
+
+        for stmt in &program.body {
+            match stmt {
+                Statement::Import(import) => {
+                    imports.push(import.source.value.to_string());
+                }
+                Statement::Export(export) => {
+                    // Re-export from another module: export { foo } from "./bar"
+                    if let Some(ref source) = export.source {
+                        imports.push(source.value.to_string());
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        imports
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -846,6 +1073,16 @@ impl Interpreter {
 
             Statement::ClassDeclaration(class) => {
                 self.execute_class_declaration(class)?;
+                Ok(Completion::Normal(JsValue::Undefined))
+            }
+
+            Statement::Import(import) => {
+                self.execute_import(import)?;
+                Ok(Completion::Normal(JsValue::Undefined))
+            }
+
+            Statement::Export(export) => {
+                self.execute_export(export)?;
                 Ok(Completion::Normal(JsValue::Undefined))
             }
 
@@ -1525,6 +1762,270 @@ impl Interpreter {
                 }
             }
         }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Import/Export Implementation
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    fn execute_import(
+        &mut self,
+        import: &crate::ast::ImportDeclaration,
+    ) -> Result<(), JsError> {
+        let specifier = import.source.value.to_string();
+
+        // Resolve the module
+        let module_obj = self.resolve_module(&specifier)?;
+
+        // Bind imported names to current environment
+        for spec in &import.specifiers {
+            match spec {
+                crate::ast::ImportSpecifier::Named {
+                    local, imported, ..
+                } => {
+                    // import { foo as bar } from "module"
+                    let import_key = self.key(imported.name.as_str());
+                    let value = module_obj
+                        .borrow()
+                        .get_property(&import_key)
+                        .unwrap_or(JsValue::Undefined);
+                    self.env_define(local.name.cheap_clone(), value, false);
+                }
+                crate::ast::ImportSpecifier::Default { local, .. } => {
+                    // import foo from "module"
+                    let default_key = self.key("default");
+                    let value = module_obj
+                        .borrow()
+                        .get_property(&default_key)
+                        .unwrap_or(JsValue::Undefined);
+                    self.env_define(local.name.cheap_clone(), value, false);
+                }
+                crate::ast::ImportSpecifier::Namespace { local, .. } => {
+                    // import * as foo from "module"
+                    self.env_define(
+                        local.name.cheap_clone(),
+                        JsValue::Object(module_obj),
+                        false,
+                    );
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn execute_export(&mut self, export: &crate::ast::ExportDeclaration) -> Result<(), JsError> {
+        // Handle export declaration (e.g., export function foo() {})
+        if let Some(decl) = &export.declaration {
+            self.execute_statement(decl)?;
+
+            // For named declarations, add to exports
+            match decl.as_ref() {
+                Statement::FunctionDeclaration(func) => {
+                    if let Some(id) = &func.id {
+                        let value = self.env_get(&id.name)?;
+                        let export_name = if export.default {
+                            JsString::from("default")
+                        } else {
+                            id.name.cheap_clone()
+                        };
+                        self.exports.insert(export_name, value);
+                    }
+                }
+                Statement::VariableDeclaration(var_decl) => {
+                    for declarator in &var_decl.declarations {
+                        if let Pattern::Identifier(id) = &declarator.id {
+                            let value = self.env_get(&id.name)?;
+                            self.exports.insert(id.name.cheap_clone(), value);
+                        }
+                    }
+                }
+                Statement::ClassDeclaration(class) => {
+                    if let Some(id) = &class.id {
+                        let value = self.env_get(&id.name)?;
+                        let export_name = if export.default {
+                            JsString::from("default")
+                        } else {
+                            id.name.cheap_clone()
+                        };
+                        self.exports.insert(export_name, value);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // Handle re-exports: export { foo } from "module"
+        if let Some(source) = &export.source {
+            let module_obj = self.resolve_module(&source.value.to_string())?;
+            for spec in &export.specifiers {
+                let import_key = self.key(spec.local.name.as_str());
+                let value = module_obj
+                    .borrow()
+                    .get_property(&import_key)
+                    .unwrap_or(JsValue::Undefined);
+                self.exports
+                    .insert(spec.exported.name.cheap_clone(), value);
+            }
+        } else if !export.specifiers.is_empty() {
+            // Handle named exports: export { foo, bar }
+            for spec in &export.specifiers {
+                let value = self.env_get(&spec.local.name)?;
+                self.exports
+                    .insert(spec.exported.name.cheap_clone(), value);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Resolve a module specifier to a module namespace object
+    fn resolve_module(&mut self, specifier: &str) -> Result<Gc<JsObject>, JsError> {
+        // Check internal modules first
+        if let Some(module) = self.resolve_internal_module(specifier)? {
+            return Ok(module);
+        }
+
+        // Check loaded external modules
+        if let Some(&module) = self.loaded_modules.get(specifier) {
+            return Ok(module);
+        }
+
+        Err(JsError::reference_error(format!(
+            "Module '{}' not found",
+            specifier
+        )))
+    }
+
+    /// Resolve an internal module (creates module object on first access)
+    fn resolve_internal_module(
+        &mut self,
+        specifier: &str,
+    ) -> Result<Option<Gc<JsObject>>, JsError> {
+        // Return cached if exists
+        if let Some(&cached) = self.internal_module_cache.get(specifier) {
+            return Ok(Some(cached));
+        }
+
+        // Check if it's a registered internal module
+        if !self.internal_modules.contains_key(specifier) {
+            return Ok(None);
+        }
+
+        // Get module definition - we need to clone to avoid borrow issues
+        let module_kind = {
+            let module = self
+                .internal_modules
+                .get(specifier)
+                .ok_or_else(|| JsError::internal_error("Module disappeared"))?;
+            module.kind.clone()
+        };
+
+        // Create module object based on kind
+        // Returns (module_obj, temp_guard) - we must root before temp_guard is dropped
+        let (module_obj, _temp_guard) = match module_kind {
+            crate::InternalModuleKind::Native(exports) => {
+                self.create_native_module_object(&exports)?
+            }
+            crate::InternalModuleKind::Source(source) => {
+                self.create_source_module_object(specifier, &source)?
+            }
+        };
+
+        // Root the module (lives forever) - must happen before _temp_guard is dropped
+        self.root_guard.guard(&module_obj);
+
+        // Cache it
+        self.internal_module_cache
+            .insert(specifier.to_string(), module_obj);
+
+        Ok(Some(module_obj))
+    }
+
+    /// Create module object from native exports
+    fn create_native_module_object(
+        &mut self,
+        exports: &[(String, crate::InternalExport)],
+    ) -> Result<(Gc<JsObject>, Guard<JsObject>), JsError> {
+        let (module_obj, guard) = self.create_object_with_guard();
+
+        for (name, export) in exports {
+            let key = self.key(name);
+            let value = match export {
+                crate::InternalExport::Function {
+                    name: fn_name,
+                    func,
+                    arity,
+                } => {
+                    let fn_obj = self.create_internal_function(fn_name, *func, *arity);
+                    module_obj.own(&fn_obj, &self.heap);
+                    JsValue::Object(fn_obj)
+                }
+                crate::InternalExport::Value(v) => v.clone(),
+            };
+            module_obj.borrow_mut().set_property(key, value);
+        }
+
+        Ok((module_obj, guard))
+    }
+
+    /// Create module object from TypeScript source
+    fn create_source_module_object(
+        &mut self,
+        _specifier: &str,
+        source: &str,
+    ) -> Result<(Gc<JsObject>, Guard<JsObject>), JsError> {
+        // Parse the source
+        let mut parser = Parser::new(source, &mut self.string_dict);
+        let program = parser.parse_program()?;
+
+        // Save current environment and exports
+        let saved_env = self.env;
+        let saved_exports = std::mem::take(&mut self.exports);
+
+        // Create module environment
+        let module_env = self.create_module_environment();
+        self.env = module_env;
+
+        // Execute the module body
+        let result = self.execute_program(&program);
+
+        // Restore environment
+        self.env = saved_env;
+
+        // Handle errors
+        result?;
+
+        // Create module namespace object from exports
+        let (module_obj, guard) = self.create_object_with_guard();
+
+        // Drain exports to a vector to avoid borrow conflict
+        let exports: Vec<_> = self.exports.drain().collect();
+
+        // Copy exports to module object
+        for (name, value) in exports {
+            let key = self.key(name.as_str());
+            if let JsValue::Object(ref obj) = value {
+                module_obj.own(obj, &self.heap);
+            }
+            module_obj.borrow_mut().set_property(key, value);
+        }
+
+        // Restore saved exports
+        self.exports = saved_exports;
+
+        Ok((module_obj, guard))
+    }
+
+    /// Create a function from an InternalFn
+    fn create_internal_function(
+        &mut self,
+        name: &str,
+        func: crate::InternalFn,
+        arity: usize,
+    ) -> Gc<JsObject> {
+        // InternalFn and NativeFn have the same signature, so we can use it directly
+        self.create_native_function(name, func, arity)
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
