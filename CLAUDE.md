@@ -149,6 +149,27 @@ let (val, _guard) = if some_condition {
 };
 ```
 
+**Rule: Propagate guards when returning derived values:**
+If you evaluate an expression and return a derived value (e.g., member access, property lookup), propagate the input's guard:
+```rust
+// CORRECT: Propagate guard when returning derived value
+fn evaluate_member(&mut self, member: &MemberExpression) -> Result<Guarded, JsError> {
+    let Guarded { value: obj, guard: obj_guard } = self.evaluate_expression(&member.object)?;
+    let property_value = /* get property from obj */;
+    // Return property with original object's guard - keeps object alive
+    Ok(Guarded { value: property_value, guard: obj_guard })
+}
+
+// WRONG: Dropping guard, returned property may be collected
+fn evaluate_member(&mut self, member: &MemberExpression) -> Result<JsValue, JsError> {
+    let Guarded { value: obj, guard: _guard } = self.evaluate_expression(&member.object)?;
+    let property_value = /* get property from obj */;
+    Ok(property_value)  // BUG: obj_guard dropped, obj may be GC'd!
+}
+```
+
+Use `Guarded::with_value(new_value)` to easily propagate a guard with a new value.
+
 ## Development Workflow
 
 Use TDD (Test-Driven Development) for new features:

@@ -56,13 +56,27 @@ pub enum Completion {
 /// - The value is assigned to an object property (parent.own establishes ownership)
 /// - The value is returned from a function (caller takes ownership)
 ///
-/// **IMPORTANT**: Always use destructuring to access both value and guard:
+/// ## Rule 1: Always use destructuring
 /// ```ignore
 /// let Guarded { value, guard: _guard } = self.evaluate_expression(expr)?;
 /// // _guard keeps the object alive until end of scope
 /// ```
 /// Never extract just the value without keeping the guard - the object may be
 /// garbage collected before you're done using it!
+///
+/// ## Rule 2: Propagate guards when returning derived values
+/// If you derive a value from a guarded input and return it, propagate the guard:
+/// ```ignore
+/// // CORRECT: Propagate guard when returning derived value
+/// let Guarded { value, guard } = self.evaluate_expression(expr)?;
+/// let derived = do_something_with(&value);
+/// Ok(Guarded { value: derived, guard })
+///
+/// // WRONG: Guard dropped, derived value may be collected
+/// let Guarded { value, guard: _guard } = self.evaluate_expression(expr)?;
+/// let derived = do_something_with(&value);
+/// Ok(Guarded::unguarded(derived))  // BUG!
+/// ```
 ///
 /// The fields are public to allow struct destructuring pattern, which is the
 /// ONLY approved way to access the contents.
@@ -83,6 +97,17 @@ impl Guarded {
     /// Create an unguarded value (for primitives or already-owned objects)
     pub fn unguarded(value: JsValue) -> Self {
         Self { value, guard: None }
+    }
+
+    /// Return a new value with the same guard (for derived values)
+    ///
+    /// Use this when you derive a value from a guarded input and want to
+    /// propagate the guard to keep the original object alive.
+    pub fn with_value(self, value: JsValue) -> Self {
+        Self {
+            value,
+            guard: self.guard,
+        }
     }
 }
 
@@ -2122,7 +2147,7 @@ impl Interpreter {
 
             Expression::Call(call) => self.evaluate_call(call),
 
-            Expression::Member(member) => Ok(Guarded::unguarded(self.evaluate_member(member)?)),
+            Expression::Member(member) => self.evaluate_member(member),
 
             Expression::Array(arr) => self.evaluate_array(arr),
 
@@ -3149,14 +3174,15 @@ impl Interpreter {
         }
     }
 
-    fn evaluate_member(&mut self, member: &MemberExpression) -> Result<JsValue, JsError> {
+    fn evaluate_member(&mut self, member: &MemberExpression) -> Result<Guarded, JsError> {
         let Guarded {
             value: obj,
-            guard: _obj_guard,
+            guard: obj_guard,
         } = self.evaluate_expression(&member.object)?;
         let key = self.get_member_key(&member.property)?;
 
-        match &obj {
+        // Get the value from the member access
+        let value = match &obj {
             JsValue::Object(o) => {
                 // Get the property descriptor to check for getters
                 let prop_desc = o.borrow().get_property_descriptor(&key);
@@ -3164,42 +3190,49 @@ impl Interpreter {
                     Some((prop, _)) if prop.is_accessor() => {
                         // Property has a getter - invoke it
                         if let Some(getter) = prop.getter {
-                            self.call_function(JsValue::Object(getter), obj.clone(), &[])
+                            self.call_function(JsValue::Object(getter), obj.clone(), &[])?
                         } else {
-                            Ok(JsValue::Undefined)
+                            JsValue::Undefined
                         }
                     }
-                    Some((prop, _)) => Ok(prop.value),
-                    None => Ok(JsValue::Undefined),
+                    Some((prop, _)) => prop.value,
+                    None => JsValue::Undefined,
                 }
             }
             JsValue::String(s) => {
                 if let PropertyKey::Index(i) = key {
                     let chars: Vec<char> = s.as_str().chars().collect();
                     if let Some(c) = chars.get(i as usize) {
-                        return Ok(JsValue::String(JsString::from(c.to_string())));
+                        JsValue::String(JsString::from(c.to_string()))
+                    } else {
+                        JsValue::Undefined
                     }
-                }
-                if let PropertyKey::String(ref k) = key {
+                } else if let PropertyKey::String(ref k) = key {
                     if k.as_str() == "length" {
-                        return Ok(JsValue::Number(s.as_str().chars().count() as f64));
+                        JsValue::Number(s.as_str().chars().count() as f64)
+                    } else if let Some(method) = self.string_prototype.borrow().get_property(&key) {
+                        // Look up methods on String.prototype
+                        method
+                    } else {
+                        JsValue::Undefined
                     }
-                    // Look up methods on String.prototype
-                    if let Some(method) = self.string_prototype.borrow().get_property(&key) {
-                        return Ok(method);
-                    }
+                } else {
+                    JsValue::Undefined
                 }
-                Ok(JsValue::Undefined)
             }
             JsValue::Number(_) => {
                 // Look up methods on Number.prototype
                 if let Some(method) = self.number_prototype.borrow().get_property(&key) {
-                    return Ok(method);
+                    method
+                } else {
+                    JsValue::Undefined
                 }
-                Ok(JsValue::Undefined)
             }
-            _ => Ok(JsValue::Undefined),
-        }
+            _ => JsValue::Undefined,
+        };
+
+        // Propagate the object's guard to keep it alive while the returned value is used
+        Ok(Guarded { value, guard: obj_guard })
     }
 
     fn get_member_key(&mut self, property: &MemberProperty) -> Result<PropertyKey, JsError> {
