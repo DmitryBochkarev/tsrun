@@ -281,7 +281,7 @@ impl<T: Default + Reset + Traceable> Space<T> {
             chunk_capacity,
             free_list: Vec::new(),
             next_object_id: 0,
-            marked: rustc_hash::FxHashSet::default(),
+            marked: FxHashSet::default(),
             to_unlink: Vec::new(),
             net_allocs: 0,
             gc_threshold: DEFAULT_GC_THRESHOLD as isize,
