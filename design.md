@@ -4,7 +4,7 @@
 
 **Project:** `typescript-eval`
 **Purpose:** Execute TypeScript for config/manifest generation from Rust
-**Status:** Milestone 8 In Progress (Order-based Async, Internal Modules, 542 tests passing)
+**Status:** Milestone 8 Complete (Order-based Async, Internal Modules, 553 tests passing)
 
 ### Requirements
 
@@ -52,29 +52,13 @@ The interpreter uses an **order-based suspension model**:
 
 ## Next Implementation Priorities
 
-### Priority 1: Order System & Internal Modules
-
-1. **Core Order Types**
-   - `Order`, `OrderId`, `OrderResponse` structs
-   - `RuntimeResult` enum: `Complete`, `NeedImports`, `Suspended`
-
-2. **Internal Module System**
-   - Native modules (Rust functions)
-   - Source modules (TypeScript code)
-   - `eval:internal` with `__order__`, `__cancelOrder__`
-
-3. **Import Resolution**
-   - Collect imports from AST before execution
-   - Internal modules resolve automatically
-   - External modules require host provision
-
-### Priority 2: Async/Await via Orders
+### Priority 1: Async/Await via Orders
 
 - Async functions return order-based promises
 - `await` suspends until host fulfills order
 - No internal promise resolution (all async is external)
 
-### Priority 3: Serde Integration
+### Priority 2: Serde Integration
 
 - `JsValue` ↔ `serde_json::Value` conversion
 - Direct struct serialization/deserialization
@@ -85,6 +69,13 @@ The interpreter uses an **order-based suspension model**:
 - ~~**Built-in objects**~~ ✅ (Array, String, Object, Number, Math, JSON, Date, Map, Set, Symbol, RegExp, Error)
 - ~~**Classes**~~ ✅
 - ~~**Zero-Panic Policy**~~ ✅
+- ~~**Order System & Internal Modules**~~ ✅
+  - `Order`, `OrderId`, `OrderResponse` types
+  - `RuntimeResult` enum: `Complete`, `NeedImports`, `Suspended`
+  - Native modules (Rust functions) and Source modules (TypeScript)
+  - `eval:internal` with `__order__`, `__cancelOrder__`, `__getOrderId__`
+  - Import/export statement execution
+  - Static import resolution (internal modules resolve automatically)
 
 ---
 

@@ -157,10 +157,8 @@ impl NativeModuleBuilder {
         arity: usize,
     ) -> Self {
         let name = name.into();
-        self.exports.push((
-            name.clone(),
-            InternalExport::Function { name, func, arity },
-        ));
+        self.exports
+            .push((name.clone(), InternalExport::Function { name, func, arity }));
         self
     }
 
@@ -299,7 +297,10 @@ impl Runtime {
     }
 
     /// Fulfill orders with responses from the host
-    pub fn fulfill_orders(&mut self, responses: Vec<OrderResponse>) -> Result<RuntimeResult, JsError> {
+    pub fn fulfill_orders(
+        &mut self,
+        responses: Vec<OrderResponse>,
+    ) -> Result<RuntimeResult, JsError> {
         self.interpreter.fulfill_orders(responses)?;
         self.continue_eval()
     }

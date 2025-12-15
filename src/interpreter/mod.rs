@@ -160,19 +160,19 @@ pub struct Interpreter {
     // Order System
     // ═══════════════════════════════════════════════════════════════════════════
     /// Counter for generating unique order IDs
-    next_order_id: u64,
+    pub(crate) next_order_id: u64,
 
     /// Pending orders waiting for host fulfillment
-    pending_orders: Vec<crate::Order>,
+    pub(crate) pending_orders: Vec<crate::Order>,
 
     /// Guards keeping pending order payloads alive
-    pending_order_guards: Vec<Guard<JsObject>>,
+    pub(crate) pending_order_guards: Vec<Guard<JsObject>>,
 
     /// Map from OrderId -> (resolve_fn, reject_fn) for pending promises
-    order_callbacks: FxHashMap<crate::OrderId, (Gc<JsObject>, Gc<JsObject>)>,
+    pub(crate) order_callbacks: FxHashMap<crate::OrderId, (Gc<JsObject>, Gc<JsObject>)>,
 
     /// Cancelled order IDs (from Promise.race losing, etc.)
-    cancelled_orders: Vec<crate::OrderId>,
+    pub(crate) cancelled_orders: Vec<crate::OrderId>,
 }
 
 impl Interpreter {
@@ -426,7 +426,8 @@ impl Interpreter {
 
     /// Register an internal module for import
     pub fn register_internal_module(&mut self, module: crate::InternalModule) {
-        self.internal_modules.insert(module.specifier.clone(), module);
+        self.internal_modules
+            .insert(module.specifier.clone(), module);
     }
 
     /// Check if a specifier is an internal module
@@ -542,16 +543,17 @@ impl Interpreter {
     }
 
     /// Fulfill orders with responses from the host
-    pub fn fulfill_orders(
-        &mut self,
-        responses: Vec<crate::OrderResponse>,
-    ) -> Result<(), JsError> {
+    pub fn fulfill_orders(&mut self, responses: Vec<crate::OrderResponse>) -> Result<(), JsError> {
         for response in responses {
             if let Some((resolve_fn, reject_fn)) = self.order_callbacks.remove(&response.id) {
                 match response.result {
                     Ok(value) => {
                         // Call resolve(value)
-                        self.call_function(JsValue::Object(resolve_fn), JsValue::Undefined, &[value])?;
+                        self.call_function(
+                            JsValue::Object(resolve_fn),
+                            JsValue::Undefined,
+                            &[value],
+                        )?;
                     }
                     Err(error) => {
                         // Create error object and call reject
@@ -575,9 +577,8 @@ impl Interpreter {
         {
             let mut env_ref = env.borrow_mut();
             env_ref.null_prototype = true;
-            env_ref.exotic = ExoticObject::Environment(EnvironmentData::with_outer(Some(
-                self.global_env,
-            )));
+            env_ref.exotic =
+                ExoticObject::Environment(EnvironmentData::with_outer(Some(self.global_env)));
         }
         self.global_env.own(&env, &self.heap);
         env
@@ -1768,10 +1769,7 @@ impl Interpreter {
     // Import/Export Implementation
     // ═══════════════════════════════════════════════════════════════════════════
 
-    fn execute_import(
-        &mut self,
-        import: &crate::ast::ImportDeclaration,
-    ) -> Result<(), JsError> {
+    fn execute_import(&mut self, import: &crate::ast::ImportDeclaration) -> Result<(), JsError> {
         let specifier = import.source.value.to_string();
 
         // Resolve the module
@@ -1802,11 +1800,7 @@ impl Interpreter {
                 }
                 crate::ast::ImportSpecifier::Namespace { local, .. } => {
                     // import * as foo from "module"
-                    self.env_define(
-                        local.name.cheap_clone(),
-                        JsValue::Object(module_obj),
-                        false,
-                    );
+                    self.env_define(local.name.cheap_clone(), JsValue::Object(module_obj), false);
                 }
             }
         }
@@ -1864,15 +1858,13 @@ impl Interpreter {
                     .borrow()
                     .get_property(&import_key)
                     .unwrap_or(JsValue::Undefined);
-                self.exports
-                    .insert(spec.exported.name.cheap_clone(), value);
+                self.exports.insert(spec.exported.name.cheap_clone(), value);
             }
         } else if !export.specifiers.is_empty() {
             // Handle named exports: export { foo, bar }
             for spec in &export.specifiers {
                 let value = self.env_get(&spec.local.name)?;
-                self.exports
-                    .insert(spec.exported.name.cheap_clone(), value);
+                self.exports.insert(spec.exported.name.cheap_clone(), value);
             }
         }
 
@@ -4192,7 +4184,8 @@ impl Interpreter {
                             if let JsValue::Object(ref val_obj) = prop.value {
                                 obj.own(val_obj, &self.heap);
                             }
-                            obj.borrow_mut().set_property(key.clone(), prop.value.clone());
+                            obj.borrow_mut()
+                                .set_property(key.clone(), prop.value.clone());
                         }
                     }
                     // If it's null or undefined, just skip (like JS does)
