@@ -479,16 +479,8 @@ impl<T: Default + Reset + Traceable + Unlink> Space<T> {
     /// Run mark-and-sweep collection
     fn collect(&mut self) {
         self.mark();
-        let collected = self.sweep();
-        // Only reset net_allocs if we collected something
-        // This prevents frequent GC when cycles prevent collection
-        if collected > 0 {
-            self.net_allocs = 0;
-        } else {
-            // No objects collected - double the threshold temporarily
-            // to avoid spinning on futile GC attempts
-            self.gc_threshold = self.gc_threshold.saturating_mul(2);
-        }
+        self.sweep();
+        self.net_allocs = 0;
     }
 
     /// Force a collection (for testing or explicit cleanup)
