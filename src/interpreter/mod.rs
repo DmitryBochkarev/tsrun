@@ -273,6 +273,11 @@ impl Interpreter {
         let regexp_constructor = builtins::create_regexp_constructor(self);
         let regexp_name = self.string_dict.get_or_insert("RegExp");
         self.env_define(regexp_name, JsValue::Object(regexp_constructor), false);
+
+        // Initialize Number constructor (global Number function)
+        let number_constructor = builtins::create_number_constructor(self);
+        let number_name = self.string_dict.get_or_insert("Number");
+        self.env_define(number_name, JsValue::Object(number_constructor), false);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -2574,7 +2579,52 @@ impl Interpreter {
                 JsValue::Number((lhs >> rhs) as f64)
             }
 
-            _ => JsValue::Undefined,
+            // instanceof operator
+            BinaryOp::Instanceof => {
+                // left instanceof right
+                // right must be a constructor (function with prototype)
+                let JsValue::Object(right_obj) = &right else {
+                    return Err(JsError::type_error(
+                        "Right-hand side of 'instanceof' is not an object",
+                    ));
+                };
+
+                // Get right.prototype
+                let proto_key = self.key("prototype");
+                let right_proto = right_obj.borrow().get_property(&proto_key);
+                let Some(JsValue::Object(right_proto_obj)) = right_proto else {
+                    return Err(JsError::type_error(
+                        "Function has non-object prototype in instanceof check",
+                    ));
+                };
+
+                // Check if left's prototype chain contains right.prototype
+                let JsValue::Object(left_obj) = &left else {
+                    return Ok(Guarded::unguarded(JsValue::Boolean(false)));
+                };
+
+                let mut current = left_obj.borrow().prototype;
+                let target_id = right_proto_obj.id();
+                while let Some(proto) = current {
+                    if proto.id() == target_id {
+                        return Ok(Guarded::unguarded(JsValue::Boolean(true)));
+                    }
+                    current = proto.borrow().prototype;
+                }
+                JsValue::Boolean(false)
+            }
+
+            // in operator
+            BinaryOp::In => {
+                // "key" in object
+                let JsValue::Object(obj) = &right else {
+                    return Err(JsError::type_error(
+                        "Cannot use 'in' operator to search for property in non-object",
+                    ));
+                };
+                let key = PropertyKey::from(left.to_js_string());
+                JsValue::Boolean(obj.borrow().has_own_property(&key))
+            }
         }))
     }
 
@@ -3278,18 +3328,25 @@ impl Interpreter {
                     self.hoist_var_declarations(&block.body);
                 }
 
-                let (result, result_guard) = match &*interp.body {
-                    FunctionBody::Block(block) => match self.execute_block(block)? {
-                        Completion::Return(v) => (v, None),
-                        _ => (JsValue::Undefined, None),
-                    },
-                    FunctionBody::Expression(expr) => {
-                        let Guarded { value, guard } = self.evaluate_expression(expr)?;
-                        (value, guard)
-                    }
-                };
+                let body_result: Result<(JsValue, Option<Guard<JsObject>>), JsError> =
+                    match &*interp.body {
+                        FunctionBody::Block(block) => match self.execute_block(block) {
+                            Ok(Completion::Return(v)) => Ok((v, None)),
+                            Ok(_) => Ok((JsValue::Undefined, None)),
+                            Err(e) => Err(e),
+                        },
+                        FunctionBody::Expression(expr) => match self.evaluate_expression(expr) {
+                            Ok(Guarded { value, guard }) => Ok((value, guard)),
+                            Err(e) => Err(e),
+                        },
+                    };
 
+                // ALWAYS restore environment, even on error
                 self.env = saved_env;
+
+                // Now propagate the result or error
+                let (result, result_guard) = body_result?;
+
                 // Propagate guard from expression body arrow functions
                 Ok(Guarded {
                     value: result,

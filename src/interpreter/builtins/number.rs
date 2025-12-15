@@ -1,8 +1,9 @@
 //! Number built-in methods
 
 use crate::error::JsError;
+use crate::gc::Gc;
 use crate::interpreter::Interpreter;
-use crate::value::{Guarded, JsString, JsValue};
+use crate::value::{Guarded, JsObject, JsString, JsValue};
 
 /// Initialize Number.prototype with toFixed, toString, toPrecision, toExponential
 pub fn init_number_prototype(interp: &mut Interpreter) {
@@ -14,8 +15,112 @@ pub fn init_number_prototype(interp: &mut Interpreter) {
     interp.register_method(&proto, "toExponential", number_to_exponential, 1);
 }
 
-// TODO: Port Number constructor with static methods once needed
-// pub fn create_number_constructor(interp: &mut Interpreter) -> Gc<JsObject> { ... }
+/// Number constructor function - Number(value) converts value to number
+pub fn number_constructor_fn(
+    _interp: &mut Interpreter,
+    _this: JsValue,
+    args: &[JsValue],
+) -> Result<Guarded, JsError> {
+    // Number() with no arguments returns 0
+    if args.is_empty() {
+        return Ok(Guarded::unguarded(JsValue::Number(0.0)));
+    }
+    // Number(value) converts value to number
+    let value = args.first().cloned().unwrap_or(JsValue::Undefined);
+    Ok(Guarded::unguarded(JsValue::Number(value.to_number())))
+}
+
+/// Create Number constructor with static methods and constants
+pub fn create_number_constructor(interp: &mut Interpreter) -> Gc<JsObject> {
+    let constructor = interp.create_native_function("Number", number_constructor_fn, 1);
+
+    // Static methods
+    interp.register_method(&constructor, "isNaN", number_is_nan, 1);
+    interp.register_method(&constructor, "isFinite", number_is_finite, 1);
+    interp.register_method(&constructor, "isInteger", number_is_integer, 1);
+    interp.register_method(&constructor, "isSafeInteger", number_is_safe_integer, 1);
+    interp.register_method(&constructor, "parseFloat", number_parse_float, 1);
+    interp.register_method(&constructor, "parseInt", number_parse_int, 2);
+
+    // Constants
+    let max_value_key = interp.key("MAX_VALUE");
+    let min_value_key = interp.key("MIN_VALUE");
+    let max_safe_key = interp.key("MAX_SAFE_INTEGER");
+    let min_safe_key = interp.key("MIN_SAFE_INTEGER");
+    let nan_key = interp.key("NaN");
+    let pos_inf_key = interp.key("POSITIVE_INFINITY");
+    let neg_inf_key = interp.key("NEGATIVE_INFINITY");
+    let epsilon_key = interp.key("EPSILON");
+
+    {
+        let mut c = constructor.borrow_mut();
+        c.set_property(max_value_key, JsValue::Number(f64::MAX));
+        c.set_property(min_value_key, JsValue::Number(f64::MIN_POSITIVE));
+        c.set_property(max_safe_key, JsValue::Number(9007199254740991.0));
+        c.set_property(min_safe_key, JsValue::Number(-9007199254740991.0));
+        c.set_property(nan_key, JsValue::Number(f64::NAN));
+        c.set_property(pos_inf_key, JsValue::Number(f64::INFINITY));
+        c.set_property(neg_inf_key, JsValue::Number(f64::NEG_INFINITY));
+        c.set_property(epsilon_key, JsValue::Number(f64::EPSILON));
+    }
+
+    let proto_key = interp.key("prototype");
+    constructor
+        .borrow_mut()
+        .set_property(proto_key, JsValue::Object(interp.number_prototype));
+
+    constructor
+}
+
+/// Number.parseFloat - same as global parseFloat
+pub fn number_parse_float(
+    _interp: &mut Interpreter,
+    _this: JsValue,
+    args: &[JsValue],
+) -> Result<Guarded, JsError> {
+    let s = args
+        .first()
+        .cloned()
+        .unwrap_or(JsValue::Undefined)
+        .to_js_string()
+        .to_string();
+
+    let trimmed = s.trim_start();
+    let result = trimmed.parse::<f64>().unwrap_or(f64::NAN);
+    Ok(Guarded::unguarded(JsValue::Number(result)))
+}
+
+/// Number.parseInt - same as global parseInt
+pub fn number_parse_int(
+    _interp: &mut Interpreter,
+    _this: JsValue,
+    args: &[JsValue],
+) -> Result<Guarded, JsError> {
+    let s = args
+        .first()
+        .cloned()
+        .unwrap_or(JsValue::Undefined)
+        .to_js_string()
+        .to_string();
+    let radix = args.get(1).map(|v| v.to_number() as i32).unwrap_or(10);
+
+    let trimmed = s.trim_start();
+
+    // Handle radix
+    let radix = if radix == 0 {
+        10
+    } else if !(2..=36).contains(&radix) {
+        return Ok(Guarded::unguarded(JsValue::Number(f64::NAN)));
+    } else {
+        radix
+    };
+
+    let result = i64::from_str_radix(trimmed, radix as u32)
+        .map(|n| n as f64)
+        .unwrap_or(f64::NAN);
+
+    Ok(Guarded::unguarded(JsValue::Number(result)))
+}
 
 // Number.isNaN - stricter, no type coercion
 pub fn number_is_nan(
