@@ -1,39 +1,13 @@
-//! Guard-based garbage collection system.
+//! Mark-and-sweep garbage collection system.
 //!
-//! Objects are kept alive by being transitively owned from Guard roots.
-//! Each object tracks *why* it's guarded via `GuardSource`.
+//! Objects are kept alive by being reachable from Guard roots through ownership edges.
+//! Collection happens when guards are dropped, using a mark-and-sweep algorithm.
 
 use std::cell::{Cell, Ref, RefCell, RefMut};
 use std::ptr::NonNull;
 use std::rc::{Rc, Weak};
 
 use rustc_hash::{FxHashMap, FxHashSet};
-
-// ============================================================================
-// GuardSource - tracks why an object is guarded
-// ============================================================================
-
-/// Tracks the reason why an object is guarded.
-///
-/// Each object maintains a set of `GuardSource` entries. When the set becomes
-/// empty, the object can be collected.
-#[derive(Clone, PartialEq, Eq, Hash, Debug)]
-pub enum GuardSource {
-    /// Directly guarded by a root guard (from `guard.alloc()` or `guard.guard()`)
-    Direct { guard: usize },
-    /// Guarded through ownership by another object
-    Through { object_id: usize, guard: usize },
-}
-
-impl GuardSource {
-    /// Get the root guard ID regardless of how we got it
-    pub fn guard_id(&self) -> usize {
-        match self {
-            GuardSource::Direct { guard } => *guard,
-            GuardSource::Through { guard, .. } => *guard,
-        }
-    }
-}
 
 // ============================================================================
 // Reset trait - for pooling objects
@@ -59,9 +33,8 @@ struct GcBox<T> {
     /// The actual data
     data: RefCell<T>,
 
-    /// Set of reasons why this object is guarded.
-    /// Empty set means object can be collected.
-    guard_sources: RefCell<FxHashSet<GuardSource>>,
+    /// Mark bit for mark-and-sweep collection
+    marked: Cell<bool>,
 
     /// Whether this object is in the pool (dead)
     pooled: Cell<bool>,
@@ -72,7 +45,7 @@ impl<T> GcBox<T> {
         Self {
             id,
             data: RefCell::new(data),
-            guard_sources: RefCell::new(FxHashSet::default()),
+            marked: Cell::new(false),
             pooled: Cell::new(false),
         }
     }
@@ -98,17 +71,25 @@ struct Space<T> {
     /// Next object ID
     next_object_id: usize,
 
-    /// Active guards: guard_id → set of object indices
-    /// Used for fast lookup when a guard is dropped
+    /// Active guards: guard_id → set of directly guarded object indices
     guards: FxHashMap<usize, FxHashSet<usize>>,
 
-    /// Ownership edges: (owner_id, owned_id) pairs
-    /// Used to propagate guard changes through ownership graph
-    ownership_edges: FxHashSet<(usize, usize)>,
+    /// Ownership edges: owner_id → set of owned_ids
+    /// Used during mark phase to traverse the object graph
+    ownership_edges: FxHashMap<usize, FxHashSet<usize>>,
 
     /// Object ID to index mapping (for looking up objects by ID)
     id_to_index: FxHashMap<usize, usize>,
+
+    /// Number of allocations since last collection
+    allocs_since_gc: usize,
+
+    /// Threshold for triggering collection (0 = never auto-collect)
+    gc_threshold: usize,
 }
+
+/// Default threshold: collect after this many allocations
+const DEFAULT_GC_THRESHOLD: usize = 1000;
 
 impl<T: Default + Reset> Space<T> {
     fn new() -> Self {
@@ -118,8 +99,10 @@ impl<T: Default + Reset> Space<T> {
             next_guard_id: 0,
             next_object_id: 0,
             guards: FxHashMap::default(),
-            ownership_edges: FxHashSet::default(),
+            ownership_edges: FxHashMap::default(),
             id_to_index: FxHashMap::default(),
+            allocs_since_gc: 0,
+            gc_threshold: DEFAULT_GC_THRESHOLD,
         }
     }
 
@@ -135,7 +118,7 @@ impl<T: Default + Reset> Space<T> {
                 }
             });
             gc_box.data.borrow_mut().reset();
-            gc_box.guard_sources.borrow_mut().clear();
+            gc_box.marked.set(false);
             gc_box.pooled.set(false);
 
             // Assign new ID for reused object
@@ -163,16 +146,14 @@ impl<T: Default + Reset> Space<T> {
             (index, id, ptr)
         };
 
-        // Add Direct guard source - safe because we just validated index above
-        if let Some(gc_box) = self.objects.get(index) {
-            gc_box
-                .guard_sources
-                .borrow_mut()
-                .insert(GuardSource::Direct { guard: guard_id });
-        }
-
-        // Register object with guard
+        // Register object with guard (directly guarded)
         self.guards.entry(guard_id).or_default().insert(index);
+
+        // Track allocations and maybe collect
+        self.allocs_since_gc += 1;
+        if self.gc_threshold > 0 && self.allocs_since_gc >= self.gc_threshold {
+            self.collect();
+        }
 
         Gc {
             id,
@@ -190,108 +171,14 @@ impl<T: Default + Reset> Space<T> {
         id
     }
 
-    /// Remove a guard from all objects and collect those with no guards
+    /// Remove a guard (collection happens lazily via threshold)
     fn remove_guard(&mut self, guard_id: usize) {
-        // Get all objects that have this guard directly
-        let Some(object_indices) = self.guards.remove(&guard_id) else {
-            return;
-        };
-
-        // For each object, unguard it
-        let indices: Vec<usize> = object_indices.into_iter().collect();
-        for index in indices {
-            self.unguard_object(index, guard_id);
-        }
+        self.guards.remove(&guard_id);
+        // Don't collect immediately - let threshold handle it
+        // This avoids O(n) work on every guard drop
     }
 
-    /// Unguard a specific object from a guard
-    fn unguard_object(&mut self, index: usize, guard_id: usize) {
-        let object_id = {
-            let Some(gc_box) = self.objects.get(index) else {
-                return;
-            };
-            if gc_box.pooled.get() {
-                return;
-            }
-
-            // Remove Direct{guard} from object
-            gc_box
-                .guard_sources
-                .borrow_mut()
-                .remove(&GuardSource::Direct { guard: guard_id });
-
-            gc_box.id
-        };
-
-        // Check if object still has this guard through a valid (non-circular) path
-        let still_has_guard = self.has_valid_guard_path(object_id, guard_id, &mut FxHashSet::default());
-
-        // Only propagate if the object completely lost this guard
-        if !still_has_guard {
-            self.propagate_guard_remove(object_id, guard_id);
-        }
-
-        // Re-check if object should be collected
-        let should_collect = if let Some(&idx) = self.id_to_index.get(&object_id) {
-            self.objects.get(idx).is_some_and(|gc_box| {
-                !gc_box.pooled.get() && gc_box.guard_sources.borrow().is_empty()
-            })
-        } else {
-            false
-        };
-
-        // If object has no sources left, collect it
-        if should_collect {
-            self.collect(index);
-        }
-    }
-
-    /// Check if an object has a valid (non-circular) path to a Direct guard
-    fn has_valid_guard_path(
-        &self,
-        object_id: usize,
-        guard_id: usize,
-        visited: &mut FxHashSet<usize>,
-    ) -> bool {
-        // Cycle detection
-        if !visited.insert(object_id) {
-            return false;
-        }
-
-        let index = match self.id_to_index.get(&object_id) {
-            Some(&idx) => idx,
-            None => return false,
-        };
-
-        let Some(gc_box) = self.objects.get(index) else {
-            return false;
-        };
-        if gc_box.pooled.get() {
-            return false;
-        }
-
-        for source in gc_box.guard_sources.borrow().iter() {
-            match source {
-                GuardSource::Direct { guard } if *guard == guard_id => {
-                    return true; // Found a direct path to the guard
-                }
-                GuardSource::Through {
-                    object_id: through_id,
-                    guard,
-                } if *guard == guard_id => {
-                    // Check if the "through" object has a valid path
-                    if self.has_valid_guard_path(*through_id, guard_id, visited) {
-                        return true;
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        false
-    }
-
-    /// Add a guard to an object
+    /// Add a guard to an existing object (make it directly guarded by this guard)
     fn guard_object(&mut self, index: usize, guard_id: usize) {
         let Some(gc_box) = self.objects.get(index) else {
             return;
@@ -300,159 +187,120 @@ impl<T: Default + Reset> Space<T> {
             return;
         }
 
-        let object_id = gc_box.id;
-
-        // Add Direct{guard} to object
-        gc_box
-            .guard_sources
-            .borrow_mut()
-            .insert(GuardSource::Direct { guard: guard_id });
-
         // Register object with guard
         self.guards.entry(guard_id).or_default().insert(index);
-
-        // Propagate: add Through{obj, guard} to all objects this object owns
-        self.propagate_guard_add(object_id, guard_id);
     }
 
-    /// Propagate guard addition through ownership graph
-    fn propagate_guard_add(&mut self, owner_id: usize, guard_id: usize) {
-        let mut visited = FxHashSet::default();
-        self.propagate_guard_add_inner(owner_id, guard_id, &mut visited);
+    /// Remove a guard from a specific object
+    fn unguard_object(&mut self, index: usize, guard_id: usize) {
+        if let Some(guarded_objects) = self.guards.get_mut(&guard_id) {
+            guarded_objects.remove(&index);
+        }
+        // Collection will happen when a guard is dropped
+        // No immediate collection for performance
     }
 
-    fn propagate_guard_add_inner(
-        &mut self,
-        owner_id: usize,
-        guard_id: usize,
-        visited: &mut FxHashSet<usize>,
-    ) {
-        // Avoid infinite recursion in cycles
-        if !visited.insert(owner_id) {
-            return;
+    /// Mark phase: mark all objects reachable from roots
+    fn mark(&mut self) {
+        // Clear all marks first
+        for gc_box in &self.objects {
+            gc_box.marked.set(false);
         }
 
-        // Find all objects owned by this owner
-        let owned_ids: Vec<usize> = self
-            .ownership_edges
-            .iter()
-            .filter(|(oid, _)| *oid == owner_id)
-            .map(|(_, owned_id)| *owned_id)
+        // Collect all root object indices from all guards
+        let roots: Vec<usize> = self
+            .guards
+            .values()
+            .flat_map(|indices| indices.iter().copied())
             .collect();
 
-        for owned_id in owned_ids {
-            if let Some(&index) = self.id_to_index.get(&owned_id) {
-                if let Some(gc_box) = self.objects.get(index) {
-                    if !gc_box.pooled.get() {
-                        gc_box
-                            .guard_sources
-                            .borrow_mut()
-                            .insert(GuardSource::Through {
-                                object_id: owner_id,
-                                guard: guard_id,
-                            });
-                        // Recursively propagate
-                        self.propagate_guard_add_inner(owned_id, guard_id, visited);
-                    }
-                }
-            }
+        // Mark from each root
+        for index in roots {
+            self.mark_from(index);
         }
     }
 
-    /// Propagate guard removal through ownership graph
-    fn propagate_guard_remove(&mut self, owner_id: usize, guard_id: usize) {
-        let mut visited = FxHashSet::default();
-        self.propagate_guard_remove_inner(owner_id, guard_id, &mut visited);
-    }
-
-    fn propagate_guard_remove_inner(
-        &mut self,
-        owner_id: usize,
-        guard_id: usize,
-        visited: &mut FxHashSet<usize>,
-    ) {
-        // Avoid infinite recursion in cycles
-        if !visited.insert(owner_id) {
+    /// Recursively mark an object and all objects it owns
+    fn mark_from(&mut self, index: usize) {
+        let Some(gc_box) = self.objects.get(index) else {
             return;
-        }
-
-        // Find all objects owned by this owner
-        let owned_ids: Vec<usize> = self
-            .ownership_edges
-            .iter()
-            .filter(|(oid, _)| *oid == owner_id)
-            .map(|(_, owned_id)| *owned_id)
-            .collect();
-
-        for owned_id in owned_ids {
-            let (still_has_guard, should_collect) =
-                if let Some(&index) = self.id_to_index.get(&owned_id) {
-                    if let Some(gc_box) = self.objects.get(index) {
-                        if !gc_box.pooled.get() {
-                            gc_box
-                                .guard_sources
-                                .borrow_mut()
-                                .remove(&GuardSource::Through {
-                                    object_id: owner_id,
-                                    guard: guard_id,
-                                });
-                            // Check if object still has this guard through another path
-                            let still_has_guard = gc_box
-                                .guard_sources
-                                .borrow()
-                                .iter()
-                                .any(|s| s.guard_id() == guard_id);
-                            (still_has_guard, gc_box.guard_sources.borrow().is_empty())
-                        } else {
-                            (true, false)
-                        }
-                    } else {
-                        (true, false)
-                    }
-                } else {
-                    (true, false)
-                };
-
-            // Only propagate if the object completely lost this guard
-            if !still_has_guard {
-                self.propagate_guard_remove_inner(owned_id, guard_id, visited);
-            }
-
-            // If object has no sources left, collect it
-            if should_collect {
-                if let Some(&index) = self.id_to_index.get(&owned_id) {
-                    self.collect(index);
-                }
-            }
-        }
-    }
-
-    /// Collect an object (move to pool)
-    fn collect(&mut self, index: usize) {
-        // First check if already pooled
-        let object_id = {
-            let Some(gc_box) = self.objects.get(index) else {
-                return;
-            };
-            if gc_box.pooled.get() {
-                return;
-            }
-            gc_box.id
         };
+
+        // Already marked or pooled - stop
+        if gc_box.marked.get() || gc_box.pooled.get() {
+            return;
+        }
+
+        // Mark this object
+        gc_box.marked.set(true);
+
+        let object_id = gc_box.id;
+
+        // Get owned objects and mark them recursively
+        let owned_ids: Vec<usize> = self
+            .ownership_edges
+            .get(&object_id)
+            .map(|set| set.iter().copied().collect())
+            .unwrap_or_default();
+
+        for owned_id in owned_ids {
+            if let Some(&owned_index) = self.id_to_index.get(&owned_id) {
+                self.mark_from(owned_index);
+            }
+        }
+    }
+
+    /// Sweep phase: collect all unmarked objects
+    fn sweep(&mut self) {
+        let mut to_collect = Vec::new();
+
+        for (index, gc_box) in self.objects.iter().enumerate() {
+            if !gc_box.pooled.get() && !gc_box.marked.get() {
+                to_collect.push(index);
+            }
+        }
+
+        for index in to_collect {
+            self.collect_object(index);
+        }
+    }
+
+    /// Run mark-and-sweep collection
+    fn collect(&mut self) {
+        self.mark();
+        self.sweep();
+        self.allocs_since_gc = 0;
+    }
+
+    /// Force a collection (for testing or explicit cleanup)
+    fn force_collect(&mut self) {
+        self.collect();
+    }
+
+    /// Collect a single object (move to pool)
+    fn collect_object(&mut self, index: usize) {
+        let Some(gc_box) = self.objects.get(index) else {
+            return;
+        };
+
+        if gc_box.pooled.get() {
+            return;
+        }
+
+        let object_id = gc_box.id;
 
         // Remove from id_to_index
         self.id_to_index.remove(&object_id);
 
         // Remove all ownership edges involving this object
-        self.ownership_edges
-            .retain(|(owner, owned)| *owner != object_id && *owned != object_id);
+        self.ownership_edges.remove(&object_id);
+        for owned_set in self.ownership_edges.values_mut() {
+            owned_set.remove(&object_id);
+        }
 
         // Mark as pooled and reset
-        if let Some(gc_box) = self.objects.get(index) {
-            gc_box.pooled.set(true);
-            gc_box.data.borrow_mut().reset();
-            gc_box.guard_sources.borrow_mut().clear();
-        }
+        gc_box.pooled.set(true);
+        gc_box.data.borrow_mut().reset();
 
         // Add to pool
         self.pool.push(index);
@@ -465,121 +313,57 @@ impl<T: Default + Reset> Space<T> {
             return;
         }
 
-        // Add edge
-        if !self.ownership_edges.insert((owner_id, owned_id)) {
-            // Edge already exists
+        // Verify both objects exist and are alive
+        let owner_alive = self.id_to_index.get(&owner_id).is_some_and(|&idx| {
+            self.objects
+                .get(idx)
+                .is_some_and(|gc_box| !gc_box.pooled.get())
+        });
+        let owned_alive = self.id_to_index.get(&owned_id).is_some_and(|&idx| {
+            self.objects
+                .get(idx)
+                .is_some_and(|gc_box| !gc_box.pooled.get())
+        });
+
+        if !owner_alive || !owned_alive {
             return;
         }
 
-        // Get owner's guards and propagate to owned
-        let owner_index = match self.id_to_index.get(&owner_id) {
-            Some(&idx) => idx,
-            None => return,
-        };
-
-        let guard_ids: Vec<usize> = self
-            .objects
-            .get(owner_index)
-            .map(|gc_box| {
-                gc_box
-                    .guard_sources
-                    .borrow()
-                    .iter()
-                    .map(|s| s.guard_id())
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        // For each guard the owner has, add Through{owner, guard} to owned
-        if let Some(&owned_index) = self.id_to_index.get(&owned_id) {
-            if let Some(owned_box) = self.objects.get(owned_index) {
-                for guard_id in &guard_ids {
-                    owned_box
-                        .guard_sources
-                        .borrow_mut()
-                        .insert(GuardSource::Through {
-                            object_id: owner_id,
-                            guard: *guard_id,
-                        });
-                }
-            }
-        }
-
-        // Propagate to owned's children
-        for guard_id in guard_ids {
-            self.propagate_guard_add(owned_id, guard_id);
-        }
+        // Add ownership edge
+        self.ownership_edges
+            .entry(owner_id)
+            .or_default()
+            .insert(owned_id);
     }
 
     /// Release ownership: owner no longer owns owned
     fn disown(&mut self, owner_id: usize, owned_id: usize) {
-        // Remove edge
-        if !self.ownership_edges.remove(&(owner_id, owned_id)) {
-            // Edge didn't exist
-            return;
-        }
-
-        // Get owner's guards
-        let owner_index = match self.id_to_index.get(&owner_id) {
-            Some(&idx) => idx,
-            None => return,
-        };
-
-        let guard_ids: Vec<usize> = self
-            .objects
-            .get(owner_index)
-            .map(|gc_box| {
-                gc_box
-                    .guard_sources
-                    .borrow()
-                    .iter()
-                    .map(|s| s.guard_id())
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        // For each guard the owner has, remove Through{owner, guard} from owned
-        let should_collect = if let Some(&owned_index) = self.id_to_index.get(&owned_id) {
-            if let Some(gc_box) = self.objects.get(owned_index) {
-                for guard_id in &guard_ids {
-                    gc_box
-                        .guard_sources
-                        .borrow_mut()
-                        .remove(&GuardSource::Through {
-                            object_id: owner_id,
-                            guard: *guard_id,
-                        });
-                }
-                gc_box.guard_sources.borrow().is_empty()
-            } else {
-                false
-            }
-        } else {
-            false
-        };
-
-        // Propagate removal to owned's children
-        for guard_id in &guard_ids {
-            self.propagate_guard_remove(owned_id, *guard_id);
-        }
-
-        // If owned has no sources left, collect it
-        if should_collect {
-            if let Some(&owned_index) = self.id_to_index.get(&owned_id) {
-                self.collect(owned_index);
+        if let Some(owned_set) = self.ownership_edges.get_mut(&owner_id) {
+            owned_set.remove(&owned_id);
+            if owned_set.is_empty() {
+                self.ownership_edges.remove(&owner_id);
             }
         }
+        // Collection will happen when a guard is dropped
+        // No immediate collection for performance
     }
 
     /// Get statistics
     fn stats(&self) -> GcStats {
+        let ownership_edge_count: usize = self.ownership_edges.values().map(|s| s.len()).sum();
+
         GcStats {
             total_objects: self.objects.len(),
             pooled_objects: self.pool.len(),
             live_objects: self.objects.len() - self.pool.len(),
             active_guards: self.guards.len(),
-            ownership_edges: self.ownership_edges.len(),
+            ownership_edges: ownership_edge_count,
         }
+    }
+
+    /// Set the GC threshold (0 = disable automatic collection)
+    fn set_gc_threshold(&mut self, threshold: usize) {
+        self.gc_threshold = threshold;
     }
 }
 
@@ -614,6 +398,16 @@ impl<T: Default + Reset> Heap<T> {
     pub fn stats(&self) -> GcStats {
         self.inner.borrow().stats()
     }
+
+    /// Force a garbage collection cycle
+    pub fn collect(&self) {
+        self.inner.borrow_mut().force_collect();
+    }
+
+    /// Set the GC threshold (0 = disable automatic collection)
+    pub fn set_gc_threshold(&self, threshold: usize) {
+        self.inner.borrow_mut().set_gc_threshold(threshold);
+    }
 }
 
 impl<T: Default + Reset> Default for Heap<T> {
@@ -636,7 +430,7 @@ impl<T> Clone for Heap<T> {
 
 /// A root anchor that keeps objects alive.
 ///
-/// Objects are kept alive as long as they belong to at least one guard
+/// Objects are kept alive as long as they are reachable from at least one guard
 /// (directly or through ownership).
 pub struct Guard<T: Default + Reset> {
     /// Unique identifier
@@ -665,7 +459,7 @@ impl<T: Default + Reset> Guard<T> {
     }
 
     /// Add this guard to an existing object.
-    /// Propagates to all objects owned by this object.
+    /// Makes the object directly reachable from this guard.
     pub fn guard(&self, obj: &Gc<T>) {
         if let Some(space) = self.space.upgrade() {
             space.borrow_mut().guard_object(obj.index, self.id);
@@ -673,8 +467,7 @@ impl<T: Default + Reset> Guard<T> {
     }
 
     /// Remove this guard from an object.
-    /// Propagates removal to all objects owned by this object.
-    /// Object is collected if it has no remaining guard sources.
+    /// Object may be collected if it's no longer reachable.
     pub fn unguard(&self, obj: &Gc<T>) {
         if let Some(space) = self.space.upgrade() {
             space.borrow_mut().unguard_object(obj.index, self.id);
@@ -689,7 +482,7 @@ impl<T: Default + Reset> Guard<T> {
 
 impl<T: Default + Reset> Drop for Guard<T> {
     fn drop(&mut self) {
-        // Notify space to remove this guard from all objects
+        // Notify space to remove this guard and run collection
         // If space is already dropped, nothing to do
         if let Some(space) = self.space.upgrade() {
             space.borrow_mut().remove_guard(self.id);
@@ -740,13 +533,13 @@ impl<T> Gc<T> {
 
 impl<T: Default + Reset> Gc<T> {
     /// Establish ownership: self owns other.
-    /// Other inherits all of self's guards.
+    /// Other becomes reachable through self.
     pub fn own(&self, other: &Gc<T>, heap: &Heap<T>) {
         heap.inner.borrow_mut().own(self.id, other.id);
     }
 
     /// Release ownership: self no longer owns other.
-    /// Other loses guards that came through self.
+    /// Other may be collected if no longer reachable.
     pub fn disown(&self, other: &Gc<T>, heap: &Heap<T>) {
         heap.inner.borrow_mut().disown(self.id, other.id);
     }
@@ -834,6 +627,7 @@ mod tests {
             assert_eq!(heap.stats().live_objects, 1);
         } // guard dropped here
 
+        heap.collect(); // Need explicit collect since we use threshold-based GC
         assert_eq!(heap.stats().live_objects, 0);
         assert_eq!(heap.stats().pooled_objects, 1);
     }
@@ -848,11 +642,13 @@ mod tests {
             obj.borrow_mut().value = 42;
         }
 
+        heap.collect(); // Force collection
         // Object should be in pool now
         assert_eq!(heap.stats().pooled_objects, 1);
 
         // Allocate again - should reuse from pool
         let guard = heap.create_guard();
+        heap.set_gc_threshold(0); // Disable threshold for this test
         let obj = guard.alloc();
 
         // Value should be reset
@@ -895,10 +691,12 @@ mod tests {
         a.own(&b, &heap);
         drop(guard2);
 
+        heap.collect(); // Force collection
         assert_eq!(heap.stats().live_objects, 2);
 
-        // Disown B - it should be collected
+        // Disown B - it should be collected after GC
         a.disown(&b, &heap);
+        heap.collect(); // Force collection
 
         assert_eq!(heap.stats().live_objects, 1);
         assert_eq!(heap.stats().pooled_objects, 1);
@@ -920,12 +718,15 @@ mod tests {
         b.own(&c, &heap);
 
         drop(guard3);
+        heap.collect();
         assert_eq!(heap.stats().live_objects, 3); // C alive via A and B
 
         a.disown(&c, &heap);
+        heap.collect();
         assert_eq!(heap.stats().live_objects, 3); // C still alive via B
 
         b.disown(&c, &heap);
+        heap.collect();
         assert_eq!(heap.stats().live_objects, 2); // C collected
     }
 
@@ -949,12 +750,14 @@ mod tests {
 
         // Unguard A from guard
         guard.unguard(&a);
+        heap.collect();
 
-        // A should still be alive (through B which has Direct{guard})
+        // A should still be alive (through B which is still directly guarded)
         assert_eq!(heap.stats().live_objects, 2);
 
-        // Unguard B from guard - both should be collected
+        // Unguard B from guard - both should be collected (cycle is unreachable)
         guard.unguard(&b);
+        heap.collect();
 
         assert_eq!(heap.stats().live_objects, 0);
         assert_eq!(heap.stats().pooled_objects, 2);
@@ -971,11 +774,12 @@ mod tests {
 
         a.own(&b, &heap);
 
-        // Add guard2 to A - should propagate to B
+        // Add guard2 to A - B should survive via A even if guard1 is dropped
         guard2.guard(&a);
 
-        // Drop guard1 - both should survive via guard2
+        // Drop guard1 - both should survive via guard2 → A → B
         drop(guard1);
+        heap.collect();
 
         assert_eq!(heap.stats().live_objects, 2);
     }
@@ -996,13 +800,75 @@ mod tests {
         // Unguard B and C from direct guard
         guard.unguard(&b);
         guard.unguard(&c);
+        heap.collect();
 
         // All should still be alive (C through B, B through A)
         assert_eq!(heap.stats().live_objects, 3);
 
-        // Unguard A - all should be collected (no path to any Direct guard)
+        // Unguard A - all should be collected (no path to any root)
         guard.unguard(&a);
+        heap.collect();
 
         assert_eq!(heap.stats().live_objects, 0);
+    }
+
+    #[test]
+    fn test_diamond_ownership() {
+        let heap: Heap<TestObj> = Heap::new();
+        let guard = heap.create_guard();
+
+        // Diamond: A owns B and C, both B and C own D
+        let a = guard.alloc();
+        let b = guard.alloc();
+        let c = guard.alloc();
+        let d = guard.alloc();
+
+        a.own(&b, &heap);
+        a.own(&c, &heap);
+        b.own(&d, &heap);
+        c.own(&d, &heap);
+
+        // Unguard all except A
+        guard.unguard(&b);
+        guard.unguard(&c);
+        guard.unguard(&d);
+        heap.collect();
+
+        // All should still be alive via A
+        assert_eq!(heap.stats().live_objects, 4);
+
+        // Remove one path to D (B → D)
+        b.disown(&d, &heap);
+        heap.collect();
+
+        // D should still be alive via C
+        assert_eq!(heap.stats().live_objects, 4);
+
+        // Remove other path to D (C → D)
+        c.disown(&d, &heap);
+        heap.collect();
+
+        // D should now be collected
+        assert_eq!(heap.stats().live_objects, 3);
+    }
+
+    #[test]
+    fn test_multiple_guards_same_object() {
+        let heap: Heap<TestObj> = Heap::new();
+        let guard1 = heap.create_guard();
+        let guard2 = heap.create_guard();
+
+        let obj = guard1.alloc();
+        guard2.guard(&obj);
+
+        assert_eq!(heap.stats().live_objects, 1);
+
+        drop(guard1);
+        heap.collect();
+        assert_eq!(heap.stats().live_objects, 1); // Still alive via guard2
+
+        drop(guard2);
+        heap.collect();
+        assert_eq!(heap.stats().live_objects, 0); // Now collected
     }
 }
