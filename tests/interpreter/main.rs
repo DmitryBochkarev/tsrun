@@ -48,7 +48,7 @@ use typescript_eval::{JsError, JsValue, Runtime};
 /// Create a new runtime with GC threshold from environment or default
 fn create_test_runtime() -> Runtime {
     let runtime = Runtime::new();
-    
+
     // Allow overriding GC threshold via environment variable for stress testing
     // GC_THRESHOLD=1 cargo test  # Most aggressive
     // GC_THRESHOLD=10 cargo test # Frequent GC
@@ -57,7 +57,7 @@ fn create_test_runtime() -> Runtime {
             runtime.set_gc_threshold(threshold);
         }
     }
-    
+
     runtime
 }
 

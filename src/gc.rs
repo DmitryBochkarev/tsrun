@@ -58,12 +58,15 @@ impl<T> GcBox<T> {
 /// Internal memory arena that manages all allocations.
 /// Not exposed directly - accessed through `Heap<T>`.
 struct Space<T> {
-    /// All allocated objects (including pooled).
-    /// Using Box to ensure stable addresses when Vec reallocates.
-    objects: Vec<Box<GcBox<T>>>,
+    /// Chunks of allocated objects. Each chunk has fixed capacity.
+    /// Inner vecs never reallocate, ensuring stable pointers.
+    chunks: Vec<Vec<GcBox<T>>>,
 
-    /// Free list of pooled object indices
-    pool: Vec<usize>,
+    /// Capacity of each chunk (fixed at initialization)
+    chunk_capacity: usize,
+
+    /// Free list of pooled object pointers
+    pool: Vec<NonNull<GcBox<T>>>,
 
     /// Next guard ID
     next_guard_id: usize,
@@ -71,15 +74,15 @@ struct Space<T> {
     /// Next object ID
     next_object_id: usize,
 
-    /// Active guards: guard_id → set of directly guarded object indices
+    /// Active guards: guard_id → set of directly guarded object IDs
     guards: FxHashMap<usize, FxHashSet<usize>>,
 
     /// Ownership edges: owner_id → set of owned_ids
     /// Used during mark phase to traverse the object graph
     ownership_edges: FxHashMap<usize, FxHashSet<usize>>,
 
-    /// Object ID to index mapping (for looking up objects by ID)
-    id_to_index: FxHashMap<usize, usize>,
+    /// Object ID to pointer mapping (for looking up objects by ID)
+    id_to_ptr: FxHashMap<usize, NonNull<GcBox<T>>>,
 
     /// Number of allocations since last collection
     allocs_since_gc: usize,
@@ -91,16 +94,24 @@ struct Space<T> {
 /// Default threshold: collect after this many allocations
 const DEFAULT_GC_THRESHOLD: usize = 100;
 
+/// Default chunk capacity: objects per chunk
+const DEFAULT_CHUNK_CAPACITY: usize = 256;
+
 impl<T: Default + Reset> Space<T> {
     fn new() -> Self {
+        Self::with_chunk_capacity(DEFAULT_CHUNK_CAPACITY)
+    }
+
+    fn with_chunk_capacity(chunk_capacity: usize) -> Self {
         Self {
-            objects: Vec::new(),
+            chunks: Vec::new(),
+            chunk_capacity,
             pool: Vec::new(),
             next_guard_id: 0,
             next_object_id: 0,
             guards: FxHashMap::default(),
             ownership_edges: FxHashMap::default(),
-            id_to_index: FxHashMap::default(),
+            id_to_ptr: FxHashMap::default(),
             allocs_since_gc: 0,
             gc_threshold: DEFAULT_GC_THRESHOLD,
         }
@@ -108,15 +119,19 @@ impl<T: Default + Reset> Space<T> {
 
     /// Allocate a new object with the given guard
     fn alloc_internal(&mut self, guard_id: usize) -> Gc<T> {
-        let (index, id, ptr) = if let Some(index) = self.pool.pop() {
-            // Reuse from pool - safe because pool contains valid indices
-            let gc_box = self.objects.get_mut(index).unwrap_or_else(|| {
-                // Pool should only contain valid indices, this is an internal error
-                #[allow(clippy::panic)]
-                {
-                    panic!("GC internal error: invalid pool index {index}")
+        let (id, ptr) = if let Some(ptr) = self.pool.pop() {
+            // Reuse from pool - safe because pool contains valid pointers
+            // Safety: ptr came from our chunks which have stable addresses
+            let gc_box = unsafe { ptr.as_ptr().as_mut() };
+            let gc_box = match gc_box {
+                Some(b) => b,
+                None => {
+                    #[allow(clippy::panic)]
+                    {
+                        panic!("GC internal error: invalid pool pointer")
+                    }
                 }
-            });
+            };
             gc_box.data.borrow_mut().reset();
             gc_box.marked.set(false);
             gc_box.pooled.set(false);
@@ -126,28 +141,59 @@ impl<T: Default + Reset> Space<T> {
             self.next_object_id += 1;
             gc_box.id = id;
 
-            self.id_to_index.insert(id, index);
+            self.id_to_ptr.insert(id, ptr);
 
-            // Safe: Box has stable address
-            let ptr = NonNull::from(gc_box.as_ref());
-            (index, id, ptr)
+            (id, ptr)
         } else {
-            // Allocate new - use Box for stable address
+            // Need to allocate new - check if current chunk has space
+            let need_new_chunk = self
+                .chunks
+                .last()
+                .is_none_or(|chunk| chunk.len() >= self.chunk_capacity);
+
+            if need_new_chunk {
+                // Create new chunk with fixed capacity
+                self.chunks.push(Vec::with_capacity(self.chunk_capacity));
+            }
+
+            // Get the last chunk (guaranteed to exist and have space now)
+            let chunk = match self.chunks.last_mut() {
+                Some(c) => c,
+                None => {
+                    #[allow(clippy::panic)]
+                    {
+                        panic!("GC internal error: no chunk after creation")
+                    }
+                }
+            };
+
             let id = self.next_object_id;
             self.next_object_id += 1;
 
-            let gc_box = Box::new(GcBox::new(id, T::default()));
-            let ptr = NonNull::from(gc_box.as_ref());
-            let index = self.objects.len();
-            self.objects.push(gc_box);
+            // Push the new object into the chunk
+            chunk.push(GcBox::new(id, T::default()));
 
-            self.id_to_index.insert(id, index);
+            // Get pointer to the just-pushed object
+            // Safety: We just pushed, so last() is valid and chunk won't reallocate
+            // (we pre-allocated with_capacity)
+            let gc_box = match chunk.last() {
+                Some(b) => b,
+                None => {
+                    #[allow(clippy::panic)]
+                    {
+                        panic!("GC internal error: chunk empty after push")
+                    }
+                }
+            };
+            let ptr = NonNull::from(gc_box);
 
-            (index, id, ptr)
+            self.id_to_ptr.insert(id, ptr);
+
+            (id, ptr)
         };
 
-        // Register object with guard (directly guarded)
-        self.guards.entry(guard_id).or_default().insert(index);
+        // Register object with guard (directly guarded) - now using object ID
+        self.guards.entry(guard_id).or_default().insert(id);
 
         // Track allocations and maybe collect
         self.allocs_since_gc += 1;
@@ -157,7 +203,6 @@ impl<T: Default + Reset> Space<T> {
 
         Gc {
             id,
-            index,
             ptr,
             _marker: std::marker::PhantomData,
         }
@@ -179,22 +224,25 @@ impl<T: Default + Reset> Space<T> {
     }
 
     /// Add a guard to an existing object (make it directly guarded by this guard)
-    fn guard_object(&mut self, index: usize, guard_id: usize) {
-        let Some(gc_box) = self.objects.get(index) else {
+    fn guard_object(&mut self, object_id: usize, guard_id: usize) {
+        // Verify object exists and is alive
+        let Some(&ptr) = self.id_to_ptr.get(&object_id) else {
             return;
         };
+        // Safety: ptr from id_to_ptr is valid
+        let gc_box = unsafe { ptr.as_ref() };
         if gc_box.pooled.get() {
             return;
         }
 
-        // Register object with guard
-        self.guards.entry(guard_id).or_default().insert(index);
+        // Register object with guard (using object ID)
+        self.guards.entry(guard_id).or_default().insert(object_id);
     }
 
     /// Remove a guard from a specific object
-    fn unguard_object(&mut self, index: usize, guard_id: usize) {
+    fn unguard_object(&mut self, object_id: usize, guard_id: usize) {
         if let Some(guarded_objects) = self.guards.get_mut(&guard_id) {
-            guarded_objects.remove(&index);
+            guarded_objects.remove(&object_id);
         }
         // Collection will happen when a guard is dropped
         // No immediate collection for performance
@@ -203,28 +251,33 @@ impl<T: Default + Reset> Space<T> {
     /// Mark phase: mark all objects reachable from roots
     fn mark(&mut self) {
         // Clear all marks first
-        for gc_box in &self.objects {
-            gc_box.marked.set(false);
+        for chunk in &self.chunks {
+            for gc_box in chunk {
+                gc_box.marked.set(false);
+            }
         }
 
-        // Collect all root object indices from all guards
+        // Collect all root object IDs from all guards
         let roots: Vec<usize> = self
             .guards
             .values()
-            .flat_map(|indices| indices.iter().copied())
+            .flat_map(|ids| ids.iter().copied())
             .collect();
 
         // Mark from each root
-        for index in roots {
-            self.mark_from(index);
+        for object_id in roots {
+            self.mark_from_id(object_id);
         }
     }
 
-    /// Recursively mark an object and all objects it owns
-    fn mark_from(&mut self, index: usize) {
-        let Some(gc_box) = self.objects.get(index) else {
+    /// Recursively mark an object and all objects it owns (by object ID)
+    fn mark_from_id(&mut self, object_id: usize) {
+        let Some(&ptr) = self.id_to_ptr.get(&object_id) else {
             return;
         };
+
+        // Safety: ptr from id_to_ptr is valid
+        let gc_box = unsafe { ptr.as_ref() };
 
         // Already marked or pooled - stop
         if gc_box.marked.get() || gc_box.pooled.get() {
@@ -234,8 +287,6 @@ impl<T: Default + Reset> Space<T> {
         // Mark this object
         gc_box.marked.set(true);
 
-        let object_id = gc_box.id;
-
         // Get owned objects and mark them recursively
         let owned_ids: Vec<usize> = self
             .ownership_edges
@@ -244,9 +295,7 @@ impl<T: Default + Reset> Space<T> {
             .unwrap_or_default();
 
         for owned_id in owned_ids {
-            if let Some(&owned_index) = self.id_to_index.get(&owned_id) {
-                self.mark_from(owned_index);
-            }
+            self.mark_from_id(owned_id);
         }
     }
 
@@ -254,14 +303,16 @@ impl<T: Default + Reset> Space<T> {
     fn sweep(&mut self) {
         let mut to_collect = Vec::new();
 
-        for (index, gc_box) in self.objects.iter().enumerate() {
-            if !gc_box.pooled.get() && !gc_box.marked.get() {
-                to_collect.push(index);
+        for chunk in &self.chunks {
+            for gc_box in chunk {
+                if !gc_box.pooled.get() && !gc_box.marked.get() {
+                    to_collect.push(gc_box.id);
+                }
             }
         }
 
-        for index in to_collect {
-            self.collect_object(index);
+        for object_id in to_collect {
+            self.collect_object_by_id(object_id);
         }
     }
 
@@ -277,20 +328,18 @@ impl<T: Default + Reset> Space<T> {
         self.collect();
     }
 
-    /// Collect a single object (move to pool)
-    fn collect_object(&mut self, index: usize) {
-        let Some(gc_box) = self.objects.get(index) else {
+    /// Collect a single object by ID (move to pool)
+    fn collect_object_by_id(&mut self, object_id: usize) {
+        let Some(ptr) = self.id_to_ptr.remove(&object_id) else {
             return;
         };
+
+        // Safety: ptr from id_to_ptr is valid
+        let gc_box = unsafe { ptr.as_ref() };
 
         if gc_box.pooled.get() {
             return;
         }
-
-        let object_id = gc_box.id;
-
-        // Remove from id_to_index
-        self.id_to_index.remove(&object_id);
 
         // Remove all ownership edges involving this object
         self.ownership_edges.remove(&object_id);
@@ -302,8 +351,8 @@ impl<T: Default + Reset> Space<T> {
         gc_box.pooled.set(true);
         gc_box.data.borrow_mut().reset();
 
-        // Add to pool
-        self.pool.push(index);
+        // Add pointer to pool for reuse
+        self.pool.push(ptr);
     }
 
     /// Establish ownership: owner owns owned
@@ -314,15 +363,15 @@ impl<T: Default + Reset> Space<T> {
         }
 
         // Verify both objects exist and are alive
-        let owner_alive = self.id_to_index.get(&owner_id).is_some_and(|&idx| {
-            self.objects
-                .get(idx)
-                .is_some_and(|gc_box| !gc_box.pooled.get())
+        let owner_alive = self.id_to_ptr.get(&owner_id).is_some_and(|&ptr| {
+            // Safety: ptr from id_to_ptr is valid
+            let gc_box = unsafe { ptr.as_ref() };
+            !gc_box.pooled.get()
         });
-        let owned_alive = self.id_to_index.get(&owned_id).is_some_and(|&idx| {
-            self.objects
-                .get(idx)
-                .is_some_and(|gc_box| !gc_box.pooled.get())
+        let owned_alive = self.id_to_ptr.get(&owned_id).is_some_and(|&ptr| {
+            // Safety: ptr from id_to_ptr is valid
+            let gc_box = unsafe { ptr.as_ref() };
+            !gc_box.pooled.get()
         });
 
         if !owner_alive || !owned_alive {
@@ -351,11 +400,12 @@ impl<T: Default + Reset> Space<T> {
     /// Get statistics
     fn stats(&self) -> GcStats {
         let ownership_edge_count: usize = self.ownership_edges.values().map(|s| s.len()).sum();
+        let total_objects: usize = self.chunks.iter().map(|c| c.len()).sum();
 
         GcStats {
-            total_objects: self.objects.len(),
+            total_objects,
             pooled_objects: self.pool.len(),
-            live_objects: self.objects.len() - self.pool.len(),
+            live_objects: total_objects - self.pool.len(),
             active_guards: self.guards.len(),
             ownership_edges: ownership_edge_count,
         }
@@ -378,10 +428,17 @@ pub struct Heap<T> {
 }
 
 impl<T: Default + Reset> Heap<T> {
-    /// Create a new heap
+    /// Create a new heap with default chunk capacity
     pub fn new() -> Self {
         Self {
             inner: Rc::new(RefCell::new(Space::new())),
+        }
+    }
+
+    /// Create a new heap with specified chunk capacity
+    pub fn with_chunk_capacity(chunk_capacity: usize) -> Self {
+        Self {
+            inner: Rc::new(RefCell::new(Space::with_chunk_capacity(chunk_capacity))),
         }
     }
 
@@ -462,7 +519,7 @@ impl<T: Default + Reset> Guard<T> {
     /// Makes the object directly reachable from this guard.
     pub fn guard(&self, obj: &Gc<T>) {
         if let Some(space) = self.space.upgrade() {
-            space.borrow_mut().guard_object(obj.index, self.id);
+            space.borrow_mut().guard_object(obj.id, self.id);
         }
     }
 
@@ -470,7 +527,7 @@ impl<T: Default + Reset> Guard<T> {
     /// Object may be collected if it's no longer reachable.
     pub fn unguard(&self, obj: &Gc<T>) {
         if let Some(space) = self.space.upgrade() {
-            space.borrow_mut().unguard_object(obj.index, self.id);
+            space.borrow_mut().unguard_object(obj.id, self.id);
         }
     }
 
@@ -498,9 +555,6 @@ impl<T: Default + Reset> Drop for Guard<T> {
 pub struct Gc<T> {
     /// Unique object ID (for ownership tracking)
     id: usize,
-
-    /// Index into Space.objects (for fast access)
-    index: usize,
 
     /// Pointer to the GcBox for fast access
     ptr: NonNull<GcBox<T>>,
@@ -555,10 +609,7 @@ impl<T> Copy for Gc<T> {}
 
 impl<T> std::fmt::Debug for Gc<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Gc")
-            .field("id", &self.id)
-            .field("index", &self.index)
-            .finish()
+        f.debug_struct("Gc").field("id", &self.id).finish()
     }
 }
 
@@ -643,7 +694,7 @@ mod tests {
         }
 
         heap.collect(); // Force collection
-        // Object should be in pool now
+                        // Object should be in pool now
         assert_eq!(heap.stats().pooled_objects, 1);
 
         // Allocate again - should reuse from pool
