@@ -135,8 +135,9 @@ pub struct Gc<T: Default + Reset + Traceable> {
     /// Pointer to the GcBox for fast access
     ptr: NonNull<GcBox<T>>,
 
-    /// Marker for the type
-    _marker: std::marker::PhantomData<T>,
+    /// Weak reference to space - used to check if space is still alive before accessing ptr
+    /// This prevents use-after-free when Gc outlives the Space (e.g., during interpreter shutdown)
+    space: Weak<RefCell<Space<T>>>,
 }
 
 impl<T: Default + Reset + Traceable> PartialEq for Gc<T> {
@@ -225,22 +226,31 @@ impl<T: Default + Reset + Traceable> GcPtr<T> {
 
 impl<T: Default + Reset + Traceable> Clone for Gc<T> {
     fn clone(&self) -> Self {
-        // Increment ref_count
-        let gc_box = unsafe { self.ptr.as_ref() };
-        if !gc_box.pooled.get() {
-            gc_box.ref_count.set(gc_box.ref_count.get() + 1);
+        // Increment ref_count (only if space is still alive)
+        if let Some(_space) = self.space.upgrade() {
+            let gc_box = unsafe { self.ptr.as_ref() };
+            if !gc_box.pooled.get() {
+                gc_box.ref_count.set(gc_box.ref_count.get() + 1);
+            }
         }
         Self {
             id: self.id,
             ptr: self.ptr,
-            _marker: std::marker::PhantomData,
+            space: self.space.clone(),
         }
     }
 }
 
 impl<T: Default + Reset + Traceable> Drop for Gc<T> {
     fn drop(&mut self) {
-        // Decrement ref_count
+        // SAFETY: Check if space is still alive BEFORE accessing ptr.
+        // If space is dropped, the GcBox memory is freed and ptr is dangling.
+        // This happens during interpreter shutdown when Gc fields outlive the heap.
+        let Some(space_rc) = self.space.upgrade() else {
+            return; // Space is gone, ptr is dangling - do nothing
+        };
+
+        // Now safe to access the GcBox
         let gc_box = unsafe { self.ptr.as_ref() };
         if gc_box.pooled.get() {
             return;
@@ -253,13 +263,11 @@ impl<T: Default + Reset + Traceable> Drop for Gc<T> {
 
         // If ref_count is 0, reset and pool the object immediately
         if gc_box.ref_count.get() == 0 {
-            if let Some(space_rc) = gc_box.space.upgrade() {
-                // Try to borrow - if already borrowed (e.g., during GC), skip pooling
-                if let Ok(mut space) = space_rc.try_borrow_mut() {
-                    // Reset to clear references before pooling
-                    gc_box.data.borrow_mut().reset();
-                    space.pool_object(gc_box.index, self.ptr);
-                }
+            // Try to borrow - if already borrowed (e.g., during GC), skip pooling
+            if let Ok(mut space) = space_rc.try_borrow_mut() {
+                // Reset to clear references before pooling
+                gc_box.data.borrow_mut().reset();
+                space.pool_object(gc_box.index, self.ptr);
             }
         }
     }
@@ -317,19 +325,15 @@ pub struct GcBox<T: Default + Reset + Traceable> {
 
     /// Whether this object is in the pool (dead)
     pooled: Cell<bool>,
-
-    /// Weak reference to space for pooling on drop
-    space: Weak<RefCell<Space<T>>>,
 }
 
 impl<T: Default + Reset + Traceable> GcBox<T> {
-    fn new(index: usize, data: T, space: Weak<RefCell<Space<T>>>) -> Self {
+    fn new(index: usize, data: T) -> Self {
         Self {
             index,
             data: RefCell::new(data),
             ref_count: Cell::new(0),
             pooled: Cell::new(false),
-            space,
         }
     }
 }
@@ -455,7 +459,7 @@ impl<T: Default + Reset + Traceable> Space<T> {
             let index = chunk_idx * CHUNK_CAPACITY + index_in_chunk;
 
             // Push the new object into the chunk
-            chunk.push(GcBox::new(index, T::default(), self.self_weak.clone()));
+            chunk.push(GcBox::new(index, T::default()));
 
             // Get pointer to the just-pushed object
             // Safety: We just pushed, so last() is valid and chunk won't reallocate
@@ -485,7 +489,7 @@ impl<T: Default + Reset + Traceable> Space<T> {
         Gc {
             id: index,
             ptr,
-            _marker: std::marker::PhantomData,
+            space: self.self_weak.clone(),
         }
     }
 
