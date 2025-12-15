@@ -10,7 +10,7 @@ use rustc_hash::FxHashMap;
 
 use crate::ast::{ArrowFunctionBody, BlockStatement, FunctionParam};
 use crate::error::JsError;
-use crate::gc::{Gc, Guard, Heap, Reset, Traceable};
+use crate::gc::{Gc, Guard, Heap, Reset, Traceable, Unlink};
 use crate::lexer::Span;
 use crate::string_dict::StringDict;
 
@@ -553,6 +553,112 @@ impl Traceable for JsObject {
                 // Trace outer environment if any
                 if let Some(outer) = &env_data.outer {
                     visitor(*outer);
+                }
+            }
+            ExoticObject::Ordinary
+            | ExoticObject::Array { .. }
+            | ExoticObject::Date { .. }
+            | ExoticObject::RegExp { .. } => {}
+        }
+    }
+}
+
+impl Unlink for JsObject {
+    fn unlink<F: FnMut(Gc<Self>)>(&mut self, mut unlinker: F) {
+        // Unlink prototype
+        if let Some(proto) = self.prototype.take() {
+            unlinker(proto);
+        }
+
+        // Unlink properties
+        for prop in self.properties.values_mut() {
+            if let JsValue::Object(obj) = std::mem::replace(&mut prop.value, JsValue::Undefined) {
+                unlinker(obj);
+            }
+        }
+        self.properties.clear();
+
+        // Unlink exotic object references
+        match &mut self.exotic {
+            ExoticObject::Function(func) => match func {
+                JsFunction::Bound(bound) => {
+                    unlinker(bound.target);
+                    if let JsValue::Object(obj) =
+                        std::mem::replace(&mut bound.this_arg, JsValue::Undefined)
+                    {
+                        unlinker(obj);
+                    }
+                    for arg in bound.bound_args.drain(..) {
+                        if let JsValue::Object(obj) = arg {
+                            unlinker(obj);
+                        }
+                    }
+                }
+                JsFunction::PromiseResolve(promise) | JsFunction::PromiseReject(promise) => {
+                    unlinker(*promise);
+                }
+                JsFunction::Interpreted(interp) => {
+                    unlinker(interp.closure);
+                }
+                JsFunction::Native(_) => {}
+            },
+            ExoticObject::Map { entries } => {
+                for (k, v) in entries.drain(..) {
+                    if let JsValue::Object(obj) = k {
+                        unlinker(obj);
+                    }
+                    if let JsValue::Object(obj) = v {
+                        unlinker(obj);
+                    }
+                }
+            }
+            ExoticObject::Set { entries } => {
+                for entry in entries.drain(..) {
+                    if let JsValue::Object(obj) = entry {
+                        unlinker(obj);
+                    }
+                }
+            }
+            ExoticObject::Promise(state) => {
+                let mut state = state.borrow_mut();
+                if let Some(JsValue::Object(obj)) = state.result.replace(JsValue::Undefined) {
+                    unlinker(obj);
+                }
+                for handler in state.handlers.drain(..) {
+                    if let Some(JsValue::Object(obj)) = handler.on_fulfilled {
+                        unlinker(obj);
+                    }
+                    if let Some(JsValue::Object(obj)) = handler.on_rejected {
+                        unlinker(obj);
+                    }
+                    unlinker(handler.result_promise);
+                }
+            }
+            ExoticObject::Generator(state) => {
+                let mut state = state.borrow_mut();
+                unlinker(state.closure);
+                for arg in state.args.drain(..) {
+                    if let JsValue::Object(obj) = arg {
+                        unlinker(obj);
+                    }
+                }
+                if let JsValue::Object(obj) =
+                    std::mem::replace(&mut state.sent_value, JsValue::Undefined)
+                {
+                    unlinker(obj);
+                }
+            }
+            ExoticObject::Environment(env_data) => {
+                for binding in env_data.bindings.values_mut() {
+                    if let JsValue::Object(obj) =
+                        std::mem::replace(&mut binding.value, JsValue::Undefined)
+                    {
+                        unlinker(obj);
+                    }
+                }
+                env_data.bindings.clear();
+                if let Some(outer) = env_data.outer.take() {
+                    unlinker(outer);
                 }
             }
             ExoticObject::Ordinary

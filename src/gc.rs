@@ -74,6 +74,22 @@ pub trait Traceable: Sized {
     fn trace<F: FnMut(Gc<Self>)>(&self, visitor: F);
 }
 
+/// Trait for unlinking object references during garbage collection.
+///
+/// When an object is collected, `unlink` is called to clear all references
+/// and decrement ref_counts. This enables cascading collection where objects
+/// with ref_count reaching 0 are immediately pooled.
+pub trait Unlink: Sized {
+    /// Unlink all references held by this object.
+    ///
+    /// The implementation should:
+    /// 1. Call `unlinker(gc_ref)` for each `Gc<Self>` stored in fields
+    /// 2. Clear/reset the fields that held those references
+    ///
+    /// The unlinker callback handles decrementing ref_count and pooling.
+    fn unlink<F: FnMut(Gc<Self>)>(&mut self, unlinker: F);
+}
+
 // ============================================================================
 // Reset trait - for pooling objects
 // ============================================================================
@@ -163,7 +179,7 @@ const DEFAULT_GC_THRESHOLD: usize = 100;
 /// Default chunk capacity: objects per chunk
 const DEFAULT_CHUNK_CAPACITY: usize = 256;
 
-impl<T: Default + Reset + Traceable> Space<T> {
+impl<T: Default + Reset + Traceable + Unlink> Space<T> {
     fn new() -> Self {
         Self::with_chunk_capacity(DEFAULT_CHUNK_CAPACITY)
     }
@@ -399,7 +415,7 @@ impl<T: Default + Reset + Traceable> Space<T> {
     /// Sweep phase: collect all unmarked objects and clear marks
     /// Returns number of objects collected
     fn sweep(&mut self) -> usize {
-        let mut to_collect = Vec::new();
+        let mut to_unlink: Vec<(usize, NonNull<GcBox<T>>)> = Vec::new();
 
         // Iterate over live objects only (id_to_ptr contains only non-pooled objects)
         for (&id, &ptr) in &self.id_to_ptr {
@@ -408,15 +424,42 @@ impl<T: Default + Reset + Traceable> Space<T> {
                 // Clear mark for next collection
                 gc_box.marked.set(false);
             } else {
-                // Unmarked = unreachable, collect it
-                to_collect.push(id);
+                // Unmarked = unreachable, will unlink and collect
+                to_unlink.push((id, ptr));
             }
         }
 
-        let collected = to_collect.len();
-        for object_id in to_collect {
-            self.collect_object_by_id(object_id);
+        let collected = to_unlink.len();
+
+        // First pass: unlink all unmarked objects and collect their references
+        let mut refs_to_decrement: Vec<usize> = Vec::new();
+        for &(_, ptr) in &to_unlink {
+            let gc_box = unsafe { ptr.as_ref() };
+            // Skip if already pooled (could happen via cascading)
+            if gc_box.pooled.get() {
+                continue;
+            }
+
+            // Call unlink to clear references, collecting IDs to decrement
+            let mut data = gc_box.data.borrow_mut();
+            data.unlink(|child: Gc<T>| {
+                refs_to_decrement.push(child.id);
+            });
         }
+
+        // Decrement ref_counts (may cause cascading collection)
+        for child_id in refs_to_decrement {
+            self.dec_ref(child_id);
+        }
+
+        // Second pass: pool all unmarked objects that weren't already pooled
+        for (object_id, ptr) in to_unlink {
+            let gc_box = unsafe { ptr.as_ref() };
+            if !gc_box.pooled.get() {
+                self.pool_object(object_id, ptr);
+            }
+        }
+
         collected
     }
 
@@ -438,22 +481,6 @@ impl<T: Default + Reset + Traceable> Space<T> {
     /// Force a collection (for testing or explicit cleanup)
     fn force_collect(&mut self) {
         self.collect();
-    }
-
-    /// Collect a single object by ID (move to pool) - used by sweep for cycles
-    fn collect_object_by_id(&mut self, object_id: usize) {
-        let Some(&ptr) = self.id_to_ptr.get(&object_id) else {
-            return;
-        };
-
-        // Safety: ptr from id_to_ptr is valid
-        let gc_box = unsafe { ptr.as_ref() };
-
-        if gc_box.pooled.get() {
-            return;
-        }
-
-        self.pool_object(object_id, ptr);
     }
 
     /// Get statistics
@@ -483,7 +510,7 @@ pub struct Heap<T> {
     inner: Rc<RefCell<Space<T>>>,
 }
 
-impl<T: Default + Reset + Traceable> Heap<T> {
+impl<T: Default + Reset + Traceable + Unlink> Heap<T> {
     /// Create a new heap with default chunk capacity
     pub fn new() -> Self {
         Self {
@@ -522,7 +549,7 @@ impl<T: Default + Reset + Traceable> Heap<T> {
     }
 }
 
-impl<T: Default + Reset + Traceable> Default for Heap<T> {
+impl<T: Default + Reset + Traceable + Unlink> Default for Heap<T> {
     fn default() -> Self {
         Self::new()
     }
@@ -544,7 +571,7 @@ impl<T> Clone for Heap<T> {
 ///
 /// Objects allocated through a guard have guard_count incremented.
 /// Uses Vec instead of HashSet for faster append-only tracking.
-pub struct Guard<T: Default + Reset + Traceable> {
+pub struct Guard<T: Default + Reset + Traceable + Unlink> {
     /// Object IDs guarded by this guard (append-only, may have duplicates)
     guarded_objects: RefCell<Vec<usize>>,
 
@@ -552,7 +579,7 @@ pub struct Guard<T: Default + Reset + Traceable> {
     space: Weak<RefCell<Space<T>>>,
 }
 
-impl<T: Default + Reset + Traceable> Guard<T> {
+impl<T: Default + Reset + Traceable + Unlink> Guard<T> {
     /// Allocate a new object guarded by this guard.
     /// Returns a default T (either fresh or reset from pool).
     ///
@@ -593,7 +620,7 @@ impl<T: Default + Reset + Traceable> Guard<T> {
     }
 }
 
-impl<T: Default + Reset + Traceable> Drop for Guard<T> {
+impl<T: Default + Reset + Traceable + Unlink> Drop for Guard<T> {
     fn drop(&mut self) {
         // Decrement guard_count for all guarded objects
         if let Some(space) = self.space.upgrade() {
@@ -610,7 +637,7 @@ impl<T: Default + Reset + Traceable> Drop for Guard<T> {
 // Gc methods that require Heap (own/disown)
 // ============================================================================
 
-impl<T: Default + Reset + Traceable> Gc<T> {
+impl<T: Default + Reset + Traceable + Unlink> Gc<T> {
     /// Establish ownership: increment other's ref_count.
     /// Call this when storing a Gc<T> reference in a field.
     pub fn own(&self, other: &Gc<T>, heap: &Heap<T>) {
@@ -666,6 +693,14 @@ mod tests {
         fn trace<F: FnMut(Gc<Self>)>(&self, mut visitor: F) {
             for &r in &self.refs {
                 visitor(r);
+            }
+        }
+    }
+
+    impl Unlink for TestObj {
+        fn unlink<F: FnMut(Gc<Self>)>(&mut self, mut unlinker: F) {
+            for r in self.refs.drain(..) {
+                unlinker(r);
             }
         }
     }
