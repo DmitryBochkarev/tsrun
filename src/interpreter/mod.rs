@@ -243,6 +243,9 @@ impl Interpreter {
         // Initialize Array builtin methods
         builtins::init_array_prototype(self);
 
+        // Initialize Function.prototype (call, apply, bind)
+        builtins::init_function_prototype(self);
+
         // Initialize Math global object
         builtins::init_math(self);
 
@@ -516,6 +519,18 @@ impl Interpreter {
         func_obj
     }
 
+    /// Create a function object from any JsFunction variant (for bind, etc.)
+    pub fn create_function(&mut self, func: JsFunction) -> Gc<JsObject> {
+        let func_obj = self.root_guard.alloc();
+        {
+            let mut f_ref = func_obj.borrow_mut();
+            f_ref.prototype = Some(self.function_prototype);
+            f_ref.exotic = ExoticObject::Function(func);
+        }
+        func_obj.own(&self.function_prototype, &self.heap);
+        func_obj
+    }
+
     /// Register a method on an object (for builtin initialization)
     pub fn register_method(
         &mut self,
@@ -740,9 +755,15 @@ impl Interpreter {
                                 .get_property(&PropertyKey::String(key_str.cheap_clone()))
                                 .unwrap_or(JsValue::Undefined);
 
-                            // For shorthand { x }, the pattern is just the identifier
+                            // For shorthand { x }, bind directly. For { x = default }, use bind_pattern
                             if *shorthand {
-                                self.env_define(key_str, prop_value, mutable);
+                                // Check if it's a simple identifier or has a default value
+                                if matches!(pat, Pattern::Identifier(_)) {
+                                    self.env_define(key_str, prop_value, mutable);
+                                } else {
+                                    // It's shorthand with default (e.g., { y = 10 })
+                                    self.bind_pattern(pat, prop_value, mutable)?;
+                                }
                             } else {
                                 self.bind_pattern(pat, prop_value, mutable)?;
                             }
@@ -2947,58 +2968,37 @@ impl Interpreter {
                     }
                 }
 
-                // Bind parameters
+                // Execute function body - set up environment first so bind_pattern works
+                let saved_env = self.env;
+                self.env = func_env;
+
+                // Create and bind the `arguments` object (array-like)
+                {
+                    let (args_array, _guard) = self.create_array_with_guard(args.to_vec());
+                    let args_name = JsString::from("arguments");
+                    self.env_define(args_name, JsValue::Object(args_array), false);
+                }
+
+                // Bind parameters using bind_pattern for full destructuring support
                 for (i, param) in interp.params.iter().enumerate() {
                     match &param.pattern {
-                        Pattern::Identifier(id) => {
-                            let arg_val = args.get(i).cloned().unwrap_or(JsValue::Undefined);
-                            let name = id.name.cheap_clone();
-
-                            if let JsValue::Object(ref obj) = arg_val {
-                                func_env.own(obj, &self.heap);
-                            }
-
-                            if let Some(data) = func_env.borrow_mut().as_environment_mut() {
-                                data.bindings.insert(
-                                    name,
-                                    Binding {
-                                        value: arg_val,
-                                        mutable: true,
-                                        initialized: true,
-                                    },
-                                );
-                            }
-                        }
                         Pattern::Rest(rest) => {
                             // Collect remaining arguments into an array
                             let rest_args: Vec<JsValue> =
                                 args.get(i..).unwrap_or_default().to_vec();
                             let (rest_array, _guard) = self.create_array_with_guard(rest_args);
-                            func_env.own(&rest_array, &self.heap);
 
-                            // Get the name from the rest pattern (must be an identifier)
-                            if let Pattern::Identifier(id) = &*rest.argument {
-                                let name = id.name.cheap_clone();
-                                if let Some(data) = func_env.borrow_mut().as_environment_mut() {
-                                    data.bindings.insert(
-                                        name,
-                                        Binding {
-                                            value: JsValue::Object(rest_array),
-                                            mutable: true,
-                                            initialized: true,
-                                        },
-                                    );
-                                }
-                            }
+                            // Bind the rest pattern (usually an identifier)
+                            self.bind_pattern(&rest.argument, JsValue::Object(rest_array), true)?;
                             break; // Rest param must be last
                         }
-                        _ => continue,
+                        _ => {
+                            // Use bind_pattern for all other patterns (Identifier, Object, Array, Assignment)
+                            let arg_val = args.get(i).cloned().unwrap_or(JsValue::Undefined);
+                            self.bind_pattern(&param.pattern, arg_val, true)?;
+                        }
                     }
                 }
-
-                // Execute function body
-                let saved_env = self.env;
-                self.env = func_env;
 
                 // Hoist var declarations before executing body
                 if let FunctionBody::Block(block) = &*interp.body {
@@ -3022,7 +3022,20 @@ impl Interpreter {
                 (native.func)(self, this_value, args)
             }
 
-            _ => Err(JsError::internal_error("Unsupported function type")),
+            JsFunction::Bound(bound) => {
+                // Call bound function: use bound this and prepend bound args
+                let mut full_args = bound.bound_args.clone();
+                full_args.extend_from_slice(args);
+                self.call_function(
+                    JsValue::Object(bound.target),
+                    bound.this_arg.clone(),
+                    &full_args,
+                )
+            }
+
+            JsFunction::PromiseResolve(_) | JsFunction::PromiseReject(_) => Err(
+                JsError::internal_error("Promise functions not yet implemented"),
+            ),
         }
     }
 

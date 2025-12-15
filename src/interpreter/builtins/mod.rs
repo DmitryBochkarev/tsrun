@@ -2,12 +2,12 @@
 
 pub mod array;
 pub mod error;
+pub mod function;
 pub mod math;
 pub mod number;
 // TODO: Enable these after migration to new GC
 // pub mod console;
 // pub mod date;
-// pub mod function;
 // pub mod generator;
 // pub mod global;
 // pub mod json;
@@ -22,5 +22,6 @@ pub mod number;
 // Re-export public functions from enabled modules
 pub use array::*;
 pub use error::*;
+pub use function::*;
 pub use math::*;
 pub use number::*;

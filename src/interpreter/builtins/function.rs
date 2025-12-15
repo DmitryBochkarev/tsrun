@@ -85,9 +85,20 @@ pub fn function_bind(
     // Create a bound function using JsFunction::Bound
     let bound_fn = interp.create_function(JsFunction::Bound(Box::new(BoundFunctionData {
         target: target_fn,
-        this_arg,
-        bound_args,
+        this_arg: this_arg.clone(),
+        bound_args: bound_args.clone(),
     })));
+
+    // Establish GC ownership for objects referenced by the bound function
+    bound_fn.own(&target_fn, &interp.heap);
+    if let JsValue::Object(ref this_obj) = this_arg {
+        bound_fn.own(this_obj, &interp.heap);
+    }
+    for arg in &bound_args {
+        if let JsValue::Object(ref obj) = arg {
+            bound_fn.own(obj, &interp.heap);
+        }
+    }
 
     Ok(JsValue::Object(bound_fn))
 }
