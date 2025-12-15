@@ -10,6 +10,104 @@ use std::rc::{Rc, Weak};
 use rustc_hash::FxHashSet;
 
 // ============================================================================
+// ChunkBitmask - 256-bit bitmask for marking objects within a chunk
+// ============================================================================
+
+/// 256-bit bitmask for marking objects within a chunk.
+/// Each bit corresponds to an index in the chunk (0-255).
+#[derive(Clone, Copy, Default)]
+struct ChunkBitmask {
+    /// 4 × u64 = 256 bits
+    bits: [u64; 4],
+}
+
+impl ChunkBitmask {
+    /// Set a bit at the given index (0-255)
+    #[inline]
+    fn set(&mut self, index: usize) {
+        debug_assert!(index < 256);
+        let word = index / 64;
+        let bit = index % 64;
+        if let Some(w) = self.bits.get_mut(word) {
+            *w |= 1 << bit;
+        }
+    }
+
+    /// Check if a bit is set at the given index (0-255)
+    #[inline]
+    fn get(&self, index: usize) -> bool {
+        debug_assert!(index < 256);
+        let word = index / 64;
+        let bit = index % 64;
+        self.bits.get(word).is_some_and(|w| (w & (1 << bit)) != 0)
+    }
+
+    /// Clear all bits
+    #[inline]
+    fn clear(&mut self) {
+        self.bits = [0; 4];
+    }
+
+    /// Iterate over unmarked indices (bits that are 0) up to `len`
+    #[inline]
+    fn iter_unmarked(&self, len: usize) -> impl Iterator<Item = usize> + '_ {
+        UnmarkedIter {
+            bitmask: self,
+            len,
+            current_word: 0,
+            current_bits: !self.bits.first().copied().unwrap_or(0),
+            base_index: 0,
+        }
+    }
+}
+
+/// Iterator over unmarked (zero) bits in a ChunkBitmask
+struct UnmarkedIter<'a> {
+    bitmask: &'a ChunkBitmask,
+    len: usize,
+    current_word: usize,
+    current_bits: u64,  // Inverted bits (1 = unmarked)
+    base_index: usize,
+}
+
+impl Iterator for UnmarkedIter<'_> {
+    type Item = usize;
+
+    #[inline]
+    fn next(&mut self) -> Option<usize> {
+        loop {
+            // Find next set bit in current_bits (which represents unmarked positions)
+            if self.current_bits != 0 {
+                let bit_pos = self.current_bits.trailing_zeros() as usize;
+                let index = self.base_index + bit_pos;
+
+                // Clear this bit
+                self.current_bits &= self.current_bits - 1;
+
+                if index < self.len {
+                    return Some(index);
+                }
+                // Index beyond len, continue to potentially skip to next word
+            }
+
+            // Move to next word
+            self.current_word += 1;
+            if self.current_word >= 4 {
+                return None;
+            }
+
+            self.base_index = self.current_word * 64;
+            if self.base_index >= self.len {
+                return None;
+            }
+
+            // Get inverted bits for this word (1 = unmarked)
+            self.current_bits = !self.bitmask.bits.get(self.current_word).copied().unwrap_or(0);
+        }
+    }
+}
+
+// ============================================================================
 // Gc - smart pointer to GC-managed object (defined early for Traceable trait)
 // ============================================================================
 
@@ -106,9 +204,9 @@ impl<T: Default + Reset + Traceable> GcPtr<T> {
         self.id
     }
 
-    /// Get the GcBox's current ID (may differ from self.id if object was reused)
-    pub fn gcbox_id(&self) -> usize {
-        unsafe { self.ptr.as_ref().id }
+    /// Get the GcBox's current index (stable - doesn't change when object is reused)
+    pub fn gcbox_index(&self) -> usize {
+        unsafe { self.ptr.as_ref().index }
     }
 }
 
@@ -147,7 +245,7 @@ impl<T: Default + Reset + Traceable> Drop for Gc<T> {
                 if let Ok(mut space) = space_rc.try_borrow_mut() {
                     // Reset to clear references before pooling
                     gc_box.data.borrow_mut().reset();
-                    space.pool_object(gc_box.id, self.ptr);
+                    space.pool_object(gc_box.index, self.ptr);
                 }
             }
         }
@@ -193,9 +291,10 @@ pub trait Reset: Default {
 // ============================================================================
 
 /// Internal storage for a GC-managed object.
-pub(crate) struct GcBox<T: Default + Reset + Traceable> {
-    /// Unique object ID (stable across lifetime, unlike index)
-    id: usize,
+pub struct GcBox<T: Default + Reset + Traceable> {
+    /// Index in chunks (chunk_idx * CHUNK_CAPACITY + index_in_chunk).
+    /// This serves as both the unique ID and encodes the position for bitmask marking.
+    index: usize,
 
     /// The actual data
     data: RefCell<T>,
@@ -211,9 +310,9 @@ pub(crate) struct GcBox<T: Default + Reset + Traceable> {
 }
 
 impl<T: Default + Reset + Traceable> GcBox<T> {
-    fn new(id: usize, data: T, space: Weak<RefCell<Space<T>>>) -> Self {
+    fn new(index: usize, data: T, space: Weak<RefCell<Space<T>>>) -> Self {
         Self {
-            id,
+            index,
             data: RefCell::new(data),
             ref_count: Cell::new(0),
             pooled: Cell::new(false),
@@ -229,25 +328,17 @@ impl<T: Default + Reset + Traceable> GcBox<T> {
 /// Internal memory arena that manages all allocations.
 /// Not exposed directly - accessed through `Heap<T>`.
 struct Space<T: Default + Reset + Traceable> {
-    /// Chunks of allocated objects. Each chunk has fixed capacity.
+    /// Chunks of allocated objects. Each chunk has fixed capacity (CHUNK_CAPACITY).
     /// Inner vecs never reallocate, ensuring stable pointers.
     chunks: Vec<Vec<GcBox<T>>>,
-
-    /// Capacity of each chunk (fixed at initialization)
-    chunk_capacity: usize,
 
     /// Free list of pooled object pointers
     free_list: Vec<NonNull<GcBox<T>>>,
 
-    /// Next object ID
-    next_object_id: usize,
-
-    /// Mark set for mark-and-sweep collection (stores object IDs)
-    /// Stored in Space rather than GcBox for better cache locality during marking.
-    marked: FxHashSet<usize>,
-
-    /// Reusable buffer for sweep phase (avoids allocation each GC cycle)
-    to_unlink: Vec<NonNull<GcBox<T>>>,
+    /// Per-chunk bitmasks for mark-and-sweep collection.
+    /// Each bitmask has 256 bits (4 × u64) for marking objects within a chunk.
+    /// Better cache locality than HashSet during marking and sweeping.
+    marked_chunks: Vec<ChunkBitmask>,
 
     /// Net allocations: incremented on alloc, decremented on dealloc
     /// GC triggers when this exceeds threshold
@@ -267,22 +358,16 @@ struct Space<T: Default + Reset + Traceable> {
 /// Higher threshold = less frequent GC = better throughput but more memory
 const DEFAULT_GC_THRESHOLD: usize = 100;
 
-/// Default chunk capacity: objects per chunk
-const DEFAULT_CHUNK_CAPACITY: usize = 256;
+/// Chunk capacity: objects per chunk (hardcoded for bitmask optimization)
+/// 256 = 4 × 64 bits, matching ChunkBitmask size
+const CHUNK_CAPACITY: usize = 256;
 
 impl<T: Default + Reset + Traceable> Space<T> {
     fn new() -> Self {
-        Self::with_chunk_capacity(DEFAULT_CHUNK_CAPACITY)
-    }
-
-    fn with_chunk_capacity(chunk_capacity: usize) -> Self {
         Self {
             chunks: Vec::new(),
-            chunk_capacity,
             free_list: Vec::new(),
-            next_object_id: 0,
-            marked: FxHashSet::default(),
-            to_unlink: Vec::new(),
+            marked_chunks: Vec::new(),
             net_allocs: 0,
             gc_threshold: DEFAULT_GC_THRESHOLD as isize,
             self_weak: Weak::new(),
@@ -307,7 +392,7 @@ impl<T: Default + Reset + Traceable> Space<T> {
 
     /// Allocate a new object (starts with ref_count = 1 for the allocating guard)
     fn alloc_internal(&mut self) -> Gc<T> {
-        let (id, ptr) = if let Some(ptr) = self.free_list.pop() {
+        let (index, ptr) = if let Some(ptr) = self.free_list.pop() {
             // Reuse from pool - safe because pool contains valid pointers
             // Safety: ptr came from our chunks which have stable addresses
             let gc_box = unsafe { ptr.as_ptr().as_mut() };
@@ -324,25 +409,24 @@ impl<T: Default + Reset + Traceable> Space<T> {
             gc_box.ref_count.set(1); // Start with ref_count = 1 for the returned Gc
             gc_box.pooled.set(false);
 
-            // Assign new ID for reused object
-            let id = self.next_object_id;
-            self.next_object_id += 1;
-            gc_box.id = id;
-
-            (id, ptr)
+            // Index stays the same for reused objects
+            (gc_box.index, ptr)
         } else {
             // Need to allocate new - check if current chunk has space
             let need_new_chunk = self
                 .chunks
                 .last()
-                .is_none_or(|chunk| chunk.len() >= self.chunk_capacity);
+                .is_none_or(|chunk| chunk.len() >= CHUNK_CAPACITY);
 
             if need_new_chunk {
                 // Create new chunk with fixed capacity
-                self.chunks.push(Vec::with_capacity(self.chunk_capacity));
+                self.chunks.push(Vec::with_capacity(CHUNK_CAPACITY));
+                // Create corresponding bitmask for the new chunk
+                self.marked_chunks.push(ChunkBitmask::default());
             }
 
-            // Get the last chunk (guaranteed to exist and have space now)
+            // Get chunk index and the chunk itself
+            let chunk_idx = self.chunks.len().saturating_sub(1);
             let chunk = match self.chunks.last_mut() {
                 Some(c) => c,
                 None => {
@@ -353,11 +437,12 @@ impl<T: Default + Reset + Traceable> Space<T> {
                 }
             };
 
-            let id = self.next_object_id;
-            self.next_object_id += 1;
+            let index_in_chunk = chunk.len();
+            // Linear index: chunk_idx * CHUNK_CAPACITY + index_in_chunk
+            let index = chunk_idx * CHUNK_CAPACITY + index_in_chunk;
 
             // Push the new object into the chunk
-            chunk.push(GcBox::new(id, T::default(), self.self_weak.clone()));
+            chunk.push(GcBox::new(index, T::default(), self.self_weak.clone()));
 
             // Get pointer to the just-pushed object
             // Safety: We just pushed, so last() is valid and chunk won't reallocate
@@ -374,7 +459,7 @@ impl<T: Default + Reset + Traceable> Space<T> {
             gc_box.ref_count.set(1); // Start with ref_count = 1 for the returned Gc
             let ptr = NonNull::from(gc_box);
 
-            (id, ptr)
+            (index, ptr)
         };
 
         // Track allocations since last GC
@@ -385,7 +470,7 @@ impl<T: Default + Reset + Traceable> Space<T> {
         }
 
         Gc {
-            id,
+            id: index,
             ptr,
             _marker: std::marker::PhantomData,
         }
@@ -414,8 +499,10 @@ impl<T: Default + Reset + Traceable> Space<T> {
 
     /// Mark phase: trace from roots to find all reachable objects
     fn mark(&mut self) {
-        // Clear mark set from previous collection
-        self.marked.clear();
+        // Clear all bitmasks from previous collection
+        for bitmask in &mut self.marked_chunks {
+            bitmask.clear();
+        }
 
         // Remove inactive guards and collect roots from active guards
         let mut stack: Vec<NonNull<GcBox<T>>> = Vec::with_capacity(64);
@@ -438,22 +525,33 @@ impl<T: Default + Reset + Traceable> Space<T> {
         // Iterative mark traversal using Traceable::trace()
         while let Some(ptr) = stack.pop() {
             let gc_box = unsafe { ptr.as_ref() };
-            let id = gc_box.id;
+            let chunk_idx = gc_box.index / CHUNK_CAPACITY;
+            let index_in_chunk = gc_box.index % CHUNK_CAPACITY;
 
-            // Already marked - skip
-            if self.marked.contains(&id) {
-                continue;
+            // Already marked - skip (check bitmask)
+            if let Some(bitmask) = self.marked_chunks.get(chunk_idx) {
+                if bitmask.get(index_in_chunk) {
+                    continue;
+                }
             }
 
-            // Mark this object
-            self.marked.insert(id);
+            // Mark this object in the bitmask
+            if let Some(bitmask) = self.marked_chunks.get_mut(chunk_idx) {
+                bitmask.set(index_in_chunk);
+            }
 
             // Trace references via Traceable trait
             let data = gc_box.data.borrow();
             data.trace(|child: GcPtr<T>| {
-                let child_id = child.id;
                 let child_box = unsafe { child.ptr.as_ref() };
-                if !self.marked.contains(&child_id) && !child_box.pooled.get() {
+                let child_chunk_idx = child_box.index / CHUNK_CAPACITY;
+                let child_index_in_chunk = child_box.index % CHUNK_CAPACITY;
+                // Check if already marked or pooled
+                let already_marked = self
+                    .marked_chunks
+                    .get(child_chunk_idx)
+                    .is_some_and(|bm| bm.get(child_index_in_chunk));
+                if !already_marked && !child_box.pooled.get() {
                     stack.push(child.ptr);
                 }
             });
@@ -463,46 +561,40 @@ impl<T: Default + Reset + Traceable> Space<T> {
     /// Sweep phase: collect all unmarked objects
     /// Returns number of objects collected
     fn sweep(&mut self) -> usize {
-        // Clear and reuse the to_unlink buffer
-        self.to_unlink.clear();
+        let mut collected = 0;
 
-        // Iterate over all chunks, collecting unmarked non-pooled objects
-        for chunk in &self.chunks {
-            for gc_box in chunk {
-                if !gc_box.pooled.get() && !self.marked.contains(&gc_box.id) {
-                    // Unmarked = unreachable, will unlink and collect
-                    self.to_unlink.push(NonNull::from(gc_box));
+        // Take ownership of chunks and bitmasks to avoid borrow issues
+        let chunks = std::mem::take(&mut self.chunks);
+        let bitmasks = std::mem::take(&mut self.marked_chunks);
+
+        // First pass: reset all unmarked objects to clear references
+        // This must happen before pooling because reset() triggers Gc::drop
+        // which decrements ref_counts of referenced objects
+        for (chunk, bitmask) in chunks.iter().zip(bitmasks.iter()) {
+            for index_in_chunk in bitmask.iter_unmarked(chunk.len()) {
+                if let Some(gc_box) = chunk.get(index_in_chunk) {
+                    if !gc_box.pooled.get() {
+                        gc_box.data.borrow_mut().reset();
+                        collected += 1;
+                    }
                 }
             }
         }
 
-        let collected = self.to_unlink.len();
-
-        // First pass: reset all unmarked objects to clear references
-        // This decrements ref_counts of referenced objects via Gc::drop
-        for i in 0..self.to_unlink.len() {
-            let Some(&ptr) = self.to_unlink.get(i) else {
-                continue;
-            };
-            let gc_box = unsafe { ptr.as_ref() };
-            if !gc_box.pooled.get() {
-                // Clear references to decrement ref_counts
-                gc_box.data.borrow_mut().reset();
+        // Second pass: pool objects with ref_count == 0
+        for (chunk, bitmask) in chunks.iter().zip(bitmasks.iter()) {
+            for index_in_chunk in bitmask.iter_unmarked(chunk.len()) {
+                if let Some(gc_box) = chunk.get(index_in_chunk) {
+                    if !gc_box.pooled.get() && gc_box.ref_count.get() == 0 {
+                        self.pool_object(gc_box.index, NonNull::from(gc_box));
+                    }
+                }
             }
         }
 
-        // Second pass: pool objects that have no remaining Gc pointers
-        for i in 0..self.to_unlink.len() {
-            let Some(&ptr) = self.to_unlink.get(i) else {
-                continue;
-            };
-            let gc_box = unsafe { ptr.as_ref() };
-            // Only pool if no Gc pointers remain (ref_count == 0)
-            // If ref_count > 0, there are still Gc pointers that would become stale
-            if !gc_box.pooled.get() && gc_box.ref_count.get() == 0 {
-                self.pool_object(gc_box.id, ptr);
-            }
-        }
+        // Restore chunks and bitmasks
+        self.chunks = chunks;
+        self.marked_chunks = bitmasks;
 
         collected
     }
@@ -562,16 +654,9 @@ pub struct Heap<T: Default + Reset + Traceable> {
 }
 
 impl<T: Default + Reset + Traceable> Heap<T> {
-    /// Create a new heap with default chunk capacity
+    /// Create a new heap
     pub fn new() -> Self {
         let inner = Rc::new(RefCell::new(Space::new()));
-        inner.borrow_mut().set_self_weak(Rc::downgrade(&inner));
-        Self { inner }
-    }
-
-    /// Create a new heap with specified chunk capacity
-    pub fn with_chunk_capacity(chunk_capacity: usize) -> Self {
-        let inner = Rc::new(RefCell::new(Space::with_chunk_capacity(chunk_capacity)));
         inner.borrow_mut().set_self_weak(Rc::downgrade(&inner));
         Self { inner }
     }
