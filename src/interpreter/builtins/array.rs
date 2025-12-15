@@ -2,7 +2,7 @@
 
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
-use crate::value::{ExoticObject, JsObjectRef, JsString, JsValue, Property, PropertyKey};
+use crate::value::{ExoticObject, Guarded, JsObjectRef, JsString, JsValue, Property, PropertyKey};
 
 /// Initialize Array.prototype with all array methods.
 /// The prototype object must already exist in `interp.array_prototype`.
@@ -73,10 +73,10 @@ pub fn create_array_constructor(interp: &mut Interpreter) -> JsObjectRef {
 }
 
 pub fn array_constructor_fn(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     if args.len() == 1 {
         if let Some(JsValue::Number(n)) = args.first() {
             let len = *n as u32;
@@ -84,30 +84,32 @@ pub fn array_constructor_fn(
             for _ in 0..len {
                 elements.push(JsValue::Undefined);
             }
-            return Ok(JsValue::Object(_interp.create_array(elements)));
+            let (arr, guard) = interp.create_array(elements);
+            return Ok(Guarded::with_guard(JsValue::Object(arr), guard));
         }
     }
-    Ok(JsValue::Object(_interp.create_array(args.to_vec())))
+    let (arr, guard) = interp.create_array(args.to_vec());
+    Ok(Guarded::with_guard(JsValue::Object(arr), guard))
 }
 
 pub fn array_is_array(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let value = args.first().cloned().unwrap_or(JsValue::Undefined);
     let is_array = match value {
         JsValue::Object(obj) => matches!(obj.borrow().exotic, ExoticObject::Array { .. }),
         _ => false,
     };
-    Ok(JsValue::Boolean(is_array))
+    Ok(Guarded::unguarded(JsValue::Boolean(is_array)))
 }
 
 pub fn array_push(
     interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let JsValue::Object(arr) = this else {
         return Err(JsError::type_error(
             "Array.prototype.push called on non-object",
@@ -151,14 +153,14 @@ pub fn array_push(
         Property::with_attributes(JsValue::Number(current_length as f64), true, false, false),
     );
 
-    Ok(JsValue::Number(current_length as f64))
+    Ok(Guarded::unguarded(JsValue::Number(current_length as f64)))
 }
 
 pub fn array_pop(
     interp: &mut Interpreter,
     this: JsValue,
     _args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let JsValue::Object(arr) = this else {
         return Err(JsError::type_error(
             "Array.prototype.pop called on non-object",
@@ -179,7 +181,7 @@ pub fn array_pop(
     };
 
     if current_length == 0 {
-        return Ok(JsValue::Undefined);
+        return Ok(Guarded::unguarded(JsValue::Undefined));
     }
 
     let new_length = current_length - 1;
@@ -199,14 +201,15 @@ pub fn array_pop(
         Property::with_attributes(JsValue::Number(new_length as f64), true, false, false),
     );
 
-    Ok(value)
+    // Value came from array which is already owned by caller - no guard needed
+    Ok(Guarded::unguarded(value))
 }
 
 pub fn array_map(
     interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let JsValue::Object(arr) = this.clone() else {
         return Err(JsError::type_error(
             "Array.prototype.map called on non-object",
@@ -243,7 +246,10 @@ pub fn array_map(
             .get_property(&PropertyKey::Index(i))
             .unwrap_or(JsValue::Undefined);
 
-        let mapped = interp.call_function(
+        let Guarded {
+            value: mapped,
+            guard: _mapped_guard,
+        } = interp.call_function(
             callback.clone(),
             this_arg.clone(),
             &[elem, JsValue::Number(i as f64), this.clone()],
@@ -252,14 +258,15 @@ pub fn array_map(
         result.push(mapped);
     }
 
-    Ok(JsValue::Object(interp.create_array(result)))
+    let (arr, guard) = interp.create_array(result);
+    Ok(Guarded::with_guard(JsValue::Object(arr), guard))
 }
 
 pub fn array_filter(
     interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let JsValue::Object(arr) = this.clone() else {
         return Err(JsError::type_error(
             "Array.prototype.filter called on non-object",
@@ -296,7 +303,10 @@ pub fn array_filter(
             .get_property(&PropertyKey::Index(i))
             .unwrap_or(JsValue::Undefined);
 
-        let keep = interp.call_function(
+        let Guarded {
+            value: keep,
+            guard: _keep_guard,
+        } = interp.call_function(
             callback.clone(),
             this_arg.clone(),
             &[elem.clone(), JsValue::Number(i as f64), this.clone()],
@@ -307,14 +317,15 @@ pub fn array_filter(
         }
     }
 
-    Ok(JsValue::Object(interp.create_array(result)))
+    let (arr, guard) = interp.create_array(result);
+    Ok(Guarded::with_guard(JsValue::Object(arr), guard))
 }
 
 pub fn array_foreach(
     interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let JsValue::Object(arr) = this.clone() else {
         return Err(JsError::type_error(
             "Array.prototype.forEach called on non-object",
@@ -356,14 +367,14 @@ pub fn array_foreach(
         )?;
     }
 
-    Ok(JsValue::Undefined)
+    Ok(Guarded::unguarded(JsValue::Undefined))
 }
 
 pub fn array_reduce(
     interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let JsValue::Object(arr) = this.clone() else {
         return Err(JsError::type_error(
             "Array.prototype.reduce called on non-object",
@@ -410,21 +421,27 @@ pub fn array_reduce(
             .get_property(&PropertyKey::Index(i))
             .unwrap_or(JsValue::Undefined);
 
-        accumulator = interp.call_function(
+        let Guarded {
+            value: acc,
+            guard: _acc_guard,
+        } = interp.call_function(
             callback.clone(),
             JsValue::Undefined,
             &[accumulator, elem, JsValue::Number(i as f64), this.clone()],
         )?;
+        accumulator = acc;
     }
 
-    Ok(accumulator)
+    // Accumulator is a derived value - no guard needed as it's either a primitive
+    // or an object from the array/callback which is already owned
+    Ok(Guarded::unguarded(accumulator))
 }
 
 pub fn array_find(
     interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let JsValue::Object(arr) = this.clone() else {
         return Err(JsError::type_error(
             "Array.prototype.find called on non-object",
@@ -459,25 +476,29 @@ pub fn array_find(
             .get_property(&PropertyKey::Index(i))
             .unwrap_or(JsValue::Undefined);
 
-        let result = interp.call_function(
+        let Guarded {
+            value: result,
+            guard: _result_guard,
+        } = interp.call_function(
             callback.clone(),
             this_arg.clone(),
             &[elem.clone(), JsValue::Number(i as f64), this.clone()],
         )?;
 
         if result.to_boolean() {
-            return Ok(elem);
+            // Element came from array which is owned by caller - no guard needed
+            return Ok(Guarded::unguarded(elem));
         }
     }
 
-    Ok(JsValue::Undefined)
+    Ok(Guarded::unguarded(JsValue::Undefined))
 }
 
 pub fn array_find_index(
     interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let JsValue::Object(arr) = this.clone() else {
         return Err(JsError::type_error(
             "Array.prototype.findIndex called on non-object",
@@ -512,25 +533,28 @@ pub fn array_find_index(
             .get_property(&PropertyKey::Index(i))
             .unwrap_or(JsValue::Undefined);
 
-        let result = interp.call_function(
+        let Guarded {
+            value: result,
+            guard: _result_guard,
+        } = interp.call_function(
             callback.clone(),
             this_arg.clone(),
             &[elem, JsValue::Number(i as f64), this.clone()],
         )?;
 
         if result.to_boolean() {
-            return Ok(JsValue::Number(i as f64));
+            return Ok(Guarded::unguarded(JsValue::Number(i as f64)));
         }
     }
 
-    Ok(JsValue::Number(-1.0))
+    Ok(Guarded::unguarded(JsValue::Number(-1.0)))
 }
 
 pub fn array_index_of(
     _interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let JsValue::Object(arr) = this else {
         return Err(JsError::type_error(
             "Array.prototype.indexOf called on non-object",
@@ -561,18 +585,18 @@ pub fn array_index_of(
             .unwrap_or(JsValue::Undefined);
 
         if elem.strict_equals(&search_element) {
-            return Ok(JsValue::Number(i as f64));
+            return Ok(Guarded::unguarded(JsValue::Number(i as f64)));
         }
     }
 
-    Ok(JsValue::Number(-1.0))
+    Ok(Guarded::unguarded(JsValue::Number(-1.0)))
 }
 
 pub fn array_includes(
     _interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let JsValue::Object(arr) = this else {
         return Err(JsError::type_error(
             "Array.prototype.includes called on non-object",
@@ -608,18 +632,18 @@ pub fn array_includes(
         };
 
         if found {
-            return Ok(JsValue::Boolean(true));
+            return Ok(Guarded::unguarded(JsValue::Boolean(true)));
         }
     }
 
-    Ok(JsValue::Boolean(false))
+    Ok(Guarded::unguarded(JsValue::Boolean(false)))
 }
 
 pub fn array_slice(
     interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let JsValue::Object(arr) = this else {
         return Err(JsError::type_error(
             "Array.prototype.slice called on non-object",
@@ -658,14 +682,15 @@ pub fn array_slice(
         result.push(elem);
     }
 
-    Ok(JsValue::Object(interp.create_array(result)))
+    let (arr, guard) = interp.create_array(result);
+    Ok(Guarded::with_guard(JsValue::Object(arr), guard))
 }
 
 pub fn array_concat(
     interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let mut result = Vec::new();
 
     fn add_elements(result: &mut Vec<JsValue>, value: JsValue) {
@@ -693,14 +718,15 @@ pub fn array_concat(
         add_elements(&mut result, arg.clone());
     }
 
-    Ok(JsValue::Object(interp.create_array(result)))
+    let (arr, guard) = interp.create_array(result);
+    Ok(Guarded::with_guard(JsValue::Object(arr), guard))
 }
 
 pub fn array_join(
     _interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let JsValue::Object(arr) = this else {
         return Err(JsError::type_error(
             "Array.prototype.join called on non-object",
@@ -740,14 +766,16 @@ pub fn array_join(
         parts.push(part);
     }
 
-    Ok(JsValue::String(JsString::from(parts.join(&separator))))
+    Ok(Guarded::unguarded(JsValue::String(JsString::from(
+        parts.join(&separator),
+    ))))
 }
 
 pub fn array_every(
     interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let JsValue::Object(arr) = this.clone() else {
         return Err(JsError::type_error(
             "Array.prototype.every called on non-object",
@@ -782,25 +810,28 @@ pub fn array_every(
             .get_property(&PropertyKey::Index(i))
             .unwrap_or(JsValue::Undefined);
 
-        let result = interp.call_function(
+        let Guarded {
+            value: result,
+            guard: _result_guard,
+        } = interp.call_function(
             callback.clone(),
             this_arg.clone(),
             &[elem, JsValue::Number(i as f64), this.clone()],
         )?;
 
         if !result.to_boolean() {
-            return Ok(JsValue::Boolean(false));
+            return Ok(Guarded::unguarded(JsValue::Boolean(false)));
         }
     }
 
-    Ok(JsValue::Boolean(true))
+    Ok(Guarded::unguarded(JsValue::Boolean(true)))
 }
 
 pub fn array_some(
     interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let JsValue::Object(arr) = this.clone() else {
         return Err(JsError::type_error(
             "Array.prototype.some called on non-object",
@@ -835,25 +866,28 @@ pub fn array_some(
             .get_property(&PropertyKey::Index(i))
             .unwrap_or(JsValue::Undefined);
 
-        let result = interp.call_function(
+        let Guarded {
+            value: result,
+            guard: _result_guard,
+        } = interp.call_function(
             callback.clone(),
             this_arg.clone(),
             &[elem, JsValue::Number(i as f64), this.clone()],
         )?;
 
         if result.to_boolean() {
-            return Ok(JsValue::Boolean(true));
+            return Ok(Guarded::unguarded(JsValue::Boolean(true)));
         }
     }
 
-    Ok(JsValue::Boolean(false))
+    Ok(Guarded::unguarded(JsValue::Boolean(false)))
 }
 
 pub fn array_shift(
     interp: &mut Interpreter,
     this: JsValue,
     _args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let JsValue::Object(arr) = this else {
         return Err(JsError::type_error(
             "Array.prototype.shift called on non-object",
@@ -869,7 +903,7 @@ pub fn array_shift(
     };
 
     if length == 0 {
-        return Ok(JsValue::Undefined);
+        return Ok(Guarded::unguarded(JsValue::Undefined));
     }
 
     let first = arr_ref
@@ -890,14 +924,15 @@ pub fn array_shift(
     }
     arr_ref.set_property(length_key, JsValue::Number(new_len as f64));
 
-    Ok(first)
+    // Value came from array which is owned by caller - no guard needed
+    Ok(Guarded::unguarded(first))
 }
 
 pub fn array_unshift(
     interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let JsValue::Object(arr) = this else {
         return Err(JsError::type_error(
             "Array.prototype.unshift called on non-object",
@@ -914,7 +949,7 @@ pub fn array_unshift(
 
     let arg_count = args.len() as u32;
     if arg_count == 0 {
-        return Ok(JsValue::Number(current_length as f64));
+        return Ok(Guarded::unguarded(JsValue::Number(current_length as f64)));
     }
 
     for i in (0..current_length).rev() {
@@ -934,14 +969,14 @@ pub fn array_unshift(
     }
     arr_ref.set_property(length_key, JsValue::Number(new_length as f64));
 
-    Ok(JsValue::Number(new_length as f64))
+    Ok(Guarded::unguarded(JsValue::Number(new_length as f64)))
 }
 
 pub fn array_reverse(
     _interp: &mut Interpreter,
     this: JsValue,
     _args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let JsValue::Object(arr) = this.clone() else {
         return Err(JsError::type_error(
             "Array.prototype.reverse called on non-object",
@@ -955,7 +990,8 @@ pub fn array_reverse(
     };
 
     if length <= 1 {
-        return Ok(this);
+        // Array was passed in by caller, already owned - no guard needed
+        return Ok(Guarded::unguarded(this));
     }
 
     let mut elements: Vec<JsValue> = (0..length)
@@ -972,14 +1008,15 @@ pub fn array_reverse(
     }
 
     drop(arr_ref);
-    Ok(this)
+    // Array was passed in by caller, already owned - no guard needed
+    Ok(Guarded::unguarded(this))
 }
 
 pub fn array_sort(
     interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let JsValue::Object(arr) = this.clone() else {
         return Err(JsError::type_error(
             "Array.prototype.sort called on non-object",
@@ -1021,8 +1058,10 @@ pub fn array_sort(
                         (Some(l), Some(r)) => (l.clone(), r.clone()),
                         _ => continue,
                     };
-                    let result =
-                        interp.call_function(cmp.clone(), JsValue::Undefined, &[left, right])?;
+                    let Guarded {
+                        value: result,
+                        guard: _result_guard,
+                    } = interp.call_function(cmp.clone(), JsValue::Undefined, &[left, right])?;
                     if result.to_number() > 0.0 {
                         elements.swap(j, j + 1);
                     }
@@ -1044,14 +1083,17 @@ pub fn array_sort(
         }
     }
 
-    Ok(this)
+    // Return with guard to protect the array until caller stores it
+    // This is necessary because the array might have been created inline in a chain
+    let guard = interp.guard_value(&this);
+    Ok(Guarded { value: this, guard })
 }
 
 pub fn array_fill(
     _interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let JsValue::Object(arr) = this.clone() else {
         return Err(JsError::type_error(
             "Array.prototype.fill called on non-object",
@@ -1095,14 +1137,15 @@ pub fn array_fill(
     }
 
     drop(arr_ref);
-    Ok(this)
+    // Array was passed in by caller, already owned - no guard needed
+    Ok(Guarded::unguarded(this))
 }
 
 pub fn array_copy_within(
     _interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let JsValue::Object(arr) = this.clone() else {
         return Err(JsError::type_error(
             "Array.prototype.copyWithin called on non-object",
@@ -1167,14 +1210,15 @@ pub fn array_copy_within(
     }
 
     drop(arr_ref);
-    Ok(this)
+    // Array was passed in by caller, already owned - no guard needed
+    Ok(Guarded::unguarded(this))
 }
 
 pub fn array_splice(
     interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let JsValue::Object(arr) = this else {
         return Err(JsError::type_error(
             "Array.prototype.splice called on non-object",
@@ -1253,22 +1297,24 @@ pub fn array_splice(
     arr_ref.set_property(length_key, JsValue::Number(new_length as f64));
 
     drop(arr_ref);
-    Ok(JsValue::Object(interp.create_array(removed)))
+    let (arr, guard) = interp.create_array(removed);
+    Ok(Guarded::with_guard(JsValue::Object(arr), guard))
 }
 
 pub fn array_of(
     interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
-    Ok(JsValue::Object(interp.create_array(args.to_vec())))
+) -> Result<Guarded, JsError> {
+    let (arr, guard) = interp.create_array(args.to_vec());
+    Ok(Guarded::with_guard(JsValue::Object(arr), guard))
 }
 
 pub fn array_from(
     interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let source = args.first().cloned().unwrap_or(JsValue::Undefined);
     let map_fn = args.get(1).cloned();
 
@@ -1299,11 +1345,15 @@ pub fn array_from(
             for (i, elem) in source_elements.into_iter().enumerate() {
                 let mapped = if let Some(ref map) = map_fn {
                     if map.is_callable() {
-                        interp.call_function(
+                        let Guarded {
+                            value: mapped_val,
+                            guard: _mapped_guard,
+                        } = interp.call_function(
                             map.clone(),
                             JsValue::Undefined,
                             &[elem, JsValue::Number(i as f64)],
-                        )?
+                        )?;
+                        mapped_val
                     } else {
                         elem
                     }
@@ -1318,11 +1368,15 @@ pub fn array_from(
                 let elem = JsValue::String(JsString::from(ch.to_string()));
                 let mapped = if let Some(ref map) = map_fn {
                     if map.is_callable() {
-                        interp.call_function(
+                        let Guarded {
+                            value: mapped_val,
+                            guard: _mapped_guard,
+                        } = interp.call_function(
                             map.clone(),
                             JsValue::Undefined,
                             &[elem, JsValue::Number(i as f64)],
-                        )?
+                        )?;
+                        mapped_val
                     } else {
                         elem
                     }
@@ -1335,14 +1389,15 @@ pub fn array_from(
         _ => {}
     }
 
-    Ok(JsValue::Object(interp.create_array(elements)))
+    let (arr, guard) = interp.create_array(elements);
+    Ok(Guarded::with_guard(JsValue::Object(arr), guard))
 }
 
 pub fn array_at(
     _interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let JsValue::Object(arr) = this else {
         return Err(JsError::type_error(
             "Array.prototype.at called on non-object",
@@ -1360,19 +1415,22 @@ pub fn array_at(
     let actual_index = if index < 0 { length + index } else { index };
 
     if actual_index < 0 || actual_index >= length {
-        return Ok(JsValue::Undefined);
+        return Ok(Guarded::unguarded(JsValue::Undefined));
     }
 
-    Ok(arr_ref
-        .get_property(&PropertyKey::Index(actual_index as u32))
-        .unwrap_or(JsValue::Undefined))
+    // Value came from array which is owned by caller - no guard needed
+    Ok(Guarded::unguarded(
+        arr_ref
+            .get_property(&PropertyKey::Index(actual_index as u32))
+            .unwrap_or(JsValue::Undefined),
+    ))
 }
 
 pub fn array_last_index_of(
     _interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let JsValue::Object(arr) = this else {
         return Err(JsError::type_error(
             "Array.prototype.lastIndexOf called on non-object",
@@ -1400,7 +1458,7 @@ pub fn array_last_index_of(
         .unwrap_or(length as i64 - 1);
 
     if from_index < 0 {
-        return Ok(JsValue::Number(-1.0));
+        return Ok(Guarded::unguarded(JsValue::Number(-1.0)));
     }
 
     for i in (0..=from_index as u32).rev() {
@@ -1408,18 +1466,18 @@ pub fn array_last_index_of(
             .get_property(&PropertyKey::Index(i))
             .unwrap_or(JsValue::Undefined);
         if elem.strict_equals(&search_elem) {
-            return Ok(JsValue::Number(i as f64));
+            return Ok(Guarded::unguarded(JsValue::Number(i as f64)));
         }
     }
 
-    Ok(JsValue::Number(-1.0))
+    Ok(Guarded::unguarded(JsValue::Number(-1.0)))
 }
 
 pub fn array_reduce_right(
     interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let JsValue::Object(arr) = this.clone() else {
         return Err(JsError::type_error(
             "Array.prototype.reduceRight called on non-object",
@@ -1462,7 +1520,10 @@ pub fn array_reduce_right(
             .borrow()
             .get_property(&PropertyKey::Index(i as u32))
             .unwrap_or(JsValue::Undefined);
-        let result = interp.call_function(
+        let Guarded {
+            value: result,
+            guard: _result_guard,
+        } = interp.call_function(
             callback.clone(),
             JsValue::Undefined,
             &[
@@ -1475,14 +1536,15 @@ pub fn array_reduce_right(
         accumulator = result;
     }
 
-    Ok(accumulator)
+    // Accumulator is a derived value - no guard needed
+    Ok(Guarded::unguarded(accumulator))
 }
 
 pub fn array_flat(
     interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let JsValue::Object(arr) = this else {
         return Err(JsError::type_error(
             "Array.prototype.flat called on non-object",
@@ -1523,14 +1585,15 @@ pub fn array_flat(
     }
 
     let elements = flatten(&arr, depth);
-    Ok(JsValue::Object(interp.create_array(elements)))
+    let (arr, guard) = interp.create_array(elements);
+    Ok(Guarded::with_guard(JsValue::Object(arr), guard))
 }
 
 pub fn array_flat_map(
     interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let JsValue::Object(arr) = this.clone() else {
         return Err(JsError::type_error(
             "Array.prototype.flatMap called on non-object",
@@ -1567,13 +1630,16 @@ pub fn array_flat_map(
             .get_property(&PropertyKey::Index(i))
             .unwrap_or(JsValue::Undefined);
 
-        let mapped = interp.call_function(
+        let Guarded {
+            value: mapped,
+            guard: mapped_guard,
+        } = interp.call_function(
             callback.clone(),
             this_arg.clone(),
             &[elem, JsValue::Number(i as f64), this.clone()],
         )?;
 
-        if let JsValue::Object(ref inner) = mapped {
+        let is_array = if let JsValue::Object(ref inner) = mapped {
             let inner_ref = inner.borrow();
             if let ExoticObject::Array { length: inner_len } = inner_ref.exotic {
                 for j in 0..inner_len {
@@ -1582,20 +1648,32 @@ pub fn array_flat_map(
                         .unwrap_or(JsValue::Undefined);
                     result.push(inner_elem);
                 }
-                continue;
+                true
+            } else {
+                false
             }
+            // inner_ref borrow ends here
+        } else {
+            false
+        };
+
+        // Now safe to drop guard since borrows are released
+        drop(mapped_guard);
+
+        if !is_array {
+            result.push(mapped);
         }
-        result.push(mapped);
     }
 
-    Ok(JsValue::Object(interp.create_array(result)))
+    let (arr, guard) = interp.create_array(result);
+    Ok(Guarded::with_guard(JsValue::Object(arr), guard))
 }
 
 pub fn array_find_last(
     interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let JsValue::Object(arr) = this.clone() else {
         return Err(JsError::type_error(
             "Array.prototype.findLast called on non-object",
@@ -1625,25 +1703,29 @@ pub fn array_find_last(
             .get_property(&PropertyKey::Index(i))
             .unwrap_or(JsValue::Undefined);
 
-        let result = interp.call_function(
+        let Guarded {
+            value: result,
+            guard: _result_guard,
+        } = interp.call_function(
             callback.clone(),
             this_arg.clone(),
             &[elem.clone(), JsValue::Number(i as f64), this.clone()],
         )?;
 
         if result.to_boolean() {
-            return Ok(elem);
+            // Element came from array which is owned by caller - no guard needed
+            return Ok(Guarded::unguarded(elem));
         }
     }
 
-    Ok(JsValue::Undefined)
+    Ok(Guarded::unguarded(JsValue::Undefined))
 }
 
 pub fn array_find_last_index(
     interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let JsValue::Object(arr) = this.clone() else {
         return Err(JsError::type_error(
             "Array.prototype.findLastIndex called on non-object",
@@ -1673,25 +1755,28 @@ pub fn array_find_last_index(
             .get_property(&PropertyKey::Index(i))
             .unwrap_or(JsValue::Undefined);
 
-        let result = interp.call_function(
+        let Guarded {
+            value: result,
+            guard: _result_guard,
+        } = interp.call_function(
             callback.clone(),
             this_arg.clone(),
             &[elem, JsValue::Number(i as f64), this.clone()],
         )?;
 
         if result.to_boolean() {
-            return Ok(JsValue::Number(i as f64));
+            return Ok(Guarded::unguarded(JsValue::Number(i as f64)));
         }
     }
 
-    Ok(JsValue::Number(-1.0))
+    Ok(Guarded::unguarded(JsValue::Number(-1.0)))
 }
 
 pub fn array_to_reversed(
     interp: &mut Interpreter,
     this: JsValue,
     _args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let JsValue::Object(arr) = this else {
         return Err(JsError::type_error(
             "Array.prototype.toReversed called on non-object",
@@ -1715,14 +1800,15 @@ pub fn array_to_reversed(
         })
         .collect();
 
-    Ok(JsValue::Object(interp.create_array(elements)))
+    let (arr, guard) = interp.create_array(elements);
+    Ok(Guarded::with_guard(JsValue::Object(arr), guard))
 }
 
 pub fn array_to_sorted(
     interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let JsValue::Object(arr) = this.clone() else {
         return Err(JsError::type_error(
             "Array.prototype.toSorted called on non-object",
@@ -1759,8 +1845,10 @@ pub fn array_to_sorted(
                         (Some(l), Some(r)) => (l.clone(), r.clone()),
                         _ => break,
                     };
-                    let cmp_result =
-                        interp.call_function(cmp_fn.clone(), JsValue::Undefined, &[left, right])?;
+                    let Guarded {
+                        value: cmp_result,
+                        guard: _cmp_guard,
+                    } = interp.call_function(cmp_fn.clone(), JsValue::Undefined, &[left, right])?;
                     let cmp = cmp_result.to_number();
                     if cmp > 0.0 {
                         elements.swap(j - 1, j);
@@ -1780,14 +1868,15 @@ pub fn array_to_sorted(
         });
     }
 
-    Ok(JsValue::Object(interp.create_array(elements)))
+    let (arr, guard) = interp.create_array(elements);
+    Ok(Guarded::with_guard(JsValue::Object(arr), guard))
 }
 
 pub fn array_to_spliced(
     interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let JsValue::Object(arr) = this else {
         return Err(JsError::type_error(
             "Array.prototype.toSpliced called on non-object",
@@ -1835,14 +1924,15 @@ pub fn array_to_spliced(
         );
     }
 
-    Ok(JsValue::Object(interp.create_array(result)))
+    let (arr, guard) = interp.create_array(result);
+    Ok(Guarded::with_guard(JsValue::Object(arr), guard))
 }
 
 pub fn array_with(
     interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let JsValue::Object(arr) = this else {
         return Err(JsError::type_error(
             "Array.prototype.with called on non-object",
@@ -1882,14 +1972,15 @@ pub fn array_with(
         })
         .collect();
 
-    Ok(JsValue::Object(interp.create_array(elements)))
+    let (arr, guard) = interp.create_array(elements);
+    Ok(Guarded::with_guard(JsValue::Object(arr), guard))
 }
 
 pub fn array_keys(
     interp: &mut Interpreter,
     this: JsValue,
     _args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let JsValue::Object(arr) = this else {
         return Err(JsError::type_error(
             "Array.prototype.keys called on non-object",
@@ -1905,14 +1996,15 @@ pub fn array_keys(
     };
 
     let keys: Vec<JsValue> = (0..length).map(|i| JsValue::Number(i as f64)).collect();
-    Ok(JsValue::Object(interp.create_array(keys)))
+    let (arr, guard) = interp.create_array(keys);
+    Ok(Guarded::with_guard(JsValue::Object(arr), guard))
 }
 
 pub fn array_values(
     interp: &mut Interpreter,
     this: JsValue,
     _args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let JsValue::Object(arr) = this else {
         return Err(JsError::type_error(
             "Array.prototype.values called on non-object",
@@ -1934,14 +2026,15 @@ pub fn array_values(
                 .unwrap_or(JsValue::Undefined)
         })
         .collect();
-    Ok(JsValue::Object(interp.create_array(values)))
+    let (arr, guard) = interp.create_array(values);
+    Ok(Guarded::with_guard(JsValue::Object(arr), guard))
 }
 
 pub fn array_entries(
     interp: &mut Interpreter,
     this: JsValue,
     _args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let JsValue::Object(arr) = this else {
         return Err(JsError::type_error(
             "Array.prototype.entries called on non-object",
@@ -1968,12 +2061,12 @@ pub fn array_entries(
             .get_property(&PropertyKey::Index(i))
             .unwrap_or(JsValue::Undefined);
         let pair = vec![JsValue::Number(i as f64), value];
-        let entry_arr = interp.create_array(pair);
+        let (entry_arr, _entry_guard) = interp.create_array(pair);
         scope.guard(&entry_arr);
         entries.push(JsValue::Object(entry_arr));
     }
 
-    let result = interp.create_array(entries);
+    let (result, result_guard) = interp.create_array(entries);
     drop(scope); // Safe to drop now - entries are stored in result array
-    Ok(JsValue::Object(result))
+    Ok(Guarded::with_guard(JsValue::Object(result), result_guard))
 }

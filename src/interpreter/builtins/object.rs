@@ -2,15 +2,12 @@
 
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
-use crate::value::{
-    create_function, ExoticObject, JsFunction, JsObjectRef, JsString, JsValue, NativeFunction,
-    Property, PropertyKey,
-};
+use crate::value::{ExoticObject, Guarded, JsObjectRef, JsString, JsValue, Property, PropertyKey};
 
 /// Initialize Object.prototype with hasOwnProperty, toString, valueOf methods.
 /// The prototype object must already exist in `interp.object_prototype`.
 pub fn init_object_prototype(interp: &mut Interpreter) {
-    let proto = interp.object_prototype.clone();
+    let proto = interp.object_prototype;
 
     interp.register_method(&proto, "hasOwnProperty", object_has_own_property, 1);
     interp.register_method(&proto, "toString", object_to_string, 0);
@@ -19,16 +16,7 @@ pub fn init_object_prototype(interp: &mut Interpreter) {
 
 /// Create Object constructor with static methods (keys, values, entries, assign, etc.)
 pub fn create_object_constructor(interp: &mut Interpreter) -> JsObjectRef {
-    let name = interp.intern("Object");
-    let constructor = create_function(
-        &mut interp.gc_space,
-        &mut interp.string_dict,
-        JsFunction::Native(NativeFunction {
-            name,
-            func: object_constructor,
-            arity: 1,
-        }),
-    );
+    let constructor = interp.create_native_function("Object", object_constructor, 1);
 
     // Property enumeration
     interp.register_method(&constructor, "keys", object_keys, 1);
@@ -87,12 +75,18 @@ pub fn object_constructor(
     interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let value = args.first().cloned().unwrap_or(JsValue::Undefined);
     match value {
-        JsValue::Null | JsValue::Undefined => Ok(JsValue::Object(interp.create_object())),
-        JsValue::Object(_) => Ok(value),
-        _ => Ok(JsValue::Object(interp.create_object())),
+        JsValue::Null | JsValue::Undefined => {
+            let (obj, guard) = interp.create_object_with_guard();
+            Ok(Guarded::with_guard(JsValue::Object(obj), guard))
+        }
+        JsValue::Object(_) => Ok(Guarded::unguarded(value)),
+        _ => {
+            let (obj, guard) = interp.create_object_with_guard();
+            Ok(Guarded::with_guard(JsValue::Object(obj), guard))
+        }
     }
 }
 
@@ -100,7 +94,7 @@ pub fn object_keys(
     interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
     let JsValue::Object(obj_ref) = obj else {
         return Err(JsError::type_error("Object.keys requires an object"));
@@ -114,14 +108,15 @@ pub fn object_keys(
         .map(|(key, _)| JsValue::String(JsString::from(key.to_string())))
         .collect();
 
-    Ok(JsValue::Object(interp.create_array(keys)))
+    let (arr, guard) = interp.create_array(keys);
+    Ok(Guarded::with_guard(JsValue::Object(arr), guard))
 }
 
 pub fn object_values(
     interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
     let JsValue::Object(obj_ref) = obj else {
         return Err(JsError::type_error("Object.values requires an object"));
@@ -135,14 +130,15 @@ pub fn object_values(
         .map(|(_, prop)| prop.value.clone())
         .collect();
 
-    Ok(JsValue::Object(interp.create_array(values)))
+    let (arr, guard) = interp.create_array(values);
+    Ok(Guarded::with_guard(JsValue::Object(arr), guard))
 }
 
 pub fn object_entries(
     interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
     let JsValue::Object(obj_ref) = obj else {
         return Err(JsError::type_error("Object.entries requires an object"));
@@ -159,24 +155,25 @@ pub fn object_entries(
 
     // Create entry arrays with proper prototype
     // Guard each entry array as it's created to prevent GC from collecting them
-    let mut scope = interp.guarded_scope();
+    let scope = interp.guarded_scope();
     let mut entries: Vec<JsValue> = Vec::with_capacity(pairs.len());
     for (key, value) in pairs {
-        let arr = interp.create_array(vec![JsValue::String(JsString::from(key)), value]);
-        scope.add(&arr);
+        let (arr, _entry_guard) =
+            interp.create_array(vec![JsValue::String(JsString::from(key)), value]);
+        scope.guard(&arr);
         entries.push(JsValue::Object(arr));
     }
 
-    let result = interp.create_array(entries);
+    let (result, result_guard) = interp.create_array(entries);
     drop(scope);
-    Ok(JsValue::Object(result))
+    Ok(Guarded::with_guard(JsValue::Object(result), result_guard))
 }
 
 pub fn object_assign(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let target = args.first().cloned().unwrap_or(JsValue::Undefined);
     let JsValue::Object(target_ref) = target.clone() else {
         return Err(JsError::type_error(
@@ -197,14 +194,15 @@ pub fn object_assign(
         }
     }
 
-    Ok(target)
+    // Target was passed in by caller, so it's already owned - no guard needed
+    Ok(Guarded::unguarded(target))
 }
 
 pub fn object_from_entries(
     interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let iterable = args.first().cloned().unwrap_or(JsValue::Undefined);
 
     let JsValue::Object(arr) = iterable else {
@@ -214,10 +212,10 @@ pub fn object_from_entries(
     };
 
     // Guard the input array to prevent GC from collecting it during iteration
-    let _arr_guard = interp.gc_space.guard(&arr);
+    let _arr_guard = interp.guard_value(&JsValue::Object(arr));
 
     // Create result object with guard - key interning may trigger GC
-    let result = interp.create_object_guarded();
+    let (result, result_guard) = interp.create_object_with_guard();
 
     let length = {
         let arr_ref = arr.borrow();
@@ -253,35 +251,35 @@ pub fn object_from_entries(
         }
     }
 
-    Ok(JsValue::Object(result.take()))
+    Ok(Guarded::with_guard(JsValue::Object(result), result_guard))
 }
 
 pub fn object_has_own(
     interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
     let key = args.get(1).cloned().unwrap_or(JsValue::Undefined);
 
     let JsValue::Object(obj_ref) = obj else {
-        return Ok(JsValue::Boolean(false));
+        return Ok(Guarded::unguarded(JsValue::Boolean(false)));
     };
 
     let key_str = key.to_js_string().to_string();
     let interned_key = interp.key(&key_str);
     let has = obj_ref.borrow().properties.contains_key(&interned_key);
-    Ok(JsValue::Boolean(has))
+    Ok(Guarded::unguarded(JsValue::Boolean(has)))
 }
 
 pub fn object_create(
     interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let proto = args.first().cloned().unwrap_or(JsValue::Undefined);
 
-    let result = interp.create_object();
+    let (result, result_guard) = interp.create_object_with_guard();
 
     // Set prototype (or null)
     match proto {
@@ -293,6 +291,8 @@ pub fn object_create(
         }
         JsValue::Object(proto_ref) => {
             result.borrow_mut().prototype = Some(proto_ref);
+            // Establish GC ownership so prototype isn't collected
+            result.own(&proto_ref, &interp.heap);
         }
         _ => {
             return Err(JsError::type_error(
@@ -301,14 +301,14 @@ pub fn object_create(
         }
     }
 
-    Ok(JsValue::Object(result))
+    Ok(Guarded::with_guard(JsValue::Object(result), result_guard))
 }
 
 pub fn object_freeze(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
 
     if let JsValue::Object(obj_ref) = &obj {
@@ -321,14 +321,19 @@ pub fn object_freeze(
         }
     }
 
-    Ok(obj)
+    // Return with guard to protect the object until caller stores it
+    // This is necessary because the object might have been created inline
+    // (e.g., Object.freeze({a: 1})) and the caller's arg guards will drop
+    // before the returned value is used
+    let guard = interp.guard_value(&obj);
+    Ok(Guarded { value: obj, guard })
 }
 
 pub fn object_is_frozen(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
 
     let is_frozen = match obj {
@@ -336,14 +341,14 @@ pub fn object_is_frozen(
         _ => true, // Non-objects are considered frozen
     };
 
-    Ok(JsValue::Boolean(is_frozen))
+    Ok(Guarded::unguarded(JsValue::Boolean(is_frozen)))
 }
 
 pub fn object_seal(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
 
     if let JsValue::Object(obj_ref) = &obj {
@@ -355,14 +360,16 @@ pub fn object_seal(
         }
     }
 
-    Ok(obj)
+    // Return with guard to protect the object until caller stores it
+    let guard = interp.guard_value(&obj);
+    Ok(Guarded { value: obj, guard })
 }
 
 pub fn object_is_sealed(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
 
     let is_sealed = match obj {
@@ -370,7 +377,7 @@ pub fn object_is_sealed(
         _ => true, // Non-objects are considered sealed
     };
 
-    Ok(JsValue::Boolean(is_sealed))
+    Ok(Guarded::unguarded(JsValue::Boolean(is_sealed)))
 }
 
 // Object.prototype methods
@@ -379,9 +386,9 @@ pub fn object_has_own_property(
     interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let JsValue::Object(obj) = this else {
-        return Ok(JsValue::Boolean(false));
+        return Ok(Guarded::unguarded(JsValue::Boolean(false)));
     };
 
     let prop_name = args
@@ -391,14 +398,14 @@ pub fn object_has_own_property(
     let key = interp.key(&prop_name);
 
     let has_prop = obj.borrow().properties.contains_key(&key);
-    Ok(JsValue::Boolean(has_prop))
+    Ok(Guarded::unguarded(JsValue::Boolean(has_prop)))
 }
 
 pub fn object_to_string(
     _interp: &mut Interpreter,
     this: JsValue,
     _args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     match this {
         JsValue::Object(obj) => {
             let obj_ref = obj.borrow();
@@ -413,28 +420,42 @@ pub fn object_to_string(
                                 .unwrap_or_default()
                         })
                         .collect();
-                    Ok(JsValue::String(JsString::from(parts.join(","))))
+                    Ok(Guarded::unguarded(JsValue::String(JsString::from(
+                        parts.join(","),
+                    ))))
                 }
-                ExoticObject::Function(_) => {
-                    Ok(JsValue::String(JsString::from("[object Function]")))
-                }
-                ExoticObject::Ordinary => Ok(JsValue::String(JsString::from("[object Object]"))),
-                ExoticObject::Map { .. } => Ok(JsValue::String(JsString::from("[object Map]"))),
-                ExoticObject::Set { .. } => Ok(JsValue::String(JsString::from("[object Set]"))),
-                ExoticObject::Date { .. } => Ok(JsValue::String(JsString::from("[object Date]"))),
-                ExoticObject::RegExp { .. } => {
-                    Ok(JsValue::String(JsString::from("[object RegExp]")))
-                }
-                ExoticObject::Generator(_) => {
-                    Ok(JsValue::String(JsString::from("[object Generator]")))
-                }
-                ExoticObject::Promise(_) => Ok(JsValue::String(JsString::from("[object Promise]"))),
-                ExoticObject::Environment(_) => {
-                    Ok(JsValue::String(JsString::from("[object Environment]")))
-                }
+                ExoticObject::Function(_) => Ok(Guarded::unguarded(JsValue::String(
+                    JsString::from("[object Function]"),
+                ))),
+                ExoticObject::Ordinary => Ok(Guarded::unguarded(JsValue::String(JsString::from(
+                    "[object Object]",
+                )))),
+                ExoticObject::Map { .. } => Ok(Guarded::unguarded(JsValue::String(
+                    JsString::from("[object Map]"),
+                ))),
+                ExoticObject::Set { .. } => Ok(Guarded::unguarded(JsValue::String(
+                    JsString::from("[object Set]"),
+                ))),
+                ExoticObject::Date { .. } => Ok(Guarded::unguarded(JsValue::String(
+                    JsString::from("[object Date]"),
+                ))),
+                ExoticObject::RegExp { .. } => Ok(Guarded::unguarded(JsValue::String(
+                    JsString::from("[object RegExp]"),
+                ))),
+                ExoticObject::Generator(_) => Ok(Guarded::unguarded(JsValue::String(
+                    JsString::from("[object Generator]"),
+                ))),
+                ExoticObject::Promise(_) => Ok(Guarded::unguarded(JsValue::String(
+                    JsString::from("[object Promise]"),
+                ))),
+                ExoticObject::Environment(_) => Ok(Guarded::unguarded(JsValue::String(
+                    JsString::from("[object Environment]"),
+                ))),
             }
         }
-        _ => Ok(JsValue::String(JsString::from("[object Object]"))),
+        _ => Ok(Guarded::unguarded(JsValue::String(JsString::from(
+            "[object Object]",
+        )))),
     }
 }
 
@@ -442,8 +463,9 @@ pub fn object_value_of(
     _interp: &mut Interpreter,
     this: JsValue,
     _args: &[JsValue],
-) -> Result<JsValue, JsError> {
-    Ok(this)
+) -> Result<Guarded, JsError> {
+    // Returns the object itself, which is already owned by caller
+    Ok(Guarded::unguarded(this))
 }
 
 /// Object.getOwnPropertyDescriptor(obj, prop)
@@ -451,7 +473,7 @@ pub fn object_get_own_property_descriptor(
     interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
     let prop = args.get(1).cloned().unwrap_or(JsValue::Undefined);
 
@@ -474,19 +496,19 @@ pub fn object_get_own_property_descriptor(
         let configurable_key = interp.key("configurable");
 
         // Create a descriptor object
-        let desc = interp.create_object();
+        let (desc, desc_guard) = interp.create_object_with_guard();
         {
             let mut desc_ref = desc.borrow_mut();
 
             if property.is_accessor() {
                 // Accessor descriptor
                 if let Some(ref getter) = property.getter {
-                    desc_ref.set_property(get_key, JsValue::Object(getter.clone()));
+                    desc_ref.set_property(get_key, JsValue::Object(*getter));
                 } else {
                     desc_ref.set_property(get_key, JsValue::Undefined);
                 }
                 if let Some(ref setter) = property.setter {
-                    desc_ref.set_property(set_key, JsValue::Object(setter.clone()));
+                    desc_ref.set_property(set_key, JsValue::Object(*setter));
                 } else {
                     desc_ref.set_property(set_key, JsValue::Undefined);
                 }
@@ -499,9 +521,9 @@ pub fn object_get_own_property_descriptor(
             desc_ref.set_property(enumerable_key, JsValue::Boolean(property.enumerable));
             desc_ref.set_property(configurable_key, JsValue::Boolean(property.configurable));
         }
-        Ok(JsValue::Object(desc))
+        Ok(Guarded::with_guard(JsValue::Object(desc), desc_guard))
     } else {
-        Ok(JsValue::Undefined)
+        Ok(Guarded::unguarded(JsValue::Undefined))
     }
 }
 
@@ -510,7 +532,7 @@ pub fn object_get_own_property_names(
     interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
 
     let JsValue::Object(obj_ref) = obj else {
@@ -528,7 +550,8 @@ pub fn object_get_own_property_names(
         .map(|key| JsValue::String(JsString::from(key.to_string())))
         .collect();
 
-    Ok(JsValue::Object(interp.create_array(names)))
+    let (arr, guard) = interp.create_array(names);
+    Ok(Guarded::with_guard(JsValue::Object(arr), guard))
 }
 
 /// Object.getOwnPropertySymbols(obj)
@@ -536,7 +559,7 @@ pub fn object_get_own_property_symbols(
     interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
 
     let JsValue::Object(obj_ref) = obj else {
@@ -559,7 +582,8 @@ pub fn object_get_own_property_symbols(
         })
         .collect();
 
-    Ok(JsValue::Object(interp.create_array(symbols)))
+    let (arr, guard) = interp.create_array(symbols);
+    Ok(Guarded::with_guard(JsValue::Object(arr), guard))
 }
 
 /// Object.defineProperty(obj, prop, descriptor)
@@ -567,7 +591,7 @@ pub fn object_define_property(
     interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
     let prop = args.get(1).cloned().unwrap_or(JsValue::Undefined);
     let descriptor = args.get(2).cloned().unwrap_or(JsValue::Undefined);
@@ -637,7 +661,8 @@ pub fn object_define_property(
         obj_ref.borrow_mut().define_property(key, prop);
     }
 
-    Ok(obj)
+    // Object was passed in by caller, already owned - no guard needed
+    Ok(Guarded::unguarded(obj))
 }
 
 /// Object.defineProperties(obj, props)
@@ -646,7 +671,7 @@ pub fn object_define_properties(
     interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
     let props = args.get(1).cloned().unwrap_or(JsValue::Undefined);
 
@@ -734,7 +759,8 @@ pub fn object_define_properties(
         }
     }
 
-    Ok(obj)
+    // Object was passed in by caller, already owned - no guard needed
+    Ok(Guarded::unguarded(obj))
 }
 
 /// Object.getPrototypeOf(obj)
@@ -742,7 +768,7 @@ pub fn object_get_prototype_of(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
 
     let JsValue::Object(obj_ref) = obj else {
@@ -753,8 +779,8 @@ pub fn object_get_prototype_of(
 
     let obj_borrowed = obj_ref.borrow();
     match &obj_borrowed.prototype {
-        Some(proto) => Ok(JsValue::Object(proto.clone())),
-        None => Ok(JsValue::Null),
+        Some(proto) => Ok(Guarded::unguarded(JsValue::Object(*proto))),
+        None => Ok(Guarded::unguarded(JsValue::Null)),
     }
 }
 
@@ -763,7 +789,7 @@ pub fn object_set_prototype_of(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
     let proto = args.get(1).cloned().unwrap_or(JsValue::Undefined);
 
@@ -784,5 +810,6 @@ pub fn object_set_prototype_of(
     };
 
     obj_ref.borrow_mut().prototype = new_proto;
-    Ok(obj)
+    // Object was passed in by caller, already owned - no guard needed
+    Ok(Guarded::unguarded(obj))
 }

@@ -3,7 +3,7 @@
 use crate::error::JsError;
 use crate::gc::Gc;
 use crate::interpreter::Interpreter;
-use crate::value::{JsObject, JsValue};
+use crate::value::{Guarded, JsObject, JsValue};
 
 /// Initialize Math object and bind it to global scope.
 /// Returns the Math object for rooting.
@@ -97,52 +97,52 @@ pub fn math_abs(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let n = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
-    Ok(JsValue::Number(n.abs()))
+    Ok(Guarded::unguarded(JsValue::Number(n.abs())))
 }
 
 pub fn math_floor(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let n = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
-    Ok(JsValue::Number(n.floor()))
+    Ok(Guarded::unguarded(JsValue::Number(n.floor())))
 }
 
 pub fn math_ceil(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let n = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
-    Ok(JsValue::Number(n.ceil()))
+    Ok(Guarded::unguarded(JsValue::Number(n.ceil())))
 }
 
 pub fn math_round(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let n = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
-    Ok(JsValue::Number(n.round()))
+    Ok(Guarded::unguarded(JsValue::Number(n.round())))
 }
 
 pub fn math_trunc(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let n = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
-    Ok(JsValue::Number(n.trunc()))
+    Ok(Guarded::unguarded(JsValue::Number(n.trunc())))
 }
 
 pub fn math_sign(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let n = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
     let result = if n.is_nan() {
         f64::NAN
@@ -153,93 +153,93 @@ pub fn math_sign(
     } else {
         0.0
     };
-    Ok(JsValue::Number(result))
+    Ok(Guarded::unguarded(JsValue::Number(result)))
 }
 
 pub fn math_min(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     if args.is_empty() {
-        return Ok(JsValue::Number(f64::INFINITY));
+        return Ok(Guarded::unguarded(JsValue::Number(f64::INFINITY)));
     }
     let mut min = f64::INFINITY;
     for arg in args {
         let n = arg.to_number();
         if n.is_nan() {
-            return Ok(JsValue::Number(f64::NAN));
+            return Ok(Guarded::unguarded(JsValue::Number(f64::NAN)));
         }
         if n < min {
             min = n;
         }
     }
-    Ok(JsValue::Number(min))
+    Ok(Guarded::unguarded(JsValue::Number(min)))
 }
 
 pub fn math_max(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     if args.is_empty() {
-        return Ok(JsValue::Number(f64::NEG_INFINITY));
+        return Ok(Guarded::unguarded(JsValue::Number(f64::NEG_INFINITY)));
     }
     let mut max = f64::NEG_INFINITY;
     for arg in args {
         let n = arg.to_number();
         if n.is_nan() {
-            return Ok(JsValue::Number(f64::NAN));
+            return Ok(Guarded::unguarded(JsValue::Number(f64::NAN)));
         }
         if n > max {
             max = n;
         }
     }
-    Ok(JsValue::Number(max))
+    Ok(Guarded::unguarded(JsValue::Number(max)))
 }
 
 pub fn math_pow(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let base = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
     let exp = args.get(1).map(|v| v.to_number()).unwrap_or(f64::NAN);
-    Ok(JsValue::Number(base.powf(exp)))
+    Ok(Guarded::unguarded(JsValue::Number(base.powf(exp))))
 }
 
 pub fn math_sqrt(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let n = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
-    Ok(JsValue::Number(n.sqrt()))
+    Ok(Guarded::unguarded(JsValue::Number(n.sqrt())))
 }
 
 pub fn math_log(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let n = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
-    Ok(JsValue::Number(n.ln()))
+    Ok(Guarded::unguarded(JsValue::Number(n.ln())))
 }
 
 pub fn math_exp(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let n = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
-    Ok(JsValue::Number(n.exp()))
+    Ok(Guarded::unguarded(JsValue::Number(n.exp())))
 }
 
 pub fn math_random(
     _interp: &mut Interpreter,
     _this: JsValue,
     _args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     use std::time::{SystemTime, UNIX_EPOCH};
     // Simple pseudo-random using system time (not cryptographically secure)
     let seed = SystemTime::now()
@@ -247,143 +247,143 @@ pub fn math_random(
         .map(|d| d.subsec_nanos() as f64)
         .unwrap_or(0.0);
     let random = (seed / 1_000_000_000.0) % 1.0;
-    Ok(JsValue::Number(random))
+    Ok(Guarded::unguarded(JsValue::Number(random)))
 }
 
 pub fn math_sin(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let n = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
-    Ok(JsValue::Number(n.sin()))
+    Ok(Guarded::unguarded(JsValue::Number(n.sin())))
 }
 
 pub fn math_cos(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let n = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
-    Ok(JsValue::Number(n.cos()))
+    Ok(Guarded::unguarded(JsValue::Number(n.cos())))
 }
 
 pub fn math_tan(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let n = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
-    Ok(JsValue::Number(n.tan()))
+    Ok(Guarded::unguarded(JsValue::Number(n.tan())))
 }
 
 pub fn math_asin(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let n = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
-    Ok(JsValue::Number(n.asin()))
+    Ok(Guarded::unguarded(JsValue::Number(n.asin())))
 }
 
 pub fn math_acos(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let n = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
-    Ok(JsValue::Number(n.acos()))
+    Ok(Guarded::unguarded(JsValue::Number(n.acos())))
 }
 
 pub fn math_atan(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let n = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
-    Ok(JsValue::Number(n.atan()))
+    Ok(Guarded::unguarded(JsValue::Number(n.atan())))
 }
 
 pub fn math_atan2(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let y = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
     let x = args.get(1).map(|v| v.to_number()).unwrap_or(f64::NAN);
-    Ok(JsValue::Number(y.atan2(x)))
+    Ok(Guarded::unguarded(JsValue::Number(y.atan2(x))))
 }
 
 pub fn math_sinh(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let n = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
-    Ok(JsValue::Number(n.sinh()))
+    Ok(Guarded::unguarded(JsValue::Number(n.sinh())))
 }
 
 pub fn math_cosh(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let n = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
-    Ok(JsValue::Number(n.cosh()))
+    Ok(Guarded::unguarded(JsValue::Number(n.cosh())))
 }
 
 pub fn math_tanh(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let n = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
-    Ok(JsValue::Number(n.tanh()))
+    Ok(Guarded::unguarded(JsValue::Number(n.tanh())))
 }
 
 pub fn math_asinh(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let n = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
-    Ok(JsValue::Number(n.asinh()))
+    Ok(Guarded::unguarded(JsValue::Number(n.asinh())))
 }
 
 pub fn math_acosh(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let n = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
-    Ok(JsValue::Number(n.acosh()))
+    Ok(Guarded::unguarded(JsValue::Number(n.acosh())))
 }
 
 pub fn math_atanh(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let n = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
-    Ok(JsValue::Number(n.atanh()))
+    Ok(Guarded::unguarded(JsValue::Number(n.atanh())))
 }
 
 pub fn math_cbrt(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let n = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
-    Ok(JsValue::Number(n.cbrt()))
+    Ok(Guarded::unguarded(JsValue::Number(n.cbrt())))
 }
 
 pub fn math_hypot(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     if args.is_empty() {
-        return Ok(JsValue::Number(0.0));
+        return Ok(Guarded::unguarded(JsValue::Number(0.0)));
     }
     let sum_sq: f64 = args
         .iter()
@@ -392,41 +392,41 @@ pub fn math_hypot(
             n * n
         })
         .sum();
-    Ok(JsValue::Number(sum_sq.sqrt()))
+    Ok(Guarded::unguarded(JsValue::Number(sum_sq.sqrt())))
 }
 
 pub fn math_log10(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let n = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
-    Ok(JsValue::Number(n.log10()))
+    Ok(Guarded::unguarded(JsValue::Number(n.log10())))
 }
 
 pub fn math_log2(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let n = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
-    Ok(JsValue::Number(n.log2()))
+    Ok(Guarded::unguarded(JsValue::Number(n.log2())))
 }
 
 pub fn math_log1p(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let n = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
-    Ok(JsValue::Number(n.ln_1p()))
+    Ok(Guarded::unguarded(JsValue::Number(n.ln_1p())))
 }
 
 pub fn math_expm1(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let n = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
-    Ok(JsValue::Number(n.exp_m1()))
+    Ok(Guarded::unguarded(JsValue::Number(n.exp_m1())))
 }

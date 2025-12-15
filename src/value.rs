@@ -53,6 +53,44 @@ pub enum JsValue {
     Object(JsObjectRef),
 }
 
+/// A JsValue bundled with a Guard that keeps it alive.
+///
+/// IMPORTANT: Access the value through destructuring ONLY to ensure the guard
+/// stays alive for the correct duration. See CLAUDE.md for rules.
+///
+/// The fields are public to allow struct destructuring pattern, which is the
+/// ONLY approved way to access the contents.
+pub struct Guarded {
+    pub value: JsValue,
+    pub guard: Option<Guard<JsObject>>,
+}
+
+impl Guarded {
+    /// Create a guarded value with a guard
+    pub fn with_guard(value: JsValue, guard: Guard<JsObject>) -> Self {
+        Self {
+            value,
+            guard: Some(guard),
+        }
+    }
+
+    /// Create an unguarded value (for primitives or already-owned objects)
+    pub fn unguarded(value: JsValue) -> Self {
+        Self { value, guard: None }
+    }
+
+    /// Return a new value with the same guard (for derived values)
+    ///
+    /// Use this when you derive a value from a guarded input and want to
+    /// propagate the guard to keep the original object alive.
+    pub fn with_value(self, value: JsValue) -> Self {
+        Self {
+            value,
+            guard: self.guard,
+        }
+    }
+}
+
 impl JsValue {
     /// Check if this value is null or undefined
     pub fn is_null_or_undefined(&self) -> bool {
@@ -931,11 +969,10 @@ impl From<ArrowFunctionBody> for FunctionBody {
     }
 }
 
-// TODO: Re-enable after GC migration
-// /// Native function signature
 /// Native function signature type
+/// Returns Guarded to keep newly created objects alive until ownership is transferred.
 pub type NativeFn =
-    fn(&mut crate::interpreter::Interpreter, JsValue, &[JsValue]) -> Result<JsValue, JsError>;
+    fn(&mut crate::interpreter::Interpreter, JsValue, &[JsValue]) -> Result<Guarded, JsError>;
 
 /// Native function wrapper
 #[derive(Clone)]

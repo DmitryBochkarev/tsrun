@@ -2,11 +2,11 @@
 
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
-use crate::value::{BoundFunctionData, ExoticObject, JsFunction, JsValue, PropertyKey};
+use crate::value::{BoundFunctionData, ExoticObject, Guarded, JsFunction, JsValue, PropertyKey};
 
 /// Initialize Function.prototype with call, apply, bind methods
 pub fn init_function_prototype(interp: &mut Interpreter) {
-    let proto = interp.function_prototype.clone();
+    let proto = interp.function_prototype;
 
     interp.register_method(&proto, "call", function_call, 1);
     interp.register_method(&proto, "apply", function_apply, 2);
@@ -18,12 +18,13 @@ pub fn function_call(
     interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     // `this` is the function to call
     // args[0] is the thisArg for the call
     // args[1..] are the arguments
     let this_arg = args.first().cloned().unwrap_or(JsValue::Undefined);
     let call_args: Vec<JsValue> = args.iter().skip(1).cloned().collect();
+    // Propagate the Guarded from call_function
     interp.call_function(this, this_arg, &call_args)
 }
 
@@ -32,7 +33,7 @@ pub fn function_apply(
     interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     // `this` is the function to call
     // args[0] is the thisArg for the call
     // args[1] is an array of arguments
@@ -58,6 +59,7 @@ pub fn function_apply(
         }
     };
 
+    // Propagate the Guarded from call_function
     interp.call_function(this, this_arg, &call_args)
 }
 
@@ -66,7 +68,7 @@ pub fn function_bind(
     interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     // `this` is the function to bind
     // args[0] is the thisArg to bind
     // args[1..] are pre-filled arguments
@@ -83,6 +85,7 @@ pub fn function_bind(
     let bound_args: Vec<JsValue> = args.iter().skip(1).cloned().collect();
 
     // Create a bound function using JsFunction::Bound
+    // create_function roots to root_guard, so no additional guard needed
     let bound_fn = interp.create_function(JsFunction::Bound(Box::new(BoundFunctionData {
         target: target_fn,
         this_arg: this_arg.clone(),
@@ -100,5 +103,5 @@ pub fn function_bind(
         }
     }
 
-    Ok(JsValue::Object(bound_fn))
+    Ok(Guarded::unguarded(JsValue::Object(bound_fn)))
 }

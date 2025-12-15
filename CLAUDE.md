@@ -170,6 +170,44 @@ fn evaluate_member(&mut self, member: &MemberExpression) -> Result<JsValue, JsEr
 
 Use `Guarded::with_value(new_value)` to easily propagate a guard with a new value.
 
+**Rule: Never assign temporary objects to root_guard:**
+Methods that create temporary objects (like `create_array`, `create_object`) must return the temporary guard alongside the object:
+```rust
+// CORRECT: Return guard with temporary object
+pub fn create_object_with_guard(&mut self) -> (Gc<JsObject>, Guard<JsObject>) {
+    let temp = self.heap.create_guard();
+    let obj = temp.alloc();
+    obj.borrow_mut().prototype = Some(self.object_prototype);
+    (obj, temp)
+}
+
+// WRONG: Assigning to root_guard keeps object alive forever (memory leak!)
+pub fn create_object(&mut self) -> Gc<JsObject> {
+    let obj = self.root_guard.alloc();  // BUG: Never freed!
+    obj
+}
+```
+
+**Why this matters:** The root_guard is never dropped, so objects allocated from it will never be garbage collected. This causes memory leaks. Instead, return a temporary guard that the caller manages - when the guard is dropped, the object becomes eligible for GC.
+
+**Rule: Return Guarded when returning JsValue:**
+When functions return `JsValue`, they should return `Guarded` to keep the guard alive until ownership is transferred:
+```rust
+// CORRECT: Return Guarded to maintain GC safety
+pub fn some_builtin(interp: &mut Interpreter, ...) -> Result<Guarded, JsError> {
+    let (arr, guard) = interp.create_array(elements);
+    Ok(Guarded { value: JsValue::Object(arr), guard: Some(guard) })
+}
+
+// WRONG: Returning JsValue drops the guard, object may be collected!
+pub fn some_builtin(interp: &mut Interpreter, ...) -> Result<JsValue, JsError> {
+    let (arr, _guard) = interp.create_array(elements);
+    Ok(JsValue::Object(arr))  // BUG: _guard dropped here!
+}
+```
+
+**Why this matters:** When we create temporary objects and return them, the guard must stay alive until ownership is established (e.g., the value is stored in a variable, property, or array). By returning `Guarded`, the caller receives both the value and the guard, ensuring the object survives until properly owned.
+
 ## Development Workflow
 
 Use TDD (Test-Driven Development) for new features:

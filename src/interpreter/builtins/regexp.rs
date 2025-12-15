@@ -1,36 +1,26 @@
 //! RegExp built-in methods
 
 use crate::error::JsError;
+use crate::gc::Gc;
 use crate::interpreter::Interpreter;
-use crate::value::{
-    create_function, ExoticObject, JsFunction, JsObjectRef, JsString, JsValue, NativeFunction,
-};
+use crate::value::{ExoticObject, Guarded, JsObject, JsString, JsValue};
 
 /// Initialize RegExp.prototype with test and exec methods
 pub fn init_regexp_prototype(interp: &mut Interpreter) {
-    let proto = interp.regexp_prototype.clone();
+    let proto = interp.regexp_prototype;
 
     interp.register_method(&proto, "test", regexp_test, 1);
     interp.register_method(&proto, "exec", regexp_exec, 1);
 }
 
 /// Create RegExp constructor
-pub fn create_regexp_constructor(interp: &mut Interpreter) -> JsObjectRef {
-    let name = interp.intern("RegExp");
-    let constructor = create_function(
-        &mut interp.gc_space,
-        &mut interp.string_dict,
-        JsFunction::Native(NativeFunction {
-            name,
-            func: regexp_constructor,
-            arity: 2,
-        }),
-    );
+pub fn create_regexp_constructor(interp: &mut Interpreter) -> Gc<JsObject> {
+    let constructor = interp.create_native_function("RegExp", regexp_constructor, 2);
 
     let proto_key = interp.key("prototype");
     constructor
         .borrow_mut()
-        .set_property(proto_key, JsValue::Object(interp.regexp_prototype.clone()));
+        .set_property(proto_key, JsValue::Object(interp.regexp_prototype));
 
     constructor
 }
@@ -39,7 +29,7 @@ pub fn regexp_constructor(
     interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let pattern = args
         .first()
         .cloned()
@@ -64,14 +54,14 @@ pub fn regexp_constructor(
     let sticky_key = interp.key("sticky");
     let last_index_key = interp.key("lastIndex");
 
-    let regexp_obj = interp.create_object();
+    let (regexp_obj, guard) = interp.create_object_with_guard();
     {
         let mut obj = regexp_obj.borrow_mut();
         obj.exotic = ExoticObject::RegExp {
             pattern: pattern.clone(),
             flags: flags.clone(),
         };
-        obj.prototype = Some(interp.regexp_prototype.clone());
+        obj.prototype = Some(interp.regexp_prototype);
         obj.set_property(source_key, JsValue::String(JsString::from(pattern)));
         obj.set_property(flags_key, JsValue::String(JsString::from(flags.clone())));
         obj.set_property(global_key, JsValue::Boolean(flags.contains('g')));
@@ -83,7 +73,7 @@ pub fn regexp_constructor(
         // Initialize lastIndex to 0
         obj.set_property(last_index_key, JsValue::Number(0.0));
     }
-    Ok(JsValue::Object(regexp_obj))
+    Ok(Guarded::with_guard(JsValue::Object(regexp_obj), guard))
 }
 
 pub fn get_regexp_data(this: &JsValue) -> Result<(String, String), JsError> {
@@ -135,7 +125,7 @@ pub fn regexp_test(
     _interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let (pattern, flags) = get_regexp_data(&this)?;
     let input = args
         .first()
@@ -145,14 +135,14 @@ pub fn regexp_test(
         .to_string();
 
     let re = build_regex(&pattern, &flags)?;
-    Ok(JsValue::Boolean(re.is_match(&input)))
+    Ok(Guarded::unguarded(JsValue::Boolean(re.is_match(&input))))
 }
 
 pub fn regexp_exec(
     interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let JsValue::Object(ref obj) = this else {
         return Err(JsError::type_error("this is not a RegExp"));
     };
@@ -203,7 +193,7 @@ pub fn regexp_exec(
             obj.borrow_mut()
                 .set_property(last_index_key, JsValue::Number(0.0));
         }
-        return Ok(JsValue::Null);
+        return Ok(Guarded::unguarded(JsValue::Null));
     } else {
         input.as_str()
     };
@@ -217,7 +207,7 @@ pub fn regexp_exec(
                     None => result.push(JsValue::Undefined),
                 }
             }
-            let arr = interp.create_array(result);
+            let (arr, guard) = interp.create_array(result);
 
             // Calculate actual index in original string
             let match_start = caps.get(0).map(|m| m.start()).unwrap_or(0);
@@ -236,7 +226,7 @@ pub fn regexp_exec(
                     .set_property(last_index_key, JsValue::Number(new_last_index as f64));
             }
 
-            Ok(JsValue::Object(arr))
+            Ok(Guarded::with_guard(JsValue::Object(arr), guard))
         }
         None => {
             // Reset lastIndex to 0 on no match for global/sticky
@@ -244,7 +234,7 @@ pub fn regexp_exec(
                 obj.borrow_mut()
                     .set_property(last_index_key, JsValue::Number(0.0));
             }
-            Ok(JsValue::Null)
+            Ok(Guarded::unguarded(JsValue::Null))
         }
     }
 }

@@ -30,8 +30,8 @@ use crate::parser::Parser;
 use crate::string_dict::StringDict;
 use crate::value::{
     create_environment_with_guard, Binding, CheapClone, EnvRef, EnvironmentData, ExoticObject,
-    FunctionBody, InterpretedFunction, JsFunction, JsObject, JsString, JsValue, NativeFunction,
-    Property, PropertyKey,
+    FunctionBody, Guarded, InterpretedFunction, JsFunction, JsObject, JsString, JsValue, NativeFn,
+    NativeFunction, Property, PropertyKey,
 };
 use rustc_hash::FxHashMap;
 use std::rc::Rc;
@@ -46,70 +46,7 @@ pub enum Completion {
     Continue(Option<JsString>),
 }
 
-/// Result of evaluating an expression.
-///
-/// Contains the value and an optional guard that keeps newly created objects alive
-/// until ownership is transferred to an environment or parent object.
-///
-/// The guard is consumed when:
-/// - The value is stored in a variable (env_define establishes ownership)
-/// - The value is assigned to an object property (parent.own establishes ownership)
-/// - The value is returned from a function (caller takes ownership)
-///
-/// ## Rule 1: Always use destructuring
-/// ```ignore
-/// let Guarded { value, guard: _guard } = self.evaluate_expression(expr)?;
-/// // _guard keeps the object alive until end of scope
-/// ```
-/// Never extract just the value without keeping the guard - the object may be
-/// garbage collected before you're done using it!
-///
-/// ## Rule 2: Propagate guards when returning derived values
-/// If you derive a value from a guarded input and return it, propagate the guard:
-/// ```ignore
-/// // CORRECT: Propagate guard when returning derived value
-/// let Guarded { value, guard } = self.evaluate_expression(expr)?;
-/// let derived = do_something_with(&value);
-/// Ok(Guarded { value: derived, guard })
-///
-/// // WRONG: Guard dropped, derived value may be collected
-/// let Guarded { value, guard: _guard } = self.evaluate_expression(expr)?;
-/// let derived = do_something_with(&value);
-/// Ok(Guarded::unguarded(derived))  // BUG!
-/// ```
-///
-/// The fields are public to allow struct destructuring pattern, which is the
-/// ONLY approved way to access the contents.
-pub struct Guarded {
-    pub value: JsValue,
-    pub guard: Option<Guard<JsObject>>,
-}
-
-impl Guarded {
-    /// Create a guarded value with a guard
-    pub fn with_guard(value: JsValue, guard: Guard<JsObject>) -> Self {
-        Self {
-            value,
-            guard: Some(guard),
-        }
-    }
-
-    /// Create an unguarded value (for primitives or already-owned objects)
-    pub fn unguarded(value: JsValue) -> Self {
-        Self { value, guard: None }
-    }
-
-    /// Return a new value with the same guard (for derived values)
-    ///
-    /// Use this when you derive a value from a guarded input and want to
-    /// propagate the guard to keep the original object alive.
-    pub fn with_value(self, value: JsValue) -> Self {
-        Self {
-            value,
-            guard: self.guard,
-        }
-    }
-}
+// Re-export Guarded from value module - see value.rs for documentation
 
 /// A stack frame for tracking call stack
 #[derive(Debug, Clone)]
@@ -171,6 +108,9 @@ pub struct Interpreter {
     /// Number.prototype (for number primitive methods)
     pub number_prototype: Gc<JsObject>,
 
+    /// RegExp.prototype (for regexp methods)
+    pub regexp_prototype: Gc<JsObject>,
+
     // ═══════════════════════════════════════════════════════════════════════════
     // Execution State
     // ═══════════════════════════════════════════════════════════════════════════
@@ -205,6 +145,7 @@ impl Interpreter {
         let function_prototype = root_guard.alloc();
         let string_prototype = root_guard.alloc();
         let number_prototype = root_guard.alloc();
+        let regexp_prototype = root_guard.alloc();
 
         // Set up prototype chain
         {
@@ -226,6 +167,11 @@ impl Interpreter {
             let proto = object_prototype;
             number_prototype.borrow_mut().prototype = Some(proto);
             number_prototype.own(&proto, &heap);
+        }
+        {
+            let proto = object_prototype;
+            regexp_prototype.borrow_mut().prototype = Some(proto);
+            regexp_prototype.own(&proto, &heap);
         }
 
         // Create global object (rooted)
@@ -256,6 +202,7 @@ impl Interpreter {
             function_prototype,
             string_prototype,
             number_prototype,
+            regexp_prototype,
             thrown_value: None,
             exports: FxHashMap::default(),
             call_stack: Vec::new(),
@@ -284,17 +231,48 @@ impl Interpreter {
         // Initialize Array builtin methods
         builtins::init_array_prototype(self);
 
+        // Initialize String prototype methods
+        builtins::init_string_prototype(self);
+
         // Initialize Function.prototype (call, apply, bind)
         builtins::init_function_prototype(self);
 
         // Initialize Math global object
         builtins::init_math(self);
 
+        // Initialize JSON global object
+        builtins::init_json(self);
+
+        // Initialize console global object
+        builtins::init_console(self);
+
         // Initialize Number prototype methods
         builtins::init_number_prototype(self);
 
         // Initialize Error constructor
         builtins::init_error(self);
+
+        // Initialize String constructor (global String function)
+        let string_constructor = builtins::create_string_constructor(self);
+        let string_name = self.string_dict.get_or_insert("String");
+        self.env_define(string_name, JsValue::Object(string_constructor), false);
+
+        // Initialize Array constructor (global Array function)
+        let array_constructor = builtins::create_array_constructor(self);
+        let array_name = self.string_dict.get_or_insert("Array");
+        self.env_define(array_name, JsValue::Object(array_constructor), false);
+
+        // Initialize Object prototype and constructor
+        builtins::init_object_prototype(self);
+        let object_constructor = builtins::create_object_constructor(self);
+        let object_name = self.string_dict.get_or_insert("Object");
+        self.env_define(object_name, JsValue::Object(object_constructor), false);
+
+        // Initialize RegExp prototype and constructor
+        builtins::init_regexp_prototype(self);
+        let regexp_constructor = builtins::create_regexp_constructor(self);
+        let regexp_name = self.string_dict.get_or_insert("RegExp");
+        self.env_define(regexp_name, JsValue::Object(regexp_constructor), false);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -470,6 +448,43 @@ impl Interpreter {
         (obj, temp)
     }
 
+    /// Create a RegExp literal object with a temporary guard.
+    /// Used when evaluating /pattern/flags syntax.
+    fn create_regexp_literal(&mut self, pattern: &str, flags: &str) -> Result<Guarded, JsError> {
+        // Pre-intern all property keys
+        let source_key = self.key("source");
+        let flags_key = self.key("flags");
+        let global_key = self.key("global");
+        let ignore_case_key = self.key("ignoreCase");
+        let multiline_key = self.key("multiline");
+        let dot_all_key = self.key("dotAll");
+        let unicode_key = self.key("unicode");
+        let sticky_key = self.key("sticky");
+        let last_index_key = self.key("lastIndex");
+
+        let (regexp_obj, guard) = self.create_object_with_guard();
+        {
+            let mut obj = regexp_obj.borrow_mut();
+            obj.exotic = ExoticObject::RegExp {
+                pattern: pattern.to_string(),
+                flags: flags.to_string(),
+            };
+            obj.prototype = Some(self.regexp_prototype);
+            obj.set_property(source_key, JsValue::String(JsString::from(pattern)));
+            obj.set_property(flags_key, JsValue::String(JsString::from(flags)));
+            obj.set_property(global_key, JsValue::Boolean(flags.contains('g')));
+            obj.set_property(ignore_case_key, JsValue::Boolean(flags.contains('i')));
+            obj.set_property(multiline_key, JsValue::Boolean(flags.contains('m')));
+            obj.set_property(dot_all_key, JsValue::Boolean(flags.contains('s')));
+            obj.set_property(unicode_key, JsValue::Boolean(flags.contains('u')));
+            obj.set_property(sticky_key, JsValue::Boolean(flags.contains('y')));
+            obj.set_property(last_index_key, JsValue::Number(0.0));
+        }
+        // Update ownership
+        regexp_obj.own(&self.regexp_prototype, &self.heap);
+        Ok(Guarded::with_guard(JsValue::Object(regexp_obj), guard))
+    }
+
     /// Create a new array with elements and a temporary guard.
     /// Returns (array, temp_guard). Caller must transfer ownership before guard is dropped.
     pub fn create_array_with_guard(
@@ -553,10 +568,12 @@ impl Interpreter {
         PropertyKey::String(self.string_dict.get_or_insert(s))
     }
 
-    /// Create a rooted array (for use during initialization)
-    pub fn create_array(&mut self, elements: Vec<JsValue>) -> Gc<JsObject> {
+    /// Create an array with a temporary guard.
+    /// Returns (array, temp_guard). Caller must transfer ownership before guard is dropped.
+    pub fn create_array(&mut self, elements: Vec<JsValue>) -> (Gc<JsObject>, Guard<JsObject>) {
         let len = elements.len() as u32;
-        let arr = self.root_guard.alloc();
+        let temp = self.heap.create_guard();
+        let arr = temp.alloc();
         {
             let mut arr_ref = arr.borrow_mut();
             arr_ref.prototype = Some(self.array_prototype);
@@ -580,14 +597,14 @@ impl Interpreter {
             }
         }
 
-        arr
+        (arr, temp)
     }
 
     /// Create a rooted native function (for use during initialization)
     pub fn create_native_function(
         &mut self,
         name: &str,
-        func: fn(&mut Interpreter, JsValue, &[JsValue]) -> Result<JsValue, JsError>,
+        func: NativeFn,
         arity: usize,
     ) -> Gc<JsObject> {
         let name_str = self.string_dict.get_or_insert(name);
@@ -622,7 +639,7 @@ impl Interpreter {
         &mut self,
         obj: &Gc<JsObject>,
         name: &str,
-        func: fn(&mut Interpreter, JsValue, &[JsValue]) -> Result<JsValue, JsError>,
+        func: NativeFn,
         arity: usize,
     ) {
         let func_obj = self.create_native_function(name, func, arity);
@@ -691,7 +708,10 @@ impl Interpreter {
         match stmt {
             Statement::Expression(expr_stmt) => {
                 // Expression statement - value is discarded, guard dropped at end of scope
-                let Guarded { value: val, guard: _guard } = self.evaluate_expression(&expr_stmt.expression)?;
+                let Guarded {
+                    value: val,
+                    guard: _guard,
+                } = self.evaluate_expression(&expr_stmt.expression)?;
                 Ok(Completion::Normal(val))
             }
 
@@ -880,7 +900,8 @@ impl Interpreter {
                 // Assignment pattern: { x = defaultValue }
                 let (val, _guard) = if matches!(value, JsValue::Undefined) {
                     // Use default value
-                    let Guarded { value: v, guard: g } = self.evaluate_expression(&assign_pat.right)?;
+                    let Guarded { value: v, guard: g } =
+                        self.evaluate_expression(&assign_pat.right)?;
                     (v, g)
                 } else {
                     (value, None)
@@ -955,7 +976,10 @@ impl Interpreter {
     }
 
     fn execute_if(&mut self, if_stmt: &IfStatement) -> Result<Completion, JsError> {
-        let Guarded { value: condition, guard: _guard } = self.evaluate_expression(&if_stmt.test)?;
+        let Guarded {
+            value: condition,
+            guard: _guard,
+        } = self.evaluate_expression(&if_stmt.test)?;
 
         if condition.to_boolean() {
             self.execute_statement(&if_stmt.consequent)
@@ -970,7 +994,10 @@ impl Interpreter {
         loop {
             // Check for timeout at each iteration
             self.check_timeout()?;
-            let Guarded { value: condition, guard: _guard } = self.evaluate_expression(&while_stmt.test)?;
+            let Guarded {
+                value: condition,
+                guard: _guard,
+            } = self.evaluate_expression(&while_stmt.test)?;
             if !condition.to_boolean() {
                 break;
             }
@@ -1028,7 +1055,10 @@ impl Interpreter {
                 }
                 ForInit::Expression(expr) => {
                     // Init expression - value discarded
-                    let Guarded { value: _, guard: _guard } = self.evaluate_expression(expr)?;
+                    let Guarded {
+                        value: _,
+                        guard: _guard,
+                    } = self.evaluate_expression(expr)?;
                 }
             }
         }
@@ -1069,7 +1099,10 @@ impl Interpreter {
 
             // Test (runs in current per-iteration environment)
             if let Some(ref test) = for_stmt.test {
-                let Guarded { value: condition, guard: _guard } = self.evaluate_expression(test)?;
+                let Guarded {
+                    value: condition,
+                    guard: _guard,
+                } = self.evaluate_expression(test)?;
                 if !condition.to_boolean() {
                     break;
                 }
@@ -1131,7 +1164,10 @@ impl Interpreter {
 
             // Update (runs in NEW per-iteration environment, not the one body used)
             if let Some(ref update) = for_stmt.update {
-                let Guarded { value: _, guard: _guard } = self.evaluate_expression(update)?;
+                let Guarded {
+                    value: _,
+                    guard: _guard,
+                } = self.evaluate_expression(update)?;
             }
         }
 
@@ -1151,7 +1187,10 @@ impl Interpreter {
                 c @ (Completion::Break(_) | Completion::Continue(_)) => return Ok(c),
             }
 
-            let Guarded { value: condition, guard: _guard } = self.evaluate_expression(&do_while.test)?;
+            let Guarded {
+                value: condition,
+                guard: _guard,
+            } = self.evaluate_expression(&do_while.test)?;
             if !condition.to_boolean() {
                 break;
             }
@@ -1161,7 +1200,10 @@ impl Interpreter {
     }
 
     fn execute_for_in(&mut self, for_in: &ForInStatement) -> Result<Completion, JsError> {
-        let Guarded { value: right, guard: _right_guard } = self.evaluate_expression(&for_in.right)?;
+        let Guarded {
+            value: right,
+            guard: _right_guard,
+        } = self.evaluate_expression(&for_in.right)?;
 
         let keys = match &right {
             JsValue::Object(obj) => {
@@ -1228,7 +1270,10 @@ impl Interpreter {
     }
 
     fn execute_for_of(&mut self, for_of: &ForOfStatement) -> Result<Completion, JsError> {
-        let Guarded { value: right, guard: _right_guard } = self.evaluate_expression(&for_of.right)?;
+        let Guarded {
+            value: right,
+            guard: _right_guard,
+        } = self.evaluate_expression(&for_of.right)?;
 
         // Collect items to iterate over
         let items = match &right {
@@ -1307,7 +1352,10 @@ impl Interpreter {
     }
 
     fn execute_switch(&mut self, switch: &SwitchStatement) -> Result<Completion, JsError> {
-        let Guarded { value: discriminant, guard: _disc_guard } = self.evaluate_expression(&switch.discriminant)?;
+        let Guarded {
+            value: discriminant,
+            guard: _disc_guard,
+        } = self.evaluate_expression(&switch.discriminant)?;
         let mut matched = false;
         let mut default_index = None;
 
@@ -1320,7 +1368,10 @@ impl Interpreter {
 
             if !matched {
                 if let Some(test_expr) = &case.test {
-                    let Guarded { value: test, guard: _test_guard } = self.evaluate_expression(test_expr)?;
+                    let Guarded {
+                        value: test,
+                        guard: _test_guard,
+                    } = self.evaluate_expression(test_expr)?;
                     if discriminant.strict_equals(&test) {
                         matched = true;
                     }
@@ -1453,7 +1504,10 @@ impl Interpreter {
         // Handle extends - evaluate superclass first
         let (super_constructor, _super_guard): (Option<Gc<JsObject>>, Option<Guard<JsObject>>) =
             if let Some(super_class_expr) = &class.super_class {
-                let Guarded { value: super_val, guard } = self.evaluate_expression(super_class_expr)?;
+                let Guarded {
+                    value: super_val,
+                    guard,
+                } = self.evaluate_expression(super_class_expr)?;
                 if let JsValue::Object(sc) = super_val {
                     (Some(sc), guard)
                 } else {
@@ -1824,7 +1878,10 @@ impl Interpreter {
         loop {
             // Check for timeout at each iteration
             self.check_timeout()?;
-            let Guarded { value: condition, guard: _guard } = self.evaluate_expression(&while_stmt.test)?;
+            let Guarded {
+                value: condition,
+                guard: _guard,
+            } = self.evaluate_expression(&while_stmt.test)?;
             if !condition.to_boolean() {
                 break;
             }
@@ -1862,7 +1919,10 @@ impl Interpreter {
                 Completion::Return(v) => return Ok(Completion::Return(v)),
             }
 
-            let Guarded { value: condition, guard: _guard } = self.evaluate_expression(&do_while.test)?;
+            let Guarded {
+                value: condition,
+                guard: _guard,
+            } = self.evaluate_expression(&do_while.test)?;
             if !condition.to_boolean() {
                 break;
             }
@@ -1884,7 +1944,10 @@ impl Interpreter {
             match init {
                 ForInit::Variable(decl) => self.execute_variable_declaration(decl)?,
                 ForInit::Expression(expr) => {
-                    let Guarded { value: _, guard: _guard } = self.evaluate_expression(expr)?;
+                    let Guarded {
+                        value: _,
+                        guard: _guard,
+                    } = self.evaluate_expression(expr)?;
                 }
             }
         }
@@ -1895,7 +1958,10 @@ impl Interpreter {
 
             // Test
             if let Some(ref test) = for_stmt.test {
-                let Guarded { value: condition, guard: _guard } = self.evaluate_expression(test)?;
+                let Guarded {
+                    value: condition,
+                    guard: _guard,
+                } = self.evaluate_expression(test)?;
                 if !condition.to_boolean() {
                     break;
                 }
@@ -1923,7 +1989,10 @@ impl Interpreter {
 
             // Update
             if let Some(ref update) = for_stmt.update {
-                let Guarded { value: _, guard: _guard } = self.evaluate_expression(update)?;
+                let Guarded {
+                    value: _,
+                    guard: _guard,
+                } = self.evaluate_expression(update)?;
             }
         }
 
@@ -1936,7 +2005,10 @@ impl Interpreter {
         for_in: &ForInStatement,
         label: Option<&JsString>,
     ) -> Result<Completion, JsError> {
-        let Guarded { value: right, guard: _right_guard } = self.evaluate_expression(&for_in.right)?;
+        let Guarded {
+            value: right,
+            guard: _right_guard,
+        } = self.evaluate_expression(&for_in.right)?;
 
         let keys = match &right {
             JsValue::Object(obj) => {
@@ -2012,7 +2084,10 @@ impl Interpreter {
         for_of: &ForOfStatement,
         label: Option<&JsString>,
     ) -> Result<Completion, JsError> {
-        let Guarded { value: right, guard: _right_guard } = self.evaluate_expression(&for_of.right)?;
+        let Guarded {
+            value: right,
+            guard: _right_guard,
+        } = self.evaluate_expression(&for_of.right)?;
 
         // Collect items to iterate over
         let items = match &right {
@@ -2131,7 +2206,13 @@ impl Interpreter {
 
     fn evaluate_expression(&mut self, expr: &Expression) -> Result<Guarded, JsError> {
         match expr {
-            Expression::Literal(lit) => Ok(Guarded::unguarded(self.evaluate_literal(&lit.value)?)),
+            Expression::Literal(lit) => {
+                // Handle RegExp literals specially since they need to create objects
+                if let LiteralValue::RegExp { pattern, flags } = &lit.value {
+                    return self.create_regexp_literal(pattern, flags);
+                }
+                Ok(Guarded::unguarded(self.evaluate_literal(&lit.value)?))
+            }
 
             Expression::Identifier(id) => Ok(Guarded::unguarded(self.env_get(&id.name)?)),
 
@@ -2333,12 +2414,13 @@ impl Interpreter {
         let result = self.call_function(constructor, this.clone(), &args)?;
 
         // If constructor returns an object, use that; otherwise use the created object
-        match result {
+        match result.value {
             JsValue::Object(obj) => {
-                // Create new guard for returned object
-                let (_, result_guard) = self.create_object_with_guard();
-                result_guard.guard(&obj);
-                Ok(Guarded::with_guard(JsValue::Object(obj), result_guard))
+                // The result already has a guard from call_function
+                Ok(Guarded {
+                    value: JsValue::Object(obj),
+                    guard: result.guard,
+                })
             }
             _ => Ok(Guarded::with_guard(this, new_guard)),
         }
@@ -2353,7 +2435,10 @@ impl Interpreter {
         for (i, quasi) in template.quasis.iter().enumerate() {
             result.push_str(quasi.value.as_ref());
             if let Some(expr) = template.expressions.get(i) {
-                let Guarded { value: val, guard: _guard } = self.evaluate_expression(expr)?;
+                let Guarded {
+                    value: val,
+                    guard: _guard,
+                } = self.evaluate_expression(expr)?;
                 result.push_str(val.to_js_string().as_ref());
             }
         }
@@ -2366,7 +2451,10 @@ impl Interpreter {
         tagged: &TaggedTemplateExpression,
     ) -> Result<Guarded, JsError> {
         // Evaluate the tag function
-        let Guarded { value: tag_fn, guard: _tag_guard } = self.evaluate_expression(&tagged.tag)?;
+        let Guarded {
+            value: tag_fn,
+            guard: _tag_guard,
+        } = self.evaluate_expression(&tagged.tag)?;
 
         // Build the strings array (first argument)
         let strings: Vec<JsValue> = tagged
@@ -2404,9 +2492,8 @@ impl Interpreter {
             }
         }
 
-        // Call the tag function
-        let result = self.call_function(tag_fn, JsValue::Undefined, &args)?;
-        Ok(Guarded::unguarded(result))
+        // Call the tag function - propagate guard
+        self.call_function(tag_fn, JsValue::Undefined, &args)
     }
 
     fn evaluate_literal(&self, lit: &LiteralValue) -> Result<JsValue, JsError> {
@@ -2425,8 +2512,14 @@ impl Interpreter {
     }
 
     fn evaluate_binary(&mut self, bin: &BinaryExpression) -> Result<Guarded, JsError> {
-        let Guarded { value: left, guard: _left_guard } = self.evaluate_expression(&bin.left)?;
-        let Guarded { value: right, guard: _right_guard } = self.evaluate_expression(&bin.right)?;
+        let Guarded {
+            value: left,
+            guard: _left_guard,
+        } = self.evaluate_expression(&bin.left)?;
+        let Guarded {
+            value: right,
+            guard: _right_guard,
+        } = self.evaluate_expression(&bin.right)?;
 
         Ok(Guarded::unguarded(match bin.operator {
             // Arithmetic
@@ -2495,7 +2588,10 @@ impl Interpreter {
     }
 
     fn evaluate_unary(&mut self, un: &UnaryExpression) -> Result<Guarded, JsError> {
-        let Guarded { value: operand, guard: _guard } = self.evaluate_expression(&un.argument)?;
+        let Guarded {
+            value: operand,
+            guard: _guard,
+        } = self.evaluate_expression(&un.argument)?;
 
         Ok(Guarded::unguarded(match un.operator {
             UnaryOp::Minus => JsValue::Number(-operand.to_number()),
@@ -2537,7 +2633,10 @@ impl Interpreter {
     }
 
     fn evaluate_conditional(&mut self, cond: &ConditionalExpression) -> Result<Guarded, JsError> {
-        let Guarded { value: test, guard: _guard } = self.evaluate_expression(&cond.test)?;
+        let Guarded {
+            value: test,
+            guard: _guard,
+        } = self.evaluate_expression(&cond.test)?;
 
         if test.to_boolean() {
             self.evaluate_expression(&cond.consequent)
@@ -2647,11 +2746,15 @@ impl Interpreter {
                         match prop_desc {
                             Some((prop, _)) if prop.is_accessor() => {
                                 if let Some(getter) = prop.getter {
-                                    self.call_function(
+                                    let Guarded {
+                                        value: getter_val,
+                                        guard: _getter_guard,
+                                    } = self.call_function(
                                         JsValue::Object(getter),
                                         obj_val.clone(),
                                         &[],
-                                    )?
+                                    )?;
+                                    getter_val
                                 } else {
                                     JsValue::Undefined
                                 }
@@ -2729,6 +2832,23 @@ impl Interpreter {
                         // If no setter, silently ignore in strict mode would throw, but we're lenient
                         return Ok(Guarded::unguarded(final_value));
                     }
+                }
+
+                // Handle __proto__ special property - set prototype instead of property
+                if key.eq_str("__proto__") {
+                    let new_proto = match &final_value {
+                        JsValue::Object(proto_obj) => Some(*proto_obj),
+                        JsValue::Null => None,
+                        _ => {
+                            // Non-object, non-null values are ignored for __proto__ set
+                            return Ok(Guarded::unguarded(final_value));
+                        }
+                    };
+                    if let Some(proto_obj) = new_proto {
+                        obj.own(&proto_obj, &self.heap);
+                    }
+                    obj.borrow_mut().prototype = new_proto;
+                    return Ok(Guarded::unguarded(final_value));
                 }
 
                 // Not an accessor - set property directly
@@ -2822,7 +2942,8 @@ impl Interpreter {
 
             Pattern::Assignment(assign_pat) => {
                 let (val, _guard) = if matches!(value, JsValue::Undefined) {
-                    let Guarded { value: v, guard: g } = self.evaluate_expression(&assign_pat.right)?;
+                    let Guarded { value: v, guard: g } =
+                        self.evaluate_expression(&assign_pat.right)?;
                     (v, g)
                 } else {
                     (value, None)
@@ -2898,7 +3019,10 @@ impl Interpreter {
                 }
             }
             Expression::Member(member) => {
-                let Guarded { value: obj_val, guard: _obj_guard } = self.evaluate_expression(&member.object)?;
+                let Guarded {
+                    value: obj_val,
+                    guard: _obj_guard,
+                } = self.evaluate_expression(&member.object)?;
                 let JsValue::Object(obj) = obj_val else {
                     return Err(JsError::type_error("Cannot update property of non-object"));
                 };
@@ -3003,7 +3127,10 @@ impl Interpreter {
                 }
             }
             _ => {
-                let Guarded { value: callee, guard } = self.evaluate_expression(&call.callee)?;
+                let Guarded {
+                    value: callee,
+                    guard,
+                } = self.evaluate_expression(&call.callee)?;
                 (callee, JsValue::Undefined, guard)
             }
         };
@@ -3023,15 +3150,29 @@ impl Interpreter {
                         _arg_guards.push(g);
                     }
                 }
-                crate::ast::Argument::Spread(_) => {
-                    return Err(JsError::internal_error("Spread not implemented"));
+                crate::ast::Argument::Spread(spread) => {
+                    let Guarded { value, guard } = self.evaluate_expression(&spread.argument)?;
+                    if let Some(g) = guard {
+                        _arg_guards.push(g);
+                    }
+                    // Spread the array elements into arguments
+                    if let JsValue::Object(obj) = value {
+                        let obj_ref = obj.borrow();
+                        if let ExoticObject::Array { length } = &obj_ref.exotic {
+                            for i in 0..*length {
+                                let elem = obj_ref
+                                    .get_property(&PropertyKey::Index(i))
+                                    .unwrap_or(JsValue::Undefined);
+                                args.push(elem);
+                            }
+                        }
+                    }
                 }
             }
         }
 
-        // Call function - result ownership will be handled by caller
-        let result = self.call_function(callee, this_value, &args)?;
-        Ok(Guarded::unguarded(result))
+        // Call function - propagate guard from result
+        self.call_function(callee, this_value, &args)
     }
 
     pub fn call_function(
@@ -3039,7 +3180,7 @@ impl Interpreter {
         callee: JsValue,
         this_value: JsValue,
         args: &[JsValue],
-    ) -> Result<JsValue, JsError> {
+    ) -> Result<Guarded, JsError> {
         let JsValue::Object(func_obj) = callee else {
             return Err(JsError::type_error("Not a function"));
         };
@@ -3137,23 +3278,27 @@ impl Interpreter {
                     self.hoist_var_declarations(&block.body);
                 }
 
-                let result = match &*interp.body {
+                let (result, result_guard) = match &*interp.body {
                     FunctionBody::Block(block) => match self.execute_block(block)? {
-                        Completion::Return(v) => v,
-                        _ => JsValue::Undefined,
+                        Completion::Return(v) => (v, None),
+                        _ => (JsValue::Undefined, None),
                     },
                     FunctionBody::Expression(expr) => {
-                        let Guarded { value, guard: _guard } = self.evaluate_expression(expr)?;
-                        value
+                        let Guarded { value, guard } = self.evaluate_expression(expr)?;
+                        (value, guard)
                     }
                 };
 
                 self.env = saved_env;
-                Ok(result)
+                // Propagate guard from expression body arrow functions
+                Ok(Guarded {
+                    value: result,
+                    guard: result_guard,
+                })
             }
 
             JsFunction::Native(native) => {
-                // Call native function
+                // Call native function - propagate the Guarded to preserve guard
                 (native.func)(self, this_value, args)
             }
 
@@ -3182,57 +3327,76 @@ impl Interpreter {
         let key = self.get_member_key(&member.property)?;
 
         // Get the value from the member access
-        let value = match &obj {
+        // Returns (value, optional_extra_guard) - extra guard for values from getter calls
+        let (value, extra_guard) = match &obj {
             JsValue::Object(o) => {
-                // Get the property descriptor to check for getters
-                let prop_desc = o.borrow().get_property_descriptor(&key);
-                match prop_desc {
-                    Some((prop, _)) if prop.is_accessor() => {
-                        // Property has a getter - invoke it
-                        if let Some(getter) = prop.getter {
-                            self.call_function(JsValue::Object(getter), obj.clone(), &[])?
-                        } else {
-                            JsValue::Undefined
-                        }
+                // Handle __proto__ special property
+                if key.eq_str("__proto__") {
+                    let proto = o.borrow().prototype;
+                    match proto {
+                        Some(p) => (JsValue::Object(p), None),
+                        None => (JsValue::Null, None),
                     }
-                    Some((prop, _)) => prop.value,
-                    None => JsValue::Undefined,
+                } else {
+                    // Get the property descriptor to check for getters
+                    let prop_desc = o.borrow().get_property_descriptor(&key);
+                    match prop_desc {
+                        Some((prop, _)) if prop.is_accessor() => {
+                            // Property has a getter - invoke it
+                            if let Some(getter) = prop.getter {
+                                let Guarded {
+                                    value: getter_val,
+                                    guard: getter_guard,
+                                } =
+                                    self.call_function(JsValue::Object(getter), obj.clone(), &[])?;
+                                (getter_val, getter_guard)
+                            } else {
+                                (JsValue::Undefined, None)
+                            }
+                        }
+                        Some((prop, _)) => (prop.value, None),
+                        None => (JsValue::Undefined, None),
+                    }
                 }
             }
             JsValue::String(s) => {
                 if let PropertyKey::Index(i) = key {
                     let chars: Vec<char> = s.as_str().chars().collect();
                     if let Some(c) = chars.get(i as usize) {
-                        JsValue::String(JsString::from(c.to_string()))
+                        (JsValue::String(JsString::from(c.to_string())), None)
                     } else {
-                        JsValue::Undefined
+                        (JsValue::Undefined, None)
                     }
                 } else if let PropertyKey::String(ref k) = key {
                     if k.as_str() == "length" {
-                        JsValue::Number(s.as_str().chars().count() as f64)
+                        (JsValue::Number(s.as_str().chars().count() as f64), None)
                     } else if let Some(method) = self.string_prototype.borrow().get_property(&key) {
                         // Look up methods on String.prototype
-                        method
+                        (method, None)
                     } else {
-                        JsValue::Undefined
+                        (JsValue::Undefined, None)
                     }
                 } else {
-                    JsValue::Undefined
+                    (JsValue::Undefined, None)
                 }
             }
             JsValue::Number(_) => {
                 // Look up methods on Number.prototype
                 if let Some(method) = self.number_prototype.borrow().get_property(&key) {
-                    method
+                    (method, None)
                 } else {
-                    JsValue::Undefined
+                    (JsValue::Undefined, None)
                 }
             }
-            _ => JsValue::Undefined,
+            _ => (JsValue::Undefined, None),
         };
 
-        // Propagate the object's guard to keep it alive while the returned value is used
-        Ok(Guarded { value, guard: obj_guard })
+        // Use getter's guard if present, otherwise the object's guard
+        let final_guard = extra_guard.or(obj_guard);
+        Ok(Guarded {
+            value,
+            guard: final_guard,
+        })
     }
 
     fn get_member_key(&mut self, property: &MemberProperty) -> Result<PropertyKey, JsError> {
@@ -3265,8 +3429,23 @@ impl Interpreter {
                         _elem_guards.push(g);
                     }
                 }
-                Some(ArrayElement::Spread(_)) => {
-                    return Err(JsError::internal_error("Spread not implemented"));
+                Some(ArrayElement::Spread(spread)) => {
+                    let Guarded { value, guard } = self.evaluate_expression(&spread.argument)?;
+                    if let Some(g) = guard {
+                        _elem_guards.push(g);
+                    }
+                    // Spread the array elements into the new array
+                    if let JsValue::Object(obj) = value {
+                        let obj_ref = obj.borrow();
+                        if let ExoticObject::Array { length } = &obj_ref.exotic {
+                            for i in 0..*length {
+                                let elem = obj_ref
+                                    .get_property(&PropertyKey::Index(i))
+                                    .unwrap_or(JsValue::Undefined);
+                                elements.push(elem);
+                            }
+                        }
+                    }
                 }
                 None => elements.push(JsValue::Undefined),
             }
@@ -3323,6 +3502,27 @@ impl Interpreter {
                     } else {
                         self.evaluate_expression(&p.value)?
                     };
+
+                    // Handle __proto__ special property in object literals
+                    if prop_key.eq_str("__proto__") {
+                        let new_proto = match &prop_val {
+                            JsValue::Object(proto_obj) => Some(*proto_obj),
+                            JsValue::Null => None,
+                            _ => {
+                                // Non-object, non-null values are ignored for __proto__
+                                continue;
+                            }
+                        };
+                        if let Some(proto_obj) = new_proto {
+                            obj.own(&proto_obj, &self.heap);
+                        }
+                        obj.borrow_mut().prototype = new_proto;
+                        // Keep prop_guard alive until after own() call
+                        if let Some(g) = prop_guard {
+                            _prop_guards.push(g);
+                        }
+                        continue;
+                    }
 
                     // Transfer ownership from prop_guard to obj
                     if let JsValue::Object(ref val_obj) = prop_val {

@@ -2,7 +2,7 @@
 
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
-use crate::value::{JsString, JsValue};
+use crate::value::{Guarded, JsString, JsValue};
 
 /// Initialize Number.prototype with toFixed, toString, toPrecision, toExponential
 pub fn init_number_prototype(interp: &mut Interpreter) {
@@ -22,10 +22,10 @@ pub fn number_is_nan(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     match args.first() {
-        Some(JsValue::Number(n)) => Ok(JsValue::Boolean(n.is_nan())),
-        _ => Ok(JsValue::Boolean(false)),
+        Some(JsValue::Number(n)) => Ok(Guarded::unguarded(JsValue::Boolean(n.is_nan()))),
+        _ => Ok(Guarded::unguarded(JsValue::Boolean(false))),
     }
 }
 
@@ -34,10 +34,10 @@ pub fn number_is_finite(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     match args.first() {
-        Some(JsValue::Number(n)) => Ok(JsValue::Boolean(n.is_finite())),
-        _ => Ok(JsValue::Boolean(false)),
+        Some(JsValue::Number(n)) => Ok(Guarded::unguarded(JsValue::Boolean(n.is_finite()))),
+        _ => Ok(Guarded::unguarded(JsValue::Boolean(false))),
     }
 }
 
@@ -46,13 +46,13 @@ pub fn number_is_integer(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     match args.first() {
         Some(JsValue::Number(n)) => {
             let is_int = n.is_finite() && n.trunc() == *n;
-            Ok(JsValue::Boolean(is_int))
+            Ok(Guarded::unguarded(JsValue::Boolean(is_int)))
         }
-        _ => Ok(JsValue::Boolean(false)),
+        _ => Ok(Guarded::unguarded(JsValue::Boolean(false))),
     }
 }
 
@@ -61,14 +61,14 @@ pub fn number_is_safe_integer(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     const MAX_SAFE: f64 = 9007199254740991.0;
     match args.first() {
         Some(JsValue::Number(n)) => {
             let is_safe = n.is_finite() && n.trunc() == *n && n.abs() <= MAX_SAFE;
-            Ok(JsValue::Boolean(is_safe))
+            Ok(Guarded::unguarded(JsValue::Boolean(is_safe)))
         }
-        _ => Ok(JsValue::Boolean(false)),
+        _ => Ok(Guarded::unguarded(JsValue::Boolean(false))),
     }
 }
 
@@ -77,7 +77,7 @@ pub fn number_to_fixed(
     _interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let n = this.to_number();
     let digits = args.first().map(|v| v.to_number() as i32).unwrap_or(0);
 
@@ -88,7 +88,7 @@ pub fn number_to_fixed(
     }
 
     let result = format!("{:.prec$}", n, prec = digits as usize);
-    Ok(JsValue::String(JsString::from(result)))
+    Ok(Guarded::unguarded(JsValue::String(JsString::from(result))))
 }
 
 // Number.prototype.toString
@@ -96,7 +96,7 @@ pub fn number_to_string(
     _interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let n = this.to_number();
     let radix = args.first().map(|v| v.to_number() as i32).unwrap_or(10);
 
@@ -107,12 +107,16 @@ pub fn number_to_string(
     }
 
     if radix == 10 {
-        return Ok(JsValue::String(JsString::from(format!("{}", n))));
+        return Ok(Guarded::unguarded(JsValue::String(JsString::from(
+            format!("{}", n),
+        ))));
     }
 
     // For other radixes, we need integer conversion
     if !n.is_finite() || n.fract() != 0.0 {
-        return Ok(JsValue::String(JsString::from(format!("{}", n))));
+        return Ok(Guarded::unguarded(JsValue::String(JsString::from(
+            format!("{}", n),
+        ))));
     }
 
     let int_val = n as i64;
@@ -146,7 +150,7 @@ pub fn number_to_string(
         result
     };
 
-    Ok(JsValue::String(JsString::from(result)))
+    Ok(Guarded::unguarded(JsValue::String(JsString::from(result))))
 }
 
 // Number.prototype.toPrecision
@@ -154,11 +158,13 @@ pub fn number_to_precision(
     _interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let n = this.to_number();
 
     if args.is_empty() || matches!(args.first(), Some(JsValue::Undefined)) {
-        return Ok(JsValue::String(JsString::from(format!("{}", n))));
+        return Ok(Guarded::unguarded(JsValue::String(JsString::from(
+            format!("{}", n),
+        ))));
     }
 
     let precision = args.first().map(|v| v.to_number() as i32).unwrap_or(1);
@@ -170,7 +176,9 @@ pub fn number_to_precision(
     }
 
     if !n.is_finite() {
-        return Ok(JsValue::String(JsString::from(format!("{}", n))));
+        return Ok(Guarded::unguarded(JsValue::String(JsString::from(
+            format!("{}", n),
+        ))));
     }
 
     let result = format!("{:.prec$e}", n, prec = (precision - 1) as usize);
@@ -184,33 +192,30 @@ pub fn number_to_precision(
         if exp >= 0 && exp < precision {
             let decimals = precision - 1 - exp;
             if decimals >= 0 {
-                return Ok(JsValue::String(JsString::from(format!(
-                    "{:.prec$}",
-                    n,
-                    prec = decimals as usize
+                return Ok(Guarded::unguarded(JsValue::String(JsString::from(
+                    format!("{:.prec$}", n, prec = decimals as usize),
                 ))));
             }
         } else if (-4..0).contains(&exp) {
             // For small numbers, use fixed notation
             let decimals = precision - 1 - exp;
             if (0..=100).contains(&decimals) {
-                return Ok(JsValue::String(JsString::from(format!(
-                    "{:.prec$}",
-                    n,
-                    prec = decimals as usize
+                return Ok(Guarded::unguarded(JsValue::String(JsString::from(
+                    format!("{:.prec$}", n, prec = decimals as usize),
                 ))));
             }
         }
 
         // Use exponential notation
         let exp_sign = if exp >= 0 { "+" } else { "" };
-        return Ok(JsValue::String(JsString::from(format!(
-            "{}e{}{}",
-            mantissa, exp_sign, exp
+        return Ok(Guarded::unguarded(JsValue::String(JsString::from(
+            format!("{}e{}{}", mantissa, exp_sign, exp),
         ))));
     }
 
-    Ok(JsValue::String(JsString::from(format!("{}", n))))
+    Ok(Guarded::unguarded(JsValue::String(JsString::from(
+        format!("{}", n),
+    ))))
 }
 
 // Number.prototype.toExponential
@@ -218,11 +223,13 @@ pub fn number_to_exponential(
     _interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let n = this.to_number();
 
     if !n.is_finite() {
-        return Ok(JsValue::String(JsString::from(format!("{}", n))));
+        return Ok(Guarded::unguarded(JsValue::String(JsString::from(
+            format!("{}", n),
+        ))));
     }
 
     let digits = args.first().map(|v| v.to_number() as i32).unwrap_or(6);
@@ -236,5 +243,5 @@ pub fn number_to_exponential(
     let result = format!("{:.prec$e}", n, prec = digits as usize);
     // Convert Rust's "e" notation to JS format (e.g., "1.23e2" -> "1.23e+2")
     let result = result.replace("e", "e+").replace("e+-", "e-");
-    Ok(JsValue::String(JsString::from(result)))
+    Ok(Guarded::unguarded(JsValue::String(JsString::from(result))))
 }

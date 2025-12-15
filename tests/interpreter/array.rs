@@ -9,6 +9,29 @@ fn test_array() {
     assert_eq!(eval("const arr = [1, 2, 3]; arr[1]"), JsValue::Number(2.0));
 }
 
+// Debug test to understand map issue
+#[test]
+fn test_debug_map_step_by_step() {
+    // Step 1: Test callback is called
+    assert_eq!(
+        eval("let r = 0; [1].map(x => { r = x * 2; }); r"),
+        JsValue::Number(2.0),
+        "Callback should be called and set r"
+    );
+
+    // Step 2: Test that map returns something
+    let result = eval("[1].map(x => x * 2)");
+    println!("map result: {:?}", result);
+    // assert it's an object (array)
+
+    // Step 2b: Test length directly on result
+    assert_eq!(
+        eval("[1].map(x => x * 2).length"),
+        JsValue::Number(1.0),
+        "Mapped array should have length 1"
+    );
+}
+
 // Array.prototype.push tests
 #[test]
 fn test_array_push_single() {
@@ -1154,5 +1177,8 @@ fn test_debug_array_method_lookup() {
     println!("arr.map with simplest callback: {:?}", result15);
 
     // Assert something to make test visible
-    assert!(result.is_ok() || result.is_err(), "This test is for debugging");
+    assert!(
+        result.is_ok() || result.is_err(),
+        "This test is for debugging"
+    );
 }

@@ -1,12 +1,30 @@
 //! JSON built-in methods
 
 use crate::error::JsError;
+use crate::gc::Gc;
 use crate::interpreter::Interpreter;
-use crate::value::{create_object, ExoticObject, JsObjectRef, JsString, JsValue, PropertyKey};
+use crate::value::{ExoticObject, Guarded, JsObject, JsString, JsValue, PropertyKey};
 
-/// Create JSON object with stringify and parse methods
-pub fn create_json_object(interp: &mut Interpreter) -> JsObjectRef {
-    let json = create_object(&mut interp.gc_space);
+/// Initialize JSON object and add it to globals
+pub fn init_json(interp: &mut Interpreter) {
+    let (json, _json_guard) = interp.create_object_with_guard();
+    interp.root_guard.guard(&json);
+
+    interp.register_method(&json, "stringify", json_stringify, 1);
+    interp.register_method(&json, "parse", json_parse, 1);
+
+    let json_key = interp.key("JSON");
+    interp.global.own(&json, &interp.heap);
+    interp
+        .global
+        .borrow_mut()
+        .set_property(json_key, JsValue::Object(json));
+}
+
+/// Create JSON object with stringify and parse methods (for compatibility)
+pub fn create_json_object(interp: &mut Interpreter) -> Gc<JsObject> {
+    let (json, _json_guard) = interp.create_object_with_guard();
+    interp.root_guard.guard(&json);
 
     interp.register_method(&json, "stringify", json_stringify, 1);
     interp.register_method(&json, "parse", json_parse, 1);
@@ -18,7 +36,7 @@ pub fn json_stringify(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let value = args.first().cloned().unwrap_or(JsValue::Undefined);
     // Second argument is replacer (not implemented, ignored)
     // Third argument is space/indent
@@ -79,21 +97,22 @@ pub fn json_stringify(
         _ => json.to_string(),
     };
 
-    Ok(JsValue::String(JsString::from(output)))
+    Ok(Guarded::unguarded(JsValue::String(JsString::from(output))))
 }
 
 pub fn json_parse(
     interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let text = args.first().cloned().unwrap_or(JsValue::Undefined);
     let text_str = text.to_js_string();
 
     let json: serde_json::Value = serde_json::from_str(text_str.as_str())
         .map_err(|e| JsError::syntax_error(format!("JSON parse error: {}", e), 0, 0))?;
 
-    json_to_js_value_with_interp(interp, &json)
+    let value = json_to_js_value_with_interp(interp, &json)?;
+    Ok(Guarded::unguarded(value))
 }
 
 pub fn js_value_to_json(value: &JsValue) -> Result<serde_json::Value, JsError> {
@@ -174,28 +193,23 @@ pub fn json_to_js_value_with_interp(
         serde_json::Value::Number(n) => JsValue::Number(n.as_f64().unwrap_or(0.0)),
         serde_json::Value::String(s) => JsValue::String(JsString::from(s.clone())),
         serde_json::Value::Array(arr) => {
-            // Guard each element as it's created to prevent GC from corrupting them.
-            // The scope must remain alive until after create_array(elements) completes.
-            let mut scope = interp.guarded_scope();
             let mut elements = Vec::with_capacity(arr.len());
             for item in arr {
                 let val = json_to_js_value_with_interp(interp, item)?;
-                scope.add_value(&val);
                 elements.push(val);
             }
-            let result = interp.create_array(elements);
-            drop(scope);
+            let (result, _guard) = interp.create_array(elements);
             JsValue::Object(result)
         }
         serde_json::Value::Object(map) => {
             // Guard the result object during property setup
-            let obj = interp.create_object_guarded();
+            let (obj, _guard) = interp.create_object_with_guard();
             for (key, value) in map {
                 let js_value = json_to_js_value_with_interp(interp, value)?;
                 let interned_key = interp.key(key);
                 obj.borrow_mut().set_property(interned_key, js_value);
             }
-            JsValue::Object(obj.take())
+            JsValue::Object(obj)
         }
     })
 }

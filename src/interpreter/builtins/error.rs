@@ -3,7 +3,7 @@
 use crate::error::JsError;
 use crate::gc::Gc;
 use crate::interpreter::Interpreter;
-use crate::value::{JsObject, JsString, JsValue, PropertyKey};
+use crate::value::{Guarded, JsObject, JsString, JsValue, PropertyKey};
 
 /// Initialize Error constructor and add it to globals
 pub fn init_error(interp: &mut Interpreter) {
@@ -49,9 +49,9 @@ pub fn error_to_string(
     interp: &mut Interpreter,
     this: JsValue,
     _args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let JsValue::Object(obj) = this else {
-        return Ok(JsValue::String(JsString::from("Error")));
+        return Ok(Guarded::unguarded(JsValue::String(JsString::from("Error"))));
     };
 
     // Pre-intern keys
@@ -73,11 +73,10 @@ pub fn error_to_string(
         .unwrap_or_default();
 
     if message.is_empty() {
-        Ok(JsValue::String(JsString::from(name)))
+        Ok(Guarded::unguarded(JsValue::String(JsString::from(name))))
     } else {
-        Ok(JsValue::String(JsString::from(format!(
-            "{}: {}",
-            name, message
+        Ok(Guarded::unguarded(JsValue::String(JsString::from(
+            format!("{}: {}", name, message),
         ))))
     }
 }
@@ -102,7 +101,7 @@ pub fn error_constructor(
     _interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let message = args.first().cloned().unwrap_or(JsValue::Undefined);
 
     // When called via `new Error()`, this is the newly created object
@@ -111,5 +110,5 @@ pub fn error_constructor(
     }
 
     // Return undefined - new handler will return the created object
-    Ok(JsValue::Undefined)
+    Ok(Guarded::unguarded(JsValue::Undefined))
 }

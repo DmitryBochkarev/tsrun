@@ -6,8 +6,9 @@ use std::time::Instant;
 use rustc_hash::FxHashMap;
 
 use crate::error::JsError;
+use crate::gc::Gc;
 use crate::interpreter::Interpreter;
-use crate::value::{ExoticObject, JsObjectRef, JsValue, PropertyKey};
+use crate::value::{ExoticObject, Guarded, JsObject, JsValue, PropertyKey};
 
 /// Format a JsValue for console output (strings without quotes)
 fn format_for_console(value: &JsValue) -> String {
@@ -23,11 +24,10 @@ lazy_static::lazy_static! {
     static ref CONSOLE_COUNTERS: Mutex<FxHashMap<String, u64>> = Mutex::new(FxHashMap::default());
 }
 
-/// Create console object with log, error, warn, info, debug methods
-pub fn create_console_object(interp: &mut Interpreter) -> JsObjectRef {
-    // Use guarded allocation to protect the console object during method registration
-    let console_guarded = interp.gc_space.alloc_guarded(crate::value::JsObject::new());
-    let console = console_guarded.as_gc().clone();
+/// Initialize console global object
+pub fn init_console(interp: &mut Interpreter) {
+    let (console, _console_guard) = interp.create_object_with_guard();
+    interp.root_guard.guard(&console);
 
     // Logging methods
     interp.register_method(&console, "log", console_log, 0);
@@ -53,7 +53,43 @@ pub fn create_console_object(interp: &mut Interpreter) -> JsObjectRef {
     interp.register_method(&console, "group", console_group, 0);
     interp.register_method(&console, "groupEnd", console_group_end, 0);
 
-    // Guard is dropped here, but console is stored in env so it stays alive
+    let console_key = interp.key("console");
+    interp.global.own(&console, &interp.heap);
+    interp
+        .global
+        .borrow_mut()
+        .set_property(console_key, JsValue::Object(console));
+}
+
+/// Create console object with log, error, warn, info, debug methods (for compatibility)
+pub fn create_console_object(interp: &mut Interpreter) -> Gc<JsObject> {
+    let (console, _console_guard) = interp.create_object_with_guard();
+    interp.root_guard.guard(&console);
+
+    // Logging methods
+    interp.register_method(&console, "log", console_log, 0);
+    interp.register_method(&console, "error", console_error, 0);
+    interp.register_method(&console, "warn", console_warn, 0);
+    interp.register_method(&console, "info", console_info, 0);
+    interp.register_method(&console, "debug", console_debug, 0);
+
+    // Display methods
+    interp.register_method(&console, "table", console_table, 1);
+    interp.register_method(&console, "dir", console_dir, 1);
+
+    // Timing methods
+    interp.register_method(&console, "time", console_time, 1);
+    interp.register_method(&console, "timeEnd", console_time_end, 1);
+
+    // Counting methods
+    interp.register_method(&console, "count", console_count, 1);
+    interp.register_method(&console, "countReset", console_count_reset, 1);
+
+    // Other methods
+    interp.register_method(&console, "clear", console_clear, 0);
+    interp.register_method(&console, "group", console_group, 0);
+    interp.register_method(&console, "groupEnd", console_group_end, 0);
+
     console
 }
 
@@ -61,50 +97,50 @@ pub fn console_log(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let output: Vec<String> = args.iter().map(format_for_console).collect();
     println!("{}", output.join(" "));
-    Ok(JsValue::Undefined)
+    Ok(Guarded::unguarded(JsValue::Undefined))
 }
 
 pub fn console_error(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let output: Vec<String> = args.iter().map(format_for_console).collect();
     eprintln!("{}", output.join(" "));
-    Ok(JsValue::Undefined)
+    Ok(Guarded::unguarded(JsValue::Undefined))
 }
 
 pub fn console_warn(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let output: Vec<String> = args.iter().map(format_for_console).collect();
     eprintln!("{}", output.join(" "));
-    Ok(JsValue::Undefined)
+    Ok(Guarded::unguarded(JsValue::Undefined))
 }
 
 pub fn console_info(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let output: Vec<String> = args.iter().map(format_for_console).collect();
     println!("{}", output.join(" "));
-    Ok(JsValue::Undefined)
+    Ok(Guarded::unguarded(JsValue::Undefined))
 }
 
 pub fn console_debug(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let output: Vec<String> = args.iter().map(format_for_console).collect();
     println!("{}", output.join(" "));
-    Ok(JsValue::Undefined)
+    Ok(Guarded::unguarded(JsValue::Undefined))
 }
 
 /// console.table(data, columns?)
@@ -113,7 +149,7 @@ pub fn console_table(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let data = args.first().cloned().unwrap_or(JsValue::Undefined);
 
     match &data {
@@ -150,7 +186,7 @@ pub fn console_table(
         }
         _ => println!("{:?}", data),
     }
-    Ok(JsValue::Undefined)
+    Ok(Guarded::unguarded(JsValue::Undefined))
 }
 
 /// console.dir(obj, options?)
@@ -159,7 +195,7 @@ pub fn console_dir(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
 
     match &obj {
@@ -173,7 +209,7 @@ pub fn console_dir(
         }
         other => println!("{:?}", other),
     }
-    Ok(JsValue::Undefined)
+    Ok(Guarded::unguarded(JsValue::Undefined))
 }
 
 /// console.time(label)
@@ -182,7 +218,7 @@ pub fn console_time(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let label = args
         .first()
         .map(|v| v.to_js_string().to_string())
@@ -191,7 +227,7 @@ pub fn console_time(
     if let Ok(mut timers) = CONSOLE_TIMERS.lock() {
         timers.insert(label, Instant::now());
     }
-    Ok(JsValue::Undefined)
+    Ok(Guarded::unguarded(JsValue::Undefined))
 }
 
 /// console.timeEnd(label)
@@ -200,7 +236,7 @@ pub fn console_time_end(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let label = args
         .first()
         .map(|v| v.to_js_string().to_string())
@@ -214,7 +250,7 @@ pub fn console_time_end(
             println!("Timer '{}' does not exist", label);
         }
     }
-    Ok(JsValue::Undefined)
+    Ok(Guarded::unguarded(JsValue::Undefined))
 }
 
 /// console.count(label)
@@ -223,7 +259,7 @@ pub fn console_count(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let label = args
         .first()
         .map(|v| v.to_js_string().to_string())
@@ -234,7 +270,7 @@ pub fn console_count(
         *count += 1;
         println!("{}: {}", label, count);
     }
-    Ok(JsValue::Undefined)
+    Ok(Guarded::unguarded(JsValue::Undefined))
 }
 
 /// console.countReset(label)
@@ -243,7 +279,7 @@ pub fn console_count_reset(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let label = args
         .first()
         .map(|v| v.to_js_string().to_string())
@@ -252,7 +288,7 @@ pub fn console_count_reset(
     if let Ok(mut counters) = CONSOLE_COUNTERS.lock() {
         counters.remove(&label);
     }
-    Ok(JsValue::Undefined)
+    Ok(Guarded::unguarded(JsValue::Undefined))
 }
 
 /// console.clear()
@@ -261,11 +297,11 @@ pub fn console_clear(
     _interp: &mut Interpreter,
     _this: JsValue,
     _args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     // In a real terminal, we'd clear the screen
     // For now, just print some newlines
     println!("\n\n--- Console cleared ---\n\n");
-    Ok(JsValue::Undefined)
+    Ok(Guarded::unguarded(JsValue::Undefined))
 }
 
 /// console.group(label)
@@ -274,7 +310,7 @@ pub fn console_group(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let label = args
         .first()
         .map(|v| v.to_js_string().to_string())
@@ -285,7 +321,7 @@ pub fn console_group(
     } else {
         println!("▼ {}", label);
     }
-    Ok(JsValue::Undefined)
+    Ok(Guarded::unguarded(JsValue::Undefined))
 }
 
 /// console.groupEnd()
@@ -294,7 +330,7 @@ pub fn console_group_end(
     _interp: &mut Interpreter,
     _this: JsValue,
     _args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     // In a real implementation, this would decrease indentation
-    Ok(JsValue::Undefined)
+    Ok(Guarded::unguarded(JsValue::Undefined))
 }

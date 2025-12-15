@@ -27,6 +27,7 @@ pub use interpreter::Interpreter;
 pub use string_dict::StringDict;
 pub use value::CheapClone;
 pub use value::EnvRef;
+pub use value::Guarded;
 pub use value::JsObject;
 pub use value::JsString;
 pub use value::JsValue;

@@ -33,12 +33,12 @@ mod function;
 // mod math;
 // mod namespace;
 // mod number;
-// mod object;
+mod object;
 // mod promise;
-// mod regexp;
+mod regexp;
 // mod set;
 // mod state_machine;
-// mod string;
+mod string;
 // mod symbol;
 // mod timeout;
 
