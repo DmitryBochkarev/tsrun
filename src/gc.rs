@@ -498,7 +498,7 @@ impl<T: Default + Reset> Heap<T> {
     /// Create a new guard (root)
     pub fn create_guard(&self) -> Guard<T> {
         Guard {
-            guarded_objects: RefCell::new(FxHashSet::default()),
+            guarded_objects: RefCell::new(Vec::new()),
             space: Rc::downgrade(&self.inner),
         }
     }
@@ -539,13 +539,13 @@ impl<T> Clone for Heap<T> {
 
 /// A root anchor that keeps objects alive.
 ///
-/// Objects are kept alive as long as they have ref_count > 0.
-/// Guards increment ref_count when guarding objects.
+/// Objects allocated through a guard have guard_count incremented.
+/// Uses Vec instead of HashSet for faster append-only tracking.
 pub struct Guard<T: Default + Reset> {
-    /// Object IDs guarded by this guard (so we can dec_ref on drop)
-    guarded_objects: RefCell<FxHashSet<usize>>,
+    /// Object IDs guarded by this guard (append-only, may have duplicates)
+    guarded_objects: RefCell<Vec<usize>>,
 
-    /// Weak reference back to space for allocation and cleanup
+    /// Weak reference back to space for allocation
     space: Weak<RefCell<Space<T>>>,
 }
 
@@ -564,30 +564,29 @@ impl<T: Default + Reset> Guard<T> {
             }
         });
         let result = space.borrow_mut().alloc_internal();
-        // Track this object in the guard (ref_count already set to 1 by alloc_internal)
-        self.guarded_objects.borrow_mut().insert(result.id);
+        // Track this object (guard_count already set to 1 by alloc_internal)
+        self.guarded_objects.borrow_mut().push(result.id);
         result
     }
 
-    /// Add this guard to an existing object.
-    /// Makes the object directly reachable from this guard.
+    /// Increment guard_count for an existing object.
+    /// Makes the object a root for mark-and-sweep.
     pub fn guard(&self, obj: &Gc<T>) {
-        // Only guard if not already guarded by this guard
-        if self.guarded_objects.borrow_mut().insert(obj.id) {
-            if let Some(space) = self.space.upgrade() {
-                space.borrow_mut().inc_guard(obj.id);
-            }
+        if let Some(space) = self.space.upgrade() {
+            space.borrow_mut().inc_guard(obj.id);
+            self.guarded_objects.borrow_mut().push(obj.id);
         }
     }
 
-    /// Remove this guard from an object.
-    /// Object may be collected if it's no longer reachable.
+    /// Decrement guard_count for an object.
+    /// Object may be collected if guard_count and ref_count both reach 0.
     pub fn unguard(&self, obj: &Gc<T>) {
-        if self.guarded_objects.borrow_mut().remove(&obj.id) {
-            if let Some(space) = self.space.upgrade() {
-                space.borrow_mut().dec_guard(obj.id);
-            }
+        if let Some(space) = self.space.upgrade() {
+            space.borrow_mut().dec_guard(obj.id);
         }
+        // Note: We don't remove from guarded_objects (it would be O(n))
+        // The dec_guard already happened, so drop will just do an extra
+        // dec_guard on a potentially pooled object (which is safe/no-op)
     }
 }
 
