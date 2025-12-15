@@ -7,7 +7,6 @@ use std::cell::{Cell, Ref, RefCell, RefMut};
 use std::ptr::NonNull;
 use std::rc::{Rc, Weak};
 
-use rustc_hash::FxHashSet;
 use smallvec::SmallVec;
 
 // ============================================================================
@@ -364,11 +363,8 @@ struct Space<T: Default + Reset + Traceable> {
     /// Threshold for triggering collection (0 = never auto-collect)
     gc_threshold: isize,
 
-    /// Weak self-reference for GcBox (currently unused, kept for potential future use)
+    /// Weak self-reference for Gc pointers
     self_weak: Weak<RefCell<Space<T>>>,
-
-    /// Active guards (Space holds strong references, Guards hold weak back-references)
-    guards: Vec<Rc<RefCell<GuardInner<T>>>>,
 }
 
 /// Default threshold: collect after this many net allocations
@@ -388,7 +384,6 @@ impl<T: Default + Reset + Traceable> Space<T> {
             net_allocs: 0,
             gc_threshold: DEFAULT_GC_THRESHOLD as isize,
             self_weak: Weak::new(),
-            guards: Vec::new(),
         }
     }
 
@@ -397,17 +392,14 @@ impl<T: Default + Reset + Traceable> Space<T> {
         self.self_weak = weak;
     }
 
-    /// Create and register a new guard, returning the inner Rc
-    fn create_guard(&mut self) -> Rc<RefCell<GuardInner<T>>> {
-        let inner: Rc<RefCell<GuardInner<T>>> = Rc::new(RefCell::new(GuardInner {
-            objects: FxHashSet::default(),
-            active: true,
-        }));
-        self.guards.push(inner.clone());
-        inner
+    /// Create a new guard for allocating objects
+    fn create_guard(&self) -> Guard<T> {
+        Guard {
+            space: self.self_weak.clone(),
+        }
     }
 
-    /// Allocate a new object (starts with ref_count = 1 for the allocating guard)
+    /// Allocate a new object (starts with ref_count = 1 for the returned Gc)
     fn alloc_internal(&mut self) -> Gc<T> {
         let (index, ptr) = if let Some(ptr) = self.free_list.pop() {
             // Reuse from pool - safe because pool contains valid pointers
@@ -526,22 +518,15 @@ impl<T: Default + Reset + Traceable> Space<T> {
         // Falls back to heap allocation if more space needed.
         let mut stack: SmallVec<[NonNull<GcBox<T>>; 64]> = SmallVec::new();
 
-        // Remove inactive guards and collect roots from active guards
-        self.guards.retain(|guard| {
-            let guard_inner = guard.borrow();
-            if guard_inner.active {
-                // Guard is active - add its objects as roots
-                for gc in &guard_inner.objects {
-                    let gc_box = unsafe { gc.ptr.as_ref() };
-                    if !gc_box.pooled.get() {
-                        stack.push(gc.ptr);
-                    }
+        // Collect roots: objects with ref_count > 0 are roots (someone is holding a Gc to them)
+        // This replaces the previous guard-based root tracking with a more efficient approach
+        for chunk in &self.chunks {
+            for gc_box in chunk {
+                if !gc_box.pooled.get() && gc_box.ref_count.get() > 0 {
+                    stack.push(NonNull::from(gc_box));
                 }
-                true // Keep this guard
-            } else {
-                false // Guard was deactivated, remove it
             }
-        });
+        }
 
         // Get raw pointer to marked_chunks for use in closure (avoids borrow issues)
         let marked_chunks_ptr = self.marked_chunks.as_mut_ptr();
@@ -686,13 +671,9 @@ impl<T: Default + Reset + Traceable> Heap<T> {
         Self { inner }
     }
 
-    /// Create a new guard (root)
+    /// Create a new guard for allocating objects
     pub fn create_guard(&self) -> Guard<T> {
-        let inner = self.inner.borrow_mut().create_guard();
-        Guard {
-            inner,
-            space: Rc::downgrade(&self.inner),
-        }
+        self.inner.borrow().create_guard()
     }
 
     /// Get statistics
@@ -729,28 +710,22 @@ impl<T: Default + Reset + Traceable> Clone for Heap<T> {
 // Guard - root anchor for objects
 // ============================================================================
 
-/// Inner data for a guard, stored in Space
-struct GuardInner<T: Default + Reset + Traceable> {
-    /// Gc pointers guarded by this guard - dropping these decrements ref_counts
-    objects: FxHashSet<Gc<T>>,
-    /// Whether this guard is still active (user hasn't dropped it)
-    active: bool,
-}
-
 /// A root anchor that keeps objects alive.
 ///
-/// Objects allocated through a guard are roots for mark-and-sweep.
+/// Guards provide a way to allocate GC-managed objects. The returned `Gc<T>`
+/// pointers keep objects alive via reference counting. When all `Gc<T>` pointers
+/// to an object are dropped, the object becomes eligible for collection.
+///
+/// During mark-and-sweep, objects with ref_count > 0 are used as roots.
+/// This eliminates the need to track every allocation in a HashSet.
 pub struct Guard<T: Default + Reset + Traceable> {
-    /// Reference to inner data (stored in Space)
-    inner: Rc<RefCell<GuardInner<T>>>,
-
     /// Weak reference back to space for allocation
     space: Weak<RefCell<Space<T>>>,
 }
 
 impl<T: Default + Reset + Traceable> Guard<T> {
-    /// Allocate a new object guarded by this guard.
-    /// Returns a default T (either fresh or reset from pool).
+    /// Allocate a new object.
+    /// Returns a `Gc<T>` with ref_count=1, keeping the object alive.
     ///
     /// # Panics
     /// Panics if the Heap has been dropped while the guard is still alive.
@@ -763,35 +738,37 @@ impl<T: Default + Reset + Traceable> Guard<T> {
             }
         });
         let result = space.borrow_mut().alloc_internal();
-        // Track this object as a root by cloning the Gc (increments ref_count)
-        self.inner.borrow_mut().objects.insert(result.clone());
         result
     }
 
-    /// Add an existing object to this guard's roots.
-    /// Clones the Gc, keeping the object alive via the guard's ref_count.
+    /// Add an existing object to the roots (increments ref_count).
+    /// This keeps the object alive even if other references are dropped.
     pub fn guard(&self, obj: Gc<T>) {
-        // Clone the Gc into the guard (increments ref_count)
-        self.inner.borrow_mut().objects.insert(obj);
+        // Clone increments ref_count, keeping obj alive
+        // We just need to ensure the clone is stored somewhere
+        // Since we're changing the API, we increment ref_count directly
+        if let Some(_space) = self.space.upgrade() {
+            let gc_box = unsafe { obj.ptr.as_ref() };
+            if !gc_box.pooled.get() {
+                gc_box.ref_count.set(gc_box.ref_count.get() + 1);
+            }
+        }
     }
 
-    /// Remove an object from this guard's roots.
-    /// Returns true if the object was found and removed.
+    /// Remove an object from the roots (decrements ref_count).
+    /// Returns true if the object's ref_count was decremented.
     pub fn unguard(&self, obj: &Gc<T>) -> bool {
-        let mut inner = self.inner.borrow_mut();
-        let len_before = inner.objects.len();
-        inner.objects.remove(obj);
-        inner.objects.len() < len_before
-    }
-}
-
-impl<T: Default + Reset + Traceable> Drop for Guard<T> {
-    fn drop(&mut self) {
-        // Mark guard as inactive - Space will clean it up during next mark phase
-        // The Gc objects in inner.objects will drop when inner is dropped,
-        // decrementing ref_counts and potentially pooling objects
-        self.inner.borrow_mut().objects.clear();
-        self.inner.borrow_mut().active = false;
+        if let Some(_space) = self.space.upgrade() {
+            let gc_box = unsafe { obj.ptr.as_ref() };
+            if !gc_box.pooled.get() {
+                let count = gc_box.ref_count.get();
+                if count > 0 {
+                    gc_box.ref_count.set(count - 1);
+                    return true;
+                }
+            }
+        }
+        false
     }
 }
 
@@ -1106,25 +1083,20 @@ mod tests {
     }
 
     #[test]
-    fn test_multiple_guards_same_object() {
+    fn test_multiple_references_same_object() {
         let heap: Heap<TestObj> = Heap::new();
-        let guard1 = heap.create_guard();
-        let guard2 = heap.create_guard();
+        let guard = heap.create_guard();
 
-        let obj = guard1.alloc();
-        guard2.guard(obj.clone());
+        let obj1 = guard.alloc();
+        let obj2 = obj1.clone(); // Two references to same object
 
         assert_eq!(heap.stats().live_objects, 1);
 
-        drop(guard1);
+        drop(obj1);
         heap.collect();
-        assert_eq!(heap.stats().live_objects, 1); // Still alive via guard2
+        assert_eq!(heap.stats().live_objects, 1); // Still alive via obj2
 
-        drop(guard2);
-        heap.collect();
-        assert_eq!(heap.stats().live_objects, 1); // Still alive via obj variable
-
-        drop(obj);
+        drop(obj2);
         heap.collect();
         assert_eq!(heap.stats().live_objects, 0); // Now collected
     }
