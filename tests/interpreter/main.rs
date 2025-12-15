@@ -45,9 +45,20 @@ mod symbol;
 
 use typescript_eval::{JsError, JsValue, Runtime};
 
-/// Create a new runtime
+/// Create a new runtime with GC threshold from environment or default
 fn create_test_runtime() -> Runtime {
-    Runtime::new()
+    let runtime = Runtime::new();
+    
+    // Allow overriding GC threshold via environment variable for stress testing
+    // GC_THRESHOLD=1 cargo test  # Most aggressive
+    // GC_THRESHOLD=10 cargo test # Frequent GC
+    if let Ok(threshold_str) = std::env::var("GC_THRESHOLD") {
+        if let Ok(threshold) = threshold_str.parse::<usize>() {
+            runtime.set_gc_threshold(threshold);
+        }
+    }
+    
+    runtime
 }
 
 /// Helper function to evaluate TypeScript source code

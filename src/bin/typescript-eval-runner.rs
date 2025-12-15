@@ -33,6 +33,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let source = fs::read_to_string(&entry_path)?;
 
     let mut runtime = Runtime::new();
+    runtime.set_gc_threshold(100);
     let result = runtime.eval_simple(&source)?;
 
     print_value(&result);

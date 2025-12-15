@@ -304,6 +304,19 @@ impl Runtime {
         self.interpreter.fulfill_orders(responses)?;
         self.continue_eval()
     }
+
+    /// Set the GC threshold (0 = disable automatic collection)
+    ///
+    /// Lower values reduce peak memory but increase GC overhead.
+    /// Higher values improve throughput but may use more memory.
+    pub fn set_gc_threshold(&self, threshold: usize) {
+        self.interpreter.heap.set_gc_threshold(threshold);
+    }
+
+    /// Force a garbage collection cycle
+    pub fn collect(&self) {
+        self.interpreter.heap.collect();
+    }
 }
 
 impl Default for Runtime {

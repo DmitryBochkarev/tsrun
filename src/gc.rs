@@ -89,7 +89,7 @@ struct Space<T> {
 }
 
 /// Default threshold: collect after this many allocations
-const DEFAULT_GC_THRESHOLD: usize = 1000;
+const DEFAULT_GC_THRESHOLD: usize = 100;
 
 impl<T: Default + Reset> Space<T> {
     fn new() -> Self {
