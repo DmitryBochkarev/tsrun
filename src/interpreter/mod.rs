@@ -120,6 +120,9 @@ pub struct Interpreter {
     /// Date.prototype (for Date methods)
     pub date_prototype: Gc<JsObject>,
 
+    /// Symbol.prototype (for Symbol methods)
+    pub symbol_prototype: Gc<JsObject>,
+
     // ═══════════════════════════════════════════════════════════════════════════
     // Execution State
     // ═══════════════════════════════════════════════════════════════════════════
@@ -158,6 +161,7 @@ impl Interpreter {
         let map_prototype = root_guard.alloc();
         let set_prototype = root_guard.alloc();
         let date_prototype = root_guard.alloc();
+        let symbol_prototype = root_guard.alloc();
 
         // Set up prototype chain
         {
@@ -200,6 +204,11 @@ impl Interpreter {
             date_prototype.borrow_mut().prototype = Some(proto);
             date_prototype.own(&proto, &heap);
         }
+        {
+            let proto = object_prototype;
+            symbol_prototype.borrow_mut().prototype = Some(proto);
+            symbol_prototype.own(&proto, &heap);
+        }
 
         // Create global object (rooted)
         let global = root_guard.alloc();
@@ -233,6 +242,7 @@ impl Interpreter {
             map_prototype,
             set_prototype,
             date_prototype,
+            symbol_prototype,
             thrown_value: None,
             exports: FxHashMap::default(),
             call_stack: Vec::new(),
@@ -293,6 +303,9 @@ impl Interpreter {
 
         // Initialize Date constructor and prototype
         builtins::init_date(self);
+
+        // Initialize Symbol constructor and prototype
+        builtins::init_symbol(self);
 
         // Initialize String constructor (global String function)
         let string_constructor = builtins::create_string_constructor(self);
@@ -3210,6 +3223,7 @@ impl Interpreter {
                             None
                         }
                     }
+                    JsValue::Symbol(_) => self.symbol_prototype.borrow().get_property(&key),
                     _ => None,
                 };
 
@@ -3483,6 +3497,24 @@ impl Interpreter {
                 // Look up methods on Number.prototype
                 if let Some(method) = self.number_prototype.borrow().get_property(&key) {
                     (method, None)
+                } else {
+                    (JsValue::Undefined, None)
+                }
+            }
+            JsValue::Symbol(ref sym) => {
+                // Handle .description property for symbols
+                if let PropertyKey::String(ref k) = key {
+                    if k.as_str() == "description" {
+                        match &sym.description {
+                            Some(desc) => (JsValue::String(JsString::from(desc.as_str())), None),
+                            None => (JsValue::Undefined, None),
+                        }
+                    } else if let Some(method) = self.symbol_prototype.borrow().get_property(&key) {
+                        // Look up methods on Symbol.prototype
+                        (method, None)
+                    } else {
+                        (JsValue::Undefined, None)
+                    }
                 } else {
                     (JsValue::Undefined, None)
                 }

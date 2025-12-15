@@ -7,9 +7,7 @@ use rustc_hash::FxHashMap;
 
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
-use crate::value::{
-    create_function, JsFunction, JsObjectRef, JsString, JsSymbol, JsValue, NativeFunction,
-};
+use crate::value::{Guarded, JsString, JsSymbol, JsValue};
 
 /// Global symbol ID counter for generating unique symbol IDs
 static SYMBOL_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
@@ -76,22 +74,30 @@ pub fn get_well_known_symbols() -> WellKnownSymbols {
     WELL_KNOWN_SYMBOLS.with(|s| *s)
 }
 
-/// Create the Symbol constructor function object
-pub fn create_symbol_constructor(
-    interp: &mut Interpreter,
-    well_known: &WellKnownSymbols,
-) -> JsObjectRef {
+/// Initialize Symbol.prototype with toString and valueOf methods
+pub fn init_symbol_prototype(interp: &mut Interpreter) {
+    let proto = interp.symbol_prototype;
+
+    // Symbol.prototype.toString()
+    interp.register_method(&proto, "toString", symbol_to_string, 0);
+
+    // Symbol.prototype.valueOf()
+    interp.register_method(&proto, "valueOf", symbol_value_of, 0);
+
+    // Symbol.prototype.description (getter)
+    // Note: In full JS this is an accessor property. For simplicity we implement
+    // description access directly in member expression evaluation.
+}
+
+/// Initialize Symbol constructor and register it globally
+pub fn init_symbol(interp: &mut Interpreter) {
+    init_symbol_prototype(interp);
+
+    let well_known = get_well_known_symbols();
+
     // Create the Symbol function (not a constructor - can't be called with new)
-    let name = interp.intern("Symbol");
-    let symbol_fn = create_function(
-        &mut interp.gc_space,
-        &mut interp.string_dict,
-        JsFunction::Native(NativeFunction {
-            name,
-            func: symbol_call,
-            arity: 0,
-        }),
-    );
+    let symbol_fn = interp.create_native_function("Symbol", symbol_call, 0);
+    interp.root_guard.guard(&symbol_fn);
 
     // Symbol.for(key) and Symbol.keyFor(sym)
     interp.register_method(&symbol_fn, "for", symbol_for, 1);
@@ -111,110 +117,102 @@ pub fn create_symbol_constructor(
     let split_key = interp.key("split");
     let async_iterator_key = interp.key("asyncIterator");
 
-    let mut sym = symbol_fn.borrow_mut();
+    {
+        let mut sym = symbol_fn.borrow_mut();
 
-    sym.set_property(
-        iterator_key,
-        JsValue::Symbol(JsSymbol::new(
-            well_known.iterator,
-            Some("Symbol.iterator".to_string()),
-        )),
-    );
-    sym.set_property(
-        to_string_tag_key,
-        JsValue::Symbol(JsSymbol::new(
-            well_known.to_string_tag,
-            Some("Symbol.toStringTag".to_string()),
-        )),
-    );
-    sym.set_property(
-        has_instance_key,
-        JsValue::Symbol(JsSymbol::new(
-            well_known.has_instance,
-            Some("Symbol.hasInstance".to_string()),
-        )),
-    );
-    sym.set_property(
-        is_concat_spreadable_key,
-        JsValue::Symbol(JsSymbol::new(
-            well_known.is_concat_spreadable,
-            Some("Symbol.isConcatSpreadable".to_string()),
-        )),
-    );
-    sym.set_property(
-        species_key,
-        JsValue::Symbol(JsSymbol::new(
-            well_known.species,
-            Some("Symbol.species".to_string()),
-        )),
-    );
-    sym.set_property(
-        to_primitive_key,
-        JsValue::Symbol(JsSymbol::new(
-            well_known.to_primitive,
-            Some("Symbol.toPrimitive".to_string()),
-        )),
-    );
-    sym.set_property(
-        unscopables_key,
-        JsValue::Symbol(JsSymbol::new(
-            well_known.unscopables,
-            Some("Symbol.unscopables".to_string()),
-        )),
-    );
-    sym.set_property(
-        match_key,
-        JsValue::Symbol(JsSymbol::new(
-            well_known.match_symbol,
-            Some("Symbol.match".to_string()),
-        )),
-    );
-    sym.set_property(
-        replace_key,
-        JsValue::Symbol(JsSymbol::new(
-            well_known.replace,
-            Some("Symbol.replace".to_string()),
-        )),
-    );
-    sym.set_property(
-        search_key,
-        JsValue::Symbol(JsSymbol::new(
-            well_known.search,
-            Some("Symbol.search".to_string()),
-        )),
-    );
-    sym.set_property(
-        split_key,
-        JsValue::Symbol(JsSymbol::new(
-            well_known.split,
-            Some("Symbol.split".to_string()),
-        )),
-    );
-    sym.set_property(
-        async_iterator_key,
-        JsValue::Symbol(JsSymbol::new(
-            well_known.async_iterator,
-            Some("Symbol.asyncIterator".to_string()),
-        )),
-    );
+        sym.set_property(
+            iterator_key,
+            JsValue::Symbol(JsSymbol::new(
+                well_known.iterator,
+                Some("Symbol.iterator".to_string()),
+            )),
+        );
+        sym.set_property(
+            to_string_tag_key,
+            JsValue::Symbol(JsSymbol::new(
+                well_known.to_string_tag,
+                Some("Symbol.toStringTag".to_string()),
+            )),
+        );
+        sym.set_property(
+            has_instance_key,
+            JsValue::Symbol(JsSymbol::new(
+                well_known.has_instance,
+                Some("Symbol.hasInstance".to_string()),
+            )),
+        );
+        sym.set_property(
+            is_concat_spreadable_key,
+            JsValue::Symbol(JsSymbol::new(
+                well_known.is_concat_spreadable,
+                Some("Symbol.isConcatSpreadable".to_string()),
+            )),
+        );
+        sym.set_property(
+            species_key,
+            JsValue::Symbol(JsSymbol::new(
+                well_known.species,
+                Some("Symbol.species".to_string()),
+            )),
+        );
+        sym.set_property(
+            to_primitive_key,
+            JsValue::Symbol(JsSymbol::new(
+                well_known.to_primitive,
+                Some("Symbol.toPrimitive".to_string()),
+            )),
+        );
+        sym.set_property(
+            unscopables_key,
+            JsValue::Symbol(JsSymbol::new(
+                well_known.unscopables,
+                Some("Symbol.unscopables".to_string()),
+            )),
+        );
+        sym.set_property(
+            match_key,
+            JsValue::Symbol(JsSymbol::new(
+                well_known.match_symbol,
+                Some("Symbol.match".to_string()),
+            )),
+        );
+        sym.set_property(
+            replace_key,
+            JsValue::Symbol(JsSymbol::new(
+                well_known.replace,
+                Some("Symbol.replace".to_string()),
+            )),
+        );
+        sym.set_property(
+            search_key,
+            JsValue::Symbol(JsSymbol::new(
+                well_known.search,
+                Some("Symbol.search".to_string()),
+            )),
+        );
+        sym.set_property(
+            split_key,
+            JsValue::Symbol(JsSymbol::new(
+                well_known.split,
+                Some("Symbol.split".to_string()),
+            )),
+        );
+        sym.set_property(
+            async_iterator_key,
+            JsValue::Symbol(JsSymbol::new(
+                well_known.async_iterator,
+                Some("Symbol.asyncIterator".to_string()),
+            )),
+        );
+    }
 
-    drop(sym);
-    symbol_fn
-}
-
-/// Initialize Symbol.prototype
-pub fn init_symbol_prototype(interp: &mut Interpreter) {
-    let proto = interp.symbol_prototype.clone();
-
-    // Symbol.prototype.toString()
-    interp.register_method(&proto, "toString", symbol_to_string, 0);
-
-    // Symbol.prototype.valueOf()
-    interp.register_method(&proto, "valueOf", symbol_value_of, 0);
-
-    // Symbol.prototype.description (getter)
-    // Note: In full JS this is an accessor property. For simplicity we implement
-    // description access directly in member expression evaluation.
+    // Register globally
+    let symbol_key = interp.key("Symbol");
+    interp.global.own(&symbol_fn, &interp.heap);
+    interp
+        .global
+        .borrow_mut()
+        .set_property(symbol_key, JsValue::Object(symbol_fn));
 }
 
 /// Symbol() - create a new unique symbol
@@ -222,14 +220,17 @@ fn symbol_call(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let description = match args.first() {
         None | Some(JsValue::Undefined) => None,
         Some(other) => Some(other.to_js_string().to_string()),
     };
 
     let id = next_symbol_id();
-    Ok(JsValue::Symbol(JsSymbol::new(id, description)))
+    Ok(Guarded::unguarded(JsValue::Symbol(JsSymbol::new(
+        id,
+        description,
+    ))))
 }
 
 /// Symbol.for(key) - get or create a symbol in the global registry
@@ -237,7 +238,7 @@ fn symbol_for(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let key = args
         .first()
         .map(|v| v.to_js_string().to_string())
@@ -246,13 +247,13 @@ fn symbol_for(
     SYMBOL_REGISTRY.with(|registry| {
         let mut registry = registry.borrow_mut();
         if let Some(sym) = registry.get(&key) {
-            return Ok(JsValue::Symbol(sym.clone()));
+            return Ok(Guarded::unguarded(JsValue::Symbol(sym.clone())));
         }
 
         let id = next_symbol_id();
         let sym = JsSymbol::new(id, Some(key.clone()));
         registry.insert(key, sym.clone());
-        Ok(JsValue::Symbol(sym))
+        Ok(Guarded::unguarded(JsValue::Symbol(sym)))
     })
 }
 
@@ -261,7 +262,7 @@ fn symbol_key_for(
     _interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let sym = match args.first() {
         Some(JsValue::Symbol(s)) => s,
         _ => {
@@ -275,10 +276,12 @@ fn symbol_key_for(
         let registry = registry.borrow();
         for (key, registered_sym) in registry.iter() {
             if registered_sym.id() == sym.id() {
-                return Ok(JsValue::String(JsString::from(key.as_str())));
+                return Ok(Guarded::unguarded(JsValue::String(JsString::from(
+                    key.as_str(),
+                ))));
             }
         }
-        Ok(JsValue::Undefined)
+        Ok(Guarded::unguarded(JsValue::Undefined))
     })
 }
 
@@ -287,14 +290,14 @@ fn symbol_to_string(
     _interp: &mut Interpreter,
     this: JsValue,
     _args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     match this {
         JsValue::Symbol(s) => {
             let result = match &s.description {
                 Some(desc) => format!("Symbol({})", desc),
                 None => "Symbol()".to_string(),
             };
-            Ok(JsValue::String(JsString::from(result)))
+            Ok(Guarded::unguarded(JsValue::String(JsString::from(result))))
         }
         _ => Err(JsError::type_error(
             "Symbol.prototype.toString requires that 'this' be a Symbol",
@@ -307,9 +310,9 @@ fn symbol_value_of(
     _interp: &mut Interpreter,
     this: JsValue,
     _args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     match this {
-        JsValue::Symbol(_) => Ok(this),
+        JsValue::Symbol(_) => Ok(Guarded::unguarded(this)),
         _ => Err(JsError::type_error(
             "Symbol.prototype.valueOf requires that 'this' be a Symbol",
         )),

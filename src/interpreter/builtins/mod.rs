@@ -14,10 +14,10 @@ pub mod object;
 pub mod regexp;
 pub mod set;
 pub mod string;
+pub mod symbol;
 // TODO: Enable these after migration to new GC
 // pub mod generator;
 // pub mod promise;
-// pub mod symbol;
 
 // Re-export public functions from enabled modules
 pub use array::*;
@@ -34,3 +34,4 @@ pub use object::*;
 pub use regexp::*;
 pub use set::*;
 pub use string::*;
+pub use symbol::*;
