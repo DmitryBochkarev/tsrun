@@ -7,6 +7,8 @@ use std::cell::{Cell, Ref, RefCell, RefMut};
 use std::ptr::NonNull;
 use std::rc::{Rc, Weak};
 
+use rustc_hash::FxHashSet;
+
 // ============================================================================
 // Gc - smart pointer to GC-managed object (defined early for Traceable trait)
 // ============================================================================
@@ -24,6 +26,22 @@ pub struct Gc<T: Default + Reset + Traceable> {
 
     /// Marker for the type
     _marker: std::marker::PhantomData<T>,
+}
+
+impl<T: Default + Reset + Traceable> PartialEq for Gc<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+impl<T: Default + Reset + Traceable> std::hash::Hash for Gc<T> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
+    }
+}
+
+impl<T: Default + Reset + Traceable> Eq for Gc<T> {
+
 }
 
 impl<T: Default + Reset + Traceable> Gc<T> {
@@ -67,15 +85,22 @@ impl<T: Default + Reset + Traceable> Gc<T> {
 
 /// A raw pointer to a GC-managed object. Copy and no Drop.
 /// Used during tracing to avoid affecting ref_counts.
-#[derive(Copy, Clone)]
-pub struct GcPtr<T> {
+pub struct GcPtr<T: Default + Reset + Traceable> {
     /// Unique object ID
     pub(crate) id: usize,
     /// Pointer to the GcBox
     pub(crate) ptr: NonNull<GcBox<T>>,
 }
 
-impl<T> GcPtr<T> {
+impl<T: Default + Reset + Traceable> Copy for GcPtr<T> {}
+
+impl<T: Default + Reset + Traceable> Clone for GcPtr<T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<T: Default + Reset + Traceable> GcPtr<T> {
     /// Get the object's unique ID
     pub fn id(&self) -> usize {
         self.id
@@ -143,7 +168,7 @@ impl<T: Default + Reset + Traceable> std::fmt::Debug for Gc<T> {
 ///
 /// Objects implement this to yield their `GcPtr<T>` references during mark phase.
 /// The GC calls `trace()` to discover reachable objects.
-pub trait Traceable: Sized {
+pub trait Traceable: Sized + Default + Reset {
     /// Visit all `Gc<Self>` references held by this object.
     ///
     /// The implementation should call `visitor` for each `Gc<T>` stored in fields,
@@ -168,7 +193,7 @@ pub trait Reset: Default {
 // ============================================================================
 
 /// Internal storage for a GC-managed object.
-struct GcBox<T> {
+struct GcBox<T: Default + Reset + Traceable> {
     /// Unique object ID (stable across lifetime, unlike index)
     id: usize,
 
@@ -185,7 +210,7 @@ struct GcBox<T> {
     space: Weak<RefCell<Space<T>>>,
 }
 
-impl<T> GcBox<T> {
+impl<T: Default + Reset + Traceable> GcBox<T> {
     fn new(id: usize, data: T, space: Weak<RefCell<Space<T>>>) -> Self {
         Self {
             id,
@@ -203,7 +228,7 @@ impl<T> GcBox<T> {
 
 /// Internal memory arena that manages all allocations.
 /// Not exposed directly - accessed through `Heap<T>`.
-struct Space<T> {
+struct Space<T: Default + Reset + Traceable> {
     /// Chunks of allocated objects. Each chunk has fixed capacity.
     /// Inner vecs never reallocate, ensuring stable pointers.
     chunks: Vec<Vec<GcBox<T>>>,
@@ -272,8 +297,8 @@ impl<T: Default + Reset + Traceable> Space<T> {
 
     /// Create and register a new guard, returning the inner Rc
     fn create_guard(&mut self) -> Rc<RefCell<GuardInner<T>>> {
-        let inner = Rc::new(RefCell::new(GuardInner {
-            objects: Vec::new(),
+        let inner: Rc<RefCell<GuardInner<T>>> = Rc::new(RefCell::new(GuardInner {
+            objects: FxHashSet::default(),
             active: true,
         }));
         self.guards.push(inner.clone());
@@ -422,10 +447,10 @@ impl<T: Default + Reset + Traceable> Space<T> {
             let guard_inner = guard.borrow();
             if guard_inner.active {
                 // Guard is active - add its objects as roots
-                for &ptr in &guard_inner.objects {
-                    let gc_box = unsafe { ptr.as_ref() };
+                for gc in &guard_inner.objects {
+                    let gc_box = unsafe { gc.ptr.as_ref() };
                     if !gc_box.pooled.get() {
-                        stack.push(ptr);
+                        stack.push(gc.ptr);
                     }
                 }
                 true // Keep this guard
@@ -535,7 +560,7 @@ impl<T: Default + Reset + Traceable> Space<T> {
     }
 }
 
-impl<T> Drop for Space<T> {
+impl<T: Default + Reset + Traceable> Drop for Space<T> {
     fn drop(&mut self) {
         // Mark all GcBoxes as pooled before dropping chunks.
         // This ensures any remaining Gc pointers will see pooled=true
@@ -556,7 +581,7 @@ impl<T> Drop for Space<T> {
 
 /// A wrapper around the GC space that provides the public API.
 /// This is the main entry point for using the GC.
-pub struct Heap<T> {
+pub struct Heap<T: Default + Reset + Traceable> {
     inner: Rc<RefCell<Space<T>>>,
 }
 
@@ -606,7 +631,7 @@ impl<T: Default + Reset + Traceable> Default for Heap<T> {
     }
 }
 
-impl<T> Clone for Heap<T> {
+impl<T: Default + Reset + Traceable> Clone for Heap<T> {
     fn clone(&self) -> Self {
         Heap {
             inner: self.inner.clone(),
@@ -619,9 +644,9 @@ impl<T> Clone for Heap<T> {
 // ============================================================================
 
 /// Inner data for a guard, stored in Space
-struct GuardInner<T> {
-    /// Object pointers guarded by this guard
-    objects: Vec<NonNull<GcBox<T>>>,
+struct GuardInner<T: Default + Reset + Traceable> {
+    /// Gc pointers guarded by this guard - dropping these decrements ref_counts
+    objects: FxHashSet<Gc<T>>,
     /// Whether this guard is still active (user hasn't dropped it)
     active: bool,
 }
@@ -652,20 +677,16 @@ impl<T: Default + Reset + Traceable> Guard<T> {
             }
         });
         let result = space.borrow_mut().alloc_internal();
-        // Track this object as a root (don't modify ref_count - that's for Gc clones)
-        self.inner.borrow_mut().objects.push(result.ptr);
+        // Track this object as a root by cloning the Gc (increments ref_count)
+        self.inner.borrow_mut().objects.insert(result.clone());
         result
     }
 
     /// Add an existing object to this guard's roots.
-    /// Takes ownership of the Gc, keeping the object alive via the guard.
+    /// Clones the Gc, keeping the object alive via the guard's ref_count.
     pub fn guard(&self, obj: Gc<T>) {
-        let ptr = obj.ptr;
-        // Store the pointer as a root
-        self.inner.borrow_mut().objects.push(ptr);
-        // Don't forget - let the Gc drop naturally (decrementing ref_count)
-        // The guard keeps the object alive via mark-and-sweep, not ref_count
-        drop(obj);
+        // Clone the Gc into the guard (increments ref_count)
+        self.inner.borrow_mut().objects.insert(obj);
     }
 
     /// Remove an object from this guard's roots.
@@ -673,7 +694,7 @@ impl<T: Default + Reset + Traceable> Guard<T> {
     pub fn unguard(&self, obj: &Gc<T>) -> bool {
         let mut inner = self.inner.borrow_mut();
         let len_before = inner.objects.len();
-        inner.objects.retain(|&p| p != obj.ptr);
+        inner.objects.remove(obj);
         inner.objects.len() < len_before
     }
 }
@@ -681,7 +702,9 @@ impl<T: Default + Reset + Traceable> Guard<T> {
 impl<T: Default + Reset + Traceable> Drop for Guard<T> {
     fn drop(&mut self) {
         // Mark guard as inactive - Space will clean it up during next mark phase
-        // Don't decrement ref_counts - that's handled by Gc::drop
+        // The Gc objects in inner.objects will drop when inner is dropped,
+        // decrementing ref_counts and potentially pooling objects
+        self.inner.borrow_mut().objects.clear();
         self.inner.borrow_mut().active = false;
     }
 }
