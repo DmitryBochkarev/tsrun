@@ -4,69 +4,217 @@
 
 **Project:** `typescript-eval`
 **Purpose:** Execute TypeScript for config/manifest generation from Rust
-**Status:** Milestone 7 Complete (ES Modules, Async/Await, Zero-Panic Policy, 627+ tests passing)
+**Status:** Milestone 8 In Progress (Order-based Async, Internal Modules, 542 tests passing)
 
 ### Requirements
 
 - Full TypeScript syntax support (types stripped, not checked at runtime)
-- ES Modules support with suspension-based loading
-- Async/await support via explicit evaluation stack
-- Full ES2022+ standard built-ins
-- Serde integration for Rust API
-- Production-quality implementation
+- Static import resolution with host-provided modules
+- Order-based async model (host fulfills external effects)
+- Internal module system (native Rust or TypeScript source)
+- Guard-based garbage collection
 - **Zero-panic policy** - no runtime panics in production code
 
 ### Execution Model
 
-The interpreter uses an **explicit evaluation stack** that enables:
-- **Suspension at imports**: Host loads modules via any mechanism (sync/async)
-- **Suspension at await**: Host resolves promises via any mechanism
-- **True state capture**: Resume exactly where suspended, no re-execution
+The interpreter uses an **order-based suspension model**:
 
-See `state_machine.md` for full architecture documentation.
+1. **Static Imports**: Collected before execution, host provides modules
+2. **Orders**: Async operations suspend and return "orders" for host to fulfill
+3. **Resumption**: Host fulfills orders, interpreter continues until completion
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         EXECUTION FLOW                                       │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  1. runtime.eval(source)                                                     │
+│     │                                                                        │
+│     ├──▶ Internal modules (eval:*) → resolve automatically                   │
+│     └──▶ External modules → return NeedImports([...])                        │
+│                                                                              │
+│  2. Host provides modules via runtime.provide_module(specifier, source)      │
+│                                                                              │
+│  3. runtime.continue_eval() → begin execution                                │
+│                                                                              │
+│  4. Code calls __order__() → interpreter suspends                            │
+│     │                                                                        │
+│     └──▶ return Suspended { pending: [...], cancelled: [...] }               │
+│                                                                              │
+│  5. Host fulfills orders → runtime.fulfill_orders(responses)                 │
+│                                                                              │
+│  6. Repeat 4-5 until Complete(value)                                         │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
 
 ---
 
 ## Next Implementation Priorities
 
-The following features should be implemented next, in priority order:
+### Priority 1: Order System & Internal Modules
 
-### Priority 1: Serde Integration & Public API Polish
+1. **Core Order Types**
+   - `Order`, `OrderId`, `OrderResponse` structs
+   - `RuntimeResult` enum: `Complete`, `NeedImports`, `Suspended`
 
-1. **Serde Bridge Completion**
-   - `JsValue` ↔ `serde_json::Value` conversion
-   - Direct struct serialization/deserialization
-   - Handle `undefined` vs `null` properly
+2. **Internal Module System**
+   - Native modules (Rust functions)
+   - Source modules (TypeScript code)
+   - `eval:internal` with `__order__`, `__cancelOrder__`
 
-2. **Public API Improvements**
-   - Custom module resolver interface
-   - Global value injection
-   - Execution timeout/limits
+3. **Import Resolution**
+   - Collect imports from AST before execution
+   - Internal modules resolve automatically
+   - External modules require host provision
 
-### Priority 2: WeakMap/WeakSet
+### Priority 2: Async/Await via Orders
 
-- `WeakMap` with proper weak reference semantics
-- `WeakSet` with proper weak reference semantics
+- Async functions return order-based promises
+- `await` suspends until host fulfills order
+- No internal promise resolution (all async is external)
+
+### Priority 3: Serde Integration
+
+- `JsValue` ↔ `serde_json::Value` conversion
+- Direct struct serialization/deserialization
 
 ### Completed Priorities
-- ~~**State Machine Refactor**~~ ✅ (explicit evaluation stack)
-- ~~**Static Imports**~~ ✅ (via `RuntimeResult::ImportAwaited`)
-- ~~**Promise Implementation**~~ ✅ (full Promise API)
-- ~~**Async/Await**~~ ✅ (async functions, await expressions)
-- ~~**Dynamic Import**~~ ✅ (`import()` returning Promise)
-- ~~**Temporal Dead Zone (TDZ)**~~ ✅
-- ~~**Symbol primitive**~~ ✅
-- ~~**Generator functions**~~ ✅
-- ~~**String.prototype.match/matchAll/search**~~ ✅
-- ~~**String.fromCodePoint/codePointAt**~~ ✅
-- ~~**Object.defineProperties**~~ ✅
-- ~~**Error.prototype.toString**~~ ✅
-- ~~**Date setter methods**~~ ✅
-- ~~**Error stack traces**~~ ✅
-- ~~**namespace/module declarations**~~ ✅
-- ~~**RegExp flags**~~ ✅
-- ~~**console.table/dir/time**~~ ✅
-- ~~**Zero-Panic Policy**~~ ✅ (Clippy lints enforced)
+- ~~**Guard-based GC**~~ ✅
+- ~~**Core language features**~~ ✅
+- ~~**Built-in objects**~~ ✅ (Array, String, Object, Number, Math, JSON, Date, Map, Set, Symbol, RegExp, Error)
+- ~~**Classes**~~ ✅
+- ~~**Zero-Panic Policy**~~ ✅
+
+---
+
+## Architecture
+
+### Runtime Result Model
+
+```rust
+/// Unique identifier for an order
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct OrderId(pub u64);
+
+/// An order is a request for an external effect
+pub struct Order {
+    pub id: OrderId,
+    pub payload: Guarded,  // JS value describing what to do
+}
+
+/// Response to fulfill an order
+pub struct OrderResponse {
+    pub id: OrderId,
+    pub result: Result<JsValue, JsError>,
+}
+
+/// Result of running the interpreter
+pub enum RuntimeResult {
+    /// Execution completed with a value
+    Complete(JsValue),
+
+    /// Need these modules before execution can start
+    NeedImports(Vec<String>),
+
+    /// Waiting for orders to be fulfilled
+    Suspended {
+        pending: Vec<Order>,
+        cancelled: Vec<OrderId>,
+    },
+}
+```
+
+### Internal Module System
+
+Internal modules can be **native** (Rust) or **source** (TypeScript):
+
+```rust
+/// How an internal module is defined
+pub enum InternalModuleKind {
+    /// Native module with Rust functions
+    Native(Vec<(String, InternalExport)>),
+    /// Source module (TypeScript code)
+    Source(String),
+}
+
+/// Definition of an internal module
+pub struct InternalModule {
+    pub specifier: String,  // e.g., "eval:internal", "eval:fs"
+    pub kind: InternalModuleKind,
+}
+```
+
+### Runtime Configuration
+
+```rust
+/// Configuration for creating a Runtime
+pub struct RuntimeConfig {
+    /// Internal modules available for import
+    pub internal_modules: Vec<InternalModule>,
+    /// Timeout in milliseconds (0 = no timeout)
+    pub timeout_ms: u64,
+}
+
+let config = RuntimeConfig {
+    internal_modules: vec![
+        // Core order system - native
+        InternalModule::native("eval:internal")
+            .with_function("__order__", order_syscall, 1)
+            .with_function("__cancelOrder__", cancel_order_syscall, 1)
+            .build(),
+
+        // FS module - TypeScript source
+        InternalModule::source("eval:fs", r#"
+            import { __order__ } from "eval:internal";
+            export async function readFile(path: string): Promise<string> {
+                return __order__({ type: "readFile", path });
+            }
+        "#),
+    ],
+    timeout_ms: 5000,
+};
+
+let mut runtime = Runtime::with_config(config);
+```
+
+### Host Loop Pattern
+
+```rust
+fn run_script(source: &str, config: RuntimeConfig) -> Result<JsValue, Error> {
+    let mut runtime = Runtime::with_config(config);
+    let mut result = runtime.eval(source)?;
+
+    loop {
+        match result {
+            RuntimeResult::Complete(value) => return Ok(value),
+
+            RuntimeResult::NeedImports(specifiers) => {
+                for spec in &specifiers {
+                    let module_source = load_module_from_disk(spec)?;
+                    runtime.provide_module(spec, &module_source)?;
+                }
+                result = runtime.continue_eval()?;
+            }
+
+            RuntimeResult::Suspended { pending, cancelled } => {
+                // Handle cancelled orders
+                for id in cancelled {
+                    cancel_pending_operation(id);
+                }
+
+                // Fulfill pending orders
+                let responses: Vec<OrderResponse> = pending
+                    .into_iter()
+                    .map(|order| fulfill_order(order))
+                    .collect();
+
+                result = runtime.fulfill_orders(responses)?;
+            }
+        }
+    }
+}
+```
 
 ---
 
@@ -133,8 +281,8 @@ The following features should be implemented next, in priority order:
 - [x] Closures
 - [x] `return` statement
 - [x] Implicit `undefined` return
-- [x] Generator functions (`function*`)
-- [x] `yield` / `yield*`
+- [ ] Generator functions (`function*`) - needs order system
+- [ ] `yield` / `yield*` - needs order system
 - [x] `this` binding
 - [x] `arguments` object
 - [x] `Function.prototype.call`
@@ -185,39 +333,6 @@ The following features should be implemented next, in priority order:
 - [x] Private methods (`#method()`)
 - [x] Static initialization blocks
 
-**Classes Implementation Notes:**
-To fully implement classes, the following components are needed:
-
-1. **Class Declaration Execution** (`execute_class_declaration`):
-   - Create constructor function from class body
-   - Set up prototype object with methods
-   - Handle static methods and fields on constructor
-   - Handle instance fields in constructor body
-   - Handle `extends` for inheritance (prototype chain)
-
-2. **Class Expression Evaluation** (`evaluate_class`):
-   - Same as declaration but returns the constructor function
-
-3. **Constructor Handling**:
-   - Create new object with class prototype
-   - Execute constructor body with `this` bound
-   - Initialize instance fields before constructor body
-   - Handle `super()` calls for derived classes
-
-4. **Method Definition**:
-   - Add methods to prototype object
-   - Bind `this` correctly when method is called
-   - Handle getters/setters
-
-5. **Inheritance (`extends`)**:
-   - Set up prototype chain correctly
-   - Handle `super` calls in constructor
-   - Handle `super.method()` property access
-
-6. **Private Fields/Methods**:
-   - Store private fields in separate map keyed by class
-   - Validate access to private fields/methods
-
 #### Error Handling
 - [x] `try` / `catch` / `finally`
 - [x] `throw` statement
@@ -231,17 +346,14 @@ To fully implement classes, the following components are needed:
 - [x] Default imports/exports (parsing)
 - [x] Namespace imports (`import * as`) (parsing)
 - [x] Re-exports (`export { x } from`) (parsing)
-- [x] Static import resolution (via `RuntimeResult::ImportAwaited`)
-- [x] Dynamic `import()` (returns Promise)
-- [x] Module object creation (host provides via `create_module_object`)
+- [x] Static import resolution (via `RuntimeResult::NeedImports`)
+- [ ] Dynamic `import()` - planned via order system
 
-**Note:** Module caching and circular dependency handling are the host's responsibility. The runtime always asks for modules via `ImportAwaited` and the host decides whether to cache or handle cycles.
-
-#### Async/Await
-- [x] `async function` declarations and expressions
-- [x] `await` expression (synchronous Promise resolution)
-- [x] Top-level await in modules
-- [x] Async arrow functions
+#### Async/Await (Planned - Order System)
+- [ ] `async function` declarations and expressions
+- [ ] `await` expression (suspends, host fulfills)
+- [ ] Top-level await in modules
+- [ ] Async arrow functions
 
 ### TypeScript Features
 
@@ -303,6 +415,7 @@ To fully implement classes, the following components are needed:
 - [x] `Object.isFrozen(obj)`
 - [x] `Object.isSealed(obj)`
 - [x] `Object.getOwnPropertyNames(obj)`
+- [x] `Object.getOwnPropertySymbols(obj)`
 - [x] `Object.getOwnPropertyDescriptor(obj, prop)`
 - [x] `Object.defineProperty(obj, prop, descriptor)`
 - [x] `Object.defineProperties(obj, props)`
@@ -440,12 +553,23 @@ To fully implement classes, the following components are needed:
 - [x] `JSON.parse(text, reviver?)`
 - [x] `JSON.stringify(value, replacer?, space?)`
 
+#### Symbol
+- [x] `Symbol(description?)`
+- [x] `Symbol.for(key)`
+- [x] `Symbol.keyFor(sym)`
+- [x] `Symbol.prototype.toString()`
+- [x] `Symbol.prototype.valueOf()`
+- [x] `Symbol.prototype.description`
+- [x] Well-known symbols (iterator, toStringTag, hasInstance, etc.)
+
 #### Error
 - [x] `new Error(message?)`
 - [x] `new TypeError(message?)`
 - [x] `new ReferenceError(message?)`
 - [x] `new SyntaxError(message?)`
 - [x] `new RangeError(message?)`
+- [x] `new URIError(message?)`
+- [x] `new EvalError(message?)`
 - [x] `Error.prototype.stack`
 - [x] `Error.prototype.toString()`
 
@@ -505,32 +629,6 @@ To fully implement classes, the following components are needed:
 - [x] `RegExp.prototype.unicode`
 - [x] `RegExp.prototype.sticky`
 
-#### Error Types
-- [x] `Error`
-- [x] `TypeError`
-- [x] `ReferenceError`
-- [x] `SyntaxError`
-- [x] `RangeError`
-- [x] `URIError`
-- [x] `EvalError`
-- [x] `Error.prototype.name`
-- [x] `Error.prototype.message`
-- [x] `Error.prototype.stack`
-
-#### Promise
-- [x] `new Promise(executor)`
-- [x] `Promise.prototype.then(onFulfilled, onRejected)`
-- [x] `Promise.prototype.catch(onRejected)`
-- [x] `Promise.prototype.finally(onFinally)`
-- [x] `Promise.resolve(value)`
-- [x] `Promise.reject(reason)`
-- [x] `Promise.all(iterable)`
-- [x] `Promise.race(iterable)`
-- [x] `Promise.allSettled(iterable)`
-- [x] `Promise.any(iterable)`
-
-**Note:** Promise uses simplified synchronous callback semantics (no microtask queue). When a promise resolves, `.then()` handlers run immediately.
-
 #### Console
 - [x] `console.log(...args)`
 - [x] `console.error(...args)`
@@ -547,506 +645,107 @@ To fully implement classes, the following components are needed:
 - [x] `console.group(label)`
 - [x] `console.groupEnd()`
 
+#### Promise (Order-Based - Planned)
+- [ ] `new Promise(executor)` - via order system
+- [ ] `Promise.prototype.then(onFulfilled, onRejected)`
+- [ ] `Promise.prototype.catch(onRejected)`
+- [ ] `Promise.prototype.finally(onFinally)`
+- [ ] `Promise.resolve(value)`
+- [ ] `Promise.reject(reason)`
+- [ ] `Promise.all(iterable)`
+- [ ] `Promise.race(iterable)`
+- [ ] `Promise.allSettled(iterable)`
+- [ ] `Promise.any(iterable)`
+
+**Note:** Promise will use order-based semantics - all async operations create orders that the host fulfills.
+
 ### Rust Integration
+
+#### Public API
+- [x] `Runtime::new()` - Create runtime instance
+- [x] `Runtime::with_config(config)` - Create with configuration
+- [x] `Runtime::eval(source)` - Evaluate source, returns `RuntimeResult`
+- [x] `Runtime::provide_module(specifier, source)` - Provide external module
+- [x] `Runtime::continue_eval()` - Continue after providing modules
+- [ ] `Runtime::fulfill_orders(responses)` - Fulfill pending orders
+- [x] `Runtime::get_exports()` - Get all exported values
+
+#### Configuration
+- [ ] `RuntimeConfig::internal_modules` - Register internal modules
+- [x] `RuntimeConfig::timeout_ms` - Execution timeout
 
 #### Serde Bridge
 - [ ] `JsValue` → `serde_json::Value`
 - [ ] `serde_json::Value` → `JsValue`
 - [ ] `JsValue` → Rust struct (via Deserialize)
 - [ ] Rust struct → `JsValue` (via Serialize)
-- [ ] Handle `undefined` vs `null` in serialization
-- [ ] Preserve object key order
-
-#### Public API
-- [x] `Runtime::new()` - Create runtime instance
-- [x] `Runtime::eval(source)` - Evaluate source string
-- [ ] `Runtime::load_module(path)` - Load and cache module
-- [x] `Runtime::call_function(name, args)` - Call exported function with JSON args
-- [x] `Runtime::get_exports()` - Get all exported values
-- [ ] Error type conversion to Rust errors
-
-#### Configuration
-- [ ] Custom module resolver
-- [ ] Global value injection
-- [ ] Execution timeout/limits
-- [ ] Memory limits
-
-### Target Use Case
-
-```rust
-let runtime = Runtime::new();
-runtime.load_module("config.ts")?;
-
-let manifest: K8sDeployment = runtime.call_function("generateDeployment", &DeploymentInput {
-    name: "my-app",
-    replicas: 3,
-    image: "nginx:latest",
-})?;
-```
 
 ---
 
-## Architecture
+## Guard-Based Garbage Collection
 
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                           PUBLIC API (lib.rs)                           │
-│  Runtime::new() → runtime.load_module(path) → module.call(name, args)   │
-└─────────────────────────────────────────────────────────────────────────┘
-                                    │
-                    ┌───────────────┼───────────────┐
-                    ▼               ▼               ▼
-            ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
-            │    Serde     │ │    Module    │ │   Error      │
-            │    Bridge    │ │    System    │ │   Handling   │
-            └──────────────┘ └──────────────┘ └──────────────┘
-                    │               │               │
-                    └───────────────┼───────────────┘
-                                    ▼
-            ┌─────────────────────────────────────────────────┐
-            │                 INTERPRETER                      │
-            │  ┌─────────────┐ ┌─────────────┐ ┌────────────┐ │
-            │  │ Evaluator   │ │   Scope     │ │  Control   │ │
-            │  │ (expr/stmt) │ │   Chain     │ │   Flow     │ │
-            │  └─────────────┘ └─────────────┘ └────────────┘ │
-            └─────────────────────────────────────────────────┘
-                                    │
-            ┌─────────────────────────────────────────────────┐
-            │                   RUNTIME                        │
-            │  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌────────┐ │
-            │  │ JsValue │ │ Object  │ │Prototype│ │Built-  │ │
-            │  │  enum   │ │ Model   │ │ Chain   │ │  ins   │ │
-            │  └─────────┘ └─────────┘ └─────────┘ └────────┘ │
-            └─────────────────────────────────────────────────┘
-                                    │
-            ┌─────────────────────────────────────────────────┐
-            │                    PARSER                        │
-            │  ┌─────────────┐         ┌────────────────────┐ │
-            │  │ Recursive   │────────▶│       AST          │ │
-            │  │  Descent    │         │  (Typed Nodes)     │ │
-            │  └─────────────┘         └────────────────────┘ │
-            └─────────────────────────────────────────────────┘
-                                    │
-            ┌─────────────────────────────────────────────────┐
-            │                    LEXER                         │
-            │  Source Code ──▶ Token Stream ──▶ Span Info     │
-            └─────────────────────────────────────────────────┘
-```
+The interpreter uses a guard-based GC model for memory management.
 
----
-
-## Module Structure
-
-```
-src/
-├── lib.rs          # Public API: Runtime, eval()
-├── error.rs        # Error types: JsError, SourceLocation, StackFrame
-├── lexer.rs        # Tokenizer: Lexer, Token, TokenKind, Span
-├── ast.rs          # AST nodes: Statement, Expression, Pattern, TypeAnnotation
-├── parser.rs       # Parser: recursive descent + Pratt parsing
-├── value.rs        # Runtime values: JsValue, JsObject, Environment
-└── interpreter.rs  # Evaluator: statement/expression execution
-```
-
----
-
-## Component Details
-
-### 1. Lexer (`lexer.rs`)
-
-The lexer converts source text into a stream of tokens.
-
-#### Token Types
+### Core Types
 
 ```rust
-pub enum TokenKind {
-    // Literals
-    Number(f64),
-    String(String),
-    TemplateHead(String),
-    TemplateMiddle(String),
-    TemplateTail(String),
-    True, False, Null,
+/// Memory arena managing all allocations
+pub struct Heap<T> {
+    inner: Rc<RefCell<Space<T>>>,
+}
 
-    // Identifiers & Keywords
-    Identifier(String),
+/// Root anchor that keeps objects alive
+pub struct Guard<T: Default + Reset> {
+    id: usize,
+    space: Weak<RefCell<Space<T>>>,
+}
 
-    // JS Keywords
-    Let, Const, Var, Function, Return, If, Else,
-    For, While, Do, Break, Continue, Switch, Case, Default,
-    Try, Catch, Finally, Throw, New, This, Super,
-    Class, Extends, Static, Import, Export, From, As,
-    Typeof, Instanceof, In, Of, Void, Delete, Debugger,
-
-    // TS Keywords (parsed, ignored at runtime)
-    Type, Interface, Enum, Declare, Abstract, Readonly,
-    Public, Private, Protected, Implements,
-    Any, Unknown, Never, Keyof, Infer,
-
-    // Operators
-    Plus, Minus, Star, Slash, Percent, StarStar,
-    Eq, EqEq, EqEqEq, BangEq, BangEqEq,
-    Lt, LtEq, Gt, GtEq, LtLt, GtGt, GtGtGt,
-    Amp, AmpAmp, Pipe, PipePipe, Caret, Tilde, Bang,
-    Question, QuestionQuestion, QuestionDot,
-    // ... assignment operators, punctuation
-
-    Eof,
+/// Smart pointer to GC-managed object
+pub struct Gc<T> {
+    id: usize,
+    index: usize,
+    ptr: NonNull<GcBox<T>>,
 }
 ```
 
-#### Key Features
+### The Guarded Pattern
 
-- Handles all number formats (decimal, hex, octal, binary, floats, exponents)
-- String literals with escape sequences
-- Template literal support with interpolation
-- Comment handling (single-line `//`, multi-line `/* */`)
-- Tracks line/column for error reporting
-- Newline tracking for automatic semicolon insertion (ASI)
-
-### 2. AST (`ast.rs`)
-
-The Abstract Syntax Tree represents parsed TypeScript structure.
-
-#### Statement Types
+Expression evaluation returns `Guarded` to pair values with guards:
 
 ```rust
-pub enum Statement {
-    // Declarations
-    VariableDeclaration(VariableDeclaration),
-    FunctionDeclaration(FunctionDeclaration),
-    ClassDeclaration(ClassDeclaration),
-
-    // TypeScript (no-op at runtime)
-    TypeAlias(TypeAliasDeclaration),
-    InterfaceDeclaration(InterfaceDeclaration),
-    EnumDeclaration(EnumDeclaration),
-
-    // Control Flow
-    Block(BlockStatement),
-    If(IfStatement),
-    Switch(SwitchStatement),
-    For(ForStatement),
-    ForIn(ForInStatement),
-    ForOf(ForOfStatement),
-    While(WhileStatement),
-    DoWhile(DoWhileStatement),
-    Try(TryStatement),
-
-    // Jump
-    Return(ReturnStatement),
-    Break(BreakStatement),
-    Continue(ContinueStatement),
-    Throw(ThrowStatement),
-
-    // Module
-    Import(ImportDeclaration),
-    Export(ExportDeclaration),
-
-    // Other
-    Expression(ExpressionStatement),
-    Empty,
-    Debugger,
+pub struct Guarded {
+    pub value: JsValue,
+    pub guard: Option<Guard<JsObject>>,
 }
 ```
 
-#### Expression Types
+This keeps newly created objects alive until ownership is transferred:
 
 ```rust
-pub enum Expression {
-    // Literals
-    Literal(Literal),
-    Array(ArrayExpression),
-    Object(ObjectExpression),
-    Function(FunctionExpression),
-    ArrowFunction(ArrowFunctionExpression),
-    Class(ClassExpression),
-    Template(TemplateLiteral),
-
-    // Identifiers
-    Identifier(Identifier),
-    This,
-    Super,
-
-    // Operations
-    Unary(UnaryExpression),
-    Binary(BinaryExpression),
-    Logical(LogicalExpression),
-    Conditional(ConditionalExpression),
-    Assignment(AssignmentExpression),
-    Update(UpdateExpression),
-    Sequence(SequenceExpression),
-
-    // Access
-    Member(MemberExpression),
-    Call(CallExpression),
-    New(NewExpression),
-
-    // TypeScript (runtime behavior)
-    TypeAssertion(TypeAssertionExpression),  // x as T → evaluates to x
-    NonNull(NonNullExpression),              // x! → evaluates to x
-}
+// Object stays alive via guard until env.own() establishes ownership
+let Guarded { value, guard: _g } = self.evaluate_expression(expr)?;
+self.env_define(name, value, mutable);  // ownership transferred
+// _g dropped AFTER ownership established - safe!
 ```
 
-#### Pattern Types (Destructuring)
+### Ownership Rules
 
-```rust
-pub enum Pattern {
-    Identifier(Identifier),
-    Object(ObjectPattern),
-    Array(ArrayPattern),
-    Rest(RestElement),
-    Assignment(AssignmentPattern),  // { x = default }
-}
-```
-
-### 3. Parser (`parser.rs`)
-
-Recursive descent parser with Pratt parsing for expressions.
-
-#### Operator Precedence
-
-| Precedence | Operators | Associativity |
-|------------|-----------|---------------|
-| 4 | `??` `\|\|` | Left |
-| 5 | `&&` | Left |
-| 6-8 | `\|` `^` `&` (bitwise) | Left |
-| 9 | `==` `!=` `===` `!==` | Left |
-| 10 | `<` `<=` `>` `>=` `in` `instanceof` | Left |
-| 11 | `<<` `>>` `>>>` | Left |
-| 12 | `+` `-` | Left |
-| 13 | `*` `/` `%` | Left |
-| 14 | `**` | Right |
-
-#### Key Implementation Details
-
-```rust
-/// Pratt parser for binary expressions
-fn parse_binary_expression(&mut self, min_prec: u8) -> Result<Expression, JsError> {
-    let mut left = self.parse_unary_expression()?;
-
-    loop {
-        let (op, prec, is_logical) = match self.current_binary_op() {
-            Some(info) => info,
-            None => break,
-        };
-
-        if prec < min_prec {
-            break;
-        }
-
-        self.advance();
-        let next_prec = if op == BinaryOp::Exp { prec } else { prec + 1 };
-        let right = self.parse_binary_expression(next_prec)?;
-
-        left = Expression::Binary(BinaryExpression {
-            operator: op,
-            left: Box::new(left),
-            right: Box::new(right),
-            span,
-        });
-    }
-
-    Ok(left)
-}
-```
-
-#### TypeScript Handling
-
-- Type annotations are parsed but stored separately
-- `type`, `interface` declarations become no-ops
-- `enum` declarations compile to object literals
-- Type assertions (`x as T`, `<T>x`) evaluate to just `x`
-- Non-null assertions (`x!`) evaluate to just `x`
-
-### 4. Runtime Values (`value.rs`)
-
-#### JsValue Enum
-
-```rust
-pub enum JsValue {
-    Undefined,
-    Null,
-    Boolean(bool),
-    Number(f64),
-    String(JsString),  // Rc<str> - cheap clone
-    Object(JsObjectRef), // Rc<RefCell<JsObject>> - cheap clone
-}
-
-pub type JsObjectRef = Rc<RefCell<JsObject>>;
-```
-
-#### CheapClone Trait
-
-The codebase uses a `CheapClone` trait to distinguish O(1) reference-counted clones from expensive deep clones:
-
-```rust
-/// Trait for types with cheap (O(1), reference-counted) clones.
-pub trait CheapClone: Clone {
-    fn cheap_clone(&self) -> Self {
-        self.clone()
-    }
-}
-
-// Implemented for:
-impl<T: ?Sized> CheapClone for Rc<T> {}
-impl CheapClone for JsString {}  // wraps Rc<str>
-impl CheapClone for PendingSlot {}  // contains Rc
-```
-
-**Usage:**
-- Use `.cheap_clone()` for `JsObjectRef`, `JsString`, `PendingSlot`, and any `Rc<T>`
-- Use `.clone()` with a comment for expensive types (AST nodes, `Environment`, `String`, `Vec<T>`)
-
-This makes clone costs explicit and self-documenting in the codebase.
-
-#### Object Model
-
-```rust
-pub struct JsObject {
-    pub prototype: Option<JsObjectRef>,
-    pub properties: IndexMap<PropertyKey, Property>,
-    pub exotic: ExoticObject,
-}
-
-pub enum ExoticObject {
-    Ordinary,
-    Array { length: u32 },
-    Function(JsFunction),
-}
-
-pub enum JsFunction {
-    Interpreted(InterpretedFunction),
-    Native(NativeFunction),
-}
-```
-
-#### Property Keys
-
-```rust
-pub enum PropertyKey {
-    String(JsString),
-    Index(u32),  // Array index optimization
-}
-```
-
-#### Environment (Scope Chain)
-
-```rust
-pub struct Environment {
-    bindings: HashMap<String, Binding>,
-    outer: Option<Box<Environment>>,
-}
-
-pub struct Binding {
-    value: JsValue,
-    mutable: bool,      // false for const
-    initialized: bool,  // for TDZ (temporal dead zone)
-}
-```
-
-### 5. Interpreter (`interpreter.rs`)
-
-#### Completion Records
-
-```rust
-pub enum Completion {
-    Normal(JsValue),
-    Return(JsValue),
-    Break(Option<String>),
-    Continue(Option<String>),
-}
-```
-
-#### Statement Execution
-
-```rust
-impl Interpreter {
-    pub fn execute_statement(&mut self, stmt: &Statement) -> Result<Completion, JsError> {
-        match stmt {
-            Statement::VariableDeclaration(decl) => { /* ... */ }
-            Statement::FunctionDeclaration(decl) => { /* ... */ }
-            Statement::If(if_stmt) => { /* ... */ }
-            Statement::For(for_stmt) => { /* ... */ }
-            Statement::Return(ret) => { /* ... */ }
-            // TypeScript no-ops
-            Statement::TypeAlias(_) | Statement::InterfaceDeclaration(_) => {
-                Ok(Completion::Normal(JsValue::Undefined))
-            }
-            // ...
-        }
-    }
-}
-```
-
-#### Expression Evaluation
-
-```rust
-impl Interpreter {
-    pub fn evaluate(&mut self, expr: &Expression) -> Result<JsValue, JsError> {
-        match expr {
-            Expression::Literal(lit) => self.evaluate_literal(lit),
-            Expression::Identifier(id) => self.env.get(&id.name),
-            Expression::Binary(bin) => self.evaluate_binary(bin),
-            Expression::Call(call) => self.evaluate_call(call),
-            // TypeScript runtime behavior
-            Expression::TypeAssertion(ta) => self.evaluate(&ta.expression),
-            Expression::NonNull(nn) => self.evaluate(&nn.expression),
-            // ...
-        }
-    }
-}
-```
-
-#### Built-in Globals
-
-Currently implemented:
-- `console.log` - Output to stdout
-- `JSON.parse` - Parse JSON string to value
-- `JSON.stringify` - Convert value to JSON string
-- `Object.keys` - Get object's own enumerable property names
-- `Object.values` - Get object's own enumerable property values
-- `Object.entries` - Get object's own enumerable [key, value] pairs
-- `Object.assign` - Copy properties from sources to target
-- `Array.isArray` - Check if value is an array
-
----
-
-## Error Handling
-
-```rust
-pub enum JsError {
-    SyntaxError { message: String, location: SourceLocation },
-    TypeError { message: String },
-    ReferenceError { name: String },
-    RangeError { message: String },
-    RuntimeError { kind: String, message: String, stack: Vec<StackFrame> },
-}
-
-pub struct SourceLocation {
-    pub file: Option<PathBuf>,
-    pub line: u32,
-    pub column: u32,
-    pub length: u32,
-}
-
-pub struct StackFrame {
-    pub function_name: Option<String>,
-    pub file: Option<PathBuf>,
-    pub line: u32,
-    pub column: u32,
-}
-```
+| Situation | Action |
+|-----------|--------|
+| Define variable with object | `env.own(&obj, &heap)` |
+| Set property to object | `parent.own(&obj, &heap)` |
+| Array element is object | `array.own(&obj, &heap)` |
+| Function captures closure | `func.own(&closure_env, &heap)` |
+| Prototype chain | `child.own(&prototype, &heap)` |
 
 ---
 
 ## Zero-Panic Policy
 
-The codebase enforces a strict **zero-panic policy** to ensure production reliability. All panic-prone patterns are denied via Clippy lints.
+The codebase enforces a strict **zero-panic policy** via Clippy lints.
 
 ### Enforced Lints
 
-Configured in `Cargo.toml`:
 ```toml
 [lints.clippy]
 unwrap_used = "deny"
@@ -1059,16 +758,6 @@ unimplemented = "deny"
 string_slice = "deny"
 ```
 
-### Test Exemptions
-
-Test code is exempt via `clippy.toml`:
-```toml
-allow-unwrap-in-tests = true
-allow-expect-in-tests = true
-allow-indexing-slicing-in-tests = true
-allow-panic-in-tests = true
-```
-
 ### Safe Alternatives
 
 | Panic Pattern | Safe Alternative |
@@ -1079,157 +768,126 @@ allow-panic-in-tests = true
 | `args[0]` | `args.first().cloned().unwrap_or(JsValue::Undefined)` |
 | `unreachable!()` | `return Err(JsError::internal_error(...))` |
 
-### Internal Errors
+---
 
-For unexpected interpreter states (invariant violations), use:
-```rust
-JsError::internal_error("description of what went wrong")
+## Module Structure
+
 ```
-
-This wraps the error as a `TypeError` with "Internal error: " prefix, making it clear that the error represents a bug in the interpreter rather than user code.
+src/
+├── lib.rs              # Public API: Runtime, RuntimeResult, RuntimeConfig
+├── error.rs            # Error types: JsError, SourceLocation
+├── lexer.rs            # Tokenizer: Lexer, Token, TokenKind, Span
+├── ast.rs              # AST nodes: Statement, Expression, Pattern
+├── parser.rs           # Parser: recursive descent + Pratt parsing
+├── value.rs            # Runtime values: JsValue, JsObject, Guarded
+├── gc.rs               # Guard-based garbage collector
+├── string_dict.rs      # String interning
+└── interpreter/
+    ├── mod.rs          # Core interpreter with Guarded pattern
+    └── builtins/       # Built-in implementations
+        ├── array.rs
+        ├── string.rs
+        ├── number.rs
+        ├── object.rs
+        ├── function.rs
+        ├── math.rs
+        ├── json.rs
+        ├── date.rs
+        ├── map.rs
+        ├── set.rs
+        ├── symbol.rs
+        ├── regexp.rs
+        ├── error.rs
+        ├── console.rs
+        └── global.rs
+```
 
 ---
 
 ## Implementation Milestones
 
-### Milestone 1: Basic Expressions ✅ Complete
+### Milestone 1-7: Core Implementation ✅
 
-- [x] Project setup, Cargo.toml
-- [x] Token definitions
-- [x] Lexer for literals, operators, punctuation
-- [x] AST for expressions
-- [x] Parser for expressions (Pratt parsing)
-- [x] JsValue enum (primitives + objects)
-- [x] Expression evaluator (arithmetic, comparison, logical)
-- [x] Basic tests (25 passing)
+- [x] Lexer, Parser, AST
+- [x] Core interpreter with Guarded pattern
+- [x] Guard-based GC
+- [x] All built-in objects
+- [x] Classes with inheritance
+- [x] Zero-panic policy
 
-### Milestone 2: Variables & Functions ✅
+### Milestone 8: Order System (In Progress)
 
-- [x] Variable declarations (let, const, var)
-- [x] Scope/environment chain
-- [x] Function declarations & expressions
-- [x] Arrow functions with closure capture
-- [x] Function calls with `this` binding
-- [x] Default parameters
-- [x] Rest parameters
+- [ ] `Order`, `OrderId`, `OrderResponse` types
+- [ ] `RuntimeResult` with `NeedImports`, `Suspended`
+- [ ] Internal module system (native + source)
+- [ ] `eval:internal` with `__order__`, `__cancelOrder__`
+- [ ] Import collection and resolution
 
-### Milestone 3: Objects & Arrays ✅
+### Milestone 9: Async/Await
 
-- [x] Object literals with methods
-- [x] Array literals
-- [x] Property access (dot and bracket)
-- [x] Destructuring assignment
-- [x] Spread operator
-- [x] Object/Array prototype methods
+- [ ] Async functions via order system
+- [ ] `await` suspends execution
+- [ ] Generator functions via order system
 
-### Milestone 4: Control Flow & Classes ✅
+### Milestone 10: Serde Integration
 
-- [x] if/else, switch/case
-- [x] for, while, do-while
-- [x] for-in, for-of
-- [x] try/catch/finally
-- [x] Class declarations
-- [x] Inheritance (extends)
-- [x] Static methods and properties
-
-### Milestone 5: Built-ins ✅
-
-- [x] Complete Object methods
-- [x] Complete Array methods (map, filter, reduce, etc.)
-- [x] String methods
-- [x] Number, Math
-- [x] Map, Set
-- [x] Date (basic)
-- [x] RegExp (basic)
-
-### Milestone 6: Modules ✅
-
-- [x] ES module parsing (import/export)
-- [x] Module resolution (via RuntimeResult::ImportAwaited)
-- [x] Module caching (host responsibility)
-- [x] Circular dependency handling (host responsibility)
-- [x] TypeScript enum compilation
-
-### Milestone 7: Serde Integration (Partial)
-
-- [x] `Serialize` trait for JsValue → Rust (via serde_json)
-- [x] `Deserialize` trait for Rust → JsValue (via serde_json)
-- [x] Public Runtime API
-- [x] Integration tests (619 tests passing)
+- [ ] `JsValue` ↔ `serde_json::Value`
+- [ ] Direct struct serialization
 
 ---
 
-## Testing Strategy
+## Testing
 
-### Unit Tests
+### Current Status: 542 tests passing
 
-Each module has inline tests:
+```bash
+cargo test                     # Run all tests
+cargo test --test interpreter  # Run interpreter tests
+cargo test symbol::            # Run symbol tests
+cargo test -- --nocapture      # Show output
+```
+
+### Known Failures (4)
+
+- `test_gc_cycles_test6_minimal` - GC timeout
+- `test_gc_cycles_all_tests` - GC timeout
+- `test_json_stringify_async_nested_object` - Async not implemented
+- `test_json_stringify_with_async_result` - Async not implemented
+
+---
+
+## Target Use Case
 
 ```rust
-#[cfg(test)]
-mod tests {
-    use super::*;
+// Configure runtime with internal modules
+let config = RuntimeConfig {
+    internal_modules: vec![
+        create_eval_internal_module(),
+        create_eval_fs_module(),
+    ],
+    timeout_ms: 5000,
+};
 
-    #[test]
-    fn test_arithmetic() {
-        assert_eq!(eval("1 + 2"), JsValue::Number(3.0));
-        assert_eq!(eval("2 ** 3"), JsValue::Number(8.0));
+let mut runtime = Runtime::with_config(config);
+
+// Evaluate with import/order handling
+let mut result = runtime.eval(source)?;
+loop {
+    match result {
+        RuntimeResult::Complete(value) => {
+            let manifest: K8sDeployment = serde_json::from_value(value.to_json())?;
+            return Ok(manifest);
+        }
+        RuntimeResult::NeedImports(specs) => {
+            for spec in specs {
+                runtime.provide_module(&spec, &load_module(&spec)?)?;
+            }
+            result = runtime.continue_eval()?;
+        }
+        RuntimeResult::Suspended { pending, .. } => {
+            let responses = fulfill_orders(pending);
+            result = runtime.fulfill_orders(responses)?;
+        }
     }
 }
 ```
-
-### Test Categories
-
-- **Lexer tests**: Token stream verification
-- **Parser tests**: AST structure verification
-- **Value tests**: Type coercion, equality
-- **Interpreter tests**: Expression evaluation, control flow
-
-### Running Tests
-
-```bash
-cargo test              # Run all tests
-cargo test lexer        # Run lexer tests only
-cargo test -- --nocapture  # Show test output
-```
-
----
-
-## Dependencies
-
-```toml
-[dependencies]
-thiserror = "1.0"       # Error derive macros
-serde = "1.0"           # Serialization framework
-serde_json = "1.0"      # JSON support
-indexmap = "2.0"        # Ordered map for properties
-unicode-xid = "0.2"     # Unicode identifier validation
-regex = "1.10"          # RegExp built-in
-chrono = "0.4"          # Date built-in
-
-[dev-dependencies]
-pretty_assertions = "1.4"  # Better test diffs
-```
-
----
-
-## Future Enhancements
-
-### Performance Optimizations
-
-- Bytecode compilation for hot paths
-- Object shape optimization (hidden classes)
-- String interning
-- Property access caching
-
-### Additional Features
-
-- Source maps for debugging
-- REPL mode
-- Optional type checking mode
-- Decorator support
-
-### Compatibility
-
-- Test262 conformance testing
-- Node.js built-in stubs (for config files that use them)
