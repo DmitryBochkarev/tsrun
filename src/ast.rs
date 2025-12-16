@@ -1,5 +1,7 @@
 //! Abstract Syntax Tree types for TypeScript
 
+use std::rc::Rc;
+
 use crate::lexer::Span;
 use crate::value::JsString;
 
@@ -97,10 +99,10 @@ pub struct VariableDeclarator {
 #[derive(Debug, Clone)]
 pub struct FunctionDeclaration {
     pub id: Option<Identifier>,
-    pub params: Vec<FunctionParam>,
+    pub params: Rc<[FunctionParam]>,
     pub return_type: Option<TypeAnnotation>,
     pub type_parameters: Option<TypeParameters>,
-    pub body: BlockStatement,
+    pub body: Rc<BlockStatement>,
     pub generator: bool,
     pub async_: bool,
     pub span: Span,
@@ -568,10 +570,10 @@ pub enum PropertyKind {
 #[derive(Debug, Clone)]
 pub struct FunctionExpression {
     pub id: Option<Identifier>,
-    pub params: Vec<FunctionParam>,
+    pub params: Rc<[FunctionParam]>,
     pub return_type: Option<TypeAnnotation>,
     pub type_parameters: Option<TypeParameters>,
-    pub body: BlockStatement,
+    pub body: Rc<BlockStatement>,
     pub generator: bool,
     pub async_: bool,
     pub span: Span,
@@ -579,10 +581,10 @@ pub struct FunctionExpression {
 
 #[derive(Debug, Clone)]
 pub struct ArrowFunctionExpression {
-    pub params: Vec<FunctionParam>,
+    pub params: Rc<[FunctionParam]>,
     pub return_type: Option<TypeAnnotation>,
     pub type_parameters: Option<TypeParameters>,
-    pub body: ArrowFunctionBody,
+    pub body: Rc<ArrowFunctionBody>,
     pub async_: bool,
     pub span: Span,
 }

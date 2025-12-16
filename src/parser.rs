@@ -2,6 +2,8 @@
 //!
 //! Uses recursive descent with Pratt parsing for expressions.
 
+use std::rc::Rc;
+
 use crate::ast::*;
 use crate::error::JsError;
 use crate::lexer::{Lexer, Span, Token, TokenKind};
@@ -357,9 +359,9 @@ impl<'a> Parser<'a> {
         };
 
         let type_parameters = self.parse_optional_type_parameters()?;
-        let params = self.parse_function_params()?;
+        let params: Rc<[_]> = self.parse_function_params()?.into();
         let return_type = self.parse_optional_return_type()?;
-        let body = self.parse_block_statement()?;
+        let body = Rc::new(self.parse_block_statement()?);
 
         let span = self.span_from(start);
         Ok(FunctionDeclaration {
@@ -545,9 +547,9 @@ impl<'a> Parser<'a> {
         if self.check(&TokenKind::LParen) || self.check(&TokenKind::Lt) {
             // Method
             let type_params = self.parse_optional_type_parameters()?;
-            let params = self.parse_function_params()?;
+            let params: Rc<[_]> = self.parse_function_params()?.into();
             let return_type = self.parse_optional_return_type()?;
-            let body = self.parse_block_statement()?;
+            let body = Rc::new(self.parse_block_statement()?);
 
             let value = FunctionExpression {
                 id: None,
@@ -2093,9 +2095,9 @@ impl<'a> Parser<'a> {
         // Method shorthand
         if self.check(&TokenKind::LParen) || self.check(&TokenKind::Lt) {
             let type_params = self.parse_optional_type_parameters()?;
-            let params = self.parse_function_params()?;
+            let params: Rc<[_]> = self.parse_function_params()?.into();
             let return_type = self.parse_optional_return_type()?;
-            let body = self.parse_block_statement()?;
+            let body = Rc::new(self.parse_block_statement()?);
 
             let func_span = self.span_from(start);
             let value = Expression::Function(FunctionExpression {
@@ -2349,10 +2351,10 @@ impl<'a> Parser<'a> {
 
         let span = self.span_from(start);
         Ok(Expression::ArrowFunction(ArrowFunctionExpression {
-            params,
+            params: params.into(),
             return_type,
             type_parameters: None,
-            body,
+            body: Rc::new(body),
             async_: is_async,
             span,
         }))
@@ -2462,9 +2464,9 @@ impl<'a> Parser<'a> {
         };
 
         let type_parameters = self.parse_optional_type_parameters()?;
-        let params = self.parse_function_params()?;
+        let params: Rc<[_]> = self.parse_function_params()?.into();
         let return_type = self.parse_optional_return_type()?;
-        let body = self.parse_block_statement()?;
+        let body = Rc::new(self.parse_block_statement()?);
 
         let span = self.span_from(start);
         Ok(Expression::Function(FunctionExpression {

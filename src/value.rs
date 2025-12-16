@@ -452,6 +452,7 @@ impl Reset for JsObject {
         self.frozen = false;
         self.sealed = false;
         self.null_prototype = false;
+        // clear() preserves capacity, avoiding reallocation for reused objects
         self.properties.clear();
         self.exotic = ExoticObject::Ordinary;
     }
@@ -1159,15 +1160,24 @@ pub struct InterpretedFunction {
 /// Function body (block or expression for arrow functions)
 #[derive(Debug, Clone)]
 pub enum FunctionBody {
-    Block(BlockStatement),
+    Block(Rc<BlockStatement>),
     Expression(Box<crate::ast::Expression>),
 }
 
-impl From<ArrowFunctionBody> for FunctionBody {
-    fn from(body: ArrowFunctionBody) -> Self {
-        match body {
-            ArrowFunctionBody::Block(block) => FunctionBody::Block(block),
-            ArrowFunctionBody::Expression(expr) => FunctionBody::Expression(expr),
+impl From<Rc<ArrowFunctionBody>> for FunctionBody {
+    fn from(body: Rc<ArrowFunctionBody>) -> Self {
+        // Try to avoid cloning the inner data if we're the only owner
+        match Rc::try_unwrap(body) {
+            Ok(owned) => match owned {
+                ArrowFunctionBody::Block(block) => FunctionBody::Block(Rc::new(block)),
+                ArrowFunctionBody::Expression(expr) => FunctionBody::Expression(expr),
+            },
+            Err(shared) => match shared.as_ref() {
+                ArrowFunctionBody::Block(block) => FunctionBody::Block(Rc::new(block.clone())),
+                ArrowFunctionBody::Expression(expr) => {
+                    FunctionBody::Expression(expr.clone())
+                }
+            },
         }
     }
 }

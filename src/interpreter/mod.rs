@@ -682,6 +682,19 @@ impl Interpreter {
         (obj, temp)
     }
 
+    /// Create an object with pre-allocated property capacity.
+    /// Use this when you know the number of properties upfront to avoid hashmap resizing.
+    pub fn create_object_with_capacity(&mut self, capacity: usize) -> (Gc<JsObject>, Guard<JsObject>) {
+        let temp = self.heap.create_guard();
+        let obj = temp.alloc();
+        {
+            let mut obj_ref = obj.borrow_mut();
+            obj_ref.prototype = Some(self.object_prototype.clone());
+            obj_ref.properties.reserve(capacity);
+        }
+        (obj, temp)
+    }
+
     /// Create a RegExp literal object with a temporary guard.
     /// Used when evaluating /pattern/flags syntax.
     fn create_regexp_literal(&mut self, pattern: &str, flags: &str) -> Result<Guarded, JsError> {
@@ -2055,7 +2068,7 @@ impl Interpreter {
             let func = &method.value;
             let (func_obj, _func_guard) = self.create_function_with_guard(
                 Some(method_name.cheap_clone()),
-                Rc::from(func.params.as_slice()),
+                func.params.clone(), // Rc clone is cheap
                 Rc::new(FunctionBody::Block(func.body.clone())),
                 self.env.clone(),
                 func.span,
@@ -2137,7 +2150,7 @@ impl Interpreter {
         let (constructor_fn, _ctor_guard) = self.create_function_with_guard(
             class.id.as_ref().map(|id| JsString::from(id.name.as_str())),
             Rc::from(ctor_params),
-            Rc::new(FunctionBody::Block(ctor_body)),
+            Rc::new(FunctionBody::Block(Rc::new(ctor_body))),
             self.env.clone(),
             class.span,
             false,
@@ -2216,7 +2229,7 @@ impl Interpreter {
             let func = &method.value;
             let (func_obj, _func_guard) = self.create_function_with_guard(
                 Some(method_name.cheap_clone()),
-                Rc::from(func.params.as_slice()),
+                func.params.clone(), // Rc clone is cheap
                 Rc::new(FunctionBody::Block(func.body.clone())),
                 self.env.clone(),
                 func.span,
@@ -2631,7 +2644,8 @@ impl Interpreter {
 
     fn execute_function_declaration(&mut self, func: &FunctionDeclaration) -> Result<(), JsError> {
         let name = func.id.as_ref().map(|id| id.name.cheap_clone());
-        let params: Rc<[_]> = func.params.clone().into();
+        // Rc clone is cheap (just ref count increment)
+        let params = func.params.clone();
         let body = Rc::new(FunctionBody::Block(func.body.clone()));
 
         // Create function with temp guard
@@ -2693,7 +2707,8 @@ impl Interpreter {
             Expression::Object(obj) => self.evaluate_object(obj),
 
             Expression::ArrowFunction(arrow) => {
-                let params: Rc<[_]> = arrow.params.clone().into();
+                // Rc clone is cheap (just ref count increment)
+                let params = arrow.params.clone();
                 let body = Rc::new(FunctionBody::from(arrow.body.clone()));
 
                 let (func_obj, guard) = self.create_function_with_guard(
@@ -2711,7 +2726,8 @@ impl Interpreter {
 
             Expression::Function(func) => {
                 let name = func.id.as_ref().map(|id| id.name.cheap_clone());
-                let params: Rc<[_]> = func.params.clone().into();
+                // Rc clones are cheap (just ref count increment)
+                let params = func.params.clone();
                 let body = Rc::new(FunctionBody::Block(func.body.clone()));
 
                 let (func_obj, guard) = self.create_function_with_guard(
@@ -3966,7 +3982,8 @@ impl Interpreter {
     }
 
     fn evaluate_object(&mut self, obj_expr: &ObjectExpression) -> Result<Guarded, JsError> {
-        let (obj, obj_guard) = self.create_object_with_guard();
+        // Pre-allocate for expected number of properties to avoid hashmap resizing
+        let (obj, obj_guard) = self.create_object_with_capacity(obj_expr.properties.len());
 
         // Keep property value guards alive until ownership is transferred to obj
         let mut _prop_guards = Vec::new();
