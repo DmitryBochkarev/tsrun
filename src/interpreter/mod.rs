@@ -196,6 +196,10 @@ pub struct Interpreter {
 
     /// Pending program waiting for imports to be provided
     pub(crate) pending_program: Option<crate::ast::Program>,
+
+    /// Pending module sources waiting for their imports to be satisfied
+    /// Maps specifier -> (parsed program, needed imports)
+    pub(crate) pending_module_sources: FxHashMap<String, crate::ast::Program>,
 }
 
 impl Interpreter {
@@ -282,6 +286,7 @@ impl Interpreter {
             cancelled_orders: Vec::new(),
             suspended_state: None,
             pending_program: None,
+            pending_module_sources: FxHashMap::default(),
         };
 
         // Initialize built-in globals
@@ -557,10 +562,27 @@ impl Interpreter {
     }
 
     /// Provide a module source for a pending import
+    ///
+    /// The module is parsed and stored, but not executed until `continue_eval` is called.
+    /// This allows collecting all needed imports before execution.
     pub fn provide_module(&mut self, specifier: &str, source: &str) -> Result<(), JsError> {
-        // Parse and execute the module
+        // Parse the module
         let mut parser = Parser::new(source, &mut self.string_dict);
         let program = parser.parse_program()?;
+
+        // Store the parsed program for later execution
+        self.pending_module_sources
+            .insert(specifier.to_string(), program);
+
+        Ok(())
+    }
+
+    /// Execute a pending module that has all its imports satisfied
+    fn execute_pending_module(&mut self, specifier: &str) -> Result<(), JsError> {
+        let program = self
+            .pending_module_sources
+            .remove(specifier)
+            .ok_or_else(|| JsError::internal_error(format!("Module '{}' not found", specifier)))?;
 
         // Save current environment
         let saved_env = self.env.clone();
@@ -605,6 +627,66 @@ impl Interpreter {
         if let Some(mut state) = self.suspended_state.take() {
             // Resume execution from where we left off
             return self.run_to_completion_or_suspend(&mut state);
+        }
+
+        // First, try to execute any pending modules that have all their imports
+        loop {
+            // Collect all missing imports across all pending modules
+            let mut all_missing: Vec<String> = Vec::new();
+            let mut ready_modules: Vec<String> = Vec::new();
+
+            // Clone keys to avoid borrow issues
+            let pending_keys: Vec<String> = self.pending_module_sources.keys().cloned().collect();
+
+            for specifier in &pending_keys {
+                // Skip if already loaded
+                if self.loaded_modules.contains_key(specifier) {
+                    continue;
+                }
+
+                // Get the program to check its imports
+                if let Some(program) = self.pending_module_sources.get(specifier) {
+                    let imports = self.collect_imports(program);
+                    let missing: Vec<String> = imports
+                        .into_iter()
+                        .filter(|spec| {
+                            !self.is_internal_module(spec)
+                                && !self.loaded_modules.contains_key(spec)
+                        })
+                        .collect();
+
+                    if missing.is_empty() {
+                        // This module is ready to execute
+                        ready_modules.push(specifier.clone());
+                    } else {
+                        // Collect missing imports
+                        for m in missing {
+                            if !all_missing.contains(&m)
+                                && !self.pending_module_sources.contains_key(&m)
+                            {
+                                all_missing.push(m);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // If we have modules ready to execute, execute them
+            if !ready_modules.is_empty() {
+                for specifier in ready_modules {
+                    self.execute_pending_module(&specifier)?;
+                }
+                // Continue the loop to check if more modules are now ready
+                continue;
+            }
+
+            // If we still have missing imports, return them
+            if !all_missing.is_empty() {
+                return Ok(crate::RuntimeResult::NeedImports(all_missing));
+            }
+
+            // No more pending modules to process
+            break;
         }
 
         // If we have a pending program waiting for imports, check if we can execute it now
