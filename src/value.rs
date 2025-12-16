@@ -577,8 +577,8 @@ pub struct JsObject {
     pub sealed: bool,
     /// Whether this object was explicitly created with null prototype (Object.create(null))
     pub null_prototype: bool,
-    /// Object properties
-    pub properties: FxHashMap<PropertyKey, Property>,
+    /// Object properties (optimized for small objects)
+    pub properties: PropertyStorage,
     /// Exotic object behavior
     pub exotic: ExoticObject,
 }
@@ -592,7 +592,7 @@ impl JsObject {
             frozen: false,
             sealed: false,
             null_prototype: false,
-            properties: FxHashMap::default(),
+            properties: PropertyStorage::new(),
             exotic: ExoticObject::Ordinary,
         }
     }
@@ -605,7 +605,7 @@ impl JsObject {
             frozen: false,
             sealed: false,
             null_prototype: false,
-            properties: FxHashMap::with_capacity_and_hasher(capacity, Default::default()),
+            properties: PropertyStorage::with_capacity(capacity),
             exotic: ExoticObject::Ordinary,
         }
     }
@@ -618,7 +618,7 @@ impl JsObject {
             frozen: false,
             sealed: false,
             null_prototype: false,
-            properties: FxHashMap::default(),
+            properties: PropertyStorage::new(),
             exotic: ExoticObject::Ordinary,
         }
     }
@@ -974,6 +974,317 @@ impl Property {
                 getter: None,
                 setter,
             }));
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Property Storage - optimized for small objects
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Maximum number of properties stored inline before switching to a HashMap.
+/// 4 properties covers most small objects like `{ a, b }` or `{ x: 1, y: 2 }`.
+const INLINE_PROPERTY_CAPACITY: usize = 4;
+
+/// Optimized property storage that uses inline storage for small objects.
+///
+/// Most JavaScript objects have only a few properties. By storing up to 4 properties
+/// inline (without heap allocation), we avoid the overhead of a HashMap for common cases.
+/// When the object grows beyond 4 properties, we transparently switch to a HashMap.
+#[derive(Debug)]
+pub enum PropertyStorage {
+    /// Inline storage for small objects (≤4 properties).
+    /// Uses a fixed-size array with a length counter.
+    Inline {
+        len: u8,
+        entries: [(PropertyKey, Property); INLINE_PROPERTY_CAPACITY],
+    },
+    /// HashMap storage for larger objects.
+    Map(FxHashMap<PropertyKey, Property>),
+}
+
+impl Default for PropertyStorage {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl PropertyStorage {
+    /// Create empty inline storage.
+    #[inline]
+    pub fn new() -> Self {
+        PropertyStorage::Inline {
+            len: 0,
+            entries: std::array::from_fn(|_| (PropertyKey::Index(0), Property::data(JsValue::Undefined))),
+        }
+    }
+
+    /// Create storage with pre-allocated capacity.
+    /// If capacity > INLINE_PROPERTY_CAPACITY, creates a HashMap.
+    #[inline]
+    pub fn with_capacity(capacity: usize) -> Self {
+        if capacity <= INLINE_PROPERTY_CAPACITY {
+            Self::new()
+        } else {
+            PropertyStorage::Map(FxHashMap::with_capacity_and_hasher(capacity, Default::default()))
+        }
+    }
+
+    /// Reserve capacity. Only meaningful for Map variant.
+    #[inline]
+    pub fn reserve(&mut self, additional: usize) {
+        if let PropertyStorage::Map(map) = self {
+            map.reserve(additional);
+        }
+        // For Inline, we'll convert to Map when needed during insert
+    }
+
+    /// Get a property by key.
+    #[inline]
+    pub fn get(&self, key: &PropertyKey) -> Option<&Property> {
+        match self {
+            PropertyStorage::Inline { len, entries } => {
+                for entry in entries.get(..(*len as usize)).unwrap_or_default() {
+                    if &entry.0 == key {
+                        return Some(&entry.1);
+                    }
+                }
+                None
+            }
+            PropertyStorage::Map(map) => map.get(key),
+        }
+    }
+
+    /// Get a mutable reference to a property by key.
+    #[inline]
+    pub fn get_mut(&mut self, key: &PropertyKey) -> Option<&mut Property> {
+        match self {
+            PropertyStorage::Inline { len, entries } => {
+                for entry in entries.get_mut(..(*len as usize)).unwrap_or_default() {
+                    if &entry.0 == key {
+                        return Some(&mut entry.1);
+                    }
+                }
+                None
+            }
+            PropertyStorage::Map(map) => map.get_mut(key),
+        }
+    }
+
+    /// Insert or update a property. Returns the old value if the key existed.
+    pub fn insert(&mut self, key: PropertyKey, value: Property) -> Option<Property> {
+        match self {
+            PropertyStorage::Inline { len, entries } => {
+                let current_len = *len as usize;
+
+                // Check if key already exists
+                for entry in entries.get_mut(..current_len).unwrap_or_default() {
+                    if entry.0 == key {
+                        let old = std::mem::replace(&mut entry.1, value);
+                        return Some(old);
+                    }
+                }
+
+                // Key doesn't exist - try to add inline
+                if let Some(slot) = entries.get_mut(current_len) {
+                    *slot = (key, value);
+                    *len += 1;
+                    return None;
+                }
+
+                // Need to convert to Map (current_len == INLINE_PROPERTY_CAPACITY)
+                let mut map = FxHashMap::with_capacity_and_hasher(
+                    INLINE_PROPERTY_CAPACITY + 1,
+                    Default::default(),
+                );
+                for entry in entries.iter_mut() {
+                    let (k, v) = std::mem::replace(
+                        entry,
+                        (PropertyKey::Index(0), Property::data(JsValue::Undefined)),
+                    );
+                    map.insert(k, v);
+                }
+                map.insert(key, value);
+                *self = PropertyStorage::Map(map);
+                None
+            }
+            PropertyStorage::Map(map) => map.insert(key, value),
+        }
+    }
+
+    /// Check if a key exists.
+    #[inline]
+    pub fn contains_key(&self, key: &PropertyKey) -> bool {
+        match self {
+            PropertyStorage::Inline { len, entries } => {
+                for entry in entries.get(..(*len as usize)).unwrap_or_default() {
+                    if &entry.0 == key {
+                        return true;
+                    }
+                }
+                false
+            }
+            PropertyStorage::Map(map) => map.contains_key(key),
+        }
+    }
+
+    /// Remove a property by key. Returns the removed value if it existed.
+    pub fn remove(&mut self, key: &PropertyKey) -> Option<Property> {
+        match self {
+            PropertyStorage::Inline { len, entries } => {
+                let current_len = *len as usize;
+                let mut found_idx = None;
+                for (i, entry) in entries.get(..current_len).unwrap_or_default().iter().enumerate() {
+                    if &entry.0 == key {
+                        found_idx = Some(i);
+                        break;
+                    }
+                }
+                if let Some(i) = found_idx {
+                    // Swap with last element and decrement len
+                    let removed = if let Some(entry) = entries.get_mut(i) {
+                        std::mem::replace(
+                            entry,
+                            (PropertyKey::Index(0), Property::data(JsValue::Undefined)),
+                        )
+                    } else {
+                        return None;
+                    };
+                    if i < current_len - 1 {
+                        entries.swap(i, current_len - 1);
+                    }
+                    *len -= 1;
+                    Some(removed.1)
+                } else {
+                    None
+                }
+            }
+            PropertyStorage::Map(map) => map.remove(key),
+        }
+    }
+
+    /// Clear all properties.
+    #[inline]
+    pub fn clear(&mut self) {
+        match self {
+            PropertyStorage::Inline { len, entries } => {
+                // Reset entries to avoid holding references
+                for entry in entries.get_mut(..(*len as usize)).unwrap_or_default() {
+                    *entry = (PropertyKey::Index(0), Property::data(JsValue::Undefined));
+                }
+                *len = 0;
+            }
+            PropertyStorage::Map(map) => map.clear(),
+        }
+    }
+
+    /// Get the number of properties.
+    #[inline]
+    pub fn len(&self) -> usize {
+        match self {
+            PropertyStorage::Inline { len, .. } => *len as usize,
+            PropertyStorage::Map(map) => map.len(),
+        }
+    }
+
+    /// Check if empty.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Iterate over all (key, value) pairs.
+    pub fn iter(&self) -> PropertyStorageIter<'_> {
+        match self {
+            PropertyStorage::Inline { len, entries } => {
+                PropertyStorageIter::Inline { entries, index: 0, len: *len as usize }
+            }
+            PropertyStorage::Map(map) => {
+                PropertyStorageIter::Map(map.iter())
+            }
+        }
+    }
+
+    /// Iterate over all (key, value) pairs mutably.
+    pub fn iter_mut(&mut self) -> PropertyStorageIterMut<'_> {
+        match self {
+            PropertyStorage::Inline { len, entries } => {
+                let len = *len as usize;
+                PropertyStorageIterMut::Inline {
+                    entries: entries.get_mut(..len).unwrap_or_default(),
+                }
+            }
+            PropertyStorage::Map(map) => {
+                PropertyStorageIterMut::Map(map.iter_mut())
+            }
+        }
+    }
+
+    /// Iterate over all keys.
+    pub fn keys(&self) -> impl Iterator<Item = &PropertyKey> {
+        self.iter().map(|(k, _)| k)
+    }
+
+    /// Iterate over all values.
+    pub fn values(&self) -> impl Iterator<Item = &Property> {
+        self.iter().map(|(_, v)| v)
+    }
+}
+
+/// Iterator over PropertyStorage entries.
+pub enum PropertyStorageIter<'a> {
+    Inline {
+        entries: &'a [(PropertyKey, Property); INLINE_PROPERTY_CAPACITY],
+        index: usize,
+        len: usize,
+    },
+    Map(std::collections::hash_map::Iter<'a, PropertyKey, Property>),
+}
+
+impl<'a> Iterator for PropertyStorageIter<'a> {
+    type Item = (&'a PropertyKey, &'a Property);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            PropertyStorageIter::Inline { entries, index, len } => {
+                if *index < *len {
+                    let i = *index;
+                    *index += 1;
+                    entries.get(i).map(|e| (&e.0, &e.1))
+                } else {
+                    None
+                }
+            }
+            PropertyStorageIter::Map(iter) => iter.next(),
+        }
+    }
+}
+
+/// Mutable iterator over PropertyStorage entries.
+pub enum PropertyStorageIterMut<'a> {
+    Inline {
+        entries: &'a mut [(PropertyKey, Property)],
+    },
+    Map(std::collections::hash_map::IterMut<'a, PropertyKey, Property>),
+}
+
+impl<'a> Iterator for PropertyStorageIterMut<'a> {
+    type Item = (&'a PropertyKey, &'a mut Property);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            PropertyStorageIterMut::Inline { entries } => {
+                // Take the slice and split off the first element
+                if entries.is_empty() {
+                    None
+                } else {
+                    // Split the slice: take first element, keep the rest
+                    let (first, rest) = std::mem::take(entries).split_at_mut(1);
+                    *entries = rest;
+                    first.first_mut().map(|e| (&e.0, &mut e.1))
+                }
+            }
+            PropertyStorageIterMut::Map(iter) => iter.next(),
         }
     }
 }

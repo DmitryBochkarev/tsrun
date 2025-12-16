@@ -1330,3 +1330,32 @@ fn test_nested_for_loop_environments_collected() {
         overhead
     );
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Size checks for memory optimization
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_type_sizes() {
+    use std::mem::size_of;
+    use typescript_eval::value::{JsObject, JsValue, Property, PropertyKey, PropertyStorage};
+
+    // Print sizes for debugging/optimization
+    println!("JsValue: {} bytes", size_of::<JsValue>());
+    println!("PropertyKey: {} bytes", size_of::<PropertyKey>());
+    println!("Property: {} bytes", size_of::<Property>());
+    println!("PropertyStorage: {} bytes", size_of::<PropertyStorage>());
+    println!("JsObject: {} bytes", size_of::<JsObject>());
+    println!(
+        "(PropertyKey, Property) entry: {} bytes",
+        size_of::<(PropertyKey, Property)>()
+    );
+
+    // Sanity checks - these should be relatively small
+    // JsValue is 32 bytes due to JsSymbol containing Option<String>
+    assert!(size_of::<JsValue>() <= 32, "JsValue too large");
+    assert!(size_of::<PropertyKey>() <= 32, "PropertyKey too large");
+    assert!(size_of::<Property>() <= 48, "Property too large");
+    // PropertyStorage uses inline storage for small objects (4 entries × 80 bytes + overhead)
+    assert!(size_of::<PropertyStorage>() <= 400, "PropertyStorage too large");
+}
