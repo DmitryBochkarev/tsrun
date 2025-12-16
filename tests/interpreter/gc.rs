@@ -1246,3 +1246,87 @@ fn test_loop_environments_collected() {
         overhead
     );
 }
+
+#[test]
+fn test_for_loop_object_bindings_collected() {
+    // Test that objects assigned to loop bindings are collected after each iteration
+    let baseline = get_baseline_live_count();
+
+    let source = r#"
+        let sum = 0;
+        for (let i = 0; i < 500; i++) {
+            // Each iteration creates these objects in loop-scoped bindings
+            const obj1 = { a: 1, b: 2, c: 3 };
+            const obj2 = { x: i, y: i * 2 };
+            const arr = [1, 2, 3, 4, 5];
+            sum = sum + obj1.a + obj2.x + arr[0];
+        }
+        sum
+    "#;
+
+    let (result, stats) = eval_with_gc_stats(source);
+
+    println!("Result: {:?}", result);
+    println!(
+        "Baseline: {}, After test: total={}, pooled={}, live={}",
+        baseline, stats.total_objects, stats.pooled_objects, stats.live_objects
+    );
+
+    // Verify computation is correct
+    // sum = 500 * 1 (obj1.a) + (0+1+...+499) (obj2.x) + 500 * 1 (arr[0])
+    // = 500 + 499*500/2 + 500 = 500 + 124750 + 500 = 125750
+    assert_eq!(result, JsValue::Number(125750.0));
+
+    // If objects weren't collected, we'd have 500 * 3 = 1500+ extra objects
+    // Allow some overhead but not a full leak
+    let overhead = stats.live_objects.saturating_sub(baseline);
+    assert!(
+        overhead < 100,
+        "Too many live objects: {} over baseline (objects in loop bindings may be leaking)",
+        overhead
+    );
+}
+
+#[test]
+fn test_nested_for_loop_environments_collected() {
+    // Test that nested loop environments are properly collected
+    let baseline = get_baseline_live_count();
+
+    let source = r#"
+        let total = 0;
+        for (let i = 0; i < 50; i++) {
+            const outer_obj = { id: i };
+            for (let j = 0; j < 20; j++) {
+                const inner_obj = { value: j };
+                total = total + outer_obj.id + inner_obj.value;
+            }
+        }
+        total
+    "#;
+
+    let (result, stats) = eval_with_gc_stats(source);
+
+    println!("Result: {:?}", result);
+    println!(
+        "Baseline: {}, After test: total={}, pooled={}, live={}",
+        baseline, stats.total_objects, stats.pooled_objects, stats.live_objects
+    );
+
+    // Verify computation
+    // outer_obj.id contribution: 50 * 20 * (0+1+...+49)/50 = 1000 * 24.5 = doesn't matter
+    // Let's just verify it ran correctly
+    // total = sum over i,j of (i + j)
+    // = 50 * sum(j=0 to 19) + 20 * sum(i=0 to 49)
+    // = 50 * 190 + 20 * 1225 = 9500 + 24500 = 34000
+    assert_eq!(result, JsValue::Number(34000.0));
+
+    // 50 outer iterations * 20 inner = 1000 inner environments
+    // Plus 50 outer environments = 1050 environments total
+    // If not collected, we'd have 1050+ extra objects
+    let overhead = stats.live_objects.saturating_sub(baseline);
+    assert!(
+        overhead < 100,
+        "Too many live objects: {} over baseline (nested loop environments may be leaking)",
+        overhead
+    );
+}
