@@ -1526,6 +1526,168 @@ fn test_try_catch_in_loop() {
     );
 }
 
+// Debug tests to isolate the try-catch-in-loop issue
+#[test]
+fn test_for_with_try_no_throw() {
+    // Simplest case: for loop with try that doesn't throw
+    assert_eq!(
+        eval(
+            r#"
+            let count: number = 0;
+            for (let i: number = 0; i < 3; i = i + 1) {
+                try {
+                    count = count + 1;
+                } catch (e: any) {
+                }
+            }
+            count
+        "#
+        ),
+        JsValue::Number(3.0)
+    );
+}
+
+#[test]
+fn test_for_with_try_always_throw() {
+    // For loop with try that always throws
+    assert_eq!(
+        eval(
+            r#"
+            let count: number = 0;
+            for (let i: number = 0; i < 3; i = i + 1) {
+                try {
+                    throw "error";
+                } catch (e: any) {
+                    count = count + 1;
+                }
+            }
+            count
+        "#
+        ),
+        JsValue::Number(3.0)
+    );
+}
+
+#[test]
+fn test_for_with_throw_no_let() {
+    // For loop without let (using var instead) to isolate per-iteration binding
+    assert_eq!(
+        eval(
+            r#"
+            let count: number = 0;
+            for (var i: number = 0; i < 3; i = i + 1) {
+                try {
+                    throw "error";
+                } catch (e: any) {
+                    count = count + 1;
+                }
+            }
+            count
+        "#
+        ),
+        JsValue::Number(3.0)
+    );
+}
+
+#[test]
+fn test_for_simple_throw_let() {
+    // Minimal for loop with let that throws
+    assert_eq!(
+        eval(
+            r#"
+            let count: number = 0;
+            for (let i: number = 0; i < 2; i = i + 1) {
+                try { throw 1; } catch (e: any) { count = count + 1; }
+            }
+            count
+        "#
+        ),
+        JsValue::Number(2.0)
+    );
+}
+
+#[test]
+fn test_for_iter_count_let() {
+    // Check that iteration happens correct number of times
+    assert_eq!(
+        eval(
+            r#"
+            let iterations: number = 0;
+            for (let i: number = 0; i < 3; i = i + 1) {
+                iterations = iterations + 1;
+            }
+            iterations
+        "#
+        ),
+        JsValue::Number(3.0)
+    );
+}
+
+#[test]
+fn test_for_iter_with_block_let() {
+    // For loop with block containing multiple statements
+    assert_eq!(
+        eval(
+            r#"
+            let a: number = 0;
+            let b: number = 0;
+            for (let i: number = 0; i < 2; i = i + 1) {
+                a = a + 1;
+                b = b + 10;
+            }
+            a + b
+        "#
+        ),
+        JsValue::Number(22.0) // a=2, b=20
+    );
+}
+
+#[test]
+fn test_for_let_with_throw_in_body() {
+    // For loop with let and try-catch that throws in body
+    assert_eq!(
+        eval(
+            r#"
+            let last_i: number = -1;
+            let count: number = 0;
+            for (let i: number = 0; i < 3; i = i + 1) {
+                last_i = i;
+                try {
+                    throw "error";
+                } catch (e: any) {
+                    count = count + 1;
+                }
+            }
+            last_i + "," + count
+        "#
+        ),
+        JsValue::from("2,3")
+    );
+}
+
+#[test]
+fn test_for_with_if_throw() {
+    // For loop with if that throws conditionally
+    assert_eq!(
+        eval(
+            r#"
+            let thrown: number = 0;
+            for (let i: number = 0; i < 3; i = i + 1) {
+                try {
+                    if (i % 2 === 0) {
+                        throw "error";
+                    }
+                } catch (e: any) {
+                    thrown = thrown + 1;
+                }
+            }
+            thrown
+        "#
+        ),
+        JsValue::Number(2.0) // i=0, i=2 throw
+    );
+}
+
 #[test]
 fn test_loop_in_try_catch() {
     assert_eq!(

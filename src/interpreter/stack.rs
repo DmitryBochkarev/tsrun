@@ -4,15 +4,17 @@
 //! at await points and resume later with a value.
 
 use crate::ast::{
-    BinaryOp, Expression, LiteralValue, LogicalOp, Pattern, Program, Statement, UnaryOp,
-    VariableDeclarator, VariableKind,
+    BinaryOp, Expression, ForInit, ForStatement, LiteralValue, LogicalOp, Pattern, Program,
+    Statement, UnaryOp, VariableDeclarator, VariableKind,
 };
 use crate::error::JsError;
 use crate::gc::Gc;
-use crate::value::{CheapClone, ExoticObject, Guarded, JsObject, JsString, JsValue, PromiseStatus};
+use crate::value::{
+    Binding, CheapClone, ExoticObject, Guarded, JsObject, JsString, JsValue, PromiseStatus,
+};
 use std::rc::Rc;
 
-use super::{Completion, Interpreter};
+use super::{create_environment_with_guard, Completion, Interpreter};
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Stack Types
@@ -115,10 +117,7 @@ pub enum Frame {
     },
 
     /// Bind variable after init expression evaluated
-    VarBind {
-        pattern: Rc<Pattern>,
-        mutable: bool,
-    },
+    VarBind { pattern: Rc<Pattern>, mutable: bool },
 
     // ═══════════════════════════════════════════════════════════════════════
     // Control Flow
@@ -162,6 +161,50 @@ pub enum Frame {
         test: Rc<Expression>,
         body: Rc<Statement>,
         label: Option<JsString>,
+    },
+
+    /// For loop: full state for iteration
+    ForLoop {
+        test: Option<Rc<Expression>>,
+        update: Option<Rc<Expression>>,
+        body: Rc<Statement>,
+        label: Option<JsString>,
+        /// Variables for per-iteration binding (name, mutable)
+        loop_vars: Rc<Vec<(JsString, bool)>>,
+        /// Saved environment to restore after loop
+        saved_env: Gc<JsObject>,
+    },
+
+    /// For loop test check: condition evaluated, decide to continue or exit
+    ForTestCheck {
+        test: Option<Rc<Expression>>,
+        update: Option<Rc<Expression>>,
+        body: Rc<Statement>,
+        label: Option<JsString>,
+        loop_vars: Rc<Vec<(JsString, bool)>>,
+        saved_env: Gc<JsObject>,
+    },
+
+    /// For loop after body: handle control flow, create per-iteration env, run update
+    ForAfterBody {
+        test: Option<Rc<Expression>>,
+        update: Option<Rc<Expression>>,
+        body: Rc<Statement>,
+        label: Option<JsString>,
+        loop_vars: Rc<Vec<(JsString, bool)>>,
+        saved_env: Gc<JsObject>,
+    },
+
+    /// For loop cleanup: restore environment after loop exits
+    ForCleanup { saved_env: Gc<JsObject> },
+
+    /// Discard expression result (for init expressions, update expressions)
+    DiscardValue,
+
+    /// Push scope before for loop body
+    PushScope {
+        /// Continuation frame to push after scope is created
+        next: Box<Frame>,
     },
 }
 
@@ -418,6 +461,51 @@ impl Interpreter {
             Frame::DoWhileTestCheck { test, body, label } => {
                 self.step_do_while_test_check(state, test, body, label)
             }
+
+            Frame::ForLoop {
+                test,
+                update,
+                body,
+                label,
+                loop_vars,
+                saved_env,
+            } => self.step_for_loop(state, test, update, body, label, loop_vars, saved_env),
+
+            Frame::ForTestCheck {
+                test,
+                update,
+                body,
+                label,
+                loop_vars,
+                saved_env,
+            } => self.step_for_test_check(state, test, update, body, label, loop_vars, saved_env),
+
+            Frame::ForAfterBody {
+                test,
+                update,
+                body,
+                label,
+                loop_vars,
+                saved_env,
+            } => self.step_for_after_body(state, test, update, body, label, loop_vars, saved_env),
+
+            Frame::ForCleanup { saved_env } => {
+                self.pop_scope(saved_env);
+                state.push_value(Guarded::unguarded(JsValue::Undefined));
+                StepResult::Continue
+            }
+
+            Frame::DiscardValue => {
+                // Pop and discard the value
+                let _ = state.pop_value();
+                StepResult::Continue
+            }
+
+            Frame::PushScope { next } => {
+                let _saved = self.push_scope();
+                state.push_frame(*next);
+                StepResult::Continue
+            }
         }
     }
 
@@ -612,6 +700,8 @@ impl Interpreter {
                 });
                 StepResult::Continue
             }
+
+            Statement::For(for_stmt) => self.setup_for_loop(state, for_stmt, None),
 
             // For complex statements, delegate to recursive execution
             _ => match self.execute_statement(stmt) {
@@ -1018,7 +1108,9 @@ impl Interpreter {
         let Guarded {
             value: init_value,
             guard: _init_guard,
-        } = state.pop_value().unwrap_or(Guarded::unguarded(JsValue::Undefined));
+        } = state
+            .pop_value()
+            .unwrap_or(Guarded::unguarded(JsValue::Undefined));
 
         // bind_pattern calls env_define which establishes ownership
         match self.bind_pattern(pattern, init_value, mutable) {
@@ -1078,11 +1170,7 @@ impl Interpreter {
                 if cont_label.is_none() || cont_label.as_ref() == label.as_ref() {
                     state.completion = StackCompletion::Normal;
                     // Continue to next iteration - don't check condition value, restart loop
-                    state.push_frame(Frame::WhileLoop {
-                        test,
-                        body,
-                        label,
-                    });
+                    state.push_frame(Frame::WhileLoop { test, body, label });
                     return StepResult::Continue;
                 }
                 // Continue targets outer loop - propagate
@@ -1157,7 +1245,11 @@ impl Interpreter {
 
         // We need to evaluate the test expression and then check it
         // Push frame to check result after test is evaluated
-        state.push_frame(Frame::DoWhileTestCheck { test: test.clone(), body, label });
+        state.push_frame(Frame::DoWhileTestCheck {
+            test: test.clone(),
+            body,
+            label,
+        });
         state.push_frame(Frame::Expr(test));
         StepResult::Continue
     }
@@ -1177,11 +1269,286 @@ impl Interpreter {
 
         if condition.to_boolean() {
             // Continue loop - execute body, then check condition again
-            state.push_frame(Frame::DoWhileLoop { test, body: body.clone(), label });
+            state.push_frame(Frame::DoWhileLoop {
+                test,
+                body: body.clone(),
+                label,
+            });
         } else {
             // Exit loop
             state.push_value(Guarded::unguarded(JsValue::Undefined));
         }
+        StepResult::Continue
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // For Loop
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    /// Set up a for loop - handle var hoisting, create scope, setup init
+    fn setup_for_loop(
+        &mut self,
+        state: &mut ExecutionState,
+        for_stmt: &ForStatement,
+        label: Option<JsString>,
+    ) -> StepResult {
+        // Handle var declarations BEFORE creating loop scope (var is function-scoped)
+        let has_var_init =
+            matches!(&for_stmt.init, Some(ForInit::Variable(d)) if d.kind == VariableKind::Var);
+
+        if has_var_init {
+            if let Some(ForInit::Variable(decl)) = &for_stmt.init {
+                if let Err(e) = self.execute_variable_declaration(decl) {
+                    return StepResult::Error(e);
+                }
+            }
+        }
+
+        // Create loop scope
+        let saved_env = self.push_scope();
+
+        // Extract loop variable names for let/const (for per-iteration binding)
+        let loop_vars: Vec<(JsString, bool)> = match &for_stmt.init {
+            Some(ForInit::Variable(decl)) if decl.kind != VariableKind::Var => {
+                let mutable = decl.kind == VariableKind::Let;
+                decl.declarations
+                    .iter()
+                    .filter_map(|d| {
+                        if let Pattern::Identifier(id) = &d.id {
+                            Some((JsString::from(id.name.as_str()), mutable))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
+            }
+            _ => vec![],
+        };
+
+        let test = for_stmt.test.as_ref().map(|t| Rc::new(t.clone()));
+        let update = for_stmt.update.as_ref().map(|u| Rc::new(u.clone()));
+        let body = Rc::new((*for_stmt.body).clone());
+        let loop_vars = Rc::new(loop_vars);
+
+        // Push cleanup frame (will be executed when loop exits)
+        state.push_frame(Frame::ForCleanup {
+            saved_env: saved_env.clone(),
+        });
+
+        // Push the main loop frame (will start after init)
+        state.push_frame(Frame::ForLoop {
+            test,
+            update,
+            body,
+            label,
+            loop_vars: loop_vars.clone(),
+            saved_env: saved_env.clone(),
+        });
+
+        // Handle init
+        match &for_stmt.init {
+            Some(ForInit::Variable(decl)) if decl.kind != VariableKind::Var => {
+                // let/const - execute in loop scope
+                state.push_frame(Frame::VarDecl {
+                    declarators: Rc::new(decl.declarations.clone()),
+                    index: 0,
+                    mutable: decl.kind == VariableKind::Let,
+                });
+            }
+            Some(ForInit::Expression(expr)) => {
+                // Expression init - discard result
+                state.push_frame(Frame::DiscardValue);
+                state.push_frame(Frame::Expr(Rc::new(expr.clone())));
+            }
+            _ => {
+                // No init or var already handled
+            }
+        }
+
+        StepResult::Continue
+    }
+
+    /// Step for ForLoop - set up test evaluation and per-iteration environment
+    fn step_for_loop(
+        &mut self,
+        state: &mut ExecutionState,
+        test: Option<Rc<Expression>>,
+        update: Option<Rc<Expression>>,
+        body: Rc<Statement>,
+        label: Option<JsString>,
+        loop_vars: Rc<Vec<(JsString, bool)>>,
+        saved_env: Gc<JsObject>,
+    ) -> StepResult {
+        // Create per-iteration environment if needed
+        if !loop_vars.is_empty() {
+            let iter_env = create_environment_with_guard(&self.root_guard, Some(saved_env.clone()));
+            for (name, mutable) in loop_vars.iter() {
+                let value = match self.env_get(name) {
+                    Ok(v) => v,
+                    Err(e) => return StepResult::Error(e),
+                };
+                let mut env_ref = iter_env.borrow_mut();
+                if let Some(data) = env_ref.as_environment_mut() {
+                    data.bindings.insert(
+                        name.cheap_clone(),
+                        Binding {
+                            value,
+                            mutable: *mutable,
+                            initialized: true,
+                        },
+                    );
+                }
+            }
+            self.env = iter_env;
+        }
+
+        // Set up test check frame
+        state.push_frame(Frame::ForTestCheck {
+            test: test.clone(),
+            update,
+            body,
+            label,
+            loop_vars,
+            saved_env,
+        });
+
+        // Evaluate test if present
+        if let Some(test_expr) = test {
+            state.push_frame(Frame::Expr(test_expr));
+        } else {
+            // No test means always true
+            state.push_value(Guarded::unguarded(JsValue::Boolean(true)));
+        }
+
+        StepResult::Continue
+    }
+
+    /// Step for ForTestCheck - condition evaluated, decide to continue or exit
+    fn step_for_test_check(
+        &mut self,
+        state: &mut ExecutionState,
+        test: Option<Rc<Expression>>,
+        update: Option<Rc<Expression>>,
+        body: Rc<Statement>,
+        label: Option<JsString>,
+        loop_vars: Rc<Vec<(JsString, bool)>>,
+        saved_env: Gc<JsObject>,
+    ) -> StepResult {
+        let condition = state
+            .pop_value()
+            .map(|v| v.value)
+            .unwrap_or(JsValue::Boolean(true));
+
+        if !condition.to_boolean() {
+            // Exit loop - cleanup frame already on stack
+            state.push_value(Guarded::unguarded(JsValue::Undefined));
+            return StepResult::Continue;
+        }
+
+        // Continue loop - execute body, then handle post-body
+        state.push_frame(Frame::ForAfterBody {
+            test,
+            update,
+            body: body.clone(),
+            label,
+            loop_vars,
+            saved_env,
+        });
+        state.push_frame(Frame::Stmt(body));
+
+        StepResult::Continue
+    }
+
+    /// Step for ForAfterBody - handle control flow, per-iteration env, update
+    fn step_for_after_body(
+        &mut self,
+        state: &mut ExecutionState,
+        test: Option<Rc<Expression>>,
+        update: Option<Rc<Expression>>,
+        body: Rc<Statement>,
+        label: Option<JsString>,
+        loop_vars: Rc<Vec<(JsString, bool)>>,
+        saved_env: Gc<JsObject>,
+    ) -> StepResult {
+        // Check for control flow from body
+        match &state.completion {
+            StackCompletion::Break(brk_label) => {
+                if brk_label.is_none() || brk_label.as_ref() == label.as_ref() {
+                    state.completion = StackCompletion::Normal;
+                    // Exit loop - cleanup will happen
+                    state.push_value(Guarded::unguarded(JsValue::Undefined));
+                    return StepResult::Continue;
+                }
+                // Break targets outer loop - propagate
+                return StepResult::Continue;
+            }
+            StackCompletion::Continue(cont_label) => {
+                if cont_label.is_none() || cont_label.as_ref() == label.as_ref() {
+                    state.completion = StackCompletion::Normal;
+                    // Continue to update phase (fall through)
+                } else {
+                    // Continue targets outer loop - propagate
+                    return StepResult::Continue;
+                }
+            }
+            StackCompletion::Return | StackCompletion::Throw => {
+                // Return/throw - propagate up (cleanup will happen)
+                return StepResult::Continue;
+            }
+            StackCompletion::Normal => {}
+        }
+
+        // Pop body result
+        let _ = state.pop_value();
+
+        // Create new per-iteration environment BEFORE update (ES spec)
+        if !loop_vars.is_empty() {
+            let current_env = self.env.clone();
+            let new_iter_env =
+                create_environment_with_guard(&self.root_guard, Some(saved_env.clone()));
+            for (name, mutable) in loop_vars.iter() {
+                let value = {
+                    let env_ref = current_env.borrow();
+                    if let Some(data) = env_ref.as_environment() {
+                        data.bindings
+                            .get(name)
+                            .map(|b| b.value.clone())
+                            .unwrap_or(JsValue::Undefined)
+                    } else {
+                        JsValue::Undefined
+                    }
+                };
+                let mut env_ref = new_iter_env.borrow_mut();
+                if let Some(data) = env_ref.as_environment_mut() {
+                    data.bindings.insert(
+                        name.cheap_clone(),
+                        Binding {
+                            value,
+                            mutable: *mutable,
+                            initialized: true,
+                        },
+                    );
+                }
+            }
+            self.env = new_iter_env;
+        }
+
+        // Push next iteration
+        state.push_frame(Frame::ForLoop {
+            test,
+            update: update.clone(),
+            body,
+            label,
+            loop_vars,
+            saved_env,
+        });
+
+        // Execute update if present
+        if let Some(upd) = update {
+            state.push_frame(Frame::DiscardValue);
+            state.push_frame(Frame::Expr(upd));
+        }
+
         StepResult::Continue
     }
 }

@@ -1660,6 +1660,11 @@ impl Interpreter {
     }
 
     fn execute_try(&mut self, try_stmt: &TryStatement) -> Result<Completion, JsError> {
+        // Save environment BEFORE executing try block
+        // This is important because execute_block pushes a scope that may not be
+        // popped if an exception is thrown (the ? operator short-circuits)
+        let saved_env = self.env.clone();
+
         let result = self.execute_block(&try_stmt.block);
 
         match result {
@@ -1671,6 +1676,10 @@ impl Interpreter {
                 Ok(completion)
             }
             Err(err) => {
+                // Restore environment to state before try block
+                // (execute_block may have left us in a nested scope if it threw)
+                self.env = saved_env.clone();
+
                 if let Some(ref handler) = try_stmt.handler {
                     // Get the error value
                     let error_value = match &err {
@@ -1680,9 +1689,8 @@ impl Interpreter {
                     };
 
                     // Create catch scope
-                    let prev_env = self.env.clone();
                     let catch_env =
-                        create_environment_with_guard(&self.root_guard, Some(prev_env.clone()));
+                        create_environment_with_guard(&self.root_guard, Some(saved_env.clone()));
                     self.env = catch_env;
 
                     // Bind error parameter if present
@@ -1691,7 +1699,7 @@ impl Interpreter {
                     }
 
                     let catch_result = self.execute_block(&handler.body);
-                    self.env = prev_env;
+                    self.env = saved_env;
 
                     // Run finalizer if present
                     if let Some(ref finalizer) = try_stmt.finalizer {
