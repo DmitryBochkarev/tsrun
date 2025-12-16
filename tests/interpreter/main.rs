@@ -25,7 +25,7 @@ mod date;
 mod error;
 // mod exports;
 mod function;
-// mod gc;
+mod gc;
 // mod generator;
 mod global;
 mod json;

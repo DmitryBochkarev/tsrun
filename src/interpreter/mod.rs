@@ -2034,8 +2034,10 @@ impl Interpreter {
 
         // Collect getters, setters, and regular methods separately
         #[allow(clippy::type_complexity)]
-        let mut accessors: FxHashMap<JsString, (Option<Gc<JsObject>>, Option<Gc<JsObject>>)> =
-            FxHashMap::default();
+        let mut accessors: FxHashMap<
+            JsString,
+            (Option<Gc<JsObject>>, Option<Gc<JsObject>>),
+        > = FxHashMap::default();
         let mut regular_methods: Vec<(JsString, Gc<JsObject>)> = Vec::new();
 
         for method in &instance_methods {
@@ -3833,8 +3835,11 @@ impl Interpreter {
                                 let Guarded {
                                     value: getter_val,
                                     guard: getter_guard,
-                                } =
-                                    self.call_function(JsValue::Object(getter.clone()), obj.clone(), &[])?;
+                                } = self.call_function(
+                                    JsValue::Object(getter.clone()),
+                                    obj.clone(),
+                                    &[],
+                                )?;
                                 (getter_val, getter_guard)
                             } else {
                                 (JsValue::Undefined, None)

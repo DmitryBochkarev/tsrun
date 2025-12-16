@@ -21,8 +21,7 @@ pub mod string_dict;
 pub mod value;
 
 pub use error::JsError;
-pub use gc::{Gc, Guard, Heap, Reset};
-pub use interpreter::GcStats;
+pub use gc::{Gc, GcStats, Guard, Heap, Reset};
 pub use interpreter::Interpreter;
 pub use string_dict::StringDict;
 pub use value::CheapClone;
@@ -321,6 +320,11 @@ impl Runtime {
     /// Force a garbage collection cycle
     pub fn collect(&self) {
         self.interpreter.heap.collect();
+    }
+
+    /// Get GC statistics
+    pub fn gc_stats(&self) -> gc::GcStats {
+        self.interpreter.heap.stats()
     }
 }
 
