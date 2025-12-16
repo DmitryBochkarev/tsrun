@@ -4,8 +4,9 @@
 //! at await points and resume later with a value.
 
 use crate::ast::{
-    BinaryOp, Expression, ForInit, ForStatement, LiteralValue, LogicalOp, Pattern, Program,
-    Statement, UnaryOp, VariableDeclarator, VariableKind,
+    BinaryOp, Expression, ForInOfLeft, ForInStatement, ForInit, ForOfStatement, ForStatement,
+    LiteralValue, LogicalOp, Pattern, Program, Statement, UnaryOp, VariableDeclarator,
+    VariableKind,
 };
 use crate::error::JsError;
 use crate::gc::Gc;
@@ -197,6 +198,58 @@ pub enum Frame {
 
     /// For loop cleanup: restore environment after loop exits
     ForCleanup { saved_env: Gc<JsObject> },
+
+    /// For-in loop: iterate over object keys
+    ForInLoop {
+        /// Keys to iterate over
+        keys: Rc<Vec<String>>,
+        /// Current index in keys
+        index: usize,
+        /// Left-hand side binding
+        left: Rc<ForInOfLeft>,
+        /// Loop body
+        body: Rc<Statement>,
+        /// Optional label
+        label: Option<JsString>,
+        /// Saved environment to restore after loop
+        saved_env: Gc<JsObject>,
+    },
+
+    /// For-in iteration: after body, proceed to next key
+    ForInAfterBody {
+        keys: Rc<Vec<String>>,
+        index: usize,
+        left: Rc<ForInOfLeft>,
+        body: Rc<Statement>,
+        label: Option<JsString>,
+        saved_env: Gc<JsObject>,
+    },
+
+    /// For-of loop: iterate over iterable values
+    ForOfLoop {
+        /// Items to iterate over
+        items: Rc<Vec<JsValue>>,
+        /// Current index in items
+        index: usize,
+        /// Left-hand side binding
+        left: Rc<ForInOfLeft>,
+        /// Loop body
+        body: Rc<Statement>,
+        /// Optional label
+        label: Option<JsString>,
+        /// Saved environment to restore after loop
+        saved_env: Gc<JsObject>,
+    },
+
+    /// For-of iteration: after body, proceed to next item
+    ForOfAfterBody {
+        items: Rc<Vec<JsValue>>,
+        index: usize,
+        left: Rc<ForInOfLeft>,
+        body: Rc<Statement>,
+        label: Option<JsString>,
+        saved_env: Gc<JsObject>,
+    },
 
     /// Discard expression result (for init expressions, update expressions)
     DiscardValue,
@@ -495,6 +548,42 @@ impl Interpreter {
                 StepResult::Continue
             }
 
+            Frame::ForInLoop {
+                keys,
+                index,
+                left,
+                body,
+                label,
+                saved_env,
+            } => self.step_for_in_loop(state, keys, index, left, body, label, saved_env),
+
+            Frame::ForInAfterBody {
+                keys,
+                index,
+                left,
+                body,
+                label,
+                saved_env,
+            } => self.step_for_in_after_body(state, keys, index, left, body, label, saved_env),
+
+            Frame::ForOfLoop {
+                items,
+                index,
+                left,
+                body,
+                label,
+                saved_env,
+            } => self.step_for_of_loop(state, items, index, left, body, label, saved_env),
+
+            Frame::ForOfAfterBody {
+                items,
+                index,
+                left,
+                body,
+                label,
+                saved_env,
+            } => self.step_for_of_after_body(state, items, index, left, body, label, saved_env),
+
             Frame::DiscardValue => {
                 // Pop and discard the value
                 let _ = state.pop_value();
@@ -702,6 +791,10 @@ impl Interpreter {
             }
 
             Statement::For(for_stmt) => self.setup_for_loop(state, for_stmt, None),
+
+            Statement::ForIn(for_in) => self.setup_for_in_loop(state, for_in, None),
+
+            Statement::ForOf(for_of) => self.setup_for_of_loop(state, for_of, None),
 
             // For complex statements, delegate to recursive execution
             _ => match self.execute_statement(stmt) {
@@ -1548,6 +1641,380 @@ impl Interpreter {
             state.push_frame(Frame::DiscardValue);
             state.push_frame(Frame::Expr(upd));
         }
+
+        StepResult::Continue
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // For-In Loop Implementation
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    /// Setup for-in loop: evaluate right side, collect keys
+    fn setup_for_in_loop(
+        &mut self,
+        state: &mut ExecutionState,
+        for_in: &ForInStatement,
+        label: Option<JsString>,
+    ) -> StepResult {
+        // Evaluate right side
+        let right = match self.evaluate_expression(&for_in.right) {
+            Ok(guarded) => guarded.value,
+            Err(e) => return StepResult::Error(e),
+        };
+
+        // Collect enumerable keys
+        let keys = match &right {
+            JsValue::Object(obj) => {
+                let obj_ref = obj.borrow();
+                obj_ref
+                    .properties
+                    .iter()
+                    .filter(|(key, prop)| prop.enumerable() && !key.is_symbol())
+                    .map(|(key, _)| key.to_string())
+                    .collect::<Vec<_>>()
+            }
+            _ => vec![],
+        };
+
+        let saved_env = self.env.clone();
+
+        // Push loop frame
+        state.push_frame(Frame::ForInLoop {
+            keys: Rc::new(keys),
+            index: 0,
+            left: Rc::new(for_in.left.clone()),
+            body: Rc::new((*for_in.body).clone()),
+            label,
+            saved_env,
+        });
+
+        StepResult::Continue
+    }
+
+    /// Step for ForInLoop: bind current key and execute body
+    fn step_for_in_loop(
+        &mut self,
+        state: &mut ExecutionState,
+        keys: Rc<Vec<String>>,
+        index: usize,
+        left: Rc<ForInOfLeft>,
+        body: Rc<Statement>,
+        label: Option<JsString>,
+        saved_env: Gc<JsObject>,
+    ) -> StepResult {
+        // Check if we've iterated through all keys
+        if index >= keys.len() {
+            // Loop finished - restore env
+            self.env = saved_env;
+            state.push_value(Guarded::unguarded(JsValue::Undefined));
+            return StepResult::Continue;
+        }
+
+        // Check for timeout
+        if let Err(e) = self.check_timeout() {
+            self.env = saved_env;
+            return StepResult::Error(e);
+        }
+
+        // Get current key
+        let key = match keys.get(index) {
+            Some(k) => k.clone(),
+            None => {
+                self.env = saved_env;
+                state.push_value(Guarded::unguarded(JsValue::Undefined));
+                return StepResult::Continue;
+            }
+        };
+        let key_value = JsValue::String(JsString::from(key));
+
+        // Create per-iteration environment
+        let iter_env = create_environment_with_guard(&self.root_guard, Some(saved_env.clone()));
+        self.env = iter_env;
+
+        // Bind the key to the left-hand side
+        match &*left {
+            ForInOfLeft::Variable(decl) => {
+                let mutable = decl.kind != VariableKind::Const;
+                if let Some(declarator) = decl.declarations.first() {
+                    if let Err(e) = self.bind_pattern(&declarator.id, key_value, mutable) {
+                        self.env = saved_env;
+                        return StepResult::Error(e);
+                    }
+                }
+            }
+            ForInOfLeft::Pattern(pattern) => {
+                if let Err(e) = self.assign_pattern(pattern, key_value) {
+                    self.env = saved_env;
+                    return StepResult::Error(e);
+                }
+            }
+        }
+
+        // Push after-body frame to handle next iteration
+        state.push_frame(Frame::ForInAfterBody {
+            keys,
+            index,
+            left,
+            body: body.clone(),
+            label,
+            saved_env,
+        });
+
+        // Push body statement
+        state.push_frame(Frame::Stmt(body));
+
+        StepResult::Continue
+    }
+
+    /// Step for ForInAfterBody: handle control flow and proceed to next iteration
+    fn step_for_in_after_body(
+        &mut self,
+        state: &mut ExecutionState,
+        keys: Rc<Vec<String>>,
+        index: usize,
+        left: Rc<ForInOfLeft>,
+        body: Rc<Statement>,
+        label: Option<JsString>,
+        saved_env: Gc<JsObject>,
+    ) -> StepResult {
+        // Check completion type
+        match &state.completion {
+            StackCompletion::Break(break_label) => {
+                if break_label.is_none() || break_label.as_ref() == label.as_ref() {
+                    // Break targets this loop
+                    state.completion = StackCompletion::Normal;
+                    self.env = saved_env;
+                    let _ = state.pop_value();
+                    state.push_value(Guarded::unguarded(JsValue::Undefined));
+                    return StepResult::Continue;
+                }
+                // Break targets outer loop - restore env and propagate
+                self.env = saved_env;
+                return StepResult::Continue;
+            }
+            StackCompletion::Continue(cont_label) => {
+                if cont_label.is_none() || cont_label.as_ref() == label.as_ref() {
+                    // Continue targets this loop - proceed to next iteration
+                    state.completion = StackCompletion::Normal;
+                } else {
+                    // Continue targets outer loop - restore env and propagate
+                    self.env = saved_env;
+                    return StepResult::Continue;
+                }
+            }
+            StackCompletion::Return | StackCompletion::Throw => {
+                // Return/throw - restore env and propagate
+                self.env = saved_env;
+                return StepResult::Continue;
+            }
+            StackCompletion::Normal => {}
+        }
+
+        // Pop body result
+        let _ = state.pop_value();
+
+        // Push next iteration
+        state.push_frame(Frame::ForInLoop {
+            keys,
+            index: index + 1,
+            left,
+            body,
+            label,
+            saved_env,
+        });
+
+        StepResult::Continue
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // For-Of Loop Implementation
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    /// Setup for-of loop: evaluate right side, collect items
+    fn setup_for_of_loop(
+        &mut self,
+        state: &mut ExecutionState,
+        for_of: &ForOfStatement,
+        label: Option<JsString>,
+    ) -> StepResult {
+        // Evaluate right side
+        let right = match self.evaluate_expression(&for_of.right) {
+            Ok(guarded) => guarded.value,
+            Err(e) => return StepResult::Error(e),
+        };
+
+        // Collect items to iterate over
+        let items = match &right {
+            JsValue::Object(obj) => {
+                let obj_ref = obj.borrow();
+                match &obj_ref.exotic {
+                    ExoticObject::Array { length } => {
+                        let mut items = Vec::with_capacity(*length as usize);
+                        for i in 0..*length {
+                            items.push(
+                                obj_ref
+                                    .get_property(&crate::value::PropertyKey::Index(i))
+                                    .unwrap_or(JsValue::Undefined),
+                            );
+                        }
+                        items
+                    }
+                    _ => vec![],
+                }
+            }
+            JsValue::String(s) => s
+                .as_str()
+                .chars()
+                .map(|c| JsValue::from(c.to_string()))
+                .collect(),
+            _ => vec![],
+        };
+
+        let saved_env = self.env.clone();
+
+        // Push loop frame
+        state.push_frame(Frame::ForOfLoop {
+            items: Rc::new(items),
+            index: 0,
+            left: Rc::new(for_of.left.clone()),
+            body: Rc::new((*for_of.body).clone()),
+            label,
+            saved_env,
+        });
+
+        StepResult::Continue
+    }
+
+    /// Step for ForOfLoop: bind current item and execute body
+    fn step_for_of_loop(
+        &mut self,
+        state: &mut ExecutionState,
+        items: Rc<Vec<JsValue>>,
+        index: usize,
+        left: Rc<ForInOfLeft>,
+        body: Rc<Statement>,
+        label: Option<JsString>,
+        saved_env: Gc<JsObject>,
+    ) -> StepResult {
+        // Check if we've iterated through all items
+        if index >= items.len() {
+            // Loop finished - restore env
+            self.env = saved_env;
+            state.push_value(Guarded::unguarded(JsValue::Undefined));
+            return StepResult::Continue;
+        }
+
+        // Check for timeout
+        if let Err(e) = self.check_timeout() {
+            self.env = saved_env;
+            return StepResult::Error(e);
+        }
+
+        // Get current item
+        let item = match items.get(index) {
+            Some(i) => i.clone(),
+            None => {
+                self.env = saved_env;
+                state.push_value(Guarded::unguarded(JsValue::Undefined));
+                return StepResult::Continue;
+            }
+        };
+
+        // Create per-iteration environment
+        let iter_env = create_environment_with_guard(&self.root_guard, Some(saved_env.clone()));
+        self.env = iter_env;
+
+        // Bind the item to the left-hand side
+        match &*left {
+            ForInOfLeft::Variable(decl) => {
+                let mutable = decl.kind != VariableKind::Const;
+                if let Some(declarator) = decl.declarations.first() {
+                    if let Err(e) = self.bind_pattern(&declarator.id, item, mutable) {
+                        self.env = saved_env;
+                        return StepResult::Error(e);
+                    }
+                }
+            }
+            ForInOfLeft::Pattern(pattern) => {
+                if let Err(e) = self.assign_pattern(pattern, item) {
+                    self.env = saved_env;
+                    return StepResult::Error(e);
+                }
+            }
+        }
+
+        // Push after-body frame to handle next iteration
+        state.push_frame(Frame::ForOfAfterBody {
+            items,
+            index,
+            left,
+            body: body.clone(),
+            label,
+            saved_env,
+        });
+
+        // Push body statement
+        state.push_frame(Frame::Stmt(body));
+
+        StepResult::Continue
+    }
+
+    /// Step for ForOfAfterBody: handle control flow and proceed to next iteration
+    fn step_for_of_after_body(
+        &mut self,
+        state: &mut ExecutionState,
+        items: Rc<Vec<JsValue>>,
+        index: usize,
+        left: Rc<ForInOfLeft>,
+        body: Rc<Statement>,
+        label: Option<JsString>,
+        saved_env: Gc<JsObject>,
+    ) -> StepResult {
+        // Check completion type
+        match &state.completion {
+            StackCompletion::Break(break_label) => {
+                if break_label.is_none() || break_label.as_ref() == label.as_ref() {
+                    // Break targets this loop
+                    state.completion = StackCompletion::Normal;
+                    self.env = saved_env;
+                    let _ = state.pop_value();
+                    state.push_value(Guarded::unguarded(JsValue::Undefined));
+                    return StepResult::Continue;
+                }
+                // Break targets outer loop - restore env and propagate
+                self.env = saved_env;
+                return StepResult::Continue;
+            }
+            StackCompletion::Continue(cont_label) => {
+                if cont_label.is_none() || cont_label.as_ref() == label.as_ref() {
+                    // Continue targets this loop - proceed to next iteration
+                    state.completion = StackCompletion::Normal;
+                } else {
+                    // Continue targets outer loop - restore env and propagate
+                    self.env = saved_env;
+                    return StepResult::Continue;
+                }
+            }
+            StackCompletion::Return | StackCompletion::Throw => {
+                // Return/throw - restore env and propagate
+                self.env = saved_env;
+                return StepResult::Continue;
+            }
+            StackCompletion::Normal => {}
+        }
+
+        // Pop body result
+        let _ = state.pop_value();
+
+        // Push next iteration
+        state.push_frame(Frame::ForOfLoop {
+            items,
+            index: index + 1,
+            left,
+            body,
+            label,
+            saved_env,
+        });
 
         StepResult::Continue
     }
