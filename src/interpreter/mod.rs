@@ -1366,7 +1366,7 @@ impl Interpreter {
     fn execute_variable_declaration(&mut self, decl: &VariableDeclaration) -> Result<(), JsError> {
         let mutable = matches!(decl.kind, VariableKind::Let | VariableKind::Var);
 
-        for declarator in &decl.declarations {
+        for declarator in decl.declarations.iter() {
             // Keep guard alive until bind_pattern transfers ownership to env
             let Guarded {
                 value: init_value,
@@ -1851,7 +1851,7 @@ impl Interpreter {
                         }
                         Statement::VariableDeclaration(var_decl) => {
                             self.execute_variable_declaration(var_decl)?;
-                            for declarator in &var_decl.declarations {
+                            for declarator in var_decl.declarations.iter() {
                                 if let Pattern::Identifier(id) = &declarator.id {
                                     let value = self.env_get(&id.name)?;
                                     self.exports.insert(id.name.cheap_clone(), value);
@@ -3989,7 +3989,7 @@ impl Interpreter {
     fn hoist_var_in_statement(&mut self, stmt: &Statement) {
         match stmt {
             Statement::VariableDeclaration(decl) if decl.kind == VariableKind::Var => {
-                for declarator in &decl.declarations {
+                for declarator in decl.declarations.iter() {
                     self.hoist_pattern_names(&declarator.id);
                 }
             }
@@ -4006,7 +4006,7 @@ impl Interpreter {
             Statement::For(for_stmt) => {
                 if let Some(ForInit::Variable(decl)) = &for_stmt.init {
                     if decl.kind == VariableKind::Var {
-                        for declarator in &decl.declarations {
+                        for declarator in decl.declarations.iter() {
                             self.hoist_pattern_names(&declarator.id);
                         }
                     }
@@ -4016,7 +4016,7 @@ impl Interpreter {
             Statement::ForIn(for_in) => {
                 if let ForInOfLeft::Variable(decl) = &for_in.left {
                     if decl.kind == VariableKind::Var {
-                        for declarator in &decl.declarations {
+                        for declarator in decl.declarations.iter() {
                             self.hoist_pattern_names(&declarator.id);
                         }
                     }
@@ -4026,7 +4026,7 @@ impl Interpreter {
             Statement::ForOf(for_of) => {
                 if let ForInOfLeft::Variable(decl) = &for_of.left {
                     if decl.kind == VariableKind::Var {
-                        for declarator in &decl.declarations {
+                        for declarator in decl.declarations.iter() {
                             self.hoist_pattern_names(&declarator.id);
                         }
                     }

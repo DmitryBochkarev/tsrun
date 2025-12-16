@@ -116,7 +116,7 @@ pub enum Frame {
     // ═══════════════════════════════════════════════════════════════════════
     /// Process variable declarators sequentially
     VarDecl {
-        declarators: Rc<Vec<VariableDeclarator>>,
+        declarators: Rc<[VariableDeclarator]>,
         index: usize,
         mutable: bool,
     },
@@ -1151,7 +1151,7 @@ impl Interpreter {
                     StepResult::Continue
                 } else {
                     state.push_frame(Frame::VarDecl {
-                        declarators: Rc::new(decl.declarations.clone()),
+                        declarators: Rc::clone(&decl.declarations),
                         index: 0,
                         mutable,
                     });
@@ -1606,7 +1606,7 @@ impl Interpreter {
     fn step_var_decl(
         &mut self,
         state: &mut ExecutionState,
-        declarators: Rc<Vec<VariableDeclarator>>,
+        declarators: Rc<[VariableDeclarator]>,
         index: usize,
         mutable: bool,
     ) -> StepResult {
@@ -1933,7 +1933,7 @@ impl Interpreter {
             Some(ForInit::Variable(decl)) if decl.kind != VariableKind::Var => {
                 // let/const - execute in loop scope
                 state.push_frame(Frame::VarDecl {
-                    declarators: Rc::new(decl.declarations.clone()),
+                    declarators: Rc::clone(&decl.declarations),
                     index: 0,
                     mutable: decl.kind == VariableKind::Let,
                 });
@@ -3262,7 +3262,7 @@ impl Interpreter {
                 }
                 Statement::VariableDeclaration(var_decl) => {
                     self.execute_variable_declaration(var_decl)?;
-                    for declarator in &var_decl.declarations {
+                    for declarator in var_decl.declarations.iter() {
                         if let Pattern::Identifier(id) = &declarator.id {
                             let value = self.env_get(&id.name)?;
                             self.exports.insert(id.name.cheap_clone(), value);

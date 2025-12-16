@@ -77,7 +77,7 @@ pub struct BlockStatement {
 #[derive(Debug, Clone)]
 pub struct VariableDeclaration {
     pub kind: VariableKind,
-    pub declarations: Vec<VariableDeclarator>,
+    pub declarations: Rc<[VariableDeclarator]>,
     pub span: Span,
 }
 

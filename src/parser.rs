@@ -139,7 +139,7 @@ impl<'a> Parser<'a> {
         let span = self.span_from(start);
         Ok(VariableDeclaration {
             kind,
-            declarations,
+            declarations: declarations.into(),
             span,
         })
     }
@@ -720,12 +720,12 @@ impl<'a> Parser<'a> {
                 let span = self.span_from(start);
                 let left = ForInOfLeft::Variable(VariableDeclaration {
                     kind,
-                    declarations: vec![VariableDeclarator {
+                    declarations: Rc::from([VariableDeclarator {
                         id,
                         type_annotation: type_ann,
                         init: None,
                         span: self.span_from(decl_start),
-                    }],
+                    }]),
                     span: self.span_from(decl_start),
                 });
 
@@ -768,7 +768,7 @@ impl<'a> Parser<'a> {
 
             Some(ForInit::Variable(VariableDeclaration {
                 kind,
-                declarations,
+                declarations: declarations.into(),
                 span: self.span_from(decl_start),
             }))
         } else {
