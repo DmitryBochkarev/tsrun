@@ -8,8 +8,8 @@
 // Builtin function implementations
 pub mod builtins;
 
-// Evaluation stack for suspendable execution (disabled - needs migration)
-// pub mod eval_stack;
+// Stack-based evaluation for suspendable execution
+pub mod stack;
 
 use crate::ast::{
     Argument, ArrayElement, ArrayPattern, AssignmentExpression, AssignmentOp, AssignmentTarget,

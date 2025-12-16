@@ -38,6 +38,7 @@ mod object;
 mod promise;
 mod regexp;
 mod set;
+mod stack;
 // mod state_machine;
 mod string;
 mod symbol;
