@@ -4,8 +4,11 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::error::JsError;
+use crate::gc::Gc;
 use crate::interpreter::Interpreter;
-use crate::value::{ExoticObject, GeneratorState, GeneratorStatus, JsObjectRef, JsString, JsValue};
+use crate::value::{
+    ExoticObject, GeneratorState, GeneratorStatus, Guarded, JsObject, JsString, JsValue,
+};
 
 /// Initialize Generator.prototype
 pub fn init_generator_prototype(interp: &mut Interpreter) {
@@ -23,22 +26,20 @@ pub fn init_generator_prototype(interp: &mut Interpreter) {
 }
 
 /// Create a generator result object { value, done }
-pub fn create_generator_result_with_interp(
-    interp: &mut Interpreter,
-    value: JsValue,
-    done: bool,
-) -> JsValue {
-    // Pre-intern keys
+pub fn create_generator_result(interp: &mut Interpreter, value: JsValue, done: bool) -> Guarded {
     let value_key = interp.key("value");
     let done_key = interp.key("done");
 
-    let obj = interp.create_object();
+    let (obj, guard) = interp.create_object_with_guard();
     {
         let mut o = obj.borrow_mut();
         o.set_property(value_key, value);
         o.set_property(done_key, JsValue::Boolean(done));
     }
-    JsValue::Object(obj)
+    Guarded {
+        value: JsValue::Object(obj),
+        guard: Some(guard),
+    }
 }
 
 /// Generator.prototype.next(value)
@@ -46,7 +47,7 @@ pub fn generator_next(
     interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let JsValue::Object(obj) = this else {
         return Err(JsError::type_error(
             "Generator.prototype.next called on non-object",
@@ -66,6 +67,14 @@ pub fn generator_next(
         }
     };
 
+    // Check if generator is already completed
+    {
+        let state = gen_state.borrow();
+        if state.state == GeneratorStatus::Completed {
+            return Ok(create_generator_result(interp, JsValue::Undefined, true));
+        }
+    }
+
     // Set the sent value
     {
         let mut state = gen_state.borrow_mut();
@@ -81,7 +90,7 @@ pub fn generator_return(
     interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let JsValue::Object(obj) = this else {
         return Err(JsError::type_error(
             "Generator.prototype.return called on non-object",
@@ -108,7 +117,7 @@ pub fn generator_return(
         state.state = GeneratorStatus::Completed;
     }
 
-    Ok(create_generator_result_with_interp(interp, value, true))
+    Ok(create_generator_result(interp, value, true))
 }
 
 /// Generator.prototype.throw(exception)
@@ -116,7 +125,7 @@ pub fn generator_throw(
     interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let JsValue::Object(obj) = this else {
         return Err(JsError::type_error(
             "Generator.prototype.throw called on non-object",
@@ -138,13 +147,18 @@ pub fn generator_throw(
 
     let exception = args.first().cloned().unwrap_or(JsValue::Undefined);
 
+    // Check if generator is completed
+    {
+        let state = gen_state.borrow();
+        if state.state == GeneratorStatus::Completed {
+            // If generator is completed, throw the exception directly
+            return Err(JsError::ThrownValue { value: exception });
+        }
+    }
+
     // Set exception as sent value and mark for throwing
     {
         let mut state = gen_state.borrow_mut();
-        if state.state == GeneratorStatus::Completed {
-            // If generator is completed, throw the exception directly
-            return Err(JsError::type_error("Generator is already completed"));
-        }
         state.sent_value = exception;
     }
 
@@ -153,8 +167,10 @@ pub fn generator_throw(
 }
 
 /// Create a new generator object from a generator function
-pub fn create_generator_object(interp: &mut Interpreter, state: GeneratorState) -> JsObjectRef {
-    let obj = interp.create_object();
+pub fn create_generator_object(interp: &mut Interpreter, state: GeneratorState) -> Gc<JsObject> {
+    let (obj, _guard) = interp.create_object_with_guard();
+    // Transfer to root guard for longer life
+    interp.root_guard_object(&obj);
     {
         let mut o = obj.borrow_mut();
         o.exotic = ExoticObject::Generator(Rc::new(RefCell::new(state)));

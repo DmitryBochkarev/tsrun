@@ -251,6 +251,32 @@ pub enum Frame {
         saved_env: Gc<JsObject>,
     },
 
+    /// For-of loop over a generator: call next() each iteration
+    ForOfGenerator {
+        /// The generator object
+        generator: Gc<JsObject>,
+        /// Generator state RC
+        gen_state: Rc<std::cell::RefCell<crate::value::GeneratorState>>,
+        /// Left-hand side binding
+        left: Rc<ForInOfLeft>,
+        /// Loop body
+        body: Rc<Statement>,
+        /// Optional label
+        label: Option<JsString>,
+        /// Saved environment to restore after loop
+        saved_env: Gc<JsObject>,
+    },
+
+    /// For-of generator: after body, call next() again
+    ForOfGeneratorAfterBody {
+        generator: Gc<JsObject>,
+        gen_state: Rc<std::cell::RefCell<crate::value::GeneratorState>>,
+        left: Rc<ForInOfLeft>,
+        body: Rc<Statement>,
+        label: Option<JsString>,
+        saved_env: Gc<JsObject>,
+    },
+
     /// Discard expression result (for init expressions, update expressions)
     DiscardValue,
 
@@ -583,6 +609,27 @@ impl Interpreter {
                 label,
                 saved_env,
             } => self.step_for_of_after_body(state, items, index, left, body, label, saved_env),
+
+            Frame::ForOfGenerator {
+                generator,
+                gen_state,
+                left,
+                body,
+                label,
+                saved_env,
+            } => self
+                .step_for_of_generator(state, generator, gen_state, left, body, label, saved_env),
+
+            Frame::ForOfGeneratorAfterBody {
+                generator,
+                gen_state,
+                left,
+                body,
+                label,
+                saved_env,
+            } => self.step_for_of_generator_after_body(
+                state, generator, gen_state, left, body, label, saved_env,
+            ),
 
             Frame::DiscardValue => {
                 // Pop and discard the value
@@ -1830,7 +1877,7 @@ impl Interpreter {
     // For-Of Loop Implementation
     // ═══════════════════════════════════════════════════════════════════════════════
 
-    /// Setup for-of loop: evaluate right side, collect items
+    /// Setup for-of loop: evaluate right side, collect items or set up generator iteration
     fn setup_for_of_loop(
         &mut self,
         state: &mut ExecutionState,
@@ -1843,7 +1890,25 @@ impl Interpreter {
             Err(e) => return StepResult::Error(e),
         };
 
-        // Collect items to iterate over
+        let saved_env = self.env.clone();
+
+        // Check if it's a generator - handle with special frame
+        if let JsValue::Object(ref obj) = right {
+            if let ExoticObject::Generator(gen_state) = &obj.borrow().exotic {
+                // Use generator-specific iteration
+                state.push_frame(Frame::ForOfGenerator {
+                    generator: obj.clone(),
+                    gen_state: gen_state.clone(),
+                    left: Rc::new(for_of.left.clone()),
+                    body: Rc::new((*for_of.body).clone()),
+                    label,
+                    saved_env,
+                });
+                return StepResult::Continue;
+            }
+        }
+
+        // Collect items to iterate over for non-generators
         let items = match &right {
             JsValue::Object(obj) => {
                 let obj_ref = obj.borrow();
@@ -1869,8 +1934,6 @@ impl Interpreter {
                 .collect(),
             _ => vec![],
         };
-
-        let saved_env = self.env.clone();
 
         // Push loop frame
         state.push_frame(Frame::ForOfLoop {
@@ -2010,6 +2073,162 @@ impl Interpreter {
         state.push_frame(Frame::ForOfLoop {
             items,
             index: index + 1,
+            left,
+            body,
+            label,
+            saved_env,
+        });
+
+        StepResult::Continue
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // For-Of Generator Loop Implementation
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    /// Step for ForOfGenerator: call next() on generator and iterate
+    fn step_for_of_generator(
+        &mut self,
+        state: &mut ExecutionState,
+        generator: Gc<JsObject>,
+        gen_state: Rc<std::cell::RefCell<crate::value::GeneratorState>>,
+        left: Rc<ForInOfLeft>,
+        body: Rc<Statement>,
+        label: Option<JsString>,
+        saved_env: Gc<JsObject>,
+    ) -> StepResult {
+        // Check for timeout
+        if let Err(e) = self.check_timeout() {
+            self.env = saved_env;
+            return StepResult::Error(e);
+        }
+
+        // Call next() on the generator
+        let result = match self.resume_generator(&gen_state) {
+            Ok(guarded) => guarded.value,
+            Err(e) => {
+                self.env = saved_env;
+                return StepResult::Error(e);
+            }
+        };
+
+        // Get done and value from result
+        let done_key = self.key("done");
+        let value_key = self.key("value");
+
+        let (done, value) = match &result {
+            JsValue::Object(obj) => {
+                let done = obj
+                    .borrow()
+                    .get_property(&done_key)
+                    .map(|v| v.to_boolean())
+                    .unwrap_or(false);
+                let value = obj
+                    .borrow()
+                    .get_property(&value_key)
+                    .unwrap_or(JsValue::Undefined);
+                (done, value)
+            }
+            _ => (true, JsValue::Undefined),
+        };
+
+        // If done, loop is complete
+        if done {
+            self.env = saved_env;
+            state.push_value(Guarded::unguarded(JsValue::Undefined));
+            return StepResult::Continue;
+        }
+
+        // Create per-iteration environment
+        let iter_env = create_environment_with_guard(&self.root_guard, Some(saved_env.clone()));
+        self.env = iter_env;
+
+        // Bind the value to the left-hand side
+        match &*left {
+            ForInOfLeft::Variable(decl) => {
+                let mutable = decl.kind != VariableKind::Const;
+                if let Some(declarator) = decl.declarations.first() {
+                    if let Err(e) = self.bind_pattern(&declarator.id, value, mutable) {
+                        self.env = saved_env;
+                        return StepResult::Error(e);
+                    }
+                }
+            }
+            ForInOfLeft::Pattern(pattern) => {
+                if let Err(e) = self.bind_pattern(pattern, value, true) {
+                    self.env = saved_env;
+                    return StepResult::Error(e);
+                }
+            }
+        }
+
+        // Push continuation frame for after body
+        state.push_frame(Frame::ForOfGeneratorAfterBody {
+            generator,
+            gen_state,
+            left,
+            body: body.clone(),
+            label,
+            saved_env,
+        });
+
+        // Push body statement
+        state.push_frame(Frame::Stmt(body));
+
+        StepResult::Continue
+    }
+
+    /// Step for ForOfGeneratorAfterBody: handle control flow and proceed to next iteration
+    fn step_for_of_generator_after_body(
+        &mut self,
+        state: &mut ExecutionState,
+        generator: Gc<JsObject>,
+        gen_state: Rc<std::cell::RefCell<crate::value::GeneratorState>>,
+        left: Rc<ForInOfLeft>,
+        body: Rc<Statement>,
+        label: Option<JsString>,
+        saved_env: Gc<JsObject>,
+    ) -> StepResult {
+        // Check completion type
+        match &state.completion {
+            StackCompletion::Break(break_label) => {
+                if break_label.is_none() || break_label.as_ref() == label.as_ref() {
+                    // Break targets this loop
+                    state.completion = StackCompletion::Normal;
+                    self.env = saved_env;
+                    let _ = state.pop_value();
+                    state.push_value(Guarded::unguarded(JsValue::Undefined));
+                    return StepResult::Continue;
+                }
+                // Break targets outer loop - restore env and propagate
+                self.env = saved_env;
+                return StepResult::Continue;
+            }
+            StackCompletion::Continue(cont_label) => {
+                if cont_label.is_none() || cont_label.as_ref() == label.as_ref() {
+                    // Continue targets this loop - proceed to next iteration
+                    state.completion = StackCompletion::Normal;
+                } else {
+                    // Continue targets outer loop - restore env and propagate
+                    self.env = saved_env;
+                    return StepResult::Continue;
+                }
+            }
+            StackCompletion::Return | StackCompletion::Throw => {
+                // Return/throw - restore env and propagate
+                self.env = saved_env;
+                return StepResult::Continue;
+            }
+            StackCompletion::Normal => {}
+        }
+
+        // Pop body result
+        let _ = state.pop_value();
+
+        // Push next iteration
+        state.push_frame(Frame::ForOfGenerator {
+            generator,
+            gen_state,
             left,
             body,
             label,

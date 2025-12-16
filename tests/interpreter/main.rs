@@ -26,7 +26,7 @@ mod error;
 // mod exports;
 mod function;
 mod gc;
-// mod generator;
+mod generator;
 mod global;
 mod json;
 mod map;

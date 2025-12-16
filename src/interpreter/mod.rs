@@ -30,8 +30,8 @@ use crate::parser::Parser;
 use crate::string_dict::StringDict;
 use crate::value::{
     create_environment_with_guard, Binding, CheapClone, EnvRef, EnvironmentData, ExoticObject,
-    FunctionBody, Guarded, InterpretedFunction, JsFunction, JsObject, JsString, JsValue, NativeFn,
-    NativeFunction, PromiseStatus, Property, PropertyKey,
+    FunctionBody, GeneratorState, GeneratorStatus, Guarded, InterpretedFunction, JsFunction,
+    JsObject, JsString, JsValue, NativeFn, NativeFunction, PromiseStatus, Property, PropertyKey,
 };
 use rustc_hash::FxHashMap;
 use std::rc::Rc;
@@ -55,6 +55,19 @@ pub struct StackFrame {
     pub function_name: String,
     /// Source location if available
     pub location: Option<(u32, u32)>, // (line, column)
+}
+
+/// Context for generator execution
+#[derive(Debug, Clone)]
+pub struct GeneratorContext {
+    /// Which yield point to stop at (0 = first yield)
+    pub target_yield: usize,
+    /// Current yield counter during execution
+    pub current_yield: usize,
+    /// Value to inject for the current yield (from next(value))
+    pub sent_value: JsValue,
+    /// Whether to throw the sent_value as an exception
+    pub throw_value: bool,
 }
 
 /// GC statistics for debugging and monitoring
@@ -126,6 +139,9 @@ pub struct Interpreter {
     /// Promise.prototype (for Promise methods)
     pub promise_prototype: Gc<JsObject>,
 
+    /// Generator.prototype (for generator methods)
+    pub generator_prototype: Gc<JsObject>,
+
     // ═══════════════════════════════════════════════════════════════════════════
     // Execution State
     // ═══════════════════════════════════════════════════════════════════════════
@@ -137,6 +153,9 @@ pub struct Interpreter {
 
     /// Call stack for stack traces
     pub call_stack: Vec<StackFrame>,
+
+    /// Generator context for tracking yield points during execution
+    pub generator_context: Option<GeneratorContext>,
 
     // ═══════════════════════════════════════════════════════════════════════════
     // Timeout Control
@@ -196,6 +215,7 @@ impl Interpreter {
         let date_prototype = root_guard.alloc();
         let symbol_prototype = root_guard.alloc();
         let promise_prototype = root_guard.alloc();
+        let generator_prototype = root_guard.alloc();
 
         // Set up prototype chain - all prototypes inherit from object_prototype
         array_prototype.borrow_mut().prototype = Some(object_prototype.clone());
@@ -208,6 +228,7 @@ impl Interpreter {
         date_prototype.borrow_mut().prototype = Some(object_prototype.clone());
         symbol_prototype.borrow_mut().prototype = Some(object_prototype.clone());
         promise_prototype.borrow_mut().prototype = Some(object_prototype.clone());
+        generator_prototype.borrow_mut().prototype = Some(object_prototype.clone());
 
         // Create global object (rooted)
         let global = root_guard.alloc();
@@ -241,9 +262,11 @@ impl Interpreter {
             date_prototype,
             symbol_prototype,
             promise_prototype,
+            generator_prototype,
             thrown_value: None,
             exports: FxHashMap::default(),
             call_stack: Vec::new(),
+            generator_context: None,
             timeout_ms: 3000, // Default 3 second timeout
             execution_start: None,
             // Internal module system
@@ -350,6 +373,9 @@ impl Interpreter {
         let promise_constructor = builtins::promise_new::create_promise_constructor(self);
         let promise_name = self.string_dict.get_or_insert("Promise");
         self.env_define(promise_name, JsValue::Object(promise_constructor), false);
+
+        // Initialize Generator prototype
+        builtins::init_generator_prototype(self);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -908,6 +934,132 @@ impl Interpreter {
     /// Create a guarded scope for multiple objects
     pub fn guarded_scope(&mut self) -> Guard<JsObject> {
         self.heap.create_guard()
+    }
+
+    /// Add an object to the root guard (for permanent objects)
+    pub fn root_guard_object(&self, obj: &Gc<JsObject>) {
+        self.root_guard.guard(obj.clone());
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Generator Support
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// Resume a generator execution using stack-based evaluation
+    /// This executes the generator body until the next yield or return
+    pub fn resume_generator(
+        &mut self,
+        gen_state: &std::rc::Rc<std::cell::RefCell<crate::value::GeneratorState>>,
+    ) -> Result<Guarded, JsError> {
+        use stack::{ExecutionState, Frame, StepResult};
+
+        // Get generator state
+        let (body, params, args, closure, target_yield, sent_value) = {
+            let state = gen_state.borrow();
+            if state.state == GeneratorStatus::Completed {
+                return Ok(builtins::create_generator_result(
+                    self,
+                    JsValue::Undefined,
+                    true,
+                ));
+            }
+            (
+                state.body.clone(),
+                state.params.clone(),
+                state.args.clone(),
+                state.closure.clone(),
+                state.stmt_index,
+                state.sent_value.clone(),
+            )
+        };
+
+        // Save and set up generator context
+        let saved_generator_context = self.generator_context.take();
+        self.generator_context = Some(GeneratorContext {
+            target_yield,
+            current_yield: 0,
+            sent_value,
+            throw_value: false,
+        });
+
+        // Create function environment
+        let func_env = create_environment_with_guard(&self.root_guard, Some(closure));
+        let saved_env = self.env.clone();
+        self.env = func_env;
+
+        // Bind parameters
+        for (i, param) in params.iter().enumerate() {
+            let arg_value = args.get(i).cloned().unwrap_or(JsValue::Undefined);
+            if let Err(e) = self.bind_pattern(&param.pattern, arg_value, true) {
+                self.env = saved_env;
+                self.generator_context = saved_generator_context;
+                return Err(e);
+            }
+        }
+
+        // Create execution state with generator body
+        let mut state = ExecutionState::new();
+        let statements: Vec<Statement> = body.body.iter().cloned().collect();
+        state.push_frame(Frame::Program {
+            statements: std::rc::Rc::new(statements),
+            index: 0,
+        });
+
+        // Run until yield, return, or completion
+        let result = loop {
+            match self.step(&mut state) {
+                StepResult::Continue => continue,
+                StepResult::Done(guarded) => {
+                    // Generator completed normally
+                    gen_state.borrow_mut().state = GeneratorStatus::Completed;
+                    break Ok(builtins::create_generator_result(self, guarded.value, true));
+                }
+                StepResult::Suspend(_promise) => {
+                    // Yield was hit - this shouldn't happen with regular generators
+                    // For now, treat as completion
+                    gen_state.borrow_mut().state = GeneratorStatus::Completed;
+                    break Ok(builtins::create_generator_result(
+                        self,
+                        JsValue::Undefined,
+                        true,
+                    ));
+                }
+                StepResult::Error(e) => {
+                    // Check if it's a yield
+                    if let JsError::GeneratorYield { value } = e {
+                        // Update stmt_index for next resume
+                        if let Some(ctx) = &self.generator_context {
+                            gen_state.borrow_mut().stmt_index = ctx.current_yield;
+                        }
+                        break Ok(builtins::create_generator_result(self, value, false));
+                    }
+                    gen_state.borrow_mut().state = GeneratorStatus::Completed;
+                    break Err(e);
+                }
+            }
+        };
+
+        // Restore environment and context
+        self.env = saved_env;
+        self.generator_context = saved_generator_context;
+
+        result
+    }
+
+    /// Resume a generator with throw semantics (for Generator.prototype.throw)
+    pub fn resume_generator_with_throw(
+        &mut self,
+        gen_state: &std::rc::Rc<std::cell::RefCell<crate::value::GeneratorState>>,
+    ) -> Result<Guarded, JsError> {
+        use crate::value::GeneratorStatus;
+
+        let exception = gen_state.borrow().sent_value.clone();
+
+        // Mark generator as completed
+        gen_state.borrow_mut().state = GeneratorStatus::Completed;
+
+        // Throw the exception
+        Err(JsError::ThrownValue { value: exception })
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -1515,12 +1667,108 @@ impl Interpreter {
     }
 
     fn execute_for_of(&mut self, for_of: &ForOfStatement) -> Result<Completion, JsError> {
+        self.execute_for_of_labeled(for_of, None)
+    }
+
+    fn execute_for_of_impl(
+        &mut self,
+        for_of: &ForOfStatement,
+        label: Option<&JsString>,
+    ) -> Result<Completion, JsError> {
         let Guarded {
             value: right,
             guard: _right_guard,
         } = self.evaluate_expression(&for_of.right)?;
 
-        // Collect items to iterate over
+        let prev_env = self.env.clone();
+
+        // Check if it's a generator - handle with iteration protocol
+        if let JsValue::Object(ref obj) = right {
+            if let ExoticObject::Generator(gen_state) = &obj.borrow().exotic {
+                let gen_state = gen_state.clone();
+                let done_key = self.key("done");
+                let value_key = self.key("value");
+
+                loop {
+                    // Check for timeout
+                    self.check_timeout()?;
+
+                    // Call next() on the generator
+                    let result = self.resume_generator(&gen_state)?;
+
+                    // Get done and value from result
+                    let (done, value) = match &result.value {
+                        JsValue::Object(obj) => {
+                            let done = obj
+                                .borrow()
+                                .get_property(&done_key)
+                                .map(|v| v.to_boolean())
+                                .unwrap_or(false);
+                            let value = obj
+                                .borrow()
+                                .get_property(&value_key)
+                                .unwrap_or(JsValue::Undefined);
+                            (done, value)
+                        }
+                        _ => (true, JsValue::Undefined),
+                    };
+
+                    // If done, loop is complete
+                    if done {
+                        break;
+                    }
+
+                    // Per-iteration environment
+                    let iter_env =
+                        create_environment_with_guard(&self.root_guard, Some(prev_env.clone()));
+                    self.env = iter_env;
+
+                    // Bind the value to left-hand side
+                    match &for_of.left {
+                        ForInOfLeft::Variable(decl) => {
+                            let mutable = decl.kind != VariableKind::Const;
+                            if let Some(declarator) = decl.declarations.first() {
+                                self.bind_pattern(&declarator.id, value, mutable)?;
+                            }
+                        }
+                        ForInOfLeft::Pattern(pattern) => {
+                            self.assign_pattern(pattern, value)?;
+                        }
+                    }
+
+                    match self.execute_statement(&for_of.body)? {
+                        Completion::Break(None) => {
+                            self.env = prev_env;
+                            return Ok(Completion::Normal(JsValue::Undefined));
+                        }
+                        Completion::Break(Some(ref lbl)) if label == Some(lbl) => {
+                            self.env = prev_env;
+                            return Ok(Completion::Normal(JsValue::Undefined));
+                        }
+                        Completion::Break(lbl) => {
+                            self.env = prev_env;
+                            return Ok(Completion::Break(lbl));
+                        }
+                        Completion::Continue(None) => continue,
+                        Completion::Continue(Some(ref lbl)) if label == Some(lbl) => continue,
+                        Completion::Continue(lbl) => {
+                            self.env = prev_env;
+                            return Ok(Completion::Continue(lbl));
+                        }
+                        Completion::Return(val) => {
+                            self.env = prev_env;
+                            return Ok(Completion::Return(val));
+                        }
+                        Completion::Normal(_) => {}
+                    }
+                }
+
+                self.env = prev_env;
+                return Ok(Completion::Normal(JsValue::Undefined));
+            }
+        }
+
+        // Collect items to iterate over for non-generators
         let items = match &right {
             JsValue::Object(obj) => {
                 let obj_ref = obj.borrow();
@@ -1547,8 +1795,6 @@ impl Interpreter {
             _ => vec![],
         };
 
-        let prev_env = self.env.clone();
-
         for item in items {
             // Check for timeout at each iteration
             self.check_timeout()?;
@@ -1574,11 +1820,16 @@ impl Interpreter {
                     self.env = prev_env;
                     return Ok(Completion::Normal(JsValue::Undefined));
                 }
+                Completion::Break(Some(ref lbl)) if label == Some(lbl) => {
+                    self.env = prev_env;
+                    return Ok(Completion::Normal(JsValue::Undefined));
+                }
                 Completion::Break(lbl) => {
                     self.env = prev_env;
                     return Ok(Completion::Break(lbl));
                 }
                 Completion::Continue(None) => continue,
+                Completion::Continue(Some(ref lbl)) if label == Some(lbl) => continue,
                 Completion::Continue(lbl) => {
                     self.env = prev_env;
                     return Ok(Completion::Continue(lbl));
@@ -2583,89 +2834,7 @@ impl Interpreter {
         for_of: &ForOfStatement,
         label: Option<&JsString>,
     ) -> Result<Completion, JsError> {
-        let Guarded {
-            value: right,
-            guard: _right_guard,
-        } = self.evaluate_expression(&for_of.right)?;
-
-        // Collect items to iterate over
-        let items = match &right {
-            JsValue::Object(obj) => {
-                let obj_ref = obj.borrow();
-                match &obj_ref.exotic {
-                    ExoticObject::Array { length } => {
-                        let mut items = Vec::with_capacity(*length as usize);
-                        for i in 0..*length {
-                            items.push(
-                                obj_ref
-                                    .get_property(&PropertyKey::Index(i))
-                                    .unwrap_or(JsValue::Undefined),
-                            );
-                        }
-                        items
-                    }
-                    _ => vec![],
-                }
-            }
-            JsValue::String(s) => s
-                .as_str()
-                .chars()
-                .map(|c| JsValue::from(c.to_string()))
-                .collect(),
-            _ => vec![],
-        };
-
-        let prev_env = self.env.clone();
-
-        for item in items {
-            // Check for timeout at each iteration
-            self.check_timeout()?;
-
-            // Per-iteration environment
-            let iter_env = create_environment_with_guard(&self.root_guard, Some(prev_env.clone()));
-            self.env = iter_env;
-
-            match &for_of.left {
-                ForInOfLeft::Variable(decl) => {
-                    let mutable = decl.kind != VariableKind::Const;
-                    if let Some(declarator) = decl.declarations.first() {
-                        self.bind_pattern(&declarator.id, item, mutable)?;
-                    }
-                }
-                ForInOfLeft::Pattern(pattern) => {
-                    self.assign_pattern(pattern, item)?;
-                }
-            }
-
-            match self.execute_statement(&for_of.body)? {
-                Completion::Break(None) => {
-                    self.env = prev_env;
-                    return Ok(Completion::Normal(JsValue::Undefined));
-                }
-                Completion::Break(Some(ref l)) if label == Some(l) => {
-                    self.env = prev_env;
-                    return Ok(Completion::Normal(JsValue::Undefined));
-                }
-                Completion::Break(lbl) => {
-                    self.env = prev_env;
-                    return Ok(Completion::Break(lbl));
-                }
-                Completion::Continue(None) => continue,
-                Completion::Continue(Some(ref l)) if label == Some(l) => continue,
-                Completion::Continue(lbl) => {
-                    self.env = prev_env;
-                    return Ok(Completion::Continue(lbl));
-                }
-                Completion::Return(val) => {
-                    self.env = prev_env;
-                    return Ok(Completion::Return(val));
-                }
-                Completion::Normal(_) => {}
-            }
-        }
-
-        self.env = prev_env;
-        Ok(Completion::Normal(JsValue::Undefined))
+        self.execute_for_of_impl(for_of, label)
     }
 
     fn execute_function_declaration(&mut self, func: &FunctionDeclaration) -> Result<(), JsError> {
@@ -2860,10 +3029,112 @@ impl Interpreter {
                 "Spread element is only valid in array or object literals",
             )),
 
-            // Yield is only valid inside generator functions
-            Expression::Yield(_) => Err(JsError::syntax_error_simple(
-                "Yield expression is only valid inside generator function",
-            )),
+            // Yield expression - evaluates argument and suspends generator
+            Expression::Yield(yield_expr) => {
+                // Check if we're inside a generator context
+                let _ctx = self
+                    .generator_context
+                    .as_mut()
+                    .ok_or_else(|| JsError::syntax_error_simple("yield outside of generator"))?;
+
+                // Handle yield* delegation
+                if yield_expr.delegate {
+                    if let Some(arg) = &yield_expr.argument {
+                        let Guarded {
+                            value: iterable, ..
+                        } = self.evaluate_expression(arg)?;
+
+                        // Check if it's an array - iterate over its elements
+                        if let JsValue::Object(obj) = &iterable {
+                            if let ExoticObject::Array { length } = &obj.borrow().exotic {
+                                let len = *length;
+                                for i in 0..len {
+                                    let elem = obj
+                                        .borrow()
+                                        .get_property(&PropertyKey::Index(i))
+                                        .unwrap_or(JsValue::Undefined);
+
+                                    // Re-borrow context after evaluation
+                                    let ctx = self.generator_context.as_mut().ok_or_else(|| {
+                                        JsError::internal_error("generator context missing")
+                                    })?;
+
+                                    if ctx.current_yield == ctx.target_yield {
+                                        ctx.current_yield += 1;
+                                        return Err(JsError::GeneratorYield { value: elem });
+                                    }
+                                    ctx.current_yield += 1;
+                                }
+                                return Ok(Guarded::unguarded(JsValue::Undefined));
+                            }
+                            // Check if it's a generator - delegate to it
+                            if let ExoticObject::Generator(gen_state) = &obj.borrow().exotic {
+                                let gen_state = gen_state.clone();
+                                let done_key = self.key("done");
+                                let value_key = self.key("value");
+                                loop {
+                                    let result = self.resume_generator(&gen_state)?;
+                                    let JsValue::Object(res_obj) = &result.value else {
+                                        return Ok(Guarded::unguarded(JsValue::Undefined));
+                                    };
+                                    let done = res_obj
+                                        .borrow()
+                                        .get_property(&done_key)
+                                        .map(|v| v.to_boolean())
+                                        .unwrap_or(false);
+                                    let value = res_obj
+                                        .borrow()
+                                        .get_property(&value_key)
+                                        .unwrap_or(JsValue::Undefined);
+
+                                    if done {
+                                        return Ok(Guarded::unguarded(value));
+                                    }
+
+                                    let ctx = self.generator_context.as_mut().ok_or_else(|| {
+                                        JsError::internal_error("generator context missing")
+                                    })?;
+                                    if ctx.current_yield == ctx.target_yield {
+                                        ctx.current_yield += 1;
+                                        return Err(JsError::GeneratorYield { value });
+                                    }
+                                    ctx.current_yield += 1;
+                                }
+                            }
+                        }
+                        return Err(JsError::type_error("yield* on non-iterable"));
+                    } else {
+                        return Err(JsError::type_error("yield* requires an expression"));
+                    }
+                }
+
+                // Evaluate the argument if present
+                let value = if let Some(arg) = &yield_expr.argument {
+                    let Guarded { value, .. } = self.evaluate_expression(arg)?;
+                    value
+                } else {
+                    JsValue::Undefined
+                };
+
+                // Re-get the mutable context after evaluation
+                let ctx = self
+                    .generator_context
+                    .as_mut()
+                    .ok_or_else(|| JsError::syntax_error_simple("yield outside of generator"))?;
+
+                // Check if this is the target yield point
+                if ctx.current_yield == ctx.target_yield {
+                    // Suspend here
+                    ctx.current_yield += 1;
+                    return Err(JsError::GeneratorYield { value });
+                }
+
+                // Not our target yet - skip this yield and return the sent value
+                ctx.current_yield += 1;
+
+                // Return the value that was sent via next(value) for this yield
+                Ok(Guarded::unguarded(ctx.sent_value.clone()))
+            }
 
             // Import expression (dynamic import)
             Expression::Import(import_expr) => {
@@ -3807,6 +4078,30 @@ impl Interpreter {
 
         match func {
             JsFunction::Interpreted(interp) => {
+                // Handle generator functions - create generator object instead of executing
+                if interp.generator {
+                    let body = match &*interp.body {
+                        FunctionBody::Block(block) => block.clone(),
+                        FunctionBody::Expression(_) => {
+                            return Err(JsError::type_error("Generator must have block body"));
+                        }
+                    };
+
+                    let gen_state = GeneratorState {
+                        body,
+                        params: interp.params.clone(),
+                        args: args.to_vec(),
+                        closure: interp.closure,
+                        state: GeneratorStatus::Suspended,
+                        stmt_index: 0,
+                        sent_value: JsValue::Undefined,
+                        name: interp.name.clone(),
+                    };
+
+                    let gen_obj = builtins::create_generator_object(self, gen_state);
+                    return Ok(Guarded::unguarded(JsValue::Object(gen_obj)));
+                }
+
                 // Create new environment
                 let func_env =
                     create_environment_with_guard(&self.root_guard, Some(interp.closure));

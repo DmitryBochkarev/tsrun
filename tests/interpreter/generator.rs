@@ -503,6 +503,31 @@ fn test_generator_with_early_return() {
 }
 
 #[test]
+fn test_generator_passed_to_function() {
+    // When a generator is passed to a function, it should still be iterable
+    assert_eq!(
+        eval(
+            r#"
+            function iterate(gen: Generator<number>): number {
+                let sum = 0;
+                for (const v of gen) {
+                    sum += v;
+                }
+                return sum;
+            }
+            function* nums(): Generator<number> {
+                yield 1;
+                yield 2;
+                yield 3;
+            }
+            iterate(nums())
+        "#
+        ),
+        JsValue::Number(6.0)
+    );
+}
+
+#[test]
 fn test_generator_collect_helper() {
     // A helper function that collects generator values
     assert_eq!(

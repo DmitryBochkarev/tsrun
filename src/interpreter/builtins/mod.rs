@@ -5,6 +5,7 @@ pub mod console;
 pub mod date;
 pub mod error;
 pub mod function;
+pub mod generator;
 pub mod global;
 pub mod internal;
 pub mod json;
@@ -16,8 +17,6 @@ pub mod regexp;
 pub mod set;
 pub mod string;
 pub mod symbol;
-// TODO: Enable generator after migration to new GC
-// pub mod generator;
 // pub mod promise; // Old promise, kept for reference
 pub mod promise_new; // New promise using new GC
 
@@ -27,6 +26,7 @@ pub use console::*;
 pub use date::*;
 pub use error::*;
 pub use function::*;
+pub use generator::*;
 pub use global::*;
 pub use internal::*;
 pub use json::*;
