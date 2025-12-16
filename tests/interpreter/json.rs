@@ -60,7 +60,6 @@ fn test_json_round_trip() {
 }
 
 #[test]
-#[ignore] // TODO: GC issue with async results
 fn test_json_stringify_with_async_result() {
     // JSON.stringify on async function result
     let result = eval(
@@ -77,7 +76,6 @@ fn test_json_stringify_with_async_result() {
 }
 
 #[test]
-#[ignore] // TODO: GC issue with async results
 fn test_json_stringify_async_nested_object() {
     // More complex async result with nested object
     let result = eval(

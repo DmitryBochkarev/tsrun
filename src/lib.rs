@@ -31,6 +31,9 @@ pub use value::JsObject;
 pub use value::JsString;
 pub use value::JsValue;
 
+// Re-export serde conversion functions for JsValue <-> serde_json::Value
+pub use interpreter::builtins::json::{js_value_to_json, json_to_js_value_with_interp};
+
 // Re-export order system types
 // Note: Order, OrderId, OrderResponse, RuntimeResult are defined in this module
 
