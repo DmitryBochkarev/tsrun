@@ -122,87 +122,87 @@ pub fn init_symbol(interp: &mut Interpreter) {
 
         sym.set_property(
             iterator_key,
-            JsValue::Symbol(JsSymbol::new(
+            JsValue::Symbol(Box::new(JsSymbol::new(
                 well_known.iterator,
                 Some("Symbol.iterator".to_string()),
-            )),
+            ))),
         );
         sym.set_property(
             to_string_tag_key,
-            JsValue::Symbol(JsSymbol::new(
+            JsValue::Symbol(Box::new(JsSymbol::new(
                 well_known.to_string_tag,
                 Some("Symbol.toStringTag".to_string()),
-            )),
+            ))),
         );
         sym.set_property(
             has_instance_key,
-            JsValue::Symbol(JsSymbol::new(
+            JsValue::Symbol(Box::new(JsSymbol::new(
                 well_known.has_instance,
                 Some("Symbol.hasInstance".to_string()),
-            )),
+            ))),
         );
         sym.set_property(
             is_concat_spreadable_key,
-            JsValue::Symbol(JsSymbol::new(
+            JsValue::Symbol(Box::new(JsSymbol::new(
                 well_known.is_concat_spreadable,
                 Some("Symbol.isConcatSpreadable".to_string()),
-            )),
+            ))),
         );
         sym.set_property(
             species_key,
-            JsValue::Symbol(JsSymbol::new(
+            JsValue::Symbol(Box::new(JsSymbol::new(
                 well_known.species,
                 Some("Symbol.species".to_string()),
-            )),
+            ))),
         );
         sym.set_property(
             to_primitive_key,
-            JsValue::Symbol(JsSymbol::new(
+            JsValue::Symbol(Box::new(JsSymbol::new(
                 well_known.to_primitive,
                 Some("Symbol.toPrimitive".to_string()),
-            )),
+            ))),
         );
         sym.set_property(
             unscopables_key,
-            JsValue::Symbol(JsSymbol::new(
+            JsValue::Symbol(Box::new(JsSymbol::new(
                 well_known.unscopables,
                 Some("Symbol.unscopables".to_string()),
-            )),
+            ))),
         );
         sym.set_property(
             match_key,
-            JsValue::Symbol(JsSymbol::new(
+            JsValue::Symbol(Box::new(JsSymbol::new(
                 well_known.match_symbol,
                 Some("Symbol.match".to_string()),
-            )),
+            ))),
         );
         sym.set_property(
             replace_key,
-            JsValue::Symbol(JsSymbol::new(
+            JsValue::Symbol(Box::new(JsSymbol::new(
                 well_known.replace,
                 Some("Symbol.replace".to_string()),
-            )),
+            ))),
         );
         sym.set_property(
             search_key,
-            JsValue::Symbol(JsSymbol::new(
+            JsValue::Symbol(Box::new(JsSymbol::new(
                 well_known.search,
                 Some("Symbol.search".to_string()),
-            )),
+            ))),
         );
         sym.set_property(
             split_key,
-            JsValue::Symbol(JsSymbol::new(
+            JsValue::Symbol(Box::new(JsSymbol::new(
                 well_known.split,
                 Some("Symbol.split".to_string()),
-            )),
+            ))),
         );
         sym.set_property(
             async_iterator_key,
-            JsValue::Symbol(JsSymbol::new(
+            JsValue::Symbol(Box::new(JsSymbol::new(
                 well_known.async_iterator,
                 Some("Symbol.asyncIterator".to_string()),
-            )),
+            ))),
         );
     }
 
@@ -226,10 +226,10 @@ fn symbol_call(
     };
 
     let id = next_symbol_id();
-    Ok(Guarded::unguarded(JsValue::Symbol(JsSymbol::new(
+    Ok(Guarded::unguarded(JsValue::Symbol(Box::new(JsSymbol::new(
         id,
         description,
-    ))))
+    )))))
 }
 
 /// Symbol.for(key) - get or create a symbol in the global registry
@@ -246,13 +246,13 @@ fn symbol_for(
     SYMBOL_REGISTRY.with(|registry| {
         let mut registry = registry.borrow_mut();
         if let Some(sym) = registry.get(&key) {
-            return Ok(Guarded::unguarded(JsValue::Symbol(sym.clone())));
+            return Ok(Guarded::unguarded(JsValue::Symbol(Box::new(sym.clone()))));
         }
 
         let id = next_symbol_id();
         let sym = JsSymbol::new(id, Some(key.clone()));
         registry.insert(key, sym.clone());
-        Ok(Guarded::unguarded(JsValue::Symbol(sym)))
+        Ok(Guarded::unguarded(JsValue::Symbol(Box::new(sym))))
     })
 }
 

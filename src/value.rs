@@ -41,6 +41,9 @@ pub trait CheapClone: Clone {
 impl<T: ?Sized> CheapClone for Rc<T> {}
 
 /// A JavaScript value
+///
+/// Size-optimized: JsSymbol is boxed since symbols are rare, allowing JsValue
+/// to be 16 bytes instead of 32 bytes.
 #[derive(Clone, Default)]
 pub enum JsValue {
     #[default]
@@ -49,7 +52,7 @@ pub enum JsValue {
     Boolean(bool),
     Number(f64),
     String(JsString),
-    Symbol(JsSymbol),
+    Symbol(Box<JsSymbol>),
     Object(JsObjectRef),
 }
 
@@ -702,11 +705,13 @@ impl Default for JsObject {
 }
 
 /// Property key (string, index, or symbol)
+///
+/// Size-optimized: JsSymbol is boxed since symbol keys are rare.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum PropertyKey {
     String(JsString),
     Index(u32),
-    Symbol(JsSymbol),
+    Symbol(Box<JsSymbol>),
 }
 
 impl PropertyKey {
@@ -983,17 +988,17 @@ impl Property {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// Maximum number of properties stored inline before switching to a HashMap.
-/// 4 properties covers most small objects like `{ a, b }` or `{ x: 1, y: 2 }`.
-const INLINE_PROPERTY_CAPACITY: usize = 4;
+/// 2 properties covers most small objects like `{ a, b }` or `{ x: 1, y: 2 }`.
+const INLINE_PROPERTY_CAPACITY: usize = 2;
 
 /// Optimized property storage that uses inline storage for small objects.
 ///
-/// Most JavaScript objects have only a few properties. By storing up to 4 properties
+/// Most JavaScript objects have only a few properties. By storing up to 2 properties
 /// inline (without heap allocation), we avoid the overhead of a HashMap for common cases.
-/// When the object grows beyond 4 properties, we transparently switch to a HashMap.
+/// When the object grows beyond 2 properties, we transparently switch to a HashMap.
 #[derive(Debug)]
 pub enum PropertyStorage {
-    /// Inline storage for small objects (≤4 properties).
+    /// Inline storage for small objects (≤2 properties).
     /// Uses a fixed-size array with a length counter.
     Inline {
         len: u8,
