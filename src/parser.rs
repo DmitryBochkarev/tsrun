@@ -157,7 +157,7 @@ impl<'a> Parser<'a> {
 
         // Optional initializer
         let init = if self.match_token(&TokenKind::Eq) {
-            Some(self.parse_assignment_expression()?)
+            Some(Rc::new(self.parse_assignment_expression()?))
         } else {
             None
         };
@@ -658,7 +658,7 @@ impl<'a> Parser<'a> {
         let start = self.current.span;
         self.require_token(&TokenKind::If)?;
         self.require_token(&TokenKind::LParen)?;
-        let test = self.parse_expression()?;
+        let test = Rc::new(self.parse_expression()?);
         self.require_token(&TokenKind::RParen)?;
 
         let consequent = Rc::new(self.parse_statement()?);
@@ -732,7 +732,7 @@ impl<'a> Parser<'a> {
                 return if is_of {
                     Ok(Statement::ForOf(ForOfStatement {
                         left,
-                        right,
+                        right: Rc::new(right),
                         body,
                         await_: false,
                         span,
@@ -740,7 +740,7 @@ impl<'a> Parser<'a> {
                 } else {
                     Ok(Statement::ForIn(ForInStatement {
                         left,
-                        right,
+                        right: Rc::new(right),
                         body,
                         span,
                     }))
@@ -750,7 +750,7 @@ impl<'a> Parser<'a> {
             // Regular for loop - type_ann already parsed above
 
             let init_val = if self.match_token(&TokenKind::Eq) {
-                Some(self.parse_assignment_expression()?)
+                Some(Rc::new(self.parse_assignment_expression()?))
             } else {
                 None
             };
@@ -789,7 +789,7 @@ impl<'a> Parser<'a> {
                 return if is_of {
                     Ok(Statement::ForOf(ForOfStatement {
                         left,
-                        right,
+                        right: Rc::new(right),
                         body,
                         await_: false,
                         span,
@@ -797,14 +797,14 @@ impl<'a> Parser<'a> {
                 } else {
                     Ok(Statement::ForIn(ForInStatement {
                         left,
-                        right,
+                        right: Rc::new(right),
                         body,
                         span,
                     }))
                 };
             }
 
-            Some(ForInit::Expression(expr))
+            Some(ForInit::Expression(Rc::new(expr)))
         };
 
         self.require_token(&TokenKind::Semicolon)?;
@@ -866,7 +866,7 @@ impl<'a> Parser<'a> {
         let start = self.current.span;
         self.require_token(&TokenKind::Switch)?;
         self.require_token(&TokenKind::LParen)?;
-        let discriminant = self.parse_expression()?;
+        let discriminant = Rc::new(self.parse_expression()?);
         self.require_token(&TokenKind::RParen)?;
         self.require_token(&TokenKind::LBrace)?;
 
@@ -875,7 +875,7 @@ impl<'a> Parser<'a> {
         while !self.check(&TokenKind::RBrace) && !self.is_at_end() {
             let case_start = self.current.span;
             let test = if self.match_token(&TokenKind::Case) {
-                Some(self.parse_expression()?)
+                Some(Rc::new(self.parse_expression()?))
             } else {
                 self.require_token(&TokenKind::Default)?;
                 None
@@ -895,7 +895,7 @@ impl<'a> Parser<'a> {
             let span = self.span_from(case_start);
             cases.push(SwitchCase {
                 test,
-                consequent,
+                consequent: consequent.into(),
                 span,
             });
         }
@@ -905,7 +905,7 @@ impl<'a> Parser<'a> {
         let span = self.span_from(start);
         Ok(Statement::Switch(SwitchStatement {
             discriminant,
-            cases,
+            cases: cases.into(),
             span,
         }))
     }
@@ -964,7 +964,7 @@ impl<'a> Parser<'a> {
         {
             None
         } else {
-            Some(self.parse_expression()?)
+            Some(Rc::new(self.parse_expression()?))
         };
 
         self.expect_semicolon()?;
@@ -1019,7 +1019,7 @@ impl<'a> Parser<'a> {
             return Err(self.error("Illegal newline after throw"));
         }
 
-        let argument = self.parse_expression()?;
+        let argument = Rc::new(self.parse_expression()?);
         self.expect_semicolon()?;
 
         let span = self.span_from(start);

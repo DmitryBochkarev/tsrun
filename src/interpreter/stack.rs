@@ -310,13 +310,13 @@ pub enum Frame {
     // ═══════════════════════════════════════════════════════════════════════
     /// Switch statement: evaluate discriminant
     SwitchEval {
-        cases: Rc<Vec<crate::ast::SwitchCase>>,
+        cases: Rc<[crate::ast::SwitchCase]>,
     },
 
     /// Switch: discriminant evaluated, match cases
     SwitchMatch {
         discriminant: JsValue,
-        cases: Rc<Vec<crate::ast::SwitchCase>>,
+        cases: Rc<[crate::ast::SwitchCase]>,
         index: usize,
         found_match: bool,
     },
@@ -324,7 +324,7 @@ pub enum Frame {
     /// Switch: execute case body
     SwitchBody {
         discriminant: JsValue,
-        cases: Rc<Vec<crate::ast::SwitchCase>>,
+        cases: Rc<[crate::ast::SwitchCase]>,
         case_index: usize,
         stmt_index: usize,
     },
@@ -1118,7 +1118,7 @@ impl Interpreter {
             Statement::Return(ret) => {
                 state.completion = StackCompletion::Return;
                 if let Some(expr) = &ret.argument {
-                    state.push_frame(Frame::Expr(Rc::new(expr.clone())));
+                    state.push_frame(Frame::Expr(Rc::clone(expr)));
                 } else {
                     state.push_value(Guarded::unguarded(JsValue::Undefined));
                 }
@@ -1165,7 +1165,7 @@ impl Interpreter {
                     consequent: Rc::clone(&if_stmt.consequent),
                     alternate: if_stmt.alternate.as_ref().map(Rc::clone),
                 });
-                state.push_frame(Frame::Expr(Rc::new(if_stmt.test.clone())));
+                state.push_frame(Frame::Expr(Rc::clone(&if_stmt.test)));
                 StepResult::Continue
             }
 
@@ -1224,7 +1224,7 @@ impl Interpreter {
             Statement::Throw(throw_stmt) => {
                 // Evaluate the argument, then throw
                 state.push_frame(Frame::ThrowComplete);
-                state.push_frame(Frame::Expr(Rc::new(throw_stmt.argument.clone())));
+                state.push_frame(Frame::Expr(Rc::clone(&throw_stmt.argument)));
                 StepResult::Continue
             }
 
@@ -1642,7 +1642,7 @@ impl Interpreter {
         // Evaluate init expression (or undefined)
         match &declarator.init {
             Some(expr) => {
-                state.push_frame(Frame::Expr(Rc::new(expr.clone())));
+                state.push_frame(Frame::Expr(Rc::clone(expr)));
             }
             None => {
                 state.push_value(Guarded::unguarded(JsValue::Undefined));
@@ -1941,7 +1941,7 @@ impl Interpreter {
             Some(ForInit::Expression(expr)) => {
                 // Expression init - discard result
                 state.push_frame(Frame::DiscardValue);
-                state.push_frame(Frame::Expr(Rc::new(expr.clone())));
+                state.push_frame(Frame::Expr(Rc::clone(expr)));
             }
             _ => {
                 // No init or var already handled
@@ -2836,10 +2836,10 @@ impl Interpreter {
     ) -> StepResult {
         // Push frame to handle after discriminant is evaluated
         state.push_frame(Frame::SwitchEval {
-            cases: Rc::new(switch_stmt.cases.clone()),
+            cases: Rc::clone(&switch_stmt.cases),
         });
         // Evaluate discriminant first
-        state.push_frame(Frame::Expr(Rc::new(switch_stmt.discriminant.clone())));
+        state.push_frame(Frame::Expr(Rc::clone(&switch_stmt.discriminant)));
         StepResult::Continue
     }
 
@@ -2848,7 +2848,7 @@ impl Interpreter {
         &mut self,
         state: &mut ExecutionState,
         discriminant: JsValue,
-        cases: Rc<Vec<crate::ast::SwitchCase>>,
+        cases: Rc<[crate::ast::SwitchCase]>,
         index: usize,
         found_match: bool,
     ) -> StepResult {
@@ -2944,7 +2944,7 @@ impl Interpreter {
         &mut self,
         state: &mut ExecutionState,
         discriminant: JsValue,
-        cases: Rc<Vec<crate::ast::SwitchCase>>,
+        cases: Rc<[crate::ast::SwitchCase]>,
         case_index: usize,
         stmt_index: usize,
     ) -> StepResult {

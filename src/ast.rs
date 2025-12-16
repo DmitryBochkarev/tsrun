@@ -92,7 +92,7 @@ pub enum VariableKind {
 pub struct VariableDeclarator {
     pub id: Pattern,
     pub type_annotation: Option<TypeAnnotation>,
-    pub init: Option<Expression>,
+    pub init: Option<Rc<Expression>>,
     pub span: Span,
 }
 
@@ -198,7 +198,7 @@ pub struct Decorator {
 
 #[derive(Debug, Clone)]
 pub struct IfStatement {
-    pub test: Expression,
+    pub test: Rc<Expression>,
     pub consequent: Rc<Statement>,
     pub alternate: Option<Rc<Statement>>,
     pub span: Span,
@@ -206,15 +206,15 @@ pub struct IfStatement {
 
 #[derive(Debug, Clone)]
 pub struct SwitchStatement {
-    pub discriminant: Expression,
-    pub cases: Vec<SwitchCase>,
+    pub discriminant: Rc<Expression>,
+    pub cases: Rc<[SwitchCase]>,
     pub span: Span,
 }
 
 #[derive(Debug, Clone)]
 pub struct SwitchCase {
-    pub test: Option<Expression>, // None for default
-    pub consequent: Vec<Statement>,
+    pub test: Option<Rc<Expression>>, // None for default
+    pub consequent: Rc<[Statement]>,
     pub span: Span,
 }
 
@@ -228,16 +228,15 @@ pub struct ForStatement {
 }
 
 #[derive(Debug, Clone)]
-#[allow(clippy::large_enum_variant)]
 pub enum ForInit {
     Variable(VariableDeclaration),
-    Expression(Expression),
+    Expression(Rc<Expression>),
 }
 
 #[derive(Debug, Clone)]
 pub struct ForInStatement {
     pub left: ForInOfLeft,
-    pub right: Expression,
+    pub right: Rc<Expression>,
     pub body: Rc<Statement>,
     pub span: Span,
 }
@@ -245,7 +244,7 @@ pub struct ForInStatement {
 #[derive(Debug, Clone)]
 pub struct ForOfStatement {
     pub left: ForInOfLeft,
-    pub right: Expression,
+    pub right: Rc<Expression>,
     pub body: Rc<Statement>,
     pub await_: bool,
     pub span: Span,
@@ -288,7 +287,7 @@ pub struct CatchClause {
 
 #[derive(Debug, Clone)]
 pub struct ReturnStatement {
-    pub argument: Option<Expression>,
+    pub argument: Option<Rc<Expression>>,
     pub span: Span,
 }
 
@@ -306,7 +305,7 @@ pub struct ContinueStatement {
 
 #[derive(Debug, Clone)]
 pub struct ThrowStatement {
-    pub argument: Expression,
+    pub argument: Rc<Expression>,
     pub span: Span,
 }
 

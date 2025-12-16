@@ -4049,7 +4049,7 @@ impl Interpreter {
                 }
             }
             Statement::Switch(switch_stmt) => {
-                for case in &switch_stmt.cases {
+                for case in switch_stmt.cases.iter() {
                     self.hoist_var_declarations(&case.consequent);
                 }
             }
