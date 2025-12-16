@@ -318,7 +318,7 @@ fn test_order_syscall() {
 }
 
 #[test]
-fn test_order_syscall_returns_id() {
+fn test_order_syscall_returns_promise() {
     use typescript_eval::interpreter::builtins::create_eval_internal_module;
 
     let eval_internal = create_eval_internal_module();
@@ -330,28 +330,24 @@ fn test_order_syscall_returns_id() {
 
     let mut runtime = Runtime::with_config(config);
 
-    // Just test that __order__ returns an order ID
+    // Test that __order__ returns a Promise object
     let result = runtime
         .eval(
             r#"
         import { __order__ } from "eval:internal";
-        __order__({ type: "test" });
+        const p = __order__({ type: "test" });
+        typeof p === "object" && p !== null
     "#,
         )
         .unwrap();
 
-    // The result depends on whether we have pending orders or not
     // Since we called __order__, we should have a pending order and get Suspended
     match result {
         RuntimeResult::Suspended { pending, .. } => {
             assert_eq!(pending.len(), 1);
             assert_eq!(pending[0].id.0, 1);
         }
-        RuntimeResult::Complete(value) => {
-            // If we get Complete, the order ID should be returned
-            assert_eq!(value, JsValue::Number(1.0));
-        }
-        _ => panic!("Unexpected result"),
+        _ => panic!("Expected Suspended"),
     }
 }
 
@@ -388,5 +384,110 @@ fn test_multiple_orders() {
             assert_eq!(pending[2].id.0, 3);
         }
         _ => panic!("Expected Suspended with 3 pending orders"),
+    }
+}
+
+#[test]
+fn test_order_fulfillment() {
+    use typescript_eval::interpreter::builtins::create_eval_internal_module;
+
+    let eval_internal = create_eval_internal_module();
+
+    let config = RuntimeConfig {
+        internal_modules: vec![eval_internal],
+        timeout_ms: 3000,
+    };
+
+    let mut runtime = Runtime::with_config(config);
+
+    // Create an order with a .then handler
+    let result = runtime
+        .eval(
+            r#"
+        import { __order__ } from "eval:internal";
+        let captured = 0;
+        __order__({ type: "getValue" }).then((value) => {
+            captured = value;
+        });
+        captured
+    "#,
+        )
+        .unwrap();
+
+    // Should be suspended with pending order
+    match result {
+        RuntimeResult::Suspended { pending, .. } => {
+            assert_eq!(pending.len(), 1);
+            let order_id = pending[0].id;
+
+            // Fulfill the order
+            let response = OrderResponse {
+                id: order_id,
+                result: Ok(JsValue::Number(42.0)),
+            };
+
+            let result2 = runtime.fulfill_orders(vec![response]).unwrap();
+
+            // After fulfillment, should be complete
+            match result2 {
+                RuntimeResult::Complete(_) => {
+                    // Success! The promise was resolved
+                }
+                _ => panic!("Expected Complete after fulfillment"),
+            }
+        }
+        _ => panic!("Expected Suspended"),
+    }
+}
+
+#[test]
+fn test_order_fulfillment_reject() {
+    use typescript_eval::interpreter::builtins::create_eval_internal_module;
+
+    let eval_internal = create_eval_internal_module();
+
+    let config = RuntimeConfig {
+        internal_modules: vec![eval_internal],
+        timeout_ms: 3000,
+    };
+
+    let mut runtime = Runtime::with_config(config);
+
+    // Create an order with a .catch handler
+    let result = runtime
+        .eval(
+            r#"
+        import { __order__ } from "eval:internal";
+        let captured = "";
+        __order__({ type: "fail" }).catch((err) => {
+            captured = err;
+        });
+        captured
+    "#,
+        )
+        .unwrap();
+
+    match result {
+        RuntimeResult::Suspended { pending, .. } => {
+            assert_eq!(pending.len(), 1);
+            let order_id = pending[0].id;
+
+            // Reject the order
+            let response = OrderResponse {
+                id: order_id,
+                result: Err(JsError::type_error("Operation failed")),
+            };
+
+            let result2 = runtime.fulfill_orders(vec![response]).unwrap();
+
+            // After rejection, should be complete
+            match result2 {
+                RuntimeResult::Complete(_) => {
+                    // Success! The promise was rejected and caught
+                }
+                _ => panic!("Expected Complete after rejection"),
+            }
+        }
+        _ => panic!("Expected Suspended"),
     }
 }

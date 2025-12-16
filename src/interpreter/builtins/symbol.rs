@@ -226,10 +226,9 @@ fn symbol_call(
     };
 
     let id = next_symbol_id();
-    Ok(Guarded::unguarded(JsValue::Symbol(Box::new(JsSymbol::new(
-        id,
-        description,
-    )))))
+    Ok(Guarded::unguarded(JsValue::Symbol(Box::new(
+        JsSymbol::new(id, description),
+    ))))
 }
 
 /// Symbol.for(key) - get or create a symbol in the global registry

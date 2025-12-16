@@ -1357,5 +1357,8 @@ fn test_type_sizes() {
     assert!(size_of::<PropertyKey>() <= 32, "PropertyKey too large");
     assert!(size_of::<Property>() <= 48, "Property too large");
     // PropertyStorage uses inline storage for small objects (4 entries × 80 bytes + overhead)
-    assert!(size_of::<PropertyStorage>() <= 400, "PropertyStorage too large");
+    assert!(
+        size_of::<PropertyStorage>() <= 400,
+        "PropertyStorage too large"
+    );
 }

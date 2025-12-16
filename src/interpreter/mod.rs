@@ -123,6 +123,9 @@ pub struct Interpreter {
     /// Symbol.prototype (for Symbol methods)
     pub symbol_prototype: Gc<JsObject>,
 
+    /// Promise.prototype (for Promise methods)
+    pub promise_prototype: Gc<JsObject>,
+
     // ═══════════════════════════════════════════════════════════════════════════
     // Execution State
     // ═══════════════════════════════════════════════════════════════════════════
@@ -192,6 +195,7 @@ impl Interpreter {
         let set_prototype = root_guard.alloc();
         let date_prototype = root_guard.alloc();
         let symbol_prototype = root_guard.alloc();
+        let promise_prototype = root_guard.alloc();
 
         // Set up prototype chain - all prototypes inherit from object_prototype
         array_prototype.borrow_mut().prototype = Some(object_prototype.clone());
@@ -203,6 +207,7 @@ impl Interpreter {
         set_prototype.borrow_mut().prototype = Some(object_prototype.clone());
         date_prototype.borrow_mut().prototype = Some(object_prototype.clone());
         symbol_prototype.borrow_mut().prototype = Some(object_prototype.clone());
+        promise_prototype.borrow_mut().prototype = Some(object_prototype.clone());
 
         // Create global object (rooted)
         let global = root_guard.alloc();
@@ -235,6 +240,7 @@ impl Interpreter {
             set_prototype,
             date_prototype,
             symbol_prototype,
+            promise_prototype,
             thrown_value: None,
             exports: FxHashMap::default(),
             call_stack: Vec::new(),
@@ -254,6 +260,9 @@ impl Interpreter {
 
         // Initialize built-in globals
         interp.init_globals();
+
+        // Register built-in internal modules
+        interp.register_internal_module(builtins::create_eval_internal_module());
 
         interp
     }
@@ -335,6 +344,12 @@ impl Interpreter {
         let number_constructor = builtins::create_number_constructor(self);
         let number_name = self.string_dict.get_or_insert("Number");
         self.env_define(number_name, JsValue::Object(number_constructor), false);
+
+        // Initialize Promise prototype and constructor
+        builtins::promise_new::init_promise_prototype(self);
+        let promise_constructor = builtins::promise_new::create_promise_constructor(self);
+        let promise_name = self.string_dict.get_or_insert("Promise");
+        self.env_define(promise_name, JsValue::Object(promise_constructor), false);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -684,7 +699,10 @@ impl Interpreter {
 
     /// Create an object with pre-allocated property capacity.
     /// Use this when you know the number of properties upfront to avoid hashmap resizing.
-    pub fn create_object_with_capacity(&mut self, capacity: usize) -> (Gc<JsObject>, Guard<JsObject>) {
+    pub fn create_object_with_capacity(
+        &mut self,
+        capacity: usize,
+    ) -> (Gc<JsObject>, Guard<JsObject>) {
         let temp = self.heap.create_guard();
         let obj = temp.alloc();
         {
@@ -3817,9 +3835,17 @@ impl Interpreter {
                 )
             }
 
-            JsFunction::PromiseResolve(_) | JsFunction::PromiseReject(_) => Err(
-                JsError::internal_error("Promise functions not yet implemented"),
-            ),
+            JsFunction::PromiseResolve(promise) => {
+                let value = args.first().cloned().unwrap_or(JsValue::Undefined);
+                builtins::promise_new::resolve_promise_value(self, &promise, value)?;
+                Ok(Guarded::unguarded(JsValue::Undefined))
+            }
+
+            JsFunction::PromiseReject(promise) => {
+                let reason = args.first().cloned().unwrap_or(JsValue::Undefined);
+                builtins::promise_new::reject_promise_value(self, &promise, reason)?;
+                Ok(Guarded::unguarded(JsValue::Undefined))
+            }
         }
     }
 

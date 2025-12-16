@@ -1020,7 +1020,9 @@ impl PropertyStorage {
     pub fn new() -> Self {
         PropertyStorage::Inline {
             len: 0,
-            entries: std::array::from_fn(|_| (PropertyKey::Index(0), Property::data(JsValue::Undefined))),
+            entries: std::array::from_fn(|_| {
+                (PropertyKey::Index(0), Property::data(JsValue::Undefined))
+            }),
         }
     }
 
@@ -1031,7 +1033,10 @@ impl PropertyStorage {
         if capacity <= INLINE_PROPERTY_CAPACITY {
             Self::new()
         } else {
-            PropertyStorage::Map(FxHashMap::with_capacity_and_hasher(capacity, Default::default()))
+            PropertyStorage::Map(FxHashMap::with_capacity_and_hasher(
+                capacity,
+                Default::default(),
+            ))
         }
     }
 
@@ -1139,7 +1144,12 @@ impl PropertyStorage {
             PropertyStorage::Inline { len, entries } => {
                 let current_len = *len as usize;
                 let mut found_idx = None;
-                for (i, entry) in entries.get(..current_len).unwrap_or_default().iter().enumerate() {
+                for (i, entry) in entries
+                    .get(..current_len)
+                    .unwrap_or_default()
+                    .iter()
+                    .enumerate()
+                {
                     if &entry.0 == key {
                         found_idx = Some(i);
                         break;
@@ -1201,12 +1211,12 @@ impl PropertyStorage {
     /// Iterate over all (key, value) pairs.
     pub fn iter(&self) -> PropertyStorageIter<'_> {
         match self {
-            PropertyStorage::Inline { len, entries } => {
-                PropertyStorageIter::Inline { entries, index: 0, len: *len as usize }
-            }
-            PropertyStorage::Map(map) => {
-                PropertyStorageIter::Map(map.iter())
-            }
+            PropertyStorage::Inline { len, entries } => PropertyStorageIter::Inline {
+                entries,
+                index: 0,
+                len: *len as usize,
+            },
+            PropertyStorage::Map(map) => PropertyStorageIter::Map(map.iter()),
         }
     }
 
@@ -1219,9 +1229,7 @@ impl PropertyStorage {
                     entries: entries.get_mut(..len).unwrap_or_default(),
                 }
             }
-            PropertyStorage::Map(map) => {
-                PropertyStorageIterMut::Map(map.iter_mut())
-            }
+            PropertyStorage::Map(map) => PropertyStorageIterMut::Map(map.iter_mut()),
         }
     }
 
@@ -1251,7 +1259,11 @@ impl<'a> Iterator for PropertyStorageIter<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         match self {
-            PropertyStorageIter::Inline { entries, index, len } => {
+            PropertyStorageIter::Inline {
+                entries,
+                index,
+                len,
+            } => {
                 if *index < *len {
                     let i = *index;
                     *index += 1;
@@ -1490,9 +1502,7 @@ impl From<Rc<ArrowFunctionBody>> for FunctionBody {
             },
             Err(shared) => match shared.as_ref() {
                 ArrowFunctionBody::Block(block) => FunctionBody::Block(Rc::new(block.clone())),
-                ArrowFunctionBody::Expression(expr) => {
-                    FunctionBody::Expression(expr.clone())
-                }
+                ArrowFunctionBody::Expression(expr) => FunctionBody::Expression(expr.clone()),
             },
         }
     }

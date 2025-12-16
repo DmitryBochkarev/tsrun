@@ -35,7 +35,7 @@ mod modules;
 // mod namespace;
 mod number;
 mod object;
-// mod promise;
+mod promise;
 mod regexp;
 mod set;
 // mod state_machine;

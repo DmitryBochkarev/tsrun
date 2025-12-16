@@ -16,9 +16,10 @@ pub mod regexp;
 pub mod set;
 pub mod string;
 pub mod symbol;
-// TODO: Enable these after migration to new GC
+// TODO: Enable generator after migration to new GC
 // pub mod generator;
-// pub mod promise;
+// pub mod promise; // Old promise, kept for reference
+pub mod promise_new; // New promise using new GC
 
 // Re-export public functions from enabled modules
 pub use array::*;
