@@ -19,7 +19,7 @@ use crate::value::{
 };
 use std::rc::Rc;
 
-use super::{create_environment_with_guard, Completion, Interpreter};
+use super::{create_environment_with_guard, Interpreter};
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Stack Types
@@ -147,6 +147,13 @@ pub enum Frame {
         label: Option<JsString>,
     },
 
+    /// While after body: body executed, check completion before evaluating test
+    WhileAfterBody {
+        test: Rc<Expression>,
+        body: Rc<Statement>,
+        label: Option<JsString>,
+    },
+
     /// Do-while loop: execute body first, then check condition
     DoWhileLoop {
         test: Rc<Expression>,
@@ -154,7 +161,7 @@ pub enum Frame {
         label: Option<JsString>,
     },
 
-    /// Do-while check: test evaluated, loop or exit
+    /// Do-while check: body executed, check completion before evaluating test
     DoWhileCheck {
         test: Rc<Expression>,
         body: Rc<Statement>,
@@ -289,6 +296,71 @@ pub enum Frame {
         /// Continuation frame to push after scope is created
         next: Box<Frame>,
     },
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Throw Statement
+    // ═══════════════════════════════════════════════════════════════════════
+    /// Throw: expression evaluated, now throw it
+    ThrowComplete,
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Switch Statement
+    // ═══════════════════════════════════════════════════════════════════════
+    /// Switch statement: evaluate discriminant
+    SwitchEval {
+        cases: Rc<Vec<crate::ast::SwitchCase>>,
+    },
+
+    /// Switch: discriminant evaluated, match cases
+    SwitchMatch {
+        discriminant: JsValue,
+        cases: Rc<Vec<crate::ast::SwitchCase>>,
+        index: usize,
+        found_match: bool,
+    },
+
+    /// Switch: execute case body
+    SwitchBody {
+        discriminant: JsValue,
+        cases: Rc<Vec<crate::ast::SwitchCase>>,
+        case_index: usize,
+        stmt_index: usize,
+    },
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Try/Catch/Finally Statement
+    // ═══════════════════════════════════════════════════════════════════════
+    /// Try block: mark where to catch errors
+    TryBlock {
+        handler: Option<Rc<crate::ast::CatchClause>>,
+        finalizer: Option<Rc<crate::ast::BlockStatement>>,
+        body: Rc<crate::ast::BlockStatement>,
+    },
+
+    /// Catch block: execute catch handler
+    CatchBlock {
+        finalizer: Option<Rc<crate::ast::BlockStatement>>,
+        saved_env: Gc<JsObject>,
+    },
+
+    /// Finally block: execute finally regardless of outcome
+    FinallyBlock {
+        saved_result: Option<JsValue>,
+        saved_error: Option<JsError>,
+        saved_completion: StackCompletion,
+    },
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Labeled Statement
+    // ═══════════════════════════════════════════════════════════════════════
+    /// Labeled statement wrapper
+    LabeledStmt {
+        label: JsString,
+        body: Rc<Statement>,
+    },
+
+    /// After labeled body executed
+    LabeledComplete { label: JsString },
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -327,6 +399,13 @@ impl ExecutionState {
             statements: Rc::new(program.body.clone()),
             index: 0,
         });
+        state
+    }
+
+    /// Create state for executing a single statement
+    pub fn for_statement(stmt: &Statement) -> Self {
+        let mut state = Self::new();
+        state.push_frame(Frame::Stmt(Rc::new(stmt.clone())));
         state
     }
 
@@ -553,6 +632,10 @@ impl Interpreter {
                 self.step_while_check(state, test, body, label)
             }
 
+            Frame::WhileAfterBody { test, body, label } => {
+                self.step_while_after_body(state, test, body, label)
+            }
+
             Frame::DoWhileLoop { test, body, label } => {
                 // Execute body first, then check condition
                 state.push_frame(Frame::DoWhileCheck {
@@ -601,7 +684,13 @@ impl Interpreter {
 
             Frame::ForCleanup { saved_env } => {
                 self.pop_scope(saved_env);
-                state.push_value(Guarded::unguarded(JsValue::Undefined));
+                // Only push undefined if not returning/throwing - preserve the return value
+                if !matches!(
+                    state.completion,
+                    StackCompletion::Return | StackCompletion::Throw
+                ) {
+                    state.push_value(Guarded::unguarded(JsValue::Undefined));
+                }
                 StepResult::Continue
             }
 
@@ -673,6 +762,89 @@ impl Interpreter {
                 state.push_frame(*next);
                 StepResult::Continue
             }
+
+            // ═══════════════════════════════════════════════════════════════
+            // Throw Statement
+            // ═══════════════════════════════════════════════════════════════
+            Frame::ThrowComplete => {
+                let value = state
+                    .pop_value()
+                    .map(|g| g.value)
+                    .unwrap_or(JsValue::Undefined);
+                StepResult::Error(JsError::thrown(value))
+            }
+
+            // ═══════════════════════════════════════════════════════════════
+            // Switch Statement
+            // ═══════════════════════════════════════════════════════════════
+            Frame::SwitchEval { cases } => {
+                let discriminant = state
+                    .pop_value()
+                    .map(|g| g.value)
+                    .unwrap_or(JsValue::Undefined);
+                state.push_frame(Frame::SwitchMatch {
+                    discriminant,
+                    cases,
+                    index: 0,
+                    found_match: false,
+                });
+                StepResult::Continue
+            }
+
+            Frame::SwitchMatch {
+                discriminant,
+                cases,
+                index,
+                found_match,
+            } => self.step_switch_match(state, discriminant, cases, index, found_match),
+
+            Frame::SwitchBody {
+                discriminant,
+                cases,
+                case_index,
+                stmt_index,
+            } => self.step_switch_body(state, discriminant, cases, case_index, stmt_index),
+
+            // ═══════════════════════════════════════════════════════════════
+            // Try/Catch/Finally Statement
+            // ═══════════════════════════════════════════════════════════════
+            Frame::TryBlock {
+                handler,
+                finalizer,
+                body,
+            } => self.step_try_block(state, handler, finalizer, body),
+
+            Frame::CatchBlock {
+                finalizer,
+                saved_env,
+            } => self.step_catch_block(state, finalizer, saved_env),
+
+            Frame::FinallyBlock {
+                saved_result,
+                saved_error,
+                saved_completion,
+            } => self.step_finally_block(state, saved_result, saved_error, saved_completion),
+
+            // ═══════════════════════════════════════════════════════════════
+            // Labeled Statement
+            // ═══════════════════════════════════════════════════════════════
+            Frame::LabeledStmt { label, body } => {
+                state.push_frame(Frame::LabeledComplete {
+                    label: label.cheap_clone(),
+                });
+                state.push_frame(Frame::Stmt(body));
+                StepResult::Continue
+            }
+
+            Frame::LabeledComplete { label } => {
+                // Check if we got a break for this label
+                if let StackCompletion::Break(Some(ref break_label)) = state.completion {
+                    if break_label == &label {
+                        state.completion = StackCompletion::Normal;
+                    }
+                }
+                StepResult::Continue
+            }
         }
     }
 
@@ -681,8 +853,109 @@ impl Interpreter {
         loop {
             match self.step(state) {
                 StepResult::Continue => continue,
+                StepResult::Error(error) => {
+                    // Try to find a TryBlock frame to catch the error
+                    if let Some(result) = self.handle_error(state, error) {
+                        return result;
+                    }
+                    // Error was handled, continue execution
+                    continue;
+                }
                 result => return result,
             }
+        }
+    }
+
+    /// Handle an error by unwinding the stack to find a TryBlock
+    /// Returns Some(StepResult) if error should propagate, None if handled
+    pub fn handle_error(
+        &mut self,
+        state: &mut ExecutionState,
+        error: JsError,
+    ) -> Option<StepResult> {
+        // Extract error value for catch
+        let error_value = match &error {
+            JsError::Thrown => self.thrown_value.take().unwrap_or(JsValue::Undefined),
+            JsError::ThrownValue { value } => value.clone(),
+            _ => JsValue::from(error.to_string()),
+        };
+
+        // Search for TryBlock frame
+        let mut found_try_idx = None;
+        for (idx, frame) in state.frames.iter().enumerate().rev() {
+            if matches!(frame, Frame::TryBlock { .. }) {
+                found_try_idx = Some(idx);
+                break;
+            }
+        }
+
+        if let Some(idx) = found_try_idx {
+            // Remove all frames above the TryBlock (they're being unwound)
+            state.frames.truncate(idx + 1);
+
+            // Pop the TryBlock frame to process it
+            if let Some(Frame::TryBlock {
+                handler,
+                finalizer,
+                body: _,
+            }) = state.pop_frame()
+            {
+                // Clear value stack (exception unwinds computation)
+                state.values.clear();
+
+                // Reset completion - error was caught, so any previous return/break/continue is cancelled
+                state.completion = StackCompletion::Normal;
+
+                if let Some(catch_handler) = handler {
+                    // Create catch scope
+                    let saved_env = self.env.clone();
+                    let catch_env =
+                        create_environment_with_guard(&self.root_guard, Some(saved_env.clone()));
+                    self.env = catch_env;
+
+                    // Bind error parameter if present
+                    if let Some(ref param) = catch_handler.param {
+                        if let Err(e) = self.bind_pattern(param, error_value, true) {
+                            self.env = saved_env;
+                            return Some(StepResult::Error(e));
+                        }
+                    }
+
+                    // Push catch block execution
+                    state.push_frame(Frame::CatchBlock {
+                        finalizer,
+                        saved_env,
+                    });
+                    state.push_frame(Frame::Block {
+                        statements: Rc::new(catch_handler.body.body.clone()),
+                        index: 0,
+                    });
+
+                    None // Error was handled
+                } else if let Some(finally_block) = finalizer {
+                    // No catch, but there's finally - run finally then re-throw
+                    state.push_frame(Frame::FinallyBlock {
+                        saved_result: None,
+                        saved_error: Some(JsError::thrown(error_value)),
+                        saved_completion: StackCompletion::Normal,
+                    });
+                    state.push_frame(Frame::Block {
+                        statements: Rc::new(finally_block.body.clone()),
+                        index: 0,
+                    });
+
+                    None // Error will be re-thrown after finally
+                } else {
+                    // No catch or finally - propagate error
+                    Some(StepResult::Error(JsError::thrown(error_value)))
+                }
+            } else {
+                // TryBlock frame wasn't found (shouldn't happen)
+                Some(StepResult::Error(error))
+            }
+        } else {
+            // No TryBlock found - propagate error
+            Some(StepResult::Error(error))
         }
     }
 
@@ -874,31 +1147,82 @@ impl Interpreter {
 
             Statement::ForOf(for_of) => self.setup_for_of_loop(state, for_of, None),
 
-            // For complex statements, delegate to recursive execution
-            _ => match self.execute_statement(stmt) {
-                Ok(completion) => {
-                    match completion {
-                        Completion::Normal(val) => {
-                            state.push_value(Guarded::unguarded(val));
-                            state.completion = StackCompletion::Normal;
-                        }
-                        Completion::Return(val) => {
-                            state.push_value(Guarded::unguarded(val));
-                            state.completion = StackCompletion::Return;
-                        }
-                        Completion::Break(label) => {
-                            state.push_value(Guarded::unguarded(JsValue::Undefined));
-                            state.completion = StackCompletion::Break(label);
-                        }
-                        Completion::Continue(label) => {
-                            state.push_value(Guarded::unguarded(JsValue::Undefined));
-                            state.completion = StackCompletion::Continue(label);
-                        }
+            Statement::Labeled(labeled) => self.setup_labeled(state, labeled),
+
+            Statement::FunctionDeclaration(func) => {
+                // Create the function and bind it to the environment
+                match self.stack_execute_function_declaration(func) {
+                    Ok(()) => {
+                        state.push_value(Guarded::unguarded(JsValue::Undefined));
+                        StepResult::Continue
                     }
+                    Err(e) => StepResult::Error(e),
+                }
+            }
+
+            Statement::ClassDeclaration(class) => {
+                // Delegate to existing class declaration handler
+                match self.execute_class_declaration(class) {
+                    Ok(()) => {
+                        state.push_value(Guarded::unguarded(JsValue::Undefined));
+                        StepResult::Continue
+                    }
+                    Err(e) => StepResult::Error(e),
+                }
+            }
+
+            Statement::Switch(switch_stmt) => self.setup_switch(state, switch_stmt),
+
+            Statement::Try(try_stmt) => self.setup_try(state, try_stmt),
+
+            Statement::Throw(throw_stmt) => {
+                // Evaluate the argument, then throw
+                state.push_frame(Frame::ThrowComplete);
+                state.push_frame(Frame::Expr(Rc::new(throw_stmt.argument.clone())));
+                StepResult::Continue
+            }
+
+            Statement::Import(import) => match self.stack_execute_import(import) {
+                Ok(()) => {
+                    state.push_value(Guarded::unguarded(JsValue::Undefined));
                     StepResult::Continue
                 }
                 Err(e) => StepResult::Error(e),
             },
+
+            Statement::Export(export) => match self.stack_execute_export(export) {
+                Ok(()) => {
+                    state.push_value(Guarded::unguarded(JsValue::Undefined));
+                    StepResult::Continue
+                }
+                Err(e) => StepResult::Error(e),
+            },
+
+            // TypeScript declarations - no runtime effect
+            Statement::TypeAlias(_) | Statement::InterfaceDeclaration(_) => {
+                state.push_value(Guarded::unguarded(JsValue::Undefined));
+                StepResult::Continue
+            }
+
+            Statement::NamespaceDeclaration(_) => {
+                // Namespace declarations - not yet fully implemented
+                // TODO: Implement namespace support
+                state.push_value(Guarded::unguarded(JsValue::Undefined));
+                StepResult::Continue
+            }
+
+            Statement::EnumDeclaration(_) => {
+                // Enum declarations - not yet fully implemented
+                // TODO: Implement enum support
+                state.push_value(Guarded::unguarded(JsValue::Undefined));
+                StepResult::Continue
+            }
+
+            Statement::Debugger => {
+                // Debugger statement is a no-op
+                state.push_value(Guarded::unguarded(JsValue::Undefined));
+                StepResult::Continue
+            }
         }
     }
 
@@ -1324,12 +1648,43 @@ impl Interpreter {
         body: Rc<Statement>,
         label: Option<JsString>,
     ) -> StepResult {
-        // Check for break/continue from previous body execution
+        // Get condition value (test was already evaluated)
+        let condition = state
+            .pop_value()
+            .map(|v| v.value)
+            .unwrap_or(JsValue::Undefined);
+
+        if condition.to_boolean() {
+            // Continue loop: push WhileAfterBody to check completion after body, then execute body
+            state.push_frame(Frame::WhileAfterBody {
+                test,
+                body: body.clone(),
+                label,
+            });
+            // Execute body
+            state.push_frame(Frame::Stmt(body));
+        } else {
+            // Exit loop
+            state.push_value(Guarded::unguarded(JsValue::Undefined));
+        }
+        StepResult::Continue
+    }
+
+    /// Step for while after body - body executed, check completion before evaluating test
+    fn step_while_after_body(
+        &mut self,
+        state: &mut ExecutionState,
+        test: Rc<Expression>,
+        body: Rc<Statement>,
+        label: Option<JsString>,
+    ) -> StepResult {
+        // Check for break/continue/return/throw from body execution
         match &state.completion {
             StackCompletion::Break(brk_label) => {
                 // Check if break targets this loop
                 if brk_label.is_none() || brk_label.as_ref() == label.as_ref() {
                     state.completion = StackCompletion::Normal;
+                    let _ = state.pop_value(); // Discard body result
                     state.push_value(Guarded::unguarded(JsValue::Undefined));
                     return StepResult::Continue;
                 }
@@ -1340,40 +1695,37 @@ impl Interpreter {
                 // Check if continue targets this loop
                 if cont_label.is_none() || cont_label.as_ref() == label.as_ref() {
                     state.completion = StackCompletion::Normal;
-                    // Continue to next iteration - don't check condition value, restart loop
-                    state.push_frame(Frame::WhileLoop { test, body, label });
+                    let _ = state.pop_value(); // Discard body result
+                                               // Continue to next iteration - evaluate test again
+                    state.push_frame(Frame::WhileCheck {
+                        test: test.clone(),
+                        body,
+                        label,
+                    });
+                    state.push_frame(Frame::Expr(test));
                     return StepResult::Continue;
                 }
                 // Continue targets outer loop - propagate
                 return StepResult::Continue;
             }
             StackCompletion::Return | StackCompletion::Throw => {
-                // Return/throw - propagate up
+                // Return/throw - propagate up (don't push undefined, preserve return value)
                 return StepResult::Continue;
             }
             StackCompletion::Normal => {}
         }
 
-        // Get condition value
-        let condition = state
-            .pop_value()
-            .map(|v| v.value)
-            .unwrap_or(JsValue::Undefined);
+        // Discard body result
+        let _ = state.pop_value();
 
-        if condition.to_boolean() {
-            // Continue loop: check condition again after body
-            state.push_frame(Frame::WhileCheck {
-                test: test.clone(),
-                body: body.clone(),
-                label: label.clone(),
-            });
-            state.push_frame(Frame::Expr(test));
-            // Execute body
-            state.push_frame(Frame::Stmt(body));
-        } else {
-            // Exit loop
-            state.push_value(Guarded::unguarded(JsValue::Undefined));
-        }
+        // Normal completion - evaluate test for next iteration
+        state.push_frame(Frame::WhileCheck {
+            test: test.clone(),
+            body,
+            label,
+        });
+        state.push_frame(Frame::Expr(test));
+
         StepResult::Continue
     }
 
@@ -2267,5 +2619,551 @@ impl Interpreter {
         });
 
         StepResult::Continue
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // Labeled Statement Implementation
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    /// Setup labeled statement - push label context and body
+    fn setup_labeled(
+        &mut self,
+        state: &mut ExecutionState,
+        labeled: &crate::ast::LabeledStatement,
+    ) -> StepResult {
+        let label = labeled.label.name.cheap_clone();
+        let body = Rc::new((*labeled.body).clone());
+
+        // Check if this is a labeled loop - if so, pass the label to the loop
+        match labeled.body.as_ref() {
+            Statement::While(while_stmt) => {
+                state.push_frame(Frame::LabeledComplete {
+                    label: label.cheap_clone(),
+                });
+                state.push_frame(Frame::WhileLoop {
+                    test: Rc::new(while_stmt.test.clone()),
+                    body: Rc::new((*while_stmt.body).clone()),
+                    label: Some(label),
+                });
+                StepResult::Continue
+            }
+            Statement::DoWhile(do_while) => {
+                state.push_frame(Frame::LabeledComplete {
+                    label: label.cheap_clone(),
+                });
+                state.push_frame(Frame::DoWhileLoop {
+                    test: Rc::new(do_while.test.clone()),
+                    body: Rc::new((*do_while.body).clone()),
+                    label: Some(label),
+                });
+                StepResult::Continue
+            }
+            Statement::For(for_stmt) => {
+                state.push_frame(Frame::LabeledComplete {
+                    label: label.cheap_clone(),
+                });
+                self.setup_for_loop(state, for_stmt, Some(label))
+            }
+            Statement::ForIn(for_in) => {
+                state.push_frame(Frame::LabeledComplete {
+                    label: label.cheap_clone(),
+                });
+                self.setup_for_in_loop(state, for_in, Some(label))
+            }
+            Statement::ForOf(for_of) => {
+                state.push_frame(Frame::LabeledComplete {
+                    label: label.cheap_clone(),
+                });
+                self.setup_for_of_loop(state, for_of, Some(label))
+            }
+            _ => {
+                // Non-loop statement with label
+                state.push_frame(Frame::LabeledComplete { label });
+                state.push_frame(Frame::Stmt(body));
+                StepResult::Continue
+            }
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // Switch Statement Implementation
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    /// Setup switch statement - push discriminant evaluation frame
+    fn setup_switch(
+        &mut self,
+        state: &mut ExecutionState,
+        switch_stmt: &crate::ast::SwitchStatement,
+    ) -> StepResult {
+        // Push frame to handle after discriminant is evaluated
+        state.push_frame(Frame::SwitchEval {
+            cases: Rc::new(switch_stmt.cases.clone()),
+        });
+        // Evaluate discriminant first
+        state.push_frame(Frame::Expr(Rc::new(switch_stmt.discriminant.clone())));
+        StepResult::Continue
+    }
+
+    /// Step for switch case matching - find matching case
+    fn step_switch_match(
+        &mut self,
+        state: &mut ExecutionState,
+        discriminant: JsValue,
+        cases: Rc<Vec<crate::ast::SwitchCase>>,
+        index: usize,
+        found_match: bool,
+    ) -> StepResult {
+        // If we already found a match, start executing from here
+        if found_match {
+            // Start executing from the matched case
+            state.push_frame(Frame::SwitchBody {
+                discriminant,
+                cases,
+                case_index: index,
+                stmt_index: 0,
+            });
+            return StepResult::Continue;
+        }
+
+        // If we've gone through all cases without a match, look for default
+        if index >= cases.len() {
+            // Find default case
+            let mut default_index = None;
+            for (i, case) in cases.iter().enumerate() {
+                if case.test.is_none() {
+                    default_index = Some(i);
+                    break;
+                }
+            }
+
+            if let Some(idx) = default_index {
+                // Execute from default case
+                state.push_frame(Frame::SwitchBody {
+                    discriminant,
+                    cases,
+                    case_index: idx,
+                    stmt_index: 0,
+                });
+            } else {
+                // No default, switch is done
+                state.push_value(Guarded::unguarded(JsValue::Undefined));
+            }
+            return StepResult::Continue;
+        }
+
+        let case = match cases.get(index) {
+            Some(c) => c,
+            None => {
+                state.push_value(Guarded::unguarded(JsValue::Undefined));
+                return StepResult::Continue;
+            }
+        };
+
+        // Skip default case during matching phase
+        if case.test.is_none() {
+            state.push_frame(Frame::SwitchMatch {
+                discriminant,
+                cases,
+                index: index + 1,
+                found_match: false,
+            });
+            return StepResult::Continue;
+        }
+
+        // Evaluate case test
+        let test_expr = case.test.as_ref();
+        if let Some(test_expr) = test_expr {
+            match self.evaluate_expression(test_expr) {
+                Ok(guarded) => {
+                    if discriminant.strict_equals(&guarded.value) {
+                        // Found match - start executing from this case
+                        state.push_frame(Frame::SwitchBody {
+                            discriminant,
+                            cases,
+                            case_index: index,
+                            stmt_index: 0,
+                        });
+                    } else {
+                        // No match, try next case
+                        state.push_frame(Frame::SwitchMatch {
+                            discriminant,
+                            cases,
+                            index: index + 1,
+                            found_match: false,
+                        });
+                    }
+                }
+                Err(e) => return StepResult::Error(e),
+            }
+        }
+
+        StepResult::Continue
+    }
+
+    /// Step for switch body execution - execute statements with fall-through
+    fn step_switch_body(
+        &mut self,
+        state: &mut ExecutionState,
+        discriminant: JsValue,
+        cases: Rc<Vec<crate::ast::SwitchCase>>,
+        case_index: usize,
+        stmt_index: usize,
+    ) -> StepResult {
+        // Check for break from previous statement
+        if let StackCompletion::Break(None) = state.completion {
+            state.completion = StackCompletion::Normal;
+            state.push_value(Guarded::unguarded(JsValue::Undefined));
+            return StepResult::Continue;
+        }
+
+        // Check for labeled break, return, or continue - propagate
+        match &state.completion {
+            StackCompletion::Break(Some(_))
+            | StackCompletion::Return
+            | StackCompletion::Continue(_)
+            | StackCompletion::Throw => {
+                return StepResult::Continue;
+            }
+            StackCompletion::Normal | StackCompletion::Break(None) => {}
+        }
+
+        // Done with all cases
+        if case_index >= cases.len() {
+            state.push_value(Guarded::unguarded(JsValue::Undefined));
+            return StepResult::Continue;
+        }
+
+        let case = match cases.get(case_index) {
+            Some(c) => c,
+            None => {
+                state.push_value(Guarded::unguarded(JsValue::Undefined));
+                return StepResult::Continue;
+            }
+        };
+
+        // Done with this case's statements, fall through to next case
+        if stmt_index >= case.consequent.len() {
+            state.push_frame(Frame::SwitchBody {
+                discriminant,
+                cases,
+                case_index: case_index + 1,
+                stmt_index: 0,
+            });
+            return StepResult::Continue;
+        }
+
+        // Get current statement
+        let stmt = match case.consequent.get(stmt_index) {
+            Some(s) => s.clone(),
+            None => {
+                state.push_frame(Frame::SwitchBody {
+                    discriminant,
+                    cases,
+                    case_index: case_index + 1,
+                    stmt_index: 0,
+                });
+                return StepResult::Continue;
+            }
+        };
+
+        // Push continuation for next statement
+        state.push_frame(Frame::SwitchBody {
+            discriminant,
+            cases,
+            case_index,
+            stmt_index: stmt_index + 1,
+        });
+
+        // Execute current statement
+        state.push_frame(Frame::Stmt(Rc::new(stmt)));
+
+        StepResult::Continue
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // Try/Catch/Finally Statement Implementation
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    /// Setup try statement - execute try block with error handling context
+    fn setup_try(
+        &mut self,
+        state: &mut ExecutionState,
+        try_stmt: &crate::ast::TryStatement,
+    ) -> StepResult {
+        let saved_env = self.env.clone();
+
+        // Push the try block frame - it will handle errors
+        state.push_frame(Frame::TryBlock {
+            handler: try_stmt.handler.as_ref().map(|h| Rc::new(h.clone())),
+            finalizer: try_stmt.finalizer.as_ref().map(|f| Rc::new(f.clone())),
+            body: Rc::new(try_stmt.block.clone()),
+        });
+
+        // Execute try block body
+        state.push_frame(Frame::Block {
+            statements: Rc::new(try_stmt.block.body.clone()),
+            index: 0,
+        });
+
+        // Save environment for potential catch
+        // Note: We clone saved_env for potential use in catch
+        let _ = saved_env;
+
+        StepResult::Continue
+    }
+
+    /// Step for try block completion - handle normal completion (errors are caught in run())
+    fn step_try_block(
+        &mut self,
+        state: &mut ExecutionState,
+        _handler: Option<Rc<crate::ast::CatchClause>>,
+        finalizer: Option<Rc<crate::ast::BlockStatement>>,
+        _body: Rc<crate::ast::BlockStatement>,
+    ) -> StepResult {
+        // Get result from try block
+        let result = state.pop_value().map(|g| g.value);
+
+        // Normal completion (or return/break/continue) - errors are handled in run()
+        let saved_completion = state.completion.clone();
+
+        if let Some(finally_block) = finalizer {
+            // Run finally block
+            state.push_frame(Frame::FinallyBlock {
+                saved_result: result,
+                saved_error: None,
+                saved_completion,
+            });
+            state.completion = StackCompletion::Normal;
+            state.push_frame(Frame::Block {
+                statements: Rc::new(finally_block.body.clone()),
+                index: 0,
+            });
+        } else {
+            // No finally, just continue with current completion
+            if let Some(val) = result {
+                state.push_value(Guarded::unguarded(val));
+            } else {
+                state.push_value(Guarded::unguarded(JsValue::Undefined));
+            }
+        }
+
+        StepResult::Continue
+    }
+
+    /// Step for catch block completion - restore env and run finally
+    fn step_catch_block(
+        &mut self,
+        state: &mut ExecutionState,
+        finalizer: Option<Rc<crate::ast::BlockStatement>>,
+        saved_env: Gc<JsObject>,
+    ) -> StepResult {
+        // Restore environment
+        self.env = saved_env;
+
+        // Get catch result
+        let result = state.pop_value().map(|g| g.value);
+        let saved_completion = state.completion.clone();
+
+        if let Some(finally_block) = finalizer {
+            // Run finally
+            state.push_frame(Frame::FinallyBlock {
+                saved_result: result,
+                saved_error: None,
+                saved_completion,
+            });
+            state.completion = StackCompletion::Normal;
+            state.push_frame(Frame::Block {
+                statements: Rc::new(finally_block.body.clone()),
+                index: 0,
+            });
+        } else {
+            // No finally, continue
+            if let Some(val) = result {
+                state.push_value(Guarded::unguarded(val));
+            } else {
+                state.push_value(Guarded::unguarded(JsValue::Undefined));
+            }
+        }
+
+        StepResult::Continue
+    }
+
+    /// Step for finally block completion - restore original completion/error
+    fn step_finally_block(
+        &mut self,
+        state: &mut ExecutionState,
+        saved_result: Option<JsValue>,
+        saved_error: Option<JsError>,
+        saved_completion: StackCompletion,
+    ) -> StepResult {
+        // Pop finally result (we don't use it unless it threw)
+        let _ = state.pop_value();
+
+        // Check if finally threw
+        if matches!(state.completion, StackCompletion::Throw) {
+            // Finally threw - use its error
+            return StepResult::Continue;
+        }
+
+        // Restore original completion
+        state.completion = saved_completion;
+
+        // Re-throw original error if there was one
+        if let Some(error) = saved_error {
+            return StepResult::Error(error);
+        }
+
+        // Otherwise restore the saved result
+        if let Some(val) = saved_result {
+            state.push_value(Guarded::unguarded(val));
+        } else {
+            state.push_value(Guarded::unguarded(JsValue::Undefined));
+        }
+
+        StepResult::Continue
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // Statement Execution Helpers
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    /// Execute function declaration - creates and binds function to environment
+    fn stack_execute_function_declaration(
+        &mut self,
+        func: &crate::ast::FunctionDeclaration,
+    ) -> Result<(), JsError> {
+        let name = func.id.as_ref().map(|id| id.name.cheap_clone());
+        let params = func.params.clone();
+        let body = Rc::new(crate::value::FunctionBody::Block(func.body.clone()));
+
+        // Create function with temp guard
+        let (func_obj, _temp) = self.create_function_with_guard(
+            name.clone(),
+            params,
+            body,
+            self.env.clone(),
+            func.span,
+            func.generator,
+            func.async_,
+        );
+
+        // Transfer ownership to environment before temp guard is dropped
+        if let Some(js_name) = name {
+            self.env_define(js_name, JsValue::Object(func_obj), true);
+        }
+
+        Ok(())
+    }
+
+    /// Execute import declaration - binds imported names to environment
+    fn stack_execute_import(
+        &mut self,
+        import: &crate::ast::ImportDeclaration,
+    ) -> Result<(), JsError> {
+        let specifier = import.source.value.to_string();
+
+        // Resolve the module
+        let module_obj = self.resolve_module(&specifier)?;
+
+        // Bind imported names to current environment
+        for spec in &import.specifiers {
+            match spec {
+                crate::ast::ImportSpecifier::Named {
+                    local, imported, ..
+                } => {
+                    let import_key = self.key(imported.name.as_str());
+                    let value = module_obj
+                        .borrow()
+                        .get_property(&import_key)
+                        .unwrap_or(JsValue::Undefined);
+                    self.env_define(local.name.cheap_clone(), value, false);
+                }
+                crate::ast::ImportSpecifier::Default { local, .. } => {
+                    let default_key = self.key("default");
+                    let value = module_obj
+                        .borrow()
+                        .get_property(&default_key)
+                        .unwrap_or(JsValue::Undefined);
+                    self.env_define(local.name.cheap_clone(), value, false);
+                }
+                crate::ast::ImportSpecifier::Namespace { local, .. } => {
+                    self.env_define(
+                        local.name.cheap_clone(),
+                        JsValue::Object(module_obj.clone()),
+                        false,
+                    );
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Execute export declaration - registers exported values
+    fn stack_execute_export(
+        &mut self,
+        export: &crate::ast::ExportDeclaration,
+    ) -> Result<(), JsError> {
+        // Handle export declaration (e.g., export function foo() {})
+        if let Some(decl) = &export.declaration {
+            // Execute the declaration first
+            match decl.as_ref() {
+                Statement::FunctionDeclaration(func) => {
+                    self.stack_execute_function_declaration(func)?;
+                    if let Some(id) = &func.id {
+                        let value = self.env_get(&id.name)?;
+                        let export_name = if export.default {
+                            JsString::from("default")
+                        } else {
+                            id.name.cheap_clone()
+                        };
+                        self.exports.insert(export_name, value);
+                    }
+                }
+                Statement::VariableDeclaration(var_decl) => {
+                    self.execute_variable_declaration(var_decl)?;
+                    for declarator in &var_decl.declarations {
+                        if let Pattern::Identifier(id) = &declarator.id {
+                            let value = self.env_get(&id.name)?;
+                            self.exports.insert(id.name.cheap_clone(), value);
+                        }
+                    }
+                }
+                Statement::ClassDeclaration(class) => {
+                    self.execute_class_declaration(class)?;
+                    if let Some(id) = &class.id {
+                        let value = self.env_get(&id.name)?;
+                        let export_name = if export.default {
+                            JsString::from("default")
+                        } else {
+                            id.name.cheap_clone()
+                        };
+                        self.exports.insert(export_name, value);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // Handle re-exports: export { foo } from "module"
+        if let Some(source) = &export.source {
+            let module_obj = self.resolve_module(source.value.as_ref())?;
+            for spec in &export.specifiers {
+                let import_key = self.key(spec.local.name.as_str());
+                let value = module_obj
+                    .borrow()
+                    .get_property(&import_key)
+                    .unwrap_or(JsValue::Undefined);
+                self.exports.insert(spec.exported.name.cheap_clone(), value);
+            }
+        } else if !export.specifiers.is_empty() {
+            // Handle named exports: export { foo, bar }
+            for spec in &export.specifiers {
+                let value = self.env_get(&spec.local.name)?;
+                self.exports.insert(spec.exported.name.cheap_clone(), value);
+            }
+        }
+
+        Ok(())
     }
 }

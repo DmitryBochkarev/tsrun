@@ -549,6 +549,128 @@ fn test_async_retry_success() {
 }
 
 #[test]
+fn test_async_retry_simple() {
+    // Simpler test for async retry pattern
+    let result = eval(
+        r#"
+        async function test(): Promise<number | null> {
+            let attempts: number = 0;
+            while (attempts < 3) {
+                try {
+                    throw new Error("fail");
+                } catch (e: any) {
+                    attempts++;
+                    if (attempts >= 3) {
+                        return null;
+                    }
+                }
+            }
+            return null;
+        }
+
+        const r = await test();
+        r
+    "#,
+    );
+    assert_eq!(result, JsValue::Null);
+}
+
+#[test]
+fn test_async_retry_with_await() {
+    // Test without return keyword first
+    let result = eval(
+        r#"
+        let captured = "";
+        async function test() {
+            try {
+                await Promise.reject("fail");
+            } catch (e: any) {
+                captured = "caught";
+            }
+        }
+        test().then(function() {});
+        captured
+    "#,
+    );
+    assert_eq!(result, JsValue::String("caught".into()));
+}
+
+#[test]
+fn test_async_try_catch_with_return() {
+    // Await on rejected promise with return - uses top-level await
+    let result = eval(
+        r#"
+        async function test(): Promise<number | null> {
+            try {
+                return await Promise.reject("fail");
+            } catch (e: any) {
+                return null;
+            }
+        }
+
+        const r = await test();
+        r
+    "#,
+    );
+    assert_eq!(result, JsValue::Null);
+}
+
+#[test]
+fn test_async_await_throwing_function() {
+    // Await on async function that throws - this is different from Promise.reject
+    let result = eval(
+        r#"
+        async function alwaysFail(): Promise<number> {
+            throw new Error("fail");
+        }
+
+        async function test(): Promise<number | null> {
+            try {
+                return await alwaysFail();
+            } catch (e: any) {
+                return null;
+            }
+        }
+
+        const r = await test();
+        r
+    "#,
+    );
+    assert_eq!(result, JsValue::Null);
+}
+
+#[test]
+fn test_async_retry_with_await_loop() {
+    // Test with await inside try block inside loop
+    let result = eval(
+        r#"
+        async function alwaysFail(): Promise<number> {
+            throw new Error("fail");
+        }
+
+        async function test(): Promise<number | null> {
+            let attempts: number = 0;
+            while (attempts < 3) {
+                try {
+                    return await alwaysFail();
+                } catch (e: any) {
+                    attempts++;
+                    if (attempts >= 3) {
+                        return null;
+                    }
+                }
+            }
+            return null;
+        }
+
+        const r = await test();
+        r
+    "#,
+    );
+    assert_eq!(result, JsValue::Null);
+}
+
+#[test]
 fn test_async_retry_failure() {
     // retry should return null after max attempts
     let result = eval(

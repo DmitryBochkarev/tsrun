@@ -1713,6 +1713,47 @@ fn test_loop_in_try_catch() {
 // Control Flow with Functions
 // -----------------------------------------------------------------------------
 
+// Tests for return statement handling in loops
+#[test]
+fn test_return_in_simple_for_loop() {
+    // Simplest case: return immediately on first iteration
+    assert_eq!(
+        eval(
+            r#"
+            function test(): number {
+                for (let i: number = 0; i < 3; i = i + 1) {
+                    return 99;
+                }
+                return -1;
+            }
+            test()
+        "#
+        ),
+        JsValue::Number(99.0)
+    );
+}
+
+#[test]
+fn test_return_in_if_inside_for_loop() {
+    // Return inside if inside for loop
+    assert_eq!(
+        eval(
+            r#"
+            function test(): number {
+                for (let i: number = 0; i < 3; i = i + 1) {
+                    if (i === 1) {
+                        return i;
+                    }
+                }
+                return -1;
+            }
+            test()
+        "#
+        ),
+        JsValue::Number(1.0)
+    );
+}
+
 #[test]
 fn test_return_in_loop() {
     assert_eq!(
