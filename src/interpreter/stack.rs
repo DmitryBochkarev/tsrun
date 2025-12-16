@@ -3,7 +3,10 @@
 //! This module implements a trampolined interpreter that can suspend
 //! at await points and resume later with a value.
 
-use crate::ast::{BinaryOp, Expression, LiteralValue, LogicalOp, Program, Statement, UnaryOp};
+use crate::ast::{
+    BinaryOp, Expression, LiteralValue, LogicalOp, Pattern, Program, Statement, UnaryOp,
+    VariableDeclarator, VariableKind,
+};
 use crate::error::JsError;
 use crate::gc::Gc;
 use crate::value::{CheapClone, ExoticObject, Guarded, JsObject, JsString, JsValue, PromiseStatus};
@@ -100,6 +103,66 @@ pub enum Frame {
 
     /// Await: promise evaluated, check state
     AwaitCheck,
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Variable Declaration
+    // ═══════════════════════════════════════════════════════════════════════
+    /// Process variable declarators sequentially
+    VarDecl {
+        declarators: Rc<Vec<VariableDeclarator>>,
+        index: usize,
+        mutable: bool,
+    },
+
+    /// Bind variable after init expression evaluated
+    VarBind {
+        pattern: Rc<Pattern>,
+        mutable: bool,
+    },
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Control Flow
+    // ═══════════════════════════════════════════════════════════════════════
+    /// If statement: condition evaluated, pick branch
+    IfBranch {
+        consequent: Rc<Statement>,
+        alternate: Option<Rc<Statement>>,
+    },
+
+    /// While loop: evaluate test, then decide
+    WhileLoop {
+        test: Rc<Expression>,
+        body: Rc<Statement>,
+        label: Option<JsString>,
+    },
+
+    /// While check: test evaluated, execute body or exit
+    WhileCheck {
+        test: Rc<Expression>,
+        body: Rc<Statement>,
+        label: Option<JsString>,
+    },
+
+    /// Do-while loop: execute body first, then check condition
+    DoWhileLoop {
+        test: Rc<Expression>,
+        body: Rc<Statement>,
+        label: Option<JsString>,
+    },
+
+    /// Do-while check: test evaluated, loop or exit
+    DoWhileCheck {
+        test: Rc<Expression>,
+        body: Rc<Statement>,
+        label: Option<JsString>,
+    },
+
+    /// Do-while test check: after condition evaluated, decide to loop or exit
+    DoWhileTestCheck {
+        test: Rc<Expression>,
+        body: Rc<Statement>,
+        label: Option<JsString>,
+    },
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -302,6 +365,59 @@ impl Interpreter {
             }
 
             Frame::AwaitCheck => self.step_await_check(state),
+
+            // ═══════════════════════════════════════════════════════════════
+            // Variable Declaration
+            // ═══════════════════════════════════════════════════════════════
+            Frame::VarDecl {
+                declarators,
+                index,
+                mutable,
+            } => self.step_var_decl(state, declarators, index, mutable),
+
+            Frame::VarBind { pattern, mutable } => self.step_var_bind(state, &pattern, mutable),
+
+            // ═══════════════════════════════════════════════════════════════
+            // Control Flow
+            // ═══════════════════════════════════════════════════════════════
+            Frame::IfBranch {
+                consequent,
+                alternate,
+            } => self.step_if_branch(state, consequent, alternate),
+
+            Frame::WhileLoop { test, body, label } => {
+                // Start while loop - evaluate test first
+                state.push_frame(Frame::WhileCheck {
+                    test: test.clone(),
+                    body,
+                    label,
+                });
+                state.push_frame(Frame::Expr(test));
+                StepResult::Continue
+            }
+
+            Frame::WhileCheck { test, body, label } => {
+                self.step_while_check(state, test, body, label)
+            }
+
+            Frame::DoWhileLoop { test, body, label } => {
+                // Execute body first, then check condition
+                state.push_frame(Frame::DoWhileCheck {
+                    test: test.clone(),
+                    body: body.clone(),
+                    label,
+                });
+                state.push_frame(Frame::Stmt(body));
+                StepResult::Continue
+            }
+
+            Frame::DoWhileCheck { test, body, label } => {
+                self.step_do_while_check(state, test, body, label)
+            }
+
+            Frame::DoWhileTestCheck { test, body, label } => {
+                self.step_do_while_test_check(state, test, body, label)
+            }
         }
     }
 
@@ -454,6 +570,49 @@ impl Interpreter {
                 StepResult::Continue
             }
 
+            Statement::VariableDeclaration(decl) => {
+                let mutable = matches!(decl.kind, VariableKind::Let | VariableKind::Var);
+                if decl.declarations.is_empty() {
+                    state.push_value(Guarded::unguarded(JsValue::Undefined));
+                    StepResult::Continue
+                } else {
+                    state.push_frame(Frame::VarDecl {
+                        declarators: Rc::new(decl.declarations.clone()),
+                        index: 0,
+                        mutable,
+                    });
+                    StepResult::Continue
+                }
+            }
+
+            Statement::If(if_stmt) => {
+                // Evaluate condition, then branch
+                state.push_frame(Frame::IfBranch {
+                    consequent: Rc::new((*if_stmt.consequent).clone()),
+                    alternate: if_stmt.alternate.as_ref().map(|a| Rc::new((**a).clone())),
+                });
+                state.push_frame(Frame::Expr(Rc::new(if_stmt.test.clone())));
+                StepResult::Continue
+            }
+
+            Statement::While(while_stmt) => {
+                state.push_frame(Frame::WhileLoop {
+                    test: Rc::new(while_stmt.test.clone()),
+                    body: Rc::new((*while_stmt.body).clone()),
+                    label: None,
+                });
+                StepResult::Continue
+            }
+
+            Statement::DoWhile(do_while) => {
+                state.push_frame(Frame::DoWhileLoop {
+                    test: Rc::new(do_while.test.clone()),
+                    body: Rc::new((*do_while.body).clone()),
+                    label: None,
+                });
+                StepResult::Continue
+            }
+
             // For complex statements, delegate to recursive execution
             _ => match self.execute_statement(stmt) {
                 Ok(completion) => {
@@ -486,6 +645,16 @@ impl Interpreter {
     fn step_expr(&mut self, state: &mut ExecutionState, expr: &Expression) -> StepResult {
         match expr {
             Expression::Literal(lit) => {
+                // RegExp literals need special handling - delegate to recursive
+                if matches!(lit.value, LiteralValue::RegExp { .. }) {
+                    return match self.evaluate_expression(expr) {
+                        Ok(guarded) => {
+                            state.push_value(guarded);
+                            StepResult::Continue
+                        }
+                        Err(e) => StepResult::Error(e),
+                    };
+                }
                 let value = self.stack_literal_to_value(&lit.value);
                 state.push_value(Guarded::unguarded(value));
                 StepResult::Continue
@@ -783,5 +952,236 @@ impl Interpreter {
     pub fn resume_with_error(&mut self, state: &mut ExecutionState, error: JsError) -> StepResult {
         state.waiting_on = None;
         StepResult::Error(error)
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // Variable Declaration
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    /// Step for variable declaration - process declarators sequentially
+    fn step_var_decl(
+        &mut self,
+        state: &mut ExecutionState,
+        declarators: Rc<Vec<VariableDeclarator>>,
+        index: usize,
+        mutable: bool,
+    ) -> StepResult {
+        if index >= declarators.len() {
+            // All declarators processed
+            state.push_value(Guarded::unguarded(JsValue::Undefined));
+            return StepResult::Continue;
+        }
+
+        let declarator = match declarators.get(index) {
+            Some(d) => d,
+            None => {
+                state.push_value(Guarded::unguarded(JsValue::Undefined));
+                return StepResult::Continue;
+            }
+        };
+
+        // Push continuation for remaining declarators
+        if index + 1 < declarators.len() {
+            state.push_frame(Frame::VarDecl {
+                declarators: declarators.clone(),
+                index: index + 1,
+                mutable,
+            });
+        }
+
+        // Push bind frame - will be processed after init expression
+        state.push_frame(Frame::VarBind {
+            pattern: Rc::new(declarator.id.clone()),
+            mutable,
+        });
+
+        // Evaluate init expression (or undefined)
+        match &declarator.init {
+            Some(expr) => {
+                state.push_frame(Frame::Expr(Rc::new(expr.clone())));
+            }
+            None => {
+                state.push_value(Guarded::unguarded(JsValue::Undefined));
+            }
+        }
+
+        StepResult::Continue
+    }
+
+    /// Step for variable binding - bind value to pattern
+    fn step_var_bind(
+        &mut self,
+        state: &mut ExecutionState,
+        pattern: &Pattern,
+        mutable: bool,
+    ) -> StepResult {
+        let Guarded {
+            value: init_value,
+            guard: _init_guard,
+        } = state.pop_value().unwrap_or(Guarded::unguarded(JsValue::Undefined));
+
+        // bind_pattern calls env_define which establishes ownership
+        match self.bind_pattern(pattern, init_value, mutable) {
+            Ok(()) => StepResult::Continue,
+            Err(e) => StepResult::Error(e),
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // Control Flow
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    /// Step for if branch - condition evaluated, pick and execute branch
+    fn step_if_branch(
+        &mut self,
+        state: &mut ExecutionState,
+        consequent: Rc<Statement>,
+        alternate: Option<Rc<Statement>>,
+    ) -> StepResult {
+        let condition = state
+            .pop_value()
+            .map(|v| v.value)
+            .unwrap_or(JsValue::Undefined);
+
+        if condition.to_boolean() {
+            state.push_frame(Frame::Stmt(consequent));
+        } else if let Some(alt) = alternate {
+            state.push_frame(Frame::Stmt(alt));
+        } else {
+            state.push_value(Guarded::unguarded(JsValue::Undefined));
+        }
+        StepResult::Continue
+    }
+
+    /// Step for while check - test evaluated, execute body or exit
+    fn step_while_check(
+        &mut self,
+        state: &mut ExecutionState,
+        test: Rc<Expression>,
+        body: Rc<Statement>,
+        label: Option<JsString>,
+    ) -> StepResult {
+        // Check for break/continue from previous body execution
+        match &state.completion {
+            StackCompletion::Break(brk_label) => {
+                // Check if break targets this loop
+                if brk_label.is_none() || brk_label.as_ref() == label.as_ref() {
+                    state.completion = StackCompletion::Normal;
+                    state.push_value(Guarded::unguarded(JsValue::Undefined));
+                    return StepResult::Continue;
+                }
+                // Break targets outer loop - propagate
+                return StepResult::Continue;
+            }
+            StackCompletion::Continue(cont_label) => {
+                // Check if continue targets this loop
+                if cont_label.is_none() || cont_label.as_ref() == label.as_ref() {
+                    state.completion = StackCompletion::Normal;
+                    // Continue to next iteration - don't check condition value, restart loop
+                    state.push_frame(Frame::WhileLoop {
+                        test,
+                        body,
+                        label,
+                    });
+                    return StepResult::Continue;
+                }
+                // Continue targets outer loop - propagate
+                return StepResult::Continue;
+            }
+            StackCompletion::Return | StackCompletion::Throw => {
+                // Return/throw - propagate up
+                return StepResult::Continue;
+            }
+            StackCompletion::Normal => {}
+        }
+
+        // Get condition value
+        let condition = state
+            .pop_value()
+            .map(|v| v.value)
+            .unwrap_or(JsValue::Undefined);
+
+        if condition.to_boolean() {
+            // Continue loop: check condition again after body
+            state.push_frame(Frame::WhileCheck {
+                test: test.clone(),
+                body: body.clone(),
+                label: label.clone(),
+            });
+            state.push_frame(Frame::Expr(test));
+            // Execute body
+            state.push_frame(Frame::Stmt(body));
+        } else {
+            // Exit loop
+            state.push_value(Guarded::unguarded(JsValue::Undefined));
+        }
+        StepResult::Continue
+    }
+
+    /// Step for do-while check - body executed, test evaluated, loop or exit
+    fn step_do_while_check(
+        &mut self,
+        state: &mut ExecutionState,
+        test: Rc<Expression>,
+        body: Rc<Statement>,
+        label: Option<JsString>,
+    ) -> StepResult {
+        // Check for break/continue from body execution
+        match &state.completion {
+            StackCompletion::Break(brk_label) => {
+                if brk_label.is_none() || brk_label.as_ref() == label.as_ref() {
+                    state.completion = StackCompletion::Normal;
+                    state.push_value(Guarded::unguarded(JsValue::Undefined));
+                    return StepResult::Continue;
+                }
+                return StepResult::Continue;
+            }
+            StackCompletion::Continue(cont_label) => {
+                if cont_label.is_none() || cont_label.as_ref() == label.as_ref() {
+                    state.completion = StackCompletion::Normal;
+                    // In do-while, continue goes to condition check
+                    // Fall through to check the condition
+                } else {
+                    return StepResult::Continue;
+                }
+            }
+            StackCompletion::Return | StackCompletion::Throw => {
+                return StepResult::Continue;
+            }
+            StackCompletion::Normal => {}
+        }
+
+        // Body executed, now check condition - evaluate test
+        // Pop any existing value from stack (from body)
+        let _ = state.pop_value();
+
+        // We need to evaluate the test expression and then check it
+        // Push frame to check result after test is evaluated
+        state.push_frame(Frame::DoWhileTestCheck { test: test.clone(), body, label });
+        state.push_frame(Frame::Expr(test));
+        StepResult::Continue
+    }
+
+    /// Step for do-while test check - condition evaluated, loop or exit
+    fn step_do_while_test_check(
+        &mut self,
+        state: &mut ExecutionState,
+        test: Rc<Expression>,
+        body: Rc<Statement>,
+        label: Option<JsString>,
+    ) -> StepResult {
+        let condition = state
+            .pop_value()
+            .map(|v| v.value)
+            .unwrap_or(JsValue::Undefined);
+
+        if condition.to_boolean() {
+            // Continue loop - execute body, then check condition again
+            state.push_frame(Frame::DoWhileLoop { test, body: body.clone(), label });
+        } else {
+            // Exit loop
+            state.push_value(Guarded::unguarded(JsValue::Undefined));
+        }
+        StepResult::Continue
     }
 }
