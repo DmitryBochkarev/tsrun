@@ -1065,7 +1065,7 @@ impl Interpreter {
 
         // Create execution state with generator body
         let mut state = ExecutionState::new();
-        let statements: Vec<Statement> = body.body.iter().cloned().collect();
+        let statements: Vec<Statement> = body.body.to_vec();
         state.push_frame(Frame::Program {
             statements: std::rc::Rc::new(statements),
             index: 0,

@@ -3,6 +3,10 @@
 //! This module implements a trampolined interpreter that can suspend
 //! at await points and resume later with a value.
 
+// Allow many arguments for internal step_for_* functions - these handle loop state
+// and grouping into a struct would add complexity without benefit
+#![allow(clippy::too_many_arguments)]
+
 use crate::ast::{
     BinaryOp, Expression, ForInOfLeft, ForInStatement, ForInit, ForOfStatement, ForStatement,
     LiteralValue, LogicalOp, Pattern, Program, Statement, UnaryOp, VariableDeclarator,

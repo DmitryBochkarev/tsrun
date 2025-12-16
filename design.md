@@ -666,8 +666,8 @@ fn run_script(source: &str, config: RuntimeConfig) -> Result<JsValue, Error> {
 - [x] `RuntimeConfig::timeout_ms` - Execution timeout
 
 #### Serde Bridge
-- [ ] `JsValue` → `serde_json::Value`
-- [ ] `serde_json::Value` → `JsValue`
+- [x] `JsValue` → `serde_json::Value` (via `js_value_to_json`)
+- [x] `serde_json::Value` → `JsValue` (via `json_to_js_value_with_interp`)
 - [ ] `JsValue` → Rust struct (via Deserialize)
 - [ ] Rust struct → `JsValue` (via Serialize)
 
@@ -829,7 +829,7 @@ src/
 
 ## Testing
 
-### Current Status: 735 tests passing
+### Current Status: 740 tests passing
 
 ```bash
 cargo test                     # Run all tests
