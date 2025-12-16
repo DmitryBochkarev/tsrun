@@ -19,7 +19,7 @@ use crate::value::{
 };
 use std::rc::Rc;
 
-use super::{create_environment_with_guard, Interpreter};
+use super::{create_environment_unrooted, Interpreter};
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Stack Types
@@ -908,9 +908,10 @@ impl Interpreter {
 
                 if let Some(catch_handler) = handler {
                     // Create catch scope
+                    // Use unrooted allocation - the env is kept alive by self.env reference
                     let saved_env = self.env.clone();
-                    let catch_env =
-                        create_environment_with_guard(&self.root_guard, Some(saved_env.clone()));
+                    let (catch_env, _temp_guard) =
+                        create_environment_unrooted(&self.heap, Some(saved_env.clone()));
                     self.env = catch_env;
 
                     // Bind error parameter if present
@@ -1909,8 +1910,10 @@ impl Interpreter {
         saved_env: Gc<JsObject>,
     ) -> StepResult {
         // Create per-iteration environment if needed
+        // Use unrooted allocation - the env is kept alive by self.env reference
         if !loop_vars.is_empty() {
-            let iter_env = create_environment_with_guard(&self.root_guard, Some(saved_env.clone()));
+            let (iter_env, _temp_guard) =
+                create_environment_unrooted(&self.heap, Some(saved_env.clone()));
             for (name, mutable) in loop_vars.iter() {
                 let value = match self.env_get(name) {
                     Ok(v) => v,
@@ -1928,6 +1931,8 @@ impl Interpreter {
                     );
                 }
             }
+            // Assignment to self.env clones iter_env (incrementing ref_count),
+            // so iter_env stays alive after _temp_guard is dropped
             self.env = iter_env;
         }
 
@@ -2031,10 +2036,11 @@ impl Interpreter {
         let _ = state.pop_value();
 
         // Create new per-iteration environment BEFORE update (ES spec)
+        // Use unrooted allocation - the env is kept alive by self.env reference
         if !loop_vars.is_empty() {
             let current_env = self.env.clone();
-            let new_iter_env =
-                create_environment_with_guard(&self.root_guard, Some(saved_env.clone()));
+            let (new_iter_env, _temp_guard) =
+                create_environment_unrooted(&self.heap, Some(saved_env.clone()));
             for (name, mutable) in loop_vars.iter() {
                 let value = {
                     let env_ref = current_env.borrow();
@@ -2059,6 +2065,8 @@ impl Interpreter {
                     );
                 }
             }
+            // Assignment to self.env clones new_iter_env (incrementing ref_count),
+            // so new_iter_env stays alive after _temp_guard is dropped
             self.env = new_iter_env;
         }
 
@@ -2164,7 +2172,9 @@ impl Interpreter {
         let key_value = JsValue::String(JsString::from(key));
 
         // Create per-iteration environment
-        let iter_env = create_environment_with_guard(&self.root_guard, Some(saved_env.clone()));
+        // Use unrooted allocation - the env is kept alive by self.env reference
+        let (iter_env, _temp_guard) =
+            create_environment_unrooted(&self.heap, Some(saved_env.clone()));
         self.env = iter_env;
 
         // Bind the key to the left-hand side
@@ -2373,7 +2383,9 @@ impl Interpreter {
         };
 
         // Create per-iteration environment
-        let iter_env = create_environment_with_guard(&self.root_guard, Some(saved_env.clone()));
+        // Use unrooted allocation - the env is kept alive by self.env reference
+        let (iter_env, _temp_guard) =
+            create_environment_unrooted(&self.heap, Some(saved_env.clone()));
         self.env = iter_env;
 
         // Bind the item to the left-hand side
@@ -2529,7 +2541,9 @@ impl Interpreter {
         }
 
         // Create per-iteration environment
-        let iter_env = create_environment_with_guard(&self.root_guard, Some(saved_env.clone()));
+        // Use unrooted allocation - the env is kept alive by self.env reference
+        let (iter_env, _temp_guard) =
+            create_environment_unrooted(&self.heap, Some(saved_env.clone()));
         self.env = iter_env;
 
         // Bind the value to the left-hand side

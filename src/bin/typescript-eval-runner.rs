@@ -98,11 +98,9 @@ fn rewrite_imports(source: &str, base_dir: &Path) -> Result<String, Box<dyn std:
     // Match import statements: import ... from "specifier" or import ... from 'specifier'
     // Also match export ... from "specifier"
     // Handle double quotes
-    let double_quote_re =
-        Regex::new(r#"((?:import|export)\s+(?:[^;]*?\s+)?from\s+)"([^"]+)""#)?;
+    let double_quote_re = Regex::new(r#"((?:import|export)\s+(?:[^;]*?\s+)?from\s+)"([^"]+)""#)?;
     // Handle single quotes
-    let single_quote_re =
-        Regex::new(r#"((?:import|export)\s+(?:[^;]*?\s+)?from\s+)'([^']+)'"#)?;
+    let single_quote_re = Regex::new(r#"((?:import|export)\s+(?:[^;]*?\s+)?from\s+)'([^']+)'"#)?;
 
     // First pass: double quotes
     let result = double_quote_re.replace_all(source, |caps: &regex::Captures| {
@@ -113,7 +111,8 @@ fn rewrite_imports(source: &str, base_dir: &Path) -> Result<String, Box<dyn std:
             let canonical = resolve_to_canonical(base_dir, specifier);
             format!("{prefix}\"{canonical}\"")
         } else {
-            caps.get(0).map_or(String::new(), |m| m.as_str().to_string())
+            caps.get(0)
+                .map_or(String::new(), |m| m.as_str().to_string())
         }
     });
 
@@ -126,7 +125,8 @@ fn rewrite_imports(source: &str, base_dir: &Path) -> Result<String, Box<dyn std:
             let canonical = resolve_to_canonical(base_dir, specifier);
             format!("{prefix}'{canonical}'")
         } else {
-            caps.get(0).map_or(String::new(), |m| m.as_str().to_string())
+            caps.get(0)
+                .map_or(String::new(), |m| m.as_str().to_string())
         }
     });
 
@@ -190,9 +190,8 @@ fn resolve_path(path: &Path) -> PathBuf {
 fn load_module(canonical_path: &str) -> Result<(String, PathBuf), Box<dyn std::error::Error>> {
     let path = PathBuf::from(canonical_path);
 
-    let source = fs::read_to_string(&path).map_err(|e| {
-        format!("Failed to load module '{}': {}", canonical_path, e)
-    })?;
+    let source = fs::read_to_string(&path)
+        .map_err(|e| format!("Failed to load module '{}': {}", canonical_path, e))?;
 
     let module_dir = path
         .parent()

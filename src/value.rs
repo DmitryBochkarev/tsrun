@@ -10,7 +10,7 @@ use rustc_hash::FxHashMap;
 
 use crate::ast::{ArrowFunctionBody, BlockStatement, FunctionParam};
 use crate::error::JsError;
-use crate::gc::{Gc, GcPtr, Guard, Reset, Traceable};
+use crate::gc::{Gc, GcPtr, Guard, Heap, Reset, Traceable};
 use crate::lexer::Span;
 use crate::string_dict::StringDict;
 
@@ -1660,6 +1660,27 @@ pub fn create_environment_with_guard(guard: &Guard<JsObject>, outer: Option<EnvR
         env_ref.exotic = ExoticObject::Environment(EnvironmentData::with_outer(outer));
     }
     env
+}
+
+/// Create a new environment object with its own temporary guard.
+///
+/// This is used for per-iteration loop environments that should NOT be added to root_guard.
+/// The guard is returned so it can be kept alive until the environment is safely stored
+/// (e.g., in self.env), after which the guard can be dropped.
+///
+/// Returns (environment, guard) - caller must keep guard alive until env is owned elsewhere.
+pub fn create_environment_unrooted(
+    heap: &Heap<JsObject>,
+    outer: Option<EnvRef>,
+) -> (EnvRef, Guard<JsObject>) {
+    let guard = heap.create_guard();
+    let env = guard.alloc();
+    {
+        let mut env_ref = env.borrow_mut();
+        env_ref.null_prototype = true;
+        env_ref.exotic = ExoticObject::Environment(EnvironmentData::with_outer(outer));
+    }
+    (env, guard)
 }
 
 impl JsObject {

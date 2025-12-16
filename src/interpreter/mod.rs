@@ -24,7 +24,7 @@ use crate::lexer::Span;
 use crate::parser::Parser;
 use crate::string_dict::StringDict;
 use crate::value::{
-    create_environment_with_guard, Binding, CheapClone, EnvRef, EnvironmentData, ExoticObject,
+    create_environment_unrooted, Binding, CheapClone, EnvRef, EnvironmentData, ExoticObject,
     FunctionBody, GeneratorState, GeneratorStatus, Guarded, InterpretedFunction, JsFunction,
     JsObject, JsString, JsValue, NativeFn, NativeFunction, PromiseStatus, Property, PropertyKey,
 };
@@ -870,7 +870,9 @@ impl Interpreter {
 
     /// Push a new scope and return the saved environment
     pub fn push_scope(&mut self) -> EnvRef {
-        let new_env = create_environment_with_guard(&self.root_guard, Some(self.env.clone()));
+        // Use unrooted allocation - the env is kept alive by self.env reference
+        let (new_env, _temp_guard) =
+            create_environment_unrooted(&self.heap, Some(self.env.clone()));
 
         let old_env = self.env.clone();
         self.env = new_env;
@@ -1164,7 +1166,8 @@ impl Interpreter {
         });
 
         // Create function environment
-        let func_env = create_environment_with_guard(&self.root_guard, Some(closure));
+        // Use unrooted allocation - the env is kept alive by self.env reference
+        let (func_env, _temp_guard) = create_environment_unrooted(&self.heap, Some(closure));
         let saved_env = self.env.clone();
         self.env = func_env;
 
@@ -1628,11 +1631,7 @@ impl Interpreter {
         // (e.g., ReadWrite = Read | Write references FileAccess.Read)
         self.root_guard.guard(enum_obj.clone());
         let enum_name = enum_decl.id.name.cheap_clone();
-        self.env_define(
-            enum_name,
-            JsValue::Object(enum_obj.cheap_clone()),
-            false,
-        );
+        self.env_define(enum_name, JsValue::Object(enum_obj.cheap_clone()), false);
 
         // Track the current numeric value for auto-incrementing
         let mut current_value: f64 = 0.0;
@@ -1708,14 +1707,20 @@ impl Interpreter {
         };
 
         // Define the namespace in the environment first (for self-references)
-        self.env_define(ns_name.cheap_clone(), JsValue::Object(ns_obj.cheap_clone()), false);
+        self.env_define(
+            ns_name.cheap_clone(),
+            JsValue::Object(ns_obj.cheap_clone()),
+            false,
+        );
 
         // Save current exports and create fresh exports for namespace
         let saved_exports = std::mem::take(&mut self.exports);
 
         // Create a new scope for the namespace body
+        // Use unrooted allocation - the env is kept alive by self.env reference
         let saved_env = self.env.clone();
-        let new_env = create_environment_with_guard(&self.root_guard, Some(self.env.clone()));
+        let (new_env, _temp_guard) =
+            create_environment_unrooted(&self.heap, Some(self.env.clone()));
         self.env = new_env;
 
         // Execute each statement in the namespace body
@@ -3426,8 +3431,9 @@ impl Interpreter {
                 }
 
                 // Create new environment
-                let func_env =
-                    create_environment_with_guard(&self.root_guard, Some(interp.closure));
+                // Use unrooted allocation - the env is kept alive by self.env reference
+                let (func_env, _temp_guard) =
+                    create_environment_unrooted(&self.heap, Some(interp.closure));
 
                 // Bind `this` in the function environment
                 {
