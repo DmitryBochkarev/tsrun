@@ -1681,6 +1681,171 @@ impl Interpreter {
         Ok(())
     }
 
+    /// Execute a namespace declaration - creates an object with exported members
+    pub fn execute_namespace_declaration(
+        &mut self,
+        ns_decl: &crate::ast::NamespaceDeclaration,
+    ) -> Result<(), JsError> {
+        let ns_name = ns_decl.id.name.cheap_clone();
+
+        // Check if namespace already exists (for merging)
+        let ns_obj = if let Ok(existing) = self.env_get(&ns_name) {
+            if let JsValue::Object(obj) = existing {
+                obj
+            } else {
+                // Not an object, create new
+                let (obj, guard) = self.create_object_with_guard();
+                self.root_guard.guard(obj.clone());
+                drop(guard);
+                obj
+            }
+        } else {
+            // Create new namespace object
+            let (obj, guard) = self.create_object_with_guard();
+            self.root_guard.guard(obj.clone());
+            drop(guard);
+            obj
+        };
+
+        // Define the namespace in the environment first (for self-references)
+        self.env_define(ns_name.cheap_clone(), JsValue::Object(ns_obj.cheap_clone()), false);
+
+        // Save current exports and create fresh exports for namespace
+        let saved_exports = std::mem::take(&mut self.exports);
+
+        // Create a new scope for the namespace body
+        let saved_env = self.env.clone();
+        let new_env = create_environment_with_guard(&self.root_guard, Some(self.env.clone()));
+        self.env = new_env;
+
+        // Execute each statement in the namespace body
+        for stmt in &ns_decl.body {
+            self.execute_namespace_statement(stmt, &ns_obj)?;
+        }
+
+        // Copy namespace exports to the namespace object
+        // Drain to vec first to avoid borrow conflict
+        let exports: Vec<_> = self.exports.drain().collect();
+        for (name, value) in exports {
+            let key = self.key(name.as_str());
+            ns_obj.borrow_mut().set_property(key, value);
+        }
+
+        // Restore environment and exports
+        self.env = saved_env;
+        self.exports = saved_exports;
+
+        Ok(())
+    }
+
+    /// Execute a statement within a namespace context
+    fn execute_namespace_statement(
+        &mut self,
+        stmt: &Statement,
+        _ns_obj: &Gc<JsObject>,
+    ) -> Result<(), JsError> {
+        match stmt {
+            // Handle export declarations within namespace
+            Statement::Export(export) => {
+                if let Some(decl) = &export.declaration {
+                    match decl.as_ref() {
+                        Statement::FunctionDeclaration(func) => {
+                            self.execute_function_declaration(func)?;
+                            if let Some(id) = &func.id {
+                                let value = self.env_get(&id.name)?;
+                                self.exports.insert(id.name.cheap_clone(), value);
+                            }
+                        }
+                        Statement::VariableDeclaration(var_decl) => {
+                            self.execute_variable_declaration(var_decl)?;
+                            for declarator in &var_decl.declarations {
+                                if let Pattern::Identifier(id) = &declarator.id {
+                                    let value = self.env_get(&id.name)?;
+                                    self.exports.insert(id.name.cheap_clone(), value);
+                                }
+                            }
+                        }
+                        Statement::ClassDeclaration(class) => {
+                            self.execute_class_declaration(class)?;
+                            if let Some(id) = &class.id {
+                                let value = self.env_get(&id.name)?;
+                                self.exports.insert(id.name.cheap_clone(), value);
+                            }
+                        }
+                        Statement::EnumDeclaration(enum_decl) => {
+                            self.execute_enum_declaration(enum_decl)?;
+                            let value = self.env_get(&enum_decl.id.name)?;
+                            self.exports.insert(enum_decl.id.name.cheap_clone(), value);
+                        }
+                        Statement::NamespaceDeclaration(nested_ns) => {
+                            // Handle nested namespace
+                            self.execute_namespace_declaration(nested_ns)?;
+                            let value = self.env_get(&nested_ns.id.name)?;
+                            self.exports.insert(nested_ns.id.name.cheap_clone(), value);
+                        }
+                        // TypeScript-only declarations (interfaces, type aliases) - no runtime effect
+                        Statement::InterfaceDeclaration(_) | Statement::TypeAlias(_) => {}
+                        _ => {
+                            // Execute other statements normally
+                            self.execute_simple_statement(decl)?;
+                        }
+                    }
+                }
+            }
+            // Non-exported declarations stay private to the namespace
+            Statement::FunctionDeclaration(func) => {
+                self.execute_function_declaration(func)?;
+            }
+            Statement::VariableDeclaration(var_decl) => {
+                self.execute_variable_declaration(var_decl)?;
+            }
+            Statement::ClassDeclaration(class) => {
+                self.execute_class_declaration(class)?;
+            }
+            Statement::EnumDeclaration(enum_decl) => {
+                self.execute_enum_declaration(enum_decl)?;
+            }
+            Statement::NamespaceDeclaration(nested_ns) => {
+                self.execute_namespace_declaration(nested_ns)?;
+            }
+            // TypeScript-only declarations - no runtime effect
+            Statement::InterfaceDeclaration(_) | Statement::TypeAlias(_) => {}
+            // Other statements
+            _ => {
+                self.execute_simple_statement(stmt)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Execute a function declaration (used within namespace context)
+    fn execute_function_declaration(
+        &mut self,
+        func: &crate::ast::FunctionDeclaration,
+    ) -> Result<(), JsError> {
+        let name = func.id.as_ref().map(|id| id.name.cheap_clone());
+        let params = func.params.clone();
+        let body = std::rc::Rc::new(FunctionBody::Block(func.body.clone()));
+
+        // Create function with temp guard
+        let (func_obj, _temp) = self.create_function_with_guard(
+            name.clone(),
+            params,
+            body,
+            self.env.clone(),
+            func.span,
+            func.generator,
+            func.async_,
+        );
+
+        // Transfer ownership to environment before temp guard is dropped
+        if let Some(js_name) = name {
+            self.env_define(js_name, JsValue::Object(func_obj), false);
+        }
+
+        Ok(())
+    }
+
     fn create_class_constructor(
         &mut self,
         class: &ClassDeclaration,

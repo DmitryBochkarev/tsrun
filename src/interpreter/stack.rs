@@ -1204,11 +1204,14 @@ impl Interpreter {
                 StepResult::Continue
             }
 
-            Statement::NamespaceDeclaration(_) => {
-                // Namespace declarations - not yet fully implemented
-                // TODO: Implement namespace support
-                state.push_value(Guarded::unguarded(JsValue::Undefined));
-                StepResult::Continue
+            Statement::NamespaceDeclaration(ns_decl) => {
+                match self.execute_namespace_declaration(ns_decl) {
+                    Ok(()) => {
+                        state.push_value(Guarded::unguarded(JsValue::Undefined));
+                        StepResult::Continue
+                    }
+                    Err(e) => StepResult::Error(e),
+                }
             }
 
             Statement::EnumDeclaration(enum_decl) => {
@@ -3154,6 +3157,18 @@ impl Interpreter {
                     };
                     self.exports.insert(export_name, value);
                 }
+                Statement::NamespaceDeclaration(ns_decl) => {
+                    self.execute_namespace_declaration(ns_decl)?;
+                    let value = self.env_get(&ns_decl.id.name)?;
+                    let export_name = if export.default {
+                        JsString::from("default")
+                    } else {
+                        ns_decl.id.name.cheap_clone()
+                    };
+                    self.exports.insert(export_name, value);
+                }
+                // TypeScript-only declarations - no runtime effect
+                Statement::InterfaceDeclaration(_) | Statement::TypeAlias(_) => {}
                 _ => {}
             }
         }
