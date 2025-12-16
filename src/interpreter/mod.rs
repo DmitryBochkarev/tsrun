@@ -915,10 +915,10 @@ impl Interpreter {
     // ═══════════════════════════════════════════════════════════════════════════
 
     /// Evaluate source code and return the result
+    ///
+    /// Uses stack-based evaluation for suspendable execution.
     pub fn eval_simple(&mut self, source: &str) -> Result<JsValue, JsError> {
-        let mut parser = Parser::new(source, &mut self.string_dict);
-        let program = parser.parse_program()?;
-        self.execute_program(&program)
+        self.eval_with_stack(source)
     }
 
     /// Execute a program

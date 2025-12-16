@@ -3,17 +3,13 @@
 //! This module implements a trampolined interpreter that can suspend
 //! at await points and resume later with a value.
 
-use crate::ast::{
-    Argument, ArrayElement, AssignmentOp, AssignmentTarget, BinaryOp, BlockStatement, Expression,
-    ForInOfLeft, LiteralValue, LogicalOp, MemberProperty, ObjectProperty, Pattern, Statement,
-    UnaryOp, UpdateOp, VariableKind,
-};
+use crate::ast::{BinaryOp, Expression, LiteralValue, LogicalOp, Program, Statement, UnaryOp};
 use crate::error::JsError;
 use crate::gc::Gc;
 use crate::value::{CheapClone, ExoticObject, Guarded, JsObject, JsString, JsValue, PromiseStatus};
 use std::rc::Rc;
 
-use super::Interpreter;
+use super::{Completion, Interpreter};
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Stack Types
@@ -52,16 +48,37 @@ pub enum StackCompletion {
 /// to be evaluated.
 pub enum Frame {
     // ═══════════════════════════════════════════════════════════════════════
+    // Program/Statement Execution
+    // ═══════════════════════════════════════════════════════════════════════
+    /// Execute program statements sequentially
+    Program {
+        statements: Rc<Vec<Statement>>,
+        index: usize,
+    },
+
+    /// Execute a single statement
+    Stmt(Rc<Statement>),
+
+    /// Statement completed, check completion type
+    StmtComplete,
+
+    /// Execute remaining statements in block
+    Block {
+        statements: Rc<Vec<Statement>>,
+        index: usize,
+    },
+
+    /// Expression statement: keep result on stack
+    ExprStmtComplete,
+
+    // ═══════════════════════════════════════════════════════════════════════
     // Expression Evaluation
     // ═══════════════════════════════════════════════════════════════════════
     /// Evaluate an expression
     Expr(Rc<Expression>),
 
     /// Binary: left done, evaluate right then complete
-    BinaryRight {
-        op: BinaryOp,
-        right: Rc<Expression>,
-    },
+    BinaryRight { op: BinaryOp, right: Rc<Expression> },
 
     /// Binary: both done, compute result
     BinaryComplete { op: BinaryOp },
@@ -81,250 +98,8 @@ pub enum Frame {
         alternate: Rc<Expression>,
     },
 
-    /// Member access: object done, access property
-    MemberAccess {
-        property: MemberProperty,
-        computed: bool,
-        optional: bool,
-    },
-
-    /// Computed member: object done, evaluate property
-    ComputedMemberEval {
-        property: Rc<Expression>,
-        optional: bool,
-    },
-
-    /// Computed member: both done, access
-    ComputedMemberComplete { optional: bool },
-
-    /// Call: callee done, evaluate args
-    CallArgs {
-        args: Vec<Argument>,
-        args_done: Vec<JsValue>,
-        this_value: JsValue,
-        optional: bool,
-    },
-
-    /// Call: one arg done, continue with rest
-    CallArgNext {
-        args: Vec<Argument>,
-        args_done: Vec<JsValue>,
-        this_value: JsValue,
-        optional: bool,
-    },
-
-    /// Call: all args done, execute
-    CallExecute { this_value: JsValue },
-
-    /// New: constructor done, evaluate args
-    NewArgs {
-        args: Vec<Argument>,
-        args_done: Vec<JsValue>,
-    },
-
-    /// New: one arg done, continue
-    NewArgNext {
-        args: Vec<Argument>,
-        args_done: Vec<JsValue>,
-    },
-
-    /// New: ready to construct
-    NewExecute,
-
-    /// Array literal: evaluate elements
-    ArrayElements {
-        elements: Vec<Option<ArrayElement>>,
-        done: Vec<JsValue>,
-    },
-
-    /// Array: one element done
-    ArrayElementNext {
-        elements: Vec<Option<ArrayElement>>,
-        done: Vec<JsValue>,
-    },
-
-    /// Object literal: evaluate properties
-    ObjectProperties {
-        properties: Vec<ObjectProperty>,
-        obj: Gc<JsObject>,
-    },
-
-    /// Object: value done, continue with rest
-    ObjectPropertyNext {
-        properties: Vec<ObjectProperty>,
-        obj: Gc<JsObject>,
-    },
-
-    /// Assignment: target reference captured, evaluate value
-    AssignmentValue {
-        target: AssignmentTarget,
-        op: AssignmentOp,
-    },
-
-    /// Assignment: value done, perform assignment
-    AssignmentComplete {
-        target: AssignmentTarget,
-        op: AssignmentOp,
-    },
-
-    /// Update (++/--): evaluate target
-    UpdateComplete {
-        op: UpdateOp,
-        prefix: bool,
-        target: AssignmentTarget,
-    },
-
-    /// Sequence: one done, continue with rest
-    SequenceNext { remaining: Vec<Expression> },
-
     /// Await: promise evaluated, check state
     AwaitCheck,
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // Statement Execution
-    // ═══════════════════════════════════════════════════════════════════════
-    /// Execute a statement
-    Stmt(Rc<Statement>),
-
-    /// Execute remaining statements in block
-    Block {
-        statements: Vec<Statement>,
-        index: usize,
-    },
-
-    /// Expression statement: discard result
-    ExprStmtComplete,
-
-    /// Variable declaration: init done, bind
-    VarBind {
-        pattern: Pattern,
-        kind: VariableKind,
-    },
-
-    /// Multiple declarators
-    VarDeclarators {
-        declarators: Vec<(Pattern, Option<Expression>)>,
-        index: usize,
-        kind: VariableKind,
-    },
-
-    /// If: condition done, pick branch
-    IfBranch {
-        consequent: Box<Statement>,
-        alternate: Option<Box<Statement>>,
-    },
-
-    /// While: test done, maybe enter body
-    WhileBody {
-        test: Rc<Expression>,
-        body: Box<Statement>,
-        label: Option<JsString>,
-    },
-
-    /// While: body done, loop back
-    WhileLoop {
-        test: Rc<Expression>,
-        body: Box<Statement>,
-        label: Option<JsString>,
-    },
-
-    /// Do-while: body done, test
-    DoWhileTest {
-        test: Rc<Expression>,
-        body: Box<Statement>,
-        label: Option<JsString>,
-    },
-
-    /// Do-while: test done, maybe loop
-    DoWhileLoop {
-        test: Rc<Expression>,
-        body: Box<Statement>,
-        label: Option<JsString>,
-    },
-
-    /// For: init done, test
-    ForTest {
-        test: Option<Box<Expression>>,
-        update: Option<Box<Expression>>,
-        body: Box<Statement>,
-        label: Option<JsString>,
-    },
-
-    /// For: test done, maybe body
-    ForBody {
-        test: Option<Box<Expression>>,
-        update: Option<Box<Expression>>,
-        body: Box<Statement>,
-        label: Option<JsString>,
-    },
-
-    /// For: body done, update
-    ForUpdate {
-        test: Option<Box<Expression>>,
-        update: Option<Box<Expression>>,
-        body: Box<Statement>,
-        label: Option<JsString>,
-    },
-
-    /// For: update done, loop back
-    ForLoop {
-        test: Option<Box<Expression>>,
-        update: Option<Box<Expression>>,
-        body: Box<Statement>,
-        label: Option<JsString>,
-    },
-
-    /// For-in/of: iterator setup
-    ForInOf {
-        left: ForInOfLeft,
-        body: Box<Statement>,
-        label: Option<JsString>,
-        items: Vec<JsValue>,
-        index: usize,
-        is_of: bool,
-    },
-
-    /// For-in/of: body done, next iteration
-    ForInOfNext {
-        left: ForInOfLeft,
-        body: Box<Statement>,
-        label: Option<JsString>,
-        items: Vec<JsValue>,
-        index: usize,
-        is_of: bool,
-    },
-
-    /// Return: value done
-    ReturnComplete,
-
-    /// Throw: value done
-    ThrowComplete,
-
-    /// Try: body done (normal or error)
-    TryCatch {
-        catch_param: Option<Pattern>,
-        catch_body: Option<BlockStatement>,
-        finally_block: Option<BlockStatement>,
-    },
-
-    /// Try: catch done, run finally
-    TryFinally {
-        finally_block: BlockStatement,
-        completion: StackCompletion,
-    },
-
-    /// Switch: discriminant done, match cases
-    SwitchCases {
-        cases: Vec<(Option<Expression>, Vec<Statement>)>,
-        default_index: Option<usize>,
-        label: Option<JsString>,
-    },
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // Function Execution
-    // ═══════════════════════════════════════════════════════════════════════
-    /// Async function: wrap result in promise
-    AsyncComplete { is_error: bool },
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -356,6 +131,16 @@ impl ExecutionState {
         }
     }
 
+    /// Create state for executing a program
+    pub fn for_program(program: &Program) -> Self {
+        let mut state = Self::new();
+        state.push_frame(Frame::Program {
+            statements: Rc::new(program.body.clone()),
+            index: 0,
+        });
+        state
+    }
+
     /// Push a frame
     pub fn push_frame(&mut self, frame: Frame) {
         self.frames.push(frame);
@@ -377,11 +162,13 @@ impl ExecutionState {
     }
 
     /// Peek at top value
+    #[allow(dead_code)]
     pub fn peek_value(&self) -> Option<&Guarded> {
         self.values.last()
     }
 
     /// Check if we have more frames
+    #[allow(dead_code)]
     pub fn has_frames(&self) -> bool {
         !self.frames.is_empty()
     }
@@ -398,8 +185,41 @@ impl Default for ExecutionState {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 impl Interpreter {
+    /// Execute a program using stack-based evaluation
+    pub fn eval_with_stack(&mut self, source: &str) -> Result<JsValue, JsError> {
+        use crate::parser::Parser;
+
+        let mut parser = Parser::new(source, &mut self.string_dict);
+        let program = parser.parse_program()?;
+
+        // Start execution timer
+        self.start_execution();
+
+        let mut state = ExecutionState::for_program(&program);
+
+        match self.run(&mut state) {
+            StepResult::Done(g) => Ok(g.value),
+            StepResult::Error(e) => Err(e),
+            StepResult::Suspend(promise) => {
+                // For simple eval, suspension means we have pending orders
+                // Return undefined for now - full async support comes later
+                let _ = promise;
+                Ok(JsValue::Undefined)
+            }
+            StepResult::Continue => {
+                // Should never happen after run()
+                Ok(JsValue::Undefined)
+            }
+        }
+    }
+
     /// Execute one step of the stack machine
     pub fn step(&mut self, state: &mut ExecutionState) -> StepResult {
+        // Check timeout
+        if let Err(e) = self.check_timeout() {
+            return StepResult::Error(e);
+        }
+
         let Some(frame) = state.pop_frame() else {
             // No more frames - return the top value
             return match state.pop_value() {
@@ -409,6 +229,44 @@ impl Interpreter {
         };
 
         match frame {
+            // ═══════════════════════════════════════════════════════════════
+            // Program/Statement Execution
+            // ═══════════════════════════════════════════════════════════════
+            Frame::Program { statements, index } => self.step_program(state, statements, index),
+
+            Frame::Stmt(stmt) => self.step_stmt(state, &stmt),
+
+            Frame::StmtComplete => {
+                // Statement done, value on stack represents the result
+                // Check for non-normal completion
+                match &state.completion {
+                    StackCompletion::Normal => StepResult::Continue,
+                    StackCompletion::Return => {
+                        // Unwind to function boundary
+                        StepResult::Continue
+                    }
+                    StackCompletion::Break(_) | StackCompletion::Continue(_) => {
+                        // Loop control - handled by loop frames
+                        StepResult::Continue
+                    }
+                    StackCompletion::Throw => {
+                        // Error - propagate up
+                        let value = state
+                            .pop_value()
+                            .map(|g| g.value)
+                            .unwrap_or(JsValue::Undefined);
+                        StepResult::Error(JsError::thrown(value))
+                    }
+                }
+            }
+
+            Frame::Block { statements, index } => self.step_block(state, statements, index),
+
+            Frame::ExprStmtComplete => {
+                // Keep expression value on stack for program/block result
+                StepResult::Continue
+            }
+
             // ═══════════════════════════════════════════════════════════════
             // Expression Evaluation
             // ═══════════════════════════════════════════════════════════════
@@ -444,9 +302,6 @@ impl Interpreter {
             }
 
             Frame::AwaitCheck => self.step_await_check(state),
-
-            // For unimplemented frames, return error
-            _ => StepResult::Error(JsError::internal_error("Unimplemented frame type")),
         }
     }
 
@@ -457,6 +312,173 @@ impl Interpreter {
                 StepResult::Continue => continue,
                 result => return result,
             }
+        }
+    }
+
+    /// Step for program execution
+    fn step_program(
+        &mut self,
+        state: &mut ExecutionState,
+        statements: Rc<Vec<Statement>>,
+        index: usize,
+    ) -> StepResult {
+        // Check completion from previous statement FIRST (before checking if done)
+        match &state.completion {
+            StackCompletion::Return => {
+                // Return from program - done, use the value on stack
+                if state.values.is_empty() {
+                    state.push_value(Guarded::unguarded(JsValue::Undefined));
+                }
+                return StepResult::Continue;
+            }
+            StackCompletion::Break(_) => {
+                return StepResult::Error(JsError::syntax_error_simple("Illegal break statement"));
+            }
+            StackCompletion::Continue(_) => {
+                return StepResult::Error(JsError::syntax_error_simple(
+                    "Illegal continue statement",
+                ));
+            }
+            _ => {}
+        }
+
+        if index >= statements.len() {
+            // Program complete - return last value or undefined
+            if state.values.is_empty() {
+                state.push_value(Guarded::unguarded(JsValue::Undefined));
+            }
+            return StepResult::Continue;
+        }
+
+        // Push continuation for next statement
+        state.push_frame(Frame::Program {
+            statements: statements.clone(),
+            index: index + 1,
+        });
+
+        // Execute current statement
+        let stmt = statements.get(index).cloned();
+        if let Some(stmt) = stmt {
+            state.push_frame(Frame::Stmt(Rc::new(stmt)));
+        }
+
+        StepResult::Continue
+    }
+
+    /// Step for block execution
+    fn step_block(
+        &mut self,
+        state: &mut ExecutionState,
+        statements: Rc<Vec<Statement>>,
+        index: usize,
+    ) -> StepResult {
+        if index >= statements.len() {
+            // Block complete
+            if state.values.is_empty() {
+                state.push_value(Guarded::unguarded(JsValue::Undefined));
+            }
+            return StepResult::Continue;
+        }
+
+        // Check for control flow
+        match &state.completion {
+            StackCompletion::Return
+            | StackCompletion::Break(_)
+            | StackCompletion::Continue(_)
+            | StackCompletion::Throw => {
+                return StepResult::Continue;
+            }
+            StackCompletion::Normal => {}
+        }
+
+        // Push continuation for next statement
+        state.push_frame(Frame::Block {
+            statements: statements.clone(),
+            index: index + 1,
+        });
+
+        // Execute current statement
+        let stmt = statements.get(index).cloned();
+        if let Some(stmt) = stmt {
+            state.push_frame(Frame::Stmt(Rc::new(stmt)));
+        }
+
+        StepResult::Continue
+    }
+
+    /// Step for statement execution
+    fn step_stmt(&mut self, state: &mut ExecutionState, stmt: &Statement) -> StepResult {
+        match stmt {
+            Statement::Expression(expr_stmt) => {
+                // Evaluate expression, then keep result
+                state.push_frame(Frame::ExprStmtComplete);
+                state.push_frame(Frame::Expr(Rc::new(expr_stmt.expression.clone())));
+                StepResult::Continue
+            }
+
+            Statement::Block(block) => {
+                // Execute block
+                state.push_frame(Frame::Block {
+                    statements: Rc::new(block.body.clone()),
+                    index: 0,
+                });
+                StepResult::Continue
+            }
+
+            Statement::Return(ret) => {
+                state.completion = StackCompletion::Return;
+                if let Some(expr) = &ret.argument {
+                    state.push_frame(Frame::Expr(Rc::new(expr.clone())));
+                } else {
+                    state.push_value(Guarded::unguarded(JsValue::Undefined));
+                }
+                StepResult::Continue
+            }
+
+            Statement::Break(brk) => {
+                state.completion =
+                    StackCompletion::Break(brk.label.as_ref().map(|l| l.name.cheap_clone()));
+                state.push_value(Guarded::unguarded(JsValue::Undefined));
+                StepResult::Continue
+            }
+
+            Statement::Continue(cont) => {
+                state.completion =
+                    StackCompletion::Continue(cont.label.as_ref().map(|l| l.name.cheap_clone()));
+                state.push_value(Guarded::unguarded(JsValue::Undefined));
+                StepResult::Continue
+            }
+
+            Statement::Empty => {
+                state.push_value(Guarded::unguarded(JsValue::Undefined));
+                StepResult::Continue
+            }
+
+            // For complex statements, delegate to recursive execution
+            _ => match self.execute_statement(stmt) {
+                Ok(completion) => {
+                    match completion {
+                        Completion::Normal(val) => {
+                            state.push_value(Guarded::unguarded(val));
+                            state.completion = StackCompletion::Normal;
+                        }
+                        Completion::Return(val) => {
+                            state.push_value(Guarded::unguarded(val));
+                            state.completion = StackCompletion::Return;
+                        }
+                        Completion::Break(label) => {
+                            state.push_value(Guarded::unguarded(JsValue::Undefined));
+                            state.completion = StackCompletion::Break(label);
+                        }
+                        Completion::Continue(label) => {
+                            state.push_value(Guarded::unguarded(JsValue::Undefined));
+                            state.completion = StackCompletion::Continue(label);
+                        }
+                    }
+                    StepResult::Continue
+                }
+                Err(e) => StepResult::Error(e),
+            },
         }
     }
 
@@ -478,6 +500,16 @@ impl Interpreter {
             },
 
             Expression::Binary(bin) => {
+                // For instanceof/in, delegate to recursive evaluation since they need object access
+                if matches!(bin.operator, BinaryOp::Instanceof | BinaryOp::In) {
+                    return match self.evaluate_expression(expr) {
+                        Ok(guarded) => {
+                            state.push_value(guarded);
+                            StepResult::Continue
+                        }
+                        Err(e) => StepResult::Error(e),
+                    };
+                }
                 // Evaluate left first, then right
                 state.push_frame(Frame::BinaryRight {
                     op: bin.operator,
@@ -622,11 +654,10 @@ impl Interpreter {
                 JsValue::Number((lhs >> rhs) as f64)
             }
 
-            // Complex operations - delegate to evaluate_expression would need the AST
-            // For now, return error since these need object access
+            // instanceof/in handled in step_expr by delegation
             BinaryOp::Instanceof | BinaryOp::In => {
                 return Err(JsError::internal_error(
-                    "instanceof/in not implemented in stack mode",
+                    "instanceof/in should be handled by delegation",
                 ))
             }
         })
@@ -751,7 +782,6 @@ impl Interpreter {
     /// Resume execution after a promise rejects
     pub fn resume_with_error(&mut self, state: &mut ExecutionState, error: JsError) -> StepResult {
         state.waiting_on = None;
-        // TODO: Proper error handling through try/catch frames
         StepResult::Error(error)
     }
 }

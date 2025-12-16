@@ -221,7 +221,9 @@ fn test_stack_await_pending_promise_suspends() {
 
     // Set up state to await the pending promise
     let mut state = ExecutionState::new();
-    state.push_value(typescript_eval::Guarded::unguarded(JsValue::Object(promise.clone())));
+    state.push_value(typescript_eval::Guarded::unguarded(JsValue::Object(
+        promise.clone(),
+    )));
     state.push_frame(Frame::AwaitCheck);
 
     // Run - should suspend
@@ -251,13 +253,17 @@ fn test_stack_await_resume_with_value() {
 
     // Push "add 10" operation to be done after the await completes
     // (This is what would happen in: `await promise + 10`)
-    state.push_frame(Frame::BinaryComplete { op: typescript_eval::ast::BinaryOp::Add });
+    state.push_frame(Frame::BinaryComplete {
+        op: typescript_eval::ast::BinaryOp::Add,
+    });
 
     // Push the second operand (10)
     state.push_value(typescript_eval::Guarded::unguarded(JsValue::Number(10.0)));
 
     // Now push the await - this will be processed first
-    state.push_value(typescript_eval::Guarded::unguarded(JsValue::Object(promise.clone())));
+    state.push_value(typescript_eval::Guarded::unguarded(JsValue::Object(
+        promise.clone(),
+    )));
     state.push_frame(Frame::AwaitCheck);
 
     // Run - should suspend at await
@@ -290,7 +296,9 @@ fn test_stack_await_resume_with_error() {
 
     // Set up state to await the pending promise
     let mut state = ExecutionState::new();
-    state.push_value(typescript_eval::Guarded::unguarded(JsValue::Object(promise.clone())));
+    state.push_value(typescript_eval::Guarded::unguarded(JsValue::Object(
+        promise.clone(),
+    )));
     state.push_frame(Frame::AwaitCheck);
 
     // Run - should suspend at await
