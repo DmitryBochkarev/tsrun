@@ -1211,11 +1211,14 @@ impl Interpreter {
                 StepResult::Continue
             }
 
-            Statement::EnumDeclaration(_) => {
-                // Enum declarations - not yet fully implemented
-                // TODO: Implement enum support
-                state.push_value(Guarded::unguarded(JsValue::Undefined));
-                StepResult::Continue
+            Statement::EnumDeclaration(enum_decl) => {
+                match self.execute_enum_declaration(enum_decl) {
+                    Ok(()) => {
+                        state.push_value(Guarded::unguarded(JsValue::Undefined));
+                        StepResult::Continue
+                    }
+                    Err(e) => StepResult::Error(e),
+                }
             }
 
             Statement::Debugger => {
@@ -3140,6 +3143,16 @@ impl Interpreter {
                         };
                         self.exports.insert(export_name, value);
                     }
+                }
+                Statement::EnumDeclaration(enum_decl) => {
+                    self.execute_enum_declaration(enum_decl)?;
+                    let value = self.env_get(&enum_decl.id.name)?;
+                    let export_name = if export.default {
+                        JsString::from("default")
+                    } else {
+                        enum_decl.id.name.cheap_clone()
+                    };
+                    self.exports.insert(export_name, value);
                 }
                 _ => {}
             }

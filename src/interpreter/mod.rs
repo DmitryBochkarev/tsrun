@@ -1615,6 +1615,72 @@ impl Interpreter {
         Ok(())
     }
 
+    /// Execute an enum declaration - creates an object with name->value mappings
+    /// and reverse mappings for numeric values
+    pub fn execute_enum_declaration(
+        &mut self,
+        enum_decl: &crate::ast::EnumDeclaration,
+    ) -> Result<(), JsError> {
+        // Create an object for the enum
+        let (enum_obj, enum_guard) = self.create_object_with_guard();
+
+        // Root and define the enum object first so member initializers can reference it
+        // (e.g., ReadWrite = Read | Write references FileAccess.Read)
+        self.root_guard.guard(enum_obj.clone());
+        let enum_name = enum_decl.id.name.cheap_clone();
+        self.env_define(
+            enum_name,
+            JsValue::Object(enum_obj.cheap_clone()),
+            false,
+        );
+
+        // Track the current numeric value for auto-incrementing
+        let mut current_value: f64 = 0.0;
+
+        for member in &enum_decl.members {
+            let member_name = member.id.name.as_str();
+            let member_name_str = JsString::from(member_name);
+
+            // Evaluate initializer or use auto-incremented value
+            let value = if let Some(init_expr) = &member.initializer {
+                let guarded = self.evaluate_expression(init_expr)?;
+                let val = guarded.value;
+                // Update current_value for next auto-increment
+                if let JsValue::Number(n) = &val {
+                    current_value = n + 1.0;
+                }
+                val
+            } else {
+                let val = JsValue::Number(current_value);
+                current_value += 1.0;
+                val
+            };
+
+            // Set name -> value mapping on the enum object
+            let name_key = self.key(member_name);
+            enum_obj.borrow_mut().set_property(name_key, value.clone());
+
+            // Also define the member name in the current scope so later members can reference it
+            // (e.g., in `ReadWrite = Read | Write`, `Read` needs to be in scope)
+            self.env_define(member_name_str, value.clone(), false);
+
+            // For numeric values, also set reverse mapping (value -> name)
+            if let JsValue::Number(n) = &value {
+                // Only add reverse mapping for non-negative integer values
+                if n.fract() == 0.0 && *n >= 0.0 && *n <= u32::MAX as f64 {
+                    // Use Index key for numeric reverse mapping so obj[0] works
+                    let reverse_key = PropertyKey::Index(*n as u32);
+                    enum_obj
+                        .borrow_mut()
+                        .set_property(reverse_key, JsValue::String(JsString::from(member_name)));
+                }
+            }
+        }
+
+        drop(enum_guard);
+        Ok(())
+    }
+
     fn create_class_constructor(
         &mut self,
         class: &ClassDeclaration,
