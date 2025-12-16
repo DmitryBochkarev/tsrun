@@ -353,25 +353,34 @@ fn test_async_class_method() {
 #[test]
 fn test_toplevel_await_returns_object() {
     // Top-level await should return the resolved object value
+    // Verify by accessing the count property in JavaScript
     let result = eval(
         r#"
         async function getData(): Promise<{ count: number }> {
             return { count: 42 };
         }
 
-        await getData()
+        const obj = await getData();
+        obj.count
     "#,
     );
-    // The result should be an object
-    if let JsValue::Object(obj) = &result {
-        let borrowed = obj.borrow();
-        let count = borrowed
-            .get_property(&typescript_eval::value::PropertyKey::from("count"))
-            .unwrap_or(JsValue::Undefined);
-        assert_eq!(count, JsValue::Number(42.0));
-    } else {
-        panic!("Expected Object, got {:?}", result);
-    }
+    assert_eq!(result, JsValue::Number(42.0));
+}
+
+#[test]
+fn test_toplevel_await_returns_object_typeof() {
+    // Verify that top-level await returns an actual object
+    let result = eval(
+        r#"
+        async function getData(): Promise<{ count: number }> {
+            return { count: 42 };
+        }
+
+        const obj = await getData();
+        typeof obj
+    "#,
+    );
+    assert_eq!(result, JsValue::String("object".into()));
 }
 
 #[test]
@@ -639,4 +648,36 @@ fn test_async_filter() {
     "#,
     );
     assert_eq!(result, JsValue::String("2,4".into()));
+}
+
+#[test]
+fn test_async_promise_assimilation() {
+    // When an async function returns a Promise, it should not double-wrap
+    // (Promise assimilation / thenable unwrapping)
+    let result = eval(
+        r#"
+        async function returnsPromise(): Promise<number> {
+            return Promise.resolve(42);
+        }
+        await returnsPromise()
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(42.0));
+}
+
+#[test]
+fn test_async_nested_promise() {
+    // Nested async calls should properly unwrap
+    let result = eval(
+        r#"
+        async function inner(): Promise<number> {
+            return 100;
+        }
+        async function outer(): Promise<number> {
+            return inner();
+        }
+        await outer()
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(100.0));
 }

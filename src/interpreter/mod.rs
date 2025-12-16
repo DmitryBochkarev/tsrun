@@ -31,7 +31,7 @@ use crate::string_dict::StringDict;
 use crate::value::{
     create_environment_with_guard, Binding, CheapClone, EnvRef, EnvironmentData, ExoticObject,
     FunctionBody, Guarded, InterpretedFunction, JsFunction, JsObject, JsString, JsValue, NativeFn,
-    NativeFunction, Property, PropertyKey,
+    NativeFunction, PromiseStatus, Property, PropertyKey,
 };
 use rustc_hash::FxHashMap;
 use std::rc::Rc;
@@ -2797,6 +2797,86 @@ impl Interpreter {
                 Ok(Guarded::with_guard(JsValue::Object(constructor_fn), guard))
             }
 
+            // Await expression - extract value from promise
+            Expression::Await(await_expr) => {
+                let Guarded {
+                    value: promise_value,
+                    guard: promise_guard,
+                } = self.evaluate_expression(&await_expr.argument)?;
+
+                // If the value is a promise, extract its result
+                if let JsValue::Object(obj) = &promise_value {
+                    let obj_ref = obj.borrow();
+                    if let ExoticObject::Promise(state) = &obj_ref.exotic {
+                        let state_ref = state.borrow();
+                        match state_ref.status {
+                            PromiseStatus::Fulfilled => {
+                                let result = state_ref.result.clone().unwrap_or(JsValue::Undefined);
+                                drop(state_ref);
+                                drop(obj_ref);
+                                return Ok(Guarded {
+                                    value: result,
+                                    guard: promise_guard,
+                                });
+                            }
+                            PromiseStatus::Rejected => {
+                                let reason = state_ref.result.clone().unwrap_or(JsValue::Undefined);
+                                drop(state_ref);
+                                drop(obj_ref);
+                                // Re-throw the rejection as an error
+                                return Err(JsError::thrown(reason));
+                            }
+                            PromiseStatus::Pending => {
+                                // For pending promises, we would need to suspend execution
+                                // For now, return undefined (will be enhanced later)
+                                drop(state_ref);
+                                drop(obj_ref);
+                                return Ok(Guarded {
+                                    value: JsValue::Undefined,
+                                    guard: promise_guard,
+                                });
+                            }
+                        }
+                    }
+                }
+
+                // Not a promise - just return the value (await on non-promise returns the value)
+                Ok(Guarded {
+                    value: promise_value,
+                    guard: promise_guard,
+                })
+            }
+
+            // Spread is only valid in array/object literals and function calls, not as standalone expression
+            Expression::Spread(_) => Err(JsError::syntax_error_simple(
+                "Spread element is only valid in array or object literals",
+            )),
+
+            // Yield is only valid inside generator functions
+            Expression::Yield(_) => Err(JsError::syntax_error_simple(
+                "Yield expression is only valid inside generator function",
+            )),
+
+            // Import expression (dynamic import)
+            Expression::Import(import_expr) => {
+                // For dynamic import, we need to create an order and return a promise
+                // For now, just return a rejected promise
+                let Guarded {
+                    value: specifier, ..
+                } = self.evaluate_expression(&import_expr.source)?;
+                let (promise, guard) = builtins::promise_new::create_rejected_promise_with_guard(
+                    self,
+                    JsValue::String(
+                        format!("Dynamic import not yet supported: {:?}", specifier).into(),
+                    ),
+                );
+                Ok(Guarded {
+                    value: JsValue::Object(promise),
+                    guard: Some(guard),
+                })
+            }
+
+            // Super expression handled specially in member access and calls
             _ => Ok(Guarded::unguarded(JsValue::Undefined)),
         }
     }
@@ -3809,7 +3889,48 @@ impl Interpreter {
                 // ALWAYS restore environment, even on error
                 self.env = saved_env;
 
-                // Now propagate the result or error
+                // Handle async functions - wrap result in Promise
+                if interp.async_ {
+                    match body_result {
+                        Ok((result, result_guard)) => {
+                            // Promise assimilation: if result is already a Promise, return it directly
+                            // This prevents double-wrapping (async function returning Promise should
+                            // resolve to the inner Promise's value, not a Promise<Promise<T>>)
+                            if let JsValue::Object(ref obj) = result {
+                                if matches!(obj.borrow().exotic, ExoticObject::Promise(_)) {
+                                    // Return the Promise directly, preserving its guard
+                                    return Ok(Guarded {
+                                        value: result,
+                                        guard: result_guard,
+                                    });
+                                }
+                            }
+                            // Create fulfilled promise with the result
+                            let (promise, guard) =
+                                builtins::promise_new::create_fulfilled_promise_with_guard(
+                                    self, result,
+                                );
+                            return Ok(Guarded {
+                                value: JsValue::Object(promise),
+                                guard: Some(guard),
+                            });
+                        }
+                        Err(e) => {
+                            // Create rejected promise with the error
+                            let (promise, guard) =
+                                builtins::promise_new::create_rejected_promise_with_guard(
+                                    self,
+                                    e.to_value(),
+                                );
+                            return Ok(Guarded {
+                                value: JsValue::Object(promise),
+                                guard: Some(guard),
+                            });
+                        }
+                    }
+                }
+
+                // Now propagate the result or error (non-async case)
                 let (result, result_guard) = body_result?;
 
                 // Propagate guard from expression body arrow functions

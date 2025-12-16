@@ -15,7 +15,7 @@
 
 // TODO: Re-enable these test modules once the new interpreter supports more features
 mod array;
-// mod async_await;
+mod async_await;
 mod basics;
 mod class;
 mod console;
