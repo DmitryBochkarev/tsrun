@@ -195,6 +195,9 @@ pub struct Interpreter {
 
     /// Cancelled order IDs (from Promise.race losing, etc.)
     pub(crate) cancelled_orders: Vec<crate::OrderId>,
+
+    /// Suspended execution state (if any)
+    pub(crate) suspended_state: Option<stack::ExecutionState>,
 }
 
 impl Interpreter {
@@ -279,6 +282,7 @@ impl Interpreter {
             pending_order_guards: Vec::new(),
             order_callbacks: FxHashMap::default(),
             cancelled_orders: Vec::new(),
+            suspended_state: None,
         };
 
         // Initialize built-in globals
@@ -468,21 +472,77 @@ impl Interpreter {
             return Ok(crate::RuntimeResult::NeedImports(missing));
         }
 
-        // All imports satisfied - execute
-        let result = self.execute_program(&program);
+        // All imports satisfied - execute using stack-based evaluation
+        self.start_execution();
+        let mut state = stack::ExecutionState::for_program(&program);
+        self.run_to_completion_or_suspend(&mut state)
+    }
 
-        match result {
-            Ok(value) => {
-                // Check if there are pending orders
-                if !self.pending_orders.is_empty() {
+    /// Run execution until completion or suspension
+    fn run_to_completion_or_suspend(
+        &mut self,
+        state: &mut stack::ExecutionState,
+    ) -> Result<crate::RuntimeResult, JsError> {
+        use stack::StepResult;
+
+        // If we're resuming from suspension, check if the promise was resolved
+        if let Some(promise) = state.waiting_on.take() {
+            let obj_ref = promise.borrow();
+            if let ExoticObject::Promise(promise_state) = &obj_ref.exotic {
+                let status = promise_state.borrow().status.clone();
+                let result = promise_state.borrow().result.clone();
+                drop(obj_ref);
+
+                match status {
+                    PromiseStatus::Fulfilled => {
+                        let value = result.unwrap_or(JsValue::Undefined);
+                        state.push_value(Guarded::unguarded(value));
+                    }
+                    PromiseStatus::Rejected => {
+                        let reason = result.unwrap_or(JsValue::Undefined);
+                        return Err(JsError::thrown(reason));
+                    }
+                    PromiseStatus::Pending => {
+                        // Still pending - should not happen after fulfill_orders
+                        // Re-suspend
+                        state.waiting_on = Some(promise);
+                        self.suspended_state = Some(std::mem::take(state));
+                        let pending = std::mem::take(&mut self.pending_orders);
+                        let cancelled = std::mem::take(&mut self.cancelled_orders);
+                        return Ok(crate::RuntimeResult::Suspended { pending, cancelled });
+                    }
+                }
+            } else {
+                drop(obj_ref);
+                // Not a promise anymore? Push undefined
+                state.push_value(Guarded::unguarded(JsValue::Undefined));
+            }
+        }
+
+        loop {
+            match self.step(state) {
+                StepResult::Continue => continue,
+                StepResult::Done(guarded) => {
+                    // Execution complete
+                    // Check if there are pending orders (for backward compatibility)
+                    if !self.pending_orders.is_empty() {
+                        let pending = std::mem::take(&mut self.pending_orders);
+                        let cancelled = std::mem::take(&mut self.cancelled_orders);
+                        return Ok(crate::RuntimeResult::Suspended { pending, cancelled });
+                    }
+                    return Ok(crate::RuntimeResult::Complete(guarded.value));
+                }
+                StepResult::Error(e) => {
+                    return Err(e);
+                }
+                StepResult::Suspend(_promise) => {
+                    // Await on pending promise - save state and return Suspended
+                    self.suspended_state = Some(std::mem::take(state));
                     let pending = std::mem::take(&mut self.pending_orders);
                     let cancelled = std::mem::take(&mut self.cancelled_orders);
-                    Ok(crate::RuntimeResult::Suspended { pending, cancelled })
-                } else {
-                    Ok(crate::RuntimeResult::Complete(value))
+                    return Ok(crate::RuntimeResult::Suspended { pending, cancelled });
                 }
             }
-            Err(e) => Err(e),
         }
     }
 
@@ -531,7 +591,13 @@ impl Interpreter {
 
     /// Continue evaluation after providing modules or fulfilling orders
     pub fn continue_eval(&mut self) -> Result<crate::RuntimeResult, JsError> {
-        // Check if there are pending orders
+        // If we have a suspended execution state, resume it
+        if let Some(mut state) = self.suspended_state.take() {
+            // Resume execution from where we left off
+            return self.run_to_completion_or_suspend(&mut state);
+        }
+
+        // Check if there are pending orders (for backward compatibility)
         if !self.pending_orders.is_empty() {
             let pending = std::mem::take(&mut self.pending_orders);
             let cancelled = std::mem::take(&mut self.cancelled_orders);

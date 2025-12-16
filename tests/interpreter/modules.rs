@@ -97,7 +97,7 @@ fn test_internal_module_registered() {
         timeout_ms: 3000,
     };
 
-    let runtime = Runtime::with_config(config);
+    let _runtime = Runtime::with_config(config);
 
     // Internal module is registered (we can't test import yet, but we verify setup)
     assert!(true); // Basic smoke test that config works
@@ -489,5 +489,127 @@ fn test_order_fulfillment_reject() {
             }
         }
         _ => panic!("Expected Suspended"),
+    }
+}
+
+#[test]
+fn test_await_pending_promise_suspends_and_resumes() {
+    use typescript_eval::interpreter::builtins::create_eval_internal_module;
+
+    let eval_internal = create_eval_internal_module();
+
+    let config = RuntimeConfig {
+        internal_modules: vec![eval_internal],
+        timeout_ms: 3000,
+    };
+
+    let mut runtime = Runtime::with_config(config);
+
+    // Test that await on a pending promise suspends execution
+    let result = runtime
+        .eval(
+            r#"
+        import { __order__ } from "eval:internal";
+        // This will suspend when we await the pending promise
+        const result = await __order__({ type: "getData" });
+        result * 2  // This should run after resume with the resolved value
+    "#,
+        )
+        .unwrap();
+
+    // Should suspend with one pending order
+    match result {
+        RuntimeResult::Suspended { pending, .. } => {
+            assert_eq!(pending.len(), 1);
+            assert_eq!(pending[0].id.0, 1);
+
+            // Fulfill the order with value 21
+            let response = typescript_eval::OrderResponse {
+                id: pending[0].id,
+                result: Ok(JsValue::Number(21.0)),
+            };
+
+            let result2 = runtime.fulfill_orders(vec![response]).unwrap();
+
+            // After fulfillment, should complete with 42 (21 * 2)
+            match result2 {
+                RuntimeResult::Complete(value) => {
+                    assert_eq!(value, JsValue::Number(42.0));
+                }
+                _ => panic!("Expected Complete after fulfillment, got {:?}", result2),
+            }
+        }
+        RuntimeResult::Complete(v) => {
+            panic!("Expected Suspended, got Complete with {:?}", v);
+        }
+        _ => panic!("Expected Suspended"),
+    }
+}
+
+#[test]
+fn test_await_suspension_with_multiple_awaits() {
+    use typescript_eval::interpreter::builtins::create_eval_internal_module;
+
+    let eval_internal = create_eval_internal_module();
+
+    let config = RuntimeConfig {
+        internal_modules: vec![eval_internal],
+        timeout_ms: 3000,
+    };
+
+    let mut runtime = Runtime::with_config(config);
+
+    // Test multiple sequential awaits
+    let result = runtime
+        .eval(
+            r#"
+        import { __order__ } from "eval:internal";
+        const a = await __order__({ type: "first" });
+        const b = await __order__({ type: "second" });
+        a + b
+    "#,
+        )
+        .unwrap();
+
+    // Should suspend for first await
+    match result {
+        RuntimeResult::Suspended { pending, .. } => {
+            assert_eq!(pending.len(), 1);
+
+            // Fulfill first order
+            let response = typescript_eval::OrderResponse {
+                id: pending[0].id,
+                result: Ok(JsValue::Number(10.0)),
+            };
+
+            let result2 = runtime.fulfill_orders(vec![response]).unwrap();
+
+            // Should suspend again for second await
+            match result2 {
+                RuntimeResult::Suspended {
+                    pending: pending2, ..
+                } => {
+                    assert_eq!(pending2.len(), 1);
+
+                    // Fulfill second order
+                    let response2 = typescript_eval::OrderResponse {
+                        id: pending2[0].id,
+                        result: Ok(JsValue::Number(32.0)),
+                    };
+
+                    let result3 = runtime.fulfill_orders(vec![response2]).unwrap();
+
+                    // Should complete with 42 (10 + 32)
+                    match result3 {
+                        RuntimeResult::Complete(value) => {
+                            assert_eq!(value, JsValue::Number(42.0));
+                        }
+                        _ => panic!("Expected Complete after second fulfillment"),
+                    }
+                }
+                _ => panic!("Expected Suspended for second await"),
+            }
+        }
+        _ => panic!("Expected Suspended for first await"),
     }
 }
