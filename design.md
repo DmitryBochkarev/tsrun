@@ -829,7 +829,7 @@ src/
 
 ## Testing
 
-### Current Status: 740 tests passing
+### Current Status: 749 tests passing
 
 ```bash
 cargo test                     # Run all tests
