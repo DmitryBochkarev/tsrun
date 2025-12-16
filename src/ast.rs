@@ -8,7 +8,7 @@ use crate::value::JsString;
 /// A complete program (script or module)
 #[derive(Debug, Clone)]
 pub struct Program {
-    pub body: Vec<Statement>,
+    pub body: Rc<[Statement]>,
     pub source_type: SourceType,
 }
 
@@ -64,13 +64,13 @@ pub enum Statement {
 
 #[derive(Debug, Clone)]
 pub struct ExpressionStatement {
-    pub expression: Expression,
+    pub expression: Rc<Expression>,
     pub span: Span,
 }
 
 #[derive(Debug, Clone)]
 pub struct BlockStatement {
-    pub body: Vec<Statement>,
+    pub body: Rc<[Statement]>,
     pub span: Span,
 }
 
@@ -199,8 +199,8 @@ pub struct Decorator {
 #[derive(Debug, Clone)]
 pub struct IfStatement {
     pub test: Expression,
-    pub consequent: Box<Statement>,
-    pub alternate: Option<Box<Statement>>,
+    pub consequent: Rc<Statement>,
+    pub alternate: Option<Rc<Statement>>,
     pub span: Span,
 }
 
@@ -221,9 +221,9 @@ pub struct SwitchCase {
 #[derive(Debug, Clone)]
 pub struct ForStatement {
     pub init: Option<ForInit>,
-    pub test: Option<Expression>,
-    pub update: Option<Expression>,
-    pub body: Box<Statement>,
+    pub test: Option<Rc<Expression>>,
+    pub update: Option<Rc<Expression>>,
+    pub body: Rc<Statement>,
     pub span: Span,
 }
 
@@ -238,7 +238,7 @@ pub enum ForInit {
 pub struct ForInStatement {
     pub left: ForInOfLeft,
     pub right: Expression,
-    pub body: Box<Statement>,
+    pub body: Rc<Statement>,
     pub span: Span,
 }
 
@@ -246,7 +246,7 @@ pub struct ForInStatement {
 pub struct ForOfStatement {
     pub left: ForInOfLeft,
     pub right: Expression,
-    pub body: Box<Statement>,
+    pub body: Rc<Statement>,
     pub await_: bool,
     pub span: Span,
 }
@@ -259,15 +259,15 @@ pub enum ForInOfLeft {
 
 #[derive(Debug, Clone)]
 pub struct WhileStatement {
-    pub test: Expression,
-    pub body: Box<Statement>,
+    pub test: Rc<Expression>,
+    pub body: Rc<Statement>,
     pub span: Span,
 }
 
 #[derive(Debug, Clone)]
 pub struct DoWhileStatement {
-    pub body: Box<Statement>,
-    pub test: Expression,
+    pub body: Rc<Statement>,
+    pub test: Rc<Expression>,
     pub span: Span,
 }
 
@@ -313,7 +313,7 @@ pub struct ThrowStatement {
 #[derive(Debug, Clone)]
 pub struct LabeledStatement {
     pub label: Identifier,
-    pub body: Box<Statement>,
+    pub body: Rc<Statement>,
     pub span: Span,
 }
 
@@ -354,7 +354,7 @@ pub struct EnumMember {
 #[derive(Debug, Clone)]
 pub struct NamespaceDeclaration {
     pub id: Identifier,
-    pub body: Vec<Statement>,
+    pub body: Rc<[Statement]>,
     pub span: Span,
 }
 

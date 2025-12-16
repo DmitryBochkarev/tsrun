@@ -169,6 +169,9 @@ pub struct Interpreter {
     /// When execution started (for timeout checking)
     execution_start: Option<std::time::Instant>,
 
+    /// Step counter for batched timeout checking (only check every N steps)
+    step_counter: u32,
+
     // ═══════════════════════════════════════════════════════════════════════════
     // Internal Module System
     // ═══════════════════════════════════════════════════════════════════════════
@@ -288,6 +291,7 @@ impl Interpreter {
             generator_context: None,
             timeout_ms: 3000, // Default 3 second timeout
             execution_start: None,
+            step_counter: 0,
             // Internal module system
             internal_modules: FxHashMap::default(),
             internal_module_cache: FxHashMap::default(),
@@ -428,11 +432,20 @@ impl Interpreter {
     ///
     /// Returns an error if the timeout has been exceeded, otherwise Ok(()).
     /// If timeout_ms is 0, the timeout is disabled.
-    fn check_timeout(&self) -> Result<(), JsError> {
+    /// Only performs the actual time check every 1000 steps for performance.
+    fn check_timeout(&mut self) -> Result<(), JsError> {
         // Skip check if timeout is disabled
         if self.timeout_ms == 0 {
             return Ok(());
         }
+
+        // Only check every 1000 steps
+        self.step_counter += 1;
+        if self.step_counter < 1000 {
+            return Ok(());
+        }
+        self.step_counter = 0;
+
         if let Some(start) = self.execution_start {
             let elapsed = start.elapsed();
             let elapsed_ms = elapsed.as_millis() as u64;
@@ -802,7 +815,7 @@ impl Interpreter {
 
         let mut imports = Vec::new();
 
-        for stmt in &program.body {
+        for stmt in program.body.iter() {
             match stmt {
                 Statement::Import(import) => {
                     imports.push(import.source.value.to_string());
@@ -1258,9 +1271,8 @@ impl Interpreter {
 
         // Create execution state with generator body
         let mut state = ExecutionState::new();
-        let statements: Vec<Statement> = body.body.to_vec();
         state.push_frame(Frame::Program {
-            statements: std::rc::Rc::new(statements),
+            statements: Rc::clone(&body.body),
             index: 0,
         });
 
@@ -1685,7 +1697,7 @@ impl Interpreter {
         for member in &class.body.members {
             if let ClassMember::StaticBlock(block) = member {
                 // Execute each statement in the static block
-                for stmt in &block.body {
+                for stmt in block.body.iter() {
                     self.execute_simple_statement(stmt)?;
                 }
             }
@@ -1799,7 +1811,7 @@ impl Interpreter {
         self.push_env_guard(ns_guard);
 
         // Execute each statement in the namespace body
-        for stmt in &ns_decl.body {
+        for stmt in ns_decl.body.iter() {
             self.execute_namespace_statement(stmt, &ns_obj)?;
         }
 
@@ -2085,7 +2097,7 @@ impl Interpreter {
             ctor.body.clone()
         } else {
             BlockStatement {
-                body: vec![],
+                body: Rc::from([]),
                 span: class.span,
             }
         };
@@ -3587,7 +3599,7 @@ impl Interpreter {
                             // Execute function body using stack-based execution
                             let mut state = stack::ExecutionState::new();
                             state.push_frame(stack::Frame::Block {
-                                statements: Rc::new(block.body.clone()),
+                                statements: Rc::clone(&block.body),
                                 index: 0,
                             });
                             match self.run(&mut state) {

@@ -45,7 +45,7 @@ impl<'a> Parser<'a> {
         }
 
         Ok(Program {
-            body,
+            body: body.into(),
             source_type: SourceType::Script,
         })
     }
@@ -111,7 +111,7 @@ impl<'a> Parser<'a> {
                 self.expect_semicolon()?;
                 let span = expr.span();
                 Ok(Statement::Expression(ExpressionStatement {
-                    expression: expr,
+                    expression: Rc::new(expr),
                     span,
                 }))
             }
@@ -651,7 +651,7 @@ impl<'a> Parser<'a> {
         self.require_token(&TokenKind::RBrace)?;
 
         let span = self.span_from(start);
-        Ok(BlockStatement { body, span })
+        Ok(BlockStatement { body: body.into(), span })
     }
 
     fn parse_if_statement(&mut self) -> Result<Statement, JsError> {
@@ -661,10 +661,10 @@ impl<'a> Parser<'a> {
         let test = self.parse_expression()?;
         self.require_token(&TokenKind::RParen)?;
 
-        let consequent = Box::new(self.parse_statement()?);
+        let consequent = Rc::new(self.parse_statement()?);
 
         let alternate = if self.match_token(&TokenKind::Else) {
-            Some(Box::new(self.parse_statement()?))
+            Some(Rc::new(self.parse_statement()?))
         } else {
             None
         };
@@ -715,7 +715,7 @@ impl<'a> Parser<'a> {
 
                 let right = self.parse_expression()?;
                 self.require_token(&TokenKind::RParen)?;
-                let body = Box::new(self.parse_statement()?);
+                let body = Rc::new(self.parse_statement()?);
 
                 let span = self.span_from(start);
                 let left = ForInOfLeft::Variable(VariableDeclaration {
@@ -781,7 +781,7 @@ impl<'a> Parser<'a> {
 
                 let right = self.parse_expression()?;
                 self.require_token(&TokenKind::RParen)?;
-                let body = Box::new(self.parse_statement()?);
+                let body = Rc::new(self.parse_statement()?);
 
                 let span = self.span_from(start);
                 let left = ForInOfLeft::Pattern(self.expression_to_pattern(&expr)?);
@@ -812,7 +812,7 @@ impl<'a> Parser<'a> {
         let test = if self.check(&TokenKind::Semicolon) {
             None
         } else {
-            Some(self.parse_expression()?)
+            Some(Rc::new(self.parse_expression()?))
         };
 
         self.require_token(&TokenKind::Semicolon)?;
@@ -820,11 +820,11 @@ impl<'a> Parser<'a> {
         let update = if self.check(&TokenKind::RParen) {
             None
         } else {
-            Some(self.parse_expression()?)
+            Some(Rc::new(self.parse_expression()?))
         };
 
         self.require_token(&TokenKind::RParen)?;
-        let body = Box::new(self.parse_statement()?);
+        let body = Rc::new(self.parse_statement()?);
 
         let span = self.span_from(start);
         Ok(Statement::For(ForStatement {
@@ -840,9 +840,9 @@ impl<'a> Parser<'a> {
         let start = self.current.span;
         self.require_token(&TokenKind::While)?;
         self.require_token(&TokenKind::LParen)?;
-        let test = self.parse_expression()?;
+        let test = Rc::new(self.parse_expression()?);
         self.require_token(&TokenKind::RParen)?;
-        let body = Box::new(self.parse_statement()?);
+        let body = Rc::new(self.parse_statement()?);
 
         let span = self.span_from(start);
         Ok(Statement::While(WhileStatement { test, body, span }))
@@ -851,10 +851,10 @@ impl<'a> Parser<'a> {
     fn parse_do_while_statement(&mut self) -> Result<Statement, JsError> {
         let start = self.current.span;
         self.require_token(&TokenKind::Do)?;
-        let body = Box::new(self.parse_statement()?);
+        let body = Rc::new(self.parse_statement()?);
         self.require_token(&TokenKind::While)?;
         self.require_token(&TokenKind::LParen)?;
-        let test = self.parse_expression()?;
+        let test = Rc::new(self.parse_expression()?);
         self.require_token(&TokenKind::RParen)?;
         self.expect_semicolon()?;
 
@@ -1030,7 +1030,7 @@ impl<'a> Parser<'a> {
         let start = self.current.span;
         let label = self.parse_identifier()?;
         self.require_token(&TokenKind::Colon)?;
-        let body = Box::new(self.parse_statement()?);
+        let body = Rc::new(self.parse_statement()?);
 
         let span = self.span_from(start);
         Ok(Statement::Labeled(LabeledStatement { label, body, span }))
@@ -1153,7 +1153,7 @@ impl<'a> Parser<'a> {
         self.require_token(&TokenKind::RBrace)?;
 
         let span = self.span_from(start);
-        Ok(NamespaceDeclaration { id, body, span })
+        Ok(NamespaceDeclaration { id, body: body.into(), span })
     }
 
     // Module declarations (stubs)
@@ -1308,7 +1308,7 @@ impl<'a> Parser<'a> {
                 self.expect_semicolon()?;
                 let span = expr.span();
                 Some(Box::new(Statement::Expression(ExpressionStatement {
-                    expression: expr,
+                    expression: Rc::new(expr),
                     span,
                 })))
             };
@@ -4259,7 +4259,7 @@ mod tests {
 
         // Check the expression is a LogicalExpression with And operator
         if let Statement::Expression(stmt) = &prog.body[0] {
-            if let Expression::Logical(logical) = &stmt.expression {
+            if let Expression::Logical(logical) = &*stmt.expression {
                 assert!(matches!(logical.operator, LogicalOp::And));
             } else {
                 panic!("Expected LogicalExpression, got {:?}", stmt.expression);
@@ -4278,7 +4278,7 @@ mod tests {
         assert_eq!(prog.body.len(), 1);
 
         if let Statement::Expression(stmt) = &prog.body[0] {
-            if let Expression::Logical(logical) = &stmt.expression {
+            if let Expression::Logical(logical) = &*stmt.expression {
                 assert!(matches!(logical.operator, LogicalOp::Or));
             } else {
                 panic!("Expected LogicalExpression, got {:?}", stmt.expression);
@@ -4298,7 +4298,7 @@ mod tests {
         assert_eq!(prog.body.len(), 1);
 
         if let Statement::Expression(stmt) = &prog.body[0] {
-            if let Expression::Logical(logical) = &stmt.expression {
+            if let Expression::Logical(logical) = &*stmt.expression {
                 assert!(matches!(logical.operator, LogicalOp::And));
                 // Left should be a binary comparison
                 assert!(matches!(&*logical.left, Expression::Binary(_)));

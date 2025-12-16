@@ -62,7 +62,7 @@ pub enum Frame {
     // ═══════════════════════════════════════════════════════════════════════
     /// Execute program statements sequentially
     Program {
-        statements: Rc<Vec<Statement>>,
+        statements: Rc<[Statement]>,
         index: usize,
     },
 
@@ -74,7 +74,7 @@ pub enum Frame {
 
     /// Execute remaining statements in block
     Block {
-        statements: Rc<Vec<Statement>>,
+        statements: Rc<[Statement]>,
         index: usize,
     },
 
@@ -422,7 +422,7 @@ impl ExecutionState {
     /// Initialize this state to execute a program (for pool reuse)
     pub fn init_for_program(&mut self, program: &Program) {
         self.push_frame(Frame::Program {
-            statements: Rc::new(program.body.clone()),
+            statements: Rc::clone(&program.body),
             index: 0,
         });
     }
@@ -973,7 +973,7 @@ impl Interpreter {
                         saved_env,
                     });
                     state.push_frame(Frame::Block {
-                        statements: Rc::new(catch_handler.body.body.clone()),
+                        statements: Rc::clone(&catch_handler.body.body),
                         index: 0,
                     });
 
@@ -986,7 +986,7 @@ impl Interpreter {
                         saved_completion: StackCompletion::Normal,
                     });
                     state.push_frame(Frame::Block {
-                        statements: Rc::new(finally_block.body.clone()),
+                        statements: Rc::clone(&finally_block.body),
                         index: 0,
                     });
 
@@ -1009,7 +1009,7 @@ impl Interpreter {
     fn step_program(
         &mut self,
         state: &mut ExecutionState,
-        statements: Rc<Vec<Statement>>,
+        statements: Rc<[Statement]>,
         index: usize,
     ) -> StepResult {
         // Check completion from previous statement FIRST (before checking if done)
@@ -1059,7 +1059,7 @@ impl Interpreter {
     fn step_block(
         &mut self,
         state: &mut ExecutionState,
-        statements: Rc<Vec<Statement>>,
+        statements: Rc<[Statement]>,
         index: usize,
     ) -> StepResult {
         if index >= statements.len() {
@@ -1102,14 +1102,14 @@ impl Interpreter {
             Statement::Expression(expr_stmt) => {
                 // Evaluate expression, then keep result
                 state.push_frame(Frame::ExprStmtComplete);
-                state.push_frame(Frame::Expr(Rc::new(expr_stmt.expression.clone())));
+                state.push_frame(Frame::Expr(Rc::clone(&expr_stmt.expression)));
                 StepResult::Continue
             }
 
             Statement::Block(block) => {
                 // Execute block
                 state.push_frame(Frame::Block {
-                    statements: Rc::new(block.body.clone()),
+                    statements: Rc::clone(&block.body),
                     index: 0,
                 });
                 StepResult::Continue
@@ -1162,8 +1162,8 @@ impl Interpreter {
             Statement::If(if_stmt) => {
                 // Evaluate condition, then branch
                 state.push_frame(Frame::IfBranch {
-                    consequent: Rc::new((*if_stmt.consequent).clone()),
-                    alternate: if_stmt.alternate.as_ref().map(|a| Rc::new((**a).clone())),
+                    consequent: Rc::clone(&if_stmt.consequent),
+                    alternate: if_stmt.alternate.as_ref().map(Rc::clone),
                 });
                 state.push_frame(Frame::Expr(Rc::new(if_stmt.test.clone())));
                 StepResult::Continue
@@ -1171,8 +1171,8 @@ impl Interpreter {
 
             Statement::While(while_stmt) => {
                 state.push_frame(Frame::WhileLoop {
-                    test: Rc::new(while_stmt.test.clone()),
-                    body: Rc::new((*while_stmt.body).clone()),
+                    test: Rc::clone(&while_stmt.test),
+                    body: Rc::clone(&while_stmt.body),
                     label: None,
                 });
                 StepResult::Continue
@@ -1180,8 +1180,8 @@ impl Interpreter {
 
             Statement::DoWhile(do_while) => {
                 state.push_frame(Frame::DoWhileLoop {
-                    test: Rc::new(do_while.test.clone()),
-                    body: Rc::new((*do_while.body).clone()),
+                    test: Rc::clone(&do_while.test),
+                    body: Rc::clone(&do_while.body),
                     label: None,
                 });
                 StepResult::Continue
@@ -1319,9 +1319,9 @@ impl Interpreter {
                 // Evaluate left first, then right
                 state.push_frame(Frame::BinaryRight {
                     op: bin.operator,
-                    right: Rc::new((*bin.right).clone()),
+                    right: Rc::clone(&bin.right),
                 });
-                state.push_frame(Frame::Expr(Rc::new((*bin.left).clone())));
+                state.push_frame(Frame::Expr(Rc::clone(&bin.left)));
                 StepResult::Continue
             }
 
@@ -1329,31 +1329,31 @@ impl Interpreter {
                 // Evaluate left, then check for short-circuit
                 state.push_frame(Frame::LogicalCheck {
                     op: log.operator,
-                    right: Rc::new((*log.right).clone()),
+                    right: Rc::clone(&log.right),
                 });
-                state.push_frame(Frame::Expr(Rc::new((*log.left).clone())));
+                state.push_frame(Frame::Expr(Rc::clone(&log.left)));
                 StepResult::Continue
             }
 
             Expression::Unary(un) => {
                 state.push_frame(Frame::UnaryComplete { op: un.operator });
-                state.push_frame(Frame::Expr(Rc::new((*un.argument).clone())));
+                state.push_frame(Frame::Expr(Rc::clone(&un.argument)));
                 StepResult::Continue
             }
 
             Expression::Conditional(cond) => {
                 state.push_frame(Frame::ConditionalBranch {
-                    consequent: Rc::new((*cond.consequent).clone()),
-                    alternate: Rc::new((*cond.alternate).clone()),
+                    consequent: Rc::clone(&cond.consequent),
+                    alternate: Rc::clone(&cond.alternate),
                 });
-                state.push_frame(Frame::Expr(Rc::new((*cond.test).clone())));
+                state.push_frame(Frame::Expr(Rc::clone(&cond.test)));
                 StepResult::Continue
             }
 
             Expression::Await(await_expr) => {
                 // Evaluate the argument, then check if it's a promise
                 state.push_frame(Frame::AwaitCheck);
-                state.push_frame(Frame::Expr(Rc::new((*await_expr.argument).clone())));
+                state.push_frame(Frame::Expr(Rc::clone(&await_expr.argument)));
                 StepResult::Continue
             }
 
@@ -1907,9 +1907,9 @@ impl Interpreter {
             _ => vec![],
         };
 
-        let test = for_stmt.test.as_ref().map(|t| Rc::new(t.clone()));
-        let update = for_stmt.update.as_ref().map(|u| Rc::new(u.clone()));
-        let body = Rc::new((*for_stmt.body).clone());
+        let test = for_stmt.test.as_ref().map(Rc::clone);
+        let update = for_stmt.update.as_ref().map(Rc::clone);
+        let body = Rc::clone(&for_stmt.body);
         let loop_vars = Rc::new(loop_vars);
 
         // Push cleanup frame (will be executed when loop exits)
@@ -2206,7 +2206,7 @@ impl Interpreter {
             keys: Rc::new(keys),
             index: 0,
             left: Rc::new(for_in.left.clone()),
-            body: Rc::new((*for_in.body).clone()),
+            body: Rc::clone(&for_in.body),
             label,
             saved_env,
         });
@@ -2398,7 +2398,7 @@ impl Interpreter {
                     generator: obj.clone(),
                     gen_state: gen_state.clone(),
                     left: Rc::new(for_of.left.clone()),
-                    body: Rc::new((*for_of.body).clone()),
+                    body: Rc::clone(&for_of.body),
                     label,
                     saved_env,
                 });
@@ -2771,7 +2771,7 @@ impl Interpreter {
         labeled: &crate::ast::LabeledStatement,
     ) -> StepResult {
         let label = labeled.label.name.cheap_clone();
-        let body = Rc::new((*labeled.body).clone());
+        let body = Rc::clone(&labeled.body);
 
         // Check if this is a labeled loop - if so, pass the label to the loop
         match labeled.body.as_ref() {
@@ -2780,8 +2780,8 @@ impl Interpreter {
                     label: label.cheap_clone(),
                 });
                 state.push_frame(Frame::WhileLoop {
-                    test: Rc::new(while_stmt.test.clone()),
-                    body: Rc::new((*while_stmt.body).clone()),
+                    test: Rc::clone(&while_stmt.test),
+                    body: Rc::clone(&while_stmt.body),
                     label: Some(label),
                 });
                 StepResult::Continue
@@ -2791,8 +2791,8 @@ impl Interpreter {
                     label: label.cheap_clone(),
                 });
                 state.push_frame(Frame::DoWhileLoop {
-                    test: Rc::new(do_while.test.clone()),
-                    body: Rc::new((*do_while.body).clone()),
+                    test: Rc::clone(&do_while.test),
+                    body: Rc::clone(&do_while.body),
                     label: Some(label),
                 });
                 StepResult::Continue
@@ -3040,7 +3040,7 @@ impl Interpreter {
 
         // Execute try block body
         state.push_frame(Frame::Block {
-            statements: Rc::new(try_stmt.block.body.clone()),
+            statements: Rc::clone(&try_stmt.block.body),
             index: 0,
         });
 
@@ -3074,7 +3074,7 @@ impl Interpreter {
             });
             state.completion = StackCompletion::Normal;
             state.push_frame(Frame::Block {
-                statements: Rc::new(finally_block.body.clone()),
+                statements: Rc::clone(&finally_block.body),
                 index: 0,
             });
         } else {
@@ -3113,7 +3113,7 @@ impl Interpreter {
             });
             state.completion = StackCompletion::Normal;
             state.push_frame(Frame::Block {
-                statements: Rc::new(finally_block.body.clone()),
+                statements: Rc::clone(&finally_block.body),
                 index: 0,
             });
         } else {

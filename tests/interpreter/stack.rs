@@ -19,13 +19,13 @@ fn stack_eval(source: &str) -> JsValue {
 
     // For simple expression statements, extract the expression
     let expr = match program.body.first() {
-        Some(Statement::Expression(es)) => es.expression.clone(),
+        Some(Statement::Expression(es)) => Rc::clone(&es.expression),
         _ => panic!("Expected expression statement"),
     };
 
     // Set up execution state
     let mut state = ExecutionState::new();
-    state.push_frame(Frame::Expr(Rc::new(expr)));
+    state.push_frame(Frame::Expr(expr));
 
     // Run to completion
     match interp.run(&mut state) {
@@ -180,13 +180,13 @@ fn test_stack_await_resolved_promise() {
         .expect("parse failed");
 
     let expr = match program.body.first() {
-        Some(Statement::Expression(es)) => es.expression.clone(),
+        Some(Statement::Expression(es)) => Rc::clone(&es.expression),
         _ => panic!("Expected expression statement"),
     };
 
     // First, evaluate to get the promise
     let mut state = ExecutionState::new();
-    state.push_frame(Frame::Expr(Rc::new(expr)));
+    state.push_frame(Frame::Expr(expr));
 
     let promise_result = match interp.run(&mut state) {
         StepResult::Done(g) => g.value,
