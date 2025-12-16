@@ -120,7 +120,7 @@ pub struct FunctionParam {
 pub struct ClassDeclaration {
     pub id: Option<Identifier>,
     pub type_parameters: Option<TypeParameters>,
-    pub super_class: Option<Box<Expression>>,
+    pub super_class: Option<Rc<Expression>>,
     pub implements: Vec<TypeReference>,
     pub body: ClassBody,
     pub decorators: Vec<Decorator>,
@@ -447,7 +447,7 @@ pub enum Expression {
     Import(ImportExpression),
 
     // Parenthesized (for preserving source structure)
-    Parenthesized(Box<Expression>, Span),
+    Parenthesized(Rc<Expression>, Span),
 }
 
 impl Expression {
@@ -556,7 +556,7 @@ pub enum ObjectPropertyKey {
     Identifier(Identifier),
     String(StringLiteral),
     Number(Literal),
-    Computed(Box<Expression>),
+    Computed(Rc<Expression>),
     PrivateIdentifier(Identifier),
 }
 
@@ -591,7 +591,7 @@ pub struct ArrowFunctionExpression {
 
 #[derive(Debug, Clone)]
 pub enum ArrowFunctionBody {
-    Expression(Box<Expression>),
+    Expression(Rc<Expression>),
     Block(BlockStatement),
 }
 
@@ -599,7 +599,7 @@ pub enum ArrowFunctionBody {
 pub struct ClassExpression {
     pub id: Option<Identifier>,
     pub type_parameters: Option<TypeParameters>,
-    pub super_class: Option<Box<Expression>>,
+    pub super_class: Option<Rc<Expression>>,
     pub implements: Vec<TypeReference>,
     pub body: ClassBody,
     pub decorators: Vec<Decorator>,
@@ -622,7 +622,7 @@ pub struct TemplateElement {
 
 #[derive(Debug, Clone)]
 pub struct TaggedTemplateExpression {
-    pub tag: Box<Expression>,
+    pub tag: Rc<Expression>,
     pub quasi: TemplateLiteral,
     pub span: Span,
 }
@@ -630,7 +630,7 @@ pub struct TaggedTemplateExpression {
 #[derive(Debug, Clone)]
 pub struct UnaryExpression {
     pub operator: UnaryOp,
-    pub argument: Box<Expression>,
+    pub argument: Rc<Expression>,
     pub prefix: bool,
     pub span: Span,
 }
@@ -649,8 +649,8 @@ pub enum UnaryOp {
 #[derive(Debug, Clone)]
 pub struct BinaryExpression {
     pub operator: BinaryOp,
-    pub left: Box<Expression>,
-    pub right: Box<Expression>,
+    pub left: Rc<Expression>,
+    pub right: Rc<Expression>,
     pub span: Span,
 }
 
@@ -690,8 +690,8 @@ pub enum BinaryOp {
 #[derive(Debug, Clone)]
 pub struct LogicalExpression {
     pub operator: LogicalOp,
-    pub left: Box<Expression>,
-    pub right: Box<Expression>,
+    pub left: Rc<Expression>,
+    pub right: Rc<Expression>,
     pub span: Span,
 }
 
@@ -704,9 +704,9 @@ pub enum LogicalOp {
 
 #[derive(Debug, Clone)]
 pub struct ConditionalExpression {
-    pub test: Box<Expression>,
-    pub consequent: Box<Expression>,
-    pub alternate: Box<Expression>,
+    pub test: Rc<Expression>,
+    pub consequent: Rc<Expression>,
+    pub alternate: Rc<Expression>,
     pub span: Span,
 }
 
@@ -714,7 +714,7 @@ pub struct ConditionalExpression {
 pub struct AssignmentExpression {
     pub operator: AssignmentOp,
     pub left: AssignmentTarget,
-    pub right: Box<Expression>,
+    pub right: Rc<Expression>,
     pub span: Span,
 }
 
@@ -748,7 +748,7 @@ pub enum AssignmentOp {
 #[derive(Debug, Clone)]
 pub struct UpdateExpression {
     pub operator: UpdateOp,
-    pub argument: Box<Expression>,
+    pub argument: Rc<Expression>,
     pub prefix: bool,
     pub span: Span,
 }
@@ -767,7 +767,7 @@ pub struct SequenceExpression {
 
 #[derive(Debug, Clone)]
 pub struct MemberExpression {
-    pub object: Box<Expression>,
+    pub object: Rc<Expression>,
     pub property: MemberProperty,
     pub computed: bool,
     pub span: Span,
@@ -776,19 +776,19 @@ pub struct MemberExpression {
 #[derive(Debug, Clone)]
 pub enum MemberProperty {
     Identifier(Identifier),
-    Expression(Box<Expression>),
+    Expression(Rc<Expression>),
     PrivateIdentifier(Identifier),
 }
 
 #[derive(Debug, Clone)]
 pub struct OptionalChainExpression {
-    pub base: Box<Expression>,
+    pub base: Rc<Expression>,
     pub span: Span,
 }
 
 #[derive(Debug, Clone)]
 pub struct CallExpression {
-    pub callee: Box<Expression>,
+    pub callee: Rc<Expression>,
     pub arguments: Vec<Argument>,
     pub type_arguments: Option<TypeArguments>,
     pub optional: bool,
@@ -804,7 +804,7 @@ pub enum Argument {
 
 #[derive(Debug, Clone)]
 pub struct NewExpression {
-    pub callee: Box<Expression>,
+    pub callee: Rc<Expression>,
     pub arguments: Vec<Argument>,
     pub type_arguments: Option<TypeArguments>,
     pub span: Span,
@@ -812,27 +812,27 @@ pub struct NewExpression {
 
 #[derive(Debug, Clone)]
 pub struct SpreadElement {
-    pub argument: Box<Expression>,
+    pub argument: Rc<Expression>,
     pub span: Span,
 }
 
 #[derive(Debug, Clone)]
 pub struct YieldExpression {
-    pub argument: Option<Box<Expression>>,
+    pub argument: Option<Rc<Expression>>,
     pub delegate: bool,
     pub span: Span,
 }
 
 #[derive(Debug, Clone)]
 pub struct AwaitExpression {
-    pub argument: Box<Expression>,
+    pub argument: Rc<Expression>,
     pub span: Span,
 }
 
 /// Dynamic import() expression
 #[derive(Debug, Clone)]
 pub struct ImportExpression {
-    pub source: Box<Expression>,
+    pub source: Rc<Expression>,
     pub span: Span,
 }
 
@@ -840,14 +840,14 @@ pub struct ImportExpression {
 
 #[derive(Debug, Clone)]
 pub struct TypeAssertionExpression {
-    pub expression: Box<Expression>,
+    pub expression: Rc<Expression>,
     pub type_annotation: TypeAnnotation,
     pub span: Span,
 }
 
 #[derive(Debug, Clone)]
 pub struct NonNullExpression {
-    pub expression: Box<Expression>,
+    pub expression: Rc<Expression>,
     pub span: Span,
 }
 
@@ -909,7 +909,7 @@ pub struct RestElement {
 #[derive(Debug, Clone)]
 pub struct AssignmentPattern {
     pub left: Box<Pattern>,
-    pub right: Box<Expression>,
+    pub right: Rc<Expression>,
     pub span: Span,
 }
 

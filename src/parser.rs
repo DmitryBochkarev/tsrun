@@ -234,7 +234,7 @@ impl<'a> Parser<'a> {
 
             // Optional default value
             let value = if self.match_token(&TokenKind::Eq) {
-                let right = Box::new(self.parse_assignment_expression()?);
+                let right = Rc::new(self.parse_assignment_expression()?);
                 let span = self.span_from(prop_start);
                 Pattern::Assignment(AssignmentPattern {
                     left: Box::new(value),
@@ -304,7 +304,7 @@ impl<'a> Parser<'a> {
             // Optional default value
             let elem = if self.match_token(&TokenKind::Eq) {
                 let elem_span = elem.span();
-                let right = Box::new(self.parse_assignment_expression()?);
+                let right = Rc::new(self.parse_assignment_expression()?);
                 let span = self.span_from(elem_span);
                 Pattern::Assignment(AssignmentPattern {
                     left: Box::new(elem),
@@ -407,7 +407,7 @@ impl<'a> Parser<'a> {
 
             // Default value becomes AssignmentPattern
             let pattern = if self.match_token(&TokenKind::Eq) {
-                let right = Box::new(self.parse_assignment_expression()?);
+                let right = Rc::new(self.parse_assignment_expression()?);
                 let span = self.span_from(param_start);
                 Pattern::Assignment(AssignmentPattern {
                     left: Box::new(pattern),
@@ -448,7 +448,7 @@ impl<'a> Parser<'a> {
         let type_parameters = self.parse_optional_type_parameters()?;
 
         let super_class = if self.match_token(&TokenKind::Extends) {
-            Some(Box::new(self.parse_left_hand_side_expression()?))
+            Some(Rc::new(self.parse_left_hand_side_expression()?))
         } else {
             None
         };
@@ -628,7 +628,7 @@ impl<'a> Parser<'a> {
         if self.match_token(&TokenKind::LBracket) {
             let expr = self.parse_assignment_expression()?;
             self.require_token(&TokenKind::RBracket)?;
-            Ok((ObjectPropertyKey::Computed(Box::new(expr)), true))
+            Ok((ObjectPropertyKey::Computed(Rc::new(expr)), true))
         } else if self.match_token(&TokenKind::Hash) {
             // Private identifier: #name
             let name = self.parse_identifier()?;
@@ -1466,7 +1466,7 @@ impl<'a> Parser<'a> {
 
         if let Some(op) = self.current_assignment_op() {
             self.advance();
-            let right = Box::new(self.parse_assignment_expression()?);
+            let right = Rc::new(self.parse_assignment_expression()?);
             let left = self.expression_to_assignment_target(&expr)?;
             let span = self.span_from(start);
             return Ok(Expression::Assignment(AssignmentExpression {
@@ -1499,7 +1499,7 @@ impl<'a> Parser<'a> {
             && !self.is_at_end()
             && !self.lexer.had_newline_before()
         {
-            Some(Box::new(self.parse_assignment_expression()?))
+            Some(Rc::new(self.parse_assignment_expression()?))
         } else {
             None
         };
@@ -1517,7 +1517,7 @@ impl<'a> Parser<'a> {
         self.require_token(&TokenKind::Await)?;
 
         // await always requires an argument
-        let argument = Box::new(self.parse_unary_expression()?);
+        let argument = Rc::new(self.parse_unary_expression()?);
 
         let span = self.span_from(start);
         Ok(Expression::Await(AwaitExpression { argument, span }))
@@ -1528,12 +1528,12 @@ impl<'a> Parser<'a> {
         let test = self.parse_binary_expression(0)?;
 
         if self.match_token(&TokenKind::Question) {
-            let consequent = Box::new(self.parse_assignment_expression()?);
+            let consequent = Rc::new(self.parse_assignment_expression()?);
             self.require_token(&TokenKind::Colon)?;
-            let alternate = Box::new(self.parse_assignment_expression()?);
+            let alternate = Rc::new(self.parse_assignment_expression()?);
             let span = self.span_from(start);
             return Ok(Expression::Conditional(ConditionalExpression {
-                test: Box::new(test),
+                test: Rc::new(test),
                 consequent,
                 alternate,
                 span,
@@ -1573,15 +1573,15 @@ impl<'a> Parser<'a> {
                 };
                 Expression::Logical(LogicalExpression {
                     operator: logical_op,
-                    left: Box::new(left),
-                    right: Box::new(right),
+                    left: Rc::new(left),
+                    right: Rc::new(right),
                     span,
                 })
             } else {
                 Expression::Binary(BinaryExpression {
                     operator: op,
-                    left: Box::new(left),
-                    right: Box::new(right),
+                    left: Rc::new(left),
+                    right: Rc::new(right),
                     span,
                 })
             };
@@ -1595,7 +1595,7 @@ impl<'a> Parser<'a> {
 
         if let Some(op) = self.current_unary_op() {
             self.advance();
-            let argument = Box::new(self.parse_unary_expression()?);
+            let argument = Rc::new(self.parse_unary_expression()?);
             let span = self.span_from(start);
             return Ok(Expression::Unary(UnaryExpression {
                 operator: op,
@@ -1608,7 +1608,7 @@ impl<'a> Parser<'a> {
         // Update expressions (prefix)
         if let Some(op) = self.current_update_op() {
             self.advance();
-            let argument = Box::new(self.parse_unary_expression()?);
+            let argument = Rc::new(self.parse_unary_expression()?);
             let span = self.span_from(start);
             return Ok(Expression::Update(UpdateExpression {
                 operator: op,
@@ -1632,7 +1632,7 @@ impl<'a> Parser<'a> {
                 let span = self.span_from(start);
                 expr = Expression::Update(UpdateExpression {
                     operator: op,
-                    argument: Box::new(expr),
+                    argument: Rc::new(expr),
                     prefix: false,
                     span,
                 });
@@ -1646,7 +1646,7 @@ impl<'a> Parser<'a> {
         let start = self.current.span;
 
         let mut expr = if self.match_token(&TokenKind::New) {
-            let callee = Box::new(self.parse_member_expression()?);
+            let callee = Rc::new(self.parse_member_expression()?);
             let (arguments, type_arguments) = if self.check(&TokenKind::LParen) {
                 self.parse_call_arguments()?
             } else {
@@ -1669,7 +1669,7 @@ impl<'a> Parser<'a> {
                 let (arguments, type_arguments) = self.parse_call_arguments()?;
                 let span = self.span_from(start);
                 expr = Expression::Call(CallExpression {
-                    callee: Box::new(expr),
+                    callee: Rc::new(expr),
                     arguments,
                     type_arguments,
                     optional: false,
@@ -1681,7 +1681,7 @@ impl<'a> Parser<'a> {
                     let name = self.parse_identifier()?;
                     let span = self.span_from(start);
                     expr = Expression::Member(MemberExpression {
-                        object: Box::new(expr),
+                        object: Rc::new(expr),
                         property: MemberProperty::PrivateIdentifier(name),
                         computed: false,
                         span,
@@ -1691,7 +1691,7 @@ impl<'a> Parser<'a> {
                     let property = self.parse_identifier_name()?;
                     let span = self.span_from(start);
                     expr = Expression::Member(MemberExpression {
-                        object: Box::new(expr),
+                        object: Rc::new(expr),
                         property: MemberProperty::Identifier(property),
                         computed: false,
                         span,
@@ -1702,8 +1702,8 @@ impl<'a> Parser<'a> {
                 self.require_token(&TokenKind::RBracket)?;
                 let span = self.span_from(start);
                 expr = Expression::Member(MemberExpression {
-                    object: Box::new(expr),
-                    property: MemberProperty::Expression(Box::new(property)),
+                    object: Rc::new(expr),
+                    property: MemberProperty::Expression(Rc::new(property)),
                     computed: true,
                     span,
                 });
@@ -1716,7 +1716,7 @@ impl<'a> Parser<'a> {
                 if let Expression::Template(quasi) = template {
                     let span = self.span_from(start);
                     expr = Expression::TaggedTemplate(TaggedTemplateExpression {
-                        tag: Box::new(expr),
+                        tag: Rc::new(expr),
                         quasi,
                         span,
                     });
@@ -1728,7 +1728,7 @@ impl<'a> Parser<'a> {
                 self.advance(); // consume TemplateNoSub
                 let span = self.span_from(start);
                 expr = Expression::TaggedTemplate(TaggedTemplateExpression {
-                    tag: Box::new(expr),
+                    tag: Rc::new(expr),
                     quasi: TemplateLiteral {
                         quasis: vec![TemplateElement {
                             value: interned,
@@ -1746,7 +1746,7 @@ impl<'a> Parser<'a> {
                     let (arguments, type_arguments) = self.parse_call_arguments()?;
                     let span = self.span_from(start);
                     expr = Expression::Call(CallExpression {
-                        callee: Box::new(expr),
+                        callee: Rc::new(expr),
                         arguments,
                         type_arguments,
                         optional: true,
@@ -1757,8 +1757,8 @@ impl<'a> Parser<'a> {
                     self.require_token(&TokenKind::RBracket)?;
                     let span = self.span_from(start);
                     expr = Expression::Member(MemberExpression {
-                        object: Box::new(expr),
-                        property: MemberProperty::Expression(Box::new(property)),
+                        object: Rc::new(expr),
+                        property: MemberProperty::Expression(Rc::new(property)),
                         computed: true,
                         span,
                     });
@@ -1767,7 +1767,7 @@ impl<'a> Parser<'a> {
                     let property = self.parse_identifier_name()?;
                     let span = self.span_from(start);
                     expr = Expression::Member(MemberExpression {
-                        object: Box::new(expr),
+                        object: Rc::new(expr),
                         property: MemberProperty::Identifier(property),
                         computed: false,
                         span,
@@ -1780,7 +1780,7 @@ impl<'a> Parser<'a> {
                 self.advance(); // consume !
                 let span = self.span_from(start);
                 expr = Expression::NonNull(NonNullExpression {
-                    expression: Box::new(expr),
+                    expression: Rc::new(expr),
                     span,
                 });
             } else {
@@ -1793,7 +1793,7 @@ impl<'a> Parser<'a> {
             let type_annotation = self.parse_type_annotation()?;
             let span = self.span_from(start);
             expr = Expression::TypeAssertion(TypeAssertionExpression {
-                expression: Box::new(expr),
+                expression: Rc::new(expr),
                 type_annotation,
                 span,
             });
@@ -1813,7 +1813,7 @@ impl<'a> Parser<'a> {
                     let name = self.parse_identifier()?;
                     let span = self.span_from(start);
                     expr = Expression::Member(MemberExpression {
-                        object: Box::new(expr),
+                        object: Rc::new(expr),
                         property: MemberProperty::PrivateIdentifier(name),
                         computed: false,
                         span,
@@ -1823,7 +1823,7 @@ impl<'a> Parser<'a> {
                     let property = self.parse_identifier_name()?;
                     let span = self.span_from(start);
                     expr = Expression::Member(MemberExpression {
-                        object: Box::new(expr),
+                        object: Rc::new(expr),
                         property: MemberProperty::Identifier(property),
                         computed: false,
                         span,
@@ -1834,8 +1834,8 @@ impl<'a> Parser<'a> {
                 self.require_token(&TokenKind::RBracket)?;
                 let span = self.span_from(start);
                 expr = Expression::Member(MemberExpression {
-                    object: Box::new(expr),
-                    property: MemberProperty::Expression(Box::new(property)),
+                    object: Rc::new(expr),
+                    property: MemberProperty::Expression(Rc::new(property)),
                     computed: true,
                     span,
                 });
@@ -2016,7 +2016,7 @@ impl<'a> Parser<'a> {
 
             if self.match_token(&TokenKind::DotDotDot) {
                 let arg_start = self.current.span;
-                let argument = Box::new(self.parse_assignment_expression()?);
+                let argument = Rc::new(self.parse_assignment_expression()?);
                 let span = self.span_from(arg_start);
                 elements.push(Some(ArrayElement::Spread(SpreadElement { argument, span })));
             } else {
@@ -2044,7 +2044,7 @@ impl<'a> Parser<'a> {
         while !self.check(&TokenKind::RBrace) && !self.is_at_end() {
             if self.match_token(&TokenKind::DotDotDot) {
                 let arg_start = self.current.span;
-                let argument = Box::new(self.parse_assignment_expression()?);
+                let argument = Rc::new(self.parse_assignment_expression()?);
                 let span = self.span_from(arg_start);
                 properties.push(ObjectProperty::Spread(SpreadElement { argument, span }));
             } else {
@@ -2087,7 +2087,7 @@ impl<'a> Parser<'a> {
             self.advance();
             let expr = self.parse_assignment_expression()?;
             self.require_token(&TokenKind::RBracket)?;
-            ObjectPropertyKey::Computed(Box::new(expr))
+            ObjectPropertyKey::Computed(Rc::new(expr))
         } else {
             self.parse_property_name()?
         };
@@ -2198,7 +2198,7 @@ impl<'a> Parser<'a> {
 
             // Parenthesized expression
             let span = self.span_from(start);
-            return Ok(Expression::Parenthesized(Box::new(first), span));
+            return Ok(Expression::Parenthesized(Rc::new(first), span));
         }
 
         // Comma - either sequence or arrow params
@@ -2261,7 +2261,7 @@ impl<'a> Parser<'a> {
                 expressions: items,
                 span,
             });
-            return Ok(Expression::Parenthesized(Box::new(seq), span));
+            return Ok(Expression::Parenthesized(Rc::new(seq), span));
         }
 
         Err(self.unexpected_token("')' or ','"))
@@ -2298,7 +2298,7 @@ impl<'a> Parser<'a> {
 
             // Default value becomes AssignmentPattern
             let pattern = if self.match_token(&TokenKind::Eq) {
-                let right = Box::new(self.parse_assignment_expression()?);
+                let right = Rc::new(self.parse_assignment_expression()?);
                 let span = self.span_from(param_start);
                 Pattern::Assignment(AssignmentPattern {
                     left: Box::new(pattern),
@@ -2346,7 +2346,7 @@ impl<'a> Parser<'a> {
         let body = if self.check(&TokenKind::LBrace) {
             ArrowFunctionBody::Block(self.parse_block_statement()?)
         } else {
-            ArrowFunctionBody::Expression(Box::new(self.parse_assignment_expression()?))
+            ArrowFunctionBody::Expression(Rc::new(self.parse_assignment_expression()?))
         };
 
         let span = self.span_from(start);
@@ -2364,7 +2364,7 @@ impl<'a> Parser<'a> {
         let start = self.current.span;
         self.require_token(&TokenKind::Import)?;
         self.require_token(&TokenKind::LParen)?;
-        let source = Box::new(self.parse_assignment_expression()?);
+        let source = Rc::new(self.parse_assignment_expression()?);
         self.require_token(&TokenKind::RParen)?;
         let span = self.span_from(start);
         Ok(Expression::Import(ImportExpression { source, span }))
@@ -2567,7 +2567,7 @@ impl<'a> Parser<'a> {
         while !self.check(&TokenKind::RParen) && !self.is_at_end() {
             if self.match_token(&TokenKind::DotDotDot) {
                 let arg_start = self.current.span;
-                let argument = Box::new(self.parse_assignment_expression()?);
+                let argument = Rc::new(self.parse_assignment_expression()?);
                 let span = self.span_from(arg_start);
                 arguments.push(Argument::Spread(SpreadElement { argument, span }));
             } else {

@@ -1489,7 +1489,7 @@ pub struct InterpretedFunction {
 #[derive(Debug, Clone)]
 pub enum FunctionBody {
     Block(Rc<BlockStatement>),
-    Expression(Box<crate::ast::Expression>),
+    Expression(Rc<crate::ast::Expression>),
 }
 
 impl From<Rc<ArrowFunctionBody>> for FunctionBody {
