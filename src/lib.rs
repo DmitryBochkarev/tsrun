@@ -15,7 +15,6 @@ pub mod error;
 pub mod gc;
 pub mod interpreter;
 pub mod lexer;
-pub mod old_gc;
 pub mod parser;
 pub mod string_dict;
 pub mod value;

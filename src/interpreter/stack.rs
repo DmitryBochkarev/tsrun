@@ -402,6 +402,33 @@ impl Interpreter {
         }
     }
 
+    /// Execute a program using stack-based evaluation (for module execution)
+    ///
+    /// This is used internally for executing module code. It runs to completion
+    /// without supporting suspension (modules are expected to be synchronous).
+    pub fn execute_program_with_stack(
+        &mut self,
+        program: &crate::ast::Program,
+    ) -> Result<JsValue, JsError> {
+        // Start execution timer
+        self.start_execution();
+
+        let mut state = ExecutionState::for_program(program);
+
+        match self.run(&mut state) {
+            StepResult::Done(g) => Ok(g.value),
+            StepResult::Error(e) => Err(e),
+            StepResult::Suspend(_) => {
+                // Modules shouldn't suspend - if they do, treat as error
+                Err(JsError::type_error("Module execution cannot be suspended"))
+            }
+            StepResult::Continue => {
+                // Should never happen after run()
+                Ok(JsValue::Undefined)
+            }
+        }
+    }
+
     /// Execute one step of the stack machine
     pub fn step(&mut self, state: &mut ExecutionState) -> StepResult {
         // Check timeout

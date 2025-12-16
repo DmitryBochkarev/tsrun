@@ -2,9 +2,6 @@
 //!
 //! This module implements a minimal interpreter using the new guard-based GC.
 
-// Old implementation kept for reference in old_mod.rs (not compiled)
-// mod old_mod;
-
 // Builtin function implementations
 pub mod builtins;
 
@@ -565,8 +562,8 @@ impl Interpreter {
         let module_env = self.create_module_environment();
         self.env = module_env;
 
-        // Execute module
-        let result = self.execute_program(&program);
+        // Execute module using stack-based evaluation
+        let result = self.execute_program_with_stack(&program);
 
         // Restore environment
         self.env = saved_env;
@@ -1168,7 +1165,12 @@ impl Interpreter {
         self.eval_with_stack(source)
     }
 
-    /// Execute a program
+    /// Execute a program (recursive implementation)
+    ///
+    /// Note: This is no longer used directly - `execute_program_with_stack` in stack.rs is now
+    /// the primary entry point. However, `execute_statement` (called from stack.rs for certain
+    /// statement types) still uses the recursive implementation internally.
+    #[allow(dead_code)]
     fn execute_program(&mut self, program: &Program) -> Result<JsValue, JsError> {
         // Start execution timer for timeout checking
         self.start_execution();
@@ -2282,8 +2284,8 @@ impl Interpreter {
         let module_env = self.create_module_environment();
         self.env = module_env;
 
-        // Execute the module body
-        let result = self.execute_program(&program);
+        // Execute the module body using stack-based evaluation
+        let result = self.execute_program_with_stack(&program);
 
         // Restore environment
         self.env = saved_env;
