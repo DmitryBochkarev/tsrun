@@ -384,31 +384,59 @@ pub struct ExecutionState {
     pub waiting_on: Option<Gc<JsObject>>,
 }
 
+/// Initial capacity for the value stack.
+/// This is sized to avoid reallocations during typical expression evaluation.
+/// Complex expressions may exceed this, but loop iterations typically stay under 256.
+const VALUE_STACK_INITIAL_CAPACITY: usize = 256;
+
+/// Initial capacity for the frame stack.
+/// Frames accumulate for nested expressions, blocks, and control flow.
+/// Typical deep nesting rarely exceeds 128 frames.
+const FRAME_STACK_INITIAL_CAPACITY: usize = 128;
+
 impl ExecutionState {
     pub fn new() -> Self {
         Self {
-            frames: Vec::new(),
-            values: Vec::new(),
+            frames: Vec::with_capacity(FRAME_STACK_INITIAL_CAPACITY),
+            values: Vec::with_capacity(VALUE_STACK_INITIAL_CAPACITY),
             completion: StackCompletion::Normal,
             waiting_on: None,
         }
     }
 
+    /// Reset state for reuse, keeping allocated capacity
+    pub fn reset(&mut self) {
+        self.frames.clear();
+        self.values.clear();
+        self.completion = StackCompletion::Normal;
+        self.waiting_on = None;
+    }
+
     /// Create state for executing a program
     pub fn for_program(program: &Program) -> Self {
         let mut state = Self::new();
-        state.push_frame(Frame::Program {
+        state.init_for_program(program);
+        state
+    }
+
+    /// Initialize this state to execute a program (for pool reuse)
+    pub fn init_for_program(&mut self, program: &Program) {
+        self.push_frame(Frame::Program {
             statements: Rc::new(program.body.clone()),
             index: 0,
         });
-        state
     }
 
     /// Create state for executing a single statement
     pub fn for_statement(stmt: &Statement) -> Self {
         let mut state = Self::new();
-        state.push_frame(Frame::Stmt(Rc::new(stmt.clone())));
+        state.init_for_statement(stmt);
         state
+    }
+
+    /// Initialize this state to execute a statement (for pool reuse)
+    pub fn init_for_statement(&mut self, stmt: &Statement) {
+        self.push_frame(Frame::Stmt(Rc::new(stmt.clone())));
     }
 
     /// Push a frame

@@ -135,7 +135,6 @@ pub struct Gc<T: Default + Reset + Traceable> {
     /// Weak reference to space - used to check if space is still alive before accessing ptr
     /// This prevents use-after-free when Gc outlives the Space (e.g., during interpreter shutdown)
     space: Weak<RefCell<Space<T>>>,
-
     // Generation this Gc was created for. Must match GcBox's generation to affect ref_count.
     //generation: u32,
 }
@@ -228,7 +227,9 @@ impl<T: Default + Reset + Traceable> Clone for Gc<T> {
         if let Some(_space) = self.space.upgrade() {
             let gc_box = unsafe { self.ptr.as_ref() };
             // Only increment if generation matches (object wasn't swept and reused)
-            if !gc_box.pooled.get() /*&& gc_box.generation.get() == self.generation*/ {
+            if !gc_box.pooled.get()
+            /*&& gc_box.generation.get() == self.generation*/
+            {
                 gc_box.ref_count.set(gc_box.ref_count.get() + 1);
             }
         }
@@ -335,7 +336,6 @@ pub struct GcBox<T: Default + Reset + Traceable> {
 
     /// Whether this object is in the pool (dead)
     pooled: Cell<bool>,
-
     // Generation counter - incremented each time slot is reused from pool.
     // Old Gc pointers with different generations don't affect ref_count.
     // generation: Cell<u32>,
@@ -461,7 +461,7 @@ impl<T: Default + Reset + Traceable> Space<T> {
             self.collect();
         }
 
-        let (index, ptr/*, generation */) = if let Some(ptr) = self.free_list.pop() {
+        let (index, ptr /*, generation */) = if let Some(ptr) = self.free_list.pop() {
             // Reuse from pool - safe because pool contains valid pointers
             // Safety: ptr came from our chunks which have stable addresses
             let gc_box = unsafe { ptr.as_ptr().as_mut() };
@@ -482,7 +482,7 @@ impl<T: Default + Reset + Traceable> Space<T> {
             // gc_box.generation.set(new_gen);
 
             // Index stays the same for reused objects
-            (gc_box.index, ptr/*, new_gen */)
+            (gc_box.index, ptr /*, new_gen */)
         } else {
             // Need to allocate new - check if current chunk has space
             let need_new_chunk = self
@@ -532,7 +532,7 @@ impl<T: Default + Reset + Traceable> Space<T> {
             let ptr = NonNull::from(gc_box);
             //let generation = gc_box.generation.get(); // New objects start at generation 0
 
-            (index, ptr/*, generation */)
+            (index, ptr /*, generation */)
         };
 
         Gc {
@@ -871,7 +871,7 @@ impl<T: Default + Reset + Traceable> Guard<T> {
     /// Returns true if the object was found and removed.
     pub fn unguard(&self, obj: &Gc<T>) -> bool {
         let mut roots = self.inner.roots.borrow_mut();
-        while let Some(pos) = roots.iter().position(|p| *p == obj.ptr) {
+        if let Some(pos) = roots.iter().position(|p| *p == obj.ptr) {
             roots.swap_remove(pos);
             return true;
         }

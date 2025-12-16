@@ -208,6 +208,10 @@ pub struct Interpreter {
     /// Pending module sources waiting for their imports to be satisfied
     /// Maps specifier -> (parsed program, needed imports)
     pub(crate) pending_module_sources: FxHashMap<String, crate::ast::Program>,
+
+    /// Pool of reusable ExecutionState objects to avoid repeated allocations.
+    /// When an execution completes, its state is reset and returned to the pool.
+    execution_state_pool: Vec<stack::ExecutionState>,
 }
 
 impl Interpreter {
@@ -297,6 +301,7 @@ impl Interpreter {
             suspended_state: None,
             pending_program: None,
             pending_module_sources: FxHashMap::default(),
+            execution_state_pool: Vec::new(),
         };
 
         // Initialize built-in globals
@@ -490,8 +495,14 @@ impl Interpreter {
 
         // All imports satisfied - execute using stack-based evaluation
         self.start_execution();
-        let mut state = stack::ExecutionState::for_program(&program);
-        self.run_to_completion_or_suspend(&mut state)
+        let mut state = self.get_execution_state();
+        state.init_for_program(&program);
+        let result = self.run_to_completion_or_suspend(&mut state);
+        // Return state to pool if execution completed (not suspended)
+        if self.suspended_state.is_none() {
+            self.return_execution_state(state);
+        }
+        result
     }
 
     /// Run execution until completion or suspension
@@ -722,8 +733,14 @@ impl Interpreter {
 
             // All imports satisfied - execute the program
             self.start_execution();
-            let mut state = stack::ExecutionState::for_program(&program);
-            return self.run_to_completion_or_suspend(&mut state);
+            let mut state = self.get_execution_state();
+            state.init_for_program(&program);
+            let result = self.run_to_completion_or_suspend(&mut state);
+            // Return state to pool if execution completed (not suspended)
+            if self.suspended_state.is_none() {
+                self.return_execution_state(state);
+            }
+            return result;
         }
 
         // Check if there are pending orders (for backward compatibility)
@@ -1156,6 +1173,29 @@ impl Interpreter {
     /// Add an object to the root guard (for permanent objects)
     pub fn root_guard_object(&self, obj: &Gc<JsObject>) {
         self.root_guard.guard(obj.clone());
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // ExecutionState Pool
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// Maximum number of ExecutionStates to keep in the pool.
+    const EXECUTION_STATE_POOL_MAX: usize = 4;
+
+    /// Get an ExecutionState from the pool, or create a new one.
+    /// The state is reset before being returned.
+    fn get_execution_state(&mut self) -> stack::ExecutionState {
+        self.execution_state_pool.pop().unwrap_or_default()
+    }
+
+    /// Return an ExecutionState to the pool for reuse.
+    /// The state is reset before being added to the pool.
+    fn return_execution_state(&mut self, mut state: stack::ExecutionState) {
+        if self.execution_state_pool.len() < Self::EXECUTION_STATE_POOL_MAX {
+            state.reset();
+            self.execution_state_pool.push(state);
+        }
+        // Otherwise drop it - pool is full
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
