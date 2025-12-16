@@ -1645,6 +1645,43 @@ pub fn register_method_with_guard(
 /// Using this type makes it clear when a reference is expected to be an environment.
 pub type EnvRef = JsObjectRef;
 
+/// A guarded environment that keeps itself alive via its guard.
+///
+/// This bundles an environment reference with the guard that keeps it rooted.
+/// Used for `self.env` in the interpreter to ensure environments aren't collected
+/// while they're the current execution environment.
+pub struct GuardedEnv {
+    /// The environment object
+    pub env: EnvRef,
+    /// Guard keeping this environment alive (None for root_guard-allocated envs)
+    pub guard: Option<Guard<JsObject>>,
+}
+
+impl GuardedEnv {
+    /// Create a guarded environment with an explicit guard
+    pub fn with_guard(env: EnvRef, guard: Guard<JsObject>) -> Self {
+        Self {
+            env,
+            guard: Some(guard),
+        }
+    }
+
+    /// Create an unguarded environment (for envs already rooted via root_guard)
+    pub fn unguarded(env: EnvRef) -> Self {
+        Self { env, guard: None }
+    }
+
+    /// Get the environment reference
+    pub fn get(&self) -> &EnvRef {
+        &self.env
+    }
+
+    /// Clone the environment reference (for passing to outer, etc.)
+    pub fn clone_ref(&self) -> EnvRef {
+        self.env.clone()
+    }
+}
+
 /// Create a new environment object with a temporary guard.
 ///
 /// The environment is created with an optional outer environment reference.
@@ -1681,6 +1718,15 @@ pub fn create_environment_unrooted(
         env_ref.exotic = ExoticObject::Environment(EnvironmentData::with_outer(outer));
     }
     (env, guard)
+}
+
+/// Create a new guarded environment.
+///
+/// This creates an environment with its own guard that keeps it alive.
+/// Used for creating environments that will be stored in `self.env`.
+pub fn create_guarded_env(heap: &Heap<JsObject>, outer: Option<EnvRef>) -> GuardedEnv {
+    let (env, guard) = create_environment_unrooted(heap, outer);
+    GuardedEnv::with_guard(env, guard)
 }
 
 impl JsObject {

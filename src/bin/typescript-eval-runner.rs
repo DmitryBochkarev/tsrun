@@ -44,7 +44,14 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let rewritten_source = rewrite_imports(&source, &entry_dir)?;
 
     let mut runtime = Runtime::new();
-    runtime.set_gc_threshold(100);
+    // Allow overriding GC threshold via environment variable for stress testing
+    if let Ok(threshold_str) = std::env::var("GC_THRESHOLD") {
+        if let Ok(threshold) = threshold_str.parse::<usize>() {
+            runtime.set_gc_threshold(threshold);
+        }
+    } else {
+        runtime.set_gc_threshold(100);
+    }
     runtime.set_timeout_ms(300 * 1000);
 
     // Track provided modules to avoid reloading

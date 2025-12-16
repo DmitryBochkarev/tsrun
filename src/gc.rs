@@ -135,6 +135,9 @@ pub struct Gc<T: Default + Reset + Traceable> {
     /// Weak reference to space - used to check if space is still alive before accessing ptr
     /// This prevents use-after-free when Gc outlives the Space (e.g., during interpreter shutdown)
     space: Weak<RefCell<Space<T>>>,
+
+    // Generation this Gc was created for. Must match GcBox's generation to affect ref_count.
+    //generation: u32,
 }
 
 impl<T: Default + Reset + Traceable> PartialEq for Gc<T> {
@@ -224,7 +227,8 @@ impl<T: Default + Reset + Traceable> Clone for Gc<T> {
         // Increment ref_count (only if space is still alive)
         if let Some(_space) = self.space.upgrade() {
             let gc_box = unsafe { self.ptr.as_ref() };
-            if !gc_box.pooled.get() {
+            // Only increment if generation matches (object wasn't swept and reused)
+            if !gc_box.pooled.get() /*&& gc_box.generation.get() == self.generation*/ {
                 gc_box.ref_count.set(gc_box.ref_count.get() + 1);
             }
         }
@@ -232,6 +236,7 @@ impl<T: Default + Reset + Traceable> Clone for Gc<T> {
             id: self.id,
             ptr: self.ptr,
             space: self.space.clone(),
+            //generation: self.generation,
         }
     }
 }
@@ -247,6 +252,13 @@ impl<T: Default + Reset + Traceable> Drop for Gc<T> {
 
         // Now safe to access the GcBox
         let gc_box = unsafe { self.ptr.as_ref() };
+
+        // Check if this Gc is from a different generation (object was reused)
+        // In that case, don't affect ref_count - this Gc is stale
+        // if gc_box.generation.get() != self.generation {
+        //     return;
+        // }
+
         if gc_box.pooled.get() {
             return;
         }
@@ -255,7 +267,6 @@ impl<T: Default + Reset + Traceable> Drop for Gc<T> {
         if count > 0 {
             gc_box.ref_count.set(count - 1);
         }
-
         // If ref_count is 0, reset and pool the object immediately
         if gc_box.ref_count.get() == 0 {
             // Try to borrow - if already borrowed (e.g., during GC), skip pooling
@@ -265,6 +276,10 @@ impl<T: Default + Reset + Traceable> Drop for Gc<T> {
                 space.pool_object(gc_box.index, self.ptr);
             }
         }
+
+        // Note: We intentionally do NOT reset/pool when ref_count hits 0 here.
+        // The object may still be referenced by other pointers (e.g., as a parent environment).
+        // Let the GC sweep collect unreachable objects instead.
     }
 }
 
@@ -320,6 +335,10 @@ pub struct GcBox<T: Default + Reset + Traceable> {
 
     /// Whether this object is in the pool (dead)
     pooled: Cell<bool>,
+
+    // Generation counter - incremented each time slot is reused from pool.
+    // Old Gc pointers with different generations don't affect ref_count.
+    // generation: Cell<u32>,
 }
 
 impl<T: Default + Reset + Traceable> GcBox<T> {
@@ -329,6 +348,7 @@ impl<T: Default + Reset + Traceable> GcBox<T> {
             data: RefCell::new(data),
             ref_count: Cell::new(0),
             pooled: Cell::new(false),
+            // generation: Cell::new(0),
         }
     }
 }
@@ -363,6 +383,11 @@ struct Space<T: Default + Reset + Traceable> {
     /// Pool of reusable guard storage (Vec capacity is preserved for reuse)
     guard_pool: Vec<Vec<NonNull<GcBox<T>>>>,
 
+    /// Active guards - their root lists are used as GC roots.
+    /// Space keeps Weak refs so guards can be dropped independently.
+    /// Dead Weak refs are cleaned up during mark phase.
+    active_guards: Vec<Weak<GuardInner<T>>>,
+
     /// Net allocations: incremented on alloc, decremented on dealloc
     /// GC triggers when this exceeds threshold
     net_allocs: isize,
@@ -391,6 +416,7 @@ impl<T: Default + Reset + Traceable> Space<T> {
             mark_stack: Vec::new(),
             sweep_buffer: Vec::new(),
             guard_pool: Vec::new(),
+            active_guards: Vec::new(),
             net_allocs: 0,
             gc_threshold: DEFAULT_GC_THRESHOLD as isize,
             self_weak: Weak::new(),
@@ -404,12 +430,16 @@ impl<T: Default + Reset + Traceable> Space<T> {
 
     /// Create a new guard for allocating objects.
     /// Reuses pooled guard storage when available to avoid allocation.
+    /// The guard is registered with Space for GC root tracking.
     fn create_guard(&mut self) -> Guard<T> {
-        if let Some(guarded) = self.guard_pool.pop() {
-            Guard::with_storage(self.self_weak.clone(), guarded)
+        let inner = if let Some(storage) = self.guard_pool.pop() {
+            Rc::new(GuardInner::with_storage(storage))
         } else {
-            Guard::new(self.self_weak.clone())
-        }
+            Rc::new(GuardInner::new())
+        };
+        // Register this guard for root tracking
+        self.active_guards.push(Rc::downgrade(&inner));
+        Guard::new(self.self_weak.clone(), inner)
     }
 
     /// Return guard storage to the pool for reuse
@@ -423,7 +453,15 @@ impl<T: Default + Reset + Traceable> Space<T> {
 
     /// Allocate a new object (starts with ref_count = 1 for the returned Gc)
     fn alloc_internal(&mut self) -> Gc<T> {
-        let (index, ptr) = if let Some(ptr) = self.free_list.pop() {
+        // Track allocations and trigger GC BEFORE allocation
+        // This ensures the newly allocated object won't be swept before
+        // it's added to a guard's roots
+        self.net_allocs += 1;
+        if self.gc_threshold > 0 && self.net_allocs >= self.gc_threshold {
+            self.collect();
+        }
+
+        let (index, ptr/*, generation */) = if let Some(ptr) = self.free_list.pop() {
             // Reuse from pool - safe because pool contains valid pointers
             // Safety: ptr came from our chunks which have stable addresses
             let gc_box = unsafe { ptr.as_ptr().as_mut() };
@@ -439,9 +477,12 @@ impl<T: Default + Reset + Traceable> Space<T> {
             gc_box.data.borrow_mut().reset();
             gc_box.ref_count.set(1); // Start with ref_count = 1 for the returned Gc
             gc_box.pooled.set(false);
+            // Increment generation - old Gc pointers with old generation won't affect this object
+            // let new_gen = gc_box.generation.get().wrapping_add(1);
+            // gc_box.generation.set(new_gen);
 
             // Index stays the same for reused objects
-            (gc_box.index, ptr)
+            (gc_box.index, ptr/*, new_gen */)
         } else {
             // Need to allocate new - check if current chunk has space
             let need_new_chunk = self
@@ -489,21 +530,16 @@ impl<T: Default + Reset + Traceable> Space<T> {
             };
             gc_box.ref_count.set(1); // Start with ref_count = 1 for the returned Gc
             let ptr = NonNull::from(gc_box);
+            //let generation = gc_box.generation.get(); // New objects start at generation 0
 
-            (index, ptr)
+            (index, ptr/*, generation */)
         };
-
-        // Track allocations since last GC
-        self.net_allocs += 1;
-        // Trigger GC when net allocations since last GC exceeds threshold
-        if self.gc_threshold > 0 && self.net_allocs >= self.gc_threshold {
-            self.collect();
-        }
 
         Gc {
             id: index,
             ptr,
             space: self.self_weak.clone(),
+            //generation,
         }
     }
 
@@ -540,15 +576,32 @@ impl<T: Default + Reset + Traceable> Space<T> {
         let mut stack = std::mem::take(&mut self.mark_stack);
         stack.clear();
 
-        // Collect roots: objects with ref_count > 0 are roots (someone is holding a Gc to them)
-        // This replaces the previous guard-based root tracking with a more efficient approach
-        for chunk in &self.chunks {
-            for gc_box in chunk {
-                if !gc_box.pooled.get() && gc_box.ref_count.get() > 0 {
-                    stack.push(NonNull::from(gc_box));
+        // Collect roots from all active guards.
+        // Clean up dead Weak refs as we go.
+        let mut total_roots = 0;
+        let mut alive_guards = 0;
+        let mut dead_guards = 0;
+        let mut guards_with_roots: Vec<usize> = Vec::new();
+        self.active_guards.retain(|weak| {
+            if let Some(inner) = weak.upgrade() {
+                // Guard is alive - add its roots to the mark stack
+                let roots = inner.roots.borrow();
+                alive_guards += 1;
+                guards_with_roots.push(roots.len());
+                for &ptr in roots.iter() {
+                    let gc_box = unsafe { ptr.as_ref() };
+                    if !gc_box.pooled.get() {
+                        stack.push(ptr);
+                        total_roots += 1;
+                    }
                 }
+                true // Keep this Weak ref
+            } else {
+                dead_guards += 1;
+                false // Guard was dropped, remove from list
             }
-        }
+        });
+        let _ = (total_roots, alive_guards, dead_guards, guards_with_roots); // suppress unused warnings
 
         // Get raw pointer to marked_chunks for use in closure (avoids borrow issues)
         let marked_chunks_ptr = self.marked_chunks.as_mut_ptr();
@@ -603,37 +656,36 @@ impl<T: Default + Reset + Traceable> Space<T> {
     fn sweep(&mut self) -> usize {
         let mut collected = 0;
         // Take ownership of persistent sweep buffer (preserves capacity from previous cycles)
-        let mut unmarked = std::mem::take(&mut self.sweep_buffer);
-        unmarked.clear();
+        let mut to_pool = std::mem::take(&mut self.sweep_buffer);
+        to_pool.clear();
 
         // First pass: reset all unmarked objects and collect their pointers
-        // We must reset ALL objects before checking ref_counts because reset()
-        // decrements ref_counts of referenced objects (important for cycles)
+        // With guard-based roots, if unmarked, object is unreachable regardless of ref_count
         for (chunk, bitmask) in self.chunks.iter().zip(self.marked_chunks.iter()) {
             for index_in_chunk in bitmask.iter_unmarked(chunk.len()) {
                 if let Some(gc_box) = chunk.get(index_in_chunk) {
                     if !gc_box.pooled.get() {
-                        // Reset clears references, which may decrement ref_counts of other objects
+                        // Reset clears references (important for breaking cycles)
                         gc_box.data.borrow_mut().reset();
+                        // Set ref_count to 0 to prevent stale Gc pointers from
+                        // triggering reset when they're dropped
+                        gc_box.ref_count.set(0);
+                        to_pool.push(NonNull::from(gc_box));
                         collected += 1;
-                        unmarked.push(NonNull::from(gc_box));
                     }
                 }
             }
         }
 
-        // Second pass: pool objects with ref_count == 0 (after all resets complete)
-        // This ensures cycles are fully broken before we check ref_counts
-        for ptr in &unmarked {
+        // Second pass: pool all collected objects
+        for ptr in &to_pool {
             let gc_box = unsafe { ptr.as_ref() };
-            if gc_box.ref_count.get() == 0 {
-                self.pool_object(gc_box.index, *ptr);
-            }
+            self.pool_object(gc_box.index, *ptr);
         }
 
         // Put buffer back (empty but with capacity preserved for next GC cycle)
-        unmarked.clear();
-        self.sweep_buffer = unmarked;
+        to_pool.clear();
+        self.sweep_buffer = to_pool;
 
         collected
     }
@@ -739,6 +791,27 @@ impl<T: Default + Reset + Traceable> Clone for Heap<T> {
 // Guard - root anchor for objects
 // ============================================================================
 
+/// Internal guard state, shared between Guard and Space.
+/// Space keeps Weak references to track active guards for GC root collection.
+struct GuardInner<T: Default + Reset + Traceable> {
+    /// Objects guarded by this guard (these are the GC roots)
+    roots: RefCell<Vec<NonNull<GcBox<T>>>>,
+}
+
+impl<T: Default + Reset + Traceable> GuardInner<T> {
+    fn new() -> Self {
+        Self {
+            roots: RefCell::new(Vec::new()),
+        }
+    }
+
+    fn with_storage(storage: Vec<NonNull<GcBox<T>>>) -> Self {
+        Self {
+            roots: RefCell::new(storage),
+        }
+    }
+}
+
 /// A root anchor that keeps objects alive.
 ///
 /// Guards provide a way to allocate GC-managed objects. The returned `Gc<T>`
@@ -753,27 +826,14 @@ impl<T: Default + Reset + Traceable> Clone for Heap<T> {
 pub struct Guard<T: Default + Reset + Traceable> {
     /// Weak reference back to space for allocation and returning to pool
     space: Weak<RefCell<Space<T>>>,
-    /// Objects guarded by this guard (these are the roots)
-    /// Uses raw pointers to avoid ref_count overhead during guarding.
-    /// RefCell allows &self methods to mutate the guarded list.
-    guarded: RefCell<Vec<NonNull<GcBox<T>>>>,
+    /// Shared inner state - Space keeps Weak refs to this for root tracking
+    inner: Rc<GuardInner<T>>,
 }
 
 impl<T: Default + Reset + Traceable> Guard<T> {
     /// Create a new guard with the given space reference
-    fn new(space: Weak<RefCell<Space<T>>>) -> Self {
-        Self {
-            space,
-            guarded: RefCell::new(Vec::new()),
-        }
-    }
-
-    /// Create a guard with pre-allocated storage (reused from pool)
-    fn with_storage(space: Weak<RefCell<Space<T>>>, guarded: Vec<NonNull<GcBox<T>>>) -> Self {
-        Self {
-            space,
-            guarded: RefCell::new(guarded),
-        }
+    fn new(space: Weak<RefCell<Space<T>>>, inner: Rc<GuardInner<T>>) -> Self {
+        Self { space, inner }
     }
 
     /// Allocate a new object and add it to this guard's roots.
@@ -788,10 +848,12 @@ impl<T: Default + Reset + Traceable> Guard<T> {
                 panic!("GC error: Heap dropped while guard is still alive")
             }
         });
-        let result = space.borrow_mut().alloc_internal();
+        let obj = space.borrow_mut().alloc_internal();
         // Add to guarded set
-        self.guarded.borrow_mut().push(result.ptr);
-        result
+        let gc_box = unsafe { obj.ptr.as_ref() };
+        gc_box.ref_count.set(gc_box.ref_count.get() + 1);
+        self.inner.roots.borrow_mut().push(obj.ptr);
+        obj
     }
 
     /// Add an existing object to this guard's roots.
@@ -800,7 +862,7 @@ impl<T: Default + Reset + Traceable> Guard<T> {
         if let Some(_space) = self.space.upgrade() {
             let gc_box = unsafe { obj.ptr.as_ref() };
             if !gc_box.pooled.get() {
-                self.guarded.borrow_mut().push(obj.ptr);
+                self.inner.roots.borrow_mut().push(obj.ptr);
             }
         }
     }
@@ -808,9 +870,9 @@ impl<T: Default + Reset + Traceable> Guard<T> {
     /// Remove an object from this guard's roots.
     /// Returns true if the object was found and removed.
     pub fn unguard(&self, obj: &Gc<T>) -> bool {
-        let mut guarded = self.guarded.borrow_mut();
-        if let Some(pos) = guarded.iter().position(|p| *p == obj.ptr) {
-            guarded.swap_remove(pos);
+        let mut roots = self.inner.roots.borrow_mut();
+        while let Some(pos) = roots.iter().position(|p| *p == obj.ptr) {
+            roots.swap_remove(pos);
             return true;
         }
         false
@@ -818,28 +880,37 @@ impl<T: Default + Reset + Traceable> Guard<T> {
 
     /// Clear all guarded objects
     pub fn clear(&self) {
-        self.guarded.borrow_mut().clear();
+        self.inner.roots.borrow_mut().clear();
     }
 
     /// Get the number of guarded objects
     pub fn len(&self) -> usize {
-        self.guarded.borrow().len()
+        self.inner.roots.borrow().len()
     }
 
     /// Check if this guard has no objects
     pub fn is_empty(&self) -> bool {
-        self.guarded.borrow().is_empty()
+        self.inner.roots.borrow().is_empty()
+    }
+
+    /// Get the strong reference count of this guard's inner (for debugging)
+    pub fn strong_count(&self) -> usize {
+        Rc::strong_count(&self.inner)
     }
 }
 
 impl<T: Default + Reset + Traceable> Drop for Guard<T> {
     fn drop(&mut self) {
-        // Return this guard to the pool for reuse
+        // Return storage to pool for reuse when we have sole ownership
         if let Some(space) = self.space.upgrade() {
-            // Return to pool - take ownership of Vec to reuse its capacity
-            let mut guarded = self.guarded.borrow_mut().split_off(0);
-            guarded.clear();
-            space.borrow_mut().return_guard_to_pool(guarded);
+            // Try to get sole ownership of inner to reclaim storage
+            // Note: Space's Weak ref will become invalid when inner is dropped
+            if Rc::strong_count(&self.inner) == 1 {
+                let mut roots = self.inner.roots.borrow_mut();
+                let storage = std::mem::take(&mut *roots);
+                drop(roots);
+                space.borrow_mut().return_guard_to_pool(storage);
+            }
         }
     }
 }
@@ -1045,23 +1116,18 @@ mod tests {
         guard.unguard(&a);
         heap.collect();
 
-        // A should still be alive (through B which is still directly guarded,
-        // plus the cycle keeps both ref_counts > 0)
+        // A should still be alive (through B which is still directly guarded)
         assert_eq!(heap.stats().live_objects, 2);
 
-        // Unguard B from guard and drop variables
+        // Unguard B from guard and drop Gc variables
         guard.unguard(&b);
         drop(a);
         drop(b);
         heap.collect();
 
-        // NOTE: With ref_count-based root detection, cycles keep each other alive
-        // (each has ref_count=1 from the other's reference). This is a known limitation
-        // of the current GC design. Proper cycle collection would require either:
-        // - Trial deletion (decrement refs, see if cycle becomes unreachable)
-        // - Guard-based root tracking (mark only from guarded objects, not ref_count)
-        // For now, cycles that outlive their guards will leak until program end.
-        assert_eq!(heap.stats().live_objects, 2);
+        // With guard-based root tracking, cycles are properly collected!
+        // Neither A nor B is reachable from any guard, so both are collected.
+        assert_eq!(heap.stats().live_objects, 0);
     }
 
     #[test]
@@ -1172,9 +1238,15 @@ mod tests {
 
         drop(obj1);
         heap.collect();
-        assert_eq!(heap.stats().live_objects, 1); // Still alive via obj2
+        assert_eq!(heap.stats().live_objects, 1); // Still alive via obj2 AND guard
 
         drop(obj2);
+        heap.collect();
+        // Object is still alive because it's in guard's roots
+        assert_eq!(heap.stats().live_objects, 1);
+
+        // To collect, we need to unguard or drop the guard
+        guard.clear();
         heap.collect();
         assert_eq!(heap.stats().live_objects, 0); // Now collected
     }

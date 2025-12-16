@@ -208,6 +208,89 @@ pub fn some_builtin(interp: &mut Interpreter, ...) -> Result<JsValue, JsError> {
 
 **Why this matters:** When we create temporary objects and return them, the guard must stay alive until ownership is established (e.g., the value is stored in a variable, property, or array). By returning `Guarded`, the caller receives both the value and the guard, ensuring the object survives until properly owned.
 
+### GC Stress Testing
+
+Run tests with `GC_THRESHOLD=1` to trigger garbage collection on every allocation. This catches GC-related bugs that might not appear with the default threshold:
+
+```bash
+GC_THRESHOLD=1 cargo test  # Stress test: GC on every allocation
+cargo test                  # Normal test: GC every 100 allocations
+```
+
+**Common GC bugs caught by stress testing:**
+- "X is not a function" - prototype collected before method call
+- Missing array elements - array or elements collected mid-operation
+- Undefined property values - object collected while accessing properties
+
+### GC Timing: Guard Before Allocate
+
+When creating objects that reference other values, **guard the input values BEFORE allocating the new object**:
+
+```rust
+// CORRECT: Guard value, then allocate promise
+pub fn create_fulfilled_promise(interp: &mut Interpreter, value: JsValue) -> Gc<JsObject> {
+    let _value_guard = interp.guard_value(&value);  // Guard FIRST
+    let (obj, _guard) = interp.create_object_with_guard();  // Then allocate
+    // ... store value in promise state ...
+    obj
+}
+
+// WRONG: Allocating first may trigger GC that collects value!
+pub fn create_fulfilled_promise(interp: &mut Interpreter, value: JsValue) -> Gc<JsObject> {
+    let (obj, _guard) = interp.create_object_with_guard();  // GC may run here!
+    // value may have been collected if it was the only reference
+    // ... store value in promise state ...  // BUG: value may be invalid!
+    obj
+}
+```
+
+**Why this matters:** GC runs BEFORE allocation when the threshold is reached. If you allocate first, GC may collect input values that aren't yet guarded.
+
+### Collecting Multiple Results Before Creating Container
+
+When building a collection (array, object) from multiple computed values, **keep all intermediate guards alive until the container is created**:
+
+```rust
+// CORRECT: Keep all guards alive until array is created
+let mut results: Vec<JsValue> = Vec::new();
+let mut guards: Vec<Guard<JsObject>> = Vec::new();
+
+for item in items {
+    let (result_obj, guard) = interp.create_object_with_guard();
+    // ... populate result_obj ...
+    results.push(JsValue::Object(result_obj));
+    guards.push(guard);  // Keep guard alive!
+}
+
+let (arr, arr_guard) = interp.create_array_with_guard(results);
+drop(guards);  // Safe to drop after array owns the objects
+
+// WRONG: Guard dropped on each iteration, objects may be collected!
+let mut results: Vec<JsValue> = Vec::new();
+for item in items {
+    let (result_obj, _guard) = interp.create_object_with_guard();
+    results.push(JsValue::Object(result_obj));
+    // _guard dropped here! Object may be collected before array creation
+}
+```
+
+**Why this matters:** If guards are dropped between iterations, GC triggered by a subsequent allocation can collect earlier objects before they're safely stored in the container.
+
+### Promise/Async Value Guarding
+
+When extracting values from promises or async operations, guard the result immediately:
+
+```rust
+// CORRECT: Guard extracted value before using it
+let promise_result = promise_state.result.clone();
+let _result_guard = interp.guard_value(&promise_result);
+// Now safe to use promise_result
+
+// WRONG: Value may be collected if promise was only reference
+let promise_result = promise_state.result.clone();
+// If GC runs here, promise_result may be invalid!
+```
+
 ## Development Workflow
 
 Use TDD (Test-Driven Development) for new features:

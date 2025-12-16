@@ -185,6 +185,8 @@ pub enum Frame {
         loop_vars: Rc<Vec<(JsString, bool)>>,
         /// Saved environment to restore after loop
         saved_env: Gc<JsObject>,
+        /// Whether this is the first iteration (need to create per-iteration env)
+        first_iteration: bool,
     },
 
     /// For loop test check: condition evaluated, decide to continue or exit
@@ -662,7 +664,17 @@ impl Interpreter {
                 label,
                 loop_vars,
                 saved_env,
-            } => self.step_for_loop(state, test, update, body, label, loop_vars, saved_env),
+                first_iteration,
+            } => self.step_for_loop(
+                state,
+                test,
+                update,
+                body,
+                label,
+                loop_vars,
+                saved_env,
+                first_iteration,
+            ),
 
             Frame::ForTestCheck {
                 test,
@@ -767,11 +779,12 @@ impl Interpreter {
             // Throw Statement
             // ═══════════════════════════════════════════════════════════════
             Frame::ThrowComplete => {
-                let value = state
+                let guarded = state
                     .pop_value()
-                    .map(|g| g.value)
-                    .unwrap_or(JsValue::Undefined);
-                StepResult::Error(JsError::thrown(value))
+                    .unwrap_or_else(|| Guarded::unguarded(JsValue::Undefined));
+                // Store the guard to keep the thrown value alive during exception handling
+                self.thrown_guard = guarded.guard;
+                StepResult::Error(JsError::thrown(guarded.value))
             }
 
             // ═══════════════════════════════════════════════════════════════
@@ -907,20 +920,24 @@ impl Interpreter {
                 state.completion = StackCompletion::Normal;
 
                 if let Some(catch_handler) = handler {
-                    // Create catch scope
-                    // Use unrooted allocation - the env is kept alive by self.env reference
+                    // Create catch scope with guard
                     let saved_env = self.env.clone();
-                    let (catch_env, _temp_guard) =
+                    let (catch_env, catch_guard) =
                         create_environment_unrooted(&self.heap, Some(saved_env.clone()));
                     self.env = catch_env;
+                    self.push_env_guard(catch_guard);
 
                     // Bind error parameter if present
                     if let Some(ref param) = catch_handler.param {
                         if let Err(e) = self.bind_pattern(param, error_value, true) {
+                            self.pop_env_guard();
                             self.env = saved_env;
                             return Some(StepResult::Error(e));
                         }
                     }
+
+                    // Clear thrown guard - error is now owned by catch environment
+                    self.thrown_guard = None;
 
                     // Push catch block execution
                     state.push_frame(Frame::CatchBlock {
@@ -1491,10 +1508,13 @@ impl Interpreter {
 
     /// Step for await check - this is where suspension happens
     fn step_await_check(&mut self, state: &mut ExecutionState) -> StepResult {
-        let promise_val = state
+        // Keep the guard alive while we extract the promise's result
+        let Guarded {
+            value: promise_val,
+            guard: _promise_guard,
+        } = state
             .pop_value()
-            .map(|v| v.value)
-            .unwrap_or(JsValue::Undefined);
+            .unwrap_or_else(|| Guarded::unguarded(JsValue::Undefined));
 
         // If not a promise, just return the value
         let JsValue::Object(obj) = &promise_val else {
@@ -1517,11 +1537,15 @@ impl Interpreter {
         match status {
             PromiseStatus::Fulfilled => {
                 let value = result.unwrap_or(JsValue::Undefined);
-                state.push_value(Guarded::unguarded(value));
+                // Guard the value to prevent GC during execution
+                let guard = self.guard_value(&value);
+                state.push_value(Guarded { value, guard });
                 StepResult::Continue
             }
             PromiseStatus::Rejected => {
                 let reason = result.unwrap_or(JsValue::Undefined);
+                // Guard the reason to prevent GC during error propagation
+                self.thrown_guard = self.guard_value(&reason);
                 StepResult::Error(JsError::thrown(reason))
             }
             PromiseStatus::Pending => {
@@ -1873,6 +1897,7 @@ impl Interpreter {
             label,
             loop_vars: loop_vars.clone(),
             saved_env: saved_env.clone(),
+            first_iteration: true, // First iteration needs to create per-iteration env
         });
 
         // Handle init
@@ -1908,11 +1933,13 @@ impl Interpreter {
         label: Option<JsString>,
         loop_vars: Rc<Vec<(JsString, bool)>>,
         saved_env: Gc<JsObject>,
+        first_iteration: bool,
     ) -> StepResult {
         // Create per-iteration environment if needed
-        // Use unrooted allocation - the env is kept alive by self.env reference
-        if !loop_vars.is_empty() {
-            let (iter_env, _temp_guard) =
+        // On first iteration: create from loop scope (copy loop vars from self.env)
+        // On subsequent iterations: step_for_after_body already created it
+        if first_iteration && !loop_vars.is_empty() {
+            let (iter_env, iter_guard) =
                 create_environment_unrooted(&self.heap, Some(saved_env.clone()));
             for (name, mutable) in loop_vars.iter() {
                 let value = match self.env_get(name) {
@@ -1931,9 +1958,9 @@ impl Interpreter {
                     );
                 }
             }
-            // Assignment to self.env clones iter_env (incrementing ref_count),
-            // so iter_env stays alive after _temp_guard is dropped
             self.env = iter_env;
+            // Push guard to keep this iteration's environment alive
+            self.push_env_guard(iter_guard);
         }
 
         // Set up test check frame
@@ -1974,7 +2001,11 @@ impl Interpreter {
             .unwrap_or(JsValue::Boolean(true));
 
         if !condition.to_boolean() {
-            // Exit loop - cleanup frame already on stack
+            // Exit loop - pop iteration guard if we had loop vars
+            if !loop_vars.is_empty() {
+                self.pop_env_guard();
+            }
+            // Cleanup frame already on stack will restore loop scope
             state.push_value(Guarded::unguarded(JsValue::Undefined));
             return StepResult::Continue;
         }
@@ -2009,11 +2040,18 @@ impl Interpreter {
             StackCompletion::Break(brk_label) => {
                 if brk_label.is_none() || brk_label.as_ref() == label.as_ref() {
                     state.completion = StackCompletion::Normal;
+                    // Pop iteration guard if we had loop vars
+                    if !loop_vars.is_empty() {
+                        self.pop_env_guard();
+                    }
                     // Exit loop - cleanup will happen
                     state.push_value(Guarded::unguarded(JsValue::Undefined));
                     return StepResult::Continue;
                 }
-                // Break targets outer loop - propagate
+                // Break targets outer loop - pop iteration guard and propagate
+                if !loop_vars.is_empty() {
+                    self.pop_env_guard();
+                }
                 return StepResult::Continue;
             }
             StackCompletion::Continue(cont_label) => {
@@ -2021,12 +2059,18 @@ impl Interpreter {
                     state.completion = StackCompletion::Normal;
                     // Continue to update phase (fall through)
                 } else {
-                    // Continue targets outer loop - propagate
+                    // Continue targets outer loop - pop iteration guard and propagate
+                    if !loop_vars.is_empty() {
+                        self.pop_env_guard();
+                    }
                     return StepResult::Continue;
                 }
             }
             StackCompletion::Return | StackCompletion::Throw => {
-                // Return/throw - propagate up (cleanup will happen)
+                // Return/throw - pop iteration guard and propagate up (cleanup will happen)
+                if !loop_vars.is_empty() {
+                    self.pop_env_guard();
+                }
                 return StepResult::Continue;
             }
             StackCompletion::Normal => {}
@@ -2036,11 +2080,13 @@ impl Interpreter {
         let _ = state.pop_value();
 
         // Create new per-iteration environment BEFORE update (ES spec)
-        // Use unrooted allocation - the env is kept alive by self.env reference
         if !loop_vars.is_empty() {
+            // Create new environment first (may trigger GC)
             let current_env = self.env.clone();
-            let (new_iter_env, _temp_guard) =
+            let (new_iter_env, new_guard) =
                 create_environment_unrooted(&self.heap, Some(saved_env.clone()));
+
+            // Copy loop variables from current to new environment
             for (name, mutable) in loop_vars.iter() {
                 let value = {
                     let env_ref = current_env.borrow();
@@ -2065,8 +2111,12 @@ impl Interpreter {
                     );
                 }
             }
-            // Assignment to self.env clones new_iter_env (incrementing ref_count),
-            // so new_iter_env stays alive after _temp_guard is dropped
+
+            // Push new guard BEFORE popping old one - prevents GC gap
+            self.push_env_guard(new_guard);
+            // Now safe to pop the old guard
+            let _old_guard = self.env_guards.remove(self.env_guards.len() - 2);
+
             self.env = new_iter_env;
         }
 
@@ -2078,6 +2128,7 @@ impl Interpreter {
             label,
             loop_vars,
             saved_env,
+            first_iteration: false, // Not first iteration - env already created
         });
 
         // Execute update if present
@@ -2171,11 +2222,21 @@ impl Interpreter {
         };
         let key_value = JsValue::String(JsString::from(key));
 
-        // Create per-iteration environment
-        // Use unrooted allocation - the env is kept alive by self.env reference
-        let (iter_env, _temp_guard) =
+        // Create per-iteration environment with guard
+        let (iter_env, iter_guard) =
             create_environment_unrooted(&self.heap, Some(saved_env.clone()));
-        self.env = iter_env;
+        eprintln!(
+            "[step_for_in_loop] Created iter_env id={}, exotic={:?}",
+            iter_env.id(),
+            std::mem::discriminant(&iter_env.borrow().exotic)
+        );
+        self.env = iter_env.clone(); // Clone to avoid moving
+        eprintln!(
+            "[step_for_in_loop] After self.env = iter_env: self.env.id={}, exotic={:?}",
+            self.env.id(),
+            std::mem::discriminant(&self.env.borrow().exotic)
+        );
+        self.push_env_guard(iter_guard);
 
         // Bind the key to the left-hand side
         match &*left {
@@ -2183,6 +2244,7 @@ impl Interpreter {
                 let mutable = decl.kind != VariableKind::Const;
                 if let Some(declarator) = decl.declarations.first() {
                     if let Err(e) = self.bind_pattern(&declarator.id, key_value, mutable) {
+                        self.pop_env_guard();
                         self.env = saved_env;
                         return StepResult::Error(e);
                     }
@@ -2190,6 +2252,7 @@ impl Interpreter {
             }
             ForInOfLeft::Pattern(pattern) => {
                 if let Err(e) = self.assign_pattern(pattern, key_value) {
+                    self.pop_env_guard();
                     self.env = saved_env;
                     return StepResult::Error(e);
                 }
@@ -2227,33 +2290,41 @@ impl Interpreter {
         match &state.completion {
             StackCompletion::Break(break_label) => {
                 if break_label.is_none() || break_label.as_ref() == label.as_ref() {
-                    // Break targets this loop
+                    // Break targets this loop - pop iteration guard and restore env
                     state.completion = StackCompletion::Normal;
+                    self.pop_env_guard();
                     self.env = saved_env;
                     let _ = state.pop_value();
                     state.push_value(Guarded::unguarded(JsValue::Undefined));
                     return StepResult::Continue;
                 }
-                // Break targets outer loop - restore env and propagate
+                // Break targets outer loop - pop iteration guard, restore env and propagate
+                self.pop_env_guard();
                 self.env = saved_env;
                 return StepResult::Continue;
             }
             StackCompletion::Continue(cont_label) => {
                 if cont_label.is_none() || cont_label.as_ref() == label.as_ref() {
-                    // Continue targets this loop - proceed to next iteration
+                    // Continue targets this loop - pop guard and proceed to next iteration
                     state.completion = StackCompletion::Normal;
+                    self.pop_env_guard();
                 } else {
-                    // Continue targets outer loop - restore env and propagate
+                    // Continue targets outer loop - pop iteration guard, restore env and propagate
+                    self.pop_env_guard();
                     self.env = saved_env;
                     return StepResult::Continue;
                 }
             }
             StackCompletion::Return | StackCompletion::Throw => {
-                // Return/throw - restore env and propagate
+                // Return/throw - pop iteration guard, restore env and propagate
+                self.pop_env_guard();
                 self.env = saved_env;
                 return StepResult::Continue;
             }
-            StackCompletion::Normal => {}
+            StackCompletion::Normal => {
+                // Normal completion - pop guard before next iteration creates new one
+                self.pop_env_guard();
+            }
         }
 
         // Pop body result
@@ -2382,11 +2453,11 @@ impl Interpreter {
             }
         };
 
-        // Create per-iteration environment
-        // Use unrooted allocation - the env is kept alive by self.env reference
-        let (iter_env, _temp_guard) =
+        // Create per-iteration environment with guard
+        let (iter_env, iter_guard) =
             create_environment_unrooted(&self.heap, Some(saved_env.clone()));
         self.env = iter_env;
+        self.push_env_guard(iter_guard);
 
         // Bind the item to the left-hand side
         match &*left {
@@ -2394,6 +2465,7 @@ impl Interpreter {
                 let mutable = decl.kind != VariableKind::Const;
                 if let Some(declarator) = decl.declarations.first() {
                     if let Err(e) = self.bind_pattern(&declarator.id, item, mutable) {
+                        self.pop_env_guard();
                         self.env = saved_env;
                         return StepResult::Error(e);
                     }
@@ -2401,6 +2473,7 @@ impl Interpreter {
             }
             ForInOfLeft::Pattern(pattern) => {
                 if let Err(e) = self.assign_pattern(pattern, item) {
+                    self.pop_env_guard();
                     self.env = saved_env;
                     return StepResult::Error(e);
                 }
@@ -2438,33 +2511,41 @@ impl Interpreter {
         match &state.completion {
             StackCompletion::Break(break_label) => {
                 if break_label.is_none() || break_label.as_ref() == label.as_ref() {
-                    // Break targets this loop
+                    // Break targets this loop - pop iteration guard and restore env
                     state.completion = StackCompletion::Normal;
+                    self.pop_env_guard();
                     self.env = saved_env;
                     let _ = state.pop_value();
                     state.push_value(Guarded::unguarded(JsValue::Undefined));
                     return StepResult::Continue;
                 }
-                // Break targets outer loop - restore env and propagate
+                // Break targets outer loop - pop iteration guard, restore env and propagate
+                self.pop_env_guard();
                 self.env = saved_env;
                 return StepResult::Continue;
             }
             StackCompletion::Continue(cont_label) => {
                 if cont_label.is_none() || cont_label.as_ref() == label.as_ref() {
-                    // Continue targets this loop - proceed to next iteration
+                    // Continue targets this loop - pop guard and proceed to next iteration
                     state.completion = StackCompletion::Normal;
+                    self.pop_env_guard();
                 } else {
-                    // Continue targets outer loop - restore env and propagate
+                    // Continue targets outer loop - pop iteration guard, restore env and propagate
+                    self.pop_env_guard();
                     self.env = saved_env;
                     return StepResult::Continue;
                 }
             }
             StackCompletion::Return | StackCompletion::Throw => {
-                // Return/throw - restore env and propagate
+                // Return/throw - pop iteration guard, restore env and propagate
+                self.pop_env_guard();
                 self.env = saved_env;
                 return StepResult::Continue;
             }
-            StackCompletion::Normal => {}
+            StackCompletion::Normal => {
+                // Normal completion - pop guard before next iteration creates new one
+                self.pop_env_guard();
+            }
         }
 
         // Pop body result
@@ -2540,11 +2621,11 @@ impl Interpreter {
             return StepResult::Continue;
         }
 
-        // Create per-iteration environment
-        // Use unrooted allocation - the env is kept alive by self.env reference
-        let (iter_env, _temp_guard) =
+        // Create per-iteration environment with guard
+        let (iter_env, iter_guard) =
             create_environment_unrooted(&self.heap, Some(saved_env.clone()));
         self.env = iter_env;
+        self.push_env_guard(iter_guard);
 
         // Bind the value to the left-hand side
         match &*left {
@@ -2552,6 +2633,7 @@ impl Interpreter {
                 let mutable = decl.kind != VariableKind::Const;
                 if let Some(declarator) = decl.declarations.first() {
                     if let Err(e) = self.bind_pattern(&declarator.id, value, mutable) {
+                        self.pop_env_guard();
                         self.env = saved_env;
                         return StepResult::Error(e);
                     }
@@ -2559,6 +2641,7 @@ impl Interpreter {
             }
             ForInOfLeft::Pattern(pattern) => {
                 if let Err(e) = self.bind_pattern(pattern, value, true) {
+                    self.pop_env_guard();
                     self.env = saved_env;
                     return StepResult::Error(e);
                 }
@@ -2596,33 +2679,41 @@ impl Interpreter {
         match &state.completion {
             StackCompletion::Break(break_label) => {
                 if break_label.is_none() || break_label.as_ref() == label.as_ref() {
-                    // Break targets this loop
+                    // Break targets this loop - pop iteration guard and restore env
                     state.completion = StackCompletion::Normal;
+                    self.pop_env_guard();
                     self.env = saved_env;
                     let _ = state.pop_value();
                     state.push_value(Guarded::unguarded(JsValue::Undefined));
                     return StepResult::Continue;
                 }
-                // Break targets outer loop - restore env and propagate
+                // Break targets outer loop - pop iteration guard, restore env and propagate
+                self.pop_env_guard();
                 self.env = saved_env;
                 return StepResult::Continue;
             }
             StackCompletion::Continue(cont_label) => {
                 if cont_label.is_none() || cont_label.as_ref() == label.as_ref() {
-                    // Continue targets this loop - proceed to next iteration
+                    // Continue targets this loop - pop guard and proceed to next iteration
                     state.completion = StackCompletion::Normal;
+                    self.pop_env_guard();
                 } else {
-                    // Continue targets outer loop - restore env and propagate
+                    // Continue targets outer loop - pop iteration guard, restore env and propagate
+                    self.pop_env_guard();
                     self.env = saved_env;
                     return StepResult::Continue;
                 }
             }
             StackCompletion::Return | StackCompletion::Throw => {
-                // Return/throw - restore env and propagate
+                // Return/throw - pop iteration guard, restore env and propagate
+                self.pop_env_guard();
                 self.env = saved_env;
                 return StepResult::Continue;
             }
-            StackCompletion::Normal => {}
+            StackCompletion::Normal => {
+                // Normal completion - pop guard before next iteration creates new one
+                self.pop_env_guard();
+            }
         }
 
         // Pop body result
@@ -2977,7 +3068,8 @@ impl Interpreter {
         finalizer: Option<Rc<crate::ast::BlockStatement>>,
         saved_env: Gc<JsObject>,
     ) -> StepResult {
-        // Restore environment
+        // Pop catch scope guard and restore environment
+        self.pop_env_guard();
         self.env = saved_env;
 
         // Get catch result

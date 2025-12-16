@@ -95,6 +95,11 @@ pub struct Interpreter {
     /// Current execution environment
     pub env: EnvRef,
 
+    /// Stack of guards for environments (keeps them alive during execution).
+    /// Environments are pushed when entering scopes and popped when leaving.
+    /// This ensures that environments on the execution stack remain alive.
+    env_guards: Vec<Guard<JsObject>>,
+
     /// String dictionary for interning strings
     pub string_dict: StringDict,
 
@@ -142,6 +147,9 @@ pub struct Interpreter {
     // ═══════════════════════════════════════════════════════════════════════════
     /// Stores thrown value during exception propagation
     thrown_value: Option<JsValue>,
+
+    /// Guard for the thrown value (keeps it alive during exception handling)
+    thrown_guard: Option<Guard<JsObject>>,
 
     /// Exported values from the module
     pub exports: FxHashMap<JsString, JsValue>,
@@ -255,6 +263,7 @@ impl Interpreter {
             global,
             global_env: global_env.clone(),
             env: global_env,
+            env_guards: Vec::new(), // global_env is rooted via root_guard
             string_dict,
             object_prototype,
             array_prototype,
@@ -269,6 +278,7 @@ impl Interpreter {
             promise_prototype,
             generator_prototype,
             thrown_value: None,
+            thrown_guard: None,
             exports: FxHashMap::default(),
             call_stack: Vec::new(),
             generator_context: None,
@@ -502,10 +512,14 @@ impl Interpreter {
                 match status {
                     PromiseStatus::Fulfilled => {
                         let value = result.unwrap_or(JsValue::Undefined);
-                        state.push_value(Guarded::unguarded(value));
+                        // Guard the value to prevent GC during execution
+                        let guard = self.guard_value(&value);
+                        state.push_value(Guarded { value, guard });
                     }
                     PromiseStatus::Rejected => {
                         let reason = result.unwrap_or(JsValue::Undefined);
+                        // Guard the reason to prevent GC during error propagation
+                        self.thrown_guard = self.guard_value(&reason);
                         return Err(JsError::thrown(reason));
                     }
                     PromiseStatus::Pending => {
@@ -811,6 +825,7 @@ impl Interpreter {
     /// Get a variable from the environment chain
     pub fn env_get(&self, name: &JsString) -> Result<JsValue, JsError> {
         let mut current = Some(self.env.clone());
+        let mut depth = 0;
 
         while let Some(env) = current {
             let env_ref = env.borrow();
@@ -825,7 +840,10 @@ impl Interpreter {
                     return Ok(binding.value.clone());
                 }
                 current = data.outer.clone();
+                depth += 1;
             } else {
+                eprintln!("[env_get] {} NOT FOUND: env id={} at depth {} is NOT an environment! exotic={:?}",
+                    name, env.id(), depth, std::mem::discriminant(&env_ref.exotic));
                 break;
             }
         }
@@ -870,18 +888,34 @@ impl Interpreter {
 
     /// Push a new scope and return the saved environment
     pub fn push_scope(&mut self) -> EnvRef {
-        // Use unrooted allocation - the env is kept alive by self.env reference
-        let (new_env, _temp_guard) =
-            create_environment_unrooted(&self.heap, Some(self.env.clone()));
+        let (new_env, new_guard) = create_environment_unrooted(&self.heap, Some(self.env.clone()));
 
         let old_env = self.env.clone();
         self.env = new_env;
+        self.env_guards.push(new_guard);
         old_env
     }
 
     /// Pop scope by restoring saved environment
     pub fn pop_scope(&mut self, saved_env: EnvRef) {
         self.env = saved_env;
+        // Pop the guard that was pushed when this scope was created
+        self.env_guards.pop();
+    }
+
+    /// Push an environment guard (for env changes without push_scope)
+    pub fn push_env_guard(&mut self, guard: Guard<JsObject>) {
+        self.env_guards.push(guard);
+    }
+
+    /// Pop an environment guard
+    pub fn pop_env_guard(&mut self) {
+        self.env_guards.pop();
+    }
+
+    /// Get the number of environment guards (for debugging)
+    pub fn env_guards_len(&self) -> usize {
+        self.env_guards.len()
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -1165,16 +1199,17 @@ impl Interpreter {
             throw_value: false,
         });
 
-        // Create function environment
-        // Use unrooted allocation - the env is kept alive by self.env reference
-        let (func_env, _temp_guard) = create_environment_unrooted(&self.heap, Some(closure));
+        // Create function environment with guard
+        let (func_env, func_guard) = create_environment_unrooted(&self.heap, Some(closure));
         let saved_env = self.env.clone();
         self.env = func_env;
+        self.push_env_guard(func_guard);
 
         // Bind parameters
         for (i, param) in params.iter().enumerate() {
             let arg_value = args.get(i).cloned().unwrap_or(JsValue::Undefined);
             if let Err(e) = self.bind_pattern(&param.pattern, arg_value, true) {
+                self.pop_env_guard();
                 self.env = saved_env;
                 self.generator_context = saved_generator_context;
                 return Err(e);
@@ -1223,7 +1258,8 @@ impl Interpreter {
             }
         };
 
-        // Restore environment and context
+        // Pop function env guard and restore environment and context
+        self.pop_env_guard();
         self.env = saved_env;
         self.generator_context = saved_generator_context;
 
@@ -1716,12 +1752,11 @@ impl Interpreter {
         // Save current exports and create fresh exports for namespace
         let saved_exports = std::mem::take(&mut self.exports);
 
-        // Create a new scope for the namespace body
-        // Use unrooted allocation - the env is kept alive by self.env reference
+        // Create a new scope for the namespace body with guard
         let saved_env = self.env.clone();
-        let (new_env, _temp_guard) =
-            create_environment_unrooted(&self.heap, Some(self.env.clone()));
+        let (new_env, ns_guard) = create_environment_unrooted(&self.heap, Some(self.env.clone()));
         self.env = new_env;
+        self.push_env_guard(ns_guard);
 
         // Execute each statement in the namespace body
         for stmt in &ns_decl.body {
@@ -1736,7 +1771,8 @@ impl Interpreter {
             ns_obj.borrow_mut().set_property(key, value);
         }
 
-        // Restore environment and exports
+        // Pop namespace guard and restore environment and exports
+        self.pop_env_guard();
         self.env = saved_env;
         self.exports = saved_exports;
 
@@ -3430,9 +3466,8 @@ impl Interpreter {
                     return Ok(Guarded::unguarded(JsValue::Object(gen_obj)));
                 }
 
-                // Create new environment
-                // Use unrooted allocation - the env is kept alive by self.env reference
-                let (func_env, _temp_guard) =
+                // Create new environment with guard
+                let (func_env, func_guard) =
                     create_environment_unrooted(&self.heap, Some(interp.closure));
 
                 // Bind `this` in the function environment
@@ -3471,6 +3506,7 @@ impl Interpreter {
                 // Execute function body - set up environment first so bind_pattern works
                 let saved_env = self.env.clone();
                 self.env = func_env;
+                self.push_env_guard(func_guard);
 
                 // Create and bind the `arguments` object (array-like)
                 {
@@ -3537,6 +3573,7 @@ impl Interpreter {
                     };
 
                 // ALWAYS restore environment, even on error
+                self.pop_env_guard();
                 self.env = saved_env;
 
                 // Handle async functions - wrap result in Promise

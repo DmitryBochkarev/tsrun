@@ -4,7 +4,7 @@
 
 **Project:** `typescript-eval`
 **Purpose:** Execute TypeScript for config/manifest generation from Rust
-**Status:** Milestone 9 Complete (Async/Await, Generators, 735 tests passing)
+**Status:** Milestone 9 Complete (Async/Await, Generators, 757 tests passing)
 
 ### Requirements
 
@@ -729,6 +729,109 @@ self.env_define(name, value, mutable);  // ownership transferred
 | Function captures closure | `func.own(&closure_env, &heap)` |
 | Prototype chain | `child.own(&prototype, &heap)` |
 
+### GC Timing Model
+
+The GC uses a **pre-allocation trigger** model:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    ALLOCATION SEQUENCE                          │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  1. alloc_internal() called                                     │
+│     │                                                           │
+│  2. net_allocs += 1                                             │
+│     │                                                           │
+│  3. if net_allocs >= gc_threshold:                              │
+│     │   └── collect() ◀── GC runs HERE, before allocation      │
+│     │                                                           │
+│  4. Allocate new object (from pool or fresh)                    │
+│     │                                                           │
+│  5. Return Gc<T> to caller                                      │
+│     │                                                           │
+│  6. Caller adds to guard roots                                  │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Key insight:** GC runs BEFORE the new object exists, so input values to a function may be collected if not guarded. This is why you must guard input values before allocating.
+
+### GC Root Model
+
+Guards track roots explicitly. Objects are alive if reachable from any guard:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      ROOT TRACKING                              │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  Guard A              Guard B              Guard C              │
+│  ┌─────────┐          ┌─────────┐          ┌─────────┐          │
+│  │ roots:  │          │ roots:  │          │ roots:  │          │
+│  │  - obj1 │          │  - obj3 │          │  (empty)│          │
+│  │  - obj2 │          └─────────┘          └─────────┘          │
+│  └─────────┘                                                    │
+│       │                    │                                    │
+│       ▼                   ▼                                    │
+│   ┌──────┐  refs      ┌──────┐                                  │
+│   │ obj1 │───────┐    │ obj3 │   ◀── alive via Guard B          │
+│   └──────┘       │    └──────┘                                  │
+│       │          │    ┌──────┐                                  │
+│       ▼          └──▶│ obj4 │◀── alive via obj1               │
+│   ┌──────┐            └──────┘                                  │
+│   │ obj2 │           ┌──────┐                                   │
+│   └──────┘           │ obj5 │   ◀── UNREACHABLE, will be swept  │
+│                      └──────┘                                   │
+│                                                                 │
+│                                                                 │
+│                                                                 │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Generation-Based Slot Reuse
+
+When objects are collected, their slots are reused. Generation counters prevent stale `Gc<T>` pointers from affecting ref_counts:
+
+```rust
+struct GcBox<T> {
+    generation: Cell<u32>,  // Incremented on reuse
+    // ...
+}
+
+struct Gc<T> {
+    generation: u32,  // Captured at creation time
+    // ...
+}
+
+// In Gc::clone() and Gc::drop():
+if gc_box.generation.get() != self.generation {
+    return;  // Stale pointer, ignore
+}
+```
+
+### Common GC Bug Patterns (Lessons Learned)
+
+| Bug Pattern | Symptom | Fix |
+|-------------|---------|-----|
+| Guard dropped before use | "X is not a function" | Use destructuring: `let Guarded { value, guard: _g } = ...` |
+| Allocate before guarding input | Random values corrupted | Guard inputs BEFORE calling `create_*_with_guard()` |
+| Loop drops guards early | Array has wrong elements | Collect guards in `Vec`, drop after container created |
+| Promise result not guarded | Async returns undefined | Guard result immediately after extracting from promise |
+| Returning JsValue instead of Guarded | Intermittent failures | Functions creating objects should return `Guarded` |
+
+### Stress Testing
+
+The `GC_THRESHOLD` environment variable controls collection frequency:
+
+```bash
+GC_THRESHOLD=1 cargo test    # GC on every allocation (stress test)
+GC_THRESHOLD=0 cargo test    # Disable automatic GC
+cargo test                    # Default: GC every 100 allocations
+```
+
+Setting `GC_THRESHOLD=1` is essential for catching GC bugs that only manifest under memory pressure.
+
 ---
 
 ## Zero-Panic Policy
@@ -829,7 +932,7 @@ src/
 
 ## Testing
 
-### Current Status: 749 tests passing
+### Current Status: 757 tests passing
 
 ```bash
 cargo test                     # Run all tests

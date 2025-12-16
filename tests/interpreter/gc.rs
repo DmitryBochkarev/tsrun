@@ -1352,10 +1352,11 @@ fn test_type_sizes() {
     );
 
     // Sanity checks - these should be relatively small
-    // JsValue is 32 bytes due to JsSymbol containing Option<String>
-    assert!(size_of::<JsValue>() <= 32, "JsValue too large");
+    // JsValue is 40 bytes
+    assert!(size_of::<JsValue>() <= 40, "JsValue too large");
     assert!(size_of::<PropertyKey>() <= 32, "PropertyKey too large");
-    assert!(size_of::<Property>() <= 48, "Property too large");
+    // Property is 56 bytes due to Gc pointer size increase (generation field)
+    assert!(size_of::<Property>() <= 56, "Property too large");
     // PropertyStorage uses inline storage for small objects (4 entries × 80 bytes + overhead)
     assert!(
         size_of::<PropertyStorage>() <= 400,

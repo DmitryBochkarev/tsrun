@@ -63,6 +63,10 @@ pub fn create_fulfilled_promise_with_guard(
     interp: &mut Interpreter,
     value: JsValue,
 ) -> (Gc<JsObject>, Guard<JsObject>) {
+    // Guard the value BEFORE allocating the promise object
+    // This prevents GC from collecting the value during allocation
+    let _value_guard = interp.guard_value(&value);
+
     let state = Rc::new(RefCell::new(PromiseState {
         status: PromiseStatus::Fulfilled,
         result: Some(value),
@@ -83,6 +87,10 @@ pub fn create_rejected_promise_with_guard(
     interp: &mut Interpreter,
     reason: JsValue,
 ) -> (Gc<JsObject>, Guard<JsObject>) {
+    // Guard the reason BEFORE allocating the promise object
+    // This prevents GC from collecting the reason during allocation
+    let _reason_guard = interp.guard_value(&reason);
+
     let state = Rc::new(RefCell::new(PromiseState {
         status: PromiseStatus::Rejected,
         result: Some(reason),
@@ -681,6 +689,8 @@ pub fn promise_allsettled(
     let reason_key = interp.key("reason");
 
     let mut results: Vec<JsValue> = Vec::with_capacity(promises.len());
+    // Keep guards alive until we create the array - prevents GC from collecting result objects
+    let mut result_guards: Vec<Guard<JsObject>> = Vec::with_capacity(promises.len());
 
     for promise_value in &promises {
         let (status, result) = if let JsValue::Object(obj) = promise_value {
@@ -695,7 +705,7 @@ pub fn promise_allsettled(
             (PromiseStatus::Fulfilled, Some(promise_value.clone()))
         };
 
-        let (result_obj, _obj_guard) = interp.create_object_with_guard();
+        let (result_obj, obj_guard) = interp.create_object_with_guard();
         {
             let mut result_ref = result_obj.borrow_mut();
             result_ref.prototype = Some(interp.object_prototype.cheap_clone());
@@ -718,9 +728,12 @@ pub fn promise_allsettled(
             }
         }
         results.push(JsValue::Object(result_obj));
+        result_guards.push(obj_guard);
     }
 
     let (arr, arr_guard) = interp.create_array_with_guard(results);
+    // Once array is created, result objects are reachable through it - safe to drop guards
+    drop(result_guards);
     let (promise, promise_guard) =
         create_fulfilled_promise_with_guard(interp, JsValue::Object(arr));
     drop(arr_guard);

@@ -24,6 +24,7 @@ mod date;
 // mod dynamic_import;
 mod error;
 // mod exports;
+mod cycle_leak;
 mod function;
 mod gc;
 mod generator;
@@ -44,7 +45,7 @@ mod string;
 mod symbol;
 // mod timeout;
 
-use typescript_eval::{JsError, JsValue, Runtime};
+use typescript_eval::{JsError, JsValue, Runtime, RuntimeResult};
 
 /// Create a new runtime with GC threshold from environment or default
 fn create_test_runtime() -> Runtime {
@@ -63,15 +64,40 @@ fn create_test_runtime() -> Runtime {
 }
 
 /// Helper function to evaluate TypeScript source code
+/// Uses the full eval() API which properly handles async/await
 pub fn eval(source: &str) -> JsValue {
-    let mut runtime = create_test_runtime();
-    runtime.eval_simple(source).expect("eval failed")
+    eval_result(source).expect("eval failed")
 }
 
 /// Helper function to evaluate and return Result for error testing
+/// Uses the full eval() API which properly handles async/await
 pub fn eval_result(source: &str) -> Result<JsValue, JsError> {
     let mut runtime = create_test_runtime();
-    runtime.eval_simple(source)
+
+    // Use the full eval() API instead of eval_simple()
+    // This properly handles promise resolution via run_to_completion_or_suspend()
+    let mut result = runtime.eval(source)?;
+
+    // Handle the RuntimeResult - loop until we get Complete
+    loop {
+        match result {
+            RuntimeResult::Complete(value) => return Ok(value),
+            RuntimeResult::NeedImports(specifiers) => {
+                return Err(JsError::type_error(format!(
+                    "Missing imports in test: {:?}",
+                    specifiers
+                )));
+            }
+            RuntimeResult::Suspended { pending, .. } => {
+                // For tests without external dependencies, this shouldn't happen
+                // If it does, treat as error
+                return Err(JsError::type_error(format!(
+                    "Test suspended waiting for {} orders",
+                    pending.len()
+                )));
+            }
+        }
+    }
 }
 
 /// Helper to check if evaluation throws an error containing a specific message
