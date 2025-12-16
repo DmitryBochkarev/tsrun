@@ -198,6 +198,9 @@ pub struct Interpreter {
 
     /// Suspended execution state (if any)
     pub(crate) suspended_state: Option<stack::ExecutionState>,
+
+    /// Pending program waiting for imports to be provided
+    pub(crate) pending_program: Option<crate::ast::Program>,
 }
 
 impl Interpreter {
@@ -283,6 +286,7 @@ impl Interpreter {
             order_callbacks: FxHashMap::default(),
             cancelled_orders: Vec::new(),
             suspended_state: None,
+            pending_program: None,
         };
 
         // Initialize built-in globals
@@ -469,6 +473,8 @@ impl Interpreter {
             .collect();
 
         if !missing.is_empty() {
+            // Save the program for later execution when imports are provided
+            self.pending_program = Some(program);
             return Ok(crate::RuntimeResult::NeedImports(missing));
         }
 
@@ -594,6 +600,29 @@ impl Interpreter {
         // If we have a suspended execution state, resume it
         if let Some(mut state) = self.suspended_state.take() {
             // Resume execution from where we left off
+            return self.run_to_completion_or_suspend(&mut state);
+        }
+
+        // If we have a pending program waiting for imports, check if we can execute it now
+        if let Some(program) = self.pending_program.take() {
+            // Re-check imports
+            let imports = self.collect_imports(&program);
+            let missing: Vec<String> = imports
+                .into_iter()
+                .filter(|spec| {
+                    !self.is_internal_module(spec) && !self.loaded_modules.contains_key(spec)
+                })
+                .collect();
+
+            if !missing.is_empty() {
+                // Still missing imports - save program again and return
+                self.pending_program = Some(program);
+                return Ok(crate::RuntimeResult::NeedImports(missing));
+            }
+
+            // All imports satisfied - execute the program
+            self.start_execution();
+            let mut state = stack::ExecutionState::for_program(&program);
             return self.run_to_completion_or_suspend(&mut state);
         }
 

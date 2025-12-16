@@ -613,3 +613,412 @@ fn test_await_suspension_with_multiple_awaits() {
         _ => panic!("Expected Suspended for first await"),
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Static Import Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_external_module_named_exports() {
+    let mut runtime = Runtime::new();
+
+    // First, eval code that imports from external module
+    let result = runtime
+        .eval(
+            r#"
+        import { add, multiply } from "./math";
+        add(2, 3) + multiply(4, 5);
+    "#,
+        )
+        .unwrap();
+
+    // Should need the import
+    match result {
+        RuntimeResult::NeedImports(imports) => {
+            assert_eq!(imports.len(), 1);
+            assert_eq!(imports[0], "./math");
+
+            // Provide the module
+            runtime
+                .provide_module(
+                    "./math",
+                    r#"
+                export function add(a: number, b: number): number {
+                    return a + b;
+                }
+                export function multiply(a: number, b: number): number {
+                    return a * b;
+                }
+            "#,
+                )
+                .unwrap();
+
+            // Continue evaluation
+            let result2 = runtime.continue_eval().unwrap();
+
+            match result2 {
+                RuntimeResult::Complete(value) => {
+                    // add(2,3) = 5, multiply(4,5) = 20, total = 25
+                    assert_eq!(value, JsValue::Number(25.0));
+                }
+                _ => panic!("Expected Complete after providing module"),
+            }
+        }
+        _ => panic!("Expected NeedImports"),
+    }
+}
+
+#[test]
+fn test_external_module_default_export() {
+    let mut runtime = Runtime::new();
+
+    let result = runtime
+        .eval(
+            r#"
+        import greet from "./greeting";
+        greet("World");
+    "#,
+        )
+        .unwrap();
+
+    match result {
+        RuntimeResult::NeedImports(imports) => {
+            assert_eq!(imports[0], "./greeting");
+
+            runtime
+                .provide_module(
+                    "./greeting",
+                    r#"
+                export default function greet(name: string): string {
+                    return "Hello, " + name + "!";
+                }
+            "#,
+                )
+                .unwrap();
+
+            let result2 = runtime.continue_eval().unwrap();
+
+            match result2 {
+                RuntimeResult::Complete(value) => {
+                    assert_eq!(value, JsValue::String("Hello, World!".into()));
+                }
+                _ => panic!("Expected Complete"),
+            }
+        }
+        _ => panic!("Expected NeedImports"),
+    }
+}
+
+#[test]
+fn test_external_module_mixed_exports() {
+    let mut runtime = Runtime::new();
+
+    let result = runtime
+        .eval(
+            r#"
+        import Calculator, { PI, E } from "./constants";
+        const calc = new Calculator();
+        calc.add(PI, E);
+    "#,
+        )
+        .unwrap();
+
+    match result {
+        RuntimeResult::NeedImports(imports) => {
+            assert_eq!(imports[0], "./constants");
+
+            runtime
+                .provide_module(
+                    "./constants",
+                    r#"
+                export const PI = 3.14159;
+                export const E = 2.71828;
+
+                export default class Calculator {
+                    add(a: number, b: number): number {
+                        return a + b;
+                    }
+                }
+            "#,
+                )
+                .unwrap();
+
+            let result2 = runtime.continue_eval().unwrap();
+
+            match result2 {
+                RuntimeResult::Complete(value) => {
+                    if let JsValue::Number(n) = value {
+                        assert!((n - 5.85987).abs() < 0.0001);
+                    } else {
+                        panic!("Expected Number");
+                    }
+                }
+                _ => panic!("Expected Complete"),
+            }
+        }
+        _ => panic!("Expected NeedImports"),
+    }
+}
+
+#[test]
+fn test_external_module_aliased_imports() {
+    let mut runtime = Runtime::new();
+
+    let result = runtime
+        .eval(
+            r#"
+        import { value as myValue, compute as calculate } from "./utils";
+        calculate(myValue);
+    "#,
+        )
+        .unwrap();
+
+    match result {
+        RuntimeResult::NeedImports(_imports) => {
+            runtime
+                .provide_module(
+                    "./utils",
+                    r#"
+                export const value = 10;
+                export function compute(x: number): number {
+                    return x * 2;
+                }
+            "#,
+                )
+                .unwrap();
+
+            let result2 = runtime.continue_eval().unwrap();
+
+            match result2 {
+                RuntimeResult::Complete(value) => {
+                    assert_eq!(value, JsValue::Number(20.0));
+                }
+                _ => panic!("Expected Complete"),
+            }
+        }
+        _ => panic!("Expected NeedImports"),
+    }
+}
+
+#[test]
+fn test_multiple_external_modules() {
+    let mut runtime = Runtime::new();
+
+    let result = runtime
+        .eval(
+            r#"
+        import { a } from "./moduleA";
+        import { b } from "./moduleB";
+        a + b;
+    "#,
+        )
+        .unwrap();
+
+    match result {
+        RuntimeResult::NeedImports(imports) => {
+            assert_eq!(imports.len(), 2);
+            assert!(imports.contains(&"./moduleA".to_string()));
+            assert!(imports.contains(&"./moduleB".to_string()));
+
+            // Provide both modules
+            runtime
+                .provide_module("./moduleA", "export const a = 10;")
+                .unwrap();
+            runtime
+                .provide_module("./moduleB", "export const b = 20;")
+                .unwrap();
+
+            let result2 = runtime.continue_eval().unwrap();
+
+            match result2 {
+                RuntimeResult::Complete(value) => {
+                    assert_eq!(value, JsValue::Number(30.0));
+                }
+                _ => panic!("Expected Complete"),
+            }
+        }
+        _ => panic!("Expected NeedImports"),
+    }
+}
+
+#[test]
+fn test_module_namespace_import() {
+    let mut runtime = Runtime::new();
+
+    let result = runtime
+        .eval(
+            r#"
+        import * as utils from "./utils";
+        utils.double(utils.BASE);
+    "#,
+        )
+        .unwrap();
+
+    match result {
+        RuntimeResult::NeedImports(_) => {
+            runtime
+                .provide_module(
+                    "./utils",
+                    r#"
+                export const BASE = 21;
+                export function double(x: number): number {
+                    return x * 2;
+                }
+            "#,
+                )
+                .unwrap();
+
+            let result2 = runtime.continue_eval().unwrap();
+
+            match result2 {
+                RuntimeResult::Complete(value) => {
+                    assert_eq!(value, JsValue::Number(42.0));
+                }
+                _ => panic!("Expected Complete"),
+            }
+        }
+        _ => panic!("Expected NeedImports"),
+    }
+}
+
+#[test]
+fn test_module_with_internal_imports() {
+    // External module that also imports from internal module
+    use typescript_eval::interpreter::builtins::create_eval_internal_module;
+
+    let eval_internal = create_eval_internal_module();
+
+    let config = RuntimeConfig {
+        internal_modules: vec![eval_internal],
+        timeout_ms: 3000,
+    };
+
+    let mut runtime = Runtime::with_config(config);
+
+    let result = runtime
+        .eval(
+            r#"
+        import { helper } from "./myModule";
+        helper(5);
+    "#,
+        )
+        .unwrap();
+
+    match result {
+        RuntimeResult::NeedImports(imports) => {
+            // Only external module should be requested, not eval:internal
+            assert_eq!(imports.len(), 1);
+            assert_eq!(imports[0], "./myModule");
+
+            runtime
+                .provide_module(
+                    "./myModule",
+                    r#"
+                // Module can use internal modules
+                export function helper(x: number): number {
+                    return x * 10;
+                }
+            "#,
+                )
+                .unwrap();
+
+            let result2 = runtime.continue_eval().unwrap();
+
+            match result2 {
+                RuntimeResult::Complete(value) => {
+                    assert_eq!(value, JsValue::Number(50.0));
+                }
+                _ => panic!("Expected Complete"),
+            }
+        }
+        _ => panic!("Expected NeedImports"),
+    }
+}
+
+#[test]
+fn test_export_const_variable() {
+    let mut runtime = Runtime::new();
+
+    let result = runtime
+        .eval(
+            r#"
+        import { CONFIG } from "./config";
+        CONFIG.name + " v" + CONFIG.version;
+    "#,
+        )
+        .unwrap();
+
+    match result {
+        RuntimeResult::NeedImports(_) => {
+            runtime
+                .provide_module(
+                    "./config",
+                    r#"
+                export const CONFIG = {
+                    name: "MyApp",
+                    version: "1.0"
+                };
+            "#,
+                )
+                .unwrap();
+
+            let result2 = runtime.continue_eval().unwrap();
+
+            match result2 {
+                RuntimeResult::Complete(value) => {
+                    assert_eq!(value, JsValue::String("MyApp v1.0".into()));
+                }
+                _ => panic!("Expected Complete"),
+            }
+        }
+        _ => panic!("Expected NeedImports"),
+    }
+}
+
+#[test]
+fn test_export_class() {
+    let mut runtime = Runtime::new();
+
+    let result = runtime
+        .eval(
+            r#"
+        import { Point } from "./geometry";
+        const p = new Point(3, 4);
+        p.distance();
+    "#,
+        )
+        .unwrap();
+
+    match result {
+        RuntimeResult::NeedImports(_) => {
+            runtime
+                .provide_module(
+                    "./geometry",
+                    r#"
+                export class Point {
+                    x: number;
+                    y: number;
+                    constructor(x: number, y: number) {
+                        this.x = x;
+                        this.y = y;
+                    }
+                    distance(): number {
+                        return Math.sqrt(this.x * this.x + this.y * this.y);
+                    }
+                }
+            "#,
+                )
+                .unwrap();
+
+            let result2 = runtime.continue_eval().unwrap();
+
+            match result2 {
+                RuntimeResult::Complete(value) => {
+                    assert_eq!(value, JsValue::Number(5.0));
+                }
+                _ => panic!("Expected Complete"),
+            }
+        }
+        _ => panic!("Expected NeedImports"),
+    }
+}
