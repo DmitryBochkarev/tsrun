@@ -4,7 +4,7 @@
 
 **Project:** `typescript-eval`
 **Purpose:** Execute TypeScript for config/manifest generation from Rust
-**Status:** Milestone 8 Complete (Order-based Async, Internal Modules, 553 tests passing)
+**Status:** Milestone 9 Complete (Async/Await, Generators, 735 tests passing)
 
 ### Requirements
 
@@ -272,8 +272,8 @@ fn run_script(source: &str, config: RuntimeConfig) -> Result<JsValue, Error> {
 - [x] Closures
 - [x] `return` statement
 - [x] Implicit `undefined` return
-- [ ] Generator functions (`function*`) - needs order system
-- [ ] `yield` / `yield*` - needs order system
+- [x] Generator functions (`function*`)
+- [x] `yield` / `yield*`
 - [x] `this` binding
 - [x] `arguments` object
 - [x] `Function.prototype.call`
@@ -338,13 +338,13 @@ fn run_script(source: &str, config: RuntimeConfig) -> Result<JsValue, Error> {
 - [x] Namespace imports (`import * as`) (parsing)
 - [x] Re-exports (`export { x } from`) (parsing)
 - [x] Static import resolution (via `RuntimeResult::NeedImports`)
-- [ ] Dynamic `import()` - planned via order system
+- [x] Dynamic `import()` - via order system
 
-#### Async/Await (Planned - Order System)
-- [ ] `async function` declarations and expressions
-- [ ] `await` expression (suspends, host fulfills)
-- [ ] Top-level await in modules
-- [ ] Async arrow functions
+#### Async/Await
+- [x] `async function` declarations and expressions
+- [x] `await` expression (suspends, host fulfills)
+- [x] Top-level await in modules
+- [x] Async arrow functions
 
 ### TypeScript Features
 
@@ -636,19 +636,19 @@ fn run_script(source: &str, config: RuntimeConfig) -> Result<JsValue, Error> {
 - [x] `console.group(label)`
 - [x] `console.groupEnd()`
 
-#### Promise (Order-Based - Planned)
-- [ ] `new Promise(executor)` - via order system
-- [ ] `Promise.prototype.then(onFulfilled, onRejected)`
-- [ ] `Promise.prototype.catch(onRejected)`
-- [ ] `Promise.prototype.finally(onFinally)`
-- [ ] `Promise.resolve(value)`
-- [ ] `Promise.reject(reason)`
-- [ ] `Promise.all(iterable)`
-- [ ] `Promise.race(iterable)`
-- [ ] `Promise.allSettled(iterable)`
-- [ ] `Promise.any(iterable)`
+#### Promise
+- [x] `new Promise(executor)`
+- [x] `Promise.prototype.then(onFulfilled, onRejected)`
+- [x] `Promise.prototype.catch(onRejected)`
+- [x] `Promise.prototype.finally(onFinally)`
+- [x] `Promise.resolve(value)`
+- [x] `Promise.reject(reason)`
+- [x] `Promise.all(iterable)`
+- [x] `Promise.race(iterable)`
+- [x] `Promise.allSettled(iterable)`
+- [x] `Promise.any(iterable)`
 
-**Note:** Promise will use order-based semantics - all async operations create orders that the host fulfills.
+**Note:** Promise uses order-based semantics - async operations create orders that the host fulfills.
 
 ### Rust Integration
 
@@ -658,11 +658,11 @@ fn run_script(source: &str, config: RuntimeConfig) -> Result<JsValue, Error> {
 - [x] `Runtime::eval(source)` - Evaluate source, returns `RuntimeResult`
 - [x] `Runtime::provide_module(specifier, source)` - Provide external module
 - [x] `Runtime::continue_eval()` - Continue after providing modules
-- [ ] `Runtime::fulfill_orders(responses)` - Fulfill pending orders
+- [x] `Runtime::fulfill_orders(responses)` - Fulfill pending orders
 - [x] `Runtime::get_exports()` - Get all exported values
 
 #### Configuration
-- [ ] `RuntimeConfig::internal_modules` - Register internal modules
+- [x] `RuntimeConfig::internal_modules` - Register internal modules
 - [x] `RuntimeConfig::timeout_ms` - Execution timeout
 
 #### Serde Bridge
@@ -806,19 +806,19 @@ src/
 - [x] Classes with inheritance
 - [x] Zero-panic policy
 
-### Milestone 8: Order System (In Progress)
+### Milestone 8: Order System ✅
 
-- [ ] `Order`, `OrderId`, `OrderResponse` types
-- [ ] `RuntimeResult` with `NeedImports`, `Suspended`
-- [ ] Internal module system (native + source)
-- [ ] `eval:internal` with `__order__`, `__cancelOrder__`
-- [ ] Import collection and resolution
+- [x] `Order`, `OrderId`, `OrderResponse` types
+- [x] `RuntimeResult` with `NeedImports`, `Suspended`
+- [x] Internal module system (native + source)
+- [x] `eval:internal` with `__order__`, `__cancelOrder__`
+- [x] Import collection and resolution
 
-### Milestone 9: Async/Await
+### Milestone 9: Async/Await ✅
 
-- [ ] Async functions via order system
-- [ ] `await` suspends execution
-- [ ] Generator functions via order system
+- [x] Async functions via order system
+- [x] `await` suspends execution
+- [x] Generator functions (function*, yield, yield*)
 
 ### Milestone 10: Serde Integration
 
@@ -829,7 +829,7 @@ src/
 
 ## Testing
 
-### Current Status: 542 tests passing
+### Current Status: 735 tests passing
 
 ```bash
 cargo test                     # Run all tests
@@ -838,12 +838,9 @@ cargo test symbol::            # Run symbol tests
 cargo test -- --nocapture      # Show output
 ```
 
-### Known Failures (4)
+### Known Failures (0)
 
-- `test_gc_cycles_test6_minimal` - GC timeout
-- `test_gc_cycles_all_tests` - GC timeout
-- `test_json_stringify_async_nested_object` - Async not implemented
-- `test_json_stringify_with_async_result` - Async not implemented
+All tests passing.
 
 ---
 
