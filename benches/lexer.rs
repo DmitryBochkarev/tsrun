@@ -5,6 +5,7 @@
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use typescript_eval::lexer::{Lexer, TokenKind};
+use typescript_eval::string_dict::StringDict;
 
 /// Simple expression
 const SIMPLE_EXPR: &str = "1 + 2 * 3 - 4 / 5";
@@ -276,7 +277,8 @@ fn generate_large_source(size: usize) -> String {
 
 /// Count tokens in source
 fn count_tokens(source: &str) -> usize {
-    let mut lexer = Lexer::new(source);
+    let mut dict = StringDict::new();
+    let mut lexer = Lexer::new(source, &mut dict);
     let mut count = 0;
     loop {
         let token = lexer.next_token();
@@ -309,8 +311,9 @@ fn bench_lexer_individual(c: &mut Criterion) {
     for (name, source) in cases {
         group.throughput(Throughput::Bytes(source.len() as u64));
         group.bench_with_input(BenchmarkId::new("bytes", name), source, |b, s| {
+            let mut dict = StringDict::new();
             b.iter(|| {
-                let mut lexer = Lexer::new(black_box(s));
+                let mut lexer = Lexer::new(black_box(s), &mut dict);
                 loop {
                     let token = lexer.next_token();
                     if token.kind == TokenKind::Eof {
@@ -340,8 +343,9 @@ fn bench_lexer_throughput(c: &mut Criterion) {
             BenchmarkId::new("large_source", format!("{}KB", actual_size / 1024)),
             &source,
             |b, s| {
+                let mut dict = StringDict::new();
                 b.iter(|| {
-                    let mut lexer = Lexer::new(black_box(s));
+                    let mut lexer = Lexer::new(black_box(s), &mut dict);
                     loop {
                         let token = lexer.next_token();
                         if token.kind == TokenKind::Eof {
@@ -363,8 +367,9 @@ fn bench_lexer_token_types(c: &mut Criterion) {
     // Identifiers and keywords
     let identifiers = "foo bar baz qux let const var function class interface type async await yield";
     group.bench_function("identifiers_keywords", |b| {
+        let mut dict = StringDict::new();
         b.iter(|| {
-            let mut lexer = Lexer::new(black_box(identifiers));
+            let mut lexer = Lexer::new(black_box(identifiers), &mut dict);
             loop {
                 let token = lexer.next_token();
                 if token.kind == TokenKind::Eof {
@@ -378,8 +383,9 @@ fn bench_lexer_token_types(c: &mut Criterion) {
     // Numbers only
     let numbers = "1 2 3 42 3.14 1e10 0xFF 0o755 0b1010 123n 1_000_000";
     group.bench_function("numbers", |b| {
+        let mut dict = StringDict::new();
         b.iter(|| {
-            let mut lexer = Lexer::new(black_box(numbers));
+            let mut lexer = Lexer::new(black_box(numbers), &mut dict);
             loop {
                 let token = lexer.next_token();
                 if token.kind == TokenKind::Eof {
@@ -393,8 +399,9 @@ fn bench_lexer_token_types(c: &mut Criterion) {
     // Strings only
     let strings = r#""hello" 'world' "escaped\n\t" "unicode\u0041" `template`"#;
     group.bench_function("strings", |b| {
+        let mut dict = StringDict::new();
         b.iter(|| {
-            let mut lexer = Lexer::new(black_box(strings));
+            let mut lexer = Lexer::new(black_box(strings), &mut dict);
             loop {
                 let token = lexer.next_token();
                 if token.kind == TokenKind::Eof {
@@ -408,8 +415,9 @@ fn bench_lexer_token_types(c: &mut Criterion) {
     // Operators only
     let operators = "+ - * / % ** ++ -- = == === != !== < <= > >= << >> >>> & && | || ^ ~ ! ? ?? ?. => ...";
     group.bench_function("operators", |b| {
+        let mut dict = StringDict::new();
         b.iter(|| {
-            let mut lexer = Lexer::new(black_box(operators));
+            let mut lexer = Lexer::new(black_box(operators), &mut dict);
             loop {
                 let token = lexer.next_token();
                 if token.kind == TokenKind::Eof {

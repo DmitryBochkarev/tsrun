@@ -6,6 +6,7 @@
 //! Or with flamegraph: cargo flamegraph --bin profile_lexer
 
 use typescript_eval::lexer::{Lexer, TokenKind};
+use typescript_eval::string_dict::StringDict;
 
 /// Large realistic TypeScript source for profiling
 fn generate_source(size: usize) -> String {
@@ -107,7 +108,8 @@ fn main() {
     let mut total_tokens = 0usize;
 
     for _ in 0..iterations {
-        let mut lexer = Lexer::new(&source);
+        let mut string_dict = StringDict::new();
+        let mut lexer = Lexer::new(&source, &mut string_dict);
         loop {
             let token = lexer.next_token();
             if token.kind == TokenKind::Eof {

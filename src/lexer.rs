@@ -5,6 +5,9 @@
 use std::iter::Peekable;
 use std::str::CharIndices;
 
+use crate::string_dict::StringDict;
+use crate::value::JsString;
+
 /// Source span information
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Span {
@@ -41,7 +44,7 @@ impl Default for Span {
 pub enum TokenKind {
     // Literals
     Number(f64),
-    String(String),
+    String(JsString),
     BigInt(String),         // BigInt literal value as string (e.g., "123" for 123n)
     RegExp(String, String), // (pattern, flags)
     True,
@@ -49,7 +52,7 @@ pub enum TokenKind {
     Null,
 
     // Identifiers & Keywords
-    Identifier(String),
+    Identifier(JsString),
 
     // JavaScript Keywords
     Let,
@@ -179,10 +182,10 @@ pub enum TokenKind {
     Hash,      // #
 
     // Template literals
-    TemplateHead(String),   // `...${
-    TemplateMiddle(String), // }...${
-    TemplateTail(String),   // }...`
-    TemplateNoSub(String),  // `...` (no substitutions)
+    TemplateHead(JsString),   // `...${
+    TemplateMiddle(JsString), // }...${
+    TemplateTail(JsString),   // }...`
+    TemplateNoSub(JsString),  // `...` (no substitutions)
 
     // Special
     Eof,
@@ -236,10 +239,12 @@ pub struct Lexer<'a> {
     start_column: u32,
     /// Tracks if we just saw a newline (for ASI)
     saw_newline: bool,
+    /// String dictionary for interning identifiers and strings
+    string_dict: &'a mut StringDict,
 }
 
 impl<'a> Lexer<'a> {
-    pub fn new(source: &'a str) -> Self {
+    pub fn new(source: &'a str, string_dict: &'a mut StringDict) -> Self {
         Self {
             source,
             chars: source.char_indices().peekable(),
@@ -251,7 +256,13 @@ impl<'a> Lexer<'a> {
             start_line: 1,
             start_column: 1,
             saw_newline: false,
+            string_dict,
         }
+    }
+
+    /// Get mutable reference to the string dictionary for interning
+    pub fn string_dict(&mut self) -> &mut StringDict {
+        self.string_dict
     }
 
     /// Create a checkpoint of the current lexer state for backtracking
@@ -785,7 +796,7 @@ impl<'a> Lexer<'a> {
             }
         }
 
-        TokenKind::String(value)
+        TokenKind::String(self.string_dict.get_or_insert(&value))
     }
 
     fn scan_hex_escape(&mut self, count: usize) -> Option<u32> {
@@ -812,11 +823,11 @@ impl<'a> Lexer<'a> {
             match self.advance() {
                 Some((_, '`')) => {
                     // End of template
-                    return TokenKind::TemplateNoSub(value);
+                    return TokenKind::TemplateNoSub(self.string_dict.get_or_insert(&value));
                 }
                 Some((_, '$')) if self.peek() == Some('{') => {
                     self.advance(); // consume {
-                    return TokenKind::TemplateHead(value);
+                    return TokenKind::TemplateHead(self.string_dict.get_or_insert(&value));
                 }
                 Some((_, '\\')) => {
                     // Escape sequence (same as strings)
@@ -837,7 +848,7 @@ impl<'a> Lexer<'a> {
         }
 
         // Unterminated template
-        TokenKind::TemplateNoSub(value)
+        TokenKind::TemplateNoSub(self.string_dict.get_or_insert(&value))
     }
 
     /// Continue scanning a template literal after an expression
@@ -847,11 +858,11 @@ impl<'a> Lexer<'a> {
         loop {
             match self.advance() {
                 Some((_, '`')) => {
-                    return TokenKind::TemplateTail(value);
+                    return TokenKind::TemplateTail(self.string_dict.get_or_insert(&value));
                 }
                 Some((_, '$')) if self.peek() == Some('{') => {
                     self.advance();
-                    return TokenKind::TemplateMiddle(value);
+                    return TokenKind::TemplateMiddle(self.string_dict.get_or_insert(&value));
                 }
                 Some((_, '\\')) => match self.advance() {
                     Some((_, 'n')) => value.push('\n'),
@@ -868,7 +879,7 @@ impl<'a> Lexer<'a> {
             }
         }
 
-        TokenKind::TemplateTail(value)
+        TokenKind::TemplateTail(self.string_dict.get_or_insert(&value))
     }
 
     /// Rescan template continuation from a given span position (the } token)
@@ -1123,7 +1134,7 @@ impl<'a> Lexer<'a> {
             "asserts" => TokenKind::Asserts,
 
             // Identifier
-            _ => TokenKind::Identifier(name),
+            _ => TokenKind::Identifier(self.string_dict.get_or_insert(&name)),
         }
     }
 }
@@ -1142,8 +1153,14 @@ fn is_id_continue(ch: char) -> bool {
 mod tests {
     use super::*;
 
+    /// Helper to create JsString from &str in tests
+    fn s(value: &str) -> JsString {
+        JsString::from(value)
+    }
+
     fn lex(source: &str) -> Vec<TokenKind> {
-        let mut lexer = Lexer::new(source);
+        let mut dict = StringDict::new();
+        let mut lexer = Lexer::new(source, &mut dict);
         let mut tokens = vec![];
         loop {
             let token = lexer.next_token();
@@ -1169,15 +1186,15 @@ mod tests {
     fn test_strings() {
         assert_eq!(
             lex(r#""hello""#),
-            vec![TokenKind::String("hello".to_string())]
+            vec![TokenKind::String(JsString::from("hello"))]
         );
         assert_eq!(
             lex(r#"'world'"#),
-            vec![TokenKind::String("world".to_string())]
+            vec![TokenKind::String(JsString::from("world"))]
         );
         assert_eq!(
             lex(r#""line\nbreak""#),
-            vec![TokenKind::String("line\nbreak".to_string())]
+            vec![TokenKind::String(JsString::from("line\nbreak"))]
         );
     }
 
@@ -1217,9 +1234,9 @@ mod tests {
         assert_eq!(
             lex("foo bar_baz $test"),
             vec![
-                TokenKind::Identifier("foo".to_string()),
-                TokenKind::Identifier("bar_baz".to_string()),
-                TokenKind::Identifier("$test".to_string()),
+                TokenKind::Identifier(JsString::from("foo")),
+                TokenKind::Identifier(JsString::from("bar_baz")),
+                TokenKind::Identifier(JsString::from("$test")),
             ]
         );
     }
@@ -1414,7 +1431,7 @@ mod tests {
             vec![
                 TokenKind::Void,
                 TokenKind::Null,
-                TokenKind::Identifier("undefined".to_string())
+                TokenKind::Identifier(s("undefined"))
             ]
         );
     }
@@ -1429,7 +1446,7 @@ mod tests {
         // Simple template without interpolation becomes TemplateNoSub
         assert_eq!(
             lex("`hello`"),
-            vec![TokenKind::TemplateNoSub("hello".to_string())]
+            vec![TokenKind::TemplateNoSub(s("hello"))]
         );
     }
 
@@ -1437,15 +1454,15 @@ mod tests {
     fn test_string_escape_sequences() {
         assert_eq!(
             lex(r#""hello\tworld""#),
-            vec![TokenKind::String("hello\tworld".to_string())]
+            vec![TokenKind::String(s("hello\tworld"))]
         );
         assert_eq!(
             lex(r#""line\\break""#),
-            vec![TokenKind::String("line\\break".to_string())]
+            vec![TokenKind::String(s("line\\break"))]
         );
         assert_eq!(
             lex(r#""quote\"test""#),
-            vec![TokenKind::String("quote\"test".to_string())]
+            vec![TokenKind::String(s("quote\"test"))]
         );
     }
 
@@ -1492,7 +1509,8 @@ mod tests {
     #[test]
     fn test_regexp_literal_scan() {
         // Test the explicit regex scanning method
-        let mut lexer = Lexer::new("/abc/");
+        let mut dict = StringDict::new();
+        let mut lexer = Lexer::new("/abc/", &mut dict);
         let token = lexer.scan_regexp();
         assert_eq!(
             token.kind,
@@ -1502,7 +1520,8 @@ mod tests {
 
     #[test]
     fn test_regexp_literal_with_flags() {
-        let mut lexer = Lexer::new("/pattern/gi");
+        let mut dict = StringDict::new();
+        let mut lexer = Lexer::new("/pattern/gi", &mut dict);
         let token = lexer.scan_regexp();
         assert_eq!(
             token.kind,
@@ -1512,7 +1531,8 @@ mod tests {
 
     #[test]
     fn test_regexp_literal_with_escapes() {
-        let mut lexer = Lexer::new(r"/\d+\.\d+/");
+        let mut dict = StringDict::new();
+        let mut lexer = Lexer::new(r"/\d+\.\d+/", &mut dict);
         let token = lexer.scan_regexp();
         assert_eq!(
             token.kind,
@@ -1522,7 +1542,8 @@ mod tests {
 
     #[test]
     fn test_regexp_literal_with_class() {
-        let mut lexer = Lexer::new("/[a-z]/i");
+        let mut dict = StringDict::new();
+        let mut lexer = Lexer::new("/[a-z]/i", &mut dict);
         let token = lexer.scan_regexp();
         assert_eq!(
             token.kind,
@@ -1533,7 +1554,8 @@ mod tests {
     #[test]
     fn test_regexp_literal_with_slash_in_class() {
         // Forward slash inside character class doesn't end the regex
-        let mut lexer = Lexer::new("/[/]/");
+        let mut dict = StringDict::new();
+        let mut lexer = Lexer::new("/[/]/", &mut dict);
         let token = lexer.scan_regexp();
         assert_eq!(
             token.kind,
