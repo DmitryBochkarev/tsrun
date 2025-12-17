@@ -276,17 +276,15 @@ impl<'a> Lexer<'a> {
         self.start_line = checkpoint.start_line;
         self.start_column = checkpoint.start_column;
         self.saw_newline = checkpoint.saw_newline;
-        // Reset base offset since we're iterating from the beginning of source
-        self.chars_base_offset = 0;
-        // Recreate the chars iterator from the beginning and skip to checkpoint position
-        self.chars = self.source.char_indices().peekable();
-        // Skip characters until we reach the checkpoint position
-        while let Some((pos, _)) = self.chars.peek() {
-            if *pos >= checkpoint.current_pos {
-                break;
-            }
-            self.chars.next();
-        }
+        // Create iterator directly from the checkpoint position (O(1) instead of O(n))
+        // The base offset tracks where in the original source we started
+        self.chars_base_offset = checkpoint.current_pos;
+        self.chars = self
+            .source
+            .get(checkpoint.current_pos..)
+            .unwrap_or("")
+            .char_indices()
+            .peekable();
     }
 
     /// Reset the lexer to a specific position (from a Span) to rescan as regexp.
@@ -300,16 +298,14 @@ impl<'a> Lexer<'a> {
         self.start_line = span.line;
         self.start_column = span.column;
 
-        // Reset base offset since we're iterating from the beginning of source
-        self.chars_base_offset = 0;
-        // Recreate the chars iterator and skip to the correct position
-        self.chars = self.source.char_indices().peekable();
-        while let Some((pos, _)) = self.chars.peek() {
-            if *pos >= span.start {
-                break;
-            }
-            self.chars.next();
-        }
+        // Create iterator directly from the span position (O(1) instead of O(n))
+        self.chars_base_offset = span.start;
+        self.chars = self
+            .source
+            .get(span.start..)
+            .unwrap_or("")
+            .char_indices()
+            .peekable();
 
         // Now scan as regexp
         self.scan_regexp()

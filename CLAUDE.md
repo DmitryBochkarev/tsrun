@@ -634,3 +634,4 @@ self.env.define(id.name.clone(), value, mutable);
 - WeakMap/WeakSet
 
 See design.md for the complete feature checklist.
+See profiling.md for performance optimization notes.

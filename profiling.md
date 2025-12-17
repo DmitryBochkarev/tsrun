@@ -246,5 +246,179 @@ if (( $(echo "$ACTUAL > $BASELINE * 1.2" | bc -l) )); then
 fi
 ```
 
-cargo build --profile=profiling
-valgrind --leak-check=full ./target/profiling/typescript-eval-runner examples/memory-management/gc-cycles.ts
+## Criterion Benchmarks
+
+The project includes criterion-based microbenchmarks for the lexer and parser.
+
+### Running Benchmarks
+
+```bash
+# Run all benchmarks
+cargo bench
+
+# Run only lexer benchmarks
+cargo bench --bench lexer
+
+# Run only parser benchmarks
+cargo bench --bench parser
+
+# Run specific benchmark group
+cargo bench --bench lexer -- lexer/throughput
+cargo bench --bench parser -- parser/individual
+
+# Quick benchmark run (fewer samples)
+cargo bench -- --quick
+```
+
+### Benchmark Groups
+
+**Lexer benchmarks** (`benches/lexer.rs`):
+| Group | What it measures |
+|-------|------------------|
+| `lexer/individual` | Tokenization of specific code patterns (strings, operators, classes, etc.) |
+| `lexer/throughput` | Throughput at different source sizes (1KB to 500KB) |
+| `lexer/token_types` | Performance of tokenizing specific token types |
+
+**Parser benchmarks** (`benches/parser.rs`):
+| Group | What it measures |
+|-------|------------------|
+| `parser/individual` | Parsing specific code patterns |
+| `parser/throughput` | Throughput at different source sizes |
+| `parser/expression_depth` | Binary expression tree parsing at different depths |
+| `parser/statements` | Parsing many statements (lets, functions, classes) |
+| `parser/string_interning` | String dictionary performance with repeated vs unique identifiers |
+
+### Viewing Results
+
+Criterion generates HTML reports in `target/criterion/`:
+
+```bash
+# Open the report index
+firefox target/criterion/report/index.html
+```
+
+### Comparing Against Baseline
+
+```bash
+# Save current as baseline
+cargo bench -- --save-baseline main
+
+# Make changes, then compare
+cargo bench -- --baseline main
+```
+
+## Dedicated Profiling Binaries
+
+For detailed profiling with `perf` or `flamegraph`, use the dedicated profiling binaries:
+
+### Lexer Profiling
+
+```bash
+# Build with profiling profile
+cargo build --profile profiling --bin profile_lexer
+
+# Run with custom size and iterations
+# Usage: profile_lexer [size_bytes] [iterations]
+./target/profiling/profile_lexer 500000 50
+
+# Profile with perf
+perf record -g ./target/profiling/profile_lexer 500000 50
+perf report --stdio --sort=symbol --no-children | head -50
+
+# Generate flamegraph
+cargo flamegraph --profile profiling --bin profile_lexer -o lexer-flamegraph.svg -- 500000 50
+```
+
+### Parser Profiling
+
+```bash
+# Build with profiling profile
+cargo build --profile profiling --bin profile_parser
+
+# Run with custom size and iterations
+# Usage: profile_parser [size_bytes] [iterations]
+./target/profiling/profile_parser 500000 10
+
+# Profile with perf
+perf record -g ./target/profiling/profile_parser 500000 10
+perf report --stdio --sort=symbol --no-children | head -50
+
+# Generate flamegraph
+cargo flamegraph --profile profiling --bin profile_parser -o parser-flamegraph.svg -- 500000 10
+```
+
+### Example Output
+
+```
+$ ./target/profiling/profile_lexer 500000 50
+Generating 488KB source...
+Source size: 500202 bytes
+Running 50 iterations of lexer...
+Done in 319.13ms
+Total tokens: 6211350
+Throughput: 78.37 MB/s
+
+$ ./target/profiling/profile_parser 500000 10
+Generating 488KB source...
+Source size: 500137 bytes
+Running 10 iterations of parser...
+Done in 217.46ms
+Total statements: 22530
+Throughput: 23.00 MB/s
+```
+
+## Lexer/Parser Optimization Guide
+
+### Common Lexer Hotspots
+
+| Symbol | Typical % | What it does | Optimization hints |
+|--------|-----------|--------------|-------------------|
+| `Lexer::next_token` | 15-20% | Main tokenization loop | Core work, hard to optimize |
+| `__memcmp` / `str::eq` | 10-15% | Keyword matching | Use perfect hash or trie |
+| `String::push` | 5-10% | Building identifier/string tokens | Pre-allocate capacity |
+| `Lexer::advance` | 5-10% | Character iteration | Core work |
+| `drop_in_place<Token>` | 5-10% | Token cleanup | Reduce token allocations |
+
+### Common Parser Hotspots
+
+| Symbol | Typical % | What it does | Optimization hints |
+|--------|-----------|--------------|-------------------|
+| `Parser::advance` | 5-10% | Token advancement | Core work |
+| `Parser::parse_*` | varies | Parse functions | Reduce backtracking |
+| `Rc::new` / `drop<Rc>` | 5-10% | AST node allocation | Use arena allocator |
+| `malloc` / `free` | 5-10% | Memory allocation | Reduce allocations |
+| `Hash::hash` | 2-5% | String interning | Already using FxHashMap |
+
+### Red Flags in Profiler Output
+
+Watch for these patterns that indicate problems:
+
+1. **`Lexer::restore` > 1%**: The checkpoint/restore mechanism should be O(1). If it shows up, the lexer is recreating iterators inefficiently.
+
+2. **`Peekable::peek` > 5%** in parser: Excessive lookahead or backtracking.
+
+3. **`clone` > 10%**: Too much cloning. Use `Rc` or references.
+
+4. **`CharIndices::next` > 10%** outside lexer: Iterator being recreated instead of reused.
+
+## Hyperfine for Quick Comparisons
+
+For quick A/B comparisons between commits:
+
+```bash
+# Install hyperfine
+cargo install hyperfine
+
+# Compare two versions
+git stash
+cargo build --release
+cp target/release/typescript-eval-runner /tmp/baseline
+
+git stash pop
+cargo build --release
+
+hyperfine \
+    '/tmp/baseline examples/memory-management/stress-test.ts' \
+    './target/release/typescript-eval-runner examples/memory-management/stress-test.ts' \
+    --warmup 3
+```
