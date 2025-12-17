@@ -28,6 +28,15 @@ use super::{create_environment_unrooted, Interpreter};
 /// A value on the value stack, wrapped in Guarded to maintain GC safety
 pub type StackValue = Guarded;
 
+/// Boxed label for loop frames - saves 8 bytes per frame since labels are rare
+pub type LoopLabel = Option<Box<JsString>>;
+
+/// Convert LoopLabel to Option<&JsString> for comparison
+#[inline]
+fn label_ref(label: &LoopLabel) -> Option<&JsString> {
+    label.as_ref().map(|b| b.as_ref())
+}
+
 /// Result of executing one step
 pub enum StepResult {
     /// Continue execution (more frames to process)
@@ -56,6 +65,17 @@ pub struct FinallyBlockData {
     pub saved_result: Option<JsValue>,
     pub saved_error: Option<JsError>,
     pub saved_completion: StackCompletion,
+}
+
+/// Data for ForOfGenerator frames, boxed to reduce Frame enum size
+/// (contains two Gc<JsObject> fields = 48 bytes)
+pub struct ForOfGeneratorData {
+    pub generator: Gc<JsObject>,
+    pub gen_state: Rc<std::cell::RefCell<crate::value::GeneratorState>>,
+    pub left: Rc<ForInOfLeft>,
+    pub body: Rc<Statement>,
+    pub label: LoopLabel,
+    pub saved_env: Gc<JsObject>,
 }
 
 /// A frame on the evaluation stack
@@ -144,42 +164,42 @@ pub enum Frame {
     WhileLoop {
         test: Rc<Expression>,
         body: Rc<Statement>,
-        label: Option<JsString>,
+        label: LoopLabel,
     },
 
     /// While check: test evaluated, execute body or exit
     WhileCheck {
         test: Rc<Expression>,
         body: Rc<Statement>,
-        label: Option<JsString>,
+        label: LoopLabel,
     },
 
     /// While after body: body executed, check completion before evaluating test
     WhileAfterBody {
         test: Rc<Expression>,
         body: Rc<Statement>,
-        label: Option<JsString>,
+        label: LoopLabel,
     },
 
     /// Do-while loop: execute body first, then check condition
     DoWhileLoop {
         test: Rc<Expression>,
         body: Rc<Statement>,
-        label: Option<JsString>,
+        label: LoopLabel,
     },
 
     /// Do-while check: body executed, check completion before evaluating test
     DoWhileCheck {
         test: Rc<Expression>,
         body: Rc<Statement>,
-        label: Option<JsString>,
+        label: LoopLabel,
     },
 
     /// Do-while test check: after condition evaluated, decide to loop or exit
     DoWhileTestCheck {
         test: Rc<Expression>,
         body: Rc<Statement>,
-        label: Option<JsString>,
+        label: LoopLabel,
     },
 
     /// For loop: full state for iteration
@@ -187,7 +207,7 @@ pub enum Frame {
         test: Option<Rc<Expression>>,
         update: Option<Rc<Expression>>,
         body: Rc<Statement>,
-        label: Option<JsString>,
+        label: LoopLabel,
         /// Variables for per-iteration binding (name, mutable)
         loop_vars: Rc<Vec<(JsString, bool)>>,
         /// Saved environment to restore after loop
@@ -201,7 +221,7 @@ pub enum Frame {
         test: Option<Rc<Expression>>,
         update: Option<Rc<Expression>>,
         body: Rc<Statement>,
-        label: Option<JsString>,
+        label: LoopLabel,
         loop_vars: Rc<Vec<(JsString, bool)>>,
         saved_env: Gc<JsObject>,
     },
@@ -211,7 +231,7 @@ pub enum Frame {
         test: Option<Rc<Expression>>,
         update: Option<Rc<Expression>>,
         body: Rc<Statement>,
-        label: Option<JsString>,
+        label: LoopLabel,
         loop_vars: Rc<Vec<(JsString, bool)>>,
         saved_env: Gc<JsObject>,
     },
@@ -230,7 +250,7 @@ pub enum Frame {
         /// Loop body
         body: Rc<Statement>,
         /// Optional label
-        label: Option<JsString>,
+        label: LoopLabel,
         /// Saved environment to restore after loop
         saved_env: Gc<JsObject>,
     },
@@ -241,7 +261,7 @@ pub enum Frame {
         index: usize,
         left: Rc<ForInOfLeft>,
         body: Rc<Statement>,
-        label: Option<JsString>,
+        label: LoopLabel,
         saved_env: Gc<JsObject>,
     },
 
@@ -256,7 +276,7 @@ pub enum Frame {
         /// Loop body
         body: Rc<Statement>,
         /// Optional label
-        label: Option<JsString>,
+        label: LoopLabel,
         /// Saved environment to restore after loop
         saved_env: Gc<JsObject>,
     },
@@ -267,35 +287,17 @@ pub enum Frame {
         index: usize,
         left: Rc<ForInOfLeft>,
         body: Rc<Statement>,
-        label: Option<JsString>,
+        label: LoopLabel,
         saved_env: Gc<JsObject>,
     },
 
     /// For-of loop over a generator: call next() each iteration
-    ForOfGenerator {
-        /// The generator object
-        generator: Gc<JsObject>,
-        /// Generator state RC
-        gen_state: Rc<std::cell::RefCell<crate::value::GeneratorState>>,
-        /// Left-hand side binding
-        left: Rc<ForInOfLeft>,
-        /// Loop body
-        body: Rc<Statement>,
-        /// Optional label
-        label: Option<JsString>,
-        /// Saved environment to restore after loop
-        saved_env: Gc<JsObject>,
-    },
+    /// Boxed to reduce Frame enum size (contains two Gc<JsObject> = 48 bytes)
+    ForOfGenerator(Box<ForOfGeneratorData>),
 
     /// For-of generator: after body, call next() again
-    ForOfGeneratorAfterBody {
-        generator: Gc<JsObject>,
-        gen_state: Rc<std::cell::RefCell<crate::value::GeneratorState>>,
-        left: Rc<ForInOfLeft>,
-        body: Rc<Statement>,
-        label: Option<JsString>,
-        saved_env: Gc<JsObject>,
-    },
+    /// Boxed to reduce Frame enum size
+    ForOfGeneratorAfterBody(Box<ForOfGeneratorData>),
 
     /// Discard expression result (for init expressions, update expressions)
     DiscardValue,
@@ -772,25 +774,24 @@ impl Interpreter {
                 saved_env,
             } => self.step_for_of_after_body(state, items, index, left, body, label, saved_env),
 
-            Frame::ForOfGenerator {
-                generator,
-                gen_state,
-                left,
-                body,
-                label,
-                saved_env,
-            } => self
-                .step_for_of_generator(state, generator, gen_state, left, body, label, saved_env),
+            Frame::ForOfGenerator(data) => self.step_for_of_generator(
+                state,
+                data.generator,
+                data.gen_state,
+                data.left,
+                data.body,
+                data.label,
+                data.saved_env,
+            ),
 
-            Frame::ForOfGeneratorAfterBody {
-                generator,
-                gen_state,
-                left,
-                body,
-                label,
-                saved_env,
-            } => self.step_for_of_generator_after_body(
-                state, generator, gen_state, left, body, label, saved_env,
+            Frame::ForOfGeneratorAfterBody(data) => self.step_for_of_generator_after_body(
+                state,
+                data.generator,
+                data.gen_state,
+                data.left,
+                data.body,
+                data.label,
+                data.saved_env,
             ),
 
             Frame::DiscardValue => {
@@ -1705,7 +1706,7 @@ impl Interpreter {
         state: &mut ExecutionState,
         test: Rc<Expression>,
         body: Rc<Statement>,
-        label: Option<JsString>,
+        label: LoopLabel,
     ) -> StepResult {
         // Get condition value (test was already evaluated)
         let condition = state
@@ -1735,13 +1736,13 @@ impl Interpreter {
         state: &mut ExecutionState,
         test: Rc<Expression>,
         body: Rc<Statement>,
-        label: Option<JsString>,
+        label: LoopLabel,
     ) -> StepResult {
         // Check for break/continue/return/throw from body execution
         match &state.completion {
             StackCompletion::Break(brk_label) => {
                 // Check if break targets this loop
-                if brk_label.is_none() || brk_label.as_ref() == label.as_ref() {
+                if brk_label.is_none() || brk_label.as_ref() == label_ref(&label) {
                     state.completion = StackCompletion::Normal;
                     let _ = state.pop_value(); // Discard body result
                     state.push_value(Guarded::unguarded(JsValue::Undefined));
@@ -1752,7 +1753,7 @@ impl Interpreter {
             }
             StackCompletion::Continue(cont_label) => {
                 // Check if continue targets this loop
-                if cont_label.is_none() || cont_label.as_ref() == label.as_ref() {
+                if cont_label.is_none() || cont_label.as_ref() == label_ref(&label) {
                     state.completion = StackCompletion::Normal;
                     let _ = state.pop_value(); // Discard body result
                                                // Continue to next iteration - evaluate test again
@@ -1794,12 +1795,12 @@ impl Interpreter {
         state: &mut ExecutionState,
         test: Rc<Expression>,
         body: Rc<Statement>,
-        label: Option<JsString>,
+        label: LoopLabel,
     ) -> StepResult {
         // Check for break/continue from body execution
         match &state.completion {
             StackCompletion::Break(brk_label) => {
-                if brk_label.is_none() || brk_label.as_ref() == label.as_ref() {
+                if brk_label.is_none() || brk_label.as_ref() == label_ref(&label) {
                     state.completion = StackCompletion::Normal;
                     state.push_value(Guarded::unguarded(JsValue::Undefined));
                     return StepResult::Continue;
@@ -1807,7 +1808,7 @@ impl Interpreter {
                 return StepResult::Continue;
             }
             StackCompletion::Continue(cont_label) => {
-                if cont_label.is_none() || cont_label.as_ref() == label.as_ref() {
+                if cont_label.is_none() || cont_label.as_ref() == label_ref(&label) {
                     state.completion = StackCompletion::Normal;
                     // In do-while, continue goes to condition check
                     // Fall through to check the condition
@@ -1842,7 +1843,7 @@ impl Interpreter {
         state: &mut ExecutionState,
         test: Rc<Expression>,
         body: Rc<Statement>,
-        label: Option<JsString>,
+        label: LoopLabel,
     ) -> StepResult {
         let condition = state
             .pop_value()
@@ -1872,7 +1873,7 @@ impl Interpreter {
         &mut self,
         state: &mut ExecutionState,
         for_stmt: &ForStatement,
-        label: Option<JsString>,
+        label: LoopLabel,
     ) -> StepResult {
         // Handle var declarations BEFORE creating loop scope (var is function-scoped)
         let has_var_init =
@@ -1958,7 +1959,7 @@ impl Interpreter {
         test: Option<Rc<Expression>>,
         update: Option<Rc<Expression>>,
         body: Rc<Statement>,
-        label: Option<JsString>,
+        label: LoopLabel,
         loop_vars: Rc<Vec<(JsString, bool)>>,
         saved_env: Gc<JsObject>,
         first_iteration: bool,
@@ -2019,7 +2020,7 @@ impl Interpreter {
         test: Option<Rc<Expression>>,
         update: Option<Rc<Expression>>,
         body: Rc<Statement>,
-        label: Option<JsString>,
+        label: LoopLabel,
         loop_vars: Rc<Vec<(JsString, bool)>>,
         saved_env: Gc<JsObject>,
     ) -> StepResult {
@@ -2059,14 +2060,14 @@ impl Interpreter {
         test: Option<Rc<Expression>>,
         update: Option<Rc<Expression>>,
         body: Rc<Statement>,
-        label: Option<JsString>,
+        label: LoopLabel,
         loop_vars: Rc<Vec<(JsString, bool)>>,
         saved_env: Gc<JsObject>,
     ) -> StepResult {
         // Check for control flow from body
         match &state.completion {
             StackCompletion::Break(brk_label) => {
-                if brk_label.is_none() || brk_label.as_ref() == label.as_ref() {
+                if brk_label.is_none() || brk_label.as_ref() == label_ref(&label) {
                     state.completion = StackCompletion::Normal;
                     // Pop iteration guard if we had loop vars
                     if !loop_vars.is_empty() {
@@ -2083,7 +2084,7 @@ impl Interpreter {
                 return StepResult::Continue;
             }
             StackCompletion::Continue(cont_label) => {
-                if cont_label.is_none() || cont_label.as_ref() == label.as_ref() {
+                if cont_label.is_none() || cont_label.as_ref() == label_ref(&label) {
                     state.completion = StackCompletion::Normal;
                     // Continue to update phase (fall through)
                 } else {
@@ -2177,7 +2178,7 @@ impl Interpreter {
         &mut self,
         state: &mut ExecutionState,
         for_in: &ForInStatement,
-        label: Option<JsString>,
+        label: LoopLabel,
     ) -> StepResult {
         // Evaluate right side
         let right = match self.evaluate_expression(&for_in.right) {
@@ -2222,7 +2223,7 @@ impl Interpreter {
         index: usize,
         left: Rc<ForInOfLeft>,
         body: Rc<Statement>,
-        label: Option<JsString>,
+        label: LoopLabel,
         saved_env: Gc<JsObject>,
     ) -> StepResult {
         // Check if we've iterated through all keys
@@ -2311,13 +2312,13 @@ impl Interpreter {
         index: usize,
         left: Rc<ForInOfLeft>,
         body: Rc<Statement>,
-        label: Option<JsString>,
+        label: LoopLabel,
         saved_env: Gc<JsObject>,
     ) -> StepResult {
         // Check completion type
         match &state.completion {
             StackCompletion::Break(break_label) => {
-                if break_label.is_none() || break_label.as_ref() == label.as_ref() {
+                if break_label.is_none() || break_label.as_ref() == label_ref(&label) {
                     // Break targets this loop - pop iteration guard and restore env
                     state.completion = StackCompletion::Normal;
                     self.pop_env_guard();
@@ -2332,7 +2333,7 @@ impl Interpreter {
                 return StepResult::Continue;
             }
             StackCompletion::Continue(cont_label) => {
-                if cont_label.is_none() || cont_label.as_ref() == label.as_ref() {
+                if cont_label.is_none() || cont_label.as_ref() == label_ref(&label) {
                     // Continue targets this loop - pop guard and proceed to next iteration
                     state.completion = StackCompletion::Normal;
                     self.pop_env_guard();
@@ -2380,7 +2381,7 @@ impl Interpreter {
         &mut self,
         state: &mut ExecutionState,
         for_of: &ForOfStatement,
-        label: Option<JsString>,
+        label: LoopLabel,
     ) -> StepResult {
         // Evaluate right side
         let right = match self.evaluate_expression(&for_of.right) {
@@ -2394,14 +2395,14 @@ impl Interpreter {
         if let JsValue::Object(ref obj) = right {
             if let ExoticObject::Generator(gen_state) = &obj.borrow().exotic {
                 // Use generator-specific iteration
-                state.push_frame(Frame::ForOfGenerator {
+                state.push_frame(Frame::ForOfGenerator(Box::new(ForOfGeneratorData {
                     generator: obj.clone(),
                     gen_state: gen_state.clone(),
                     left: Rc::new(for_of.left.clone()),
                     body: Rc::clone(&for_of.body),
                     label,
                     saved_env,
-                });
+                })));
                 return StepResult::Continue;
             }
         }
@@ -2454,7 +2455,7 @@ impl Interpreter {
         index: usize,
         left: Rc<ForInOfLeft>,
         body: Rc<Statement>,
-        label: Option<JsString>,
+        label: LoopLabel,
         saved_env: Gc<JsObject>,
     ) -> StepResult {
         // Check if we've iterated through all items
@@ -2532,13 +2533,13 @@ impl Interpreter {
         index: usize,
         left: Rc<ForInOfLeft>,
         body: Rc<Statement>,
-        label: Option<JsString>,
+        label: LoopLabel,
         saved_env: Gc<JsObject>,
     ) -> StepResult {
         // Check completion type
         match &state.completion {
             StackCompletion::Break(break_label) => {
-                if break_label.is_none() || break_label.as_ref() == label.as_ref() {
+                if break_label.is_none() || break_label.as_ref() == label_ref(&label) {
                     // Break targets this loop - pop iteration guard and restore env
                     state.completion = StackCompletion::Normal;
                     self.pop_env_guard();
@@ -2553,7 +2554,7 @@ impl Interpreter {
                 return StepResult::Continue;
             }
             StackCompletion::Continue(cont_label) => {
-                if cont_label.is_none() || cont_label.as_ref() == label.as_ref() {
+                if cont_label.is_none() || cont_label.as_ref() == label_ref(&label) {
                     // Continue targets this loop - pop guard and proceed to next iteration
                     state.completion = StackCompletion::Normal;
                     self.pop_env_guard();
@@ -2604,7 +2605,7 @@ impl Interpreter {
         gen_state: Rc<std::cell::RefCell<crate::value::GeneratorState>>,
         left: Rc<ForInOfLeft>,
         body: Rc<Statement>,
-        label: Option<JsString>,
+        label: LoopLabel,
         saved_env: Gc<JsObject>,
     ) -> StepResult {
         // Check for timeout
@@ -2677,14 +2678,14 @@ impl Interpreter {
         }
 
         // Push continuation frame for after body
-        state.push_frame(Frame::ForOfGeneratorAfterBody {
+        state.push_frame(Frame::ForOfGeneratorAfterBody(Box::new(ForOfGeneratorData {
             generator,
             gen_state,
             left,
             body: body.clone(),
             label,
             saved_env,
-        });
+        })));
 
         // Push body statement
         state.push_frame(Frame::Stmt(body));
@@ -2700,13 +2701,13 @@ impl Interpreter {
         gen_state: Rc<std::cell::RefCell<crate::value::GeneratorState>>,
         left: Rc<ForInOfLeft>,
         body: Rc<Statement>,
-        label: Option<JsString>,
+        label: LoopLabel,
         saved_env: Gc<JsObject>,
     ) -> StepResult {
         // Check completion type
         match &state.completion {
             StackCompletion::Break(break_label) => {
-                if break_label.is_none() || break_label.as_ref() == label.as_ref() {
+                if break_label.is_none() || break_label.as_ref() == label_ref(&label) {
                     // Break targets this loop - pop iteration guard and restore env
                     state.completion = StackCompletion::Normal;
                     self.pop_env_guard();
@@ -2721,7 +2722,7 @@ impl Interpreter {
                 return StepResult::Continue;
             }
             StackCompletion::Continue(cont_label) => {
-                if cont_label.is_none() || cont_label.as_ref() == label.as_ref() {
+                if cont_label.is_none() || cont_label.as_ref() == label_ref(&label) {
                     // Continue targets this loop - pop guard and proceed to next iteration
                     state.completion = StackCompletion::Normal;
                     self.pop_env_guard();
@@ -2748,14 +2749,14 @@ impl Interpreter {
         let _ = state.pop_value();
 
         // Push next iteration
-        state.push_frame(Frame::ForOfGenerator {
+        state.push_frame(Frame::ForOfGenerator(Box::new(ForOfGeneratorData {
             generator,
             gen_state,
             left,
             body,
             label,
             saved_env,
-        });
+        })));
 
         StepResult::Continue
     }
@@ -2782,7 +2783,7 @@ impl Interpreter {
                 state.push_frame(Frame::WhileLoop {
                     test: Rc::clone(&while_stmt.test),
                     body: Rc::clone(&while_stmt.body),
-                    label: Some(label),
+                    label: Some(Box::new(label)),
                 });
                 StepResult::Continue
             }
@@ -2793,7 +2794,7 @@ impl Interpreter {
                 state.push_frame(Frame::DoWhileLoop {
                     test: Rc::clone(&do_while.test),
                     body: Rc::clone(&do_while.body),
-                    label: Some(label),
+                    label: Some(Box::new(label)),
                 });
                 StepResult::Continue
             }
@@ -2801,19 +2802,19 @@ impl Interpreter {
                 state.push_frame(Frame::LabeledComplete {
                     label: label.cheap_clone(),
                 });
-                self.setup_for_loop(state, for_stmt, Some(label))
+                self.setup_for_loop(state, for_stmt, Some(Box::new(label)))
             }
             Statement::ForIn(for_in) => {
                 state.push_frame(Frame::LabeledComplete {
                     label: label.cheap_clone(),
                 });
-                self.setup_for_in_loop(state, for_in, Some(label))
+                self.setup_for_in_loop(state, for_in, Some(Box::new(label)))
             }
             Statement::ForOf(for_of) => {
                 state.push_frame(Frame::LabeledComplete {
                     label: label.cheap_clone(),
                 });
-                self.setup_for_of_loop(state, for_of, Some(label))
+                self.setup_for_of_loop(state, for_of, Some(Box::new(label)))
             }
             _ => {
                 // Non-loop statement with label
