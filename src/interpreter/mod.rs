@@ -1378,15 +1378,18 @@ impl Interpreter {
     /// Execute a single statement using stack-based execution
     /// Used for static blocks and other simple statement execution contexts
     fn execute_simple_statement(&mut self, stmt: &Statement) -> Result<JsValue, JsError> {
-        let mut state = stack::ExecutionState::for_statement(stmt);
-        match self.run(&mut state) {
+        let mut state = self.get_execution_state();
+        state.init_for_statement(stmt);
+        let result = match self.run(&mut state) {
             stack::StepResult::Done(g) => Ok(g.value),
             stack::StepResult::Error(e) => Err(e),
             stack::StepResult::Suspend(_) => Err(JsError::type_error(
                 "Statement execution cannot be suspended",
             )),
             stack::StepResult::Continue => Ok(JsValue::Undefined),
-        }
+        };
+        self.return_execution_state(state);
+        result
     }
 
     fn execute_variable_declaration(&mut self, decl: &VariableDeclaration) -> Result<(), JsError> {
@@ -1785,10 +1788,9 @@ impl Interpreter {
                 if n.fract() == 0.0 && *n >= 0.0 && *n <= u32::MAX as f64 {
                     // Use Index key for numeric reverse mapping so obj[0] works
                     let reverse_key = PropertyKey::Index(*n as u32);
-                    enum_obj.borrow_mut().set_property(
-                        reverse_key,
-                        JsValue::String(member.id.name.cheap_clone()),
-                    );
+                    enum_obj
+                        .borrow_mut()
+                        .set_property(reverse_key, JsValue::String(member.id.name.cheap_clone()));
                 }
             }
         }
