@@ -655,7 +655,9 @@ impl Interpreter {
 
         // Copy exports to module object
         for (name, value) in exports {
-            module_obj.borrow_mut().set_property(PropertyKey::String(name), value);
+            module_obj
+                .borrow_mut()
+                .set_property(PropertyKey::String(name), value);
         }
 
         // Root the module (lives forever)
@@ -931,7 +933,8 @@ impl Interpreter {
 
     /// Push a new scope and return the saved environment
     pub fn push_scope(&mut self) -> EnvRef {
-        let (new_env, new_guard) = create_environment_unrooted(&self.heap, Some(self.env.cheap_clone()));
+        let (new_env, new_guard) =
+            create_environment_unrooted(&self.heap, Some(self.env.cheap_clone()));
 
         let old_env = self.env.cheap_clone();
         self.env = new_env;
@@ -1446,9 +1449,7 @@ impl Interpreter {
                                     }
                                 }
                                 ObjectPropertyKey::Computed(_) => continue,
-                                ObjectPropertyKey::PrivateIdentifier(id) => {
-                                    format!("#{}", id.name).into()
-                                }
+                                ObjectPropertyKey::PrivateIdentifier(id) => id.name.cheap_clone(),
                             };
 
                             let prop_value = obj
@@ -1680,7 +1681,9 @@ impl Interpreter {
 
         // Copy exports to module object
         for (name, value) in exports {
-            module_obj.borrow_mut().set_property(PropertyKey::String(name), value);
+            module_obj
+                .borrow_mut()
+                .set_property(PropertyKey::String(name), value);
         }
 
         // Restore saved exports
@@ -1767,7 +1770,10 @@ impl Interpreter {
             };
 
             // Set name -> value mapping on the enum object
-            enum_obj.borrow_mut().set_property(PropertyKey::String(member.id.name.cheap_clone()), value.clone());
+            enum_obj.borrow_mut().set_property(
+                PropertyKey::String(member.id.name.cheap_clone()),
+                value.clone(),
+            );
 
             // Also define the member name in the current scope so later members can reference it
             // (e.g., in `ReadWrite = Read | Write`, `Read` needs to be in scope)
@@ -1779,9 +1785,10 @@ impl Interpreter {
                 if n.fract() == 0.0 && *n >= 0.0 && *n <= u32::MAX as f64 {
                     // Use Index key for numeric reverse mapping so obj[0] works
                     let reverse_key = PropertyKey::Index(*n as u32);
-                    enum_obj
-                        .borrow_mut()
-                        .set_property(reverse_key, JsValue::String(JsString::from(member.id.name.cheap_clone())));
+                    enum_obj.borrow_mut().set_property(
+                        reverse_key,
+                        JsValue::String(member.id.name.cheap_clone()),
+                    );
                 }
             }
         }
@@ -1830,7 +1837,8 @@ impl Interpreter {
 
         // Create a new scope for the namespace body with guard
         let saved_env = self.env.cheap_clone();
-        let (new_env, ns_guard) = create_environment_unrooted(&self.heap, Some(self.env.cheap_clone()));
+        let (new_env, ns_guard) =
+            create_environment_unrooted(&self.heap, Some(self.env.cheap_clone()));
         self.env = new_env;
         self.push_env_guard(ns_guard);
 
@@ -1843,7 +1851,9 @@ impl Interpreter {
         // Drain to vec first to avoid borrow conflict
         let exports: Vec<_> = self.exports.drain().collect();
         for (name, value) in exports {
-            ns_obj.borrow_mut().set_property(PropertyKey::String(name), value);
+            ns_obj
+                .borrow_mut()
+                .set_property(PropertyKey::String(name), value);
         }
 
         // Pop namespace guard and restore environment and exports
@@ -2045,7 +2055,7 @@ impl Interpreter {
                     _ => continue,
                 },
                 ObjectPropertyKey::Computed(_) => continue,
-                ObjectPropertyKey::PrivateIdentifier(id) => JsString::from(format!("#{}", id.name)),
+                ObjectPropertyKey::PrivateIdentifier(id) => id.name.cheap_clone(),
             };
 
             let func = &method.value;
@@ -2062,9 +2072,10 @@ impl Interpreter {
 
             // Store __super__ on method so super.method() works
             if let Some(ref super_ctor) = super_constructor {
-                func_obj
-                    .borrow_mut()
-                    .set_property(self.key("__super__"), JsValue::Object(super_ctor.cheap_clone()));
+                func_obj.borrow_mut().set_property(
+                    self.key("__super__"),
+                    JsValue::Object(super_ctor.cheap_clone()),
+                );
             }
 
             match method.kind {
@@ -2104,9 +2115,7 @@ impl Interpreter {
                 let name: JsString = match &prop.key {
                     ObjectPropertyKey::Identifier(id) => id.name.cheap_clone(),
                     ObjectPropertyKey::String(s) => s.value.cheap_clone(),
-                    ObjectPropertyKey::PrivateIdentifier(id) => {
-                        JsString::from(format!("#{}", id.name))
-                    }
+                    ObjectPropertyKey::PrivateIdentifier(id) => id.name.cheap_clone(),
                     _ => return None,
                 };
                 Some((name, prop.value.clone()))
@@ -2142,9 +2151,10 @@ impl Interpreter {
         self.root_guard.guard(constructor_fn.clone());
 
         // Store prototype on constructor
-        constructor_fn
-            .borrow_mut()
-            .set_property(self.key("prototype"), JsValue::Object(prototype.cheap_clone()));
+        constructor_fn.borrow_mut().set_property(
+            self.key("prototype"),
+            JsValue::Object(prototype.cheap_clone()),
+        );
 
         // Store field initializers in __fields__ if there are any
         if !field_initializers.is_empty() {
@@ -2182,9 +2192,10 @@ impl Interpreter {
 
         // Store super constructor if we have one
         if let Some(ref super_ctor) = super_constructor {
-            constructor_fn
-                .borrow_mut()
-                .set_property(self.key("__super__"), JsValue::Object(super_ctor.cheap_clone()));
+            constructor_fn.borrow_mut().set_property(
+                self.key("__super__"),
+                JsValue::Object(super_ctor.cheap_clone()),
+            );
         }
 
         // Handle static methods
@@ -2204,7 +2215,7 @@ impl Interpreter {
                     _ => continue,
                 },
                 ObjectPropertyKey::Computed(_) => continue,
-                ObjectPropertyKey::PrivateIdentifier(id) => JsString::from(format!("#{}", id.name)),
+                ObjectPropertyKey::PrivateIdentifier(id) => id.name.cheap_clone(),
             };
 
             let func = &method.value;
@@ -2255,7 +2266,7 @@ impl Interpreter {
             let name = match &prop.key {
                 ObjectPropertyKey::Identifier(id) => id.name.cheap_clone(),
                 ObjectPropertyKey::String(s) => s.value.cheap_clone(),
-                ObjectPropertyKey::PrivateIdentifier(id) => JsString::from(format!("#{}", id.name)),
+                ObjectPropertyKey::PrivateIdentifier(id) => id.name.cheap_clone(),
                 _ => continue,
             };
 
@@ -2272,9 +2283,10 @@ impl Interpreter {
         }
 
         // Set prototype.constructor = constructor
-        prototype
-            .borrow_mut()
-            .set_property(self.key("constructor"), JsValue::Object(constructor_fn.cheap_clone()));
+        prototype.borrow_mut().set_property(
+            self.key("constructor"),
+            JsValue::Object(constructor_fn.cheap_clone()),
+        );
 
         Ok(constructor_fn)
     }
@@ -3230,9 +3242,7 @@ impl Interpreter {
                                     }
                                 }
                                 ObjectPropertyKey::Computed(_) => continue,
-                                ObjectPropertyKey::PrivateIdentifier(id) => {
-                                    format!("#{}", id.name).into()
-                                }
+                                ObjectPropertyKey::PrivateIdentifier(id) => id.name.cheap_clone(),
                             };
 
                             let prop_value = obj
@@ -3840,9 +3850,7 @@ impl Interpreter {
                 } = self.evaluate_expression(expr)?;
                 Ok(PropertyKey::from_value(&val))
             }
-            MemberProperty::PrivateIdentifier(id) => {
-                Ok(PropertyKey::String(JsString::from(format!("#{}", id.name))))
-            }
+            MemberProperty::PrivateIdentifier(id) => Ok(PropertyKey::String(id.name.cheap_clone())),
         }
     }
 
@@ -3917,7 +3925,7 @@ impl Interpreter {
                             PropertyKey::from_value(&k)
                         }
                         ObjectPropertyKey::PrivateIdentifier(id) => {
-                            PropertyKey::String(JsString::from(format!("#{}", id.name)))
+                            PropertyKey::String(id.name.cheap_clone())
                         }
                     };
 

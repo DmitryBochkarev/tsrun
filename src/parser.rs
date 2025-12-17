@@ -630,8 +630,8 @@ impl<'a> Parser<'a> {
             self.require_token(&TokenKind::RBracket)?;
             Ok((ObjectPropertyKey::Computed(Rc::new(expr)), true))
         } else if self.match_token(&TokenKind::Hash) {
-            // Private identifier: #name
-            let name = self.parse_identifier()?;
+            // Private identifier: #name (name includes # prefix)
+            let name = self.parse_private_identifier()?;
             Ok((ObjectPropertyKey::PrivateIdentifier(name), false))
         } else {
             Ok((self.parse_property_name()?, false))
@@ -651,7 +651,10 @@ impl<'a> Parser<'a> {
         self.require_token(&TokenKind::RBrace)?;
 
         let span = self.span_from(start);
-        Ok(BlockStatement { body: body.into(), span })
+        Ok(BlockStatement {
+            body: body.into(),
+            span,
+        })
     }
 
     fn parse_if_statement(&mut self) -> Result<Statement, JsError> {
@@ -1153,7 +1156,11 @@ impl<'a> Parser<'a> {
         self.require_token(&TokenKind::RBrace)?;
 
         let span = self.span_from(start);
-        Ok(NamespaceDeclaration { id, body: body.into(), span })
+        Ok(NamespaceDeclaration {
+            id,
+            body: body.into(),
+            span,
+        })
     }
 
     // Module declarations (stubs)
@@ -1678,7 +1685,7 @@ impl<'a> Parser<'a> {
             } else if self.match_token(&TokenKind::Dot) {
                 // Check for private identifier (#name)
                 if self.match_token(&TokenKind::Hash) {
-                    let name = self.parse_identifier()?;
+                    let name = self.parse_private_identifier()?;
                     let span = self.span_from(start);
                     expr = Expression::Member(MemberExpression {
                         object: Rc::new(expr),
@@ -1810,7 +1817,7 @@ impl<'a> Parser<'a> {
         loop {
             if self.match_token(&TokenKind::Dot) {
                 if self.match_token(&TokenKind::Hash) {
-                    let name = self.parse_identifier()?;
+                    let name = self.parse_private_identifier()?;
                     let span = self.span_from(start);
                     expr = Expression::Member(MemberExpression {
                         object: Rc::new(expr),
@@ -3208,6 +3215,22 @@ impl<'a> Parser<'a> {
                 Ok(Identifier { name, span })
             }
             _ => Err(self.unexpected_token("identifier")),
+        }
+    }
+
+    /// Parse a private identifier (after `#` token has been consumed).
+    /// Returns an Identifier with name including the `#` prefix (e.g., "#foo").
+    fn parse_private_identifier(&mut self) -> Result<Identifier, JsError> {
+        match &self.current.kind {
+            TokenKind::Identifier(name) => {
+                // Construct "#name" and intern it
+                let private_name = format!("#{}", name);
+                let name = self.intern(&private_name);
+                let span = self.current.span;
+                self.advance();
+                Ok(Identifier { name, span })
+            }
+            _ => Err(self.unexpected_token("identifier after #")),
         }
     }
 
@@ -4695,5 +4718,56 @@ export function parseLinks(text: string): ParsedElement[] {
         let prog = parse(source);
         // Should have interface + 3 functions
         assert_eq!(prog.body.len(), 4);
+    }
+
+    #[test]
+    fn test_private_field_name_includes_hash() {
+        // Verify that private field names include the # prefix
+        let prog = parse("class Foo { #bar: number = 1; }");
+        let Statement::ClassDeclaration(class) = &prog.body[0] else {
+            panic!("Expected class declaration");
+        };
+        let ClassMember::Property(prop) = &class.body.members[0] else {
+            panic!("Expected property");
+        };
+        let ObjectPropertyKey::PrivateIdentifier(id) = &prop.key else {
+            panic!("Expected private identifier");
+        };
+        // The name should include the # prefix
+        assert_eq!(id.name.as_str(), "#bar");
+    }
+
+    #[test]
+    fn test_private_method_name_includes_hash() {
+        // Verify that private method names include the # prefix
+        let prog = parse("class Foo { #secret() { return 42; } }");
+        let Statement::ClassDeclaration(class) = &prog.body[0] else {
+            panic!("Expected class declaration");
+        };
+        let ClassMember::Method(method) = &class.body.members[0] else {
+            panic!("Expected method");
+        };
+        let ObjectPropertyKey::PrivateIdentifier(id) = &method.key else {
+            panic!("Expected private identifier");
+        };
+        // The name should include the # prefix
+        assert_eq!(id.name.as_str(), "#secret");
+    }
+
+    #[test]
+    fn test_private_member_access_name_includes_hash() {
+        // Verify that private member access uses name with # prefix
+        let prog = parse("this.#foo");
+        let Statement::Expression(expr_stmt) = &prog.body[0] else {
+            panic!("Expected expression statement");
+        };
+        let Expression::Member(member) = expr_stmt.expression.as_ref() else {
+            panic!("Expected member expression");
+        };
+        let MemberProperty::PrivateIdentifier(id) = &member.property else {
+            panic!("Expected private identifier");
+        };
+        // The name should include the # prefix
+        assert_eq!(id.name.as_str(), "#foo");
     }
 }

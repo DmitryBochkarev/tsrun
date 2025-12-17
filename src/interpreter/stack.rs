@@ -309,9 +309,7 @@ pub enum Frame {
     // Switch Statement
     // ═══════════════════════════════════════════════════════════════════════
     /// Switch statement: evaluate discriminant
-    SwitchEval {
-        cases: Rc<[crate::ast::SwitchCase]>,
-    },
+    SwitchEval { cases: Rc<[crate::ast::SwitchCase]> },
 
     /// Switch: discriminant evaluated, match cases
     SwitchMatch {
