@@ -8,7 +8,7 @@ use std::rc::Rc;
 
 use rustc_hash::FxHashMap;
 
-use crate::ast::{ArrowFunctionBody, BlockStatement, FunctionParam};
+use crate::ast::{ArrowFunctionBody, BlockStatement, Expression, FunctionParam};
 use crate::error::JsError;
 use crate::gc::{Gc, GcPtr, Guard, Heap, Reset, Traceable};
 use crate::lexer::Span;
@@ -39,6 +39,7 @@ pub trait CheapClone: Clone {
 
 // Implement CheapClone for Rc-based types (Rc<RefCell<T>> is covered by this)
 impl<T: ?Sized> CheapClone for Rc<T> {}
+impl<T: CheapClone> CheapClone for Option<T> {}
 
 /// A JavaScript value
 ///
@@ -1358,6 +1359,7 @@ pub enum ExoticObject {
     /// Date exotic object - stores timestamp in milliseconds since Unix epoch
     Date { timestamp: f64 },
     /// RegExp exotic object - stores pattern and flags
+    // FIXME: use JsStrings
     RegExp { pattern: String, flags: String },
     /// Generator exotic object - stores generator state
     Generator(Rc<RefCell<GeneratorState>>),
@@ -1489,7 +1491,7 @@ pub struct InterpretedFunction {
 #[derive(Debug, Clone)]
 pub enum FunctionBody {
     Block(Rc<BlockStatement>),
-    Expression(Rc<crate::ast::Expression>),
+    Expression(Rc<Expression>),
 }
 
 impl From<Rc<ArrowFunctionBody>> for FunctionBody {

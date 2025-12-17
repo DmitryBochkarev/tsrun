@@ -127,6 +127,7 @@ impl Iterator for UnmarkedIter<'_> {
 /// Objects are collected by the GC when unreachable (not when ref_count hits 0).
 pub struct Gc<T: Default + Reset + Traceable> {
     /// Unique object ID (for ownership tracking)
+    // FIXME: duplicated index same as in gc
     id: usize,
 
     /// Pointer to the GcBox for fast access

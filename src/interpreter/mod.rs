@@ -29,6 +29,7 @@ use crate::value::{
     JsObject, JsString, JsValue, NativeFn, NativeFunction, PromiseStatus, Property, PropertyKey,
 };
 use rustc_hash::FxHashMap;
+use std::cell::RefCell;
 use std::rc::Rc;
 
 /// Completion record for control flow
@@ -182,6 +183,7 @@ pub struct Interpreter {
     internal_module_cache: FxHashMap<String, Gc<JsObject>>,
 
     /// Loaded external modules (specifier -> module namespace)
+    // FIXME: loaded modules should be specfied with path relative to main module, in order to mixup same-named modules from different paths
     loaded_modules: FxHashMap<String, Gc<JsObject>>,
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -320,13 +322,13 @@ impl Interpreter {
     /// Initialize built-in global values
     fn init_globals(&mut self) {
         // For now, minimal globals - just define undefined and NaN
-        let undefined_name = self.string_dict.get_or_insert("undefined");
+        let undefined_name = self.intern("undefined");
         self.env_define(undefined_name, JsValue::Undefined, false);
 
-        let nan_name = self.string_dict.get_or_insert("NaN");
+        let nan_name = self.intern("NaN");
         self.env_define(nan_name, JsValue::Number(f64::NAN), false);
 
-        let infinity_name = self.string_dict.get_or_insert("Infinity");
+        let infinity_name = self.intern("Infinity");
         self.env_define(infinity_name, JsValue::Number(f64::INFINITY), false);
 
         // Initialize Array builtin methods
@@ -370,35 +372,35 @@ impl Interpreter {
 
         // Initialize String constructor (global String function)
         let string_constructor = builtins::create_string_constructor(self);
-        let string_name = self.string_dict.get_or_insert("String");
+        let string_name = self.intern("String");
         self.env_define(string_name, JsValue::Object(string_constructor), false);
 
         // Initialize Array constructor (global Array function)
         let array_constructor = builtins::create_array_constructor(self);
-        let array_name = self.string_dict.get_or_insert("Array");
+        let array_name = self.intern("Array");
         self.env_define(array_name, JsValue::Object(array_constructor), false);
 
         // Initialize Object prototype and constructor
         builtins::init_object_prototype(self);
         let object_constructor = builtins::create_object_constructor(self);
-        let object_name = self.string_dict.get_or_insert("Object");
+        let object_name = self.intern("Object");
         self.env_define(object_name, JsValue::Object(object_constructor), false);
 
         // Initialize RegExp prototype and constructor
         builtins::init_regexp_prototype(self);
         let regexp_constructor = builtins::create_regexp_constructor(self);
-        let regexp_name = self.string_dict.get_or_insert("RegExp");
+        let regexp_name = self.intern("RegExp");
         self.env_define(regexp_name, JsValue::Object(regexp_constructor), false);
 
         // Initialize Number constructor (global Number function)
         let number_constructor = builtins::create_number_constructor(self);
-        let number_name = self.string_dict.get_or_insert("Number");
+        let number_name = self.intern("Number");
         self.env_define(number_name, JsValue::Object(number_constructor), false);
 
         // Initialize Promise prototype and constructor
         builtins::promise_new::init_promise_prototype(self);
         let promise_constructor = builtins::promise_new::create_promise_constructor(self);
-        let promise_name = self.string_dict.get_or_insert("Promise");
+        let promise_name = self.intern("Promise");
         self.env_define(promise_name, JsValue::Object(promise_constructor), false);
 
         // Initialize Generator prototype
@@ -496,6 +498,7 @@ impl Interpreter {
         let missing: Vec<String> = imports
             .into_iter()
             .filter(|spec| {
+                // FIXME: handle relative paths and normalization
                 !self.is_internal_module(spec) && !self.loaded_modules.contains_key(spec)
             })
             .collect();
@@ -568,12 +571,15 @@ impl Interpreter {
                 StepResult::Continue => continue,
                 StepResult::Done(guarded) => {
                     // Execution complete
+                    // FIXME: what backward compatibility?
                     // Check if there are pending orders (for backward compatibility)
                     if !self.pending_orders.is_empty() {
+                        // FIXME: should be kept in interpreter state
                         let pending = std::mem::take(&mut self.pending_orders);
                         let cancelled = std::mem::take(&mut self.cancelled_orders);
                         return Ok(crate::RuntimeResult::Suspended { pending, cancelled });
                     }
+                    // FIXME: return guarded value properly
                     return Ok(crate::RuntimeResult::Complete(guarded.value));
                 }
                 StepResult::Error(error) => {
@@ -591,6 +597,7 @@ impl Interpreter {
                 StepResult::Suspend(_promise) => {
                     // Await on pending promise - save state and return Suspended
                     self.suspended_state = Some(std::mem::take(state));
+                    // FIXME: should be kept in interpreter state
                     let pending = std::mem::take(&mut self.pending_orders);
                     let cancelled = std::mem::take(&mut self.cancelled_orders);
                     return Ok(crate::RuntimeResult::Suspended { pending, cancelled });
@@ -603,6 +610,9 @@ impl Interpreter {
     ///
     /// The module is parsed and stored, but not executed until `continue_eval` is called.
     /// This allows collecting all needed imports before execution.
+    // FIXME: handle relative paths and normalization
+    // FIXME: should support native modules
+    // FIXME: should support already parsed sources
     pub fn provide_module(&mut self, specifier: &str, source: &str) -> Result<(), JsError> {
         // Parse the module
         let mut parser = Parser::new(source, &mut self.string_dict);
@@ -623,7 +633,7 @@ impl Interpreter {
             .ok_or_else(|| JsError::internal_error(format!("Module '{}' not found", specifier)))?;
 
         // Save current environment
-        let saved_env = self.env.clone();
+        let saved_env = self.env.cheap_clone();
 
         // Create module environment
         let module_env = self.create_module_environment();
@@ -645,8 +655,7 @@ impl Interpreter {
 
         // Copy exports to module object
         for (name, value) in exports {
-            let key = self.key(name.as_str());
-            module_obj.borrow_mut().set_property(key, value);
+            module_obj.borrow_mut().set_property(PropertyKey::String(name), value);
         }
 
         // Root the module (lives forever)
@@ -730,6 +739,7 @@ impl Interpreter {
         // If we have a pending program waiting for imports, check if we can execute it now
         if let Some(program) = self.pending_program.take() {
             // Re-check imports
+            // FIXME: duplicate code
             let imports = self.collect_imports(&program);
             let missing: Vec<String> = imports
                 .into_iter()
@@ -758,6 +768,7 @@ impl Interpreter {
 
         // Check if there are pending orders (for backward compatibility)
         if !self.pending_orders.is_empty() {
+            // FIXME: should be kept in interpreter state
             let pending = std::mem::take(&mut self.pending_orders);
             let cancelled = std::mem::take(&mut self.cancelled_orders);
             return Ok(crate::RuntimeResult::Suspended { pending, cancelled });
@@ -803,13 +814,14 @@ impl Interpreter {
             let mut env_ref = env.borrow_mut();
             env_ref.null_prototype = true;
             env_ref.exotic = ExoticObject::Environment(EnvironmentData::with_outer(Some(
-                self.global_env.clone(),
+                self.global_env.cheap_clone(),
             )));
         }
         env
     }
 
     /// Collect all import specifiers from a program
+    // FIXME: move to Program
     fn collect_imports(&self, program: &Program) -> Vec<String> {
         use crate::ast::Statement;
 
@@ -853,8 +865,9 @@ impl Interpreter {
     }
 
     /// Get a variable from the environment chain
+    // FIXME: return guarded
     pub fn env_get(&self, name: &JsString) -> Result<JsValue, JsError> {
-        let mut current = Some(self.env.clone());
+        let mut current = Some(self.env.cheap_clone());
         let mut depth = 0;
 
         while let Some(env) = current {
@@ -869,7 +882,7 @@ impl Interpreter {
                     }
                     return Ok(binding.value.clone());
                 }
-                current = data.outer.clone();
+                current = data.outer.cheap_clone();
                 depth += 1;
             } else {
                 eprintln!("[env_get] {} NOT FOUND: env id={} at depth {} is NOT an environment! exotic={:?}",
@@ -918,9 +931,9 @@ impl Interpreter {
 
     /// Push a new scope and return the saved environment
     pub fn push_scope(&mut self) -> EnvRef {
-        let (new_env, new_guard) = create_environment_unrooted(&self.heap, Some(self.env.clone()));
+        let (new_env, new_guard) = create_environment_unrooted(&self.heap, Some(self.env.cheap_clone()));
 
-        let old_env = self.env.clone();
+        let old_env = self.env.cheap_clone();
         self.env = new_env;
         self.env_guards.push(new_guard);
         old_env
@@ -966,7 +979,7 @@ impl Interpreter {
     pub fn create_object_with_guard(&mut self) -> (Gc<JsObject>, Guard<JsObject>) {
         let temp = self.heap.create_guard();
         let obj = temp.alloc();
-        obj.borrow_mut().prototype = Some(self.object_prototype.clone());
+        obj.borrow_mut().prototype = Some(self.object_prototype.cheap_clone());
         (obj, temp)
     }
 
@@ -980,7 +993,7 @@ impl Interpreter {
         let obj = temp.alloc();
         {
             let mut obj_ref = obj.borrow_mut();
-            obj_ref.prototype = Some(self.object_prototype.clone());
+            obj_ref.prototype = Some(self.object_prototype.cheap_clone());
             obj_ref.properties.reserve(capacity);
         }
         (obj, temp)
@@ -988,6 +1001,7 @@ impl Interpreter {
 
     /// Create a RegExp literal object with a temporary guard.
     /// Used when evaluating /pattern/flags syntax.
+    // FIXME: extract to regexp module
     fn create_regexp_literal(&mut self, pattern: &str, flags: &str) -> Result<Guarded, JsError> {
         // Pre-intern all property keys
         let source_key = self.key("source");
@@ -1033,17 +1047,18 @@ impl Interpreter {
         let arr = temp.alloc();
         {
             let mut arr_ref = arr.borrow_mut();
-            arr_ref.prototype = Some(self.array_prototype.clone());
+            arr_ref.prototype = Some(self.array_prototype.cheap_clone());
             arr_ref.exotic = ExoticObject::Array { length: len };
 
+            // FIXME: store elements in exotic object
             for (i, elem) in elements.iter().enumerate() {
                 arr_ref.set_property(PropertyKey::Index(i as u32), elem.clone());
             }
 
             // length should be writable but not enumerable
-            let length_key = PropertyKey::String(self.string_dict.get_or_insert("length"));
+            // FIXME: delegated property
             arr_ref.properties.insert(
-                length_key,
+                PropertyKey::String(self.intern("length")),
                 Property::with_attributes(JsValue::Number(len as f64), true, false, false),
             );
         }
@@ -1092,12 +1107,14 @@ impl Interpreter {
     }
 
     /// Create a PropertyKey from a string
+    // FIXME: over-used candidate to removal
     pub fn key(&mut self, s: &str) -> PropertyKey {
-        PropertyKey::String(self.string_dict.get_or_insert(s))
+        PropertyKey::String(self.intern(s))
     }
 
     /// Create an array with a temporary guard.
     /// Returns (array, temp_guard). Caller must transfer ownership before guard is dropped.
+    // FIXME: duplicate of create_array_with_guard
     pub fn create_array(&mut self, elements: Vec<JsValue>) -> (Gc<JsObject>, Guard<JsObject>) {
         let len = elements.len() as u32;
         let temp = self.heap.create_guard();
@@ -1112,7 +1129,7 @@ impl Interpreter {
             }
 
             arr_ref.set_property(
-                PropertyKey::String(self.string_dict.get_or_insert("length")),
+                PropertyKey::String(self.intern("length")),
                 JsValue::Number(len as f64),
             );
         }
@@ -1127,7 +1144,8 @@ impl Interpreter {
         func: NativeFn,
         arity: usize,
     ) -> Gc<JsObject> {
-        let name_str = self.string_dict.get_or_insert(name);
+        let name_str = self.intern(name);
+        // FIXME: we should remove rooting here and return proper guard
         let func_obj = self.root_guard.alloc();
         {
             let mut f_ref = func_obj.borrow_mut();
@@ -1143,6 +1161,7 @@ impl Interpreter {
 
     /// Create a function object from any JsFunction variant (for bind, etc.)
     pub fn create_function(&mut self, func: JsFunction) -> Gc<JsObject> {
+        // FIXME: we should remove rooting here and return proper guard
         let func_obj = self.root_guard.alloc();
         {
             let mut f_ref = func_obj.borrow_mut();
@@ -1171,7 +1190,7 @@ impl Interpreter {
     pub fn guard_value(&mut self, value: &JsValue) -> Option<Guard<JsObject>> {
         if let JsValue::Object(obj) = value {
             let guard = self.heap.create_guard();
-            guard.guard(obj.clone());
+            guard.guard(obj.cheap_clone());
             Some(guard)
         } else {
             None
@@ -1179,13 +1198,15 @@ impl Interpreter {
     }
 
     /// Create a guarded scope for multiple objects
+    // FIXME: candidate for removal
     pub fn guarded_scope(&mut self) -> Guard<JsObject> {
         self.heap.create_guard()
     }
 
     /// Add an object to the root guard (for permanent objects)
+    // FIXME: candidate for removal
     pub fn root_guard_object(&self, obj: &Gc<JsObject>) {
-        self.root_guard.guard(obj.clone());
+        self.root_guard.guard(obj.cheap_clone());
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -1219,7 +1240,7 @@ impl Interpreter {
     /// This executes the generator body until the next yield or return
     pub fn resume_generator(
         &mut self,
-        gen_state: &std::rc::Rc<std::cell::RefCell<crate::value::GeneratorState>>,
+        gen_state: &Rc<RefCell<crate::value::GeneratorState>>,
     ) -> Result<Guarded, JsError> {
         use stack::{ExecutionState, Frame, StepResult};
 
@@ -1234,10 +1255,11 @@ impl Interpreter {
                 ));
             }
             (
-                state.body.clone(),
-                state.params.clone(),
+                state.body.cheap_clone(),
+                state.params.cheap_clone(),
+                // FIXME: make args cheap clonnable
                 state.args.clone(),
-                state.closure.clone(),
+                state.closure.cheap_clone(),
                 state.stmt_index,
                 state.sent_value.clone(),
             )
@@ -1254,12 +1276,13 @@ impl Interpreter {
 
         // Create function environment with guard
         let (func_env, func_guard) = create_environment_unrooted(&self.heap, Some(closure));
-        let saved_env = self.env.clone();
+        let saved_env = self.env.cheap_clone();
         self.env = func_env;
         self.push_env_guard(func_guard);
 
         // Bind parameters
         for (i, param) in params.iter().enumerate() {
+            // FIXME: clone
             let arg_value = args.get(i).cloned().unwrap_or(JsValue::Undefined);
             if let Err(e) = self.bind_pattern(&param.pattern, arg_value, true) {
                 self.pop_env_guard();
@@ -1272,7 +1295,7 @@ impl Interpreter {
         // Create execution state with generator body
         let mut state = ExecutionState::new();
         state.push_frame(Frame::Program {
-            statements: Rc::clone(&body.body),
+            statements: body.body.cheap_clone(),
             index: 0,
         });
 
@@ -1321,7 +1344,7 @@ impl Interpreter {
     /// Resume a generator with throw semantics (for Generator.prototype.throw)
     pub fn resume_generator_with_throw(
         &mut self,
-        gen_state: &std::rc::Rc<std::cell::RefCell<crate::value::GeneratorState>>,
+        gen_state: &Rc<RefCell<crate::value::GeneratorState>>,
     ) -> Result<Guarded, JsError> {
         use crate::value::GeneratorStatus;
 
@@ -1446,6 +1469,7 @@ impl Interpreter {
                                 self.bind_pattern(pat, prop_value, mutable)?;
                             }
                         }
+                        // FIXME: implement
                         ObjectPatternProperty::Rest(_rest) => {
                             // Rest patterns in object destructuring not yet implemented
                             return Err(JsError::internal_error(
@@ -1556,7 +1580,7 @@ impl Interpreter {
     ) -> Result<Option<Gc<JsObject>>, JsError> {
         // Return cached if exists
         if let Some(cached) = self.internal_module_cache.get(specifier) {
-            return Ok(Some(cached.clone()));
+            return Ok(Some(cached.cheap_clone()));
         }
 
         // Check if it's a registered internal module
@@ -1621,6 +1645,7 @@ impl Interpreter {
     }
 
     /// Create module object from TypeScript source
+    // FIXME: move up to other source parsing code?
     fn create_source_module_object(
         &mut self,
         _specifier: &str,
@@ -1631,7 +1656,7 @@ impl Interpreter {
         let program = parser.parse_program()?;
 
         // Save current environment and exports
-        let saved_env = self.env.clone();
+        let saved_env = self.env.cheap_clone();
         let saved_exports = std::mem::take(&mut self.exports);
 
         // Create module environment
@@ -1655,8 +1680,7 @@ impl Interpreter {
 
         // Copy exports to module object
         for (name, value) in exports {
-            let key = self.key(name.as_str());
-            module_obj.borrow_mut().set_property(key, value);
+            module_obj.borrow_mut().set_property(PropertyKey::String(name), value);
         }
 
         // Restore saved exports
@@ -1686,7 +1710,7 @@ impl Interpreter {
         // Bind the class name first (so static blocks can reference it)
         if let Some(id) = &class.id {
             self.env_define(
-                JsString::from(id.name.as_str()),
+                id.name.cheap_clone(),
                 JsValue::Object(constructor_fn.cheap_clone()),
                 false,
             );
@@ -1708,6 +1732,7 @@ impl Interpreter {
 
     /// Execute an enum declaration - creates an object with name->value mappings
     /// and reverse mappings for numeric values
+    // FIXME: make enum as exotic object
     pub fn execute_enum_declaration(
         &mut self,
         enum_decl: &crate::ast::EnumDeclaration,
@@ -1717,7 +1742,8 @@ impl Interpreter {
 
         // Root and define the enum object first so member initializers can reference it
         // (e.g., ReadWrite = Read | Write references FileAccess.Read)
-        self.root_guard.guard(enum_obj.clone());
+        // FIXME: guard in proper scope of namespace/module
+        self.root_guard.guard(enum_obj.cheap_clone());
         let enum_name = enum_decl.id.name.cheap_clone();
         self.env_define(enum_name, JsValue::Object(enum_obj.cheap_clone()), false);
 
@@ -1725,9 +1751,6 @@ impl Interpreter {
         let mut current_value: f64 = 0.0;
 
         for member in &enum_decl.members {
-            let member_name = member.id.name.as_str();
-            let member_name_str = JsString::from(member_name);
-
             // Evaluate initializer or use auto-incremented value
             let value = if let Some(init_expr) = &member.initializer {
                 let guarded = self.evaluate_expression(init_expr)?;
@@ -1744,12 +1767,11 @@ impl Interpreter {
             };
 
             // Set name -> value mapping on the enum object
-            let name_key = self.key(member_name);
-            enum_obj.borrow_mut().set_property(name_key, value.clone());
+            enum_obj.borrow_mut().set_property(PropertyKey::String(member.id.name.cheap_clone()), value.clone());
 
             // Also define the member name in the current scope so later members can reference it
             // (e.g., in `ReadWrite = Read | Write`, `Read` needs to be in scope)
-            self.env_define(member_name_str, value.clone(), false);
+            self.env_define(member.id.name.cheap_clone(), value.clone(), false);
 
             // For numeric values, also set reverse mapping (value -> name)
             if let JsValue::Number(n) = &value {
@@ -1759,7 +1781,7 @@ impl Interpreter {
                     let reverse_key = PropertyKey::Index(*n as u32);
                     enum_obj
                         .borrow_mut()
-                        .set_property(reverse_key, JsValue::String(JsString::from(member_name)));
+                        .set_property(reverse_key, JsValue::String(JsString::from(member.id.name.cheap_clone())));
                 }
             }
         }
@@ -1782,14 +1804,16 @@ impl Interpreter {
             } else {
                 // Not an object, create new
                 let (obj, guard) = self.create_object_with_guard();
-                self.root_guard.guard(obj.clone());
+                // FIXME: properly guard in module
+                self.root_guard.guard(obj.cheap_clone());
                 drop(guard);
                 obj
             }
         } else {
             // Create new namespace object
+            // FIXME: properly guard in module
             let (obj, guard) = self.create_object_with_guard();
-            self.root_guard.guard(obj.clone());
+            self.root_guard.guard(obj.cheap_clone());
             drop(guard);
             obj
         };
@@ -1805,8 +1829,8 @@ impl Interpreter {
         let saved_exports = std::mem::take(&mut self.exports);
 
         // Create a new scope for the namespace body with guard
-        let saved_env = self.env.clone();
-        let (new_env, ns_guard) = create_environment_unrooted(&self.heap, Some(self.env.clone()));
+        let saved_env = self.env.cheap_clone();
+        let (new_env, ns_guard) = create_environment_unrooted(&self.heap, Some(self.env.cheap_clone()));
         self.env = new_env;
         self.push_env_guard(ns_guard);
 
@@ -1819,8 +1843,7 @@ impl Interpreter {
         // Drain to vec first to avoid borrow conflict
         let exports: Vec<_> = self.exports.drain().collect();
         for (name, value) in exports {
-            let key = self.key(name.as_str());
-            ns_obj.borrow_mut().set_property(key, value);
+            ns_obj.borrow_mut().set_property(PropertyKey::String(name), value);
         }
 
         // Pop namespace guard and restore environment and exports
@@ -1917,15 +1940,15 @@ impl Interpreter {
         func: &crate::ast::FunctionDeclaration,
     ) -> Result<(), JsError> {
         let name = func.id.as_ref().map(|id| id.name.cheap_clone());
-        let params = func.params.clone();
-        let body = std::rc::Rc::new(FunctionBody::Block(func.body.clone()));
+        let params = func.params.cheap_clone();
+        let body = Rc::new(FunctionBody::Block(func.body.cheap_clone()));
 
         // Create function with temp guard
         let (func_obj, _temp) = self.create_function_with_guard(
-            name.clone(),
+            name.cheap_clone(),
             params,
             body,
-            self.env.clone(),
+            self.env.cheap_clone(),
             func.span,
             func.generator,
             func.async_,
@@ -1963,12 +1986,11 @@ impl Interpreter {
 
         // Create prototype object
         let (prototype, _proto_guard) = self.create_object_with_guard();
-        self.root_guard.guard(prototype.clone());
+        self.root_guard.guard(prototype.cheap_clone());
 
         // If we have a superclass, set up prototype chain
         if let Some(ref super_ctor) = super_constructor {
-            let proto_key = self.key("prototype");
-            let super_proto = super_ctor.borrow().get_property(&proto_key);
+            let super_proto = super_ctor.borrow().get_property(&self.key("prototype"));
             if let Some(JsValue::Object(sp)) = super_proto {
                 prototype.borrow_mut().prototype = Some(sp.cheap_clone());
             }
@@ -2016,7 +2038,7 @@ impl Interpreter {
 
         for method in &instance_methods {
             let method_name: JsString = match &method.key {
-                ObjectPropertyKey::Identifier(id) => JsString::from(id.name.as_str()),
+                ObjectPropertyKey::Identifier(id) => id.name.cheap_clone(),
                 ObjectPropertyKey::String(s) => s.value.cheap_clone(),
                 ObjectPropertyKey::Number(lit) => match &lit.value {
                     LiteralValue::Number(n) => JsString::from(n.to_string()),
@@ -2030,8 +2052,8 @@ impl Interpreter {
             let (func_obj, _func_guard) = self.create_function_with_guard(
                 Some(method_name.cheap_clone()),
                 func.params.clone(), // Rc clone is cheap
-                Rc::new(FunctionBody::Block(func.body.clone())),
-                self.env.clone(),
+                Rc::new(FunctionBody::Block(func.body.cheap_clone())),
+                self.env.cheap_clone(),
                 func.span,
                 func.generator,
                 func.async_,
@@ -2040,10 +2062,9 @@ impl Interpreter {
 
             // Store __super__ on method so super.method() works
             if let Some(ref super_ctor) = super_constructor {
-                let super_key = self.key("__super__");
                 func_obj
                     .borrow_mut()
-                    .set_property(super_key, JsValue::Object(super_ctor.cheap_clone()));
+                    .set_property(self.key("__super__"), JsValue::Object(super_ctor.cheap_clone()));
             }
 
             match method.kind {
@@ -2081,7 +2102,7 @@ impl Interpreter {
             .iter()
             .filter_map(|prop| {
                 let name: JsString = match &prop.key {
-                    ObjectPropertyKey::Identifier(id) => JsString::from(id.name.as_str()),
+                    ObjectPropertyKey::Identifier(id) => id.name.cheap_clone(),
                     ObjectPropertyKey::String(s) => s.value.cheap_clone(),
                     ObjectPropertyKey::PrivateIdentifier(id) => {
                         JsString::from(format!("#{}", id.name))
@@ -2109,7 +2130,7 @@ impl Interpreter {
         };
 
         let (constructor_fn, _ctor_guard) = self.create_function_with_guard(
-            class.id.as_ref().map(|id| JsString::from(id.name.as_str())),
+            class.id.as_ref().map(|id| id.name.cheap_clone()),
             Rc::from(ctor_params),
             Rc::new(FunctionBody::Block(Rc::new(ctor_body))),
             self.env.clone(),
@@ -2117,15 +2138,13 @@ impl Interpreter {
             false,
             false,
         );
+        // FIXME: proper scope
         self.root_guard.guard(constructor_fn.clone());
 
         // Store prototype on constructor
-        {
-            let proto_key = self.key("prototype");
-            constructor_fn
-                .borrow_mut()
-                .set_property(proto_key, JsValue::Object(prototype.cheap_clone()));
-        }
+        constructor_fn
+            .borrow_mut()
+            .set_property(self.key("prototype"), JsValue::Object(prototype.cheap_clone()));
 
         // Store field initializers in __fields__ if there are any
         if !field_initializers.is_empty() {
@@ -2146,11 +2165,13 @@ impl Interpreter {
             for (name, value) in field_values {
                 let (pair, _pair_guard) =
                     self.create_array_with_guard(vec![JsValue::String(name), value]);
+                // FIXME: whould be costructor guard
                 self.root_guard.guard(pair.clone());
                 field_pairs.push(JsValue::Object(pair));
             }
 
             let (fields_array, _fields_guard) = self.create_array_with_guard(field_pairs);
+            // FIXME: should be constructor guard
             self.root_guard.guard(fields_array.clone());
 
             let fields_key = self.key("__fields__");
@@ -2161,10 +2182,9 @@ impl Interpreter {
 
         // Store super constructor if we have one
         if let Some(ref super_ctor) = super_constructor {
-            let super_key = self.key("__super__");
             constructor_fn
                 .borrow_mut()
-                .set_property(super_key, JsValue::Object(super_ctor.cheap_clone()));
+                .set_property(self.key("__super__"), JsValue::Object(super_ctor.cheap_clone()));
         }
 
         // Handle static methods
@@ -2177,7 +2197,7 @@ impl Interpreter {
 
         for method in &static_methods {
             let method_name: JsString = match &method.key {
-                ObjectPropertyKey::Identifier(id) => JsString::from(id.name.as_str()),
+                ObjectPropertyKey::Identifier(id) => id.name.cheap_clone(),
                 ObjectPropertyKey::String(s) => s.value.cheap_clone(),
                 ObjectPropertyKey::Number(lit) => match &lit.value {
                     LiteralValue::Number(n) => JsString::from(n.to_string()),
@@ -2190,8 +2210,9 @@ impl Interpreter {
             let func = &method.value;
             let (func_obj, _func_guard) = self.create_function_with_guard(
                 Some(method_name.cheap_clone()),
-                func.params.clone(), // Rc clone is cheap
-                Rc::new(FunctionBody::Block(func.body.clone())),
+                func.params.cheap_clone(),
+                // FIXME: no need to wrap FunctionBody to rc
+                Rc::new(FunctionBody::Block(func.body.cheap_clone())),
                 self.env.clone(),
                 func.span,
                 func.generator,
@@ -2232,7 +2253,7 @@ impl Interpreter {
         // Initialize static fields
         for prop in &static_fields {
             let name = match &prop.key {
-                ObjectPropertyKey::Identifier(id) => JsString::from(id.name.as_str()),
+                ObjectPropertyKey::Identifier(id) => id.name.cheap_clone(),
                 ObjectPropertyKey::String(s) => s.value.cheap_clone(),
                 ObjectPropertyKey::PrivateIdentifier(id) => JsString::from(format!("#{}", id.name)),
                 _ => continue,
@@ -2251,12 +2272,9 @@ impl Interpreter {
         }
 
         // Set prototype.constructor = constructor
-        {
-            let ctor_key = self.key("constructor");
-            prototype
-                .borrow_mut()
-                .set_property(ctor_key, JsValue::Object(constructor_fn.cheap_clone()));
-        }
+        prototype
+            .borrow_mut()
+            .set_property(self.key("constructor"), JsValue::Object(constructor_fn.cheap_clone()));
 
         Ok(constructor_fn)
     }
@@ -2266,10 +2284,11 @@ impl Interpreter {
         class_expr: &ClassExpression,
     ) -> Result<Gc<JsObject>, JsError> {
         // Convert ClassExpression to ClassDeclaration
+        // FIXME: clones
         let class_decl = ClassDeclaration {
             id: class_expr.id.clone(),
             type_parameters: class_expr.type_parameters.clone(),
-            super_class: class_expr.super_class.clone(),
+            super_class: class_expr.super_class.cheap_clone(),
             implements: class_expr.implements.clone(),
             body: class_expr.body.clone(),
             decorators: class_expr.decorators.clone(),
@@ -2297,6 +2316,7 @@ impl Interpreter {
                 Ok(Guarded::unguarded(self.evaluate_literal(&lit.value)?))
             }
 
+            // FIXME:
             Expression::Identifier(id) => Ok(Guarded::unguarded(self.env_get(&id.name)?)),
 
             Expression::Binary(bin) => self.evaluate_binary(bin),
@@ -2320,13 +2340,13 @@ impl Interpreter {
             Expression::ArrowFunction(arrow) => {
                 // Rc clone is cheap (just ref count increment)
                 let params = arrow.params.clone();
-                let body = Rc::new(FunctionBody::from(arrow.body.clone()));
+                let body = Rc::new(FunctionBody::from(arrow.body.cheap_clone()));
 
                 let (func_obj, guard) = self.create_function_with_guard(
                     None,
                     params,
                     body,
-                    self.env.clone(),
+                    self.env.cheap_clone(),
                     arrow.span,
                     false,
                     arrow.async_,
@@ -2337,15 +2357,14 @@ impl Interpreter {
 
             Expression::Function(func) => {
                 let name = func.id.as_ref().map(|id| id.name.cheap_clone());
-                // Rc clones are cheap (just ref count increment)
-                let params = func.params.clone();
-                let body = Rc::new(FunctionBody::Block(func.body.clone()));
+                let params = func.params.cheap_clone();
+                let body = Rc::new(FunctionBody::Block(func.body.cheap_clone()));
 
                 let (func_obj, guard) = self.create_function_with_guard(
                     name,
                     params,
                     body,
-                    self.env.clone(),
+                    self.env.cheap_clone(),
                     func.span,
                     func.generator,
                     func.async_,
@@ -2375,7 +2394,7 @@ impl Interpreter {
 
             // This expression
             Expression::This(_) => {
-                let this_name = JsString::from("this");
+                let this_name = self.intern("this");
                 Ok(Guarded::unguarded(
                     self.env_get(&this_name).unwrap_or(JsValue::Undefined),
                 ))
@@ -2386,7 +2405,7 @@ impl Interpreter {
                 let constructor_fn = self.create_class_from_expression(class_expr)?;
                 // Create guard for the returned object
                 let (_, guard) = self.create_object_with_guard();
-                guard.guard(constructor_fn.clone());
+                guard.guard(constructor_fn.cheap_clone());
                 Ok(Guarded::with_guard(JsValue::Object(constructor_fn), guard))
             }
 
@@ -2608,7 +2627,7 @@ impl Interpreter {
         let (proto_opt, fields_opt) = if let JsValue::Object(ctor) = &constructor {
             let ctor_ref = ctor.borrow();
             let proto = ctor_ref
-                .get_property(&PropertyKey::from("prototype"))
+                .get_property(&PropertyKey::String(self.intern("prototype")))
                 .and_then(|v| {
                     if let JsValue::Object(p) = v {
                         Some(p)
@@ -2617,7 +2636,7 @@ impl Interpreter {
                     }
                 });
             let fields = ctor_ref
-                .get_property(&PropertyKey::from("__fields__"))
+                .get_property(&PropertyKey::String(self.intern("__fields__")))
                 .and_then(|v| {
                     if let JsValue::Object(f) = v {
                         Some(f)
@@ -2640,7 +2659,7 @@ impl Interpreter {
             // Get length property
             let len = {
                 let fields_ref = fields_array.borrow();
-                match fields_ref.get_property(&PropertyKey::from("length")) {
+                match fields_ref.get_property(&PropertyKey::String(self.intern("length"))) {
                     Some(JsValue::Number(n)) => n as usize,
                     _ => 0,
                 }
@@ -2725,6 +2744,7 @@ impl Interpreter {
             .iter()
             .map(|q| JsValue::String(q.value.cheap_clone()))
             .collect();
+        // FIXME: clone strings
         let (strings_arr, strings_guard) = self.create_array_with_guard(strings.clone());
 
         // Add 'raw' property to strings array
@@ -2737,7 +2757,7 @@ impl Interpreter {
         let (raw_array, _raw_guard) = self.create_array_with_guard(raw);
 
         // Set raw property and transfer ownership
-        let raw_key = PropertyKey::String(self.string_dict.get_or_insert("raw"));
+        let raw_key = PropertyKey::String(self.intern("raw"));
         strings_arr
             .borrow_mut()
             .set_property(raw_key, JsValue::Object(raw_array));
@@ -3130,7 +3150,7 @@ impl Interpreter {
                         if let Some(setter) = prop.setter() {
                             // Call the setter with the value
                             self.call_function(
-                                JsValue::Object(setter.clone()),
+                                JsValue::Object(setter.cheap_clone()),
                                 obj_val.clone(),
                                 std::slice::from_ref(&final_value),
                             )?;
@@ -3143,7 +3163,7 @@ impl Interpreter {
                 // Handle __proto__ special property - set prototype instead of property
                 if key.eq_str("__proto__") {
                     let new_proto = match &final_value {
-                        JsValue::Object(proto_obj) => Some(proto_obj.clone()),
+                        JsValue::Object(proto_obj) => Some(proto_obj.cheap_clone()),
                         JsValue::Null => None,
                         _ => {
                             // Non-object, non-null values are ignored for __proto__ set
@@ -3361,17 +3381,17 @@ impl Interpreter {
         let (callee, this_value, obj_guard) = match &*call.callee {
             // super(args) - call parent constructor
             Expression::Super(_) => {
-                let super_name = JsString::from("__super__");
+                let super_name = self.intern("__super__");
                 let super_constructor = self.env_get(&super_name)?;
-                let this_name = JsString::from("this");
+                let this_name = self.intern("this");
                 let this_val = self.env_get(&this_name)?;
                 (super_constructor, this_val, None)
             }
             // super.method() - call parent method
             Expression::Member(member) if matches!(&*member.object, Expression::Super(_)) => {
-                let super_name = JsString::from("__super__");
+                let super_name = self.intern("__super__");
                 let super_constructor = self.env_get(&super_name)?;
-                let this_name = JsString::from("this");
+                let this_name = self.intern("this");
                 let this_val = self.env_get(&this_name)?;
 
                 // Get the method from super's prototype
@@ -3497,7 +3517,7 @@ impl Interpreter {
                 // Handle generator functions - create generator object instead of executing
                 if interp.generator {
                     let body = match &*interp.body {
-                        FunctionBody::Block(block) => block.clone(),
+                        FunctionBody::Block(block) => block.cheap_clone(),
                         FunctionBody::Expression(_) => {
                             return Err(JsError::type_error("Generator must have block body"));
                         }
@@ -3505,13 +3525,13 @@ impl Interpreter {
 
                     let gen_state = GeneratorState {
                         body,
-                        params: interp.params.clone(),
+                        params: interp.params.cheap_clone(),
                         args: args.to_vec(),
                         closure: interp.closure,
                         state: GeneratorStatus::Suspended,
                         stmt_index: 0,
                         sent_value: JsValue::Undefined,
-                        name: interp.name.clone(),
+                        name: interp.name.cheap_clone(),
                     };
 
                     let gen_obj = builtins::create_generator_object(self, gen_state);
@@ -3524,7 +3544,7 @@ impl Interpreter {
 
                 // Bind `this` in the function environment
                 {
-                    let this_name = JsString::from("this");
+                    let this_name = self.intern("this");
                     if let Some(data) = func_env.borrow_mut().as_environment_mut() {
                         data.bindings.insert(
                             this_name,
@@ -3539,9 +3559,9 @@ impl Interpreter {
 
                 // Bind `__super__` if this is a class constructor with inheritance
                 {
-                    let super_key = self.key("__super__");
+                    let super_name = self.intern("__super__");
+                    let super_key = PropertyKey::String(super_name.cheap_clone());
                     if let Some(super_val) = func_obj.borrow().get_property(&super_key) {
-                        let super_name = JsString::from("__super__");
                         if let Some(data) = func_env.borrow_mut().as_environment_mut() {
                             data.bindings.insert(
                                 super_name,
@@ -3556,14 +3576,14 @@ impl Interpreter {
                 }
 
                 // Execute function body - set up environment first so bind_pattern works
-                let saved_env = self.env.clone();
+                let saved_env = self.env.cheap_clone();
                 self.env = func_env;
                 self.push_env_guard(func_guard);
 
                 // Create and bind the `arguments` object (array-like)
                 {
                     let (args_array, _guard) = self.create_array_with_guard(args.to_vec());
-                    let args_name = JsString::from("arguments");
+                    let args_name = self.intern("arguments");
                     self.env_define(args_name, JsValue::Object(args_array), false);
                 }
 
@@ -3918,7 +3938,7 @@ impl Interpreter {
                     // Handle __proto__ special property in object literals
                     if prop_key.eq_str("__proto__") {
                         let new_proto = match &prop_val {
-                            JsValue::Object(proto_obj) => Some(proto_obj.clone()),
+                            JsValue::Object(proto_obj) => Some(proto_obj.cheap_clone()),
                             JsValue::Null => None,
                             _ => {
                                 // Non-object, non-null values are ignored for __proto__
