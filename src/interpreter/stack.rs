@@ -462,18 +462,6 @@ impl ExecutionState {
     pub fn pop_value(&mut self) -> Option<Guarded> {
         self.values.pop()
     }
-
-    /// Peek at top value
-    #[allow(dead_code)]
-    pub fn peek_value(&self) -> Option<&Guarded> {
-        self.values.last()
-    }
-
-    /// Check if we have more frames
-    #[allow(dead_code)]
-    pub fn has_frames(&self) -> bool {
-        !self.frames.is_empty()
-    }
 }
 
 impl Default for ExecutionState {

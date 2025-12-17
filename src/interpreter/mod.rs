@@ -398,8 +398,8 @@ impl Interpreter {
         self.env_define(number_name, JsValue::Object(number_constructor), false);
 
         // Initialize Promise prototype and constructor
-        builtins::promise_new::init_promise_prototype(self);
-        let promise_constructor = builtins::promise_new::create_promise_constructor(self);
+        builtins::promise::init_promise_prototype(self);
+        let promise_constructor = builtins::promise::create_promise_constructor(self);
         let promise_name = self.intern("Promise");
         self.env_define(promise_name, JsValue::Object(promise_constructor), false);
 
@@ -2592,7 +2592,7 @@ impl Interpreter {
                 let Guarded {
                     value: specifier, ..
                 } = self.evaluate_expression(&import_expr.source)?;
-                let (promise, guard) = builtins::promise_new::create_rejected_promise_with_guard(
+                let (promise, guard) = builtins::promise::create_rejected_promise_with_guard(
                     self,
                     JsValue::String(
                         format!("Dynamic import not yet supported: {:?}", specifier).into(),
@@ -3678,7 +3678,7 @@ impl Interpreter {
                             }
                             // Create fulfilled promise with the result
                             let (promise, guard) =
-                                builtins::promise_new::create_fulfilled_promise_with_guard(
+                                builtins::promise::create_fulfilled_promise_with_guard(
                                     self, result,
                                 );
                             return Ok(Guarded {
@@ -3689,7 +3689,7 @@ impl Interpreter {
                         Err(e) => {
                             // Create rejected promise with the error
                             let (promise, guard) =
-                                builtins::promise_new::create_rejected_promise_with_guard(
+                                builtins::promise::create_rejected_promise_with_guard(
                                     self,
                                     e.to_value(),
                                 );
@@ -3729,13 +3729,13 @@ impl Interpreter {
 
             JsFunction::PromiseResolve(promise) => {
                 let value = args.first().cloned().unwrap_or(JsValue::Undefined);
-                builtins::promise_new::resolve_promise_value(self, &promise, value)?;
+                builtins::promise::resolve_promise_value(self, &promise, value)?;
                 Ok(Guarded::unguarded(JsValue::Undefined))
             }
 
             JsFunction::PromiseReject(promise) => {
                 let reason = args.first().cloned().unwrap_or(JsValue::Undefined);
-                builtins::promise_new::reject_promise_value(self, &promise, reason)?;
+                builtins::promise::reject_promise_value(self, &promise, reason)?;
                 Ok(Guarded::unguarded(JsValue::Undefined))
             }
         }

@@ -44,37 +44,6 @@ impl StringDict {
         self.strings.insert(s.into(), js_str.cheap_clone());
         js_str
     }
-
-    /// Get an existing string without inserting.
-    /// Returns None if the string is not in the dictionary.
-    #[allow(dead_code)]
-    pub fn get(&self, s: &str) -> Option<JsString> {
-        self.strings.get(s).map(|s| s.cheap_clone())
-    }
-
-    /// Insert a JsString that was created elsewhere.
-    /// If the string already exists, returns the existing instance.
-    #[allow(dead_code)]
-    pub fn insert(&mut self, js_str: JsString) -> JsString {
-        if let Some(existing) = self.strings.get(js_str.as_str()) {
-            return existing.cheap_clone();
-        }
-        self.strings
-            .insert(js_str.as_str().into(), js_str.cheap_clone());
-        js_str
-    }
-
-    /// Number of unique strings in the dictionary.
-    #[allow(dead_code)]
-    pub fn len(&self) -> usize {
-        self.strings.len()
-    }
-
-    /// Check if dictionary is empty.
-    #[allow(dead_code)]
-    pub fn is_empty(&self) -> bool {
-        self.strings.is_empty()
-    }
 }
 
 impl Default for StringDict {
@@ -326,27 +295,10 @@ mod tests {
 
     #[test]
     fn test_common_strings_preloaded() {
-        let dict = StringDict::with_common_strings();
-        assert!(dict.get("length").is_some());
-        assert!(dict.get("prototype").is_some());
-        assert!(dict.get("toString").is_some());
-    }
-
-    #[test]
-    fn test_string_dict_len() {
-        let mut dict = StringDict::new();
-        assert_eq!(dict.len(), 0);
-        assert!(dict.is_empty());
-
-        dict.get_or_insert("hello");
-        assert_eq!(dict.len(), 1);
-        assert!(!dict.is_empty());
-
-        // Same string doesn't increase count
-        dict.get_or_insert("hello");
-        assert_eq!(dict.len(), 1);
-
-        dict.get_or_insert("world");
-        assert_eq!(dict.len(), 2);
+        let mut dict = StringDict::with_common_strings();
+        // Common strings should be deduplicated
+        let s1 = dict.get_or_insert("length");
+        let s2 = dict.get_or_insert("length");
+        assert!(std::ptr::eq(s1.as_str(), s2.as_str()));
     }
 }

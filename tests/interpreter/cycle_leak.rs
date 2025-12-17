@@ -1,6 +1,6 @@
 //! Test for cycle memory leak
 
-use typescript_eval::{GcStats, JsString, JsValue, Runtime, RuntimeResult};
+use typescript_eval::{Runtime, RuntimeResult};
 
 /// Get baseline object count (builtins only, no user code)
 fn get_baseline_live_count() -> usize {

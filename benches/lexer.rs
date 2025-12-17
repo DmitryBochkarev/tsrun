@@ -275,21 +275,6 @@ fn generate_large_source(size: usize) -> String {
     source
 }
 
-/// Count tokens in source
-fn count_tokens(source: &str) -> usize {
-    let mut dict = StringDict::new();
-    let mut lexer = Lexer::new(source, &mut dict);
-    let mut count = 0;
-    loop {
-        let token = lexer.next_token();
-        if token.kind == TokenKind::Eof {
-            break;
-        }
-        count += 1;
-    }
-    count
-}
-
 fn bench_lexer_individual(c: &mut Criterion) {
     let mut group = c.benchmark_group("lexer/individual");
 

@@ -17,8 +17,7 @@ pub mod regexp;
 pub mod set;
 pub mod string;
 pub mod symbol;
-// pub mod promise; // Old promise, kept for reference
-pub mod promise_new; // New promise using new GC
+pub mod promise;
 
 // Re-export public functions from enabled modules
 pub use array::*;

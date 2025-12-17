@@ -1174,7 +1174,7 @@ impl<'a> Parser<'a> {
         // import "module"
         if let TokenKind::String(s) = &self.current.kind {
             let source = StringLiteral {
-                value: s.clone().into(),
+                value: s.clone(),
                 span: self.current.span,
             };
             self.advance();
@@ -2972,7 +2972,7 @@ impl<'a> Parser<'a> {
             let pattern = if is_rest {
                 Pattern::Rest(RestElement {
                     argument: Box::new(Pattern::Identifier(Identifier {
-                        name: name.clone().into(),
+                        name: name.clone(),
                         span: self.span_from(param_start),
                     })),
                     type_annotation: None,
@@ -2980,7 +2980,7 @@ impl<'a> Parser<'a> {
                 })
             } else {
                 Pattern::Identifier(Identifier {
-                    name: name.clone().into(),
+                    name: name.clone(),
                     span: self.span_from(param_start),
                 })
             };

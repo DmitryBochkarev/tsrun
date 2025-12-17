@@ -7,7 +7,7 @@ use crate::interpreter::Interpreter;
 use crate::value::{CheapClone, Guarded, JsFunction, JsValue};
 use crate::{InternalModule, Order, OrderId};
 
-use super::promise_new::create_promise_with_guard;
+use super::promise::create_promise_with_guard;
 
 /// Create the eval:internal module
 pub fn create_eval_internal_module() -> InternalModule {

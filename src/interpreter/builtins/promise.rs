@@ -1,13 +1,16 @@
-//! Promise built-in methods
+//! Promise built-in methods (new GC implementation)
+//!
+//! This module implements Promise using the new guard-based GC system.
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::error::JsError;
+use crate::gc::{Gc, Guard};
 use crate::interpreter::Interpreter;
 use crate::value::{
-    create_function, CheapClone, ExoticObject, JsFunction, JsObjectRef, JsValue, NativeFunction,
-    PromiseHandler, PromiseState, PromiseStatus, PropertyKey,
+    CheapClone, ExoticObject, Guarded, JsFunction, JsObject, JsValue, PromiseHandler, PromiseState,
+    PromiseStatus, PropertyKey,
 };
 
 /// Initialize Promise.prototype with then, catch, finally methods
@@ -20,17 +23,8 @@ pub fn init_promise_prototype(interp: &mut Interpreter) {
 }
 
 /// Create Promise constructor with static methods
-pub fn create_promise_constructor(interp: &mut Interpreter) -> JsObjectRef {
-    let name = interp.intern("Promise");
-    let ctor = create_function(
-        &mut interp.gc_space,
-        &mut interp.string_dict,
-        JsFunction::Native(NativeFunction {
-            name,
-            func: promise_constructor,
-            arity: 1,
-        }),
-    );
+pub fn create_promise_constructor(interp: &mut Interpreter) -> Gc<JsObject> {
+    let ctor = interp.create_native_function("Promise", promise_constructor, 1);
 
     let proto_key = interp.key("prototype");
     ctor.borrow_mut()
@@ -47,54 +41,31 @@ pub fn create_promise_constructor(interp: &mut Interpreter) -> JsObjectRef {
     ctor
 }
 
-/// Create a new promise object with pending state using the interpreter's GC space
-pub fn create_promise_object(interp: &mut Interpreter) -> JsObjectRef {
+/// Create a new pending promise object with a guard
+pub fn create_promise_with_guard(interp: &mut Interpreter) -> (Gc<JsObject>, Guard<JsObject>) {
     let state = Rc::new(RefCell::new(PromiseState {
         status: PromiseStatus::Pending,
         result: None,
         handlers: Vec::new(),
     }));
 
-    let obj = interp.create_object();
+    let (obj, guard) = interp.create_object_with_guard();
     {
         let mut o = obj.borrow_mut();
         o.prototype = Some(interp.promise_prototype.cheap_clone());
         o.exotic = ExoticObject::Promise(state);
     }
-    obj
+    (obj, guard)
 }
 
-/// Create a pending promise using the interpreter's prototype (alias)
-pub fn create_promise(interp: &mut Interpreter) -> JsObjectRef {
-    create_promise_object(interp)
-}
-
-/// Create a pending promise with GC protection.
-/// Use this when the promise needs to survive allocations before being stored.
-pub fn create_promise_guarded(
+/// Create a fulfilled promise with a guard
+pub fn create_fulfilled_promise_with_guard(
     interp: &mut Interpreter,
-) -> crate::gc::GuardedGc<crate::value::JsObject> {
-    let state = Rc::new(RefCell::new(PromiseState {
-        status: PromiseStatus::Pending,
-        result: None,
-        handlers: Vec::new(),
-    }));
-
-    let obj = interp.create_object_guarded();
-    {
-        let mut o = obj.borrow_mut();
-        o.prototype = Some(interp.promise_prototype.cheap_clone());
-        o.exotic = ExoticObject::Promise(state);
-    }
-    obj
-}
-
-/// Create a fulfilled promise using the interpreter's GC space
-pub fn create_fulfilled_promise(interp: &mut Interpreter, value: JsValue) -> JsObjectRef {
-    // Guard the value during object creation since create_object can trigger GC
-    // and the value would otherwise only be referenced by the PromiseState which
-    // isn't rooted until it's attached to the object.
-    let _guard = interp.guard_value(&value);
+    value: JsValue,
+) -> (Gc<JsObject>, Guard<JsObject>) {
+    // Guard the value BEFORE allocating the promise object
+    // This prevents GC from collecting the value during allocation
+    let _value_guard = interp.guard_value(&value);
 
     let state = Rc::new(RefCell::new(PromiseState {
         status: PromiseStatus::Fulfilled,
@@ -102,19 +73,23 @@ pub fn create_fulfilled_promise(interp: &mut Interpreter, value: JsValue) -> JsO
         handlers: Vec::new(),
     }));
 
-    let obj = interp.create_object();
+    let (obj, guard) = interp.create_object_with_guard();
     {
         let mut o = obj.borrow_mut();
         o.prototype = Some(interp.promise_prototype.cheap_clone());
         o.exotic = ExoticObject::Promise(state);
     }
-    obj
+    (obj, guard)
 }
 
-/// Create a rejected promise using the interpreter's GC space
-pub fn create_rejected_promise(interp: &mut Interpreter, reason: JsValue) -> JsObjectRef {
-    // Guard the reason during object creation since create_object can trigger GC
-    let _guard = interp.guard_value(&reason);
+/// Create a rejected promise with a guard
+pub fn create_rejected_promise_with_guard(
+    interp: &mut Interpreter,
+    reason: JsValue,
+) -> (Gc<JsObject>, Guard<JsObject>) {
+    // Guard the reason BEFORE allocating the promise object
+    // This prevents GC from collecting the reason during allocation
+    let _reason_guard = interp.guard_value(&reason);
 
     let state = Rc::new(RefCell::new(PromiseState {
         status: PromiseStatus::Rejected,
@@ -122,37 +97,19 @@ pub fn create_rejected_promise(interp: &mut Interpreter, reason: JsValue) -> JsO
         handlers: Vec::new(),
     }));
 
-    let obj = interp.create_object();
+    let (obj, guard) = interp.create_object_with_guard();
     {
         let mut o = obj.borrow_mut();
         o.prototype = Some(interp.promise_prototype.cheap_clone());
         o.exotic = ExoticObject::Promise(state);
     }
-    obj
-}
-
-/// Public function to resolve a promise (called from PromiseResolve function handling)
-pub fn resolve_promise_value(
-    interp: &mut Interpreter,
-    promise: &JsObjectRef,
-    value: JsValue,
-) -> Result<(), JsError> {
-    resolve_promise(interp, promise, value)
-}
-
-/// Public function to reject a promise (called from PromiseReject function handling)
-pub fn reject_promise_value(
-    interp: &mut Interpreter,
-    promise: &JsObjectRef,
-    reason: JsValue,
-) -> Result<(), JsError> {
-    reject_promise(interp, promise, reason)
+    (obj, guard)
 }
 
 /// Resolve a promise (fulfill or reject based on value)
 fn resolve_promise(
     interp: &mut Interpreter,
-    promise: &JsObjectRef,
+    promise: &Gc<JsObject>,
     value: JsValue,
 ) -> Result<(), JsError> {
     // Check if value is a thenable (another promise)
@@ -194,7 +151,7 @@ fn resolve_promise(
 /// Fulfill a promise with a value
 fn fulfill_promise(
     interp: &mut Interpreter,
-    promise: &JsObjectRef,
+    promise: &Gc<JsObject>,
     value: JsValue,
 ) -> Result<(), JsError> {
     let handlers = {
@@ -224,7 +181,7 @@ fn fulfill_promise(
 /// Reject a promise with a reason
 fn reject_promise(
     interp: &mut Interpreter,
-    promise: &JsObjectRef,
+    promise: &Gc<JsObject>,
     reason: JsValue,
 ) -> Result<(), JsError> {
     let handlers = {
@@ -251,6 +208,24 @@ fn reject_promise(
     Ok(())
 }
 
+/// Public function to resolve a promise
+pub fn resolve_promise_value(
+    interp: &mut Interpreter,
+    promise: &Gc<JsObject>,
+    value: JsValue,
+) -> Result<(), JsError> {
+    resolve_promise(interp, promise, value)
+}
+
+/// Public function to reject a promise
+pub fn reject_promise_value(
+    interp: &mut Interpreter,
+    promise: &Gc<JsObject>,
+    reason: JsValue,
+) -> Result<(), JsError> {
+    reject_promise(interp, promise, reason)
+}
+
 /// Trigger a promise handler
 fn trigger_handler(
     interp: &mut Interpreter,
@@ -259,8 +234,8 @@ fn trigger_handler(
     is_fulfilled: bool,
 ) -> Result<(), JsError> {
     // Guard the result_promise since it's been removed from the traced promise state
-    // and the callback may trigger GC before we can resolve/reject it.
-    let _result_guard = interp.gc_space.guard(handler.result_promise.clone());
+    let guard = interp.heap.create_guard();
+    guard.guard(handler.result_promise.clone());
 
     let callback = if is_fulfilled {
         handler.on_fulfilled.clone()
@@ -272,7 +247,7 @@ fn trigger_handler(
         Some(cb) => {
             // Call the callback and resolve result_promise with the return value
             match interp.call_function(cb, JsValue::Undefined, std::slice::from_ref(value)) {
-                Ok(result) => {
+                Ok(Guarded { value: result, .. }) => {
                     resolve_promise(interp, &handler.result_promise, result)?;
                 }
                 Err(e) => {
@@ -300,7 +275,7 @@ pub fn promise_constructor(
     interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let executor = args
         .first()
         .cloned()
@@ -313,18 +288,17 @@ pub fn promise_constructor(
         )));
     }
 
-    let promise = create_promise_object(interp);
+    let (promise, promise_guard) = create_promise_with_guard(interp);
 
-    // Guard the promise during the executor call
-    let _promise_guard = interp.gc_space.guard(promise.clone());
-
-    // Create resolve function using the new PromiseResolve variant
+    // Create resolve function using the PromiseResolve variant
     let resolve_fn = interp.create_function(JsFunction::PromiseResolve(promise.cheap_clone()));
-    let _resolve_guard = interp.gc_space.guard(resolve_fn.clone());
+    let resolve_guard = interp.heap.create_guard();
+    resolve_guard.guard(resolve_fn.clone());
 
-    // Create reject function using the new PromiseReject variant
+    // Create reject function using the PromiseReject variant
     let reject_fn = interp.create_function(JsFunction::PromiseReject(promise.cheap_clone()));
-    let _reject_guard = interp.gc_space.guard(reject_fn.clone());
+    let reject_guard = interp.heap.create_guard();
+    reject_guard.guard(reject_fn.clone());
 
     // Call executor(resolve, reject)
     match interp.call_function(
@@ -340,7 +314,10 @@ pub fn promise_constructor(
         }
     }
 
-    Ok(JsValue::Object(promise))
+    Ok(Guarded {
+        value: JsValue::Object(promise),
+        guard: Some(promise_guard),
+    })
 }
 
 /// Promise.prototype.then(onFulfilled, onRejected)
@@ -348,15 +325,16 @@ pub fn promise_then(
     interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let JsValue::Object(promise) = this else {
         return Err(JsError::type_error(
             "Promise.prototype.then called on non-object",
         ));
     };
 
-    // Guard the promise to prevent GC from corrupting it during result_promise creation
-    let _promise_guard = interp.gc_space.guard(promise.clone());
+    // Guard the promise
+    let guard = interp.heap.create_guard();
+    guard.guard(promise.clone());
 
     let on_fulfilled = args.first().cloned();
     let on_rejected = args.get(1).cloned();
@@ -366,7 +344,7 @@ pub fn promise_then(
     let on_rejected = on_rejected.filter(|v| v.is_callable());
 
     // Create the result promise
-    let result_promise = create_promise_object(interp);
+    let (result_promise, result_guard) = create_promise_with_guard(interp);
 
     let (status, result) = {
         let obj = promise.borrow();
@@ -412,7 +390,10 @@ pub fn promise_then(
         }
     }
 
-    Ok(JsValue::Object(result_promise))
+    Ok(Guarded {
+        value: JsValue::Object(result_promise),
+        guard: Some(result_guard),
+    })
 }
 
 /// Promise.prototype.catch(onRejected)
@@ -420,7 +401,7 @@ pub fn promise_catch(
     interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     // catch(onRejected) is equivalent to then(undefined, onRejected)
     let on_rejected = args.first().cloned().unwrap_or(JsValue::Undefined);
     promise_then(interp, this, &[JsValue::Undefined, on_rejected])
@@ -431,7 +412,7 @@ pub fn promise_finally(
     interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let JsValue::Object(promise) = this.clone() else {
         return Err(JsError::type_error(
             "Promise.prototype.finally called on non-object",
@@ -443,11 +424,7 @@ pub fn promise_finally(
 
     match on_finally {
         Some(callback) => {
-            // For finally, we need to call the callback but preserve the original value/reason
-            // This is tricky without closures. We'll use a simpler approach:
-            // Create wrapper functions that call the callback then return/re-throw
-
-            let result_promise = create_promise_object(interp);
+            let (result_promise, result_guard) = create_promise_with_guard(interp);
 
             let (status, result) = {
                 let obj = promise.borrow();
@@ -461,19 +438,16 @@ pub fn promise_finally(
             match status {
                 PromiseStatus::Pending => {
                     // Store callback reference in the handler
-                    // We'll handle finally specially in trigger_handler_finally
                     let obj = promise.borrow();
                     let ExoticObject::Promise(ref state) = obj.exotic else {
                         return Err(JsError::type_error("Not a promise"));
                     };
                     // Store callback in both slots - we'll call it regardless
-                    // JsValue clone for callback - may be cheap or expensive
                     state.borrow_mut().handlers.push(PromiseHandler {
                         on_fulfilled: Some(callback.clone()),
                         on_rejected: Some(callback),
                         result_promise: result_promise.cheap_clone(),
                     });
-                    // Mark this as a finally handler somehow... for now, use a simpler approach
                 }
                 PromiseStatus::Fulfilled => {
                     let value = result.unwrap_or(JsValue::Undefined);
@@ -491,7 +465,10 @@ pub fn promise_finally(
                 }
             }
 
-            Ok(JsValue::Object(result_promise))
+            Ok(Guarded {
+                value: JsValue::Object(result_promise),
+                guard: Some(result_guard),
+            })
         }
         None => {
             // No callback - just return a then with no handlers
@@ -505,17 +482,21 @@ pub fn promise_resolve_static(
     interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let value = args.first().cloned().unwrap_or(JsValue::Undefined);
 
     // If value is already a promise, return it as-is
     if let JsValue::Object(obj) = &value {
         if matches!(obj.borrow().exotic, ExoticObject::Promise(_)) {
-            return Ok(value);
+            return Ok(Guarded::unguarded(value));
         }
     }
 
-    Ok(JsValue::Object(create_fulfilled_promise(interp, value)))
+    let (promise, guard) = create_fulfilled_promise_with_guard(interp, value);
+    Ok(Guarded {
+        value: JsValue::Object(promise),
+        guard: Some(guard),
+    })
 }
 
 /// Promise.reject(reason)
@@ -523,9 +504,34 @@ pub fn promise_reject_static(
     interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let reason = args.first().cloned().unwrap_or(JsValue::Undefined);
-    Ok(JsValue::Object(create_rejected_promise(interp, reason)))
+    let (promise, guard) = create_rejected_promise_with_guard(interp, reason);
+    Ok(Guarded {
+        value: JsValue::Object(promise),
+        guard: Some(guard),
+    })
+}
+
+/// Extract values from an iterable (for Promise.all/race/etc)
+fn extract_iterable(value: &JsValue) -> Result<Vec<JsValue>, JsError> {
+    let JsValue::Object(arr) = value else {
+        return Ok(vec![]);
+    };
+
+    let arr_ref = arr.borrow();
+    if let ExoticObject::Array { length } = arr_ref.exotic {
+        let mut result = Vec::with_capacity(length as usize);
+        for i in 0..length {
+            let elem = arr_ref
+                .get_property(&PropertyKey::Index(i))
+                .unwrap_or(JsValue::Undefined);
+            result.push(elem);
+        }
+        Ok(result)
+    } else {
+        Ok(vec![])
+    }
 }
 
 /// Promise.all(iterable)
@@ -533,38 +539,36 @@ pub fn promise_all(
     interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let iterable = args.first().cloned().unwrap_or(JsValue::Undefined);
-
-    // Extract array elements
     let promises = extract_iterable(&iterable)?;
 
     if promises.is_empty() {
-        let empty_array = interp.create_array(vec![]);
-        return Ok(JsValue::Object(create_fulfilled_promise(
-            interp,
-            JsValue::Object(empty_array),
-        )));
+        let (arr, arr_guard) = interp.create_array_with_guard(vec![]);
+        let (promise, promise_guard) =
+            create_fulfilled_promise_with_guard(interp, JsValue::Object(arr));
+        // Keep arr alive through promise_guard
+        drop(arr_guard);
+        return Ok(Guarded {
+            value: JsValue::Object(promise),
+            guard: Some(promise_guard),
+        });
     }
 
-    // For Promise.all, we need to track all results.
-    // Since we process synchronously, we can collect results directly.
+    // Collect status info
     let mut results: Vec<JsValue> = Vec::with_capacity(promises.len());
     let mut rejected_reason: Option<JsValue> = None;
 
     for promise_value in &promises {
-        // Convert to promise if not already - for non-promise values, just extract directly
         let (status, result) = if let JsValue::Object(obj) = promise_value {
             let obj_ref = obj.borrow();
             if let ExoticObject::Promise(ref state) = obj_ref.exotic {
                 let state_ref = state.borrow();
                 (state_ref.status.clone(), state_ref.result.clone())
             } else {
-                // Non-promise object - treat as fulfilled with that value
                 (PromiseStatus::Fulfilled, Some(promise_value.clone()))
             }
         } else {
-            // Primitive value - treat as fulfilled with that value
             (PromiseStatus::Fulfilled, Some(promise_value.clone()))
         };
 
@@ -577,19 +581,27 @@ pub fn promise_all(
                 break;
             }
             PromiseStatus::Pending => {
-                // In a sync context, pending promises won't resolve
-                // For now, treat as undefined
                 results.push(JsValue::Undefined);
             }
         }
     }
 
     if let Some(reason) = rejected_reason {
-        return Ok(JsValue::Object(create_rejected_promise(interp, reason)));
+        let (promise, guard) = create_rejected_promise_with_guard(interp, reason);
+        return Ok(Guarded {
+            value: JsValue::Object(promise),
+            guard: Some(guard),
+        });
     }
 
-    let array = JsValue::Object(interp.create_array(results));
-    Ok(JsValue::Object(create_fulfilled_promise(interp, array)))
+    let (arr, arr_guard) = interp.create_array_with_guard(results);
+    let (promise, promise_guard) =
+        create_fulfilled_promise_with_guard(interp, JsValue::Object(arr));
+    drop(arr_guard);
+    Ok(Guarded {
+        value: JsValue::Object(promise),
+        guard: Some(promise_guard),
+    })
 }
 
 /// Promise.race(iterable)
@@ -597,12 +609,10 @@ pub fn promise_race(
     interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let iterable = args.first().cloned().unwrap_or(JsValue::Undefined);
     let promises = extract_iterable(&iterable)?;
 
-    // Race returns the first settled promise
-    // First, scan for the first settled promise without creating new promises
     let mut first_result: Option<(PromiseStatus, JsValue)> = None;
 
     for promise_value in &promises {
@@ -612,11 +622,9 @@ pub fn promise_race(
                 let state_ref = state.borrow();
                 (state_ref.status.clone(), state_ref.result.clone())
             } else {
-                // Non-promise object - treat as fulfilled with that value
                 (PromiseStatus::Fulfilled, Some(promise_value.clone()))
             }
         } else {
-            // Primitive value - treat as fulfilled with that value
             (PromiseStatus::Fulfilled, Some(promise_value.clone()))
         };
 
@@ -625,23 +633,32 @@ pub fn promise_race(
                 first_result = Some((status, result.unwrap_or(JsValue::Undefined)));
                 break;
             }
-            PromiseStatus::Pending => {
-                // Continue to next promise
-            }
+            PromiseStatus::Pending => {}
         }
     }
 
-    // Now create the result promise
     match first_result {
         Some((PromiseStatus::Fulfilled, value)) => {
-            Ok(JsValue::Object(create_fulfilled_promise(interp, value)))
+            let (promise, guard) = create_fulfilled_promise_with_guard(interp, value);
+            Ok(Guarded {
+                value: JsValue::Object(promise),
+                guard: Some(guard),
+            })
         }
         Some((PromiseStatus::Rejected, reason)) => {
-            Ok(JsValue::Object(create_rejected_promise(interp, reason)))
+            let (promise, guard) = create_rejected_promise_with_guard(interp, reason);
+            Ok(Guarded {
+                value: JsValue::Object(promise),
+                guard: Some(guard),
+            })
         }
         _ => {
-            // If no promise is settled yet, return a pending promise
-            Ok(JsValue::Object(create_promise_object(interp)))
+            // No settled promise found - return pending
+            let (promise, guard) = create_promise_with_guard(interp);
+            Ok(Guarded {
+                value: JsValue::Object(promise),
+                guard: Some(guard),
+            })
         }
     }
 }
@@ -651,23 +668,29 @@ pub fn promise_allsettled(
     interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let iterable = args.first().cloned().unwrap_or(JsValue::Undefined);
     let promises = extract_iterable(&iterable)?;
 
     if promises.is_empty() {
-        let empty_array = interp.create_array(vec![]);
-        return Ok(JsValue::Object(create_fulfilled_promise(
-            interp,
-            JsValue::Object(empty_array),
-        )));
+        let (arr, arr_guard) = interp.create_array_with_guard(vec![]);
+        let (promise, promise_guard) =
+            create_fulfilled_promise_with_guard(interp, JsValue::Object(arr));
+        drop(arr_guard);
+        return Ok(Guarded {
+            value: JsValue::Object(promise),
+            guard: Some(promise_guard),
+        });
     }
 
-    // Guard values during the entire allSettled operation since key() and create_object() can trigger GC
-    let mut scope = interp.guarded_scope();
+    // Pre-intern keys
+    let status_key = interp.key("status");
+    let value_key = interp.key("value");
+    let reason_key = interp.key("reason");
 
-    // Collect status info first without borrowing interp
-    let mut status_info: Vec<(PromiseStatus, Option<JsValue>)> = Vec::with_capacity(promises.len());
+    let mut results: Vec<JsValue> = Vec::with_capacity(promises.len());
+    // Keep guards alive until we create the array - prevents GC from collecting result objects
+    let mut result_guards: Vec<Guard<JsObject>> = Vec::with_capacity(promises.len());
 
     for promise_value in &promises {
         let (status, result) = if let JsValue::Object(obj) = promise_value {
@@ -676,32 +699,13 @@ pub fn promise_allsettled(
                 let state_ref = state.borrow();
                 (state_ref.status.clone(), state_ref.result.clone())
             } else {
-                // Non-promise object - treat as fulfilled with that value
                 (PromiseStatus::Fulfilled, Some(promise_value.clone()))
             }
         } else {
-            // Primitive value - treat as fulfilled with that value
             (PromiseStatus::Fulfilled, Some(promise_value.clone()))
         };
-        // Guard any result value that contains an object
-        if let Some(ref v) = result {
-            scope.add_value(v);
-        }
-        status_info.push((status, result));
-    }
 
-    // Pre-intern keys for allSettled result objects
-    let status_key = interp.key("status");
-    let value_key = interp.key("value");
-    let reason_key = interp.key("reason");
-    let mut results: Vec<JsValue> = Vec::with_capacity(status_info.len());
-
-    for (status, result) in status_info {
-        // Use guarded allocation to prevent GC from collecting the object during creation
-        let result_obj_guarded = interp.create_object_guarded();
-        let result_obj = result_obj_guarded.as_gc().clone();
-        // Add the object to the scope to keep it alive until create_array is called
-        scope.add(&result_obj);
+        let (result_obj, obj_guard) = interp.create_object_with_guard();
         {
             let mut result_ref = result_obj.borrow_mut();
             result_ref.prototype = Some(interp.object_prototype.cheap_clone());
@@ -724,14 +728,19 @@ pub fn promise_allsettled(
             }
         }
         results.push(JsValue::Object(result_obj));
+        result_guards.push(obj_guard);
     }
 
-    let array = interp.create_array(results);
-    drop(scope);
-    Ok(JsValue::Object(create_fulfilled_promise(
-        interp,
-        JsValue::Object(array),
-    )))
+    let (arr, arr_guard) = interp.create_array_with_guard(results);
+    // Once array is created, result objects are reachable through it - safe to drop guards
+    drop(result_guards);
+    let (promise, promise_guard) =
+        create_fulfilled_promise_with_guard(interp, JsValue::Object(arr));
+    drop(arr_guard);
+    Ok(Guarded {
+        value: JsValue::Object(promise),
+        guard: Some(promise_guard),
+    })
 }
 
 /// Promise.any(iterable)
@@ -739,19 +748,21 @@ pub fn promise_any(
     interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
-) -> Result<JsValue, JsError> {
+) -> Result<Guarded, JsError> {
     let iterable = args.first().cloned().unwrap_or(JsValue::Undefined);
     let promises = extract_iterable(&iterable)?;
 
     if promises.is_empty() {
-        // AggregateError with no errors
-        return Ok(JsValue::Object(create_rejected_promise(
+        let (promise, guard) = create_rejected_promise_with_guard(
             interp,
             JsValue::String("All promises were rejected".into()),
-        )));
+        );
+        return Ok(Guarded {
+            value: JsValue::Object(promise),
+            guard: Some(guard),
+        });
     }
 
-    // Scan for first fulfilled or collect errors
     let mut errors: Vec<JsValue> = Vec::new();
     let mut fulfilled_value: Option<JsValue> = None;
     let mut any_pending = false;
@@ -763,11 +774,9 @@ pub fn promise_any(
                 let state_ref = state.borrow();
                 (state_ref.status.clone(), state_ref.result.clone())
             } else {
-                // Non-promise object - treat as fulfilled with that value
                 (PromiseStatus::Fulfilled, Some(promise_value.clone()))
             }
         } else {
-            // Primitive value - treat as fulfilled with that value
             (PromiseStatus::Fulfilled, Some(promise_value.clone()))
         };
 
@@ -785,41 +794,29 @@ pub fn promise_any(
         }
     }
 
-    // Now create the result using interp
     if let Some(value) = fulfilled_value {
-        return Ok(JsValue::Object(create_fulfilled_promise(interp, value)));
+        let (promise, guard) = create_fulfilled_promise_with_guard(interp, value);
+        return Ok(Guarded {
+            value: JsValue::Object(promise),
+            guard: Some(guard),
+        });
     }
 
-    // All rejected - reject with array of errors
     if !errors.is_empty() && !any_pending {
-        let errors_array = JsValue::Object(interp.create_array(errors));
-        return Ok(JsValue::Object(create_rejected_promise(
-            interp,
-            errors_array,
-        )));
+        let (errors_arr, arr_guard) = interp.create_array_with_guard(errors);
+        let (promise, promise_guard) =
+            create_rejected_promise_with_guard(interp, JsValue::Object(errors_arr));
+        drop(arr_guard);
+        return Ok(Guarded {
+            value: JsValue::Object(promise),
+            guard: Some(promise_guard),
+        });
     }
 
-    // No promise is settled yet (or some pending)
-    Ok(JsValue::Object(create_promise_object(interp)))
-}
-
-/// Extract values from an iterable (for Promise.all/race/etc)
-fn extract_iterable(value: &JsValue) -> Result<Vec<JsValue>, JsError> {
-    let JsValue::Object(arr) = value else {
-        return Ok(vec![]);
-    };
-
-    let arr_ref = arr.borrow();
-    if let ExoticObject::Array { length } = arr_ref.exotic {
-        let mut result = Vec::with_capacity(length as usize);
-        for i in 0..length {
-            let elem = arr_ref
-                .get_property(&PropertyKey::Index(i))
-                .unwrap_or(JsValue::Undefined);
-            result.push(elem);
-        }
-        Ok(result)
-    } else {
-        Ok(vec![])
-    }
+    // Return pending promise
+    let (promise, guard) = create_promise_with_guard(interp);
+    Ok(Guarded {
+        value: JsValue::Object(promise),
+        guard: Some(guard),
+    })
 }
