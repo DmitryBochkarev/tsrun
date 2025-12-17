@@ -51,6 +51,13 @@ pub enum StackCompletion {
     Throw,
 }
 
+/// Data for FinallyBlock frame, boxed to reduce Frame enum size
+pub struct FinallyBlockData {
+    pub saved_result: Option<JsValue>,
+    pub saved_error: Option<JsError>,
+    pub saved_completion: StackCompletion,
+}
+
 /// A frame on the evaluation stack
 ///
 /// Each frame represents a pending operation. The interpreter processes
@@ -344,11 +351,8 @@ pub enum Frame {
     },
 
     /// Finally block: execute finally regardless of outcome
-    FinallyBlock {
-        saved_result: Option<JsValue>,
-        saved_error: Option<JsError>,
-        saved_completion: StackCompletion,
-    },
+    /// Boxed to reduce Frame enum size (this variant would otherwise be 128 bytes)
+    FinallyBlock(Box<FinallyBlockData>),
 
     // ═══════════════════════════════════════════════════════════════════════
     // Labeled Statement
@@ -858,11 +862,9 @@ impl Interpreter {
                 saved_env,
             } => self.step_catch_block(state, finalizer, saved_env),
 
-            Frame::FinallyBlock {
-                saved_result,
-                saved_error,
-                saved_completion,
-            } => self.step_finally_block(state, saved_result, saved_error, saved_completion),
+            Frame::FinallyBlock(data) => {
+                self.step_finally_block(state, data.saved_result, data.saved_error, data.saved_completion)
+            }
 
             // ═══════════════════════════════════════════════════════════════
             // Labeled Statement
@@ -978,11 +980,11 @@ impl Interpreter {
                     None // Error was handled
                 } else if let Some(finally_block) = finalizer {
                     // No catch, but there's finally - run finally then re-throw
-                    state.push_frame(Frame::FinallyBlock {
+                    state.push_frame(Frame::FinallyBlock(Box::new(FinallyBlockData {
                         saved_result: None,
                         saved_error: Some(JsError::thrown(error_value)),
                         saved_completion: StackCompletion::Normal,
-                    });
+                    })));
                     state.push_frame(Frame::Block {
                         statements: Rc::clone(&finally_block.body),
                         index: 0,
@@ -3065,11 +3067,11 @@ impl Interpreter {
 
         if let Some(finally_block) = finalizer {
             // Run finally block
-            state.push_frame(Frame::FinallyBlock {
+            state.push_frame(Frame::FinallyBlock(Box::new(FinallyBlockData {
                 saved_result: result,
                 saved_error: None,
                 saved_completion,
-            });
+            })));
             state.completion = StackCompletion::Normal;
             state.push_frame(Frame::Block {
                 statements: Rc::clone(&finally_block.body),
@@ -3104,11 +3106,11 @@ impl Interpreter {
 
         if let Some(finally_block) = finalizer {
             // Run finally
-            state.push_frame(Frame::FinallyBlock {
+            state.push_frame(Frame::FinallyBlock(Box::new(FinallyBlockData {
                 saved_result: result,
                 saved_error: None,
                 saved_completion,
-            });
+            })));
             state.completion = StackCompletion::Normal;
             state.push_frame(Frame::Block {
                 statements: Rc::clone(&finally_block.body),
