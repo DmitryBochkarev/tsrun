@@ -89,13 +89,12 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
 
     // Default to 1MB, can be overridden with command line arg
-    let size: usize = args.get(1)
+    let size: usize = args
+        .get(1)
         .and_then(|s| s.parse().ok())
         .unwrap_or(1_000_000);
 
-    let iterations: usize = args.get(2)
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(100);
+    let iterations: usize = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(100);
 
     eprintln!("Generating {}KB source...", size / 1024);
     let source = generate_source(size);

@@ -13,11 +13,11 @@ pub mod map;
 pub mod math;
 pub mod number;
 pub mod object;
+pub mod promise;
 pub mod regexp;
 pub mod set;
 pub mod string;
 pub mod symbol;
-pub mod promise;
 
 // Re-export public functions from enabled modules
 pub use array::*;

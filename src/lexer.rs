@@ -1444,10 +1444,7 @@ mod tests {
     #[test]
     fn test_template_literal_basic() {
         // Simple template without interpolation becomes TemplateNoSub
-        assert_eq!(
-            lex("`hello`"),
-            vec![TokenKind::TemplateNoSub(s("hello"))]
-        );
+        assert_eq!(lex("`hello`"), vec![TokenKind::TemplateNoSub(s("hello"))]);
     }
 
     #[test]

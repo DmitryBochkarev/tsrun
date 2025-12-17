@@ -851,9 +851,12 @@ impl Interpreter {
                 saved_env,
             } => self.step_catch_block(state, finalizer, saved_env),
 
-            Frame::FinallyBlock(data) => {
-                self.step_finally_block(state, data.saved_result, data.saved_error, data.saved_completion)
-            }
+            Frame::FinallyBlock(data) => self.step_finally_block(
+                state,
+                data.saved_result,
+                data.saved_error,
+                data.saved_completion,
+            ),
 
             // ═══════════════════════════════════════════════════════════════
             // Labeled Statement
@@ -2666,14 +2669,16 @@ impl Interpreter {
         }
 
         // Push continuation frame for after body
-        state.push_frame(Frame::ForOfGeneratorAfterBody(Box::new(ForOfGeneratorData {
-            generator,
-            gen_state,
-            left,
-            body: body.clone(),
-            label,
-            saved_env,
-        })));
+        state.push_frame(Frame::ForOfGeneratorAfterBody(Box::new(
+            ForOfGeneratorData {
+                generator,
+                gen_state,
+                left,
+                body: body.clone(),
+                label,
+                saved_env,
+            },
+        )));
 
         // Push body statement
         state.push_frame(Frame::Stmt(body));

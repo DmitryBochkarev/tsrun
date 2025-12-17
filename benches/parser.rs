@@ -416,17 +416,14 @@ fn bench_parser_statements(c: &mut Criterion) {
     let mut group = c.benchmark_group("parser/statements");
 
     // Generate many simple statements
-    let many_lets: String = (0..1000).map(|i| format!("let x{} = {};\n", i, i)).collect();
+    let many_lets: String = (0..1000)
+        .map(|i| format!("let x{} = {};\n", i, i))
+        .collect();
     let many_fns: String = (0..100)
         .map(|i| format!("function f{}(a, b) {{ return a + b; }}\n", i))
         .collect();
     let many_classes: String = (0..50)
-        .map(|i| {
-            format!(
-                "class C{} {{ constructor() {{ this.x = {}; }} }}\n",
-                i, i
-            )
-        })
+        .map(|i| format!("class C{} {{ constructor() {{ this.x = {}; }} }}\n", i, i))
         .collect();
 
     group.bench_function("1000_let_statements", |b| {

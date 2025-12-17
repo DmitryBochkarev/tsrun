@@ -257,14 +257,7 @@ const c = 3;
 /// Large realistic file
 fn generate_large_source(size: usize) -> String {
     let mut source = String::with_capacity(size);
-    let patterns = [
-        CLASS_DEF,
-        FUNCTIONS,
-        CONTROL_FLOW,
-        OBJECTS,
-        ARRAYS,
-        TYPES,
-    ];
+    let patterns = [CLASS_DEF, FUNCTIONS, CONTROL_FLOW, OBJECTS, ARRAYS, TYPES];
 
     let mut i = 0;
     while source.len() < size {
@@ -350,7 +343,8 @@ fn bench_lexer_token_types(c: &mut Criterion) {
     let mut group = c.benchmark_group("lexer/token_types");
 
     // Identifiers and keywords
-    let identifiers = "foo bar baz qux let const var function class interface type async await yield";
+    let identifiers =
+        "foo bar baz qux let const var function class interface type async await yield";
     group.bench_function("identifiers_keywords", |b| {
         let mut dict = StringDict::new();
         b.iter(|| {
@@ -398,7 +392,8 @@ fn bench_lexer_token_types(c: &mut Criterion) {
     });
 
     // Operators only
-    let operators = "+ - * / % ** ++ -- = == === != !== < <= > >= << >> >>> & && | || ^ ~ ! ? ?? ?. => ...";
+    let operators =
+        "+ - * / % ** ++ -- = == === != !== < <= > >= << >> >>> & && | || ^ ~ ! ? ?? ?. => ...";
     group.bench_function("operators", |b| {
         let mut dict = StringDict::new();
         b.iter(|| {

@@ -212,7 +212,7 @@ fn test_stack_await_resolved_promise() {
 
 #[test]
 fn test_stack_await_pending_promise_suspends() {
-    use typescript_eval::interpreter::builtins::promise_new::create_promise_with_guard;
+    use typescript_eval::interpreter::builtins::promise::create_promise_with_guard;
 
     let mut interp = Interpreter::new();
 
@@ -240,7 +240,7 @@ fn test_stack_await_pending_promise_suspends() {
 
 #[test]
 fn test_stack_await_resume_with_value() {
-    use typescript_eval::interpreter::builtins::promise_new::create_promise_with_guard;
+    use typescript_eval::interpreter::builtins::promise::create_promise_with_guard;
 
     let mut interp = Interpreter::new();
 
@@ -286,7 +286,7 @@ fn test_stack_await_resume_with_value() {
 
 #[test]
 fn test_stack_await_resume_with_error() {
-    use typescript_eval::interpreter::builtins::promise_new::create_promise_with_guard;
+    use typescript_eval::interpreter::builtins::promise::create_promise_with_guard;
     use typescript_eval::JsError;
 
     let mut interp = Interpreter::new();
