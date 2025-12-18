@@ -175,7 +175,7 @@ pub struct Interpreter {
     step_counter: u32,
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // Internal Module System
+    // Module System
     // ═══════════════════════════════════════════════════════════════════════════
     /// Registered internal modules (specifier -> module definition)
     internal_modules: FxHashMap<String, crate::InternalModule>,
@@ -183,9 +183,14 @@ pub struct Interpreter {
     /// Instantiated internal module objects (cached after first import)
     internal_module_cache: FxHashMap<String, Gc<JsObject>>,
 
-    /// Loaded external modules (specifier -> module namespace)
-    // FIXME: loaded modules should be specfied with path relative to main module, in order to mixup same-named modules from different paths
-    loaded_modules: FxHashMap<String, Gc<JsObject>>,
+    /// Loaded external modules (normalized path -> module namespace)
+    loaded_modules: FxHashMap<crate::ModulePath, Gc<JsObject>>,
+
+    /// The path of the main module (set by eval_with_path)
+    main_module_path: Option<crate::ModulePath>,
+
+    /// The path of the currently executing module (for resolving relative imports)
+    current_module_path: Option<crate::ModulePath>,
 
     // ═══════════════════════════════════════════════════════════════════════════
     // Order System
@@ -212,8 +217,8 @@ pub struct Interpreter {
     pub(crate) pending_program: Option<crate::ast::Program>,
 
     /// Pending module sources waiting for their imports to be satisfied
-    /// Maps specifier -> (parsed program, needed imports)
-    pub(crate) pending_module_sources: FxHashMap<String, crate::ast::Program>,
+    /// Maps normalized path -> parsed program
+    pub(crate) pending_module_sources: FxHashMap<crate::ModulePath, crate::ast::Program>,
 
     /// Pool of reusable ExecutionState objects to avoid repeated allocations.
     /// When an execution completes, its state is reset and returned to the pool.
@@ -295,10 +300,12 @@ impl Interpreter {
             timeout_ms: 3000, // Default 3 second timeout
             execution_start: None,
             step_counter: 0,
-            // Internal module system
+            // Module system
             internal_modules: FxHashMap::default(),
             internal_module_cache: FxHashMap::default(),
             loaded_modules: FxHashMap::default(),
+            main_module_path: None,
+            current_module_path: None,
             // Order system
             next_order_id: 1,
             pending_orders: Vec::new(),
@@ -481,28 +488,52 @@ impl Interpreter {
     // Full Runtime API (imports + orders)
     // ═══════════════════════════════════════════════════════════════════════════
 
-    /// Evaluate TypeScript/JavaScript code with full runtime support
+    /// Evaluate TypeScript/JavaScript code with full runtime support.
+    ///
+    /// This is equivalent to `eval_with_path(source, None)` - relative imports
+    /// will be resolved without a base path (treated as bare specifiers).
     ///
     /// Returns RuntimeResult which may indicate:
     /// - Complete: execution finished with a value
     /// - NeedImports: modules need to be provided before continuing
     /// - Suspended: waiting for orders to be fulfilled
     pub fn eval(&mut self, source: &str) -> Result<crate::RuntimeResult, JsError> {
+        self.eval_with_path(source, None)
+    }
+
+    /// Evaluate TypeScript/JavaScript code with a known module path.
+    ///
+    /// The `module_path` is used as the base for resolving relative imports.
+    /// For example, if `module_path` is `/project/src/main.ts` and the code
+    /// contains `import { foo } from "./utils"`, it will resolve to
+    /// `/project/src/utils`.
+    ///
+    /// Returns RuntimeResult which may indicate:
+    /// - Complete: execution finished with a value
+    /// - NeedImports: modules need to be provided before continuing
+    /// - Suspended: waiting for orders to be fulfilled
+    pub fn eval_with_path(
+        &mut self,
+        source: &str,
+        module_path: Option<crate::ModulePath>,
+    ) -> Result<crate::RuntimeResult, JsError> {
+        // Set main module path if this is the entry point
+        if self.main_module_path.is_none() {
+            self.main_module_path = module_path.clone();
+        }
+        self.current_module_path = module_path.clone();
+
         // Parse the source
         let mut parser = Parser::new(source, &mut self.string_dict);
         let program = parser.parse_program()?;
 
-        // Collect all import specifiers
-        let imports = self.collect_imports(&program);
+        // Collect all import requests with resolved paths
+        // For main module, importer is None (we pass module_path for resolution but not as importer)
+        let imports = self.collect_import_requests_internal(&program, module_path.as_ref(), None);
 
-        // Check which imports are missing (not internal and not already loaded)
-        let missing: Vec<String> = imports
-            .into_iter()
-            .filter(|spec| {
-                // FIXME: handle relative paths and normalization
-                !self.is_internal_module(spec) && !self.loaded_modules.contains_key(spec)
-            })
-            .collect();
+        // Filter to only missing imports and deduplicate
+        let missing = self.filter_missing_imports(imports);
+        let missing = Self::dedupe_import_requests(missing);
 
         if !missing.is_empty() {
             // Save the program for later execution when imports are provided
@@ -603,34 +634,41 @@ impl Interpreter {
         }
     }
 
-    /// Provide a module source for a pending import
+    /// Provide a module source for a pending import.
     ///
+    /// The `resolved_path` should be the normalized path from `ImportRequest.resolved_path`.
     /// The module is parsed and stored, but not executed until `continue_eval` is called.
     /// This allows collecting all needed imports before execution.
-    // FIXME: handle relative paths and normalization
-    // FIXME: should support native modules
-    // FIXME: should support already parsed sources
-    pub fn provide_module(&mut self, specifier: &str, source: &str) -> Result<(), JsError> {
+    pub fn provide_module(
+        &mut self,
+        resolved_path: crate::ModulePath,
+        source: &str,
+    ) -> Result<(), JsError> {
         // Parse the module
         let mut parser = Parser::new(source, &mut self.string_dict);
         let program = parser.parse_program()?;
 
         // Store the parsed program for later execution
-        self.pending_module_sources
-            .insert(specifier.to_string(), program);
+        self.pending_module_sources.insert(resolved_path, program);
 
         Ok(())
     }
 
-    /// Execute a pending module that has all its imports satisfied
-    fn execute_pending_module(&mut self, specifier: &str) -> Result<(), JsError> {
+    /// Execute a pending module that has all its imports satisfied.
+    fn execute_pending_module(&mut self, module_path: &crate::ModulePath) -> Result<(), JsError> {
         let program = self
             .pending_module_sources
-            .remove(specifier)
-            .ok_or_else(|| JsError::internal_error(format!("Module '{}' not found", specifier)))?;
+            .remove(module_path)
+            .ok_or_else(|| {
+                JsError::internal_error(format!("Module '{}' not found", module_path))
+            })?;
 
-        // Save current environment
+        // Save current state
         let saved_env = self.env.cheap_clone();
+        let saved_module_path = self.current_module_path.take();
+
+        // Set current module path for resolving nested imports
+        self.current_module_path = Some(module_path.clone());
 
         // Create module environment
         let module_env = self.create_module_environment();
@@ -639,8 +677,9 @@ impl Interpreter {
         // Execute module using stack-based evaluation
         let result = self.execute_program_with_stack(&program);
 
-        // Restore environment
+        // Restore state
         self.env = saved_env;
+        self.current_module_path = saved_module_path;
 
         result?;
 
@@ -661,9 +700,8 @@ impl Interpreter {
         // Root the module (lives forever)
         self.root_guard.guard(module_obj.clone());
 
-        // Cache it
-        self.loaded_modules
-            .insert(specifier.to_string(), module_obj);
+        // Cache it by normalized path
+        self.loaded_modules.insert(module_path.clone(), module_obj);
 
         Ok(())
     }
@@ -679,39 +717,37 @@ impl Interpreter {
         // First, try to execute any pending modules that have all their imports
         loop {
             // Collect all missing imports across all pending modules
-            let mut all_missing: Vec<String> = Vec::new();
-            let mut ready_modules: Vec<String> = Vec::new();
+            let mut all_missing: Vec<crate::ImportRequest> = Vec::new();
+            let mut ready_modules: Vec<crate::ModulePath> = Vec::new();
 
             // Clone keys to avoid borrow issues
-            let pending_keys: Vec<String> = self.pending_module_sources.keys().cloned().collect();
+            let pending_keys: Vec<crate::ModulePath> =
+                self.pending_module_sources.keys().cloned().collect();
 
-            for specifier in &pending_keys {
+            for module_path in &pending_keys {
                 // Skip if already loaded
-                if self.loaded_modules.contains_key(specifier) {
+                if self.loaded_modules.contains_key(module_path) {
                     continue;
                 }
 
                 // Get the program to check its imports
-                if let Some(program) = self.pending_module_sources.get(specifier) {
-                    let imports = self.collect_imports(program);
-                    let missing: Vec<String> = imports
-                        .into_iter()
-                        .filter(|spec| {
-                            !self.is_internal_module(spec)
-                                && !self.loaded_modules.contains_key(spec)
-                        })
-                        .collect();
+                if let Some(program) = self.pending_module_sources.get(module_path) {
+                    let imports = self.collect_import_requests(program, Some(module_path));
+                    let missing = self.filter_missing_imports(imports);
 
                     if missing.is_empty() {
                         // This module is ready to execute
-                        ready_modules.push(specifier.clone());
+                        ready_modules.push(module_path.clone());
                     } else {
-                        // Collect missing imports
-                        for m in missing {
-                            if !all_missing.contains(&m)
-                                && !self.pending_module_sources.contains_key(&m)
-                            {
-                                all_missing.push(m);
+                        // Collect missing imports (dedupe by resolved path)
+                        for req in missing {
+                            let already_pending =
+                                self.pending_module_sources.contains_key(&req.resolved_path);
+                            let already_in_list = all_missing
+                                .iter()
+                                .any(|r| r.resolved_path == req.resolved_path);
+                            if !already_pending && !already_in_list {
+                                all_missing.push(req);
                             }
                         }
                     }
@@ -720,8 +756,8 @@ impl Interpreter {
 
             // If we have modules ready to execute, execute them
             if !ready_modules.is_empty() {
-                for specifier in ready_modules {
-                    self.execute_pending_module(&specifier)?;
+                for module_path in ready_modules {
+                    self.execute_pending_module(&module_path)?;
                 }
                 // Continue the loop to check if more modules are now ready
                 continue;
@@ -738,15 +774,10 @@ impl Interpreter {
 
         // If we have a pending program waiting for imports, check if we can execute it now
         if let Some(program) = self.pending_program.take() {
-            // Re-check imports
-            // FIXME: duplicate code
-            let imports = self.collect_imports(&program);
-            let missing: Vec<String> = imports
-                .into_iter()
-                .filter(|spec| {
-                    !self.is_internal_module(spec) && !self.loaded_modules.contains_key(spec)
-                })
-                .collect();
+            // Re-check imports using the main module path as base
+            let imports = self.collect_import_requests(&program, self.main_module_path.as_ref());
+            let missing = self.filter_missing_imports(imports);
+            let missing = Self::dedupe_import_requests(missing);
 
             if !missing.is_empty() {
                 // Still missing imports - save program again and return
@@ -819,29 +850,92 @@ impl Interpreter {
         env
     }
 
-    /// Collect all import specifiers from a program
-    // FIXME: move to Program
-    fn collect_imports(&self, program: &Program) -> Vec<String> {
+    /// Resolve a module specifier to a normalized path.
+    ///
+    /// Uses the current module path (or main module path) as the base for resolving
+    /// relative imports like `./foo` or `../bar`.
+    pub fn resolve_module_specifier(&self, specifier: &str) -> crate::ModulePath {
+        let base = self
+            .current_module_path
+            .as_ref()
+            .or(self.main_module_path.as_ref());
+        crate::ModulePath::resolve(specifier, base)
+    }
+
+    /// Collect all import requests from a program, resolving relative paths.
+    ///
+    /// Uses the same path for both resolution base and importer.
+    /// For main module imports, use `collect_import_requests_internal` instead.
+    fn collect_import_requests(
+        &self,
+        program: &Program,
+        module_path: Option<&crate::ModulePath>,
+    ) -> Vec<crate::ImportRequest> {
+        self.collect_import_requests_internal(program, module_path, module_path)
+    }
+
+    /// Collect all import requests from a program with separate resolution base and importer.
+    ///
+    /// - `resolve_base`: Used to resolve relative paths (e.g., ./foo becomes /project/src/foo)
+    /// - `importer`: Stored in ImportRequest.importer (None for main module)
+    fn collect_import_requests_internal(
+        &self,
+        program: &Program,
+        resolve_base: Option<&crate::ModulePath>,
+        importer: Option<&crate::ModulePath>,
+    ) -> Vec<crate::ImportRequest> {
         use crate::ast::Statement;
 
         let mut imports = Vec::new();
 
         for stmt in program.body.iter() {
-            match stmt {
-                Statement::Import(import) => {
-                    imports.push(import.source.value.to_string());
-                }
+            let specifier = match stmt {
+                Statement::Import(import) => Some(import.source.value.to_string()),
                 Statement::Export(export) => {
                     // Re-export from another module: export { foo } from "./bar"
-                    if let Some(ref source) = export.source {
-                        imports.push(source.value.to_string());
-                    }
+                    export.source.as_ref().map(|s| s.value.to_string())
                 }
-                _ => {}
+                _ => None,
+            };
+
+            if let Some(spec) = specifier {
+                let resolved = crate::ModulePath::resolve(&spec, resolve_base);
+                imports.push(crate::ImportRequest {
+                    specifier: spec,
+                    resolved_path: resolved,
+                    importer: importer.cloned(),
+                });
             }
         }
 
         imports
+    }
+
+    /// Filter import requests to only those that are missing (not internal, not already loaded).
+    fn filter_missing_imports(
+        &self,
+        imports: Vec<crate::ImportRequest>,
+    ) -> Vec<crate::ImportRequest> {
+        imports
+            .into_iter()
+            .filter(|req| {
+                // Internal modules are resolved automatically
+                if self.is_internal_module(&req.specifier) {
+                    return false;
+                }
+                // Already loaded modules don't need to be requested
+                !self.loaded_modules.contains_key(&req.resolved_path)
+            })
+            .collect()
+    }
+
+    /// Deduplicate import requests by resolved path.
+    fn dedupe_import_requests(imports: Vec<crate::ImportRequest>) -> Vec<crate::ImportRequest> {
+        let mut seen = std::collections::HashSet::new();
+        imports
+            .into_iter()
+            .filter(|req| seen.insert(req.resolved_path.clone()))
+            .collect()
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -1570,21 +1664,27 @@ impl Interpreter {
     // Module Resolution (used by stack-based execution)
     // ═══════════════════════════════════════════════════════════════════════════
 
-    /// Resolve a module specifier to a module namespace object
+    /// Resolve a module specifier to a module namespace object.
+    ///
+    /// The specifier is resolved relative to the current module path before
+    /// looking up in the loaded modules cache.
     fn resolve_module(&mut self, specifier: &str) -> Result<Gc<JsObject>, JsError> {
-        // Check internal modules first
+        // Check internal modules first (use original specifier for internal modules)
         if let Some(module) = self.resolve_internal_module(specifier)? {
             return Ok(module);
         }
 
-        // Check loaded external modules
-        if let Some(module) = self.loaded_modules.get(specifier) {
+        // Resolve the specifier to a normalized path
+        let resolved_path = self.resolve_module_specifier(specifier);
+
+        // Check loaded external modules by resolved path
+        if let Some(module) = self.loaded_modules.get(&resolved_path) {
             return Ok(module.clone());
         }
 
         Err(JsError::reference_error(format!(
-            "Module '{}' not found",
-            specifier
+            "Module '{}' not found (resolved to '{}')",
+            specifier, resolved_path
         )))
     }
 

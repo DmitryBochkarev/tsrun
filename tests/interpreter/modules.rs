@@ -1,8 +1,8 @@
 //! Tests for the module system and order API
 
 use typescript_eval::{
-    Guarded, InternalModule, Interpreter, JsError, JsValue, OrderResponse, Runtime, RuntimeConfig,
-    RuntimeResult,
+    Guarded, InternalModule, Interpreter, JsError, JsValue, ModulePath, OrderResponse, Runtime,
+    RuntimeConfig, RuntimeResult,
 };
 
 #[test]
@@ -26,7 +26,9 @@ fn test_runtime_result_need_imports() {
     match result {
         RuntimeResult::NeedImports(imports) => {
             assert_eq!(imports.len(), 1);
-            assert_eq!(imports[0], "./utils");
+            assert_eq!(imports[0].specifier, "./utils");
+            // Without a base path, ./utils normalizes to just "utils"
+            assert_eq!(imports[0].resolved_path.as_str(), "utils");
         }
         _ => panic!("Expected NeedImports result"),
     }
@@ -48,12 +50,12 @@ fn test_provide_module() {
 
     match result {
         RuntimeResult::NeedImports(imports) => {
-            assert_eq!(imports[0], "./math");
+            assert_eq!(imports[0].specifier, "./math");
 
-            // Provide the module
+            // Provide the module using the resolved path
             runtime
                 .provide_module(
-                    "./math",
+                    imports[0].resolved_path.clone(),
                     r#"
                 export function add(a: number, b: number): number {
                     return a + b;
@@ -131,9 +133,9 @@ fn test_internal_module_not_in_need_imports() {
         RuntimeResult::NeedImports(imports) => {
             // Only external modules should be needed
             assert_eq!(imports.len(), 1);
-            assert_eq!(imports[0], "./external");
+            assert_eq!(imports[0].specifier, "./external");
             // eval:internal should NOT be in the list
-            assert!(!imports.contains(&"eval:internal".to_string()));
+            assert!(!imports.iter().any(|i| i.specifier == "eval:internal"));
         }
         _ => panic!("Expected NeedImports"),
     }
@@ -636,12 +638,12 @@ fn test_external_module_named_exports() {
     match result {
         RuntimeResult::NeedImports(imports) => {
             assert_eq!(imports.len(), 1);
-            assert_eq!(imports[0], "./math");
+            assert_eq!(imports[0].specifier, "./math");
 
-            // Provide the module
+            // Provide the module using the resolved path
             runtime
                 .provide_module(
-                    "./math",
+                    imports[0].resolved_path.clone(),
                     r#"
                 export function add(a: number, b: number): number {
                     return a + b;
@@ -683,11 +685,11 @@ fn test_external_module_default_export() {
 
     match result {
         RuntimeResult::NeedImports(imports) => {
-            assert_eq!(imports[0], "./greeting");
+            assert_eq!(imports[0].specifier, "./greeting");
 
             runtime
                 .provide_module(
-                    "./greeting",
+                    imports[0].resolved_path.clone(),
                     r#"
                 export default function greet(name: string): string {
                     return "Hello, " + name + "!";
@@ -725,11 +727,11 @@ fn test_external_module_mixed_exports() {
 
     match result {
         RuntimeResult::NeedImports(imports) => {
-            assert_eq!(imports[0], "./constants");
+            assert_eq!(imports[0].specifier, "./constants");
 
             runtime
                 .provide_module(
-                    "./constants",
+                    imports[0].resolved_path.clone(),
                     r#"
                 export const PI = 3.14159;
                 export const E = 2.71828;
@@ -774,10 +776,11 @@ fn test_external_module_aliased_imports() {
         .unwrap();
 
     match result {
-        RuntimeResult::NeedImports(_imports) => {
+        RuntimeResult::NeedImports(imports) => {
+            // Provide the module using the resolved path
             runtime
                 .provide_module(
-                    "./utils",
+                    imports[0].resolved_path.clone(),
                     r#"
                 export const value = 10;
                 export function compute(x: number): number {
@@ -817,16 +820,20 @@ fn test_multiple_external_modules() {
     match result {
         RuntimeResult::NeedImports(imports) => {
             assert_eq!(imports.len(), 2);
-            assert!(imports.contains(&"./moduleA".to_string()));
-            assert!(imports.contains(&"./moduleB".to_string()));
+            assert!(imports.iter().any(|i| i.specifier == "./moduleA"));
+            assert!(imports.iter().any(|i| i.specifier == "./moduleB"));
 
-            // Provide both modules
-            runtime
-                .provide_module("./moduleA", "export const a = 10;")
-                .unwrap();
-            runtime
-                .provide_module("./moduleB", "export const b = 20;")
-                .unwrap();
+            // Provide both modules using their resolved paths
+            for req in &imports {
+                let source = if req.specifier == "./moduleA" {
+                    "export const a = 10;"
+                } else {
+                    "export const b = 20;"
+                };
+                runtime
+                    .provide_module(req.resolved_path.clone(), source)
+                    .unwrap();
+            }
 
             let result2 = runtime.continue_eval().unwrap();
 
@@ -855,10 +862,10 @@ fn test_module_namespace_import() {
         .unwrap();
 
     match result {
-        RuntimeResult::NeedImports(_) => {
+        RuntimeResult::NeedImports(imports) => {
             runtime
                 .provide_module(
-                    "./utils",
+                    imports[0].resolved_path.clone(),
                     r#"
                 export const BASE = 21;
                 export function double(x: number): number {
@@ -908,11 +915,11 @@ fn test_module_with_internal_imports() {
         RuntimeResult::NeedImports(imports) => {
             // Only external module should be requested, not eval:internal
             assert_eq!(imports.len(), 1);
-            assert_eq!(imports[0], "./myModule");
+            assert_eq!(imports[0].specifier, "./myModule");
 
             runtime
                 .provide_module(
-                    "./myModule",
+                    imports[0].resolved_path.clone(),
                     r#"
                 // Module can use internal modules
                 export function helper(x: number): number {
@@ -949,10 +956,10 @@ fn test_export_const_variable() {
         .unwrap();
 
     match result {
-        RuntimeResult::NeedImports(_) => {
+        RuntimeResult::NeedImports(imports) => {
             runtime
                 .provide_module(
-                    "./config",
+                    imports[0].resolved_path.clone(),
                     r#"
                 export const CONFIG = {
                     name: "MyApp",
@@ -990,10 +997,10 @@ fn test_export_class() {
         .unwrap();
 
     match result {
-        RuntimeResult::NeedImports(_) => {
+        RuntimeResult::NeedImports(imports) => {
             runtime
                 .provide_module(
-                    "./geometry",
+                    imports[0].resolved_path.clone(),
                     r#"
                 export class Point {
                     x: number;
@@ -1020,5 +1027,183 @@ fn test_export_class() {
             }
         }
         _ => panic!("Expected NeedImports"),
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Module Path Resolution Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_module_path_normalize() {
+    // Test that paths are normalized correctly
+    assert_eq!(ModulePath::resolve("./utils", None).as_str(), "utils");
+    assert_eq!(
+        ModulePath::resolve("./foo/bar", None).as_str(),
+        "foo/bar"
+    );
+    assert_eq!(
+        ModulePath::resolve("./a/b/../c", None).as_str(),
+        "a/c"
+    );
+    assert_eq!(
+        ModulePath::resolve("./a/./b/./c", None).as_str(),
+        "a/b/c"
+    );
+}
+
+#[test]
+fn test_module_path_resolve_with_base() {
+    let base = ModulePath::new("/project/src/main.ts");
+
+    // Relative import from main module
+    assert_eq!(
+        ModulePath::resolve("./utils", Some(&base)).as_str(),
+        "/project/src/utils"
+    );
+
+    // Parent directory
+    assert_eq!(
+        ModulePath::resolve("../shared/lib", Some(&base)).as_str(),
+        "/project/shared/lib"
+    );
+
+    // Multiple parent levels
+    assert_eq!(
+        ModulePath::resolve("../../config", Some(&base)).as_str(),
+        "/config"
+    );
+}
+
+#[test]
+fn test_module_path_bare_specifier() {
+    // Bare specifiers (npm packages) should pass through unchanged
+    assert_eq!(ModulePath::resolve("lodash", None).as_str(), "lodash");
+    assert_eq!(
+        ModulePath::resolve("@scope/package", None).as_str(),
+        "@scope/package"
+    );
+
+    // Bare specifiers should ignore base path
+    let base = ModulePath::new("/project/src/main.ts");
+    assert_eq!(
+        ModulePath::resolve("lodash", Some(&base)).as_str(),
+        "lodash"
+    );
+}
+
+#[test]
+fn test_module_path_absolute() {
+    // Absolute paths should just be normalized
+    assert_eq!(
+        ModulePath::resolve("/foo/bar", None).as_str(),
+        "/foo/bar"
+    );
+    assert_eq!(
+        ModulePath::resolve("/foo/../bar", None).as_str(),
+        "/bar"
+    );
+}
+
+#[test]
+fn test_eval_with_path_resolves_imports() {
+    let mut runtime = Runtime::new();
+
+    // Eval with a base path
+    let result = runtime
+        .eval_with_path(
+            r#"import { foo } from "./utils";"#,
+            "/project/src/main.ts",
+        )
+        .unwrap();
+
+    match result {
+        RuntimeResult::NeedImports(imports) => {
+            assert_eq!(imports.len(), 1);
+            assert_eq!(imports[0].specifier, "./utils");
+            // Should resolve relative to the main module path
+            assert_eq!(imports[0].resolved_path.as_str(), "/project/src/utils");
+            // Importer is None for main module
+            assert!(imports[0].importer.is_none());
+        }
+        _ => panic!("Expected NeedImports"),
+    }
+}
+
+#[test]
+fn test_nested_module_imports_resolve_correctly() {
+    let mut runtime = Runtime::new();
+
+    // Main module at /project/src/main.ts imports ./lib/helpers
+    let result = runtime
+        .eval_with_path(
+            r#"import { helper } from "./lib/helpers";"#,
+            "/project/src/main.ts",
+        )
+        .unwrap();
+
+    match result {
+        RuntimeResult::NeedImports(imports) => {
+            assert_eq!(
+                imports[0].resolved_path.as_str(),
+                "/project/src/lib/helpers"
+            );
+
+            // Provide the helpers module, which imports from ../shared
+            runtime
+                .provide_module(
+                    imports[0].resolved_path.clone(),
+                    r#"
+                    import { util } from "../shared";
+                    export function helper(): number { return util(); }
+                "#,
+                )
+                .unwrap();
+
+            // Continue - should now need /project/src/shared
+            let result2 = runtime.continue_eval().unwrap();
+
+            match result2 {
+                RuntimeResult::NeedImports(imports2) => {
+                    // The import "../shared" from /project/src/lib/helpers
+                    // should resolve to /project/src/shared
+                    assert_eq!(imports2[0].specifier, "../shared");
+                    assert_eq!(imports2[0].resolved_path.as_str(), "/project/src/shared");
+                    // Importer should be the helpers module
+                    assert_eq!(
+                        imports2[0].importer.as_ref().unwrap().as_str(),
+                        "/project/src/lib/helpers"
+                    );
+                }
+                _ => panic!("Expected NeedImports for nested import"),
+            }
+        }
+        _ => panic!("Expected NeedImports for initial import"),
+    }
+}
+
+#[test]
+fn test_same_module_different_paths_deduplicated() {
+    let mut runtime = Runtime::new();
+
+    // Main module imports the same logical module via different relative paths
+    let result = runtime
+        .eval_with_path(
+            r#"
+            import { a } from "./utils";
+            import { b } from "./lib/../utils";
+            a + b;
+        "#,
+            "/project/main.ts",
+        )
+        .unwrap();
+
+    match result {
+        RuntimeResult::NeedImports(imports) => {
+            // Both should resolve to the same path, so only 1 import request
+            assert_eq!(imports.len(), 1);
+            assert_eq!(imports[0].resolved_path.as_str(), "/project/utils");
+        }
+        _ => panic!("Expected NeedImports for deduplication test"),
     }
 }

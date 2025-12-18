@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
-use typescript_eval::{JsValue, Runtime, RuntimeResult};
+use typescript_eval::{JsValue, ModulePath, Runtime, RuntimeResult};
 
 fn main() {
     if let Err(e) = run() {
@@ -54,8 +54,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     runtime.set_timeout_ms(300 * 1000);
 
-    // Track provided modules to avoid reloading
-    let mut provided: HashMap<String, PathBuf> = HashMap::new();
+    // Track provided modules by resolved path to avoid reloading
+    let mut provided: HashMap<ModulePath, PathBuf> = HashMap::new();
 
     // Start evaluation - may return NeedImports
     let mut result = runtime.eval(&rewritten_source)?;
@@ -67,21 +67,23 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 print_value(&value);
                 return Ok(());
             }
-            RuntimeResult::NeedImports(specifiers) => {
-                for specifier in specifiers {
-                    if provided.contains_key(&specifier) {
+            RuntimeResult::NeedImports(import_requests) => {
+                for req in import_requests {
+                    // Use resolved_path for deduplication
+                    if provided.contains_key(&req.resolved_path) {
                         continue;
                     }
 
-                    // Load module from filesystem
-                    let (module_source, module_dir) = load_module(&specifier)?;
+                    // Load module from filesystem using the resolved path
+                    // (which is the canonical filesystem path in this runner)
+                    let (module_source, module_dir) = load_module(req.resolved_path.as_str())?;
 
                     // Rewrite imports in this module to use canonical paths
                     let rewritten_module = rewrite_imports(&module_source, &module_dir)?;
 
-                    // Provide to runtime (doesn't execute yet, just stores it)
-                    runtime.provide_module(&specifier, &rewritten_module)?;
-                    provided.insert(specifier, module_dir);
+                    // Provide to runtime using the resolved path
+                    runtime.provide_module(req.resolved_path.clone(), &rewritten_module)?;
+                    provided.insert(req.resolved_path, module_dir);
                 }
                 // continue_eval will check for nested imports and return NeedImports again if needed
                 result = runtime.continue_eval()?;

@@ -34,7 +34,7 @@ pub use value::JsValue;
 pub use interpreter::builtins::json::{js_value_to_json, json_to_js_value_with_interp};
 
 // Re-export order system types
-// Note: Order, OrderId, OrderResponse, RuntimeResult are defined in this module
+// Note: Order, OrderId, OrderResponse, RuntimeResult, ModulePath, ImportRequest are defined in this module
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -66,6 +66,133 @@ pub struct OrderResponse {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// Module Path System
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// A normalized, absolute module path.
+///
+/// Module paths are always stored in normalized form:
+/// - No `.` or `..` segments
+/// - Forward slashes only
+/// - No trailing slashes
+/// - Absolute (starts with `/` or is a bare specifier like `lodash`)
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ModulePath(String);
+
+impl ModulePath {
+    /// Create a ModulePath from an already-normalized absolute path.
+    /// Use `resolve` for relative paths.
+    pub fn new(path: impl Into<String>) -> Self {
+        ModulePath(path.into())
+    }
+
+    /// Get the path as a string slice
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// Get the directory portion of this path (everything before the last `/`)
+    pub fn parent(&self) -> Option<&str> {
+        self.0.rfind('/').and_then(|idx| self.0.get(..idx))
+    }
+
+    /// Check if this is a relative specifier (starts with `.` or `..`)
+    pub fn is_relative(specifier: &str) -> bool {
+        specifier.starts_with("./") || specifier.starts_with("../")
+    }
+
+    /// Check if this is a bare specifier (not relative, not absolute)
+    /// e.g., "lodash", "react", "eval:internal"
+    pub fn is_bare(specifier: &str) -> bool {
+        !specifier.starts_with('/') && !Self::is_relative(specifier)
+    }
+
+    /// Resolve a specifier relative to a base path.
+    ///
+    /// - Relative specifiers (`./foo`, `../bar`) are resolved against the base's directory
+    /// - Absolute specifiers (`/foo/bar`) are normalized and returned as-is
+    /// - Bare specifiers (`lodash`) are returned as-is (for the host to resolve)
+    pub fn resolve(specifier: &str, base: Option<&ModulePath>) -> ModulePath {
+        if Self::is_bare(specifier) {
+            // Bare specifier - return as-is for host resolution
+            return ModulePath(specifier.to_string());
+        }
+
+        if specifier.starts_with('/') {
+            // Absolute path - just normalize
+            return ModulePath(Self::normalize_path(specifier));
+        }
+
+        // Relative path - resolve against base
+        let base_dir = base.and_then(|b| b.parent()).unwrap_or("");
+
+        let combined = if base_dir.is_empty() {
+            specifier.to_string()
+        } else {
+            format!("{}/{}", base_dir, specifier)
+        };
+
+        ModulePath(Self::normalize_path(&combined))
+    }
+
+    /// Normalize a path by resolving `.` and `..` segments
+    fn normalize_path(path: &str) -> String {
+        let mut segments: Vec<&str> = Vec::new();
+
+        for segment in path.split('/') {
+            match segment {
+                "" | "." => {
+                    // Skip empty segments and current directory markers
+                }
+                ".." => {
+                    // Go up one directory
+                    segments.pop();
+                }
+                s => {
+                    segments.push(s);
+                }
+            }
+        }
+
+        // Reconstruct path
+        if path.starts_with('/') {
+            format!("/{}", segments.join("/"))
+        } else {
+            segments.join("/")
+        }
+    }
+}
+
+impl std::fmt::Display for ModulePath {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl From<&str> for ModulePath {
+    fn from(s: &str) -> Self {
+        ModulePath::new(s)
+    }
+}
+
+impl From<String> for ModulePath {
+    fn from(s: String) -> Self {
+        ModulePath::new(s)
+    }
+}
+
+/// A pending import request with context about where it was requested from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportRequest {
+    /// The original specifier as written in the source code
+    pub specifier: String,
+    /// The resolved absolute path (for deduplication)
+    pub resolved_path: ModulePath,
+    /// The module that requested this import (None for main module)
+    pub importer: Option<ModulePath>,
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // Runtime Result
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -76,8 +203,8 @@ pub enum RuntimeResult {
     Complete(JsValue),
 
     /// Need these modules before execution can start.
-    /// Only includes non-internal modules (internal ones resolve automatically).
-    NeedImports(Vec<String>),
+    /// Contains import requests with resolved paths and importer context.
+    NeedImports(Vec<ImportRequest>),
 
     /// Execution suspended waiting for orders to be fulfilled
     Suspended {
@@ -278,7 +405,10 @@ impl Runtime {
         self.interpreter.eval_simple(source)
     }
 
-    /// Evaluate TypeScript/JavaScript code with full runtime support
+    /// Evaluate TypeScript/JavaScript code with full runtime support.
+    ///
+    /// This is equivalent to `eval_with_path(source, None)` - relative imports
+    /// will be resolved without a base path (treated as bare specifiers).
     ///
     /// Returns RuntimeResult which may indicate:
     /// - Complete: execution finished with a value
@@ -288,9 +418,38 @@ impl Runtime {
         self.interpreter.eval(source)
     }
 
-    /// Provide a module source for a pending import
-    pub fn provide_module(&mut self, specifier: &str, source: &str) -> Result<(), JsError> {
-        self.interpreter.provide_module(specifier, source)
+    /// Evaluate TypeScript/JavaScript code with a known module path.
+    ///
+    /// The `module_path` is used as the base for resolving relative imports.
+    /// For example, if `module_path` is `/project/src/main.ts` and the code
+    /// contains `import { foo } from "./utils"`, it will resolve to
+    /// `/project/src/utils`.
+    ///
+    /// Returns RuntimeResult which may indicate:
+    /// - Complete: execution finished with a value
+    /// - NeedImports: modules need to be provided before continuing
+    /// - Suspended: waiting for orders to be fulfilled
+    pub fn eval_with_path(
+        &mut self,
+        source: &str,
+        module_path: impl Into<ModulePath>,
+    ) -> Result<RuntimeResult, JsError> {
+        self.interpreter
+            .eval_with_path(source, Some(module_path.into()))
+    }
+
+    /// Provide a module source for a pending import.
+    ///
+    /// The `resolved_path` should be the `ImportRequest.resolved_path` from
+    /// the `NeedImports` result. This ensures proper deduplication of modules
+    /// even when they are imported with different relative paths.
+    pub fn provide_module(
+        &mut self,
+        resolved_path: impl Into<ModulePath>,
+        source: &str,
+    ) -> Result<(), JsError> {
+        self.interpreter
+            .provide_module(resolved_path.into(), source)
     }
 
     /// Continue evaluation after providing modules or fulfilling orders
