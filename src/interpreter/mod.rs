@@ -1701,9 +1701,11 @@ impl Interpreter {
     // ═══════════════════════════════════════════════════════════════════════════
 
     fn execute_class_declaration(&mut self, class: &ClassDeclaration) -> Result<(), JsError> {
-        let constructor_fn = self.create_class_constructor(class)?;
+        let class_guard = self.heap.create_guard();
+        let constructor_fn = self.create_class_constructor(&class_guard, class)?;
 
         // Bind the class name first (so static blocks can reference it)
+        // Once bound to environment, the class becomes reachable and protected
         if let Some(id) = &class.id {
             self.env_define(
                 id.name.cheap_clone(),
@@ -1968,6 +1970,7 @@ impl Interpreter {
 
     fn create_class_constructor(
         &mut self,
+        guard: &Guard<JsObject>,
         class: &ClassDeclaration,
     ) -> Result<Gc<JsObject>, JsError> {
         // Handle extends - evaluate superclass first
@@ -1988,10 +1991,8 @@ impl Interpreter {
                 (None, None)
             };
 
-        // Create prototype object
-        let proto_guard = self.heap.create_guard();
-        let prototype = self.create_object(&proto_guard);
-        self.root_guard.guard(prototype.cheap_clone());
+        // Create prototype object using the passed guard
+        let prototype = self.create_object(guard);
 
         // If we have a superclass, set up prototype chain
         if let Some(ref super_ctor) = super_constructor {
@@ -2054,9 +2055,8 @@ impl Interpreter {
             };
 
             let func = &method.value;
-            let method_guard = self.heap.create_guard();
             let func_obj = self.create_interpreted_function(
-                &method_guard,
+                guard,
                 Some(method_name.cheap_clone()),
                 func.params.clone(), // Rc clone is cheap
                 Rc::new(FunctionBody::Block(func.body.cheap_clone())),
@@ -2065,7 +2065,6 @@ impl Interpreter {
                 func.generator,
                 func.async_,
             );
-            self.root_guard.guard(func_obj.clone());
 
             // Store __super__ on method so super.method() works
             if let Some(ref super_ctor) = super_constructor {
@@ -2135,9 +2134,8 @@ impl Interpreter {
             vec![]
         };
 
-        let ctor_guard = self.heap.create_guard();
         let constructor_fn = self.create_interpreted_function(
-            &ctor_guard,
+            guard,
             class.id.as_ref().map(|id| id.name.cheap_clone()),
             Rc::from(ctor_params),
             Rc::new(FunctionBody::Block(Rc::new(ctor_body))),
@@ -2146,8 +2144,6 @@ impl Interpreter {
             false,
             false,
         );
-        // FIXME: proper scope
-        self.root_guard.guard(constructor_fn.clone());
 
         // Store prototype on constructor
         constructor_fn.borrow_mut().set_property(
@@ -2169,15 +2165,15 @@ impl Interpreter {
                 field_values.push((name, value));
             }
 
-            // Create the fields array using ctor_guard - fields are stored on constructor
+            // Create the fields array - fields are stored on constructor
             // so they'll be protected once set as a property
             let mut field_pairs: Vec<JsValue> = Vec::new();
             for (name, value) in field_values {
-                let pair = self.create_array_from(&ctor_guard, vec![JsValue::String(name), value]);
+                let pair = self.create_array_from(guard, vec![JsValue::String(name), value]);
                 field_pairs.push(JsValue::Object(pair));
             }
 
-            let fields_array = self.create_array_from(&ctor_guard, field_pairs);
+            let fields_array = self.create_array_from(guard, field_pairs);
 
             let fields_key = self.key("__fields__");
             constructor_fn
@@ -2214,9 +2210,8 @@ impl Interpreter {
             };
 
             let func = &method.value;
-            let static_method_guard = self.heap.create_guard();
             let func_obj = self.create_interpreted_function(
-                &static_method_guard,
+                guard,
                 Some(method_name.cheap_clone()),
                 func.params.cheap_clone(),
                 // FIXME: no need to wrap FunctionBody to rc
@@ -2226,7 +2221,6 @@ impl Interpreter {
                 func.generator,
                 func.async_,
             );
-            self.root_guard.guard(func_obj.clone());
 
             match method.kind {
                 MethodKind::Get => {
@@ -2290,6 +2284,7 @@ impl Interpreter {
 
     fn create_class_from_expression(
         &mut self,
+        guard: &Guard<JsObject>,
         class_expr: &ClassExpression,
     ) -> Result<Gc<JsObject>, JsError> {
         // Convert ClassExpression to ClassDeclaration
@@ -2304,7 +2299,7 @@ impl Interpreter {
             abstract_: false,
             span: class_expr.span,
         };
-        self.create_class_constructor(&class_decl)
+        self.create_class_constructor(guard, &class_decl)
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -2417,10 +2412,8 @@ impl Interpreter {
 
             // Class expression
             Expression::Class(class_expr) => {
-                let constructor_fn = self.create_class_from_expression(class_expr)?;
-                // Create guard for the returned object
                 let guard = self.heap.create_guard();
-                guard.guard(constructor_fn.cheap_clone());
+                let constructor_fn = self.create_class_from_expression(&guard, class_expr)?;
                 Ok(Guarded::with_guard(JsValue::Object(constructor_fn), guard))
             }
 

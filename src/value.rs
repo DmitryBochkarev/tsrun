@@ -469,10 +469,19 @@ impl Traceable for JsObject {
             visitor(proto.copy_ref());
         }
 
-        // Trace properties
+        // Trace properties (both data values and accessor functions)
         for prop in self.properties.values() {
             if let JsValue::Object(obj) = &prop.value {
                 visitor(obj.copy_ref());
+            }
+            // Trace accessor getter/setter functions
+            if let Some(accessor) = &prop.accessor {
+                if let Some(getter) = &accessor.getter {
+                    visitor(getter.copy_ref());
+                }
+                if let Some(setter) = &accessor.setter {
+                    visitor(setter.copy_ref());
+                }
             }
         }
 
