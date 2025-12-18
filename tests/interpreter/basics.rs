@@ -428,6 +428,111 @@ fn test_destructuring_assignment_object_rename() {
     );
 }
 
+// Object rest destructuring tests
+#[test]
+fn test_destructuring_object_rest_basic() {
+    // Basic rest pattern: collect remaining properties
+    assert_eq!(
+        eval(
+            r#"
+            const { a, ...rest }: { a: number; b: number; c: number } = { a: 1, b: 2, c: 3 };
+            rest.b + rest.c
+        "#
+        ),
+        JsValue::Number(5.0)
+    );
+}
+
+#[test]
+fn test_destructuring_object_rest_empty() {
+    // Rest is empty when all properties are extracted
+    assert_eq!(
+        eval(
+            r#"
+            const { x, y, ...rest }: { x: number; y: number } = { x: 1, y: 2 };
+            Object.keys(rest).length
+        "#
+        ),
+        JsValue::Number(0.0)
+    );
+}
+
+#[test]
+fn test_destructuring_object_rest_only() {
+    // Only rest pattern, no other properties extracted
+    assert_eq!(
+        eval(
+            r#"
+            const { ...all }: { a: number; b: number } = { a: 10, b: 20 };
+            all.a + all.b
+        "#
+        ),
+        JsValue::Number(30.0)
+    );
+}
+
+#[test]
+fn test_destructuring_object_rest_with_rename() {
+    // Combine renaming with rest
+    assert_eq!(
+        eval(
+            r#"
+            const { a: first, ...others }: { a: number; b: number; c: number } = { a: 1, b: 2, c: 3 };
+            first + others.b + others.c
+        "#
+        ),
+        JsValue::Number(6.0)
+    );
+}
+
+#[test]
+fn test_destructuring_object_rest_with_default() {
+    // Combine defaults with rest
+    assert_eq!(
+        eval(
+            r#"
+            const { a, b = 100, ...rest }: { a: number; b?: number; c: number } = { a: 1, c: 3 };
+            a + b + rest.c
+        "#
+        ),
+        JsValue::Number(104.0)
+    );
+}
+
+#[test]
+fn test_destructuring_object_rest_assignment() {
+    // Rest in assignment expression (not declaration)
+    assert_eq!(
+        eval(
+            r#"
+            let x: number;
+            let rest: { b: number; c: number };
+            ({ a: x, ...rest } = { a: 5, b: 10, c: 15 });
+            x + rest.b + rest.c
+        "#
+        ),
+        JsValue::Number(30.0)
+    );
+}
+
+#[test]
+fn test_destructuring_object_rest_nested() {
+    // Rest with nested destructuring
+    assert_eq!(
+        eval(
+            r#"
+            const { user: { name }, ...meta }: { user: { name: string }; id: number; active: boolean } = {
+                user: { name: "Alice" },
+                id: 42,
+                active: true
+            };
+            name + "-" + meta.id
+        "#
+        ),
+        JsValue::from("Alice-42")
+    );
+}
+
 // Temporal Dead Zone (TDZ) tests
 #[test]
 fn test_tdz_let_access_before_declaration() {

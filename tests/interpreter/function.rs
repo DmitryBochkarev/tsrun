@@ -162,6 +162,36 @@ fn test_destructuring_nested_param() {
 }
 
 #[test]
+fn test_destructuring_object_param_with_rest() {
+    // Rest pattern in function parameter
+    assert_eq!(
+        eval(
+            r#"
+            function f({ id, ...rest }: { id: number; name: string; age: number }): string {
+                return id + "-" + rest.name + "-" + rest.age;
+            }
+            f({ id: 1, name: "Bob", age: 30 })
+        "#
+        ),
+        JsValue::from("1-Bob-30")
+    );
+}
+
+#[test]
+fn test_arrow_destructuring_param_with_rest() {
+    // Rest pattern in arrow function parameter
+    assert_eq!(
+        eval(
+            r#"
+            const extract = ({ type, ...data }: { type: string; x: number; y: number }) => data.x + data.y;
+            extract({ type: "point", x: 10, y: 20 })
+        "#
+        ),
+        JsValue::Number(30.0)
+    );
+}
+
+#[test]
 fn test_arrow_destructuring_param() {
     assert_eq!(
         eval("const f: (obj: { x: number }) => number = ({ x }) => x * 2; f({ x: 5 })"),

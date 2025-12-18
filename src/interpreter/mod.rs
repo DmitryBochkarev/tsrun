@@ -1131,6 +1131,23 @@ impl Interpreter {
         PropertyKey::String(self.intern(s))
     }
 
+    /// Extract string key from ObjectPropertyKey (for destructuring)
+    fn extract_property_key_string(&self, key: &ObjectPropertyKey) -> Option<JsString> {
+        match key {
+            ObjectPropertyKey::Identifier(id) => Some(id.name.cheap_clone()),
+            ObjectPropertyKey::String(s) => Some(s.value.cheap_clone()),
+            ObjectPropertyKey::Number(l) => {
+                if let LiteralValue::Number(n) = &l.value {
+                    Some(n.to_string().into())
+                } else {
+                    None
+                }
+            }
+            ObjectPropertyKey::Computed(_) => None, // Can't statically determine
+            ObjectPropertyKey::PrivateIdentifier(id) => Some(id.name.cheap_clone()),
+        }
+    }
+
     /// Create a rooted native function for global constructors.
     /// The function is permanently rooted and never collected.
     /// Use this for built-in constructors during initialization.
@@ -1429,6 +1446,16 @@ impl Interpreter {
                     _ => return Err(JsError::type_error("Cannot destructure non-object")),
                 };
 
+                // First pass: collect keys that are explicitly destructured
+                let mut extracted_keys: Vec<JsString> = Vec::new();
+                for prop in &obj_pattern.properties {
+                    if let ObjectPatternProperty::KeyValue { key, .. } = prop {
+                        if let Some(key_str) = self.extract_property_key_string(key) {
+                            extracted_keys.push(key_str);
+                        }
+                    }
+                }
+
                 for prop in &obj_pattern.properties {
                     match prop {
                         ObjectPatternProperty::KeyValue {
@@ -1469,12 +1496,30 @@ impl Interpreter {
                                 self.bind_pattern(pat, prop_value, mutable)?;
                             }
                         }
-                        // FIXME: implement
-                        ObjectPatternProperty::Rest(_rest) => {
-                            // Rest patterns in object destructuring not yet implemented
-                            return Err(JsError::internal_error(
-                                "Object rest patterns not yet implemented",
-                            ));
+                        ObjectPatternProperty::Rest(rest) => {
+                            // Create a new object with remaining properties
+                            let guard = self.heap.create_guard();
+                            let rest_obj = self.create_object(&guard);
+
+                            // Copy all properties except those explicitly extracted
+                            let obj_ref = obj.borrow();
+                            for (key, prop) in obj_ref.properties.iter() {
+                                let should_include = match key {
+                                    PropertyKey::String(s) => {
+                                        !extracted_keys.iter().any(|k| k == s)
+                                    }
+                                    PropertyKey::Symbol(_) => true, // Symbols are always included
+                                    PropertyKey::Index(_) => true,  // Indices are always included
+                                };
+                                if should_include {
+                                    rest_obj
+                                        .borrow_mut()
+                                        .set_property(key.clone(), prop.value.clone());
+                                }
+                            }
+                            drop(obj_ref);
+
+                            self.bind_pattern(&rest.argument, JsValue::Object(rest_obj), mutable)?;
                         }
                     }
                 }
@@ -3220,6 +3265,16 @@ impl Interpreter {
                     _ => return Err(JsError::type_error("Cannot destructure non-object")),
                 };
 
+                // First pass: collect keys that are explicitly destructured
+                let mut extracted_keys: Vec<JsString> = Vec::new();
+                for prop in &obj_pattern.properties {
+                    if let ObjectPatternProperty::KeyValue { key, .. } = prop {
+                        if let Some(key_str) = self.extract_property_key_string(key) {
+                            extracted_keys.push(key_str);
+                        }
+                    }
+                }
+
                 for prop in &obj_pattern.properties {
                     match prop {
                         ObjectPatternProperty::KeyValue {
@@ -3253,10 +3308,30 @@ impl Interpreter {
                                 self.assign_pattern(pat, prop_value)?;
                             }
                         }
-                        ObjectPatternProperty::Rest(_) => {
-                            return Err(JsError::internal_error(
-                                "Object rest patterns not yet implemented",
-                            ));
+                        ObjectPatternProperty::Rest(rest) => {
+                            // Create a new object with remaining properties
+                            let guard = self.heap.create_guard();
+                            let rest_obj = self.create_object(&guard);
+
+                            // Copy all properties except those explicitly extracted
+                            let obj_ref = obj.borrow();
+                            for (key, prop) in obj_ref.properties.iter() {
+                                let should_include = match key {
+                                    PropertyKey::String(s) => {
+                                        !extracted_keys.iter().any(|k| k == s)
+                                    }
+                                    PropertyKey::Symbol(_) => true,
+                                    PropertyKey::Index(_) => true,
+                                };
+                                if should_include {
+                                    rest_obj
+                                        .borrow_mut()
+                                        .set_property(key.clone(), prop.value.clone());
+                                }
+                            }
+                            drop(obj_ref);
+
+                            self.assign_pattern(&rest.argument, JsValue::Object(rest_obj))?;
                         }
                     }
                 }
