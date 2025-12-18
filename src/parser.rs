@@ -3908,6 +3908,7 @@ impl<'a> Parser<'a> {
     }
 }
 
+// FIXME: move this to separate file in tests dir
 #[cfg(test)]
 mod tests {
     use super::*;

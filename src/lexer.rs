@@ -1149,6 +1149,7 @@ fn is_id_continue(ch: char) -> bool {
     ch == '_' || ch == '$' || unicode_xid::UnicodeXID::is_xid_continue(ch)
 }
 
+// FIXME: move this to separate file in tests dir
 #[cfg(test)]
 mod tests {
     use super::*;
