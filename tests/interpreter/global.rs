@@ -160,3 +160,174 @@ fn test_btoa_atob_roundtrip() {
         JsValue::from("test string")
     );
 }
+
+// structuredClone tests
+
+#[test]
+fn test_structured_clone_primitives() {
+    // Numbers
+    assert_eq!(eval("structuredClone(42)"), JsValue::Number(42.0));
+    assert_eq!(eval("structuredClone(3.14)"), JsValue::Number(3.14));
+    assert_eq!(
+        eval("Object.is(structuredClone(NaN), NaN)"),
+        JsValue::Boolean(true)
+    );
+    assert_eq!(
+        eval("structuredClone(Infinity)"),
+        JsValue::Number(f64::INFINITY)
+    );
+
+    // Strings
+    assert_eq!(eval("structuredClone('hello')"), JsValue::from("hello"));
+    assert_eq!(eval("structuredClone('')"), JsValue::from(""));
+
+    // Booleans
+    assert_eq!(eval("structuredClone(true)"), JsValue::Boolean(true));
+    assert_eq!(eval("structuredClone(false)"), JsValue::Boolean(false));
+
+    // null and undefined
+    assert_eq!(eval("structuredClone(null)"), JsValue::Null);
+    assert_eq!(eval("structuredClone(undefined)"), JsValue::Undefined);
+}
+
+#[test]
+fn test_structured_clone_object() {
+    // Simple object clone
+    assert_eq!(
+        eval("let obj = {a: 1, b: 2}; let clone = structuredClone(obj); clone.a"),
+        JsValue::Number(1.0)
+    );
+    assert_eq!(
+        eval("let obj = {a: 1, b: 2}; let clone = structuredClone(obj); clone.b"),
+        JsValue::Number(2.0)
+    );
+
+    // Verify it's a deep copy (modifying clone doesn't affect original)
+    assert_eq!(
+        eval("let obj = {a: 1}; let clone = structuredClone(obj); clone.a = 99; obj.a"),
+        JsValue::Number(1.0)
+    );
+}
+
+#[test]
+fn test_structured_clone_array() {
+    // Simple array clone
+    assert_eq!(
+        eval("let arr = [1, 2, 3]; let clone = structuredClone(arr); clone[0]"),
+        JsValue::Number(1.0)
+    );
+    assert_eq!(
+        eval("let arr = [1, 2, 3]; let clone = structuredClone(arr); clone.length"),
+        JsValue::Number(3.0)
+    );
+
+    // Verify it's a deep copy
+    assert_eq!(
+        eval("let arr = [1, 2, 3]; let clone = structuredClone(arr); clone[0] = 99; arr[0]"),
+        JsValue::Number(1.0)
+    );
+}
+
+#[test]
+fn test_structured_clone_nested() {
+    // Nested object
+    assert_eq!(
+        eval("let obj = {a: {b: {c: 42}}}; let clone = structuredClone(obj); clone.a.b.c"),
+        JsValue::Number(42.0)
+    );
+
+    // Verify nested deep copy
+    assert_eq!(
+        eval("let obj = {a: {b: 1}}; let clone = structuredClone(obj); clone.a.b = 99; obj.a.b"),
+        JsValue::Number(1.0)
+    );
+
+    // Array of objects
+    assert_eq!(
+        eval("let arr = [{x: 1}, {x: 2}]; let clone = structuredClone(arr); clone[0].x"),
+        JsValue::Number(1.0)
+    );
+
+    // Object containing array
+    assert_eq!(
+        eval("let obj = {items: [1, 2, 3]}; let clone = structuredClone(obj); clone.items[1]"),
+        JsValue::Number(2.0)
+    );
+}
+
+#[test]
+fn test_structured_clone_date() {
+    // Date should be cloned
+    assert_eq!(
+        eval("let d = new Date(1234567890000); let clone = structuredClone(d); clone.getTime()"),
+        JsValue::Number(1234567890000.0)
+    );
+
+    // Verify it's a deep copy
+    assert_eq!(
+        eval("let d = new Date(1234567890000); let clone = structuredClone(d); clone.setTime(0); d.getTime()"),
+        JsValue::Number(1234567890000.0)
+    );
+}
+
+#[test]
+fn test_structured_clone_regexp() {
+    // RegExp should be cloned
+    assert_eq!(
+        eval("let r = /abc/gi; let clone = structuredClone(r); clone.source"),
+        JsValue::from("abc")
+    );
+    assert_eq!(
+        eval("let r = /abc/gi; let clone = structuredClone(r); clone.flags"),
+        JsValue::from("gi")
+    );
+}
+
+#[test]
+fn test_structured_clone_map() {
+    // Map should be cloned
+    assert_eq!(
+        eval(
+            "let m = new Map([['a', 1], ['b', 2]]); let clone = structuredClone(m); clone.get('a')"
+        ),
+        JsValue::Number(1.0)
+    );
+
+    // Verify it's a deep copy
+    assert_eq!(
+        eval("let m = new Map([['a', 1]]); let clone = structuredClone(m); clone.set('a', 99); m.get('a')"),
+        JsValue::Number(1.0)
+    );
+}
+
+#[test]
+fn test_structured_clone_set() {
+    // Set should be cloned
+    assert_eq!(
+        eval("let s = new Set([1, 2, 3]); let clone = structuredClone(s); clone.has(2)"),
+        JsValue::Boolean(true)
+    );
+    assert_eq!(
+        eval("let s = new Set([1, 2, 3]); let clone = structuredClone(s); clone.size"),
+        JsValue::Number(3.0)
+    );
+
+    // Verify it's a deep copy
+    assert_eq!(
+        eval("let s = new Set([1, 2]); let clone = structuredClone(s); clone.add(99); s.has(99)"),
+        JsValue::Boolean(false)
+    );
+}
+
+#[test]
+fn test_structured_clone_error_types() {
+    // Error objects should be cloned
+    assert_eq!(
+        eval("let e = new Error('test'); let clone = structuredClone(e); clone.message"),
+        JsValue::from("test")
+    );
+    assert_eq!(
+        eval("let e = new TypeError('type error'); let clone = structuredClone(e); clone.message"),
+        JsValue::from("type error")
+    );
+}

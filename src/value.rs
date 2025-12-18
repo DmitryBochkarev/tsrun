@@ -783,6 +783,24 @@ impl JsObject {
             }
         }
 
+        // For Maps, compute size from entries
+        if let ExoticObject::Map { ref entries } = self.exotic {
+            if let PropertyKey::String(s) = key {
+                if s.as_str() == "size" {
+                    return Some((Property::data(JsValue::Number(entries.len() as f64)), false));
+                }
+            }
+        }
+
+        // For Sets, compute size from entries
+        if let ExoticObject::Set { ref entries } = self.exotic {
+            if let PropertyKey::String(s) = key {
+                if s.as_str() == "size" {
+                    return Some((Property::data(JsValue::Number(entries.len() as f64)), false));
+                }
+            }
+        }
+
         // For enums, handle member lookups from EnumData
         if let ExoticObject::Enum(ref data) = self.exotic {
             match key {

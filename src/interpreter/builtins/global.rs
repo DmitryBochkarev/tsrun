@@ -1,8 +1,9 @@
 //! Global built-in functions (parseInt, parseFloat, URI functions, etc.)
 
 use crate::error::JsError;
+use crate::gc::{Gc, Guard};
 use crate::interpreter::Interpreter;
-use crate::value::{Guarded, JsString, JsValue, PropertyKey};
+use crate::value::{ExoticObject, Guarded, JsObject, JsString, JsValue, PropertyKey};
 
 /// Register global functions (parseInt, parseFloat, isNaN, isFinite, URI functions)
 pub fn init_global_functions(interp: &mut Interpreter) {
@@ -97,6 +98,16 @@ pub fn init_global_functions(interp: &mut Interpreter) {
         .global
         .borrow_mut()
         .set_property(key, JsValue::Object(atob_fn));
+
+    // structuredClone (deep clone)
+    let structured_clone_fn =
+        interp.create_native_function("structuredClone", global_structured_clone, 1);
+    interp.root_guard.guard(structured_clone_fn.clone());
+    let key = PropertyKey::String(interp.intern("structuredClone"));
+    interp
+        .global
+        .borrow_mut()
+        .set_property(key, JsValue::Object(structured_clone_fn));
 }
 
 pub fn global_parse_int(
@@ -508,4 +519,259 @@ fn base64_char_value(c: char) -> Result<u8, &'static str> {
         '=' => Ok(0), // Padding, handled separately
         _ => Err("invalid character"),
     }
+}
+
+/// structuredClone - Deep clone a value
+/// Creates a deep copy of the given value using the structured clone algorithm
+pub fn global_structured_clone(
+    interp: &mut Interpreter,
+    _this: JsValue,
+    args: &[JsValue],
+) -> Result<Guarded, JsError> {
+    let value = args.first().cloned().unwrap_or(JsValue::Undefined);
+    let guard = interp.heap.create_guard();
+
+    // Clone the value
+    let cloned = structured_clone_internal(interp, &guard, &value)?;
+
+    Ok(Guarded::with_guard(cloned, guard))
+}
+
+/// Internal recursive cloning function
+fn structured_clone_internal(
+    interp: &mut Interpreter,
+    guard: &Guard<JsObject>,
+    value: &JsValue,
+) -> Result<JsValue, JsError> {
+    match value {
+        // Primitives are returned as-is (they're value types)
+        JsValue::Undefined => Ok(JsValue::Undefined),
+        JsValue::Null => Ok(JsValue::Null),
+        JsValue::Boolean(b) => Ok(JsValue::Boolean(*b)),
+        JsValue::Number(n) => Ok(JsValue::Number(*n)),
+        JsValue::String(s) => Ok(JsValue::String(s.clone())),
+
+        // Symbols cannot be cloned
+        JsValue::Symbol(_) => Err(JsError::type_error(
+            "Symbol cannot be cloned with structuredClone",
+        )),
+
+        // Objects require deep cloning
+        JsValue::Object(obj) => clone_object(interp, guard, obj),
+    }
+}
+
+/// Clone an object (handles arrays, maps, sets, dates, regexps, errors, and plain objects)
+fn clone_object(
+    interp: &mut Interpreter,
+    guard: &Guard<JsObject>,
+    obj: &Gc<JsObject>,
+) -> Result<JsValue, JsError> {
+    let obj_ref = obj.borrow();
+
+    // Check the exotic type
+    match &obj_ref.exotic {
+        // Functions cannot be cloned
+        ExoticObject::Function(_) => Err(JsError::type_error(
+            "Function cannot be cloned with structuredClone",
+        )),
+
+        // Generators cannot be cloned
+        ExoticObject::Generator(_) => Err(JsError::type_error(
+            "Generator cannot be cloned with structuredClone",
+        )),
+
+        // Promises cannot be cloned
+        ExoticObject::Promise(_) => Err(JsError::type_error(
+            "Promise cannot be cloned with structuredClone",
+        )),
+
+        // Environments cannot be cloned
+        ExoticObject::Environment(_) => Err(JsError::type_error(
+            "Environment cannot be cloned with structuredClone",
+        )),
+
+        // Arrays - clone elements recursively
+        ExoticObject::Array { elements } => {
+            // Clone elements recursively first, then release borrow
+            let elements_to_clone: Vec<JsValue> = elements.clone();
+            drop(obj_ref); // Release borrow before recursive calls
+
+            let mut cloned_elements = Vec::with_capacity(elements_to_clone.len());
+            for elem in &elements_to_clone {
+                cloned_elements.push(structured_clone_internal(interp, guard, elem)?);
+            }
+
+            let arr = interp.create_array_from(guard, cloned_elements);
+            Ok(JsValue::Object(arr))
+        }
+
+        // Maps - clone entries recursively
+        ExoticObject::Map { entries } => {
+            let entries_to_clone: Vec<(JsValue, JsValue)> = entries.clone();
+            drop(obj_ref);
+
+            let mut cloned_entries = Vec::with_capacity(entries_to_clone.len());
+            for (key, val) in &entries_to_clone {
+                let cloned_key = structured_clone_internal(interp, guard, key)?;
+                let cloned_val = structured_clone_internal(interp, guard, val)?;
+                cloned_entries.push((cloned_key, cloned_val));
+            }
+
+            let map_obj = interp.create_object(guard);
+            {
+                let mut map_ref = map_obj.borrow_mut();
+                map_ref.prototype = Some(interp.map_prototype.clone());
+                map_ref.exotic = ExoticObject::Map {
+                    entries: cloned_entries,
+                };
+            }
+            Ok(JsValue::Object(map_obj))
+        }
+
+        // Sets - clone entries recursively
+        ExoticObject::Set { entries } => {
+            let entries_to_clone: Vec<JsValue> = entries.clone();
+            drop(obj_ref);
+
+            let mut cloned_entries = Vec::with_capacity(entries_to_clone.len());
+            for entry in &entries_to_clone {
+                cloned_entries.push(structured_clone_internal(interp, guard, entry)?);
+            }
+
+            let set_obj = interp.create_object(guard);
+            {
+                let mut set_ref = set_obj.borrow_mut();
+                set_ref.prototype = Some(interp.set_prototype.clone());
+                set_ref.exotic = ExoticObject::Set {
+                    entries: cloned_entries,
+                };
+            }
+            Ok(JsValue::Object(set_obj))
+        }
+
+        // Dates - clone the timestamp
+        ExoticObject::Date { timestamp } => {
+            let ts = *timestamp;
+            drop(obj_ref);
+
+            let date_obj = interp.create_object(guard);
+            {
+                let mut date_ref = date_obj.borrow_mut();
+                date_ref.prototype = Some(interp.date_prototype.clone());
+                date_ref.exotic = ExoticObject::Date { timestamp: ts };
+            }
+            Ok(JsValue::Object(date_obj))
+        }
+
+        // RegExps - clone pattern and flags
+        ExoticObject::RegExp { pattern, flags } => {
+            let pattern_clone = pattern.clone();
+            let flags_clone = flags.clone();
+            drop(obj_ref);
+
+            let regexp_obj = interp.create_object(guard);
+            {
+                let mut regexp_ref = regexp_obj.borrow_mut();
+                regexp_ref.prototype = Some(interp.regexp_prototype.clone());
+                regexp_ref.exotic = ExoticObject::RegExp {
+                    pattern: pattern_clone.clone(),
+                    flags: flags_clone.clone(),
+                };
+
+                // Set properties like source, flags, etc.
+                regexp_ref.set_property(
+                    PropertyKey::from("source"),
+                    JsValue::String(JsString::from(pattern_clone.as_str())),
+                );
+                regexp_ref.set_property(
+                    PropertyKey::from("flags"),
+                    JsValue::String(JsString::from(flags_clone.as_str())),
+                );
+                regexp_ref.set_property(
+                    PropertyKey::from("global"),
+                    JsValue::Boolean(flags_clone.contains('g')),
+                );
+                regexp_ref.set_property(
+                    PropertyKey::from("ignoreCase"),
+                    JsValue::Boolean(flags_clone.contains('i')),
+                );
+                regexp_ref.set_property(
+                    PropertyKey::from("multiline"),
+                    JsValue::Boolean(flags_clone.contains('m')),
+                );
+                regexp_ref.set_property(
+                    PropertyKey::from("dotAll"),
+                    JsValue::Boolean(flags_clone.contains('s')),
+                );
+                regexp_ref.set_property(
+                    PropertyKey::from("unicode"),
+                    JsValue::Boolean(flags_clone.contains('u')),
+                );
+                regexp_ref.set_property(
+                    PropertyKey::from("sticky"),
+                    JsValue::Boolean(flags_clone.contains('y')),
+                );
+                regexp_ref.set_property(PropertyKey::from("lastIndex"), JsValue::Number(0.0));
+            }
+            Ok(JsValue::Object(regexp_obj))
+        }
+
+        // Enums - clone the enum data
+        ExoticObject::Enum(data) => {
+            let data_clone = data.clone();
+            drop(obj_ref);
+
+            let enum_obj = interp.create_object(guard);
+            {
+                let mut enum_ref = enum_obj.borrow_mut();
+                enum_ref.exotic = ExoticObject::Enum(data_clone);
+            }
+            Ok(JsValue::Object(enum_obj))
+        }
+
+        // Ordinary objects - clone properties recursively
+        ExoticObject::Ordinary => {
+            // Collect properties to clone (extract values from Property wrapper)
+            let props_to_clone: Vec<(PropertyKey, JsValue)> = obj_ref
+                .properties
+                .iter()
+                .map(|(k, prop)| (k.clone(), prop.value.clone()))
+                .collect();
+
+            // Check if this is an Error object by looking at prototype chain
+            let is_error = is_error_object(&obj_ref, interp);
+
+            drop(obj_ref);
+
+            let cloned_obj = interp.create_object(guard);
+
+            // Clone each property
+            for (key, value) in &props_to_clone {
+                let cloned_value = structured_clone_internal(interp, guard, value)?;
+                cloned_obj
+                    .borrow_mut()
+                    .set_property(key.clone(), cloned_value);
+            }
+
+            // For error objects, the properties are already cloned so we don't need
+            // to set a special prototype - object_prototype is sufficient
+            let _ = is_error; // silence unused warning
+
+            Ok(JsValue::Object(cloned_obj))
+        }
+    }
+}
+
+/// Check if an object is an Error object by looking for error-like properties
+fn is_error_object(obj_ref: &std::cell::Ref<JsObject>, _interp: &Interpreter) -> bool {
+    // Check if it has name, message, and stack properties typical of Error objects
+    let has_name = obj_ref.properties.contains_key(&PropertyKey::from("name"));
+    let has_message = obj_ref
+        .properties
+        .contains_key(&PropertyKey::from("message"));
+    let has_stack = obj_ref.properties.contains_key(&PropertyKey::from("stack"));
+
+    // If it has all three error-like properties, consider it an error
+    has_name && has_message && has_stack
 }

@@ -782,7 +782,7 @@ These features have AST support but are ignored or partially handled at runtime:
 - [ ] `clearInterval(id)` - Host-dependent
 - [ ] `setImmediate(callback)` - Host-dependent
 - [ ] `queueMicrotask(callback)` - Requires microtask queue
-- [ ] `structuredClone(value)` - Deep cloning
+- [x] `structuredClone(value)` - Deep cloning
 - [x] `atob(encoded)` - Base64 decode
 - [x] `btoa(string)` - Base64 encode
 
@@ -827,7 +827,6 @@ These are parsed but not enforced at runtime (by design - matches TypeScript beh
 
 #### High Priority (Common Use Cases)
 1. Full BigInt support
-2. `structuredClone()`
 
 #### Medium Priority (Improved Compatibility)
 1. WeakMap / WeakSet
