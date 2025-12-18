@@ -217,17 +217,10 @@ pub fn object_from_entries(
     // Create result object with guard - key interning may trigger GC
     let (result, result_guard) = interp.create_object_with_guard();
 
-    let length = {
-        let arr_ref = arr.borrow();
-        match &arr_ref.exotic {
-            ExoticObject::Array { length } => *length,
-            _ => {
-                return Err(JsError::type_error(
-                    "Object.fromEntries requires an array-like",
-                ))
-            }
-        }
-    };
+    let length = arr
+        .borrow()
+        .array_length()
+        .ok_or_else(|| JsError::type_error("Object.fromEntries requires an array-like"))?;
 
     for i in 0..length {
         let entry = arr
@@ -236,7 +229,7 @@ pub fn object_from_entries(
             .unwrap_or(JsValue::Undefined);
         if let JsValue::Object(entry_ref) = entry {
             let entry_borrow = entry_ref.borrow();
-            if let ExoticObject::Array { .. } = entry_borrow.exotic {
+            if entry_borrow.is_array() {
                 let key = entry_borrow
                     .get_property(&PropertyKey::Index(0))
                     .unwrap_or(JsValue::Undefined);
@@ -408,21 +401,21 @@ pub fn object_to_string(
     match this {
         JsValue::Object(obj) => {
             let obj_ref = obj.borrow();
+            if let Some(elements) = obj_ref.array_elements() {
+                // Array.prototype.toString returns comma-separated values
+                let parts: Vec<String> = elements
+                    .iter()
+                    .map(|v| v.to_js_string().to_string())
+                    .collect();
+                return Ok(Guarded::unguarded(JsValue::String(JsString::from(
+                    parts.join(","),
+                ))));
+            }
             match &obj_ref.exotic {
-                ExoticObject::Array { length } => {
-                    // Array.prototype.toString returns comma-separated values
-                    let parts: Vec<String> = (0..*length)
-                        .map(|i| {
-                            obj_ref
-                                .get_property(&PropertyKey::Index(i))
-                                .map(|v| v.to_js_string().to_string())
-                                .unwrap_or_default()
-                        })
-                        .collect();
-                    Ok(Guarded::unguarded(JsValue::String(JsString::from(
-                        parts.join(","),
-                    ))))
-                }
+                // Array is handled above by is_array() check
+                ExoticObject::Array { .. } => Ok(Guarded::unguarded(JsValue::String(
+                    JsString::from("[object Array]"),
+                ))),
                 ExoticObject::Function(_) => Ok(Guarded::unguarded(JsValue::String(
                     JsString::from("[object Function]"),
                 ))),

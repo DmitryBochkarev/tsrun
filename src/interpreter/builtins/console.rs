@@ -8,7 +8,7 @@ use rustc_hash::FxHashMap;
 use crate::error::JsError;
 use crate::gc::Gc;
 use crate::interpreter::Interpreter;
-use crate::value::{ExoticObject, Guarded, JsObject, JsValue, PropertyKey};
+use crate::value::{Guarded, JsObject, JsValue, PropertyKey};
 
 /// Format a JsValue for console output (strings without quotes)
 fn format_for_console(value: &JsValue) -> String {
@@ -154,33 +154,30 @@ pub fn console_table(
     match &data {
         JsValue::Object(obj) => {
             let obj_ref = obj.borrow();
-            match &obj_ref.exotic {
-                ExoticObject::Array { length } => {
-                    println!("┌───────┬───────────┐");
-                    println!("│ index │   value   │");
-                    println!("├───────┼───────────┤");
-                    for i in 0..*length {
-                        let val = obj_ref
-                            .get_property(&PropertyKey::Index(i))
-                            .unwrap_or(JsValue::Undefined);
-                        println!("│ {:5} │ {:9} │", i, format!("{:?}", val));
-                    }
-                    println!("└───────┴───────────┘");
+            if let Some(length) = obj_ref.array_length() {
+                println!("┌───────┬───────────┐");
+                println!("│ index │   value   │");
+                println!("├───────┼───────────┤");
+                for i in 0..length {
+                    let val = obj_ref
+                        .get_property(&PropertyKey::Index(i))
+                        .unwrap_or(JsValue::Undefined);
+                    println!("│ {:5} │ {:9} │", i, format!("{:?}", val));
                 }
-                _ => {
-                    // Regular object - display properties
-                    println!("┌─────────────┬───────────┐");
-                    println!("│     key     │   value   │");
-                    println!("├─────────────┼───────────┤");
-                    for (key, prop) in obj_ref.properties.iter() {
-                        println!(
-                            "│ {:11} │ {:9} │",
-                            key.to_string(),
-                            format!("{:?}", prop.value)
-                        );
-                    }
-                    println!("└─────────────┴───────────┘");
+                println!("└───────┴───────────┘");
+            } else {
+                // Regular object - display properties
+                println!("┌─────────────┬───────────┐");
+                println!("│     key     │   value   │");
+                println!("├─────────────┼───────────┤");
+                for (key, prop) in obj_ref.properties.iter() {
+                    println!(
+                        "│ {:11} │ {:9} │",
+                        key.to_string(),
+                        format!("{:?}", prop.value)
+                    );
                 }
+                println!("└─────────────┴───────────┘");
             }
         }
         _ => println!("{:?}", data),

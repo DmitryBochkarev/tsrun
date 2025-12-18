@@ -560,10 +560,15 @@ impl Traceable for JsObject {
                     visitor(outer.copy_ref());
                 }
             }
-            ExoticObject::Ordinary
-            | ExoticObject::Array { .. }
-            | ExoticObject::Date { .. }
-            | ExoticObject::RegExp { .. } => {}
+            ExoticObject::Array { elements } => {
+                // Trace all array elements that are objects
+                for elem in elements {
+                    if let JsValue::Object(obj) = elem {
+                        visitor(obj.copy_ref());
+                    }
+                }
+            }
+            ExoticObject::Ordinary | ExoticObject::Date { .. } | ExoticObject::RegExp { .. } => {}
         }
     }
 }
@@ -639,6 +644,19 @@ impl JsObject {
 
     /// Get a property, searching the prototype chain
     pub fn get_property(&self, key: &PropertyKey) -> Option<JsValue> {
+        // For arrays, handle index access and length from elements Vec
+        if let ExoticObject::Array { ref elements } = self.exotic {
+            match key {
+                PropertyKey::Index(idx) => {
+                    return elements.get(*idx as usize).cloned();
+                }
+                PropertyKey::String(s) if s.as_str() == "length" => {
+                    return Some(JsValue::Number(elements.len() as f64));
+                }
+                _ => {}
+            }
+        }
+
         if let Some(prop) = self.properties.get(key) {
             return Some(prop.value.clone());
         }
@@ -653,6 +671,25 @@ impl JsObject {
     /// Get a property descriptor, searching the prototype chain
     /// Returns (property, found_in_prototype)
     pub fn get_property_descriptor(&self, key: &PropertyKey) -> Option<(Property, bool)> {
+        // For arrays, handle index access and length from elements Vec
+        if let ExoticObject::Array { ref elements } = self.exotic {
+            match key {
+                PropertyKey::Index(idx) => {
+                    if let Some(val) = elements.get(*idx as usize) {
+                        return Some((Property::data(val.clone()), false));
+                    }
+                    // Index out of bounds - return None (falls through to prototype)
+                }
+                PropertyKey::String(s) if s.as_str() == "length" => {
+                    return Some((
+                        Property::data(JsValue::Number(elements.len() as f64)),
+                        false,
+                    ));
+                }
+                _ => {}
+            }
+        }
+
         if let Some(prop) = self.properties.get(key) {
             return Some((prop.clone(), false));
         }
@@ -672,6 +709,33 @@ impl JsObject {
         if self.frozen {
             return;
         }
+
+        // For arrays, handle index access via elements Vec
+        if let ExoticObject::Array { ref mut elements } = self.exotic {
+            if let PropertyKey::Index(idx) = key {
+                let idx = idx as usize;
+                // Extend array with undefined if needed (dense array)
+                if idx >= elements.len() {
+                    elements.resize(idx + 1, JsValue::Undefined);
+                }
+                // Safe: we just resized to ensure idx is in bounds
+                if let Some(slot) = elements.get_mut(idx) {
+                    *slot = value;
+                }
+                return;
+            }
+            // Setting length truncates or extends the array
+            if let PropertyKey::String(ref s) = key {
+                if s.as_str() == "length" {
+                    if let JsValue::Number(n) = value {
+                        let new_len = n as usize;
+                        elements.resize(new_len, JsValue::Undefined);
+                    }
+                    return;
+                }
+            }
+        }
+
         if let Some(prop) = self.properties.get_mut(&key) {
             // Only set if writable
             if prop.writable() {
@@ -696,6 +760,46 @@ impl JsObject {
     /// Get own property keys
     pub fn own_keys(&self) -> Vec<PropertyKey> {
         self.properties.keys().cloned().collect()
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Array-specific methods for efficient element access
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// Get array length if this is an array, None otherwise
+    #[inline]
+    pub fn array_length(&self) -> Option<u32> {
+        if let ExoticObject::Array { ref elements } = self.exotic {
+            Some(elements.len() as u32)
+        } else {
+            None
+        }
+    }
+
+    /// Get array elements slice if this is an array
+    #[inline]
+    pub fn array_elements(&self) -> Option<&[JsValue]> {
+        if let ExoticObject::Array { ref elements } = self.exotic {
+            Some(elements)
+        } else {
+            None
+        }
+    }
+
+    /// Get mutable array elements if this is an array
+    #[inline]
+    pub fn array_elements_mut(&mut self) -> Option<&mut Vec<JsValue>> {
+        if let ExoticObject::Array { ref mut elements } = self.exotic {
+            Some(elements)
+        } else {
+            None
+        }
+    }
+
+    /// Check if this is an array
+    #[inline]
+    pub fn is_array(&self) -> bool {
+        matches!(self.exotic, ExoticObject::Array { .. })
     }
 }
 
@@ -1348,8 +1452,8 @@ impl Default for EnvironmentData {
 pub enum ExoticObject {
     /// Ordinary object
     Ordinary,
-    /// Array exotic object
-    Array { length: u32 },
+    /// Array exotic object - stores elements directly for O(1) indexed access
+    Array { elements: Vec<JsValue> },
     /// Function exotic object
     Function(JsFunction),
     /// Map exotic object - stores key-value pairs preserving insertion order
@@ -1563,26 +1667,13 @@ pub fn create_object_with_guard(guard: &Guard<JsObject>) -> JsObjectRef {
 /// Returns the array object. Caller is responsible for ownership transfer.
 pub fn create_array_with_guard(
     guard: &Guard<JsObject>,
-    dict: &mut StringDict,
+    _dict: &mut StringDict,
     elements: Vec<JsValue>,
 ) -> JsObjectRef {
-    let len = elements.len() as u32;
     let arr = guard.alloc();
     {
         let mut arr_ref = arr.borrow_mut();
-        arr_ref.exotic = ExoticObject::Array { length: len };
-
-        for (i, elem) in elements.into_iter().enumerate() {
-            arr_ref
-                .properties
-                .insert(PropertyKey::Index(i as u32), Property::data(elem));
-        }
-
-        let length_key = PropertyKey::String(dict.get_or_insert("length"));
-        arr_ref.properties.insert(
-            length_key,
-            Property::with_attributes(JsValue::Number(len as f64), true, false, false),
-        );
+        arr_ref.exotic = ExoticObject::Array { elements };
     }
     arr
 }

@@ -3,7 +3,7 @@
 use super::map::same_value_zero;
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
-use crate::value::{ExoticObject, Guarded, JsValue, PropertyKey};
+use crate::value::{ExoticObject, Guarded, JsValue};
 
 /// Initialize Set.prototype with add, has, delete, clear, forEach methods
 pub fn init_set_prototype(interp: &mut Interpreter) {
@@ -60,13 +60,8 @@ pub fn set_constructor(
     // If an iterable (array) is passed, add its elements
     if let Some(JsValue::Object(arr)) = args.first() {
         let arr_ref = arr.borrow();
-        if let ExoticObject::Array { length } = arr_ref.exotic {
-            let mut items = Vec::new();
-            for i in 0..length {
-                if let Some(value) = arr_ref.get_property(&PropertyKey::Index(i)) {
-                    items.push(value);
-                }
-            }
+        if let Some(elements) = arr_ref.array_elements() {
+            let items: Vec<JsValue> = elements.to_vec();
             drop(arr_ref);
 
             let size_key = interp.key("size");

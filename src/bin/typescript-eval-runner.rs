@@ -253,13 +253,10 @@ fn value_to_json(value: &JsValue) -> Result<serde_json::Value, &'static str> {
             let borrowed = obj.borrow();
 
             // Check if it's an array
-            if let typescript_eval::value::ExoticObject::Array { length } = &borrowed.exotic {
-                let mut arr = Vec::with_capacity(*length as usize);
-                for i in 0..*length {
-                    let elem = borrowed
-                        .get_property(&typescript_eval::value::PropertyKey::Index(i))
-                        .unwrap_or(JsValue::Undefined);
-                    arr.push(value_to_json(&elem)?);
+            if let Some(elements) = borrowed.array_elements() {
+                let mut arr = Vec::with_capacity(elements.len());
+                for elem in elements {
+                    arr.push(value_to_json(elem)?);
                 }
                 return Ok(serde_json::Value::Array(arr));
             }

@@ -78,8 +78,10 @@ const [first, ...rest] = numbers.filter(n => n > 0).map(n => n * 2);
     let mut source = String::with_capacity(size);
     let mut i = 0;
     while source.len() < size {
-        source.push_str(patterns[i % patterns.len()]);
-        source.push_str("\n\n");
+        if let Some(pattern) = patterns.get(i % patterns.len()) {
+            source.push_str(pattern);
+            source.push_str("\n\n");
+        }
         i += 1;
     }
     source

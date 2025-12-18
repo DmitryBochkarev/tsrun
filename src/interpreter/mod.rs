@@ -1045,25 +1045,12 @@ impl Interpreter {
         &mut self,
         elements: Vec<JsValue>,
     ) -> (Gc<JsObject>, Guard<JsObject>) {
-        let len = elements.len() as u32;
         let temp = self.heap.create_guard();
         let arr = temp.alloc();
         {
             let mut arr_ref = arr.borrow_mut();
             arr_ref.prototype = Some(self.array_prototype.cheap_clone());
-            arr_ref.exotic = ExoticObject::Array { length: len };
-
-            // FIXME: store elements in exotic object
-            for (i, elem) in elements.iter().enumerate() {
-                arr_ref.set_property(PropertyKey::Index(i as u32), elem.clone());
-            }
-
-            // length should be writable but not enumerable
-            // FIXME: delegated property
-            arr_ref.properties.insert(
-                PropertyKey::String(self.intern("length")),
-                Property::with_attributes(JsValue::Number(len as f64), true, false, false),
-            );
+            arr_ref.exotic = ExoticObject::Array { elements };
         }
 
         (arr, temp)
@@ -1119,25 +1106,7 @@ impl Interpreter {
     /// Returns (array, temp_guard). Caller must transfer ownership before guard is dropped.
     // FIXME: duplicate of create_array_with_guard
     pub fn create_array(&mut self, elements: Vec<JsValue>) -> (Gc<JsObject>, Guard<JsObject>) {
-        let len = elements.len() as u32;
-        let temp = self.heap.create_guard();
-        let arr = temp.alloc();
-        {
-            let mut arr_ref = arr.borrow_mut();
-            arr_ref.prototype = Some(self.array_prototype.clone());
-            arr_ref.exotic = ExoticObject::Array { length: len };
-
-            for (i, elem) in elements.iter().enumerate() {
-                arr_ref.set_property(PropertyKey::Index(i as u32), elem.clone());
-            }
-
-            arr_ref.set_property(
-                PropertyKey::String(self.intern("length")),
-                JsValue::Number(len as f64),
-            );
-        }
-
-        (arr, temp)
+        self.create_array_with_guard(elements)
     }
 
     /// Create a rooted native function (for use during initialization)
@@ -1517,16 +1486,8 @@ impl Interpreter {
         let items: Vec<JsValue> = match value {
             JsValue::Object(obj) => {
                 let obj_ref = obj.borrow();
-                if let ExoticObject::Array { length } = &obj_ref.exotic {
-                    let mut items = Vec::with_capacity(*length as usize);
-                    for i in 0..*length {
-                        items.push(
-                            obj_ref
-                                .get_property(&PropertyKey::Index(i))
-                                .unwrap_or(JsValue::Undefined),
-                        );
-                    }
-                    items
+                if let Some(elements) = obj_ref.array_elements() {
+                    elements.to_vec()
                 } else {
                     vec![]
                 }
@@ -2495,14 +2456,12 @@ impl Interpreter {
 
                         // Check if it's an array - iterate over its elements
                         if let JsValue::Object(obj) = &iterable {
-                            if let ExoticObject::Array { length } = &obj.borrow().exotic {
-                                let len = *length;
-                                for i in 0..len {
-                                    let elem = obj
-                                        .borrow()
-                                        .get_property(&PropertyKey::Index(i))
-                                        .unwrap_or(JsValue::Undefined);
-
+                            let elements: Option<Vec<JsValue>> = {
+                                let obj_ref = obj.borrow();
+                                obj_ref.array_elements().map(|e| e.to_vec())
+                            };
+                            if let Some(elements) = elements {
+                                for elem in elements {
                                     // Re-borrow context after evaluation
                                     let ctx = self.generator_context.as_mut().ok_or_else(|| {
                                         JsError::internal_error("generator context missing")
@@ -3292,16 +3251,8 @@ impl Interpreter {
         let items: Vec<JsValue> = match value {
             JsValue::Object(obj) => {
                 let obj_ref = obj.borrow();
-                if let ExoticObject::Array { length } = &obj_ref.exotic {
-                    let mut items = Vec::with_capacity(*length as usize);
-                    for i in 0..*length {
-                        items.push(
-                            obj_ref
-                                .get_property(&PropertyKey::Index(i))
-                                .unwrap_or(JsValue::Undefined),
-                        );
-                    }
-                    items
+                if let Some(elements) = obj_ref.array_elements() {
+                    elements.to_vec()
                 } else {
                     vec![]
                 }
@@ -3489,13 +3440,8 @@ impl Interpreter {
                     // Spread the array elements into arguments
                     if let JsValue::Object(obj) = value {
                         let obj_ref = obj.borrow();
-                        if let ExoticObject::Array { length } = &obj_ref.exotic {
-                            for i in 0..*length {
-                                let elem = obj_ref
-                                    .get_property(&PropertyKey::Index(i))
-                                    .unwrap_or(JsValue::Undefined);
-                                args.push(elem);
-                            }
+                        if let Some(elements) = obj_ref.array_elements() {
+                            args.extend(elements.iter().cloned());
                         }
                     }
                 }
@@ -3878,13 +3824,8 @@ impl Interpreter {
                     // Spread the array elements into the new array
                     if let JsValue::Object(obj) = value {
                         let obj_ref = obj.borrow();
-                        if let ExoticObject::Array { length } = &obj_ref.exotic {
-                            for i in 0..*length {
-                                let elem = obj_ref
-                                    .get_property(&PropertyKey::Index(i))
-                                    .unwrap_or(JsValue::Undefined);
-                                elements.push(elem);
-                            }
+                        if let Some(arr_elements) = obj_ref.array_elements() {
+                            elements.extend(arr_elements.iter().cloned());
                         }
                     }
                 }

@@ -3,7 +3,7 @@
 use crate::error::JsError;
 use crate::gc::{Gc, Guard};
 use crate::interpreter::Interpreter;
-use crate::value::{ExoticObject, Guarded, JsObject, JsString, JsValue, PropertyKey};
+use crate::value::{ExoticObject, Guarded, JsObject, JsString, JsValue};
 
 /// Initialize JSON object and add it to globals
 pub fn init_json(interp: &mut Interpreter) {
@@ -151,44 +151,49 @@ pub fn js_value_to_json(value: &JsValue) -> Result<serde_json::Value, JsError> {
         JsValue::Symbol(_) => serde_json::Value::Null, // Symbols are ignored in JSON
         JsValue::Object(obj) => {
             let obj_ref = obj.borrow();
-            match &obj_ref.exotic {
-                ExoticObject::Array { length } => {
-                    let mut arr = Vec::with_capacity(*length as usize);
-                    for i in 0..*length {
-                        let val = obj_ref
-                            .get_property(&PropertyKey::Index(i))
-                            .unwrap_or(JsValue::Undefined);
-                        arr.push(js_value_to_json(&val)?);
+            if let Some(elements) = obj_ref.array_elements() {
+                let mut arr = Vec::with_capacity(elements.len());
+                for val in elements {
+                    arr.push(js_value_to_json(val)?);
+                }
+                serde_json::Value::Array(arr)
+            } else {
+                match &obj_ref.exotic {
+                    // Array is handled above by array_elements() check
+                    ExoticObject::Array { .. } | ExoticObject::Function(_) => {
+                        serde_json::Value::Null
                     }
-                    serde_json::Value::Array(arr)
-                }
-                ExoticObject::Function(_) => serde_json::Value::Null,
-                ExoticObject::Map { .. } => serde_json::Value::Null,
-                ExoticObject::Set { .. } => serde_json::Value::Null,
-                ExoticObject::Date { timestamp } => {
-                    // Dates serialize as their ISO string
-                    let datetime = chrono::DateTime::from_timestamp_millis(*timestamp as i64)
-                        .unwrap_or(chrono::DateTime::UNIX_EPOCH);
-                    serde_json::Value::String(datetime.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string())
-                }
-                ExoticObject::RegExp { .. } => serde_json::Value::Object(serde_json::Map::new()),
-                ExoticObject::Generator(_) => serde_json::Value::Null,
-                ExoticObject::Promise(_) => serde_json::Value::Null,
-                ExoticObject::Environment(_) => serde_json::Value::Null, // Internal type
-                ExoticObject::Ordinary => {
-                    let mut map = serde_json::Map::new();
-                    for (key, prop) in obj_ref.properties.iter() {
-                        if prop.enumerable() {
-                            let json_val = js_value_to_json(&prop.value)?;
-                            // Skip undefined values in objects
-                            if json_val != serde_json::Value::Null
-                                || !matches!(prop.value, JsValue::Undefined)
-                            {
-                                map.insert(key.to_string(), json_val);
+                    ExoticObject::Map { .. } => serde_json::Value::Null,
+                    ExoticObject::Set { .. } => serde_json::Value::Null,
+                    ExoticObject::Date { timestamp } => {
+                        // Dates serialize as their ISO string
+                        let datetime = chrono::DateTime::from_timestamp_millis(*timestamp as i64)
+                            .unwrap_or(chrono::DateTime::UNIX_EPOCH);
+                        serde_json::Value::String(
+                            datetime.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
+                        )
+                    }
+                    ExoticObject::RegExp { .. } => {
+                        serde_json::Value::Object(serde_json::Map::new())
+                    }
+                    ExoticObject::Generator(_) => serde_json::Value::Null,
+                    ExoticObject::Promise(_) => serde_json::Value::Null,
+                    ExoticObject::Environment(_) => serde_json::Value::Null, // Internal type
+                    ExoticObject::Ordinary => {
+                        let mut map = serde_json::Map::new();
+                        for (key, prop) in obj_ref.properties.iter() {
+                            if prop.enumerable() {
+                                let json_val = js_value_to_json(&prop.value)?;
+                                // Skip undefined values in objects
+                                if json_val != serde_json::Value::Null
+                                    || !matches!(prop.value, JsValue::Undefined)
+                                {
+                                    map.insert(key.to_string(), json_val);
+                                }
                             }
                         }
+                        serde_json::Value::Object(map)
                     }
-                    serde_json::Value::Object(map)
                 }
             }
         }

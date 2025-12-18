@@ -2181,12 +2181,23 @@ impl Interpreter {
         let keys = match &right {
             JsValue::Object(obj) => {
                 let obj_ref = obj.borrow();
-                obj_ref
-                    .properties
-                    .iter()
-                    .filter(|(key, prop)| prop.enumerable() && !key.is_symbol())
-                    .map(|(key, _)| key.to_string())
-                    .collect::<Vec<_>>()
+                let mut keys = Vec::new();
+
+                // For arrays, include numeric indices first
+                if let Some(length) = obj_ref.array_length() {
+                    for i in 0..length {
+                        keys.push(i.to_string());
+                    }
+                }
+
+                // Then include enumerable properties
+                for (key, prop) in obj_ref.properties.iter() {
+                    if prop.enumerable() && !key.is_symbol() {
+                        keys.push(key.to_string());
+                    }
+                }
+
+                keys
             }
             _ => vec![],
         };
@@ -2402,19 +2413,10 @@ impl Interpreter {
         let items = match &right {
             JsValue::Object(obj) => {
                 let obj_ref = obj.borrow();
-                match &obj_ref.exotic {
-                    ExoticObject::Array { length } => {
-                        let mut items = Vec::with_capacity(*length as usize);
-                        for i in 0..*length {
-                            items.push(
-                                obj_ref
-                                    .get_property(&crate::value::PropertyKey::Index(i))
-                                    .unwrap_or(JsValue::Undefined),
-                            );
-                        }
-                        items
-                    }
-                    _ => vec![],
+                if let Some(elements) = obj_ref.array_elements() {
+                    elements.to_vec()
+                } else {
+                    vec![]
                 }
             }
             JsValue::String(s) => s

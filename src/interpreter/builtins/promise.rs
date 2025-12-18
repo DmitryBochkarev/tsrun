@@ -10,7 +10,7 @@ use crate::gc::{Gc, Guard};
 use crate::interpreter::Interpreter;
 use crate::value::{
     CheapClone, ExoticObject, Guarded, JsFunction, JsObject, JsValue, PromiseHandler, PromiseState,
-    PromiseStatus, PropertyKey,
+    PromiseStatus,
 };
 
 /// Initialize Promise.prototype with then, catch, finally methods
@@ -520,15 +520,8 @@ fn extract_iterable(value: &JsValue) -> Result<Vec<JsValue>, JsError> {
     };
 
     let arr_ref = arr.borrow();
-    if let ExoticObject::Array { length } = arr_ref.exotic {
-        let mut result = Vec::with_capacity(length as usize);
-        for i in 0..length {
-            let elem = arr_ref
-                .get_property(&PropertyKey::Index(i))
-                .unwrap_or(JsValue::Undefined);
-            result.push(elem);
-        }
-        Ok(result)
+    if let Some(elements) = arr_ref.array_elements() {
+        Ok(elements.to_vec())
     } else {
         Ok(vec![])
     }

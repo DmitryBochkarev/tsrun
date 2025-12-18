@@ -2,7 +2,7 @@
 
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
-use crate::value::{BoundFunctionData, ExoticObject, Guarded, JsFunction, JsValue, PropertyKey};
+use crate::value::{BoundFunctionData, Guarded, JsFunction, JsValue};
 
 /// Initialize Function.prototype with call, apply, bind methods
 pub fn init_function_prototype(interp: &mut Interpreter) {
@@ -43,10 +43,8 @@ pub fn function_apply(
     let call_args: Vec<JsValue> = match args_array {
         JsValue::Object(arr_ref) => {
             let arr = arr_ref.borrow();
-            if let ExoticObject::Array { length } = &arr.exotic {
-                (0..*length)
-                    .filter_map(|i| arr.get_property(&PropertyKey::Index(i)))
-                    .collect()
+            if let Some(elements) = arr.array_elements() {
+                elements.to_vec()
             } else {
                 vec![]
             }

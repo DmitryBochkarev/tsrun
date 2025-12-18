@@ -2,7 +2,7 @@
 
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
-use crate::value::{ExoticObject, Guarded, JsObjectRef, JsString, JsValue, Property, PropertyKey};
+use crate::value::{ExoticObject, Guarded, JsObjectRef, JsString, JsValue, PropertyKey};
 
 /// Initialize Array.prototype with all array methods.
 /// The prototype object must already exist in `interp.array_prototype`.
@@ -106,7 +106,7 @@ pub fn array_is_array(
 }
 
 pub fn array_push(
-    interp: &mut Interpreter,
+    _interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
@@ -116,41 +116,22 @@ pub fn array_push(
         ));
     };
 
-    let length_key = interp.key("length");
-
     let mut arr_ref = arr.borrow_mut();
 
-    let mut current_length = match &arr_ref.exotic {
-        ExoticObject::Array { length } => *length,
-        _ => {
-            return Err(JsError::type_error(
-                "Array.prototype.push called on non-array",
-            ))
-        }
-    };
+    let elements = arr_ref
+        .array_elements_mut()
+        .ok_or_else(|| JsError::type_error("Array.prototype.push called on non-array"))?;
 
     for arg in args {
-        arr_ref.properties.insert(
-            PropertyKey::Index(current_length),
-            Property::data(arg.clone()),
-        );
-        current_length += 1;
+        elements.push(arg.clone());
     }
 
-    if let ExoticObject::Array { ref mut length } = arr_ref.exotic {
-        *length = current_length;
-    }
-
-    arr_ref.properties.insert(
-        length_key,
-        Property::with_attributes(JsValue::Number(current_length as f64), true, false, false),
-    );
-
-    Ok(Guarded::unguarded(JsValue::Number(current_length as f64)))
+    let new_length = elements.len();
+    Ok(Guarded::unguarded(JsValue::Number(new_length as f64)))
 }
 
 pub fn array_pop(
-    interp: &mut Interpreter,
+    _interp: &mut Interpreter,
     this: JsValue,
     _args: &[JsValue],
 ) -> Result<Guarded, JsError> {
@@ -160,41 +141,13 @@ pub fn array_pop(
         ));
     };
 
-    let length_key = interp.key("length");
-
     let mut arr_ref = arr.borrow_mut();
 
-    let current_length = match &arr_ref.exotic {
-        ExoticObject::Array { length } => *length,
-        _ => {
-            return Err(JsError::type_error(
-                "Array.prototype.pop called on non-array",
-            ))
-        }
-    };
+    let elements = arr_ref
+        .array_elements_mut()
+        .ok_or_else(|| JsError::type_error("Array.prototype.pop called on non-array"))?;
 
-    if current_length == 0 {
-        return Ok(Guarded::unguarded(JsValue::Undefined));
-    }
-
-    let new_length = current_length - 1;
-
-    let value = arr_ref
-        .properties
-        .remove(&PropertyKey::Index(new_length))
-        .map(|p| p.value)
-        .unwrap_or(JsValue::Undefined);
-
-    if let ExoticObject::Array { ref mut length } = arr_ref.exotic {
-        *length = new_length;
-    }
-
-    arr_ref.properties.insert(
-        length_key,
-        Property::with_attributes(JsValue::Number(new_length as f64), true, false, false),
-    );
-
-    // Value came from array which is already owned by caller - no guard needed
+    let value = elements.pop().unwrap_or(JsValue::Undefined);
     Ok(Guarded::unguarded(value))
 }
 
@@ -224,13 +177,10 @@ pub fn array_map(
     let _this_arg_guard = interp.guard_value(&this_arg);
     let _arr_guard = interp.guard_value(&this);
 
-    let length = {
-        let arr_ref = arr.borrow();
-        match &arr_ref.exotic {
-            ExoticObject::Array { length } => *length,
-            _ => return Err(JsError::type_error("Not an array")),
-        }
-    };
+    let length = arr
+        .borrow()
+        .array_length()
+        .ok_or_else(|| JsError::type_error("Not an array"))?;
 
     let mut result = Vec::with_capacity(length as usize);
     for i in 0..length {
@@ -281,13 +231,10 @@ pub fn array_filter(
     let _this_arg_guard = interp.guard_value(&this_arg);
     let _arr_guard = interp.guard_value(&this);
 
-    let length = {
-        let arr_ref = arr.borrow();
-        match &arr_ref.exotic {
-            ExoticObject::Array { length } => *length,
-            _ => return Err(JsError::type_error("Not an array")),
-        }
-    };
+    let length = arr
+        .borrow()
+        .array_length()
+        .ok_or_else(|| JsError::type_error("Not an array"))?;
 
     let mut result = Vec::new();
     for i in 0..length {
@@ -339,13 +286,10 @@ pub fn array_foreach(
     let _this_arg_guard = interp.guard_value(&this_arg);
     let _arr_guard = interp.guard_value(&this);
 
-    let length = {
-        let arr_ref = arr.borrow();
-        match &arr_ref.exotic {
-            ExoticObject::Array { length } => *length,
-            _ => return Err(JsError::type_error("Not an array")),
-        }
-    };
+    let length = arr
+        .borrow()
+        .array_length()
+        .ok_or_else(|| JsError::type_error("Not an array"))?;
 
     for i in 0..length {
         let elem = arr
@@ -385,13 +329,10 @@ pub fn array_reduce(
     let _callback_guard = interp.guard_value(&callback);
     let _arr_guard = interp.guard_value(&this);
 
-    let length = {
-        let arr_ref = arr.borrow();
-        match &arr_ref.exotic {
-            ExoticObject::Array { length } => *length,
-            _ => return Err(JsError::type_error("Not an array")),
-        }
-    };
+    let length = arr
+        .borrow()
+        .array_length()
+        .ok_or_else(|| JsError::type_error("Not an array"))?;
 
     let (mut accumulator, start_index) = if let Some(initial) = args.get(1) {
         (initial.clone(), 0)
@@ -455,13 +396,10 @@ pub fn array_find(
     let _this_arg_guard = interp.guard_value(&this_arg);
     let _arr_guard = interp.guard_value(&this);
 
-    let length = {
-        let arr_ref = arr.borrow();
-        match &arr_ref.exotic {
-            ExoticObject::Array { length } => *length,
-            _ => return Err(JsError::type_error("Not an array")),
-        }
-    };
+    let length = arr
+        .borrow()
+        .array_length()
+        .ok_or_else(|| JsError::type_error("Not an array"))?;
 
     for i in 0..length {
         let elem = arr
@@ -512,13 +450,10 @@ pub fn array_find_index(
     let _this_arg_guard = interp.guard_value(&this_arg);
     let _arr_guard = interp.guard_value(&this);
 
-    let length = {
-        let arr_ref = arr.borrow();
-        match &arr_ref.exotic {
-            ExoticObject::Array { length } => *length,
-            _ => return Err(JsError::type_error("Not an array")),
-        }
-    };
+    let length = arr
+        .borrow()
+        .array_length()
+        .ok_or_else(|| JsError::type_error("Not an array"))?;
 
     for i in 0..length {
         let elem = arr
@@ -557,13 +492,10 @@ pub fn array_index_of(
     let search_element = args.first().cloned().unwrap_or(JsValue::Undefined);
     let from_index = args.get(1).map(|v| v.to_number() as i64).unwrap_or(0);
 
-    let length = {
-        let arr_ref = arr.borrow();
-        match &arr_ref.exotic {
-            ExoticObject::Array { length } => *length as i64,
-            _ => return Err(JsError::type_error("Not an array")),
-        }
-    };
+    let length = arr
+        .borrow()
+        .array_length()
+        .ok_or_else(|| JsError::type_error("Not an array"))? as i64;
 
     let start = if from_index < 0 {
         (length + from_index).max(0) as u32
@@ -599,13 +531,10 @@ pub fn array_includes(
     let search_element = args.first().cloned().unwrap_or(JsValue::Undefined);
     let from_index = args.get(1).map(|v| v.to_number() as i64).unwrap_or(0);
 
-    let length = {
-        let arr_ref = arr.borrow();
-        match &arr_ref.exotic {
-            ExoticObject::Array { length } => *length as i64,
-            _ => return Err(JsError::type_error("Not an array")),
-        }
-    };
+    let length = arr
+        .borrow()
+        .array_length()
+        .ok_or_else(|| JsError::type_error("Not an array"))? as i64;
 
     let start = if from_index < 0 {
         (length + from_index).max(0) as u32
@@ -643,13 +572,10 @@ pub fn array_slice(
         ));
     };
 
-    let length = {
-        let arr_ref = arr.borrow();
-        match &arr_ref.exotic {
-            ExoticObject::Array { length } => *length as i64,
-            _ => return Err(JsError::type_error("Not an array")),
-        }
-    };
+    let length = arr
+        .borrow()
+        .array_length()
+        .ok_or_else(|| JsError::type_error("Not an array"))? as i64;
 
     let start_arg = args.first().map(|v| v.to_number() as i64).unwrap_or(0);
     let end_arg = args.get(1).map(|v| v.to_number() as i64).unwrap_or(length);
@@ -690,8 +616,8 @@ pub fn array_concat(
         match &value {
             JsValue::Object(obj) => {
                 let obj_ref = obj.borrow();
-                if let ExoticObject::Array { length } = &obj_ref.exotic {
-                    for i in 0..*length {
+                if let Some(length) = obj_ref.array_length() {
+                    for i in 0..length {
                         let elem = obj_ref
                             .get_property(&PropertyKey::Index(i))
                             .unwrap_or(JsValue::Undefined);
@@ -737,13 +663,10 @@ pub fn array_join(
         })
         .unwrap_or_else(|| ",".to_string());
 
-    let length = {
-        let arr_ref = arr.borrow();
-        match &arr_ref.exotic {
-            ExoticObject::Array { length } => *length,
-            _ => return Err(JsError::type_error("Not an array")),
-        }
-    };
+    let length = arr
+        .borrow()
+        .array_length()
+        .ok_or_else(|| JsError::type_error("Not an array"))?;
 
     let mut parts = Vec::with_capacity(length as usize);
     for i in 0..length {
@@ -789,13 +712,10 @@ pub fn array_every(
     let _this_arg_guard = interp.guard_value(&this_arg);
     let _arr_guard = interp.guard_value(&this);
 
-    let length = {
-        let arr_ref = arr.borrow();
-        match &arr_ref.exotic {
-            ExoticObject::Array { length } => *length,
-            _ => return Err(JsError::type_error("Not an array")),
-        }
-    };
+    let length = arr
+        .borrow()
+        .array_length()
+        .ok_or_else(|| JsError::type_error("Not an array"))?;
 
     for i in 0..length {
         let elem = arr
@@ -845,13 +765,10 @@ pub fn array_some(
     let _this_arg_guard = interp.guard_value(&this_arg);
     let _arr_guard = interp.guard_value(&this);
 
-    let length = {
-        let arr_ref = arr.borrow();
-        match &arr_ref.exotic {
-            ExoticObject::Array { length } => *length,
-            _ => return Err(JsError::type_error("Not an array")),
-        }
-    };
+    let length = arr
+        .borrow()
+        .array_length()
+        .ok_or_else(|| JsError::type_error("Not an array"))?;
 
     for i in 0..length {
         let elem = arr
@@ -877,7 +794,7 @@ pub fn array_some(
 }
 
 pub fn array_shift(
-    interp: &mut Interpreter,
+    _interp: &mut Interpreter,
     this: JsValue,
     _args: &[JsValue],
 ) -> Result<Guarded, JsError> {
@@ -887,42 +804,21 @@ pub fn array_shift(
         ));
     };
 
-    let length_key = interp.key("length");
-
     let mut arr_ref = arr.borrow_mut();
-    let length = match &arr_ref.exotic {
-        ExoticObject::Array { length } => *length,
-        _ => return Err(JsError::type_error("Not an array")),
-    };
+    let elements = arr_ref
+        .array_elements_mut()
+        .ok_or_else(|| JsError::type_error("Array.prototype.shift called on non-array"))?;
 
-    if length == 0 {
+    if elements.is_empty() {
         return Ok(Guarded::unguarded(JsValue::Undefined));
     }
 
-    let first = arr_ref
-        .get_property(&PropertyKey::Index(0))
-        .unwrap_or(JsValue::Undefined);
-
-    for i in 1..length {
-        let val = arr_ref
-            .get_property(&PropertyKey::Index(i))
-            .unwrap_or(JsValue::Undefined);
-        arr_ref.set_property(PropertyKey::Index(i - 1), val);
-    }
-
-    arr_ref.properties.remove(&PropertyKey::Index(length - 1));
-    let new_len = length - 1;
-    if let ExoticObject::Array { ref mut length } = arr_ref.exotic {
-        *length = new_len;
-    }
-    arr_ref.set_property(length_key, JsValue::Number(new_len as f64));
-
-    // Value came from array which is owned by caller - no guard needed
+    let first = elements.remove(0);
     Ok(Guarded::unguarded(first))
 }
 
 pub fn array_unshift(
-    interp: &mut Interpreter,
+    _interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
@@ -932,37 +828,21 @@ pub fn array_unshift(
         ));
     };
 
-    let length_key = interp.key("length");
-
     let mut arr_ref = arr.borrow_mut();
-    let current_length = match &arr_ref.exotic {
-        ExoticObject::Array { length } => *length,
-        _ => return Err(JsError::type_error("Not an array")),
-    };
+    let elements = arr_ref
+        .array_elements_mut()
+        .ok_or_else(|| JsError::type_error("Array.prototype.unshift called on non-array"))?;
 
-    let arg_count = args.len() as u32;
-    if arg_count == 0 {
-        return Ok(Guarded::unguarded(JsValue::Number(current_length as f64)));
+    if args.is_empty() {
+        return Ok(Guarded::unguarded(JsValue::Number(elements.len() as f64)));
     }
 
-    for i in (0..current_length).rev() {
-        let val = arr_ref
-            .get_property(&PropertyKey::Index(i))
-            .unwrap_or(JsValue::Undefined);
-        arr_ref.set_property(PropertyKey::Index(i + arg_count), val);
-    }
-
+    // Insert args at the beginning
     for (i, val) in args.iter().enumerate() {
-        arr_ref.set_property(PropertyKey::Index(i as u32), val.clone());
+        elements.insert(i, val.clone());
     }
 
-    let new_length = current_length + arg_count;
-    if let ExoticObject::Array { ref mut length } = arr_ref.exotic {
-        *length = new_length;
-    }
-    arr_ref.set_property(length_key, JsValue::Number(new_length as f64));
-
-    Ok(Guarded::unguarded(JsValue::Number(new_length as f64)))
+    Ok(Guarded::unguarded(JsValue::Number(elements.len() as f64)))
 }
 
 pub fn array_reverse(
@@ -977,28 +857,11 @@ pub fn array_reverse(
     };
 
     let mut arr_ref = arr.borrow_mut();
-    let length = match &arr_ref.exotic {
-        ExoticObject::Array { length } => *length,
-        _ => return Err(JsError::type_error("Not an array")),
-    };
-
-    if length <= 1 {
-        // Array was passed in by caller, already owned - no guard needed
-        return Ok(Guarded::unguarded(this));
-    }
-
-    let mut elements: Vec<JsValue> = (0..length)
-        .map(|i| {
-            arr_ref
-                .get_property(&PropertyKey::Index(i))
-                .unwrap_or(JsValue::Undefined)
-        })
-        .collect();
+    let elements = arr_ref
+        .array_elements_mut()
+        .ok_or_else(|| JsError::type_error("Array.prototype.reverse called on non-array"))?;
 
     elements.reverse();
-    for (i, val) in elements.into_iter().enumerate() {
-        arr_ref.set_property(PropertyKey::Index(i as u32), val);
-    }
 
     drop(arr_ref);
     // Array was passed in by caller, already owned - no guard needed
@@ -1022,13 +885,10 @@ pub fn array_sort(
     let _cmp_guard = compare_fn.as_ref().and_then(|c| interp.guard_value(c));
     let _arr_guard = interp.guard_value(&this);
 
-    let length = {
-        let arr_ref = arr.borrow();
-        match &arr_ref.exotic {
-            ExoticObject::Array { length } => *length,
-            _ => return Err(JsError::type_error("Not an array")),
-        }
-    };
+    let length = arr
+        .borrow()
+        .array_length()
+        .ok_or_else(|| JsError::type_error("Not an array"))?;
 
     let mut elements: Vec<JsValue> = {
         let arr_ref = arr.borrow();
@@ -1096,10 +956,10 @@ pub fn array_fill(
     let value = args.first().cloned().unwrap_or(JsValue::Undefined);
 
     let mut arr_ref = arr.borrow_mut();
-    let length = match &arr_ref.exotic {
-        ExoticObject::Array { length } => *length as i64,
-        _ => return Err(JsError::type_error("Not an array")),
-    };
+    let elements = arr_ref
+        .array_elements_mut()
+        .ok_or_else(|| JsError::type_error("Array.prototype.fill called on non-array"))?;
+    let length = elements.len() as i64;
 
     let start = args
         .get(1)
@@ -1111,7 +971,7 @@ pub fn array_fill(
                 n.min(length)
             }
         })
-        .unwrap_or(0) as u32;
+        .unwrap_or(0) as usize;
 
     let end = args
         .get(2)
@@ -1123,10 +983,12 @@ pub fn array_fill(
                 n.min(length)
             }
         })
-        .unwrap_or(length) as u32;
+        .unwrap_or(length) as usize;
 
     for i in start..end {
-        arr_ref.set_property(PropertyKey::Index(i), value.clone());
+        if let Some(slot) = elements.get_mut(i) {
+            *slot = value.clone();
+        }
     }
 
     drop(arr_ref);
@@ -1146,10 +1008,10 @@ pub fn array_copy_within(
     };
 
     let mut arr_ref = arr.borrow_mut();
-    let length = match &arr_ref.exotic {
-        ExoticObject::Array { length } => *length as i64,
-        _ => return Err(JsError::type_error("Not an array")),
-    };
+    let elements = arr_ref
+        .array_elements_mut()
+        .ok_or_else(|| JsError::type_error("Array.prototype.copyWithin called on non-array"))?;
+    let length = elements.len() as i64;
 
     let target = args
         .first()
@@ -1161,7 +1023,7 @@ pub fn array_copy_within(
                 n.min(length)
             }
         })
-        .unwrap_or(0) as u32;
+        .unwrap_or(0) as usize;
 
     let start = args
         .get(1)
@@ -1173,7 +1035,7 @@ pub fn array_copy_within(
                 n.min(length)
             }
         })
-        .unwrap_or(0) as u32;
+        .unwrap_or(0) as usize;
 
     let end = args
         .get(2)
@@ -1185,20 +1047,15 @@ pub fn array_copy_within(
                 n.min(length)
             }
         })
-        .unwrap_or(length) as u32;
+        .unwrap_or(length) as usize;
 
-    let elements: Vec<JsValue> = (start..end)
-        .map(|i| {
-            arr_ref
-                .get_property(&PropertyKey::Index(i))
-                .unwrap_or(JsValue::Undefined)
-        })
-        .collect();
+    // Copy elements to temporary Vec first to avoid borrow issues
+    let copied: Vec<JsValue> = elements.get(start..end).unwrap_or_default().to_vec();
 
-    for (i, val) in elements.into_iter().enumerate() {
-        let target_idx = target + i as u32;
-        if target_idx < length as u32 {
-            arr_ref.set_property(PropertyKey::Index(target_idx), val);
+    for (i, val) in copied.into_iter().enumerate() {
+        let target_idx = target + i;
+        if let Some(slot) = elements.get_mut(target_idx) {
+            *slot = val;
         }
     }
 
@@ -1218,13 +1075,11 @@ pub fn array_splice(
         ));
     };
 
-    let length_key = interp.key("length");
-
     let mut arr_ref = arr.borrow_mut();
-    let length = match &arr_ref.exotic {
-        ExoticObject::Array { length } => *length as i64,
-        _ => return Err(JsError::type_error("Not an array")),
-    };
+    let elements = arr_ref
+        .array_elements_mut()
+        .ok_or_else(|| JsError::type_error("Array.prototype.splice called on non-array"))?;
+    let length = elements.len() as i64;
 
     let start = args
         .first()
@@ -1236,58 +1091,24 @@ pub fn array_splice(
                 n.min(length)
             }
         })
-        .unwrap_or(0) as u32;
+        .unwrap_or(0) as usize;
 
     let delete_count = args
         .get(1)
         .map(|v| {
             let n = v.to_number() as i64;
-            n.max(0).min(length - start as i64) as u32
+            n.max(0).min(length - start as i64) as usize
         })
-        .unwrap_or((length - start as i64) as u32);
+        .unwrap_or((length - start as i64) as usize);
 
-    let removed: Vec<JsValue> = (start..start + delete_count)
-        .map(|i| {
-            arr_ref
-                .get_property(&PropertyKey::Index(i))
-                .unwrap_or(JsValue::Undefined)
-        })
-        .collect();
+    // Remove elements and collect them
+    let removed: Vec<JsValue> = elements.drain(start..start + delete_count).collect();
 
+    // Insert new items
     let insert_items: Vec<JsValue> = args.iter().skip(2).cloned().collect();
-    let insert_count = insert_items.len() as u32;
-
-    let new_length = length as u32 - delete_count + insert_count;
-
-    if insert_count > delete_count {
-        let shift = insert_count - delete_count;
-        for i in (start + delete_count..length as u32).rev() {
-            let val = arr_ref
-                .get_property(&PropertyKey::Index(i))
-                .unwrap_or(JsValue::Undefined);
-            arr_ref.set_property(PropertyKey::Index(i + shift), val);
-        }
-    } else if insert_count < delete_count {
-        let shift = delete_count - insert_count;
-        for i in start + delete_count..length as u32 {
-            let val = arr_ref
-                .get_property(&PropertyKey::Index(i))
-                .unwrap_or(JsValue::Undefined);
-            arr_ref.set_property(PropertyKey::Index(i - shift), val);
-        }
-        for i in new_length..length as u32 {
-            arr_ref.properties.remove(&PropertyKey::Index(i));
-        }
-    }
-
     for (i, val) in insert_items.into_iter().enumerate() {
-        arr_ref.set_property(PropertyKey::Index(start + i as u32), val);
+        elements.insert(start + i, val);
     }
-
-    if let ExoticObject::Array { ref mut length } = arr_ref.exotic {
-        *length = new_length;
-    }
-    arr_ref.set_property(length_key, JsValue::Number(new_length as f64));
 
     drop(arr_ref);
     let (arr, guard) = interp.create_array(removed);
@@ -1322,14 +1143,8 @@ pub fn array_from(
         JsValue::Object(obj) => {
             let source_elements: Vec<JsValue> = {
                 let obj_ref = obj.borrow();
-                if let ExoticObject::Array { length } = obj_ref.exotic {
-                    (0..length)
-                        .map(|i| {
-                            obj_ref
-                                .get_property(&PropertyKey::Index(i))
-                                .unwrap_or(JsValue::Undefined)
-                        })
-                        .collect()
+                if let Some(elements) = obj_ref.array_elements() {
+                    elements.to_vec()
                 } else {
                     vec![]
                 }
@@ -1398,10 +1213,9 @@ pub fn array_at(
     };
 
     let arr_ref = arr.borrow();
-    let length = match &arr_ref.exotic {
-        ExoticObject::Array { length } => *length as i64,
-        _ => return Err(JsError::type_error("Not an array")),
-    };
+    let length = arr_ref
+        .array_length()
+        .ok_or_else(|| JsError::type_error("Not an array"))? as i64;
 
     let index = args.first().map(|v| v.to_number() as i64).unwrap_or(0);
 
@@ -1433,10 +1247,9 @@ pub fn array_last_index_of(
     let search_elem = args.first().cloned().unwrap_or(JsValue::Undefined);
 
     let arr_ref = arr.borrow();
-    let length = match &arr_ref.exotic {
-        ExoticObject::Array { length } => *length,
-        _ => return Err(JsError::type_error("Not an array")),
-    };
+    let length = arr_ref
+        .array_length()
+        .ok_or_else(|| JsError::type_error("Not an array"))?;
 
     let from_index = args
         .get(1)
@@ -1484,13 +1297,10 @@ pub fn array_reduce_right(
         ));
     }
 
-    let length = {
-        let arr_ref = arr.borrow();
-        match &arr_ref.exotic {
-            ExoticObject::Array { length } => *length,
-            _ => return Err(JsError::type_error("Not an array")),
-        }
-    };
+    let length = arr
+        .borrow()
+        .array_length()
+        .ok_or_else(|| JsError::type_error("Not an array"))?;
 
     if length == 0 && args.get(1).is_none() {
         return Err(JsError::type_error(
@@ -1549,24 +1359,18 @@ pub fn array_flat(
     fn flatten(arr: &JsObjectRef, depth: i32) -> Vec<JsValue> {
         let elements: Vec<JsValue> = {
             let arr_ref = arr.borrow();
-            let length = match &arr_ref.exotic {
-                ExoticObject::Array { length } => *length,
-                _ => return vec![],
-            };
-            (0..length)
-                .map(|i| {
-                    arr_ref
-                        .get_property(&PropertyKey::Index(i))
-                        .unwrap_or(JsValue::Undefined)
-                })
-                .collect()
+            if let Some(elements) = arr_ref.array_elements() {
+                elements.to_vec()
+            } else {
+                return vec![];
+            }
         };
 
         let mut result = Vec::new();
         for elem in elements {
             if depth > 0 {
                 if let JsValue::Object(ref inner) = elem {
-                    if matches!(inner.borrow().exotic, ExoticObject::Array { .. }) {
+                    if inner.borrow().is_array() {
                         result.extend(flatten(inner, depth - 1));
                         continue;
                     }
@@ -1607,13 +1411,10 @@ pub fn array_flat_map(
     let _this_arg_guard = interp.guard_value(&this_arg);
     let _arr_guard = interp.guard_value(&this);
 
-    let length = {
-        let arr_ref = arr.borrow();
-        match &arr_ref.exotic {
-            ExoticObject::Array { length } => *length,
-            _ => return Err(JsError::type_error("Not an array")),
-        }
-    };
+    let length = arr
+        .borrow()
+        .array_length()
+        .ok_or_else(|| JsError::type_error("Not an array"))?;
 
     let mut result = Vec::new();
 
@@ -1634,13 +1435,8 @@ pub fn array_flat_map(
 
         let is_array = if let JsValue::Object(ref inner) = mapped {
             let inner_ref = inner.borrow();
-            if let ExoticObject::Array { length: inner_len } = inner_ref.exotic {
-                for j in 0..inner_len {
-                    let inner_elem = inner_ref
-                        .get_property(&PropertyKey::Index(j))
-                        .unwrap_or(JsValue::Undefined);
-                    result.push(inner_elem);
-                }
+            if let Some(elements) = inner_ref.array_elements() {
+                result.extend(elements.iter().cloned());
                 true
             } else {
                 false
@@ -1682,13 +1478,10 @@ pub fn array_find_last(
 
     let this_arg = args.get(1).cloned().unwrap_or(JsValue::Undefined);
 
-    let length = {
-        let arr_ref = arr.borrow();
-        match &arr_ref.exotic {
-            ExoticObject::Array { length } => *length,
-            _ => return Err(JsError::type_error("Not an array")),
-        }
-    };
+    let length = arr
+        .borrow()
+        .array_length()
+        .ok_or_else(|| JsError::type_error("Not an array"))?;
 
     for i in (0..length).rev() {
         let elem = arr
@@ -1734,13 +1527,10 @@ pub fn array_find_last_index(
 
     let this_arg = args.get(1).cloned().unwrap_or(JsValue::Undefined);
 
-    let length = {
-        let arr_ref = arr.borrow();
-        match &arr_ref.exotic {
-            ExoticObject::Array { length } => *length,
-            _ => return Err(JsError::type_error("Not an array")),
-        }
-    };
+    let length = arr
+        .borrow()
+        .array_length()
+        .ok_or_else(|| JsError::type_error("Not an array"))?;
 
     for i in (0..length).rev() {
         let elem = arr
@@ -1776,13 +1566,10 @@ pub fn array_to_reversed(
         ));
     };
 
-    let length = {
-        let arr_ref = arr.borrow();
-        match &arr_ref.exotic {
-            ExoticObject::Array { length } => *length,
-            _ => return Err(JsError::type_error("Not an array")),
-        }
-    };
+    let length = arr
+        .borrow()
+        .array_length()
+        .ok_or_else(|| JsError::type_error("Not an array"))?;
 
     let elements: Vec<JsValue> = (0..length)
         .rev()
@@ -1810,13 +1597,10 @@ pub fn array_to_sorted(
 
     let comparator = args.first().cloned();
 
-    let length = {
-        let arr_ref = arr.borrow();
-        match &arr_ref.exotic {
-            ExoticObject::Array { length } => *length,
-            _ => return Err(JsError::type_error("Not an array")),
-        }
-    };
+    let length = arr
+        .borrow()
+        .array_length()
+        .ok_or_else(|| JsError::type_error("Not an array"))?;
 
     let mut elements: Vec<JsValue> = (0..length)
         .map(|i| {
@@ -1876,13 +1660,10 @@ pub fn array_to_spliced(
         ));
     };
 
-    let length = {
-        let arr_ref = arr.borrow();
-        match &arr_ref.exotic {
-            ExoticObject::Array { length } => *length as i32,
-            _ => return Err(JsError::type_error("Not an array")),
-        }
-    };
+    let length = arr
+        .borrow()
+        .array_length()
+        .ok_or_else(|| JsError::type_error("Not an array"))? as i32;
 
     let start_arg = args.first().map(|v| v.to_number() as i32).unwrap_or(0);
     let start = if start_arg < 0 {
@@ -1932,13 +1713,10 @@ pub fn array_with(
         ));
     };
 
-    let length = {
-        let arr_ref = arr.borrow();
-        match &arr_ref.exotic {
-            ExoticObject::Array { length } => *length as i32,
-            _ => return Err(JsError::type_error("Not an array")),
-        }
-    };
+    let length = arr
+        .borrow()
+        .array_length()
+        .ok_or_else(|| JsError::type_error("Not an array"))? as i32;
 
     let index_arg = args.first().map(|v| v.to_number() as i32).unwrap_or(0);
     let index = if index_arg < 0 {
@@ -1980,13 +1758,10 @@ pub fn array_keys(
         ));
     };
 
-    let length = {
-        let arr_ref = arr.borrow();
-        match &arr_ref.exotic {
-            ExoticObject::Array { length } => *length,
-            _ => return Err(JsError::type_error("Not an array")),
-        }
-    };
+    let length = arr
+        .borrow()
+        .array_length()
+        .ok_or_else(|| JsError::type_error("Not an array"))?;
 
     let keys: Vec<JsValue> = (0..length).map(|i| JsValue::Number(i as f64)).collect();
     let (arr, guard) = interp.create_array(keys);
@@ -2004,13 +1779,10 @@ pub fn array_values(
         ));
     };
 
-    let length = {
-        let arr_ref = arr.borrow();
-        match &arr_ref.exotic {
-            ExoticObject::Array { length } => *length,
-            _ => return Err(JsError::type_error("Not an array")),
-        }
-    };
+    let length = arr
+        .borrow()
+        .array_length()
+        .ok_or_else(|| JsError::type_error("Not an array"))?;
 
     let values: Vec<JsValue> = (0..length)
         .map(|i| {
@@ -2034,13 +1806,10 @@ pub fn array_entries(
         ));
     };
 
-    let length = {
-        let arr_ref = arr.borrow();
-        match &arr_ref.exotic {
-            ExoticObject::Array { length } => *length,
-            _ => return Err(JsError::type_error("Not an array")),
-        }
-    };
+    let length = arr
+        .borrow()
+        .array_length()
+        .ok_or_else(|| JsError::type_error("Not an array"))?;
 
     // Guard each entry array as it's created to prevent GC from collecting them
     // before they are stored in the result array. The scope must remain alive

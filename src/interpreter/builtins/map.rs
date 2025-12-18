@@ -82,13 +82,11 @@ pub fn map_constructor(
         let pairs: Vec<(JsValue, JsValue)> = {
             let arr_ref = arr.borrow();
             let mut result = Vec::new();
-            if let ExoticObject::Array { length } = arr_ref.exotic {
-                for i in 0..length {
-                    if let Some(JsValue::Object(pair_arr)) =
-                        arr_ref.get_property(&PropertyKey::Index(i))
-                    {
+            if let Some(elements) = arr_ref.array_elements() {
+                for elem in elements {
+                    if let JsValue::Object(pair_arr) = elem {
                         let pair_ref = pair_arr.borrow();
-                        if let ExoticObject::Array { .. } = pair_ref.exotic {
+                        if pair_ref.is_array() {
                             let key = pair_ref
                                 .get_property(&PropertyKey::Index(0))
                                 .unwrap_or(JsValue::Undefined);
