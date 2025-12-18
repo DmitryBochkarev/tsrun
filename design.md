@@ -676,9 +676,9 @@ These features have AST support but are ignored or partially handled at runtime:
 - [x] Getter/setter decorators
 - [x] Decorator context object (`kind`, `name`, `static`, `private`, `function`, `index`)
 - [x] `context.addInitializer()`
-- [ ] Auto-accessor decorators (`accessor` keyword)
+- [x] Auto-accessor decorators (`accessor` keyword)
 
-**Status:** Fully implemented for class, method, getter/setter, field, and parameter decorators. Context provides `addInitializer()` for class decorators. Auto-accessors not yet supported.
+**Status:** Fully implemented for all decorator types including auto-accessors. Context provides `addInitializer()` for class decorators.
 
 #### Dynamic Import
 - [ ] `import("./module")` expression at runtime
