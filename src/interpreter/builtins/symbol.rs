@@ -10,6 +10,7 @@ use crate::interpreter::Interpreter;
 use crate::value::{Guarded, JsString, JsSymbol, JsValue, PropertyKey};
 
 /// Global symbol ID counter for generating unique symbol IDs
+// FIXME: store in interpreter
 static SYMBOL_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 /// Generate a unique symbol ID
@@ -19,6 +20,7 @@ pub fn next_symbol_id() -> u64 {
 
 // Symbol registry - maps string keys to symbols for Symbol.for()
 // This is a thread-local registry to avoid requiring synchronization
+// FIXME: store in interpreter
 thread_local! {
     static SYMBOL_REGISTRY: RefCell<FxHashMap<String, JsSymbol>> = RefCell::new(FxHashMap::default());
 }

@@ -30,16 +30,17 @@ pub fn regexp_constructor(
     _this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
+    let empty = interp.intern("");
     let pattern = args
         .first()
         .cloned()
-        .unwrap_or(JsValue::String(JsString::from("")))
+        .unwrap_or(JsValue::String(empty.clone()))
         .to_js_string()
         .to_string();
     let flags = args
         .get(1)
         .cloned()
-        .unwrap_or(JsValue::String(JsString::from("")))
+        .unwrap_or(JsValue::String(empty))
         .to_js_string()
         .to_string();
 

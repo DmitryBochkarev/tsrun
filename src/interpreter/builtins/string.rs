@@ -57,13 +57,13 @@ pub fn init_string_prototype(interp: &mut Interpreter) {
 
 /// String constructor function - String(value) converts value to string
 pub fn string_constructor_fn(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
     // String() with no arguments returns ""
     if args.is_empty() {
-        return Ok(Guarded::unguarded(JsValue::String(JsString::from(""))));
+        return Ok(Guarded::unguarded(JsValue::String(interp.intern(""))));
     }
     // String(value) converts value to string
     let value = args.first().cloned().unwrap_or(JsValue::Undefined);

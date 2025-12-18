@@ -1599,8 +1599,10 @@ pub enum ExoticObject {
     /// Function exotic object
     Function(JsFunction),
     /// Map exotic object - stores key-value pairs preserving insertion order
+    // FIXME: use a proper hash map
     Map { entries: Vec<(JsValue, JsValue)> },
     /// Set exotic object - stores unique values preserving insertion order
+    // FIXME: use a proper set
     Set { entries: Vec<JsValue> },
     /// Date exotic object - stores timestamp in milliseconds since Unix epoch
     Date { timestamp: f64 },

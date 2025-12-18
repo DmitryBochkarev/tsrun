@@ -19,6 +19,7 @@ fn format_for_console(value: &JsValue) -> String {
 }
 
 // Thread-local storage for console timers and counters
+// FIXME: store this in interpreter
 lazy_static::lazy_static! {
     static ref CONSOLE_TIMERS: Mutex<FxHashMap<String, Instant>> = Mutex::new(FxHashMap::default());
     static ref CONSOLE_COUNTERS: Mutex<FxHashMap<String, u64>> = Mutex::new(FxHashMap::default());
