@@ -4,7 +4,7 @@
 
 **Project:** `typescript-eval`
 **Purpose:** Execute TypeScript for config/manifest generation from Rust
-**Status:** Milestone 9 Complete (Async/Await, Generators, 757 tests passing)
+**Status:** Milestone 9 Complete (Async/Await, Generators, 839 tests passing)
 
 ### Requirements
 
@@ -649,6 +649,192 @@ fn run_script(source: &str, config: RuntimeConfig) -> Result<JsValue, Error> {
 
 **Note:** Promise uses order-based semantics - async operations create orders that the host fulfills.
 
+---
+
+## Not Yet Implemented
+
+This section documents features that are NOT implemented for a complete TypeScript/JavaScript interpreter.
+
+### Parsed But Not Evaluated
+
+These features have AST support but are ignored or partially handled at runtime:
+
+#### Decorators
+- [ ] Class decorators (`@decorator class Foo {}`)
+- [ ] Method decorators (`@decorator method() {}`)
+- [ ] Property decorators (`@decorator prop = value`)
+- [ ] Parameter decorators (`method(@decorator param) {}`)
+- [ ] Decorator factories (`@decorator() class Foo {}`)
+- [ ] Decorator composition (multiple decorators)
+
+**Status:** Parsed into AST (`Decorator` struct), stored on classes/methods/properties, but never evaluated at runtime.
+
+#### Dynamic Import
+- [ ] `import("./module")` expression at runtime
+- [ ] Dynamic module specifiers (`import(variable)`)
+- [ ] `import.meta` object
+- [ ] `import.meta.url`
+
+**Status:** Parsed as call expression, but no runtime module loading. Only static imports via host are supported.
+
+#### Async Iteration
+- [ ] `for await...of` loops (partial - flag exists but async iterator protocol incomplete)
+- [ ] `Symbol.asyncIterator`
+- [ ] Async generator functions (`async function*`)
+- [ ] `yield` in async generators
+
+**Status:** `ForOfStatement` has `await_` flag in AST, but async iterator protocol is not fully implemented.
+
+### Missing Built-in Objects
+
+#### WeakMap
+- [ ] `new WeakMap()`
+- [ ] `WeakMap.prototype.get(key)`
+- [ ] `WeakMap.prototype.set(key, value)`
+- [ ] `WeakMap.prototype.has(key)`
+- [ ] `WeakMap.prototype.delete(key)`
+
+#### WeakSet
+- [ ] `new WeakSet()`
+- [ ] `WeakSet.prototype.add(value)`
+- [ ] `WeakSet.prototype.has(value)`
+- [ ] `WeakSet.prototype.delete(value)`
+
+#### WeakRef & FinalizationRegistry
+- [ ] `new WeakRef(target)`
+- [ ] `WeakRef.prototype.deref()`
+- [ ] `new FinalizationRegistry(callback)`
+- [ ] `FinalizationRegistry.prototype.register()`
+- [ ] `FinalizationRegistry.prototype.unregister()`
+
+#### Proxy & Reflect
+- [ ] `new Proxy(target, handler)`
+- [ ] All proxy traps (get, set, has, deleteProperty, etc.)
+- [ ] `Reflect.get()`, `Reflect.set()`, `Reflect.has()`, etc.
+- [ ] Revocable proxies (`Proxy.revocable()`)
+
+#### ArrayBuffer & TypedArrays
+- [ ] `ArrayBuffer`
+- [ ] `SharedArrayBuffer`
+- [ ] `DataView`
+- [ ] `Int8Array`, `Uint8Array`, `Uint8ClampedArray`
+- [ ] `Int16Array`, `Uint16Array`
+- [ ] `Int32Array`, `Uint32Array`
+- [ ] `Float32Array`, `Float64Array`
+- [ ] `BigInt64Array`, `BigUint64Array`
+
+#### BigInt (Full Support)
+- [ ] Arbitrary precision arithmetic
+- [ ] `BigInt()` constructor
+- [ ] `BigInt.asIntN()`, `BigInt.asUintN()`
+- [ ] BigInt operators with proper semantics
+
+**Current:** BigInt literals (`123n`) are parsed but converted to `Number` at runtime, losing precision.
+
+#### Intl API
+- [ ] `Intl.Collator`
+- [ ] `Intl.DateTimeFormat`
+- [ ] `Intl.NumberFormat`
+- [ ] `Intl.PluralRules`
+- [ ] `Intl.RelativeTimeFormat`
+- [ ] `Intl.ListFormat`
+- [ ] `Intl.Segmenter`
+- [ ] `Intl.DisplayNames`
+- [ ] `Intl.Locale`
+
+#### Atomics
+- [ ] `Atomics.add()`, `Atomics.sub()`, etc.
+- [ ] `Atomics.wait()`, `Atomics.notify()`
+- [ ] `Atomics.load()`, `Atomics.store()`
+
+### Missing Object Methods
+
+#### Object
+- [ ] `Object.is(value1, value2)`
+- [ ] `Object.preventExtensions(obj)`
+- [ ] `Object.isExtensible(obj)`
+- [ ] `Object.getOwnPropertyDescriptors(obj)`
+
+#### Array
+- [ ] `Array.fromAsync(asyncIterable)`
+
+#### String
+- [ ] `String.prototype.isWellFormed()`
+- [ ] `String.prototype.toWellFormed()`
+
+### Missing Global Functions
+
+- [ ] `eval(code)` - **Intentionally excluded for security**
+- [ ] `setTimeout(callback, delay)` - Host-dependent, use orders
+- [ ] `setInterval(callback, delay)` - Host-dependent, use orders
+- [ ] `clearTimeout(id)` - Host-dependent
+- [ ] `clearInterval(id)` - Host-dependent
+- [ ] `setImmediate(callback)` - Host-dependent
+- [ ] `queueMicrotask(callback)` - Requires microtask queue
+- [ ] `structuredClone(value)` - Deep cloning
+- [ ] `atob(encoded)` - Base64 decode
+- [ ] `btoa(string)` - Base64 encode
+
+**Note:** Timer functions are intentionally not built-in. They should be implemented via the order system by the host.
+
+### Language Features Not Implemented
+
+#### with Statement
+- [ ] `with (obj) { ... }`
+
+**Status:** Intentionally not implemented (deprecated, strict mode forbidden).
+
+#### Direct eval
+- [ ] `eval("code")` with access to local scope
+
+**Status:** Intentionally excluded for security reasons.
+
+#### Legacy Features
+- [ ] `__proto__` property access in literals (`{ __proto__: proto }`) - partially supported
+- [ ] `Object.prototype.__defineGetter__()` / `__defineSetter__()`
+- [ ] `Object.prototype.__lookupGetter__()` / `__lookupSetter__()`
+- [ ] `escape()` / `unescape()` (deprecated)
+
+### TypeScript Features Not Enforced
+
+These are parsed but not enforced at runtime (by design - matches TypeScript behavior):
+
+- `readonly` modifier - properties can be mutated
+- `private` / `protected` - no access control at runtime
+- `abstract` classes - can be instantiated
+- Type assertions - no runtime checking
+- Generic constraints - no runtime checking
+
+### Module System Gaps
+
+- [ ] Circular dependency detection/handling
+- [ ] Live bindings for exports
+- [ ] `export * as ns from "module"`
+- [ ] Dynamic import with variable specifiers
+
+### Potential Future Additions
+
+#### High Priority (Common Use Cases)
+1. Decorator evaluation
+2. `Object.is()`
+3. `Object.preventExtensions()` / `Object.isExtensible()`
+4. Full BigInt support
+
+#### Medium Priority (Improved Compatibility)
+1. WeakMap / WeakSet
+2. Async iterators (`for await...of`)
+3. `import.meta`
+4. `structuredClone()`
+5. `atob()` / `btoa()`
+
+#### Low Priority (Specialized Use)
+1. Proxy & Reflect
+2. TypedArrays / ArrayBuffer
+3. Intl API
+4. Atomics / SharedArrayBuffer
+
+---
+
 ### Rust Integration
 
 #### Public API
@@ -931,7 +1117,7 @@ src/
 
 ## Testing
 
-### Current Status: 757 tests passing
+### Current Status: 839 tests passing
 
 ```bash
 cargo test                     # Run all tests
