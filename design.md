@@ -338,7 +338,6 @@ fn run_script(source: &str, config: RuntimeConfig) -> Result<JsValue, Error> {
 - [x] Namespace imports (`import * as`) (parsing)
 - [x] Re-exports (`export { x } from`) (parsing)
 - [x] Static import resolution (via `RuntimeResult::NeedImports`)
-- [x] Dynamic `import()` - via order system
 
 #### Async/Await
 - [x] `async function` declarations and expressions

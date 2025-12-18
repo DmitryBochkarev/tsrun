@@ -650,7 +650,6 @@ self.env.define(id.name.clone(), value, mutable);
 - Namespace declarations with export and merging
 - `Promise`: new, resolve, reject, then, catch, finally, all, race, allSettled, any
 - Async/await: async functions, async arrow functions, await expressions
-- Dynamic `import()`: import() expression returning Promise
 
 **Not yet implemented:**
 - ES Modules (import/export resolution - parsing only)

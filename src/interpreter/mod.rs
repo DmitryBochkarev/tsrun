@@ -2603,24 +2603,6 @@ impl Interpreter {
                 Ok(Guarded::unguarded(ctx.sent_value.clone()))
             }
 
-            // Import expression (dynamic import)
-            Expression::Import(import_expr) => {
-                // For dynamic import, we need to create an order and return a promise
-                // For now, just return a rejected promise
-                let Guarded {
-                    value: specifier, ..
-                } = self.evaluate_expression(&import_expr.source)?;
-                let guard = self.heap.create_guard();
-                let promise = builtins::promise::create_rejected_promise(
-                    self,
-                    &guard,
-                    JsValue::String(
-                        format!("Dynamic import not yet supported: {:?}", specifier).into(),
-                    ),
-                );
-                Ok(Guarded::with_guard(JsValue::Object(promise), guard))
-            }
-
             // Super expression handled specially in member access and calls
             _ => Ok(Guarded::unguarded(JsValue::Undefined)),
         }

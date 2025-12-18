@@ -1958,8 +1958,14 @@ impl<'a> Parser<'a> {
             // Async function or async arrow
             TokenKind::Async => self.parse_async_expression(),
 
-            // Dynamic import() expression
-            TokenKind::Import => self.parse_import_expression(),
+            // Dynamic import() - treat as identifier "import" so it becomes a function call
+            // This allows `import("./module")` to parse as a call expression
+            TokenKind::Import => {
+                let span = self.current.span;
+                let name = self.intern("import");
+                self.advance();
+                Ok(Expression::Identifier(Identifier { name, span }))
+            }
 
             // Function expression
             TokenKind::Function => self.parse_function_expression(false),
@@ -2363,16 +2369,6 @@ impl<'a> Parser<'a> {
             async_: is_async,
             span,
         }))
-    }
-
-    fn parse_import_expression(&mut self) -> Result<Expression, JsError> {
-        let start = self.current.span;
-        self.require_token(&TokenKind::Import)?;
-        self.require_token(&TokenKind::LParen)?;
-        let source = Rc::new(self.parse_assignment_expression()?);
-        self.require_token(&TokenKind::RParen)?;
-        let span = self.span_from(start);
-        Ok(Expression::Import(ImportExpression { source, span }))
     }
 
     fn parse_async_expression(&mut self) -> Result<Expression, JsError> {

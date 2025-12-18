@@ -13,19 +13,16 @@
 //! GC_THRESHOLD=100 cargo test         # Moderate GC frequency
 //! ```
 
-// TODO: Re-enable these test modules once the new interpreter supports more features
 mod array;
 mod async_await;
 mod basics;
 mod class;
 mod console;
 mod control_flow;
+mod cycle_leak;
 mod date;
-// mod dynamic_import;
 mod enum_test;
 mod error;
-// mod exports;
-mod cycle_leak;
 mod function;
 mod gc;
 mod generator;
@@ -34,17 +31,14 @@ mod json;
 mod map;
 mod math;
 mod modules;
-// mod namespace;
 mod number;
 mod object;
 mod promise;
 mod regexp;
 mod set;
 mod stack;
-// mod state_machine;
 mod string;
 mod symbol;
-// mod timeout;
 
 use typescript_eval::{JsError, JsValue, Runtime, RuntimeResult};
 
