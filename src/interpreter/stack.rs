@@ -8,16 +8,14 @@
 #![allow(clippy::too_many_arguments)]
 
 use crate::ast::{
-    BinaryOp, Expression, ForInOfLeft, ForInStatement, ForInit, ForOfStatement, ForStatement,
-    LiteralValue, LogicalOp, Pattern, Program, Statement, UnaryOp, VariableDeclarator,
-    VariableKind,
+    BinaryOp, BlockStatement, CatchClause, ExportDeclaration, Expression, ForInOfLeft, ForInStatement, ForInit, ForOfStatement, ForStatement, ImportDeclaration, ImportSpecifier, LiteralValue, LogicalOp, Pattern, Program, Statement, SwitchCase, SwitchStatement, UnaryOp, VariableDeclarator, VariableKind
 };
 use crate::error::JsError;
 use crate::gc::{Gc, Guard};
 use crate::value::{
-    Binding, CheapClone, ExoticObject, Guarded, JsObject, JsString, JsValue, PromiseStatus,
-    PropertyKey, VarKey,
+    Binding, CheapClone, ExoticObject, FunctionBody, GeneratorState, Guarded, JsObject, JsString, JsValue, PromiseStatus, PropertyKey, VarKey
 };
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use super::{create_environment_unrooted, Interpreter};
@@ -72,7 +70,7 @@ pub struct FinallyBlockData {
 /// (contains two Gc<JsObject> fields = 48 bytes)
 pub struct ForOfGeneratorData {
     pub generator: Gc<JsObject>,
-    pub gen_state: Rc<std::cell::RefCell<crate::value::GeneratorState>>,
+    pub gen_state: Rc<RefCell<GeneratorState>>,
     pub left: Rc<ForInOfLeft>,
     pub body: Rc<Statement>,
     pub label: LoopLabel,
@@ -323,12 +321,12 @@ pub enum Frame {
     // Switch Statement
     // ═══════════════════════════════════════════════════════════════════════
     /// Switch statement: evaluate discriminant
-    SwitchEval { cases: Rc<[crate::ast::SwitchCase]> },
+    SwitchEval { cases: Rc<[SwitchCase]> },
 
     /// Switch: discriminant evaluated, match cases
     SwitchMatch {
         discriminant: JsValue,
-        cases: Rc<[crate::ast::SwitchCase]>,
+        cases: Rc<[SwitchCase]>,
         index: usize,
         found_match: bool,
     },
@@ -336,7 +334,7 @@ pub enum Frame {
     /// Switch: execute case body
     SwitchBody {
         discriminant: JsValue,
-        cases: Rc<[crate::ast::SwitchCase]>,
+        cases: Rc<[SwitchCase]>,
         case_index: usize,
         stmt_index: usize,
     },
@@ -346,14 +344,14 @@ pub enum Frame {
     // ═══════════════════════════════════════════════════════════════════════
     /// Try block: mark where to catch errors
     TryBlock {
-        handler: Option<Rc<crate::ast::CatchClause>>,
-        finalizer: Option<Rc<crate::ast::BlockStatement>>,
-        body: Rc<crate::ast::BlockStatement>,
+        handler: Option<Rc<CatchClause>>,
+        finalizer: Option<Rc<BlockStatement>>,
+        body: Rc<BlockStatement>,
     },
 
     /// Catch block: execute catch handler
     CatchBlock {
-        finalizer: Option<Rc<crate::ast::BlockStatement>>,
+        finalizer: Option<Rc<BlockStatement>>,
         saved_env: Gc<JsObject>,
     },
 
@@ -431,7 +429,7 @@ impl ExecutionState {
     /// Initialize this state to execute a program (for pool reuse)
     pub fn init_for_program(&mut self, program: &Program) {
         self.push_frame(Frame::Program {
-            statements: Rc::clone(&program.body),
+            statements: program.body.cheap_clone(),
             index: 0,
         });
     }
@@ -514,7 +512,7 @@ impl Interpreter {
     /// without supporting suspension (modules are expected to be synchronous).
     pub fn execute_program_with_stack(
         &mut self,
-        program: &crate::ast::Program,
+        program: &Program,
     ) -> Result<JsValue, JsError> {
         // Start execution timer
         self.start_execution();
@@ -966,9 +964,9 @@ impl Interpreter {
 
                 if let Some(catch_handler) = handler {
                     // Create catch scope with guard
-                    let saved_env = self.env.clone();
+                    let saved_env = self.env.cheap_clone();
                     let (catch_env, catch_guard) =
-                        create_environment_unrooted(&self.heap, Some(saved_env.clone()));
+                        create_environment_unrooted(&self.heap, Some(saved_env.cheap_clone()));
                     self.env = catch_env;
                     self.push_env_guard(catch_guard);
 
@@ -990,7 +988,7 @@ impl Interpreter {
                         saved_env,
                     });
                     state.push_frame(Frame::Block {
-                        statements: Rc::clone(&catch_handler.body.body),
+                        statements: catch_handler.body.body.cheap_clone(),
                         index: 0,
                     });
 
@@ -1003,7 +1001,7 @@ impl Interpreter {
                         saved_completion: StackCompletion::Normal,
                     })));
                     state.push_frame(Frame::Block {
-                        statements: Rc::clone(&finally_block.body),
+                        statements: finally_block.body.cheap_clone(),
                         index: 0,
                     });
 
@@ -1059,11 +1057,12 @@ impl Interpreter {
 
         // Push continuation for next statement
         state.push_frame(Frame::Program {
-            statements: statements.clone(),
+            statements: statements.cheap_clone(),
             index: index + 1,
         });
 
         // Execute current statement
+        // FIXME: eliminate clone
         let stmt = statements.get(index).cloned();
         if let Some(stmt) = stmt {
             state.push_frame(Frame::Stmt(Rc::new(stmt)));
@@ -1100,11 +1099,12 @@ impl Interpreter {
 
         // Push continuation for next statement
         state.push_frame(Frame::Block {
-            statements: statements.clone(),
+            statements: statements.cheap_clone(),
             index: index + 1,
         });
 
         // Execute current statement
+        // FIXME: eliminate clone
         let stmt = statements.get(index).cloned();
         if let Some(stmt) = stmt {
             state.push_frame(Frame::Stmt(Rc::new(stmt)));
@@ -1119,14 +1119,14 @@ impl Interpreter {
             Statement::Expression(expr_stmt) => {
                 // Evaluate expression, then keep result
                 state.push_frame(Frame::ExprStmtComplete);
-                state.push_frame(Frame::Expr(Rc::clone(&expr_stmt.expression)));
+                state.push_frame(Frame::Expr(expr_stmt.expression.cheap_clone()));
                 StepResult::Continue
             }
 
             Statement::Block(block) => {
                 // Execute block
                 state.push_frame(Frame::Block {
-                    statements: Rc::clone(&block.body),
+                    statements: block.body.cheap_clone(),
                     index: 0,
                 });
                 StepResult::Continue
@@ -1135,7 +1135,7 @@ impl Interpreter {
             Statement::Return(ret) => {
                 state.completion = StackCompletion::Return;
                 if let Some(expr) = &ret.argument {
-                    state.push_frame(Frame::Expr(Rc::clone(expr)));
+                    state.push_frame(Frame::Expr(expr.cheap_clone()));
                 } else {
                     state.push_value(Guarded::unguarded(JsValue::Undefined));
                 }
@@ -1168,7 +1168,7 @@ impl Interpreter {
                     StepResult::Continue
                 } else {
                     state.push_frame(Frame::VarDecl {
-                        declarators: Rc::clone(&decl.declarations),
+                        declarators: decl.declarations.cheap_clone(),
                         index: 0,
                         mutable,
                     });
@@ -1179,17 +1179,17 @@ impl Interpreter {
             Statement::If(if_stmt) => {
                 // Evaluate condition, then branch
                 state.push_frame(Frame::IfBranch {
-                    consequent: Rc::clone(&if_stmt.consequent),
+                    consequent: if_stmt.consequent.cheap_clone(),
                     alternate: if_stmt.alternate.as_ref().map(Rc::clone),
                 });
-                state.push_frame(Frame::Expr(Rc::clone(&if_stmt.test)));
+                state.push_frame(Frame::Expr(if_stmt.test.cheap_clone()));
                 StepResult::Continue
             }
 
             Statement::While(while_stmt) => {
                 state.push_frame(Frame::WhileLoop {
-                    test: Rc::clone(&while_stmt.test),
-                    body: Rc::clone(&while_stmt.body),
+                    test: while_stmt.test.cheap_clone(),
+                    body: while_stmt.body.cheap_clone(),
                     label: None,
                 });
                 StepResult::Continue
@@ -1197,8 +1197,8 @@ impl Interpreter {
 
             Statement::DoWhile(do_while) => {
                 state.push_frame(Frame::DoWhileLoop {
-                    test: Rc::clone(&do_while.test),
-                    body: Rc::clone(&do_while.body),
+                    test: do_while.test.cheap_clone(),
+                    body: do_while.body.cheap_clone(),
                     label: None,
                 });
                 StepResult::Continue
@@ -1241,7 +1241,7 @@ impl Interpreter {
             Statement::Throw(throw_stmt) => {
                 // Evaluate the argument, then throw
                 state.push_frame(Frame::ThrowComplete);
-                state.push_frame(Frame::Expr(Rc::clone(&throw_stmt.argument)));
+                state.push_frame(Frame::Expr(throw_stmt.argument.cheap_clone()));
                 StepResult::Continue
             }
 
@@ -1336,9 +1336,9 @@ impl Interpreter {
                 // Evaluate left first, then right
                 state.push_frame(Frame::BinaryRight {
                     op: bin.operator,
-                    right: Rc::clone(&bin.right),
+                    right: bin.right.cheap_clone(),
                 });
-                state.push_frame(Frame::Expr(Rc::clone(&bin.left)));
+                state.push_frame(Frame::Expr(bin.left.cheap_clone()));
                 StepResult::Continue
             }
 
@@ -1346,31 +1346,31 @@ impl Interpreter {
                 // Evaluate left, then check for short-circuit
                 state.push_frame(Frame::LogicalCheck {
                     op: log.operator,
-                    right: Rc::clone(&log.right),
+                    right: log.right.cheap_clone(),
                 });
-                state.push_frame(Frame::Expr(Rc::clone(&log.left)));
+                state.push_frame(Frame::Expr(log.left.cheap_clone()));
                 StepResult::Continue
             }
 
             Expression::Unary(un) => {
                 state.push_frame(Frame::UnaryComplete { op: un.operator });
-                state.push_frame(Frame::Expr(Rc::clone(&un.argument)));
+                state.push_frame(Frame::Expr(un.argument.cheap_clone()));
                 StepResult::Continue
             }
 
             Expression::Conditional(cond) => {
                 state.push_frame(Frame::ConditionalBranch {
-                    consequent: Rc::clone(&cond.consequent),
-                    alternate: Rc::clone(&cond.alternate),
+                    consequent: cond.consequent.cheap_clone(),
+                    alternate: cond.alternate.cheap_clone(),
                 });
-                state.push_frame(Frame::Expr(Rc::clone(&cond.test)));
+                state.push_frame(Frame::Expr(cond.test.cheap_clone()));
                 StepResult::Continue
             }
 
             Expression::Await(await_expr) => {
                 // Evaluate the argument, then check if it's a promise
                 state.push_frame(Frame::AwaitCheck);
-                state.push_frame(Frame::Expr(Rc::clone(&await_expr.argument)));
+                state.push_frame(Frame::Expr(await_expr.argument.cheap_clone()));
                 StepResult::Continue
             }
 
@@ -1796,7 +1796,7 @@ impl Interpreter {
 
         // Normal completion - evaluate test for next iteration
         state.push_frame(Frame::WhileCheck {
-            test: test.clone(),
+            test: test.cheap_clone(),
             body,
             label,
         });
@@ -1870,7 +1870,7 @@ impl Interpreter {
             // Continue loop - execute body, then check condition again
             state.push_frame(Frame::DoWhileLoop {
                 test,
-                body: body.clone(),
+                body: body.cheap_clone(),
                 label,
             });
         } else {
@@ -1926,14 +1926,14 @@ impl Interpreter {
             _ => vec![],
         };
 
-        let test = for_stmt.test.as_ref().map(Rc::clone);
-        let update = for_stmt.update.as_ref().map(Rc::clone);
-        let body = Rc::clone(&for_stmt.body);
+        let test = for_stmt.test.as_ref().map(CheapClone::cheap_clone);
+        let update = for_stmt.update.as_ref().map(CheapClone::cheap_clone);
+        let body = for_stmt.body.cheap_clone();
         let loop_vars = Rc::new(loop_vars);
 
         // Push cleanup frame (will be executed when loop exits)
         state.push_frame(Frame::ForCleanup {
-            saved_env: saved_env.clone(),
+            saved_env: saved_env.cheap_clone(),
         });
 
         // Push the main loop frame (will start after init)
@@ -1942,8 +1942,8 @@ impl Interpreter {
             update,
             body,
             label,
-            loop_vars: loop_vars.clone(),
-            saved_env: saved_env.clone(),
+            loop_vars: loop_vars.cheap_clone(),
+            saved_env: saved_env.cheap_clone(),
             first_iteration: true, // First iteration needs to create per-iteration env
         });
 
@@ -1952,7 +1952,7 @@ impl Interpreter {
             Some(ForInit::Variable(decl)) if decl.kind != VariableKind::Var => {
                 // let/const - execute in loop scope
                 state.push_frame(Frame::VarDecl {
-                    declarators: Rc::clone(&decl.declarations),
+                    declarators: decl.declarations.cheap_clone(),
                     index: 0,
                     mutable: decl.kind == VariableKind::Let,
                 });
@@ -1960,7 +1960,7 @@ impl Interpreter {
             Some(ForInit::Expression(expr)) => {
                 // Expression init - discard result
                 state.push_frame(Frame::DiscardValue);
-                state.push_frame(Frame::Expr(Rc::clone(expr)));
+                state.push_frame(Frame::Expr(expr.cheap_clone()));
             }
             _ => {
                 // No init or var already handled
@@ -1987,7 +1987,7 @@ impl Interpreter {
         // On subsequent iterations: step_for_after_body already created it
         if first_iteration && !loop_vars.is_empty() {
             let (iter_env, iter_guard) =
-                create_environment_unrooted(&self.heap, Some(saved_env.clone()));
+                create_environment_unrooted(&self.heap, Some(saved_env.cheap_clone()));
             for (name, mutable) in loop_vars.iter() {
                 let value = match self.env_get(name) {
                     Ok(v) => v,
@@ -2061,7 +2061,7 @@ impl Interpreter {
         state.push_frame(Frame::ForAfterBody {
             test,
             update,
-            body: body.clone(),
+            body: body.cheap_clone(),
             label,
             loop_vars,
             saved_env,
@@ -2129,9 +2129,9 @@ impl Interpreter {
         // Create new per-iteration environment BEFORE update (ES spec)
         if !loop_vars.is_empty() {
             // Create new environment first (may trigger GC)
-            let current_env = self.env.clone();
+            let current_env = self.env.cheap_clone();
             let (new_iter_env, new_guard) =
-                create_environment_unrooted(&self.heap, Some(saved_env.clone()));
+                create_environment_unrooted(&self.heap, Some(saved_env.cheap_clone()));
 
             // Copy loop variables from current to new environment
             for (name, mutable) in loop_vars.iter() {
@@ -2160,6 +2160,7 @@ impl Interpreter {
                 }
             }
 
+            // FIXME: handle this pattern of guard transfering
             // Push new guard BEFORE popping old one - prevents GC gap
             self.push_env_guard(new_guard);
             // Now safe to pop the old guard
@@ -2171,7 +2172,7 @@ impl Interpreter {
         // Push next iteration
         state.push_frame(Frame::ForLoop {
             test,
-            update: update.clone(),
+            update: update.cheap_clone(),
             body,
             label,
             loop_vars,
@@ -2214,6 +2215,7 @@ impl Interpreter {
                 // For arrays, include numeric indices first
                 if let Some(length) = obj_ref.array_length() {
                     for i in 0..length {
+                        // FIXME: use string intern
                         keys.push(i.to_string());
                     }
                 }
@@ -2222,6 +2224,7 @@ impl Interpreter {
                 if let ExoticObject::Enum(ref data) = obj_ref.exotic {
                     for key in data.keys() {
                         if !key.is_symbol() {
+                            // FIXME: use string intern
                             keys.push(key.to_string());
                         }
                     }
@@ -2229,6 +2232,7 @@ impl Interpreter {
                     // Then include enumerable properties for non-enum objects
                     for (key, prop) in obj_ref.properties.iter() {
                         if prop.enumerable() && !key.is_symbol() {
+                            // FIXME: use string intern
                             keys.push(key.to_string());
                         }
                     }
@@ -2239,14 +2243,15 @@ impl Interpreter {
             _ => vec![],
         };
 
-        let saved_env = self.env.clone();
+        let saved_env = self.env.cheap_clone();
 
         // Push loop frame
         state.push_frame(Frame::ForInLoop {
             keys: Rc::new(keys),
             index: 0,
+            // FIXME: eliminate clone?
             left: Rc::new(for_in.left.clone()),
-            body: Rc::clone(&for_in.body),
+            body: for_in.body.cheap_clone(),
             label,
             saved_env,
         });
@@ -2288,22 +2293,13 @@ impl Interpreter {
                 return StepResult::Continue;
             }
         };
+        // FIXME: string intern
         let key_value = JsValue::String(JsString::from(key));
 
         // Create per-iteration environment with guard
         let (iter_env, iter_guard) =
-            create_environment_unrooted(&self.heap, Some(saved_env.clone()));
-        eprintln!(
-            "[step_for_in_loop] Created iter_env id={}, exotic={:?}",
-            iter_env.id(),
-            std::mem::discriminant(&iter_env.borrow().exotic)
-        );
-        self.env = iter_env.clone(); // Clone to avoid moving
-        eprintln!(
-            "[step_for_in_loop] After self.env = iter_env: self.env.id={}, exotic={:?}",
-            self.env.id(),
-            std::mem::discriminant(&self.env.borrow().exotic)
-        );
+            create_environment_unrooted(&self.heap, Some(saved_env.cheap_clone()));
+        self.env = iter_env.cheap_clone(); // Clone to avoid moving
         self.push_env_guard(iter_guard);
 
         // Bind the key to the left-hand side
@@ -2332,7 +2328,7 @@ impl Interpreter {
             keys,
             index,
             left,
-            body: body.clone(),
+            body: body.cheap_clone(),
             label,
             saved_env,
         });
@@ -2431,17 +2427,18 @@ impl Interpreter {
             Err(e) => return StepResult::Error(e),
         };
 
-        let saved_env = self.env.clone();
+        let saved_env = self.env.cheap_clone();
 
         // Check if it's a generator - handle with special frame
         if let JsValue::Object(ref obj) = right {
             if let ExoticObject::Generator(gen_state) = &obj.borrow().exotic {
                 // Use generator-specific iteration
                 state.push_frame(Frame::ForOfGenerator(Box::new(ForOfGeneratorData {
-                    generator: obj.clone(),
-                    gen_state: gen_state.clone(),
+                    generator: obj.cheap_clone(),
+                    gen_state: gen_state.cheap_clone(),
+                    // FIXME: eliminate clone?
                     left: Rc::new(for_of.left.clone()),
-                    body: Rc::clone(&for_of.body),
+                    body: for_of.body.cheap_clone(),
                     label,
                     saved_env,
                 })));
@@ -2472,7 +2469,7 @@ impl Interpreter {
             items: Rc::new(items),
             index: 0,
             left: Rc::new(for_of.left.clone()),
-            body: Rc::new((*for_of.body).clone()),
+            body: for_of.body.cheap_clone(),
             label,
             saved_env,
             iterable_guard,
@@ -2519,7 +2516,7 @@ impl Interpreter {
 
         // Create per-iteration environment with guard
         let (iter_env, iter_guard) =
-            create_environment_unrooted(&self.heap, Some(saved_env.clone()));
+            create_environment_unrooted(&self.heap, Some(saved_env.cheap_clone()));
         self.env = iter_env;
         self.push_env_guard(iter_guard);
 
@@ -2549,7 +2546,7 @@ impl Interpreter {
             items,
             index,
             left,
-            body: body.clone(),
+            body: body.cheap_clone(),
             label,
             saved_env,
             iterable_guard,
@@ -2640,7 +2637,7 @@ impl Interpreter {
         &mut self,
         state: &mut ExecutionState,
         generator: Gc<JsObject>,
-        gen_state: Rc<std::cell::RefCell<crate::value::GeneratorState>>,
+        gen_state: Rc<RefCell<GeneratorState>>,
         left: Rc<ForInOfLeft>,
         body: Rc<Statement>,
         label: LoopLabel,
@@ -2690,7 +2687,7 @@ impl Interpreter {
 
         // Create per-iteration environment with guard
         let (iter_env, iter_guard) =
-            create_environment_unrooted(&self.heap, Some(saved_env.clone()));
+            create_environment_unrooted(&self.heap, Some(saved_env.cheap_clone()));
         self.env = iter_env;
         self.push_env_guard(iter_guard);
 
@@ -2721,7 +2718,7 @@ impl Interpreter {
                 generator,
                 gen_state,
                 left,
-                body: body.clone(),
+                body: body.cheap_clone(),
                 label,
                 saved_env,
             },
@@ -2738,7 +2735,7 @@ impl Interpreter {
         &mut self,
         state: &mut ExecutionState,
         generator: Gc<JsObject>,
-        gen_state: Rc<std::cell::RefCell<crate::value::GeneratorState>>,
+        gen_state: Rc<RefCell<GeneratorState>>,
         left: Rc<ForInOfLeft>,
         body: Rc<Statement>,
         label: LoopLabel,
@@ -2821,8 +2818,8 @@ impl Interpreter {
                     label: label.cheap_clone(),
                 });
                 state.push_frame(Frame::WhileLoop {
-                    test: Rc::clone(&while_stmt.test),
-                    body: Rc::clone(&while_stmt.body),
+                    test: while_stmt.test.cheap_clone(),
+                    body: while_stmt.body.cheap_clone(),
                     label: Some(Box::new(label)),
                 });
                 StepResult::Continue
@@ -2832,8 +2829,8 @@ impl Interpreter {
                     label: label.cheap_clone(),
                 });
                 state.push_frame(Frame::DoWhileLoop {
-                    test: Rc::clone(&do_while.test),
-                    body: Rc::clone(&do_while.body),
+                    test: do_while.test.cheap_clone(),
+                    body: do_while.body.cheap_clone(),
                     label: Some(Box::new(label)),
                 });
                 StepResult::Continue
@@ -2873,14 +2870,14 @@ impl Interpreter {
     fn setup_switch(
         &mut self,
         state: &mut ExecutionState,
-        switch_stmt: &crate::ast::SwitchStatement,
+        switch_stmt: &SwitchStatement,
     ) -> StepResult {
         // Push frame to handle after discriminant is evaluated
         state.push_frame(Frame::SwitchEval {
-            cases: Rc::clone(&switch_stmt.cases),
+            cases: switch_stmt.cases.cheap_clone(),
         });
         // Evaluate discriminant first
-        state.push_frame(Frame::Expr(Rc::clone(&switch_stmt.discriminant)));
+        state.push_frame(Frame::Expr(switch_stmt.discriminant.cheap_clone()));
         StepResult::Continue
     }
 
@@ -2889,7 +2886,7 @@ impl Interpreter {
         &mut self,
         state: &mut ExecutionState,
         discriminant: JsValue,
-        cases: Rc<[crate::ast::SwitchCase]>,
+        cases: Rc<[SwitchCase]>,
         index: usize,
         found_match: bool,
     ) -> StepResult {
@@ -2985,7 +2982,7 @@ impl Interpreter {
         &mut self,
         state: &mut ExecutionState,
         discriminant: JsValue,
-        cases: Rc<[crate::ast::SwitchCase]>,
+        cases: Rc<[SwitchCase]>,
         case_index: usize,
         stmt_index: usize,
     ) -> StepResult {
@@ -3034,6 +3031,7 @@ impl Interpreter {
 
         // Get current statement
         let stmt = match case.consequent.get(stmt_index) {
+            // FIXME: eliminate clone
             Some(s) => s.clone(),
             None => {
                 state.push_frame(Frame::SwitchBody {
@@ -3070,7 +3068,7 @@ impl Interpreter {
         state: &mut ExecutionState,
         try_stmt: &crate::ast::TryStatement,
     ) -> StepResult {
-        let saved_env = self.env.clone();
+        let saved_env = self.env.cheap_clone();
 
         // Push the try block frame - it will handle errors
         state.push_frame(Frame::TryBlock {
@@ -3081,7 +3079,7 @@ impl Interpreter {
 
         // Execute try block body
         state.push_frame(Frame::Block {
-            statements: Rc::clone(&try_stmt.block.body),
+            statements: try_stmt.block.body.cheap_clone(),
             index: 0,
         });
 
@@ -3096,11 +3094,12 @@ impl Interpreter {
     fn step_try_block(
         &mut self,
         state: &mut ExecutionState,
-        _handler: Option<Rc<crate::ast::CatchClause>>,
-        finalizer: Option<Rc<crate::ast::BlockStatement>>,
-        _body: Rc<crate::ast::BlockStatement>,
+        _handler: Option<Rc<CatchClause>>,
+        finalizer: Option<Rc<BlockStatement>>,
+        _body: Rc<BlockStatement>,
     ) -> StepResult {
         // Get result from try block
+        // FIXME: guard is dropped
         let result = state.pop_value().map(|g| g.value);
 
         // Normal completion (or return/break/continue) - errors are handled in run()
@@ -3115,7 +3114,7 @@ impl Interpreter {
             })));
             state.completion = StackCompletion::Normal;
             state.push_frame(Frame::Block {
-                statements: Rc::clone(&finally_block.body),
+                statements: finally_block.body.cheap_clone(),
                 index: 0,
             });
         } else {
@@ -3134,7 +3133,7 @@ impl Interpreter {
     fn step_catch_block(
         &mut self,
         state: &mut ExecutionState,
-        finalizer: Option<Rc<crate::ast::BlockStatement>>,
+        finalizer: Option<Rc<BlockStatement>>,
         saved_env: Gc<JsObject>,
     ) -> StepResult {
         // Pop catch scope guard and restore environment
@@ -3142,6 +3141,7 @@ impl Interpreter {
         self.env = saved_env;
 
         // Get catch result
+        // FIXME: guard is dropped
         let result = state.pop_value().map(|g| g.value);
         let saved_completion = state.completion.clone();
 
@@ -3154,7 +3154,7 @@ impl Interpreter {
             })));
             state.completion = StackCompletion::Normal;
             state.push_frame(Frame::Block {
-                statements: Rc::clone(&finally_block.body),
+                statements: finally_block.body.cheap_clone(),
                 index: 0,
             });
         } else {
@@ -3214,17 +3214,18 @@ impl Interpreter {
         func: &crate::ast::FunctionDeclaration,
     ) -> Result<(), JsError> {
         let name = func.id.as_ref().map(|id| id.name.cheap_clone());
-        let params = func.params.clone();
-        let body = Rc::new(crate::value::FunctionBody::Block(func.body.clone()));
+        let params = func.params.cheap_clone();
+        // FIXME: does function body need to be wrapped in rc?
+        let body = Rc::new(FunctionBody::Block(func.body.cheap_clone()));
 
         // Create function with guard
         let guard = self.heap.create_guard();
         let func_obj = self.create_interpreted_function(
             &guard,
-            name.clone(),
+            name.cheap_clone(),
             params,
             body,
-            self.env.clone(),
+            self.env.cheap_clone(),
             func.span,
             func.generator,
             func.async_,
@@ -3241,8 +3242,9 @@ impl Interpreter {
     /// Execute import declaration - binds imported names to environment
     fn stack_execute_import(
         &mut self,
-        import: &crate::ast::ImportDeclaration,
+        import: &ImportDeclaration,
     ) -> Result<(), JsError> {
+        // FIXME: should it be js string
         let specifier = import.source.value.to_string();
 
         // Resolve the module
@@ -3251,17 +3253,17 @@ impl Interpreter {
         // Bind imported names to current environment
         for spec in &import.specifiers {
             match spec {
-                crate::ast::ImportSpecifier::Named {
+                ImportSpecifier::Named {
                     local, imported, ..
                 } => {
-                    let import_key = PropertyKey::String(self.intern(imported.name.as_str()));
+                    let import_key = PropertyKey::String(imported.name.cheap_clone());
                     let value = module_obj
                         .borrow()
                         .get_property(&import_key)
                         .unwrap_or(JsValue::Undefined);
                     self.env_define(local.name.cheap_clone(), value, false);
                 }
-                crate::ast::ImportSpecifier::Default { local, .. } => {
+                ImportSpecifier::Default { local, .. } => {
                     let default_key = PropertyKey::String(self.intern("default"));
                     let value = module_obj
                         .borrow()
@@ -3269,7 +3271,7 @@ impl Interpreter {
                         .unwrap_or(JsValue::Undefined);
                     self.env_define(local.name.cheap_clone(), value, false);
                 }
-                crate::ast::ImportSpecifier::Namespace { local, .. } => {
+                ImportSpecifier::Namespace { local, .. } => {
                     self.env_define(
                         local.name.cheap_clone(),
                         JsValue::Object(module_obj.clone()),
@@ -3285,7 +3287,7 @@ impl Interpreter {
     /// Execute export declaration - registers exported values
     fn stack_execute_export(
         &mut self,
-        export: &crate::ast::ExportDeclaration,
+        export: &ExportDeclaration,
     ) -> Result<(), JsError> {
         // Handle export declaration (e.g., export function foo() {})
         if let Some(decl) = &export.declaration {
@@ -3296,7 +3298,7 @@ impl Interpreter {
                     if let Some(id) = &func.id {
                         let value = self.env_get(&id.name)?;
                         let export_name = if export.default {
-                            JsString::from("default")
+                            self.intern("default")
                         } else {
                             id.name.cheap_clone()
                         };
@@ -3317,7 +3319,7 @@ impl Interpreter {
                     if let Some(id) = &class.id {
                         let value = self.env_get(&id.name)?;
                         let export_name = if export.default {
-                            JsString::from("default")
+                            self.intern("default")
                         } else {
                             id.name.cheap_clone()
                         };
@@ -3328,7 +3330,7 @@ impl Interpreter {
                     self.execute_enum_declaration(enum_decl)?;
                     let value = self.env_get(&enum_decl.id.name)?;
                     let export_name = if export.default {
-                        JsString::from("default")
+                        self.intern("default")
                     } else {
                         enum_decl.id.name.cheap_clone()
                     };
@@ -3338,7 +3340,7 @@ impl Interpreter {
                     self.execute_namespace_declaration(ns_decl)?;
                     let value = self.env_get(&ns_decl.id.name)?;
                     let export_name = if export.default {
-                        JsString::from("default")
+                        self.intern("default")
                     } else {
                         ns_decl.id.name.cheap_clone()
                     };

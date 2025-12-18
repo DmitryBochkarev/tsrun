@@ -117,6 +117,7 @@ impl JsValue {
     }
 
     /// Get the typeof result for this value
+    // FIXME: use intern strings
     pub fn type_of(&self) -> &'static str {
         match self {
             JsValue::Undefined => "undefined",

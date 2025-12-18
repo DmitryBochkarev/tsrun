@@ -3,7 +3,7 @@
 //! Decorators follow the TC39 Stage 3 Decorators proposal (2023).
 //! See: https://github.com/tc39/proposal-decorators
 
-use super::{eval, eval_result, throws_error};
+use super::{eval, throws_error};
 use typescript_eval::JsValue;
 
 // ============================================================================

@@ -20,6 +20,7 @@ pub enum SourceType {
 
 // ============ STATEMENTS ============
 
+// FIXME: remove clippy allow when large_enum_variant is fixed
 #[derive(Debug, Clone)]
 #[allow(clippy::large_enum_variant)]
 pub enum Statement {
