@@ -41,28 +41,29 @@ pub fn create_promise_constructor(interp: &mut Interpreter) -> Gc<JsObject> {
     ctor
 }
 
-/// Create a new pending promise object with a guard
-pub fn create_promise_with_guard(interp: &mut Interpreter) -> (Gc<JsObject>, Guard<JsObject>) {
+/// Create a new pending promise object using the provided guard
+pub fn create_promise(interp: &mut Interpreter, guard: &Guard<JsObject>) -> Gc<JsObject> {
     let state = Rc::new(RefCell::new(PromiseState {
         status: PromiseStatus::Pending,
         result: None,
         handlers: Vec::new(),
     }));
 
-    let (obj, guard) = interp.create_object_with_guard();
+    let obj = interp.create_object(guard);
     {
         let mut o = obj.borrow_mut();
         o.prototype = Some(interp.promise_prototype.cheap_clone());
         o.exotic = ExoticObject::Promise(state);
     }
-    (obj, guard)
+    obj
 }
 
-/// Create a fulfilled promise with a guard
-pub fn create_fulfilled_promise_with_guard(
+/// Create a fulfilled promise using the provided guard
+pub fn create_fulfilled_promise(
     interp: &mut Interpreter,
+    guard: &Guard<JsObject>,
     value: JsValue,
-) -> (Gc<JsObject>, Guard<JsObject>) {
+) -> Gc<JsObject> {
     // Guard the value BEFORE allocating the promise object
     // This prevents GC from collecting the value during allocation
     let _value_guard = interp.guard_value(&value);
@@ -73,20 +74,21 @@ pub fn create_fulfilled_promise_with_guard(
         handlers: Vec::new(),
     }));
 
-    let (obj, guard) = interp.create_object_with_guard();
+    let obj = interp.create_object(guard);
     {
         let mut o = obj.borrow_mut();
         o.prototype = Some(interp.promise_prototype.cheap_clone());
         o.exotic = ExoticObject::Promise(state);
     }
-    (obj, guard)
+    obj
 }
 
-/// Create a rejected promise with a guard
-pub fn create_rejected_promise_with_guard(
+/// Create a rejected promise using the provided guard
+pub fn create_rejected_promise(
     interp: &mut Interpreter,
+    guard: &Guard<JsObject>,
     reason: JsValue,
-) -> (Gc<JsObject>, Guard<JsObject>) {
+) -> Gc<JsObject> {
     // Guard the reason BEFORE allocating the promise object
     // This prevents GC from collecting the reason during allocation
     let _reason_guard = interp.guard_value(&reason);
@@ -97,13 +99,13 @@ pub fn create_rejected_promise_with_guard(
         handlers: Vec::new(),
     }));
 
-    let (obj, guard) = interp.create_object_with_guard();
+    let obj = interp.create_object(guard);
     {
         let mut o = obj.borrow_mut();
         o.prototype = Some(interp.promise_prototype.cheap_clone());
         o.exotic = ExoticObject::Promise(state);
     }
-    (obj, guard)
+    obj
 }
 
 /// Resolve a promise (fulfill or reject based on value)
@@ -288,17 +290,16 @@ pub fn promise_constructor(
         )));
     }
 
-    let (promise, promise_guard) = create_promise_with_guard(interp);
+    let guard = interp.heap.create_guard();
+    let promise = create_promise(interp, &guard);
 
     // Create resolve function using the PromiseResolve variant
-    let resolve_fn = interp.create_function(JsFunction::PromiseResolve(promise.cheap_clone()));
-    let resolve_guard = interp.heap.create_guard();
-    resolve_guard.guard(resolve_fn.clone());
+    let resolve_fn =
+        interp.create_js_function(&guard, JsFunction::PromiseResolve(promise.cheap_clone()));
 
     // Create reject function using the PromiseReject variant
-    let reject_fn = interp.create_function(JsFunction::PromiseReject(promise.cheap_clone()));
-    let reject_guard = interp.heap.create_guard();
-    reject_guard.guard(reject_fn.clone());
+    let reject_fn =
+        interp.create_js_function(&guard, JsFunction::PromiseReject(promise.cheap_clone()));
 
     // Call executor(resolve, reject)
     match interp.call_function(
@@ -314,10 +315,7 @@ pub fn promise_constructor(
         }
     }
 
-    Ok(Guarded {
-        value: JsValue::Object(promise),
-        guard: Some(promise_guard),
-    })
+    Ok(Guarded::with_guard(JsValue::Object(promise), guard))
 }
 
 /// Promise.prototype.then(onFulfilled, onRejected)
@@ -344,7 +342,7 @@ pub fn promise_then(
     let on_rejected = on_rejected.filter(|v| v.is_callable());
 
     // Create the result promise
-    let (result_promise, result_guard) = create_promise_with_guard(interp);
+    let result_promise = create_promise(interp, &guard);
 
     let (status, result) = {
         let obj = promise.borrow();
@@ -390,10 +388,7 @@ pub fn promise_then(
         }
     }
 
-    Ok(Guarded {
-        value: JsValue::Object(result_promise),
-        guard: Some(result_guard),
-    })
+    Ok(Guarded::with_guard(JsValue::Object(result_promise), guard))
 }
 
 /// Promise.prototype.catch(onRejected)
@@ -424,7 +419,8 @@ pub fn promise_finally(
 
     match on_finally {
         Some(callback) => {
-            let (result_promise, result_guard) = create_promise_with_guard(interp);
+            let guard = interp.heap.create_guard();
+            let result_promise = create_promise(interp, &guard);
 
             let (status, result) = {
                 let obj = promise.borrow();
@@ -465,10 +461,7 @@ pub fn promise_finally(
                 }
             }
 
-            Ok(Guarded {
-                value: JsValue::Object(result_promise),
-                guard: Some(result_guard),
-            })
+            Ok(Guarded::with_guard(JsValue::Object(result_promise), guard))
         }
         None => {
             // No callback - just return a then with no handlers
@@ -492,11 +485,9 @@ pub fn promise_resolve_static(
         }
     }
 
-    let (promise, guard) = create_fulfilled_promise_with_guard(interp, value);
-    Ok(Guarded {
-        value: JsValue::Object(promise),
-        guard: Some(guard),
-    })
+    let guard = interp.heap.create_guard();
+    let promise = create_fulfilled_promise(interp, &guard, value);
+    Ok(Guarded::with_guard(JsValue::Object(promise), guard))
 }
 
 /// Promise.reject(reason)
@@ -506,11 +497,9 @@ pub fn promise_reject_static(
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
     let reason = args.first().cloned().unwrap_or(JsValue::Undefined);
-    let (promise, guard) = create_rejected_promise_with_guard(interp, reason);
-    Ok(Guarded {
-        value: JsValue::Object(promise),
-        guard: Some(guard),
-    })
+    let guard = interp.heap.create_guard();
+    let promise = create_rejected_promise(interp, &guard, reason);
+    Ok(Guarded::with_guard(JsValue::Object(promise), guard))
 }
 
 /// Extract values from an iterable (for Promise.all/race/etc)
@@ -536,16 +525,12 @@ pub fn promise_all(
     let iterable = args.first().cloned().unwrap_or(JsValue::Undefined);
     let promises = extract_iterable(&iterable)?;
 
+    let guard = interp.heap.create_guard();
+
     if promises.is_empty() {
-        let (arr, arr_guard) = interp.create_array_with_guard(vec![]);
-        let (promise, promise_guard) =
-            create_fulfilled_promise_with_guard(interp, JsValue::Object(arr));
-        // Keep arr alive through promise_guard
-        drop(arr_guard);
-        return Ok(Guarded {
-            value: JsValue::Object(promise),
-            guard: Some(promise_guard),
-        });
+        let arr = interp.create_empty_array(&guard);
+        let promise = create_fulfilled_promise(interp, &guard, JsValue::Object(arr));
+        return Ok(Guarded::with_guard(JsValue::Object(promise), guard));
     }
 
     // Collect status info
@@ -580,21 +565,13 @@ pub fn promise_all(
     }
 
     if let Some(reason) = rejected_reason {
-        let (promise, guard) = create_rejected_promise_with_guard(interp, reason);
-        return Ok(Guarded {
-            value: JsValue::Object(promise),
-            guard: Some(guard),
-        });
+        let promise = create_rejected_promise(interp, &guard, reason);
+        return Ok(Guarded::with_guard(JsValue::Object(promise), guard));
     }
 
-    let (arr, arr_guard) = interp.create_array_with_guard(results);
-    let (promise, promise_guard) =
-        create_fulfilled_promise_with_guard(interp, JsValue::Object(arr));
-    drop(arr_guard);
-    Ok(Guarded {
-        value: JsValue::Object(promise),
-        guard: Some(promise_guard),
-    })
+    let arr = interp.create_array_from(&guard, results);
+    let promise = create_fulfilled_promise(interp, &guard, JsValue::Object(arr));
+    Ok(Guarded::with_guard(JsValue::Object(promise), guard))
 }
 
 /// Promise.race(iterable)
@@ -630,28 +607,20 @@ pub fn promise_race(
         }
     }
 
+    let guard = interp.heap.create_guard();
     match first_result {
         Some((PromiseStatus::Fulfilled, value)) => {
-            let (promise, guard) = create_fulfilled_promise_with_guard(interp, value);
-            Ok(Guarded {
-                value: JsValue::Object(promise),
-                guard: Some(guard),
-            })
+            let promise = create_fulfilled_promise(interp, &guard, value);
+            Ok(Guarded::with_guard(JsValue::Object(promise), guard))
         }
         Some((PromiseStatus::Rejected, reason)) => {
-            let (promise, guard) = create_rejected_promise_with_guard(interp, reason);
-            Ok(Guarded {
-                value: JsValue::Object(promise),
-                guard: Some(guard),
-            })
+            let promise = create_rejected_promise(interp, &guard, reason);
+            Ok(Guarded::with_guard(JsValue::Object(promise), guard))
         }
         _ => {
             // No settled promise found - return pending
-            let (promise, guard) = create_promise_with_guard(interp);
-            Ok(Guarded {
-                value: JsValue::Object(promise),
-                guard: Some(guard),
-            })
+            let promise = create_promise(interp, &guard);
+            Ok(Guarded::with_guard(JsValue::Object(promise), guard))
         }
     }
 }
@@ -665,15 +634,12 @@ pub fn promise_allsettled(
     let iterable = args.first().cloned().unwrap_or(JsValue::Undefined);
     let promises = extract_iterable(&iterable)?;
 
+    let guard = interp.heap.create_guard();
+
     if promises.is_empty() {
-        let (arr, arr_guard) = interp.create_array_with_guard(vec![]);
-        let (promise, promise_guard) =
-            create_fulfilled_promise_with_guard(interp, JsValue::Object(arr));
-        drop(arr_guard);
-        return Ok(Guarded {
-            value: JsValue::Object(promise),
-            guard: Some(promise_guard),
-        });
+        let arr = interp.create_empty_array(&guard);
+        let promise = create_fulfilled_promise(interp, &guard, JsValue::Object(arr));
+        return Ok(Guarded::with_guard(JsValue::Object(promise), guard));
     }
 
     // Pre-intern keys
@@ -682,8 +648,6 @@ pub fn promise_allsettled(
     let reason_key = interp.key("reason");
 
     let mut results: Vec<JsValue> = Vec::with_capacity(promises.len());
-    // Keep guards alive until we create the array - prevents GC from collecting result objects
-    let mut result_guards: Vec<Guard<JsObject>> = Vec::with_capacity(promises.len());
 
     for promise_value in &promises {
         let (status, result) = if let JsValue::Object(obj) = promise_value {
@@ -698,7 +662,7 @@ pub fn promise_allsettled(
             (PromiseStatus::Fulfilled, Some(promise_value.clone()))
         };
 
-        let (result_obj, obj_guard) = interp.create_object_with_guard();
+        let result_obj = interp.create_object(&guard);
         {
             let mut result_ref = result_obj.borrow_mut();
             result_ref.prototype = Some(interp.object_prototype.cheap_clone());
@@ -721,19 +685,11 @@ pub fn promise_allsettled(
             }
         }
         results.push(JsValue::Object(result_obj));
-        result_guards.push(obj_guard);
     }
 
-    let (arr, arr_guard) = interp.create_array_with_guard(results);
-    // Once array is created, result objects are reachable through it - safe to drop guards
-    drop(result_guards);
-    let (promise, promise_guard) =
-        create_fulfilled_promise_with_guard(interp, JsValue::Object(arr));
-    drop(arr_guard);
-    Ok(Guarded {
-        value: JsValue::Object(promise),
-        guard: Some(promise_guard),
-    })
+    let arr = interp.create_array_from(&guard, results);
+    let promise = create_fulfilled_promise(interp, &guard, JsValue::Object(arr));
+    Ok(Guarded::with_guard(JsValue::Object(promise), guard))
 }
 
 /// Promise.any(iterable)
@@ -745,15 +701,15 @@ pub fn promise_any(
     let iterable = args.first().cloned().unwrap_or(JsValue::Undefined);
     let promises = extract_iterable(&iterable)?;
 
+    let guard = interp.heap.create_guard();
+
     if promises.is_empty() {
-        let (promise, guard) = create_rejected_promise_with_guard(
+        let promise = create_rejected_promise(
             interp,
+            &guard,
             JsValue::String("All promises were rejected".into()),
         );
-        return Ok(Guarded {
-            value: JsValue::Object(promise),
-            guard: Some(guard),
-        });
+        return Ok(Guarded::with_guard(JsValue::Object(promise), guard));
     }
 
     let mut errors: Vec<JsValue> = Vec::new();
@@ -788,28 +744,17 @@ pub fn promise_any(
     }
 
     if let Some(value) = fulfilled_value {
-        let (promise, guard) = create_fulfilled_promise_with_guard(interp, value);
-        return Ok(Guarded {
-            value: JsValue::Object(promise),
-            guard: Some(guard),
-        });
+        let promise = create_fulfilled_promise(interp, &guard, value);
+        return Ok(Guarded::with_guard(JsValue::Object(promise), guard));
     }
 
     if !errors.is_empty() && !any_pending {
-        let (errors_arr, arr_guard) = interp.create_array_with_guard(errors);
-        let (promise, promise_guard) =
-            create_rejected_promise_with_guard(interp, JsValue::Object(errors_arr));
-        drop(arr_guard);
-        return Ok(Guarded {
-            value: JsValue::Object(promise),
-            guard: Some(promise_guard),
-        });
+        let errors_arr = interp.create_array_from(&guard, errors);
+        let promise = create_rejected_promise(interp, &guard, JsValue::Object(errors_arr));
+        return Ok(Guarded::with_guard(JsValue::Object(promise), guard));
     }
 
     // Return pending promise
-    let (promise, guard) = create_promise_with_guard(interp);
-    Ok(Guarded {
-        value: JsValue::Object(promise),
-        guard: Some(guard),
-    })
+    let promise = create_promise(interp, &guard);
+    Ok(Guarded::with_guard(JsValue::Object(promise), guard))
 }

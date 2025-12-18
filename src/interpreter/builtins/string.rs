@@ -496,11 +496,13 @@ pub fn string_split(
                     return match limit {
                         Some(l) => {
                             let limited: Vec<JsValue> = split.into_iter().take(l).collect();
-                            let (arr, guard) = interp.create_array(limited);
+                            let guard = interp.heap.create_guard();
+                            let arr = interp.create_array_from(&guard, limited);
                             Ok(Guarded::with_guard(JsValue::Object(arr), guard))
                         }
                         None => {
-                            let (arr, guard) = interp.create_array(split);
+                            let guard = interp.heap.create_guard();
+                            let arr = interp.create_array_from(&guard, split);
                             Ok(Guarded::with_guard(JsValue::Object(arr), guard))
                         }
                     };
@@ -536,7 +538,8 @@ pub fn string_split(
         None => vec![JsValue::String(JsString::from(s.to_string()))],
     };
 
-    let (arr, guard) = interp.create_array(parts);
+    let guard = interp.heap.create_guard();
+    let arr = interp.create_array_from(&guard, parts);
     Ok(Guarded::with_guard(JsValue::Object(arr), guard))
 }
 
@@ -897,7 +900,8 @@ pub fn string_match(
         if matches.is_empty() {
             Ok(Guarded::unguarded(JsValue::Null))
         } else {
-            let (arr, guard) = interp.create_array(matches);
+            let guard = interp.heap.create_guard();
+            let arr = interp.create_array_from(&guard, matches);
             Ok(Guarded::with_guard(JsValue::Object(arr), guard))
         }
     } else {
@@ -911,7 +915,8 @@ pub fn string_match(
                         None => result.push(JsValue::Undefined),
                     }
                 }
-                let (arr, guard) = interp.create_array(result);
+                let guard = interp.heap.create_guard();
+                let arr = interp.create_array_from(&guard, result);
 
                 // Add index property
                 let index_key = interp.key("index");
@@ -972,9 +977,9 @@ pub fn string_match_all(
     let re = build_regex(&pattern, &flags)?;
 
     // Collect all matches with capture groups
-    // Keep guards alive until we create the outer array
+    // Use single guard for all match arrays
+    let guard = interp.heap.create_guard();
     let mut all_matches = Vec::new();
-    let mut _inner_guards = Vec::new();
     for caps in re.captures_iter(&s) {
         let mut match_result = Vec::new();
         for cap in caps.iter() {
@@ -983,7 +988,7 @@ pub fn string_match_all(
                 None => match_result.push(JsValue::Undefined),
             }
         }
-        let (arr, inner_guard) = interp.create_array(match_result);
+        let arr = interp.create_array_from(&guard, match_result);
 
         // Add index property
         let index_key = interp.key("index");
@@ -997,10 +1002,9 @@ pub fn string_match_all(
             .set_property(input_key, JsValue::String(JsString::from(s.clone())));
 
         all_matches.push(JsValue::Object(arr));
-        _inner_guards.push(inner_guard);
     }
 
-    let (result_arr, guard) = interp.create_array(all_matches);
+    let result_arr = interp.create_array_from(&guard, all_matches);
     Ok(Guarded::with_guard(JsValue::Object(result_arr), guard))
 }
 

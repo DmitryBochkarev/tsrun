@@ -84,11 +84,13 @@ pub fn array_constructor_fn(
             for _ in 0..len {
                 elements.push(JsValue::Undefined);
             }
-            let (arr, guard) = interp.create_array(elements);
+            let guard = interp.heap.create_guard();
+            let arr = interp.create_array_from(&guard, elements);
             return Ok(Guarded::with_guard(JsValue::Object(arr), guard));
         }
     }
-    let (arr, guard) = interp.create_array(args.to_vec());
+    let guard = interp.heap.create_guard();
+    let arr = interp.create_array_from(&guard, args.to_vec());
     Ok(Guarded::with_guard(JsValue::Object(arr), guard))
 }
 
@@ -201,7 +203,8 @@ pub fn array_map(
         result.push(mapped);
     }
 
-    let (arr, guard) = interp.create_array(result);
+    let guard = interp.heap.create_guard();
+    let arr = interp.create_array_from(&guard, result);
     Ok(Guarded::with_guard(JsValue::Object(arr), guard))
 }
 
@@ -257,7 +260,8 @@ pub fn array_filter(
         }
     }
 
-    let (arr, guard) = interp.create_array(result);
+    let guard = interp.heap.create_guard();
+    let arr = interp.create_array_from(&guard, result);
     Ok(Guarded::with_guard(JsValue::Object(arr), guard))
 }
 
@@ -601,7 +605,8 @@ pub fn array_slice(
         result.push(elem);
     }
 
-    let (arr, guard) = interp.create_array(result);
+    let guard = interp.heap.create_guard();
+    let arr = interp.create_array_from(&guard, result);
     Ok(Guarded::with_guard(JsValue::Object(arr), guard))
 }
 
@@ -637,7 +642,8 @@ pub fn array_concat(
         add_elements(&mut result, arg.clone());
     }
 
-    let (arr, guard) = interp.create_array(result);
+    let guard = interp.heap.create_guard();
+    let arr = interp.create_array_from(&guard, result);
     Ok(Guarded::with_guard(JsValue::Object(arr), guard))
 }
 
@@ -1111,7 +1117,8 @@ pub fn array_splice(
     }
 
     drop(arr_ref);
-    let (arr, guard) = interp.create_array(removed);
+    let guard = interp.heap.create_guard();
+    let arr = interp.create_array_from(&guard, removed);
     Ok(Guarded::with_guard(JsValue::Object(arr), guard))
 }
 
@@ -1120,7 +1127,8 @@ pub fn array_of(
     _this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    let (arr, guard) = interp.create_array(args.to_vec());
+    let guard = interp.heap.create_guard();
+    let arr = interp.create_array_from(&guard, args.to_vec());
     Ok(Guarded::with_guard(JsValue::Object(arr), guard))
 }
 
@@ -1197,7 +1205,8 @@ pub fn array_from(
         _ => {}
     }
 
-    let (arr, guard) = interp.create_array(elements);
+    let guard = interp.heap.create_guard();
+    let arr = interp.create_array_from(&guard, elements);
     Ok(Guarded::with_guard(JsValue::Object(arr), guard))
 }
 
@@ -1382,7 +1391,8 @@ pub fn array_flat(
     }
 
     let elements = flatten(&arr, depth);
-    let (arr, guard) = interp.create_array(elements);
+    let guard = interp.heap.create_guard();
+    let arr = interp.create_array_from(&guard, elements);
     Ok(Guarded::with_guard(JsValue::Object(arr), guard))
 }
 
@@ -1454,7 +1464,8 @@ pub fn array_flat_map(
         }
     }
 
-    let (arr, guard) = interp.create_array(result);
+    let guard = interp.heap.create_guard();
+    let arr = interp.create_array_from(&guard, result);
     Ok(Guarded::with_guard(JsValue::Object(arr), guard))
 }
 
@@ -1580,7 +1591,8 @@ pub fn array_to_reversed(
         })
         .collect();
 
-    let (arr, guard) = interp.create_array(elements);
+    let guard = interp.heap.create_guard();
+    let arr = interp.create_array_from(&guard, elements);
     Ok(Guarded::with_guard(JsValue::Object(arr), guard))
 }
 
@@ -1645,7 +1657,8 @@ pub fn array_to_sorted(
         });
     }
 
-    let (arr, guard) = interp.create_array(elements);
+    let guard = interp.heap.create_guard();
+    let arr = interp.create_array_from(&guard, elements);
     Ok(Guarded::with_guard(JsValue::Object(arr), guard))
 }
 
@@ -1698,7 +1711,8 @@ pub fn array_to_spliced(
         );
     }
 
-    let (arr, guard) = interp.create_array(result);
+    let guard = interp.heap.create_guard();
+    let arr = interp.create_array_from(&guard, result);
     Ok(Guarded::with_guard(JsValue::Object(arr), guard))
 }
 
@@ -1743,7 +1757,8 @@ pub fn array_with(
         })
         .collect();
 
-    let (arr, guard) = interp.create_array(elements);
+    let guard = interp.heap.create_guard();
+    let arr = interp.create_array_from(&guard, elements);
     Ok(Guarded::with_guard(JsValue::Object(arr), guard))
 }
 
@@ -1764,7 +1779,8 @@ pub fn array_keys(
         .ok_or_else(|| JsError::type_error("Not an array"))?;
 
     let keys: Vec<JsValue> = (0..length).map(|i| JsValue::Number(i as f64)).collect();
-    let (arr, guard) = interp.create_array(keys);
+    let guard = interp.heap.create_guard();
+    let arr = interp.create_array_from(&guard, keys);
     Ok(Guarded::with_guard(JsValue::Object(arr), guard))
 }
 
@@ -1791,7 +1807,8 @@ pub fn array_values(
                 .unwrap_or(JsValue::Undefined)
         })
         .collect();
-    let (arr, guard) = interp.create_array(values);
+    let guard = interp.heap.create_guard();
+    let arr = interp.create_array_from(&guard, values);
     Ok(Guarded::with_guard(JsValue::Object(arr), guard))
 }
 
@@ -1811,11 +1828,8 @@ pub fn array_entries(
         .array_length()
         .ok_or_else(|| JsError::type_error("Not an array"))?;
 
-    // Guard each entry array as it's created to prevent GC from collecting them
-    // before they are stored in the result array. The scope must remain alive
-    // until after create_array(entries) completes, since that allocation may
-    // trigger GC.
-    let scope = interp.guarded_scope();
+    // Use single guard for all entry arrays - keeps them alive until result array is created
+    let guard = interp.heap.create_guard();
     let mut entries = Vec::with_capacity(length as usize);
     for i in 0..length {
         let value = arr
@@ -1823,12 +1837,10 @@ pub fn array_entries(
             .get_property(&PropertyKey::Index(i))
             .unwrap_or(JsValue::Undefined);
         let pair = vec![JsValue::Number(i as f64), value];
-        let (entry_arr, _entry_guard) = interp.create_array(pair);
-        scope.guard(entry_arr.clone());
+        let entry_arr = interp.create_array_from(&guard, pair);
         entries.push(JsValue::Object(entry_arr));
     }
 
-    let (result, result_guard) = interp.create_array(entries);
-    drop(scope); // Safe to drop now - entries are stored in result array
-    Ok(Guarded::with_guard(JsValue::Object(result), result_guard))
+    let result = interp.create_array_from(&guard, entries);
+    Ok(Guarded::with_guard(JsValue::Object(result), guard))
 }

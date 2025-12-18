@@ -172,14 +172,15 @@ pub fn date_constructor(
         make_date_from_components(year, month, day, hours, minutes, seconds, ms)
     };
 
-    let (date_obj, date_guard) = interp.create_object_with_guard();
+    let guard = interp.heap.create_guard();
+    let date_obj = interp.create_object(&guard);
     {
         let mut obj = date_obj.borrow_mut();
         obj.exotic = ExoticObject::Date { timestamp };
         obj.prototype = Some(interp.date_prototype.clone());
     }
 
-    Ok(Guarded::with_guard(JsValue::Object(date_obj), date_guard))
+    Ok(Guarded::with_guard(JsValue::Object(date_obj), guard))
 }
 
 pub fn date_now(

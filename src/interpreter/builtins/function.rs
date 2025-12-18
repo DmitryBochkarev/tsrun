@@ -83,12 +83,15 @@ pub fn function_bind(
     let bound_args: Vec<JsValue> = args.iter().skip(1).cloned().collect();
 
     // Create a bound function using JsFunction::Bound
-    // create_function roots to root_guard, so no additional guard needed
-    let bound_fn = interp.create_function(JsFunction::Bound(Box::new(BoundFunctionData {
-        target: target_fn,
-        this_arg: this_arg.clone(),
-        bound_args: bound_args.clone(),
-    })));
+    let guard = interp.heap.create_guard();
+    let bound_fn = interp.create_js_function(
+        &guard,
+        JsFunction::Bound(Box::new(BoundFunctionData {
+            target: target_fn,
+            this_arg: this_arg.clone(),
+            bound_args: bound_args.clone(),
+        })),
+    );
 
-    Ok(Guarded::unguarded(JsValue::Object(bound_fn)))
+    Ok(Guarded::with_guard(JsValue::Object(bound_fn), guard))
 }

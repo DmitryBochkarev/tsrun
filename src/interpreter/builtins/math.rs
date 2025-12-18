@@ -8,7 +8,9 @@ use crate::value::{Guarded, JsObject, JsValue};
 /// Initialize Math object and bind it to global scope.
 /// Returns the Math object for rooting.
 pub fn init_math(interp: &mut Interpreter) -> Gc<JsObject> {
-    let (math_obj, _guard) = interp.create_object_with_guard();
+    // Use root_guard for permanent global objects
+    let math_obj = interp.root_guard.alloc();
+    math_obj.borrow_mut().prototype = Some(interp.object_prototype.clone());
 
     // Constants
     let pi_key = interp.key("PI");

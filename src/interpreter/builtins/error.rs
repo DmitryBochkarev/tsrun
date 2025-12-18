@@ -8,8 +8,9 @@ use crate::value::{CheapClone, Guarded, JsObject, JsString, JsValue, NativeFn, P
 /// Initialize Error and all derived error constructors and add them to globals
 pub fn init_error(interp: &mut Interpreter) {
     // Create Error.prototype first (base for all error prototypes)
-    let (error_proto, _proto_guard) = interp.create_object_with_guard();
-    interp.root_guard.guard(error_proto.clone());
+    // Use root_guard for permanent prototype objects
+    let error_proto = interp.root_guard.alloc();
+    error_proto.borrow_mut().prototype = Some(interp.object_prototype.clone());
 
     // Set default name and message on prototype
     let name_key = interp.key("name");
@@ -63,9 +64,8 @@ fn create_derived_error(
     error_proto: &Gc<JsObject>,
 ) {
     // Create prototype that inherits from Error.prototype
-    let (derived_proto, _proto_guard) = interp.create_object_with_guard();
-    interp.root_guard.guard(derived_proto.clone());
-
+    // Use root_guard for permanent prototype objects
+    let derived_proto = interp.root_guard.alloc();
     // Set prototype chain to Error.prototype
     derived_proto.borrow_mut().prototype = Some(error_proto.clone());
 

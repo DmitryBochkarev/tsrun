@@ -79,12 +79,14 @@ pub fn object_constructor(
     let value = args.first().cloned().unwrap_or(JsValue::Undefined);
     match value {
         JsValue::Null | JsValue::Undefined => {
-            let (obj, guard) = interp.create_object_with_guard();
+            let guard = interp.heap.create_guard();
+            let obj = interp.create_object(&guard);
             Ok(Guarded::with_guard(JsValue::Object(obj), guard))
         }
         JsValue::Object(_) => Ok(Guarded::unguarded(value)),
         _ => {
-            let (obj, guard) = interp.create_object_with_guard();
+            let guard = interp.heap.create_guard();
+            let obj = interp.create_object(&guard);
             Ok(Guarded::with_guard(JsValue::Object(obj), guard))
         }
     }
@@ -108,7 +110,8 @@ pub fn object_keys(
         .map(|(key, _)| JsValue::String(JsString::from(key.to_string())))
         .collect();
 
-    let (arr, guard) = interp.create_array(keys);
+    let guard = interp.heap.create_guard();
+    let arr = interp.create_array_from(&guard, keys);
     Ok(Guarded::with_guard(JsValue::Object(arr), guard))
 }
 
@@ -130,7 +133,8 @@ pub fn object_values(
         .map(|(_, prop)| prop.value.clone())
         .collect();
 
-    let (arr, guard) = interp.create_array(values);
+    let guard = interp.heap.create_guard();
+    let arr = interp.create_array_from(&guard, values);
     Ok(Guarded::with_guard(JsValue::Object(arr), guard))
 }
 
@@ -153,20 +157,17 @@ pub fn object_entries(
         .map(|(key, prop)| (key.to_string(), prop.value.clone()))
         .collect();
 
-    // Create entry arrays with proper prototype
-    // Guard each entry array as it's created to prevent GC from collecting them
-    let scope = interp.guarded_scope();
+    // Use single guard for all entry arrays
+    let guard = interp.heap.create_guard();
     let mut entries: Vec<JsValue> = Vec::with_capacity(pairs.len());
     for (key, value) in pairs {
-        let (arr, _entry_guard) =
-            interp.create_array(vec![JsValue::String(JsString::from(key)), value]);
-        scope.guard(arr.clone());
+        let arr =
+            interp.create_array_from(&guard, vec![JsValue::String(JsString::from(key)), value]);
         entries.push(JsValue::Object(arr));
     }
 
-    let (result, result_guard) = interp.create_array(entries);
-    drop(scope);
-    Ok(Guarded::with_guard(JsValue::Object(result), result_guard))
+    let result = interp.create_array_from(&guard, entries);
+    Ok(Guarded::with_guard(JsValue::Object(result), guard))
 }
 
 pub fn object_assign(
@@ -215,7 +216,8 @@ pub fn object_from_entries(
     let _arr_guard = interp.guard_value(&JsValue::Object(arr.clone()));
 
     // Create result object with guard - key interning may trigger GC
-    let (result, result_guard) = interp.create_object_with_guard();
+    let result_guard = interp.heap.create_guard();
+    let result = interp.create_object(&result_guard);
 
     let length = arr
         .borrow()
@@ -272,7 +274,8 @@ pub fn object_create(
 ) -> Result<Guarded, JsError> {
     let proto = args.first().cloned().unwrap_or(JsValue::Undefined);
 
-    let (result, result_guard) = interp.create_object_with_guard();
+    let result_guard = interp.heap.create_guard();
+    let result = interp.create_object(&result_guard);
 
     // Set prototype (or null)
     match proto {
@@ -488,7 +491,8 @@ pub fn object_get_own_property_descriptor(
         let configurable_key = interp.key("configurable");
 
         // Create a descriptor object
-        let (desc, desc_guard) = interp.create_object_with_guard();
+        let desc_guard = interp.heap.create_guard();
+        let desc = interp.create_object(&desc_guard);
         {
             let mut desc_ref = desc.borrow_mut();
 
@@ -542,7 +546,8 @@ pub fn object_get_own_property_names(
         .map(|key| JsValue::String(JsString::from(key.to_string())))
         .collect();
 
-    let (arr, guard) = interp.create_array(names);
+    let guard = interp.heap.create_guard();
+    let arr = interp.create_array_from(&guard, names);
     Ok(Guarded::with_guard(JsValue::Object(arr), guard))
 }
 
@@ -574,7 +579,8 @@ pub fn object_get_own_property_symbols(
         })
         .collect();
 
-    let (arr, guard) = interp.create_array(symbols);
+    let guard = interp.heap.create_guard();
+    let arr = interp.create_array_from(&guard, symbols);
     Ok(Guarded::with_guard(JsValue::Object(arr), guard))
 }
 

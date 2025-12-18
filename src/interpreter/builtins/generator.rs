@@ -30,16 +30,14 @@ pub fn create_generator_result(interp: &mut Interpreter, value: JsValue, done: b
     let value_key = interp.key("value");
     let done_key = interp.key("done");
 
-    let (obj, guard) = interp.create_object_with_guard();
+    let guard = interp.heap.create_guard();
+    let obj = interp.create_object(&guard);
     {
         let mut o = obj.borrow_mut();
         o.set_property(value_key, value);
         o.set_property(done_key, JsValue::Boolean(done));
     }
-    Guarded {
-        value: JsValue::Object(obj),
-        guard: Some(guard),
-    }
+    Guarded::with_guard(JsValue::Object(obj), guard)
 }
 
 /// Generator.prototype.next(value)
@@ -168,9 +166,8 @@ pub fn generator_throw(
 
 /// Create a new generator object from a generator function
 pub fn create_generator_object(interp: &mut Interpreter, state: GeneratorState) -> Gc<JsObject> {
-    let (obj, _guard) = interp.create_object_with_guard();
-    // Transfer to root guard for longer life
-    interp.root_guard_object(&obj);
+    // Use root_guard for longer-lived generator objects
+    let obj = interp.root_guard.alloc();
     {
         let mut o = obj.borrow_mut();
         o.exotic = ExoticObject::Generator(Rc::new(RefCell::new(state)));

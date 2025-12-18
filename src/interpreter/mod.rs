@@ -648,7 +648,8 @@ impl Interpreter {
         result?;
 
         // Create module namespace object from exports
-        let (module_obj, _guard) = self.create_object_with_guard();
+        let guard = self.heap.create_guard();
+        let module_obj = self.create_object(&guard);
 
         // Drain exports to a vector to avoid borrow conflict
         let exports: Vec<_> = self.exports.drain().collect();
@@ -965,47 +966,47 @@ impl Interpreter {
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // Object Creation Helpers (Temporary Guard Pattern)
-    // ═══════════════════════════════════════════════════════════════════════════
-    //
-    // Objects are created with a temporary guard that keeps them alive until
-    // ownership is transferred to a permanent owner (environment, parent object).
-    // The caller MUST transfer ownership before the temp guard is dropped.
-    //
-    // Pattern:
-    //   let (obj, _temp) = self.create_object_with_guard();
-    //   // _temp is dropped here, but obj is still alive via parent
+    // Object/Array/Function Creation
     // ═══════════════════════════════════════════════════════════════════════════
 
-    /// Create a new plain object with a temporary guard.
-    /// Returns (object, temp_guard). Caller must transfer ownership before guard is dropped.
-    pub fn create_object_with_guard(&mut self) -> (Gc<JsObject>, Guard<JsObject>) {
-        let temp = self.heap.create_guard();
-        let obj = temp.alloc();
+    /// Create a new plain object with `object_prototype`.
+    /// Caller provides the guard to control object lifetime.
+    pub fn create_object(&mut self, guard: &Guard<JsObject>) -> Gc<JsObject> {
+        let obj = guard.alloc();
         obj.borrow_mut().prototype = Some(self.object_prototype.cheap_clone());
-        (obj, temp)
+        obj
+    }
+
+    /// Create a new plain object without prototype.
+    /// Caller provides the guard to control object lifetime.
+    pub fn create_object_raw(&mut self, guard: &Guard<JsObject>) -> Gc<JsObject> {
+        guard.alloc()
     }
 
     /// Create an object with pre-allocated property capacity.
     /// Use this when you know the number of properties upfront to avoid hashmap resizing.
     pub fn create_object_with_capacity(
         &mut self,
+        guard: &Guard<JsObject>,
         capacity: usize,
-    ) -> (Gc<JsObject>, Guard<JsObject>) {
-        let temp = self.heap.create_guard();
-        let obj = temp.alloc();
+    ) -> Gc<JsObject> {
+        let obj = guard.alloc();
         {
             let mut obj_ref = obj.borrow_mut();
             obj_ref.prototype = Some(self.object_prototype.cheap_clone());
             obj_ref.properties.reserve(capacity);
         }
-        (obj, temp)
+        obj
     }
 
-    /// Create a RegExp literal object with a temporary guard.
-    /// Used when evaluating /pattern/flags syntax.
-    // FIXME: extract to regexp module
-    fn create_regexp_literal(&mut self, pattern: &str, flags: &str) -> Result<Guarded, JsError> {
+    /// Create a RegExp literal object.
+    /// Caller provides the guard to control object lifetime.
+    fn create_regexp_literal(
+        &mut self,
+        guard: &Guard<JsObject>,
+        pattern: &str,
+        flags: &str,
+    ) -> Gc<JsObject> {
         // Pre-intern all property keys
         let source_key = self.key("source");
         let flags_key = self.key("flags");
@@ -1017,7 +1018,7 @@ impl Interpreter {
         let sticky_key = self.key("sticky");
         let last_index_key = self.key("lastIndex");
 
-        let (regexp_obj, guard) = self.create_object_with_guard();
+        let regexp_obj = self.create_object_raw(guard);
         {
             let mut obj = regexp_obj.borrow_mut();
             obj.exotic = ExoticObject::RegExp {
@@ -1035,32 +1036,37 @@ impl Interpreter {
             obj.set_property(sticky_key, JsValue::Boolean(flags.contains('y')));
             obj.set_property(last_index_key, JsValue::Number(0.0));
         }
-        // Update ownership
-        Ok(Guarded::with_guard(JsValue::Object(regexp_obj), guard))
+        regexp_obj
     }
 
-    /// Create a new array with elements and a temporary guard.
-    /// Returns (array, temp_guard). Caller must transfer ownership before guard is dropped.
-    pub fn create_array_with_guard(
+    /// Create a new array with elements and `array_prototype`.
+    /// Caller provides the guard to control object lifetime.
+    pub fn create_array_from(
         &mut self,
+        guard: &Guard<JsObject>,
         elements: Vec<JsValue>,
-    ) -> (Gc<JsObject>, Guard<JsObject>) {
-        let temp = self.heap.create_guard();
-        let arr = temp.alloc();
+    ) -> Gc<JsObject> {
+        let arr = guard.alloc();
         {
             let mut arr_ref = arr.borrow_mut();
             arr_ref.prototype = Some(self.array_prototype.cheap_clone());
             arr_ref.exotic = ExoticObject::Array { elements };
         }
-
-        (arr, temp)
+        arr
     }
 
-    /// Create a function object with a temporary guard.
-    /// Returns (function, temp_guard). Caller must transfer ownership before guard is dropped.
+    /// Create a new empty array with `array_prototype`.
+    /// Caller provides the guard to control object lifetime.
+    pub fn create_empty_array(&mut self, guard: &Guard<JsObject>) -> Gc<JsObject> {
+        self.create_array_from(guard, Vec::new())
+    }
+
+    /// Create an interpreted function object.
+    /// Caller provides the guard to control object lifetime.
     #[allow(clippy::too_many_arguments)]
-    fn create_function_with_guard(
+    pub fn create_interpreted_function(
         &mut self,
+        guard: &Guard<JsObject>,
         name: Option<JsString>,
         params: Rc<[FunctionParam]>,
         body: Rc<FunctionBody>,
@@ -1068,9 +1074,8 @@ impl Interpreter {
         span: Span,
         generator: bool,
         async_: bool,
-    ) -> (Gc<JsObject>, Guard<JsObject>) {
-        let temp = self.heap.create_guard();
-        let func_obj = temp.alloc();
+    ) -> Gc<JsObject> {
+        let func_obj = guard.alloc();
         {
             let mut f_ref = func_obj.borrow_mut();
             f_ref.prototype = Some(self.function_prototype.clone());
@@ -1084,7 +1089,30 @@ impl Interpreter {
                 async_,
             }));
         }
-        (func_obj, temp)
+        func_obj
+    }
+
+    /// Create a native function object.
+    /// Caller provides the guard to control object lifetime.
+    pub fn create_native_fn(
+        &mut self,
+        guard: &Guard<JsObject>,
+        name: &str,
+        func: NativeFn,
+        arity: usize,
+    ) -> Gc<JsObject> {
+        let name_str = self.intern(name);
+        let func_obj = guard.alloc();
+        {
+            let mut f_ref = func_obj.borrow_mut();
+            f_ref.prototype = Some(self.function_prototype.clone());
+            f_ref.exotic = ExoticObject::Function(JsFunction::Native(NativeFunction {
+                name: name_str,
+                func,
+                arity,
+            }));
+        }
+        func_obj
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -1102,14 +1130,9 @@ impl Interpreter {
         PropertyKey::String(self.intern(s))
     }
 
-    /// Create an array with a temporary guard.
-    /// Returns (array, temp_guard). Caller must transfer ownership before guard is dropped.
-    // FIXME: duplicate of create_array_with_guard
-    pub fn create_array(&mut self, elements: Vec<JsValue>) -> (Gc<JsObject>, Guard<JsObject>) {
-        self.create_array_with_guard(elements)
-    }
-
-    /// Create a rooted native function (for use during initialization)
+    /// Create a rooted native function for global constructors.
+    /// The function is permanently rooted and never collected.
+    /// Use this for built-in constructors during initialization.
     pub fn create_native_function(
         &mut self,
         name: &str,
@@ -1117,7 +1140,6 @@ impl Interpreter {
         arity: usize,
     ) -> Gc<JsObject> {
         let name_str = self.intern(name);
-        // FIXME: we should remove rooting here and return proper guard
         let func_obj = self.root_guard.alloc();
         {
             let mut f_ref = func_obj.borrow_mut();
@@ -1131,10 +1153,14 @@ impl Interpreter {
         func_obj
     }
 
-    /// Create a function object from any JsFunction variant (for bind, etc.)
-    pub fn create_function(&mut self, func: JsFunction) -> Gc<JsObject> {
-        // FIXME: we should remove rooting here and return proper guard
-        let func_obj = self.root_guard.alloc();
+    /// Create a function object from any JsFunction variant.
+    /// Caller provides the guard to control object lifetime.
+    pub fn create_js_function(
+        &mut self,
+        guard: &Guard<JsObject>,
+        func: JsFunction,
+    ) -> Gc<JsObject> {
+        let func_obj = guard.alloc();
         {
             let mut f_ref = func_obj.borrow_mut();
             f_ref.prototype = Some(self.function_prototype.clone());
@@ -1501,7 +1527,8 @@ impl Interpreter {
                     Pattern::Rest(rest) => {
                         // Collect remaining items into an array
                         let remaining: Vec<JsValue> = items.get(i..).unwrap_or(&[]).to_vec();
-                        let (rest_array, _guard) = self.create_array_with_guard(remaining);
+                        let guard = self.heap.create_guard();
+                        let rest_array = self.create_array_from(&guard, remaining);
                         self.bind_pattern(&rest.argument, JsValue::Object(rest_array), mutable)?;
                         break; // Rest must be last
                     }
@@ -1563,17 +1590,17 @@ impl Interpreter {
         };
 
         // Create module object based on kind
-        // Returns (module_obj, temp_guard) - we must root before temp_guard is dropped
-        let (module_obj, _temp_guard) = match module_kind {
+        let guard = self.heap.create_guard();
+        let module_obj = match module_kind {
             crate::InternalModuleKind::Native(exports) => {
-                self.create_native_module_object(&exports)?
+                self.create_native_module_object(&guard, &exports)?
             }
             crate::InternalModuleKind::Source(source) => {
-                self.create_source_module_object(specifier, &source)?
+                self.create_source_module_object(&guard, specifier, &source)?
             }
         };
 
-        // Root the module (lives forever) - must happen before _temp_guard is dropped
+        // Root the module (lives forever)
         self.root_guard.guard(module_obj.clone());
 
         // Cache it
@@ -1586,9 +1613,10 @@ impl Interpreter {
     /// Create module object from native exports
     fn create_native_module_object(
         &mut self,
+        guard: &Guard<JsObject>,
         exports: &[(String, crate::InternalExport)],
-    ) -> Result<(Gc<JsObject>, Guard<JsObject>), JsError> {
-        let (module_obj, guard) = self.create_object_with_guard();
+    ) -> Result<Gc<JsObject>, JsError> {
+        let module_obj = self.create_object(guard);
 
         for (name, export) in exports {
             let key = self.key(name);
@@ -1606,16 +1634,17 @@ impl Interpreter {
             module_obj.borrow_mut().set_property(key, value);
         }
 
-        Ok((module_obj, guard))
+        Ok(module_obj)
     }
 
     /// Create module object from TypeScript source
     // FIXME: move up to other source parsing code?
     fn create_source_module_object(
         &mut self,
+        guard: &Guard<JsObject>,
         _specifier: &str,
         source: &str,
-    ) -> Result<(Gc<JsObject>, Guard<JsObject>), JsError> {
+    ) -> Result<Gc<JsObject>, JsError> {
         // Parse the source
         let mut parser = Parser::new(source, &mut self.string_dict);
         let program = parser.parse_program()?;
@@ -1638,7 +1667,7 @@ impl Interpreter {
         result?;
 
         // Create module namespace object from exports
-        let (module_obj, guard) = self.create_object_with_guard();
+        let module_obj = self.create_object(guard);
 
         // Drain exports to a vector to avoid borrow conflict
         let exports: Vec<_> = self.exports.drain().collect();
@@ -1653,7 +1682,7 @@ impl Interpreter {
         // Restore saved exports
         self.exports = saved_exports;
 
-        Ok((module_obj, guard))
+        Ok(module_obj)
     }
 
     /// Create a function from an InternalFn
@@ -1705,7 +1734,8 @@ impl Interpreter {
         enum_decl: &crate::ast::EnumDeclaration,
     ) -> Result<(), JsError> {
         // Create an object for the enum
-        let (enum_obj, enum_guard) = self.create_object_with_guard();
+        let guard = self.heap.create_guard();
+        let enum_obj = self.create_object(&guard);
 
         // Root and define the enum object first so member initializers can reference it
         // (e.g., ReadWrite = Read | Write references FileAccess.Read)
@@ -1756,7 +1786,6 @@ impl Interpreter {
             }
         }
 
-        drop(enum_guard);
         Ok(())
     }
 
@@ -1773,18 +1802,18 @@ impl Interpreter {
                 obj
             } else {
                 // Not an object, create new
-                let (obj, guard) = self.create_object_with_guard();
+                let guard = self.heap.create_guard();
+                let obj = self.create_object(&guard);
                 // FIXME: properly guard in module
                 self.root_guard.guard(obj.cheap_clone());
-                drop(guard);
                 obj
             }
         } else {
             // Create new namespace object
             // FIXME: properly guard in module
-            let (obj, guard) = self.create_object_with_guard();
+            let guard = self.heap.create_guard();
+            let obj = self.create_object(&guard);
             self.root_guard.guard(obj.cheap_clone());
-            drop(guard);
             obj
         };
 
@@ -1916,8 +1945,10 @@ impl Interpreter {
         let params = func.params.cheap_clone();
         let body = Rc::new(FunctionBody::Block(func.body.cheap_clone()));
 
-        // Create function with temp guard
-        let (func_obj, _temp) = self.create_function_with_guard(
+        // Create function with guard
+        let guard = self.heap.create_guard();
+        let func_obj = self.create_interpreted_function(
+            &guard,
             name.cheap_clone(),
             params,
             body,
@@ -1927,7 +1958,7 @@ impl Interpreter {
             func.async_,
         );
 
-        // Transfer ownership to environment before temp guard is dropped
+        // Transfer ownership to environment before guard is dropped
         if let Some(js_name) = name {
             self.env_define(js_name, JsValue::Object(func_obj), false);
         }
@@ -1958,7 +1989,8 @@ impl Interpreter {
             };
 
         // Create prototype object
-        let (prototype, _proto_guard) = self.create_object_with_guard();
+        let proto_guard = self.heap.create_guard();
+        let prototype = self.create_object(&proto_guard);
         self.root_guard.guard(prototype.cheap_clone());
 
         // If we have a superclass, set up prototype chain
@@ -2022,7 +2054,9 @@ impl Interpreter {
             };
 
             let func = &method.value;
-            let (func_obj, _func_guard) = self.create_function_with_guard(
+            let method_guard = self.heap.create_guard();
+            let func_obj = self.create_interpreted_function(
+                &method_guard,
                 Some(method_name.cheap_clone()),
                 func.params.clone(), // Rc clone is cheap
                 Rc::new(FunctionBody::Block(func.body.cheap_clone())),
@@ -2101,7 +2135,9 @@ impl Interpreter {
             vec![]
         };
 
-        let (constructor_fn, _ctor_guard) = self.create_function_with_guard(
+        let ctor_guard = self.heap.create_guard();
+        let constructor_fn = self.create_interpreted_function(
+            &ctor_guard,
             class.id.as_ref().map(|id| id.name.cheap_clone()),
             Rc::from(ctor_params),
             Rc::new(FunctionBody::Block(Rc::new(ctor_body))),
@@ -2134,16 +2170,17 @@ impl Interpreter {
             }
 
             // Create the fields array
+            let fields_guard = self.heap.create_guard();
             let mut field_pairs: Vec<JsValue> = Vec::new();
             for (name, value) in field_values {
-                let (pair, _pair_guard) =
-                    self.create_array_with_guard(vec![JsValue::String(name), value]);
-                // FIXME: whould be costructor guard
+                let pair =
+                    self.create_array_from(&fields_guard, vec![JsValue::String(name), value]);
+                // FIXME: should be constructor guard
                 self.root_guard.guard(pair.clone());
                 field_pairs.push(JsValue::Object(pair));
             }
 
-            let (fields_array, _fields_guard) = self.create_array_with_guard(field_pairs);
+            let fields_array = self.create_array_from(&fields_guard, field_pairs);
             // FIXME: should be constructor guard
             self.root_guard.guard(fields_array.clone());
 
@@ -2182,7 +2219,9 @@ impl Interpreter {
             };
 
             let func = &method.value;
-            let (func_obj, _func_guard) = self.create_function_with_guard(
+            let static_method_guard = self.heap.create_guard();
+            let func_obj = self.create_interpreted_function(
+                &static_method_guard,
                 Some(method_name.cheap_clone()),
                 func.params.cheap_clone(),
                 // FIXME: no need to wrap FunctionBody to rc
@@ -2286,7 +2325,9 @@ impl Interpreter {
             Expression::Literal(lit) => {
                 // Handle RegExp literals specially since they need to create objects
                 if let LiteralValue::RegExp { pattern, flags } = &lit.value {
-                    return self.create_regexp_literal(pattern, flags);
+                    let guard = self.heap.create_guard();
+                    let regexp_obj = self.create_regexp_literal(&guard, pattern, flags);
+                    return Ok(Guarded::with_guard(JsValue::Object(regexp_obj), guard));
                 }
                 Ok(Guarded::unguarded(self.evaluate_literal(&lit.value)?))
             }
@@ -2317,7 +2358,9 @@ impl Interpreter {
                 let params = arrow.params.clone();
                 let body = Rc::new(FunctionBody::from(arrow.body.cheap_clone()));
 
-                let (func_obj, guard) = self.create_function_with_guard(
+                let guard = self.heap.create_guard();
+                let func_obj = self.create_interpreted_function(
+                    &guard,
                     None,
                     params,
                     body,
@@ -2335,7 +2378,9 @@ impl Interpreter {
                 let params = func.params.cheap_clone();
                 let body = Rc::new(FunctionBody::Block(func.body.cheap_clone()));
 
-                let (func_obj, guard) = self.create_function_with_guard(
+                let guard = self.heap.create_guard();
+                let func_obj = self.create_interpreted_function(
+                    &guard,
                     name,
                     params,
                     body,
@@ -2379,7 +2424,7 @@ impl Interpreter {
             Expression::Class(class_expr) => {
                 let constructor_fn = self.create_class_from_expression(class_expr)?;
                 // Create guard for the returned object
-                let (_, guard) = self.create_object_with_guard();
+                let guard = self.heap.create_guard();
                 guard.guard(constructor_fn.cheap_clone());
                 Ok(Guarded::with_guard(JsValue::Object(constructor_fn), guard))
             }
@@ -2551,16 +2596,15 @@ impl Interpreter {
                 let Guarded {
                     value: specifier, ..
                 } = self.evaluate_expression(&import_expr.source)?;
-                let (promise, guard) = builtins::promise::create_rejected_promise_with_guard(
+                let guard = self.heap.create_guard();
+                let promise = builtins::promise::create_rejected_promise(
                     self,
+                    &guard,
                     JsValue::String(
                         format!("Dynamic import not yet supported: {:?}", specifier).into(),
                     ),
                 );
-                Ok(Guarded {
-                    value: JsValue::Object(promise),
-                    guard: Some(guard),
-                })
+                Ok(Guarded::with_guard(JsValue::Object(promise), guard))
             }
 
             // Super expression handled specially in member access and calls
@@ -2594,7 +2638,8 @@ impl Interpreter {
         }
 
         // Create a new object
-        let (new_obj, new_guard) = self.create_object_with_guard();
+        let new_guard = self.heap.create_guard();
+        let new_obj = self.create_object(&new_guard);
 
         // Get the constructor's prototype and __fields__ properties
         let (proto_opt, fields_opt) = if let JsValue::Object(ctor) = &constructor {
@@ -2718,7 +2763,8 @@ impl Interpreter {
             .map(|q| JsValue::String(q.value.cheap_clone()))
             .collect();
         // FIXME: clone strings
-        let (strings_arr, strings_guard) = self.create_array_with_guard(strings.clone());
+        let strings_guard = self.heap.create_guard();
+        let strings_arr = self.create_array_from(&strings_guard, strings.clone());
 
         // Add 'raw' property to strings array
         let raw: Vec<JsValue> = tagged
@@ -2727,7 +2773,7 @@ impl Interpreter {
             .iter()
             .map(|q| JsValue::String(q.value.cheap_clone()))
             .collect();
-        let (raw_array, _raw_guard) = self.create_array_with_guard(raw);
+        let raw_array = self.create_array_from(&strings_guard, raw);
 
         // Set raw property and transfer ownership
         let raw_key = PropertyKey::String(self.intern("raw"));
@@ -2737,7 +2783,7 @@ impl Interpreter {
 
         // Evaluate all interpolated expressions (remaining arguments)
         let mut args = vec![JsValue::Object(strings_arr)];
-        let mut _arg_guards = vec![strings_guard];
+        let mut _arg_guards: Vec<Guard<JsObject>> = vec![strings_guard];
         for expr in &tagged.quasi.expressions {
             let Guarded { value, guard } = self.evaluate_expression(expr)?;
             args.push(value);
@@ -3265,7 +3311,8 @@ impl Interpreter {
                 match pat {
                     Pattern::Rest(rest) => {
                         let remaining: Vec<JsValue> = items.get(i..).unwrap_or(&[]).to_vec();
-                        let (rest_array, _guard) = self.create_array_with_guard(remaining);
+                        let guard = self.heap.create_guard();
+                        let rest_array = self.create_array_from(&guard, remaining);
                         self.assign_pattern(&rest.argument, JsValue::Object(rest_array))?;
                         break;
                     }
@@ -3540,7 +3587,8 @@ impl Interpreter {
 
                 // Create and bind the `arguments` object (array-like)
                 {
-                    let (args_array, _guard) = self.create_array_with_guard(args.to_vec());
+                    let args_guard = self.heap.create_guard();
+                    let args_array = self.create_array_from(&args_guard, args.to_vec());
                     let args_name = self.intern("arguments");
                     self.env_define(args_name, JsValue::Object(args_array), false);
                 }
@@ -3552,7 +3600,8 @@ impl Interpreter {
                             // Collect remaining arguments into an array
                             let rest_args: Vec<JsValue> =
                                 args.get(i..).unwrap_or_default().to_vec();
-                            let (rest_array, _guard) = self.create_array_with_guard(rest_args);
+                            let rest_guard = self.heap.create_guard();
+                            let rest_array = self.create_array_from(&rest_guard, rest_args);
 
                             // Bind the rest pattern (usually an identifier)
                             self.bind_pattern(&rest.argument, JsValue::Object(rest_array), true)?;
@@ -3623,26 +3672,20 @@ impl Interpreter {
                                 }
                             }
                             // Create fulfilled promise with the result
-                            let (promise, guard) =
-                                builtins::promise::create_fulfilled_promise_with_guard(
-                                    self, result,
-                                );
-                            return Ok(Guarded {
-                                value: JsValue::Object(promise),
-                                guard: Some(guard),
-                            });
+                            let guard = self.heap.create_guard();
+                            let promise =
+                                builtins::promise::create_fulfilled_promise(self, &guard, result);
+                            return Ok(Guarded::with_guard(JsValue::Object(promise), guard));
                         }
                         Err(e) => {
                             // Create rejected promise with the error
-                            let (promise, guard) =
-                                builtins::promise::create_rejected_promise_with_guard(
-                                    self,
-                                    e.to_value(),
-                                );
-                            return Ok(Guarded {
-                                value: JsValue::Object(promise),
-                                guard: Some(guard),
-                            });
+                            let guard = self.heap.create_guard();
+                            let promise = builtins::promise::create_rejected_promise(
+                                self,
+                                &guard,
+                                e.to_value(),
+                            );
+                            return Ok(Guarded::with_guard(JsValue::Object(promise), guard));
                         }
                     }
                 }
@@ -3834,13 +3877,15 @@ impl Interpreter {
         }
 
         // Create array with guard - elements ownership transferred to array
-        let (arr_obj, guard) = self.create_array_with_guard(elements);
+        let guard = self.heap.create_guard();
+        let arr_obj = self.create_array_from(&guard, elements);
         Ok(Guarded::with_guard(JsValue::Object(arr_obj), guard))
     }
 
     fn evaluate_object(&mut self, obj_expr: &ObjectExpression) -> Result<Guarded, JsError> {
         // Pre-allocate for expected number of properties to avoid hashmap resizing
-        let (obj, obj_guard) = self.create_object_with_capacity(obj_expr.properties.len());
+        let obj_guard = self.heap.create_guard();
+        let obj = self.create_object_with_capacity(&obj_guard, obj_expr.properties.len());
 
         // Keep property value guards alive until ownership is transferred to obj
         let mut _prop_guards = Vec::new();

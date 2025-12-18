@@ -47,7 +47,8 @@ pub fn set_constructor(
 ) -> Result<Guarded, JsError> {
     let size_key = interp.key("size");
 
-    let (set_obj, set_guard) = interp.create_object_with_guard();
+    let guard = interp.heap.create_guard();
+    let set_obj = interp.create_object(&guard);
     {
         let mut obj = set_obj.borrow_mut();
         obj.exotic = ExoticObject::Set {
@@ -80,7 +81,7 @@ pub fn set_constructor(
         }
     }
 
-    Ok(Guarded::with_guard(JsValue::Object(set_obj), set_guard))
+    Ok(Guarded::with_guard(JsValue::Object(set_obj), guard))
 }
 
 pub fn set_add(
@@ -261,7 +262,8 @@ pub fn set_values(
         }
     }
 
-    let (arr, guard) = interp.create_array(values);
+    let guard = interp.heap.create_guard();
+    let arr = interp.create_array_from(&guard, values);
     Ok(Guarded::with_guard(JsValue::Object(arr), guard))
 }
 
@@ -275,6 +277,10 @@ pub fn set_entries(
             "Set.prototype.entries called on non-object",
         ));
     };
+
+    // Guard the set and collect entries
+    let guard = interp.heap.create_guard();
+    guard.guard(set_obj.clone());
 
     let raw_entries: Vec<JsValue>;
     {
@@ -292,11 +298,10 @@ pub fn set_entries(
     // Build entry arrays
     let mut entries = Vec::with_capacity(raw_entries.len());
     for v in raw_entries {
-        let (arr, _guard) = interp.create_array(vec![v.clone(), v]);
-        interp.root_guard.guard(arr.clone());
+        let arr = interp.create_array_from(&guard, vec![v.clone(), v]);
         entries.push(JsValue::Object(arr));
     }
 
-    let (result, guard) = interp.create_array(entries);
+    let result = interp.create_array_from(&guard, entries);
     Ok(Guarded::with_guard(JsValue::Object(result), guard))
 }

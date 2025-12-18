@@ -212,12 +212,13 @@ fn test_stack_await_resolved_promise() {
 
 #[test]
 fn test_stack_await_pending_promise_suspends() {
-    use typescript_eval::interpreter::builtins::promise::create_promise_with_guard;
+    use typescript_eval::interpreter::builtins::promise::create_promise;
 
     let mut interp = Interpreter::new();
 
     // Create a pending promise directly
-    let (promise, _guard) = create_promise_with_guard(&mut interp);
+    let guard = interp.heap.create_guard();
+    let promise = create_promise(&mut interp, &guard);
 
     // Set up state to await the pending promise
     let mut state = ExecutionState::new();
@@ -240,12 +241,13 @@ fn test_stack_await_pending_promise_suspends() {
 
 #[test]
 fn test_stack_await_resume_with_value() {
-    use typescript_eval::interpreter::builtins::promise::create_promise_with_guard;
+    use typescript_eval::interpreter::builtins::promise::create_promise;
 
     let mut interp = Interpreter::new();
 
     // Create a pending promise directly
-    let (promise, _guard) = create_promise_with_guard(&mut interp);
+    let guard = interp.heap.create_guard();
+    let promise = create_promise(&mut interp, &guard);
 
     // Set up state to await the pending promise, then add more operations
     // to verify execution continues after resume
@@ -286,13 +288,14 @@ fn test_stack_await_resume_with_value() {
 
 #[test]
 fn test_stack_await_resume_with_error() {
-    use typescript_eval::interpreter::builtins::promise::create_promise_with_guard;
+    use typescript_eval::interpreter::builtins::promise::create_promise;
     use typescript_eval::JsError;
 
     let mut interp = Interpreter::new();
 
     // Create a pending promise directly
-    let (promise, _guard) = create_promise_with_guard(&mut interp);
+    let guard = interp.heap.create_guard();
+    let promise = create_promise(&mut interp, &guard);
 
     // Set up state to await the pending promise
     let mut state = ExecutionState::new();

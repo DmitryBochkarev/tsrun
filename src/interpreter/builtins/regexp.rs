@@ -54,7 +54,8 @@ pub fn regexp_constructor(
     let sticky_key = interp.key("sticky");
     let last_index_key = interp.key("lastIndex");
 
-    let (regexp_obj, guard) = interp.create_object_with_guard();
+    let guard = interp.heap.create_guard();
+    let regexp_obj = interp.create_object(&guard);
     {
         let mut obj = regexp_obj.borrow_mut();
         obj.exotic = ExoticObject::RegExp {
@@ -207,7 +208,8 @@ pub fn regexp_exec(
                     None => result.push(JsValue::Undefined),
                 }
             }
-            let (arr, guard) = interp.create_array(result);
+            let guard = interp.heap.create_guard();
+            let arr = interp.create_array_from(&guard, result);
 
             // Calculate actual index in original string
             let match_start = caps.get(0).map(|m| m.start()).unwrap_or(0);

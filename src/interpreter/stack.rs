@@ -13,7 +13,7 @@ use crate::ast::{
     VariableKind,
 };
 use crate::error::JsError;
-use crate::gc::Gc;
+use crate::gc::{Gc, Guard};
 use crate::value::{
     Binding, CheapClone, ExoticObject, Guarded, JsObject, JsString, JsValue, PromiseStatus,
 };
@@ -279,6 +279,8 @@ pub enum Frame {
         label: LoopLabel,
         /// Saved environment to restore after loop
         saved_env: Gc<JsObject>,
+        /// Guard to keep iterable's objects alive during iteration
+        iterable_guard: Option<Guard<JsObject>>,
     },
 
     /// For-of iteration: after body, proceed to next item
@@ -289,6 +291,8 @@ pub enum Frame {
         body: Rc<Statement>,
         label: LoopLabel,
         saved_env: Gc<JsObject>,
+        /// Guard to keep iterable's objects alive during iteration
+        iterable_guard: Option<Guard<JsObject>>,
     },
 
     /// For-of loop over a generator: call next() each iteration
@@ -751,7 +755,17 @@ impl Interpreter {
                 body,
                 label,
                 saved_env,
-            } => self.step_for_of_loop(state, items, index, left, body, label, saved_env),
+                iterable_guard,
+            } => self.step_for_of_loop(
+                state,
+                items,
+                index,
+                left,
+                body,
+                label,
+                saved_env,
+                iterable_guard,
+            ),
 
             Frame::ForOfAfterBody {
                 items,
@@ -760,7 +774,17 @@ impl Interpreter {
                 body,
                 label,
                 saved_env,
-            } => self.step_for_of_after_body(state, items, index, left, body, label, saved_env),
+                iterable_guard,
+            } => self.step_for_of_after_body(
+                state,
+                items,
+                index,
+                left,
+                body,
+                label,
+                saved_env,
+                iterable_guard,
+            ),
 
             Frame::ForOfGenerator(data) => self.step_for_of_generator(
                 state,
@@ -2385,9 +2409,12 @@ impl Interpreter {
         for_of: &ForOfStatement,
         label: LoopLabel,
     ) -> StepResult {
-        // Evaluate right side
-        let right = match self.evaluate_expression(&for_of.right) {
-            Ok(guarded) => guarded.value,
+        // Evaluate right side - keep the guard alive to protect array elements!
+        let Guarded {
+            value: right,
+            guard: iterable_guard,
+        } = match self.evaluate_expression(&for_of.right) {
+            Ok(guarded) => guarded,
             Err(e) => return StepResult::Error(e),
         };
 
@@ -2427,7 +2454,7 @@ impl Interpreter {
             _ => vec![],
         };
 
-        // Push loop frame
+        // Push loop frame - include the guard to keep iterable objects alive during iteration
         state.push_frame(Frame::ForOfLoop {
             items: Rc::new(items),
             index: 0,
@@ -2435,6 +2462,7 @@ impl Interpreter {
             body: Rc::new((*for_of.body).clone()),
             label,
             saved_env,
+            iterable_guard,
         });
 
         StepResult::Continue
@@ -2450,6 +2478,7 @@ impl Interpreter {
         body: Rc<Statement>,
         label: LoopLabel,
         saved_env: Gc<JsObject>,
+        iterable_guard: Option<Guard<JsObject>>,
     ) -> StepResult {
         // Check if we've iterated through all items
         if index >= items.len() {
@@ -2502,7 +2531,7 @@ impl Interpreter {
             }
         }
 
-        // Push after-body frame to handle next iteration
+        // Push after-body frame to handle next iteration (keep iterable_guard alive)
         state.push_frame(Frame::ForOfAfterBody {
             items,
             index,
@@ -2510,6 +2539,7 @@ impl Interpreter {
             body: body.clone(),
             label,
             saved_env,
+            iterable_guard,
         });
 
         // Push body statement
@@ -2528,6 +2558,7 @@ impl Interpreter {
         body: Rc<Statement>,
         label: LoopLabel,
         saved_env: Gc<JsObject>,
+        iterable_guard: Option<Guard<JsObject>>,
     ) -> StepResult {
         // Check completion type
         match &state.completion {
@@ -2573,7 +2604,7 @@ impl Interpreter {
         // Pop body result
         let _ = state.pop_value();
 
-        // Push next iteration
+        // Push next iteration (keep iterable_guard alive through loop)
         state.push_frame(Frame::ForOfLoop {
             items,
             index: index + 1,
@@ -2581,6 +2612,7 @@ impl Interpreter {
             body,
             label,
             saved_env,
+            iterable_guard,
         });
 
         StepResult::Continue
@@ -3172,8 +3204,10 @@ impl Interpreter {
         let params = func.params.clone();
         let body = Rc::new(crate::value::FunctionBody::Block(func.body.clone()));
 
-        // Create function with temp guard
-        let (func_obj, _temp) = self.create_function_with_guard(
+        // Create function with guard
+        let guard = self.heap.create_guard();
+        let func_obj = self.create_interpreted_function(
+            &guard,
             name.clone(),
             params,
             body,
@@ -3183,7 +3217,7 @@ impl Interpreter {
             func.async_,
         );
 
-        // Transfer ownership to environment before temp guard is dropped
+        // Transfer ownership to environment before guard is dropped
         if let Some(js_name) = name {
             self.env_define(js_name, JsValue::Object(func_obj), true);
         }

@@ -7,7 +7,7 @@ use crate::interpreter::Interpreter;
 use crate::value::{CheapClone, Guarded, JsFunction, JsValue};
 use crate::{InternalModule, Order, OrderId};
 
-use super::promise::create_promise_with_guard;
+use super::promise::create_promise;
 
 /// Create the eval:internal module
 pub fn create_eval_internal_module() -> InternalModule {
@@ -36,11 +36,18 @@ fn order_syscall(
     interp.next_order_id += 1;
 
     // Create a pending promise
-    let (promise, promise_guard) = create_promise_with_guard(interp);
+    let promise_guard = interp.heap.create_guard();
+    let promise = create_promise(interp, &promise_guard);
 
     // Create resolve/reject functions for this promise
-    let resolve_fn = interp.create_function(JsFunction::PromiseResolve(promise.cheap_clone()));
-    let reject_fn = interp.create_function(JsFunction::PromiseReject(promise.cheap_clone()));
+    let resolve_fn = interp.create_js_function(
+        &promise_guard,
+        JsFunction::PromiseResolve(promise.cheap_clone()),
+    );
+    let reject_fn = interp.create_js_function(
+        &promise_guard,
+        JsFunction::PromiseReject(promise.cheap_clone()),
+    );
 
     // Store callbacks for order fulfillment
     interp.order_callbacks.insert(id, (resolve_fn, reject_fn));

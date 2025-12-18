@@ -7,8 +7,9 @@ use crate::value::{ExoticObject, Guarded, JsObject, JsString, JsValue};
 
 /// Initialize JSON object and add it to globals
 pub fn init_json(interp: &mut Interpreter) {
-    let (json, _json_guard) = interp.create_object_with_guard();
-    interp.root_guard.guard(json.clone());
+    // Use root_guard for permanent objects
+    let json = interp.root_guard.alloc();
+    json.borrow_mut().prototype = Some(interp.object_prototype.clone());
 
     interp.register_method(&json, "stringify", json_stringify, 1);
     interp.register_method(&json, "parse", json_parse, 1);
@@ -22,8 +23,9 @@ pub fn init_json(interp: &mut Interpreter) {
 
 /// Create JSON object with stringify and parse methods (for compatibility)
 pub fn create_json_object(interp: &mut Interpreter) -> Gc<JsObject> {
-    let (json, _json_guard) = interp.create_object_with_guard();
-    interp.root_guard.guard(json.clone());
+    // Use root_guard for permanent objects
+    let json = interp.root_guard.alloc();
+    json.borrow_mut().prototype = Some(interp.object_prototype.clone());
 
     interp.register_method(&json, "stringify", json_stringify, 1);
     interp.register_method(&json, "parse", json_parse, 1);
@@ -110,20 +112,13 @@ pub fn json_parse(
     let json: serde_json::Value = serde_json::from_str(text_str.as_str())
         .map_err(|e| JsError::syntax_error(format!("JSON parse error: {}", e), 0, 0))?;
 
-    // Collect all guards to keep objects alive during construction
-    let mut guards: Vec<Guard<JsObject>> = Vec::new();
-    let value = json_to_js_value_guarded(interp, &json, &mut guards)?;
+    // Use a single guard for all objects created during parsing
+    let guard = interp.heap.create_guard();
+    let value = json_to_js_value_with_guard(interp, &json, &guard)?;
 
-    // Return the result with a guard if it's an object
-    if let JsValue::Object(ref obj) = value {
-        // Move the first guard (the top-level object's guard) into Guarded
-        // The rest of the guards will be dropped, but that's fine because
-        // nested objects are now owned by their parents
-        if let Some(guard) = guards.into_iter().next() {
-            return Ok(Guarded::with_guard(value, guard));
-        }
-        // If no guard, use the root guard to protect it
-        interp.root_guard.guard(obj.clone());
+    // Return the result with the guard if it's an object
+    if matches!(value, JsValue::Object(_)) {
+        return Ok(Guarded::with_guard(value, guard));
     }
     Ok(Guarded::unguarded(value))
 }
@@ -200,11 +195,11 @@ pub fn js_value_to_json(value: &JsValue) -> Result<serde_json::Value, JsError> {
     })
 }
 
-/// Convert a serde_json value to a JsValue, collecting guards to keep objects alive
-fn json_to_js_value_guarded(
+/// Convert a serde_json value to a JsValue using a provided guard
+fn json_to_js_value_with_guard(
     interp: &mut Interpreter,
     json: &serde_json::Value,
-    guards: &mut Vec<Guard<JsObject>>,
+    guard: &Guard<JsObject>,
 ) -> Result<JsValue, JsError> {
     Ok(match json {
         serde_json::Value::Null => JsValue::Null,
@@ -212,24 +207,22 @@ fn json_to_js_value_guarded(
         serde_json::Value::Number(n) => JsValue::Number(n.as_f64().unwrap_or(0.0)),
         serde_json::Value::String(s) => JsValue::String(JsString::from(s.clone())),
         serde_json::Value::Array(arr) => {
-            // First build all elements with guards collected
+            // First build all elements
             let mut elements = Vec::with_capacity(arr.len());
             for item in arr {
-                let val = json_to_js_value_guarded(interp, item, guards)?;
+                let val = json_to_js_value_with_guard(interp, item, guard)?;
                 elements.push(val);
             }
-            let (result, guard) = interp.create_array(elements);
-            guards.push(guard);
+            let result = interp.create_array_from(guard, elements);
             JsValue::Object(result)
         }
         serde_json::Value::Object(map) => {
-            let (obj, guard) = interp.create_object_with_guard();
+            let obj = interp.create_object(guard);
             for (key, value) in map {
-                let js_value = json_to_js_value_guarded(interp, value, guards)?;
+                let js_value = json_to_js_value_with_guard(interp, value, guard)?;
                 let interned_key = interp.key(key);
                 obj.borrow_mut().set_property(interned_key, js_value);
             }
-            guards.push(guard);
             JsValue::Object(obj)
         }
     })
@@ -240,8 +233,7 @@ pub fn json_to_js_value_with_interp(
     interp: &mut Interpreter,
     json: &serde_json::Value,
 ) -> Result<JsValue, JsError> {
-    let mut guards = Vec::new();
-    let value = json_to_js_value_guarded(interp, json, &mut guards)?;
-    // Note: guards will be dropped after this, but objects should be owned by their parents
-    Ok(value)
+    // Create a temporary guard - caller should guard the result if needed
+    let guard = interp.heap.create_guard();
+    json_to_js_value_with_guard(interp, json, &guard)
 }

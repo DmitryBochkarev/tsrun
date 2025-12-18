@@ -66,7 +66,8 @@ pub fn map_constructor(
 ) -> Result<Guarded, JsError> {
     let size_key = interp.key("size");
 
-    let (map_obj, map_guard) = interp.create_object_with_guard();
+    let guard = interp.heap.create_guard();
+    let map_obj = interp.create_object(&guard);
     {
         let mut obj = map_obj.borrow_mut();
         obj.exotic = ExoticObject::Map {
@@ -124,7 +125,7 @@ pub fn map_constructor(
         }
     }
 
-    Ok(Guarded::with_guard(JsValue::Object(map_obj), map_guard))
+    Ok(Guarded::with_guard(JsValue::Object(map_obj), guard))
 }
 
 pub fn map_get(
@@ -324,7 +325,8 @@ pub fn map_keys(
         }
     }
 
-    let (arr, guard) = interp.create_array(keys);
+    let guard = interp.heap.create_guard();
+    let arr = interp.create_array_from(&guard, keys);
     Ok(Guarded::with_guard(JsValue::Object(arr), guard))
 }
 
@@ -351,7 +353,8 @@ pub fn map_values(
         }
     }
 
-    let (arr, guard) = interp.create_array(values);
+    let guard = interp.heap.create_guard();
+    let arr = interp.create_array_from(&guard, values);
     Ok(Guarded::with_guard(JsValue::Object(arr), guard))
 }
 
@@ -365,6 +368,10 @@ pub fn map_entries(
             "Map.prototype.entries called on non-object",
         ));
     };
+
+    // Guard the map and collect entries
+    let guard = interp.heap.create_guard();
+    guard.guard(map_obj.clone());
 
     let raw_entries: Vec<(JsValue, JsValue)>;
     {
@@ -381,11 +388,10 @@ pub fn map_entries(
     // Build entry arrays
     let mut entries = Vec::with_capacity(raw_entries.len());
     for (k, v) in raw_entries {
-        let (arr, _guard) = interp.create_array(vec![k, v]);
-        interp.root_guard.guard(arr.clone());
+        let arr = interp.create_array_from(&guard, vec![k, v]);
         entries.push(JsValue::Object(arr));
     }
 
-    let (result, guard) = interp.create_array(entries);
+    let result = interp.create_array_from(&guard, entries);
     Ok(Guarded::with_guard(JsValue::Object(result), guard))
 }

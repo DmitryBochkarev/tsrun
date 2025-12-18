@@ -171,38 +171,68 @@ fn evaluate_member(&mut self, member: &MemberExpression) -> Result<JsValue, JsEr
 Use `Guarded::with_value(new_value)` to easily propagate a guard with a new value.
 
 **Rule: Never assign temporary objects to root_guard:**
-Methods that create temporary objects (like `create_array`, `create_object`) must return the temporary guard alongside the object:
-```rust
-// CORRECT: Return guard with temporary object
-pub fn create_object_with_guard(&mut self) -> (Gc<JsObject>, Guard<JsObject>) {
-    let temp = self.heap.create_guard();
-    let obj = temp.alloc();
-    obj.borrow_mut().prototype = Some(self.object_prototype);
-    (obj, temp)
-}
+Do not allocate temporary objects from `root_guard` - they will never be garbage collected, causing memory leaks.
 
-// WRONG: Assigning to root_guard keeps object alive forever (memory leak!)
-pub fn create_object(&mut self) -> Gc<JsObject> {
-    let obj = self.root_guard.alloc();  // BUG: Never freed!
-    obj
-}
+### Object Creation API (Refactoring In Progress)
+
+**Target API:** Caller provides guard, method allocates from it:
+```rust
+// CORRECT: Caller controls lifetime via guard
+let guard = self.heap.create_guard();
+let obj = self.create_object(&guard);        // With prototype
+let raw = self.create_object_raw(&guard);    // Without prototype
+let arr = self.create_array_from(&guard, elements);
+let func = self.create_interpreted_function(&guard, name, params, body, closure, span, generator, async_);
+let native = self.create_native_fn(&guard, "name", native_fn, arity);
+
+// Multiple objects share one guard
+let guard = self.heap.create_guard();
+let obj1 = self.create_object(&guard);
+let obj2 = self.create_object(&guard);
+let arr = self.create_array_from(&guard, vec![JsValue::Object(obj1), JsValue::Object(obj2)]);
 ```
 
-**Why this matters:** The root_guard is never dropped, so objects allocated from it will never be garbage collected. This causes memory leaks. Instead, return a temporary guard that the caller manages - when the guard is dropped, the object becomes eligible for GC.
+**Deprecated API (to be removed):** Methods that create their own guards internally:
+```rust
+// DEPRECATED: Creates guard internally, less control
+let (obj, guard) = self.create_object_with_guard();  // Use create_object(&guard)
+let (arr, guard) = self.create_array_with_guard(elements);  // Use create_array_from(&guard, elements)
+let (func, guard) = self.create_function_with_guard(...);  // Use create_interpreted_function(&guard, ...)
+let func = self.create_native_function(...);  // Use create_native_fn(&guard, ...)
+let func = self.create_function(js_func);  // Use create_js_function(&guard, js_func)
+```
+
+**Method variants:**
+| Method | Description |
+|--------|-------------|
+| `create_object(&guard)` | Plain object with `object_prototype` |
+| `create_object_raw(&guard)` | Plain object without prototype |
+| `create_array_from(&guard, elements)` | Array with `array_prototype` |
+| `create_empty_array(&guard)` | Empty array with `array_prototype` |
+| `create_interpreted_function(&guard, ...)` | Interpreted function with `function_prototype` |
+| `create_native_fn(&guard, name, func, arity)` | Native function with `function_prototype` |
+| `create_js_function(&guard, js_func)` | Function from JsFunction variant |
+
+**Why this matters:**
+- Caller has explicit control over object lifetime
+- One guard can protect multiple related objects (fewer allocations)
+- Makes GC safety more visible at call sites
 
 **Rule: Return Guarded when returning JsValue:**
 When functions return `JsValue`, they should return `Guarded` to keep the guard alive until ownership is transferred:
 ```rust
 // CORRECT: Return Guarded to maintain GC safety
 pub fn some_builtin(interp: &mut Interpreter, ...) -> Result<Guarded, JsError> {
-    let (arr, guard) = interp.create_array(elements);
+    let guard = interp.heap.create_guard();
+    let arr = interp.create_array(&guard, elements);
     Ok(Guarded { value: JsValue::Object(arr), guard: Some(guard) })
 }
 
 // WRONG: Returning JsValue drops the guard, object may be collected!
 pub fn some_builtin(interp: &mut Interpreter, ...) -> Result<JsValue, JsError> {
-    let (arr, _guard) = interp.create_array(elements);
-    Ok(JsValue::Object(arr))  // BUG: _guard dropped here!
+    let guard = interp.heap.create_guard();
+    let arr = interp.create_array(&guard, elements);
+    Ok(JsValue::Object(arr))  // BUG: guard dropped here!
 }
 ```
 
@@ -229,15 +259,17 @@ When creating objects that reference other values, **guard the input values BEFO
 ```rust
 // CORRECT: Guard value, then allocate promise
 pub fn create_fulfilled_promise(interp: &mut Interpreter, value: JsValue) -> Gc<JsObject> {
-    let _value_guard = interp.guard_value(&value);  // Guard FIRST
-    let (obj, _guard) = interp.create_object_with_guard();  // Then allocate
+    let guard = interp.heap.create_guard();
+    interp.guard_value_with(&guard, &value);  // Guard input FIRST
+    let obj = interp.create_object(&guard);   // Then allocate
     // ... store value in promise state ...
     obj
 }
 
 // WRONG: Allocating first may trigger GC that collects value!
 pub fn create_fulfilled_promise(interp: &mut Interpreter, value: JsValue) -> Gc<JsObject> {
-    let (obj, _guard) = interp.create_object_with_guard();  // GC may run here!
+    let guard = interp.heap.create_guard();
+    let obj = interp.create_object(&guard);  // GC may run here!
     // value may have been collected if it was the only reference
     // ... store value in promise state ...  // BUG: value may be invalid!
     obj
@@ -248,33 +280,24 @@ pub fn create_fulfilled_promise(interp: &mut Interpreter, value: JsValue) -> Gc<
 
 ### Collecting Multiple Results Before Creating Container
 
-When building a collection (array, object) from multiple computed values, **keep all intermediate guards alive until the container is created**:
+When building a collection (array, object) from multiple computed values, **use a single guard for all objects**:
 
 ```rust
-// CORRECT: Keep all guards alive until array is created
+// CORRECT: Single guard protects all objects
+let guard = interp.heap.create_guard();
 let mut results: Vec<JsValue> = Vec::new();
-let mut guards: Vec<Guard<JsObject>> = Vec::new();
 
 for item in items {
-    let (result_obj, guard) = interp.create_object_with_guard();
+    let result_obj = interp.create_object(&guard);
     // ... populate result_obj ...
     results.push(JsValue::Object(result_obj));
-    guards.push(guard);  // Keep guard alive!
 }
 
-let (arr, arr_guard) = interp.create_array_with_guard(results);
-drop(guards);  // Safe to drop after array owns the objects
-
-// WRONG: Guard dropped on each iteration, objects may be collected!
-let mut results: Vec<JsValue> = Vec::new();
-for item in items {
-    let (result_obj, _guard) = interp.create_object_with_guard();
-    results.push(JsValue::Object(result_obj));
-    // _guard dropped here! Object may be collected before array creation
-}
+let arr = interp.create_array(&guard, results);
+// guard keeps everything alive until end of scope
 ```
 
-**Why this matters:** If guards are dropped between iterations, GC triggered by a subsequent allocation can collect earlier objects before they're safely stored in the container.
+**Why this matters:** With the new API, one guard can protect multiple objects, eliminating the need to collect guards in a separate vector.
 
 ### Promise/Async Value Guarding
 
