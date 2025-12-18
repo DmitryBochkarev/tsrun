@@ -4,7 +4,7 @@
 
 **Project:** `typescript-eval`
 **Purpose:** Execute TypeScript for config/manifest generation from Rust
-**Status:** Milestone 9 Complete (Async/Await, Generators, 839 tests passing)
+**Status:** Milestone 10 Complete (Decorators, 843 tests passing)
 
 ### Requirements
 
@@ -76,6 +76,11 @@ The interpreter uses an **order-based suspension model**:
   - `eval:internal` with `__order__`, `__cancelOrder__`, `__getOrderId__`
   - Import/export statement execution
   - Static import resolution (internal modules resolve automatically)
+- ~~**Decorators**~~ ✅
+  - Class, method, getter/setter, field decorators
+  - Decorator factories and composition
+  - Static and private member decorators
+  - Context object with `kind`, `name`, `static`, `private`
 
 ---
 
@@ -660,14 +665,20 @@ This section documents features that are NOT implemented for a complete TypeScri
 These features have AST support but are ignored or partially handled at runtime:
 
 #### Decorators
-- [ ] Class decorators (`@decorator class Foo {}`)
-- [ ] Method decorators (`@decorator method() {}`)
-- [ ] Property decorators (`@decorator prop = value`)
+- [x] Class decorators (`@decorator class Foo {}`)
+- [x] Method decorators (`@decorator method() {}`)
+- [x] Property/field decorators (`@decorator prop = value`)
 - [ ] Parameter decorators (`method(@decorator param) {}`)
-- [ ] Decorator factories (`@decorator() class Foo {}`)
-- [ ] Decorator composition (multiple decorators)
+- [x] Decorator factories (`@decorator() class Foo {}`)
+- [x] Decorator composition (multiple decorators)
+- [x] Static member decorators
+- [x] Private member decorators
+- [x] Getter/setter decorators
+- [x] Decorator context object (`kind`, `name`, `static`, `private`)
+- [ ] `context.addInitializer()`
+- [ ] Auto-accessor decorators (`accessor` keyword)
 
-**Status:** Parsed into AST (`Decorator` struct), stored on classes/methods/properties, but never evaluated at runtime.
+**Status:** Implemented for class, method, getter/setter, and field decorators. Context provides `kind`, `name`, `static`, `private` properties. Parameter decorators and auto-accessors not yet supported.
 
 #### Dynamic Import
 - [ ] `import("./module")` expression at runtime

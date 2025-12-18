@@ -48,9 +48,65 @@ impl<'a> Parser<'a> {
         })
     }
 
+    // ============ DECORATORS ============
+
+    /// Parse a single decorator: @expression
+    /// The expression can be:
+    /// - An identifier: @decorator
+    /// - A member expression: @Reflect.metadata
+    /// - A call expression: @decorator() or @decorator("arg")
+    fn parse_decorator(&mut self) -> Result<Decorator, JsError> {
+        let start = self.current.span;
+        self.require_token(&TokenKind::At)?;
+
+        // Parse the decorator expression - this can be an identifier, member access, or call
+        // We use left-hand-side expression parsing which handles member access and calls
+        let expression = self.parse_left_hand_side_expression()?;
+
+        let span = self.span_from(start);
+        Ok(Decorator { expression, span })
+    }
+
+    /// Parse zero or more decorators: @dec1 @dec2 ...
+    fn parse_decorators(&mut self) -> Result<Vec<Decorator>, JsError> {
+        let mut decorators = vec![];
+        while self.check(&TokenKind::At) {
+            decorators.push(self.parse_decorator()?);
+        }
+        Ok(decorators)
+    }
+
     // ============ STATEMENTS ============
 
     fn parse_statement(&mut self) -> Result<Statement, JsError> {
+        // Check for decorators first - they can precede class declarations
+        if self.check(&TokenKind::At) {
+            let decorators = self.parse_decorators()?;
+            // After decorators, we expect a class declaration (or export)
+            if self.check(&TokenKind::Class) {
+                let mut class_decl = self.parse_class_declaration()?;
+                class_decl.decorators = decorators;
+                return Ok(Statement::ClassDeclaration(class_decl));
+            } else if self.check(&TokenKind::Export) {
+                // Handle: @decorator export class Foo {}
+                // or: @decorator export default class Foo {}
+                let mut export_decl = self.parse_export()?;
+                // If the export contains a class declaration, attach decorators to it
+                if let Some(ref mut decl) = export_decl.declaration {
+                    if let Statement::ClassDeclaration(ref mut class_decl) = **decl {
+                        class_decl.decorators = decorators;
+                    }
+                }
+                return Ok(Statement::Export(export_decl));
+            } else {
+                return Err(JsError::syntax_error(
+                    "Decorators can only be applied to class declarations".to_string(),
+                    self.current.span.line,
+                    self.current.span.column,
+                ));
+            }
+        }
+
         // Check for labeled statement first (identifier followed by colon)
         // Must be done before match due to borrow checker
         if self.check_identifier() && self.peek_is(&TokenKind::Colon) {
@@ -505,6 +561,9 @@ impl<'a> Parser<'a> {
     fn parse_class_member(&mut self) -> Result<ClassMember, JsError> {
         let start = self.current.span;
 
+        // Parse decorators first
+        let decorators = self.parse_decorators()?;
+
         let static_ = self.match_token(&TokenKind::Static);
 
         // Check for static initialization block: static { ... }
@@ -573,7 +632,7 @@ impl<'a> Parser<'a> {
                 computed,
                 static_,
                 accessibility,
-                decorators: vec![],
+                decorators,
                 span,
             }))
         } else {
@@ -603,7 +662,7 @@ impl<'a> Parser<'a> {
                 readonly,
                 optional,
                 accessibility,
-                decorators: vec![],
+                decorators,
                 span,
             }))
         }
@@ -1296,9 +1355,27 @@ impl<'a> Parser<'a> {
             false
         };
 
+        // Check for decorators after export: export @decorator class Foo {}
+        let decorators = self.parse_decorators()?;
+
         // export default
         if self.match_token(&TokenKind::Default) {
-            let declaration = if self.check(&TokenKind::Async) {
+            let declaration = if self.check(&TokenKind::At) {
+                // export default @decorator class Foo {}
+                let more_decorators = self.parse_decorators()?;
+                let all_decorators = [decorators, more_decorators].concat();
+                if self.check(&TokenKind::Class) {
+                    let mut class_decl = self.parse_class_declaration()?;
+                    class_decl.decorators = all_decorators;
+                    Some(Box::new(Statement::ClassDeclaration(class_decl)))
+                } else {
+                    return Err(JsError::syntax_error(
+                        "Decorators can only be applied to class declarations".to_string(),
+                        self.current.span.line,
+                        self.current.span.column,
+                    ));
+                }
+            } else if self.check(&TokenKind::Async) {
                 // export default async function
                 self.advance(); // consume 'async'
                 self.require_token(&TokenKind::Function)?;
@@ -1310,9 +1387,9 @@ impl<'a> Parser<'a> {
                     self.parse_function_declaration(false)?,
                 )))
             } else if self.check(&TokenKind::Class) {
-                Some(Box::new(Statement::ClassDeclaration(
-                    self.parse_class_declaration()?,
-                )))
+                let mut class_decl = self.parse_class_declaration()?;
+                class_decl.decorators = decorators;
+                Some(Box::new(Statement::ClassDeclaration(class_decl)))
             } else {
                 let expr = self.parse_assignment_expression()?;
                 self.expect_semicolon()?;
@@ -1413,9 +1490,11 @@ impl<'a> Parser<'a> {
             TokenKind::Function => Some(Box::new(Statement::FunctionDeclaration(
                 self.parse_function_declaration(false)?,
             ))),
-            TokenKind::Class => Some(Box::new(Statement::ClassDeclaration(
-                self.parse_class_declaration()?,
-            ))),
+            TokenKind::Class => {
+                let mut class_decl = self.parse_class_declaration()?;
+                class_decl.decorators = decorators;
+                Some(Box::new(Statement::ClassDeclaration(class_decl)))
+            }
             TokenKind::Interface => Some(Box::new(Statement::InterfaceDeclaration(
                 self.parse_interface()?,
             ))),
@@ -1969,6 +2048,30 @@ impl<'a> Parser<'a> {
 
             // Function expression
             TokenKind::Function => self.parse_function_expression(false),
+
+            // Decorated class expression: @decorator class {}
+            TokenKind::At => {
+                let decorators = self.parse_decorators()?;
+                if self.check(&TokenKind::Class) {
+                    let decl = self.parse_class_declaration()?;
+                    Ok(Expression::Class(ClassExpression {
+                        id: decl.id,
+                        type_parameters: decl.type_parameters,
+                        super_class: decl.super_class,
+                        implements: decl.implements,
+                        body: decl.body,
+                        decorators,
+                        span: decl.span,
+                    }))
+                } else {
+                    Err(JsError::syntax_error(
+                        "Decorators can only be applied to class expressions in expression position"
+                            .to_string(),
+                        self.current.span.line,
+                        self.current.span.column,
+                    ))
+                }
+            }
 
             // Class expression
             TokenKind::Class => self.parse_class_expression(),
@@ -4829,5 +4932,309 @@ export function parseLinks(text: string): ParsedElement[] {
         };
         // The name should include the # prefix
         assert_eq!(id.name.as_str(), "#foo");
+    }
+
+    // ========================================================================
+    // Decorator parsing tests
+    // ========================================================================
+
+    #[test]
+    fn test_parse_class_decorator_basic() {
+        // Basic class decorator (JavaScript style)
+        let prog = parse("@decorator class Foo {}");
+        assert_eq!(prog.body.len(), 1);
+        let Statement::ClassDeclaration(class) = &prog.body[0] else {
+            panic!("Expected class declaration");
+        };
+        assert_eq!(class.decorators.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_class_decorator_typescript() {
+        // Class decorator with TypeScript type annotations
+        let prog = parse("@decorator class Foo { value: number = 42; }");
+        assert_eq!(prog.body.len(), 1);
+        let Statement::ClassDeclaration(class) = &prog.body[0] else {
+            panic!("Expected class declaration");
+        };
+        assert_eq!(class.decorators.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_class_decorator_factory() {
+        // Decorator factory with arguments
+        let prog = parse("@tag('important') class Widget {}");
+        assert_eq!(prog.body.len(), 1);
+        let Statement::ClassDeclaration(class) = &prog.body[0] else {
+            panic!("Expected class declaration");
+        };
+        assert_eq!(class.decorators.len(), 1);
+        // The decorator expression should be a call expression
+        let Expression::Call(_) = &class.decorators[0].expression else {
+            panic!("Expected decorator to be a call expression");
+        };
+    }
+
+    #[test]
+    fn test_parse_multiple_class_decorators() {
+        // Multiple decorators on a class
+        let prog = parse("@first @second @third class Foo {}");
+        assert_eq!(prog.body.len(), 1);
+        let Statement::ClassDeclaration(class) = &prog.body[0] else {
+            panic!("Expected class declaration");
+        };
+        assert_eq!(class.decorators.len(), 3);
+    }
+
+    #[test]
+    fn test_parse_method_decorator() {
+        // Method decorator
+        let prog = parse(
+            r#"class Foo {
+            @log
+            method(): void {}
+        }"#,
+        );
+        assert_eq!(prog.body.len(), 1);
+        let Statement::ClassDeclaration(class) = &prog.body[0] else {
+            panic!("Expected class declaration");
+        };
+        let ClassMember::Method(method) = &class.body.members[0] else {
+            panic!("Expected method");
+        };
+        assert_eq!(method.decorators.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_method_decorator_factory() {
+        // Method decorator with factory
+        let prog = parse(
+            r#"class Foo {
+            @log("debug")
+            method(): void {}
+        }"#,
+        );
+        assert_eq!(prog.body.len(), 1);
+        let Statement::ClassDeclaration(class) = &prog.body[0] else {
+            panic!("Expected class declaration");
+        };
+        let ClassMember::Method(method) = &class.body.members[0] else {
+            panic!("Expected method");
+        };
+        assert_eq!(method.decorators.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_property_decorator() {
+        // Property decorator
+        let prog = parse(
+            r#"class Foo {
+            @validate
+            value: number = 0;
+        }"#,
+        );
+        assert_eq!(prog.body.len(), 1);
+        let Statement::ClassDeclaration(class) = &prog.body[0] else {
+            panic!("Expected class declaration");
+        };
+        let ClassMember::Property(prop) = &class.body.members[0] else {
+            panic!("Expected property");
+        };
+        assert_eq!(prop.decorators.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_property_decorator_factory() {
+        // Property decorator with factory
+        let prog = parse(
+            r#"class Foo {
+            @min(0)
+            @max(100)
+            value: number = 50;
+        }"#,
+        );
+        assert_eq!(prog.body.len(), 1);
+        let Statement::ClassDeclaration(class) = &prog.body[0] else {
+            panic!("Expected class declaration");
+        };
+        let ClassMember::Property(prop) = &class.body.members[0] else {
+            panic!("Expected property");
+        };
+        assert_eq!(prop.decorators.len(), 2);
+    }
+
+    #[test]
+    fn test_parse_static_method_decorator() {
+        // Static method decorator
+        let prog = parse(
+            r#"class Foo {
+            @cache
+            static compute(): number { return 42; }
+        }"#,
+        );
+        assert_eq!(prog.body.len(), 1);
+        let Statement::ClassDeclaration(class) = &prog.body[0] else {
+            panic!("Expected class declaration");
+        };
+        let ClassMember::Method(method) = &class.body.members[0] else {
+            panic!("Expected method");
+        };
+        assert!(method.static_);
+        assert_eq!(method.decorators.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_getter_decorator() {
+        // Getter decorator
+        let prog = parse(
+            r#"class Foo {
+            @memoize
+            get value(): number { return 42; }
+        }"#,
+        );
+        assert_eq!(prog.body.len(), 1);
+        let Statement::ClassDeclaration(class) = &prog.body[0] else {
+            panic!("Expected class declaration");
+        };
+        let ClassMember::Method(method) = &class.body.members[0] else {
+            panic!("Expected method");
+        };
+        assert!(matches!(method.kind, MethodKind::Get));
+        assert_eq!(method.decorators.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_setter_decorator() {
+        // Setter decorator
+        let prog = parse(
+            r#"class Foo {
+            @validate
+            set value(v: number) {}
+        }"#,
+        );
+        assert_eq!(prog.body.len(), 1);
+        let Statement::ClassDeclaration(class) = &prog.body[0] else {
+            panic!("Expected class declaration");
+        };
+        let ClassMember::Method(method) = &class.body.members[0] else {
+            panic!("Expected method");
+        };
+        assert!(matches!(method.kind, MethodKind::Set));
+        assert_eq!(method.decorators.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_private_method_decorator() {
+        // Private method decorator
+        let prog = parse(
+            r#"class Foo {
+            @wrap
+            #privateMethod(): number { return 42; }
+        }"#,
+        );
+        assert_eq!(prog.body.len(), 1);
+        let Statement::ClassDeclaration(class) = &prog.body[0] else {
+            panic!("Expected class declaration");
+        };
+        let ClassMember::Method(method) = &class.body.members[0] else {
+            panic!("Expected method");
+        };
+        assert_eq!(method.decorators.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_private_field_decorator() {
+        // Private field decorator
+        let prog = parse(
+            r#"class Foo {
+            @transform
+            #secret: string = "hidden";
+        }"#,
+        );
+        assert_eq!(prog.body.len(), 1);
+        let Statement::ClassDeclaration(class) = &prog.body[0] else {
+            panic!("Expected class declaration");
+        };
+        let ClassMember::Property(prop) = &class.body.members[0] else {
+            panic!("Expected property");
+        };
+        assert_eq!(prop.decorators.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_decorator_member_expression() {
+        // Decorator with member expression
+        let prog = parse("@Reflect.metadata('key', 'value') class Foo {}");
+        assert_eq!(prog.body.len(), 1);
+        let Statement::ClassDeclaration(class) = &prog.body[0] else {
+            panic!("Expected class declaration");
+        };
+        assert_eq!(class.decorators.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_multiple_decorators_newlines() {
+        // Multiple decorators on separate lines
+        let prog = parse(
+            r#"@first
+            @second
+            @third
+            class Foo {}"#,
+        );
+        assert_eq!(prog.body.len(), 1);
+        let Statement::ClassDeclaration(class) = &prog.body[0] else {
+            panic!("Expected class declaration");
+        };
+        assert_eq!(class.decorators.len(), 3);
+    }
+
+    #[test]
+    fn test_parse_decorator_complex_class() {
+        // Complex class with multiple decorated members
+        let prog = parse(
+            r#"@entity
+            class User {
+                @column
+                name: string = "";
+
+                @column
+                @primary
+                id: number = 0;
+
+                @method
+                static create(): User { return new User(); }
+
+                @computed
+                get fullName(): string { return this.name; }
+            }"#,
+        );
+        assert_eq!(prog.body.len(), 1);
+        let Statement::ClassDeclaration(class) = &prog.body[0] else {
+            panic!("Expected class declaration");
+        };
+        assert_eq!(class.decorators.len(), 1);
+        // Should have 4 members total
+        assert_eq!(class.body.members.len(), 4);
+    }
+
+    #[test]
+    fn test_parse_class_expression_decorator() {
+        // Decorator on class expression
+        let prog = parse("const Foo = @decorator class { value: number = 1; };");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_export_decorated_class() {
+        // Export decorated class
+        let prog = parse("export @decorator class Foo {}");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_export_default_decorated_class() {
+        // Export default decorated class
+        let prog = parse("export default @decorator class Foo {}");
+        assert_eq!(prog.body.len(), 1);
     }
 }

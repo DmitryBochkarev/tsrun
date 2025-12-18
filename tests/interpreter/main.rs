@@ -21,6 +21,7 @@ mod console;
 mod control_flow;
 mod cycle_leak;
 mod date;
+mod decorator;
 mod enum_test;
 mod error;
 mod function;

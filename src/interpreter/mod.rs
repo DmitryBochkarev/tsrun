@@ -11,8 +11,8 @@ pub mod stack;
 use crate::ast::{
     Argument, ArrayElement, ArrayPattern, AssignmentExpression, AssignmentOp, AssignmentTarget,
     BinaryExpression, BinaryOp, BlockStatement, CallExpression, ClassConstructor, ClassDeclaration,
-    ClassExpression, ClassMember, ClassMethod, ClassProperty, ConditionalExpression, Expression,
-    ForInOfLeft, ForInit, FunctionParam, LiteralValue, LogicalExpression, LogicalOp,
+    ClassExpression, ClassMember, ClassMethod, ClassProperty, ConditionalExpression, Decorator,
+    Expression, ForInOfLeft, ForInit, FunctionParam, LiteralValue, LogicalExpression, LogicalOp,
     MemberExpression, MemberProperty, MethodKind, NewExpression, ObjectExpression,
     ObjectPatternProperty, ObjectProperty, ObjectPropertyKey, Pattern, Program, SequenceExpression,
     Statement, TaggedTemplateExpression, TemplateLiteral, UnaryExpression, UnaryOp,
@@ -1833,14 +1833,25 @@ impl Interpreter {
         let class_guard = self.heap.create_guard();
         let constructor_fn = self.create_class_constructor(&class_guard, class)?;
 
-        // Bind the class name first (so static blocks can reference it)
+        // Apply class decorators if any
+        let final_class = if !class.decorators.is_empty() {
+            // Evaluate decorators (top-to-bottom)
+            let evaluated_decorators = self.evaluate_decorators(&class.decorators)?;
+
+            // Apply decorators (bottom-to-top) and get the final class value
+            self.apply_class_decorators(
+                JsValue::Object(constructor_fn.cheap_clone()),
+                evaluated_decorators,
+                &class_guard,
+            )?
+        } else {
+            JsValue::Object(constructor_fn.cheap_clone())
+        };
+
+        // Bind the class name (potentially the decorated/replaced class)
         // Once bound to environment, the class becomes reachable and protected
         if let Some(id) = &class.id {
-            self.env_define(
-                id.name.cheap_clone(),
-                JsValue::Object(constructor_fn.cheap_clone()),
-                false,
-            );
+            self.env_define(id.name.cheap_clone(), final_class, false);
         }
 
         // Execute static blocks - they can reference the class name
@@ -2175,19 +2186,19 @@ impl Interpreter {
         let mut regular_methods: Vec<(JsString, Gc<JsObject>)> = Vec::new();
 
         for method in &instance_methods {
-            let method_name: JsString = match &method.key {
-                ObjectPropertyKey::Identifier(id) => id.name.cheap_clone(),
-                ObjectPropertyKey::String(s) => s.value.cheap_clone(),
+            let (method_name, is_private): (JsString, bool) = match &method.key {
+                ObjectPropertyKey::Identifier(id) => (id.name.cheap_clone(), false),
+                ObjectPropertyKey::String(s) => (s.value.cheap_clone(), false),
                 ObjectPropertyKey::Number(lit) => match &lit.value {
-                    LiteralValue::Number(n) => JsString::from(n.to_string()),
+                    LiteralValue::Number(n) => (JsString::from(n.to_string()), false),
                     _ => continue,
                 },
                 ObjectPropertyKey::Computed(_) => continue,
-                ObjectPropertyKey::PrivateIdentifier(id) => id.name.cheap_clone(),
+                ObjectPropertyKey::PrivateIdentifier(id) => (id.name.cheap_clone(), true),
             };
 
             let func = &method.value;
-            let func_obj = self.create_interpreted_function(
+            let mut func_obj = self.create_interpreted_function(
                 guard,
                 Some(method_name.cheap_clone()),
                 func.params.clone(), // Rc clone is cheap
@@ -2204,6 +2215,27 @@ impl Interpreter {
                     PropertyKey::String(self.intern("__super__")),
                     JsValue::Object(super_ctor.cheap_clone()),
                 );
+            }
+
+            // Apply method decorators if any (in reverse order - bottom to top)
+            if !method.decorators.is_empty() {
+                let evaluated_decorators = self.evaluate_decorators(&method.decorators)?;
+                let kind = match method.kind {
+                    MethodKind::Get => "getter",
+                    MethodKind::Set => "setter",
+                    MethodKind::Method => "method",
+                };
+                for (decorator, _dec_guard) in evaluated_decorators.into_iter().rev() {
+                    func_obj = self.apply_method_decorator(
+                        func_obj,
+                        decorator,
+                        method_name.cheap_clone(),
+                        false, // is_static
+                        is_private,
+                        kind,
+                        guard,
+                    )?;
+                }
             }
 
             match method.kind {
@@ -2237,18 +2269,25 @@ impl Interpreter {
         }
 
         // Build constructor body that initializes instance fields then runs user constructor
-        let field_initializers: Vec<(JsString, Option<Expression>)> = instance_fields
-            .iter()
-            .filter_map(|prop| {
-                let name: JsString = match &prop.key {
-                    ObjectPropertyKey::Identifier(id) => id.name.cheap_clone(),
-                    ObjectPropertyKey::String(s) => s.value.cheap_clone(),
-                    ObjectPropertyKey::PrivateIdentifier(id) => id.name.cheap_clone(),
-                    _ => return None,
-                };
-                Some((name, prop.value.clone()))
-            })
-            .collect();
+        // Include decorators for field transformation
+        let field_initializers: Vec<(JsString, Option<Expression>, Vec<Decorator>, bool)> =
+            instance_fields
+                .iter()
+                .filter_map(|prop| {
+                    let (name, is_private): (JsString, bool) = match &prop.key {
+                        ObjectPropertyKey::Identifier(id) => (id.name.cheap_clone(), false),
+                        ObjectPropertyKey::String(s) => (s.value.cheap_clone(), false),
+                        ObjectPropertyKey::PrivateIdentifier(id) => (id.name.cheap_clone(), true),
+                        _ => return None,
+                    };
+                    Some((
+                        name,
+                        prop.value.clone(),
+                        prop.decorators.clone(),
+                        is_private,
+                    ))
+                })
+                .collect();
 
         // Create the constructor function
         let ctor_body = if let Some(ctor) = constructor {
@@ -2286,14 +2325,40 @@ impl Interpreter {
         // Store field initializers in __fields__ if there are any
         if !field_initializers.is_empty() {
             let mut field_values: Vec<(JsString, JsValue)> = Vec::new();
-            for (name, value_expr) in field_initializers {
-                let value = if let Some(expr) = value_expr {
+            for (name, value_expr, decorators, is_private) in field_initializers {
+                // First evaluate the initial value
+                let mut value = if let Some(expr) = value_expr {
                     self.evaluate_expression(&expr)
                         .map(|g| g.value)
                         .unwrap_or(JsValue::Undefined)
                 } else {
                     JsValue::Undefined
                 };
+
+                // Apply field decorators if any
+                if !decorators.is_empty() {
+                    let evaluated_decorators = self.evaluate_decorators(&decorators)?;
+                    let mut initializers: Vec<JsValue> = Vec::new();
+
+                    // Evaluate decorators and collect initializer functions (in reverse order)
+                    for (decorator, _dec_guard) in evaluated_decorators.into_iter().rev() {
+                        if let Some(initializer) = self.apply_field_decorator(
+                            decorator,
+                            name.cheap_clone(),
+                            false, // is_static
+                            is_private,
+                            guard,
+                        )? {
+                            initializers.push(initializer);
+                        }
+                    }
+
+                    // Transform the initial value using all initializers
+                    if !initializers.is_empty() {
+                        value = self.transform_field_value(value, &initializers)?;
+                    }
+                }
+
                 field_values.push((name, value));
             }
 
@@ -2330,19 +2395,19 @@ impl Interpreter {
         let mut static_regular_methods: Vec<(JsString, Gc<JsObject>)> = Vec::new();
 
         for method in &static_methods {
-            let method_name: JsString = match &method.key {
-                ObjectPropertyKey::Identifier(id) => id.name.cheap_clone(),
-                ObjectPropertyKey::String(s) => s.value.cheap_clone(),
+            let (method_name, is_private): (JsString, bool) = match &method.key {
+                ObjectPropertyKey::Identifier(id) => (id.name.cheap_clone(), false),
+                ObjectPropertyKey::String(s) => (s.value.cheap_clone(), false),
                 ObjectPropertyKey::Number(lit) => match &lit.value {
-                    LiteralValue::Number(n) => JsString::from(n.to_string()),
+                    LiteralValue::Number(n) => (JsString::from(n.to_string()), false),
                     _ => continue,
                 },
                 ObjectPropertyKey::Computed(_) => continue,
-                ObjectPropertyKey::PrivateIdentifier(id) => id.name.cheap_clone(),
+                ObjectPropertyKey::PrivateIdentifier(id) => (id.name.cheap_clone(), true),
             };
 
             let func = &method.value;
-            let func_obj = self.create_interpreted_function(
+            let mut func_obj = self.create_interpreted_function(
                 guard,
                 Some(method_name.cheap_clone()),
                 func.params.cheap_clone(),
@@ -2353,6 +2418,27 @@ impl Interpreter {
                 func.generator,
                 func.async_,
             );
+
+            // Apply method decorators if any (in reverse order - bottom to top)
+            if !method.decorators.is_empty() {
+                let evaluated_decorators = self.evaluate_decorators(&method.decorators)?;
+                let kind = match method.kind {
+                    MethodKind::Get => "getter",
+                    MethodKind::Set => "setter",
+                    MethodKind::Method => "method",
+                };
+                for (decorator, _dec_guard) in evaluated_decorators.into_iter().rev() {
+                    func_obj = self.apply_method_decorator(
+                        func_obj,
+                        decorator,
+                        method_name.cheap_clone(),
+                        true, // is_static
+                        is_private,
+                        kind,
+                        guard,
+                    )?;
+                }
+            }
 
             match method.kind {
                 MethodKind::Get => {
@@ -2386,19 +2472,43 @@ impl Interpreter {
 
         // Initialize static fields
         for prop in &static_fields {
-            let name = match &prop.key {
-                ObjectPropertyKey::Identifier(id) => id.name.cheap_clone(),
-                ObjectPropertyKey::String(s) => s.value.cheap_clone(),
-                ObjectPropertyKey::PrivateIdentifier(id) => id.name.cheap_clone(),
+            let (name, is_private): (JsString, bool) = match &prop.key {
+                ObjectPropertyKey::Identifier(id) => (id.name.cheap_clone(), false),
+                ObjectPropertyKey::String(s) => (s.value.cheap_clone(), false),
+                ObjectPropertyKey::PrivateIdentifier(id) => (id.name.cheap_clone(), true),
                 _ => continue,
             };
 
-            let (value, _value_guard) = if let Some(expr) = &prop.value {
+            let (mut value, _value_guard) = if let Some(expr) = &prop.value {
                 let Guarded { value: v, guard: g } = self.evaluate_expression(expr)?;
                 (v, g)
             } else {
                 (JsValue::Undefined, None)
             };
+
+            // Apply field decorators if any
+            if !prop.decorators.is_empty() {
+                let evaluated_decorators = self.evaluate_decorators(&prop.decorators)?;
+                let mut initializers: Vec<JsValue> = Vec::new();
+
+                // Evaluate decorators and collect initializer functions (in reverse order)
+                for (decorator, _dec_guard) in evaluated_decorators.into_iter().rev() {
+                    if let Some(initializer) = self.apply_field_decorator(
+                        decorator,
+                        name.cheap_clone(),
+                        true, // is_static
+                        is_private,
+                        guard,
+                    )? {
+                        initializers.push(initializer);
+                    }
+                }
+
+                // Transform the initial value using all initializers
+                if !initializers.is_empty() {
+                    value = self.transform_field_value(value, &initializers)?;
+                }
+            }
 
             constructor_fn
                 .borrow_mut()
@@ -2432,6 +2542,168 @@ impl Interpreter {
             span: class_expr.span,
         };
         self.create_class_constructor(guard, &class_decl)
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Decorator Evaluation
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// Create a decorator context object with the given properties
+    fn create_decorator_context(
+        &mut self,
+        guard: &Guard<JsObject>,
+        kind: &str,
+        name: Option<JsString>,
+        is_static: bool,
+        is_private: bool,
+    ) -> Gc<JsObject> {
+        let ctx = self.create_object(guard);
+        ctx.borrow_mut().set_property(
+            PropertyKey::String(self.intern("kind")),
+            JsValue::String(self.intern(kind)),
+        );
+        if let Some(n) = name {
+            ctx.borrow_mut()
+                .set_property(PropertyKey::String(self.intern("name")), JsValue::String(n));
+        }
+        ctx.borrow_mut().set_property(
+            PropertyKey::String(self.intern("static")),
+            JsValue::Boolean(is_static),
+        );
+        ctx.borrow_mut().set_property(
+            PropertyKey::String(self.intern("private")),
+            JsValue::Boolean(is_private),
+        );
+        ctx
+    }
+
+    /// Evaluate all decorators in order (top-to-bottom for evaluation, bottom-to-top for application)
+    /// Returns a vector of (decorator_function, evaluated) pairs
+    fn evaluate_decorators(
+        &mut self,
+        decorators: &[Decorator],
+    ) -> Result<Vec<(JsValue, Guard<JsObject>)>, JsError> {
+        let mut results = Vec::with_capacity(decorators.len());
+        for decorator in decorators {
+            let Guarded { value, guard } = self.evaluate_expression(&decorator.expression)?;
+            if let Some(g) = guard {
+                results.push((value, g));
+            } else {
+                // Create a dummy guard for values that don't have one
+                let dummy = self.heap.create_guard();
+                results.push((value, dummy));
+            }
+        }
+        Ok(results)
+    }
+
+    /// Apply class decorators to a class constructor
+    /// Decorators are applied in reverse order (bottom-to-top)
+    fn apply_class_decorators(
+        &mut self,
+        mut class_value: JsValue,
+        decorators: Vec<(JsValue, Guard<JsObject>)>,
+        guard: &Guard<JsObject>,
+    ) -> Result<JsValue, JsError> {
+        // Apply decorators in reverse order (bottom-to-top)
+        for (decorator, _dec_guard) in decorators.into_iter().rev() {
+            // Create context for class decorator
+            let ctx = self.create_decorator_context(guard, "class", None, false, false);
+
+            // Call the decorator with (class, context)
+            let result = self.call_function(
+                decorator.clone(),
+                JsValue::Undefined,
+                &[class_value.clone(), JsValue::Object(ctx)],
+            )?;
+
+            // If decorator returns undefined, keep original class
+            // Otherwise use the returned value
+            if !matches!(result.value, JsValue::Undefined) {
+                class_value = result.value;
+            }
+        }
+        Ok(class_value)
+    }
+
+    /// Apply method decorator and return the (possibly wrapped) method
+    #[allow(clippy::too_many_arguments)]
+    fn apply_method_decorator(
+        &mut self,
+        method_fn: Gc<JsObject>,
+        decorator: JsValue,
+        name: JsString,
+        is_static: bool,
+        is_private: bool,
+        kind: &str,
+        guard: &Guard<JsObject>,
+    ) -> Result<Gc<JsObject>, JsError> {
+        // Create context object
+        let ctx = self.create_decorator_context(guard, kind, Some(name), is_static, is_private);
+
+        // Call the decorator with (method, context)
+        let result = self.call_function(
+            decorator,
+            JsValue::Undefined,
+            &[
+                JsValue::Object(method_fn.cheap_clone()),
+                JsValue::Object(ctx),
+            ],
+        )?;
+
+        // If decorator returns undefined, keep original method
+        // Otherwise use the returned function
+        match result.value {
+            JsValue::Undefined => Ok(method_fn),
+            JsValue::Object(new_fn) => Ok(new_fn),
+            _ => Err(JsError::type_error(
+                "Method decorator must return a function or undefined",
+            )),
+        }
+    }
+
+    /// Apply field decorator and return the initializer transformer
+    /// Field decorators return a function that transforms the initial value
+    fn apply_field_decorator(
+        &mut self,
+        decorator: JsValue,
+        name: JsString,
+        is_static: bool,
+        is_private: bool,
+        guard: &Guard<JsObject>,
+    ) -> Result<Option<JsValue>, JsError> {
+        // Create context object
+        let ctx = self.create_decorator_context(guard, "field", Some(name), is_static, is_private);
+
+        // Call the decorator with (undefined, context) for fields
+        // Field decorators receive undefined as first arg and return an initializer
+        let result = self.call_function(
+            decorator,
+            JsValue::Undefined,
+            &[JsValue::Undefined, JsValue::Object(ctx)],
+        )?;
+
+        // If decorator returns undefined, no transformation
+        // Otherwise it should return an initializer function
+        match result.value {
+            JsValue::Undefined => Ok(None),
+            JsValue::Object(_) => Ok(Some(result.value)),
+            _ => Ok(None),
+        }
+    }
+
+    /// Transform a field's initial value using decorator initializers
+    fn transform_field_value(
+        &mut self,
+        initial_value: JsValue,
+        initializers: &[JsValue],
+    ) -> Result<JsValue, JsError> {
+        let mut value = initial_value;
+        for initializer in initializers {
+            let result = self.call_function(initializer.clone(), JsValue::Undefined, &[value])?;
+            value = result.value;
+        }
+        Ok(value)
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -2546,7 +2818,20 @@ impl Interpreter {
             Expression::Class(class_expr) => {
                 let guard = self.heap.create_guard();
                 let constructor_fn = self.create_class_from_expression(&guard, class_expr)?;
-                Ok(Guarded::with_guard(JsValue::Object(constructor_fn), guard))
+
+                // Apply class decorators if any
+                let final_value = if !class_expr.decorators.is_empty() {
+                    let evaluated_decorators = self.evaluate_decorators(&class_expr.decorators)?;
+                    self.apply_class_decorators(
+                        JsValue::Object(constructor_fn),
+                        evaluated_decorators,
+                        &guard,
+                    )?
+                } else {
+                    JsValue::Object(constructor_fn)
+                };
+
+                Ok(Guarded::with_guard(final_value, guard))
             }
 
             // Await expression - extract value from promise
