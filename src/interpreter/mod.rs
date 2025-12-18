@@ -1202,18 +1202,6 @@ impl Interpreter {
         }
     }
 
-    /// Create a guarded scope for multiple objects
-    // FIXME: candidate for removal
-    pub fn guarded_scope(&mut self) -> Guard<JsObject> {
-        self.heap.create_guard()
-    }
-
-    /// Add an object to the root guard (for permanent objects)
-    // FIXME: candidate for removal
-    pub fn root_guard_object(&self, obj: &Gc<JsObject>) {
-        self.root_guard.guard(obj.cheap_clone());
-    }
-
     // ═══════════════════════════════════════════════════════════════════════════
     // ExecutionState Pool
     // ═══════════════════════════════════════════════════════════════════════════

@@ -231,88 +231,26 @@ for expr in expressions {
 }
 ```
 
-**After (using GuardedScope):**
+**After (using Guard):**
 ```rust
-let mut scope = self.guarded_scope();
+let guard = self.heap.create_guard();
 let mut elements = Vec::new();
 for expr in expressions {
     let val = self.evaluate(expr)?;
-    scope.add_value(&val);  // Guard if it's an object
+    self.guard_value_with(&guard, &val);  // Guard if it's an object
     elements.push(val);
 }
-// All guards released when scope drops
+// All guards released when guard drops
 ```
 
-This is more ergonomic than manually managing a `Vec<GuardedGc>`:
-
-```rust
-// Old pattern - verbose
-let mut guards = Vec::new();
-for expr in expressions {
-    let val = self.evaluate(expr)?;
-    if let JsValue::Object(obj) = &val {
-        guards.push(self.gc_space.guard(obj));
-    }
-    elements.push(val);
-}
-
-// New pattern - cleaner
-let mut scope = self.guarded_scope();
-for expr in expressions {
-    let val = self.evaluate(expr)?;
-    scope.add_value(&val);
-    elements.push(val);
-}
-```
-
-## GuardedScope API
-
-`GuardedScope` (and `JsGuardedScope` for the interpreter) provides a scope-based API for managing multiple guards:
-
-### Creating a Scope
-
-```rust
-// In interpreter context
-let mut scope = interp.guarded_scope();
-
-// In GC space context (low-level)
-let mut scope = space.guarded_scope();
-```
-
-### Adding Guards
-
-```rust
-// Guard a JsObjectRef
-scope.add(&obj);
-
-// Guard a JsValue (no-op for primitives)
-scope.add_value(&value);
-
-// Low-level: guard a Gc<T>
-scope.guard(&gc);
-```
-
-### Scope Lifetime
-
-Guards are automatically released when the scope is dropped:
-
-```rust
-{
-    let mut scope = interp.guarded_scope();
-    scope.add(&obj1);
-    scope.add(&obj2);
-    // Both obj1 and obj2 are protected
-}  // Both guards released here
-```
-
-### When to Use GuardedScope vs GuardedGc
+### When to Use Guard
 
 | Scenario | Use |
 |----------|-----|
-| Single object needs protection | `create_object_guarded()` or `guard()` |
-| Multiple objects in a loop | `guarded_scope()` |
-| Result object with evaluated properties | `create_object_guarded()` |
-| Collecting evaluated values into Vec | `guarded_scope()` |
+| Single object needs protection | `create_object(&guard)` |
+| Multiple objects in a loop | `heap.create_guard()` + `guard_value_with()` |
+| Result object with evaluated properties | `create_object(&guard)` |
+| Collecting evaluated values into Vec | `heap.create_guard()` + `guard_value_with()` |
 
 ## Systematic Fix Process
 
@@ -400,8 +338,8 @@ Based on allocation patterns, check these in order:
 | Access (keep guard) | - | `guarded.as_gc().clone()` |
 | Borrow | `gc.borrow()` | `guarded.borrow()` |
 | Borrow mut | `gc.borrow_mut()` | `guarded.borrow_mut()` |
-| Create scope | - | `interp.guarded_scope()` |
-| Guard in scope | - | `scope.add(&obj)` or `scope.add_value(&val)` |
+| Create guard | - | `interp.heap.create_guard()` |
+| Guard in scope | - | `guard.guard(&obj)` or `interp.guard_value_with(&guard, &val)` |
 
 ## Testing Strategy
 
