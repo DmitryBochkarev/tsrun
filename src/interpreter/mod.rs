@@ -163,7 +163,7 @@ pub struct Interpreter {
     pub generator_context: Option<GeneratorContext>,
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // Timeout Control
+    // Timeout and Limits
     // ═══════════════════════════════════════════════════════════════════════════
     /// Execution timeout in milliseconds (0 = no timeout)
     timeout_ms: u64,
@@ -173,6 +173,10 @@ pub struct Interpreter {
 
     /// Step counter for batched timeout checking (only check every N steps)
     step_counter: u32,
+
+    /// Maximum call stack depth (0 = no limit)
+    /// Default is 256, but tests use a lower value (e.g., 50) to catch infinite recursion early
+    max_call_depth: usize,
 
     // ═══════════════════════════════════════════════════════════════════════════
     // Module System
@@ -298,6 +302,7 @@ impl Interpreter {
             timeout_ms: 3000, // Default 3 second timeout
             execution_start: None,
             step_counter: 0,
+            max_call_depth: 256, // Default limit to prevent Rust stack overflow
             // Module system
             internal_modules: FxHashMap::default(),
             internal_module_cache: FxHashMap::default(),
@@ -426,6 +431,19 @@ impl Interpreter {
     /// Get the current execution timeout in milliseconds
     pub fn timeout_ms(&self) -> u64 {
         self.timeout_ms
+    }
+
+    /// Set the maximum call stack depth
+    ///
+    /// Default is 256. Set to 0 to disable limit (not recommended).
+    /// Tests should use a lower value (e.g., 50) to catch infinite recursion early.
+    pub fn set_max_call_depth(&mut self, depth: usize) {
+        self.max_call_depth = depth;
+    }
+
+    /// Get the current maximum call stack depth
+    pub fn max_call_depth(&self) -> usize {
+        self.max_call_depth
     }
 
     /// Start the execution timer
@@ -3942,6 +3960,14 @@ impl Interpreter {
         this_value: JsValue,
         args: &[JsValue],
     ) -> Result<Guarded, JsError> {
+        // Check call stack depth limit
+        if self.max_call_depth > 0 && self.call_stack.len() >= self.max_call_depth {
+            return Err(JsError::range_error(format!(
+                "Maximum call stack size exceeded (depth {})",
+                self.call_stack.len()
+            )));
+        }
+
         let JsValue::Object(func_obj) = callee else {
             return Err(JsError::type_error("Not a function"));
         };
@@ -3956,6 +3982,17 @@ impl Interpreter {
 
         match func {
             JsFunction::Interpreted(interp) => {
+                // Push call stack frame for stack traces and depth tracking
+                let func_name = interp
+                    .name
+                    .as_ref()
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| "<anonymous>".to_string());
+                self.call_stack.push(StackFrame {
+                    function_name: func_name,
+                    location: Some((interp.source_location.line, interp.source_location.column)),
+                });
+
                 // Handle generator functions - create generator object instead of executing
                 if interp.generator {
                     let body = match &*interp.body {
@@ -3977,6 +4014,7 @@ impl Interpreter {
                     };
 
                     let gen_obj = builtins::create_generator_object(self, gen_state);
+                    self.call_stack.pop();
                     return Ok(Guarded::unguarded(JsValue::Object(gen_obj)));
                 }
 
@@ -4102,6 +4140,7 @@ impl Interpreter {
                             if let JsValue::Object(ref obj) = result {
                                 if matches!(obj.borrow().exotic, ExoticObject::Promise(_)) {
                                     // Return the Promise directly, preserving its guard
+                                    self.call_stack.pop();
                                     return Ok(Guarded {
                                         value: result,
                                         guard: result_guard,
@@ -4112,6 +4151,7 @@ impl Interpreter {
                             let guard = self.heap.create_guard();
                             let promise =
                                 builtins::promise::create_fulfilled_promise(self, &guard, result);
+                            self.call_stack.pop();
                             return Ok(Guarded::with_guard(JsValue::Object(promise), guard));
                         }
                         Err(e) => {
@@ -4122,19 +4162,27 @@ impl Interpreter {
                                 &guard,
                                 e.to_value(),
                             );
+                            self.call_stack.pop();
                             return Ok(Guarded::with_guard(JsValue::Object(promise), guard));
                         }
                     }
                 }
 
                 // Now propagate the result or error (non-async case)
-                let (result, result_guard) = body_result?;
-
-                // Propagate guard from expression body arrow functions
-                Ok(Guarded {
-                    value: result,
-                    guard: result_guard,
-                })
+                // Pop call stack before returning (on success or error)
+                match body_result {
+                    Ok((result, result_guard)) => {
+                        self.call_stack.pop();
+                        Ok(Guarded {
+                            value: result,
+                            guard: result_guard,
+                        })
+                    }
+                    Err(e) => {
+                        self.call_stack.pop();
+                        Err(e)
+                    }
+                }
             }
 
             JsFunction::Native(native) => {

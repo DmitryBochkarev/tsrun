@@ -307,3 +307,27 @@ fn test_fibonacci_iterative() {
     );
     assert_eq!(result, JsValue::Number(55.0));
 }
+
+#[test]
+fn test_infinite_recursion_caught() {
+    // Infinite recursion should be caught by the call stack depth limit
+    // Tests use MAX_CALL_DEPTH=50 by default, so this should error quickly
+    use super::eval_result;
+
+    let result = eval_result(
+        r#"
+        function infinite(): number {
+            return infinite();
+        }
+        infinite()
+    "#,
+    );
+
+    assert!(result.is_err(), "Infinite recursion should error");
+    let err = format!("{:?}", result.unwrap_err());
+    assert!(
+        err.contains("Maximum call stack size exceeded"),
+        "Error should mention stack size: {}",
+        err
+    );
+}

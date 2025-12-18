@@ -569,6 +569,14 @@ impl Runtime {
         self.interpreter.set_timeout_ms(timeout_ms);
     }
 
+    /// Set the maximum call stack depth
+    ///
+    /// Default is 256. Set to 0 to disable limit (not recommended).
+    /// Tests should use a lower value (e.g., 50) to catch infinite recursion early.
+    pub fn set_max_call_depth(&mut self, depth: usize) {
+        self.interpreter.set_max_call_depth(depth);
+    }
+
     /// Force a garbage collection cycle
     pub fn collect(&self) {
         self.interpreter.heap.collect();

@@ -238,14 +238,18 @@ pub fn some_builtin(interp: &mut Interpreter, ...) -> Result<JsValue, JsError> {
 
 **Why this matters:** When we create temporary objects and return them, the guard must stay alive until ownership is established (e.g., the value is stored in a variable, property, or array). By returning `Guarded`, the caller receives both the value and the guard, ensuring the object survives until properly owned.
 
-### GC Stress Testing
+### Aggressive Test Defaults
 
-Tests default to `GC_THRESHOLD=1` (GC on every allocation) to catch GC bugs early. Override via environment variable if needed:
+Tests use aggressive defaults to catch bugs early:
+- `GC_THRESHOLD=1` - GC on every allocation to catch GC bugs
+- `MAX_CALL_DEPTH=50` - Low recursion limit to catch infinite loops before Rust stack overflow
+
+Override via environment variables:
 
 ```bash
-cargo test                  # Default: GC_THRESHOLD=1 (most aggressive)
-GC_THRESHOLD=100 cargo test # Less aggressive for faster runs
-GC_THRESHOLD=0 cargo test   # Disable automatic GC
+cargo test                      # Default: aggressive settings
+GC_THRESHOLD=100 cargo test     # Less aggressive GC for faster runs
+MAX_CALL_DEPTH=256 cargo test   # Higher recursion limit (production default)
 ```
 
 **Common GC bugs caught by stress testing:**

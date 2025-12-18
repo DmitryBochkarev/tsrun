@@ -2,15 +2,18 @@
 //!
 //! These tests exercise the interpreter through the public API.
 //!
-//! ## GC Stress Testing
+//! ## Aggressive Test Defaults
 //!
-//! Tests default to `GC_THRESHOLD=1` (GC on every allocation) to catch GC bugs early.
-//! Set the `GC_THRESHOLD` environment variable to override:
+//! Tests use aggressive defaults to catch bugs early:
+//! - `GC_THRESHOLD=1` - GC on every allocation to catch GC bugs
+//! - `MAX_CALL_DEPTH=50` - Low recursion limit to catch infinite loops before Rust stack overflow
+//!
+//! Override via environment variables:
 //!
 //! ```bash
-//! cargo test                           # Default: GC_THRESHOLD=1 (most aggressive)
-//! GC_THRESHOLD=100 cargo test          # Less aggressive for faster runs
-//! GC_THRESHOLD=0 cargo test            # Disable automatic GC
+//! cargo test                           # Default: aggressive settings
+//! GC_THRESHOLD=100 cargo test          # Less aggressive GC for faster runs
+//! MAX_CALL_DEPTH=256 cargo test        # Higher recursion limit
 //! ```
 
 mod array;
@@ -43,19 +46,31 @@ mod symbol;
 
 use typescript_eval::{JsError, Runtime, RuntimeResult, RuntimeValue};
 
-/// Create a new runtime with GC threshold from environment or default (1)
+/// Create a new runtime with aggressive defaults for testing:
+/// - GC_THRESHOLD=1 (GC on every allocation) to catch GC bugs
+/// - MAX_CALL_DEPTH=50 to catch infinite recursion before Rust stack overflow
 fn create_test_runtime() -> Runtime {
-    let runtime = Runtime::new();
+    let mut runtime = Runtime::new();
 
     // Default to GC_THRESHOLD=1 (most aggressive) to catch GC bugs early
     // Override via environment variable if needed:
     // GC_THRESHOLD=100 cargo test  # Faster runs
     // GC_THRESHOLD=0 cargo test    # Disable automatic GC
-    let threshold = std::env::var("GC_THRESHOLD")
+    let gc_threshold = std::env::var("GC_THRESHOLD")
         .ok()
         .and_then(|s| s.parse::<usize>().ok())
-        .unwrap_or(1); // Default to 1 for tests
-    runtime.set_gc_threshold(threshold);
+        .unwrap_or(1);
+    runtime.set_gc_threshold(gc_threshold);
+
+    // Default to MAX_CALL_DEPTH=50 to catch infinite recursion early
+    // Override via environment variable if needed:
+    // MAX_CALL_DEPTH=256 cargo test  # Default production limit
+    // MAX_CALL_DEPTH=0 cargo test    # Disable limit (not recommended)
+    let max_call_depth = std::env::var("MAX_CALL_DEPTH")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(50);
+    runtime.set_max_call_depth(max_call_depth);
 
     runtime
 }
