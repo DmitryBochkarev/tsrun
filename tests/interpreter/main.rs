@@ -4,13 +4,13 @@
 //!
 //! ## GC Stress Testing
 //!
-//! Set the `GC_THRESHOLD` environment variable to override the default GC threshold
-//! for all tests. This is useful for finding GC-related bugs:
+//! Tests default to `GC_THRESHOLD=1` (GC on every allocation) to catch GC bugs early.
+//! Set the `GC_THRESHOLD` environment variable to override:
 //!
 //! ```bash
-//! GC_THRESHOLD=1 cargo test           # Most aggressive - GC on every allocation
-//! GC_THRESHOLD=10 cargo test          # Frequent GC
-//! GC_THRESHOLD=100 cargo test         # Moderate GC frequency
+//! cargo test                           # Default: GC_THRESHOLD=1 (most aggressive)
+//! GC_THRESHOLD=100 cargo test          # Less aggressive for faster runs
+//! GC_THRESHOLD=0 cargo test            # Disable automatic GC
 //! ```
 
 mod array;
@@ -43,18 +43,19 @@ mod symbol;
 
 use typescript_eval::{JsError, Runtime, RuntimeResult, RuntimeValue};
 
-/// Create a new runtime with GC threshold from environment or default
+/// Create a new runtime with GC threshold from environment or default (1)
 fn create_test_runtime() -> Runtime {
     let runtime = Runtime::new();
 
-    // Allow overriding GC threshold via environment variable for stress testing
-    // GC_THRESHOLD=1 cargo test  # Most aggressive
-    // GC_THRESHOLD=10 cargo test # Frequent GC
-    if let Ok(threshold_str) = std::env::var("GC_THRESHOLD") {
-        if let Ok(threshold) = threshold_str.parse::<usize>() {
-            runtime.set_gc_threshold(threshold);
-        }
-    }
+    // Default to GC_THRESHOLD=1 (most aggressive) to catch GC bugs early
+    // Override via environment variable if needed:
+    // GC_THRESHOLD=100 cargo test  # Faster runs
+    // GC_THRESHOLD=0 cargo test    # Disable automatic GC
+    let threshold = std::env::var("GC_THRESHOLD")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(1); // Default to 1 for tests
+    runtime.set_gc_threshold(threshold);
 
     runtime
 }

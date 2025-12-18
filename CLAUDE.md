@@ -240,11 +240,12 @@ pub fn some_builtin(interp: &mut Interpreter, ...) -> Result<JsValue, JsError> {
 
 ### GC Stress Testing
 
-Run tests with `GC_THRESHOLD=1` to trigger garbage collection on every allocation. This catches GC-related bugs that might not appear with the default threshold:
+Tests default to `GC_THRESHOLD=1` (GC on every allocation) to catch GC bugs early. Override via environment variable if needed:
 
 ```bash
-GC_THRESHOLD=1 cargo test  # Stress test: GC on every allocation
-cargo test                  # Normal test: GC every 100 allocations
+cargo test                  # Default: GC_THRESHOLD=1 (most aggressive)
+GC_THRESHOLD=100 cargo test # Less aggressive for faster runs
+GC_THRESHOLD=0 cargo test   # Disable automatic GC
 ```
 
 **Common GC bugs caught by stress testing:**
@@ -298,6 +299,56 @@ let arr = interp.create_array(&guard, results);
 ```
 
 **Why this matters:** With the new API, one guard can protect multiple objects, eliminating the need to collect guards in a separate vector.
+
+### Guard Scope in Collect-Then-Store Loops
+
+When a loop collects objects that will be stored AFTER the loop completes, **declare guard collection at outer scope**:
+
+```rust
+// CORRECT: Guards collected at outer scope, dropped after storage
+let mut all_guards: Vec<Guard<JsObject>> = Vec::new();  // OUTER scope
+let mut methods: Vec<(String, Gc<JsObject>)> = Vec::new();
+
+for item in items {
+    let (func, guard) = create_decorated_function(...)?;
+    if let Some(g) = guard {
+        all_guards.push(g);  // Guard survives loop iteration
+    }
+    methods.push((name, func));
+}
+
+// Store methods on prototype
+for (name, func) in methods {
+    prototype.borrow_mut().set_property(name, JsValue::Object(func));
+}
+// NOW guards can be dropped - objects are stored
+let _ = all_guards;
+
+// WRONG: Guards dropped at end of each loop iteration!
+let mut methods: Vec<(String, Gc<JsObject>)> = Vec::new();
+
+for item in items {
+    let mut loop_guards: Vec<Guard<JsObject>> = Vec::new();  // INNER scope - BUG!
+    let (func, guard) = create_decorated_function(...)?;
+    if let Some(g) = guard {
+        loop_guards.push(g);
+    }
+    methods.push((name, func));
+    // loop_guards dropped here - func may be GC'd before storage!
+}
+
+// By this point, funcs in `methods` may have been collected and reused!
+for (name, func) in methods {
+    prototype.borrow_mut().set_property(name, JsValue::Object(func));  // BUG: corrupt data
+}
+```
+
+**Why this matters:** If guards are scoped to loop iterations but objects are stored after the loop, GC can collect and reuse the memory between guard drop and storage. This causes corruption where property A returns object B's data.
+
+**Symptoms of this bug:**
+- Property lookup returns wrong function (e.g., `obj.compute` returns `getResult`)
+- Infinite recursion when method A calls method B but B is actually A
+- "X is not a function" errors on valid methods
 
 ### Promise/Async Value Guarding
 

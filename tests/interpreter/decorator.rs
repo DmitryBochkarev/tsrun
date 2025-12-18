@@ -491,6 +491,64 @@ fn test_auto_accessor_decorator() {
 // Private Member Decorators
 // ============================================================================
 
+/// Decorator wrapper called from another instance method
+/// This test isolates the GC-related stack overflow issue
+#[test]
+fn test_decorator_wrapper_called_from_instance_method() {
+    // Calling a non-decorated method from another method works
+    assert_eq!(
+        eval(
+            r#"
+            class Secret {
+                compute(): number {
+                    return 10;
+                }
+
+                getResult(): number {
+                    return this.compute();
+                }
+            }
+
+            const s = new Secret();
+            s.getResult()
+        "#
+        ),
+        JsValue::Number(10.0)
+    );
+}
+
+/// Decorator wrapper called from another instance method - with decorator
+#[test]
+fn test_decorator_wrapper_called_from_instance_method_decorated() {
+    // Simplest case - wrapper returns constant, called from another method
+    assert_eq!(
+        eval(
+            r#"
+            function wrap(target: any, context: any) {
+                return function(...args: any[]): any {
+                    return 99;
+                };
+            }
+
+            class Secret {
+                @wrap
+                compute(): number {
+                    return 10;
+                }
+
+                getResult(): number {
+                    return this.compute();
+                }
+            }
+
+            const s = new Secret();
+            s.getResult()
+        "#
+        ),
+        JsValue::Number(99.0)
+    );
+}
+
 /// Decorator on private method
 #[test]
 fn test_private_method_decorator() {

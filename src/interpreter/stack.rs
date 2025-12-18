@@ -8,12 +8,16 @@
 #![allow(clippy::too_many_arguments)]
 
 use crate::ast::{
-    BinaryOp, BlockStatement, CatchClause, ExportDeclaration, Expression, ForInOfLeft, ForInStatement, ForInit, ForOfStatement, ForStatement, ImportDeclaration, ImportSpecifier, LiteralValue, LogicalOp, Pattern, Program, Statement, SwitchCase, SwitchStatement, UnaryOp, VariableDeclarator, VariableKind
+    BinaryOp, BlockStatement, CatchClause, ExportDeclaration, Expression, ForInOfLeft,
+    ForInStatement, ForInit, ForOfStatement, ForStatement, ImportDeclaration, ImportSpecifier,
+    LiteralValue, LogicalOp, Pattern, Program, Statement, SwitchCase, SwitchStatement, UnaryOp,
+    VariableDeclarator, VariableKind,
 };
 use crate::error::JsError;
 use crate::gc::{Gc, Guard};
 use crate::value::{
-    Binding, CheapClone, ExoticObject, FunctionBody, GeneratorState, Guarded, JsObject, JsString, JsValue, PromiseStatus, PropertyKey, VarKey
+    Binding, CheapClone, ExoticObject, FunctionBody, GeneratorState, Guarded, JsObject, JsString,
+    JsValue, PromiseStatus, PropertyKey, VarKey,
 };
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -510,10 +514,7 @@ impl Interpreter {
     ///
     /// This is used internally for executing module code. It runs to completion
     /// without supporting suspension (modules are expected to be synchronous).
-    pub fn execute_program_with_stack(
-        &mut self,
-        program: &Program,
-    ) -> Result<JsValue, JsError> {
+    pub fn execute_program_with_stack(&mut self, program: &Program) -> Result<JsValue, JsError> {
         // Start execution timer
         self.start_execution();
 
@@ -3240,10 +3241,7 @@ impl Interpreter {
     }
 
     /// Execute import declaration - binds imported names to environment
-    fn stack_execute_import(
-        &mut self,
-        import: &ImportDeclaration,
-    ) -> Result<(), JsError> {
+    fn stack_execute_import(&mut self, import: &ImportDeclaration) -> Result<(), JsError> {
         // FIXME: should it be js string
         let specifier = import.source.value.to_string();
 
@@ -3285,10 +3283,7 @@ impl Interpreter {
     }
 
     /// Execute export declaration - registers exported values
-    fn stack_execute_export(
-        &mut self,
-        export: &ExportDeclaration,
-    ) -> Result<(), JsError> {
+    fn stack_execute_export(&mut self, export: &ExportDeclaration) -> Result<(), JsError> {
         // Handle export declaration (e.g., export function foo() {})
         if let Some(decl) = &export.declaration {
             // Execute the declaration first

@@ -2184,6 +2184,9 @@ impl Interpreter {
             (Option<Gc<JsObject>>, Option<Gc<JsObject>>),
         > = FxHashMap::default();
         let mut regular_methods: Vec<(JsString, Gc<JsObject>)> = Vec::new();
+        // Collect all method guards at outer scope to keep decorated methods alive
+        // until they are stored on prototype
+        let mut all_method_guards: Vec<Guard<JsObject>> = Vec::new();
 
         for method in &instance_methods {
             let (method_name, is_private): (JsString, bool) = match &method.key {
@@ -2218,6 +2221,7 @@ impl Interpreter {
             }
 
             // Apply method decorators if any (in reverse order - bottom to top)
+            // Push guards to all_method_guards to keep wrapped functions alive until stored on prototype
             if !method.decorators.is_empty() {
                 let evaluated_decorators = self.evaluate_decorators(&method.decorators)?;
                 let kind = match method.kind {
@@ -2226,7 +2230,7 @@ impl Interpreter {
                     MethodKind::Method => "method",
                 };
                 for (decorator, _dec_guard) in evaluated_decorators.into_iter().rev() {
-                    func_obj = self.apply_method_decorator(
+                    let (new_func, new_guard) = self.apply_method_decorator(
                         func_obj,
                         decorator,
                         method_name.cheap_clone(),
@@ -2235,6 +2239,10 @@ impl Interpreter {
                         kind,
                         guard,
                     )?;
+                    func_obj = new_func;
+                    if let Some(g) = new_guard {
+                        all_method_guards.push(g);
+                    }
                 }
             }
 
@@ -2267,6 +2275,8 @@ impl Interpreter {
                 .borrow_mut()
                 .set_property(PropertyKey::String(name), JsValue::Object(func_obj));
         }
+        // Now that methods are stored on prototype, guards can be dropped
+        let _ = all_method_guards;
 
         // Build constructor body that initializes instance fields then runs user constructor
         // Include decorators for field transformation
@@ -2338,7 +2348,7 @@ impl Interpreter {
                 // Apply field decorators if any
                 if !decorators.is_empty() {
                     let evaluated_decorators = self.evaluate_decorators(&decorators)?;
-                    let mut initializers: Vec<JsValue> = Vec::new();
+                    let mut initializers: Vec<Guarded> = Vec::new();
 
                     // Evaluate decorators and collect initializer functions (in reverse order)
                     for (decorator, _dec_guard) in evaluated_decorators.into_iter().rev() {
@@ -2393,6 +2403,8 @@ impl Interpreter {
             (Option<Gc<JsObject>>, Option<Gc<JsObject>>),
         > = FxHashMap::default();
         let mut static_regular_methods: Vec<(JsString, Gc<JsObject>)> = Vec::new();
+        // Collect all static method guards at outer scope to keep decorated methods alive
+        let mut all_static_method_guards: Vec<Guard<JsObject>> = Vec::new();
 
         for method in &static_methods {
             let (method_name, is_private): (JsString, bool) = match &method.key {
@@ -2420,6 +2432,7 @@ impl Interpreter {
             );
 
             // Apply method decorators if any (in reverse order - bottom to top)
+            // Push guards to all_static_method_guards to keep wrapped functions alive
             if !method.decorators.is_empty() {
                 let evaluated_decorators = self.evaluate_decorators(&method.decorators)?;
                 let kind = match method.kind {
@@ -2428,7 +2441,7 @@ impl Interpreter {
                     MethodKind::Method => "method",
                 };
                 for (decorator, _dec_guard) in evaluated_decorators.into_iter().rev() {
-                    func_obj = self.apply_method_decorator(
+                    let (new_func, new_guard) = self.apply_method_decorator(
                         func_obj,
                         decorator,
                         method_name.cheap_clone(),
@@ -2437,6 +2450,10 @@ impl Interpreter {
                         kind,
                         guard,
                     )?;
+                    func_obj = new_func;
+                    if let Some(g) = new_guard {
+                        all_static_method_guards.push(g);
+                    }
                 }
             }
 
@@ -2469,6 +2486,8 @@ impl Interpreter {
                 .borrow_mut()
                 .set_property(PropertyKey::String(name), JsValue::Object(func_obj));
         }
+        // Now that static methods are stored, guards can be dropped
+        let _ = all_static_method_guards;
 
         // Initialize static fields
         for prop in &static_fields {
@@ -2489,7 +2508,7 @@ impl Interpreter {
             // Apply field decorators if any
             if !prop.decorators.is_empty() {
                 let evaluated_decorators = self.evaluate_decorators(&prop.decorators)?;
-                let mut initializers: Vec<JsValue> = Vec::new();
+                let mut initializers: Vec<Guarded> = Vec::new();
 
                 // Evaluate decorators and collect initializer functions (in reverse order)
                 for (decorator, _dec_guard) in evaluated_decorators.into_iter().rev() {
@@ -2637,7 +2656,7 @@ impl Interpreter {
         is_private: bool,
         kind: &str,
         guard: &Guard<JsObject>,
-    ) -> Result<Gc<JsObject>, JsError> {
+    ) -> Result<(Gc<JsObject>, Option<Guard<JsObject>>), JsError> {
         // Create context object
         let ctx = self.create_decorator_context(guard, kind, Some(name), is_static, is_private);
 
@@ -2652,10 +2671,10 @@ impl Interpreter {
         )?;
 
         // If decorator returns undefined, keep original method
-        // Otherwise use the returned function
+        // Otherwise use the returned function (with its guard to keep closure alive)
         match result.value {
-            JsValue::Undefined => Ok(method_fn),
-            JsValue::Object(new_fn) => Ok(new_fn),
+            JsValue::Undefined => Ok((method_fn, None)),
+            JsValue::Object(new_fn) => Ok((new_fn, result.guard)),
             _ => Err(JsError::type_error(
                 "Method decorator must return a function or undefined",
             )),
@@ -2671,7 +2690,7 @@ impl Interpreter {
         is_static: bool,
         is_private: bool,
         guard: &Guard<JsObject>,
-    ) -> Result<Option<JsValue>, JsError> {
+    ) -> Result<Option<Guarded>, JsError> {
         // Create context object
         let ctx = self.create_decorator_context(guard, "field", Some(name), is_static, is_private);
 
@@ -2684,10 +2703,10 @@ impl Interpreter {
         )?;
 
         // If decorator returns undefined, no transformation
-        // Otherwise it should return an initializer function
+        // Otherwise it should return an initializer function (with its guard to keep closure alive)
         match result.value {
             JsValue::Undefined => Ok(None),
-            JsValue::Object(_) => Ok(Some(result.value)),
+            JsValue::Object(_) => Ok(Some(result)),
             _ => Ok(None),
         }
     }
@@ -2696,11 +2715,12 @@ impl Interpreter {
     fn transform_field_value(
         &mut self,
         initial_value: JsValue,
-        initializers: &[JsValue],
+        initializers: &[Guarded],
     ) -> Result<JsValue, JsError> {
         let mut value = initial_value;
         for initializer in initializers {
-            let result = self.call_function(initializer.clone(), JsValue::Undefined, &[value])?;
+            let result =
+                self.call_function(initializer.value.clone(), JsValue::Undefined, &[value])?;
             value = result.value;
         }
         Ok(value)
