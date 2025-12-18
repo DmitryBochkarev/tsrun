@@ -10,7 +10,7 @@ use crate::gc::{Gc, Guard};
 use crate::interpreter::Interpreter;
 use crate::value::{
     CheapClone, ExoticObject, Guarded, JsFunction, JsObject, JsValue, PromiseHandler, PromiseState,
-    PromiseStatus,
+    PromiseStatus, PropertyKey,
 };
 
 /// Initialize Promise.prototype with then, catch, finally methods
@@ -26,7 +26,7 @@ pub fn init_promise_prototype(interp: &mut Interpreter) {
 pub fn create_promise_constructor(interp: &mut Interpreter) -> Gc<JsObject> {
     let ctor = interp.create_native_function("Promise", promise_constructor, 1);
 
-    let proto_key = interp.key("prototype");
+    let proto_key = PropertyKey::String(interp.intern("prototype"));
     ctor.borrow_mut()
         .set_property(proto_key, JsValue::Object(interp.promise_prototype.clone()));
 
@@ -643,9 +643,9 @@ pub fn promise_allsettled(
     }
 
     // Pre-intern keys
-    let status_key = interp.key("status");
-    let value_key = interp.key("value");
-    let reason_key = interp.key("reason");
+    let status_key = PropertyKey::String(interp.intern("status"));
+    let value_key = PropertyKey::String(interp.intern("value"));
+    let reason_key = PropertyKey::String(interp.intern("reason"));
 
     let mut results: Vec<JsValue> = Vec::with_capacity(promises.len());
 

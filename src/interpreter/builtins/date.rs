@@ -4,7 +4,7 @@ use chrono::{Datelike, TimeZone, Timelike, Utc};
 
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
-use crate::value::{ExoticObject, Guarded, JsString, JsValue};
+use crate::value::{ExoticObject, Guarded, JsString, JsValue, PropertyKey};
 
 /// Create a date from components, handling JavaScript-style overflow
 /// (e.g., month 12 becomes January of next year, day 0 becomes last day of previous month)
@@ -129,13 +129,13 @@ pub fn init_date(interp: &mut Interpreter) {
     interp.register_method(&constructor, "parse", date_parse, 1);
 
     // Set prototype property on constructor
-    let proto_key = interp.key("prototype");
+    let proto_key = PropertyKey::String(interp.intern("prototype"));
     constructor
         .borrow_mut()
         .set_property(proto_key, JsValue::Object(interp.date_prototype.clone()));
 
     // Register globally
-    let date_key = interp.key("Date");
+    let date_key = PropertyKey::String(interp.intern("Date"));
     interp
         .global
         .borrow_mut()

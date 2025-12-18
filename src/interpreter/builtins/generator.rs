@@ -8,6 +8,7 @@ use crate::gc::Gc;
 use crate::interpreter::Interpreter;
 use crate::value::{
     ExoticObject, GeneratorState, GeneratorStatus, Guarded, JsObject, JsString, JsValue,
+    PropertyKey,
 };
 
 /// Initialize Generator.prototype
@@ -15,7 +16,7 @@ pub fn init_generator_prototype(interp: &mut Interpreter) {
     let proto = interp.generator_prototype.clone();
 
     // Set Symbol.toStringTag
-    let tag_key = interp.key("@@toStringTag");
+    let tag_key = PropertyKey::String(interp.intern("@@toStringTag"));
     proto
         .borrow_mut()
         .set_property(tag_key, JsValue::String(JsString::from("Generator")));
@@ -27,8 +28,8 @@ pub fn init_generator_prototype(interp: &mut Interpreter) {
 
 /// Create a generator result object { value, done }
 pub fn create_generator_result(interp: &mut Interpreter, value: JsValue, done: bool) -> Guarded {
-    let value_key = interp.key("value");
-    let done_key = interp.key("done");
+    let value_key = PropertyKey::String(interp.intern("value"));
+    let done_key = PropertyKey::String(interp.intern("done"));
 
     let guard = interp.heap.create_guard();
     let obj = interp.create_object(&guard);

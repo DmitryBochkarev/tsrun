@@ -7,7 +7,7 @@ use rustc_hash::FxHashMap;
 
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
-use crate::value::{Guarded, JsString, JsSymbol, JsValue};
+use crate::value::{Guarded, JsString, JsSymbol, JsValue, PropertyKey};
 
 /// Global symbol ID counter for generating unique symbol IDs
 static SYMBOL_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
@@ -104,18 +104,18 @@ pub fn init_symbol(interp: &mut Interpreter) {
     interp.register_method(&symbol_fn, "keyFor", symbol_key_for, 1);
 
     // Well-known symbols
-    let iterator_key = interp.key("iterator");
-    let to_string_tag_key = interp.key("toStringTag");
-    let has_instance_key = interp.key("hasInstance");
-    let is_concat_spreadable_key = interp.key("isConcatSpreadable");
-    let species_key = interp.key("species");
-    let to_primitive_key = interp.key("toPrimitive");
-    let unscopables_key = interp.key("unscopables");
-    let match_key = interp.key("match");
-    let replace_key = interp.key("replace");
-    let search_key = interp.key("search");
-    let split_key = interp.key("split");
-    let async_iterator_key = interp.key("asyncIterator");
+    let iterator_key = PropertyKey::String(interp.intern("iterator"));
+    let to_string_tag_key = PropertyKey::String(interp.intern("toStringTag"));
+    let has_instance_key = PropertyKey::String(interp.intern("hasInstance"));
+    let is_concat_spreadable_key = PropertyKey::String(interp.intern("isConcatSpreadable"));
+    let species_key = PropertyKey::String(interp.intern("species"));
+    let to_primitive_key = PropertyKey::String(interp.intern("toPrimitive"));
+    let unscopables_key = PropertyKey::String(interp.intern("unscopables"));
+    let match_key = PropertyKey::String(interp.intern("match"));
+    let replace_key = PropertyKey::String(interp.intern("replace"));
+    let search_key = PropertyKey::String(interp.intern("search"));
+    let split_key = PropertyKey::String(interp.intern("split"));
+    let async_iterator_key = PropertyKey::String(interp.intern("asyncIterator"));
 
     {
         let mut sym = symbol_fn.borrow_mut();
@@ -207,7 +207,7 @@ pub fn init_symbol(interp: &mut Interpreter) {
     }
 
     // Register globally
-    let symbol_key = interp.key("Symbol");
+    let symbol_key = PropertyKey::String(interp.intern("Symbol"));
     interp
         .global
         .borrow_mut()

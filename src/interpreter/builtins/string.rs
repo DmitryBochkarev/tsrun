@@ -4,7 +4,7 @@ use unicode_normalization::UnicodeNormalization;
 
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
-use crate::value::{Guarded, JsObjectRef, JsString, JsValue};
+use crate::value::{Guarded, JsObjectRef, JsString, JsValue, PropertyKey};
 
 /// Initialize String.prototype with all string methods.
 /// The prototype object must already exist in `interp.string_prototype`.
@@ -77,7 +77,7 @@ pub fn create_string_constructor(interp: &mut Interpreter) -> JsObjectRef {
     interp.register_method(&constructor, "fromCharCode", string_from_char_code, 1);
     interp.register_method(&constructor, "fromCodePoint", string_from_code_point, 1);
 
-    let proto_key = interp.key("prototype");
+    let proto_key = PropertyKey::String(interp.intern("prototype"));
     constructor
         .borrow_mut()
         .set_property(proto_key, JsValue::Object(interp.string_prototype.clone()));
@@ -919,13 +919,13 @@ pub fn string_match(
                 let arr = interp.create_array_from(&guard, result);
 
                 // Add index property
-                let index_key = interp.key("index");
+                let index_key = PropertyKey::String(interp.intern("index"));
                 let match_start = caps.get(0).map(|m| m.start()).unwrap_or(0);
                 arr.borrow_mut()
                     .set_property(index_key, JsValue::Number(match_start as f64));
 
                 // Add input property
-                let input_key = interp.key("input");
+                let input_key = PropertyKey::String(interp.intern("input"));
                 arr.borrow_mut()
                     .set_property(input_key, JsValue::String(JsString::from(s)));
 
@@ -991,13 +991,13 @@ pub fn string_match_all(
         let arr = interp.create_array_from(&guard, match_result);
 
         // Add index property
-        let index_key = interp.key("index");
+        let index_key = PropertyKey::String(interp.intern("index"));
         let match_start = caps.get(0).map(|m| m.start()).unwrap_or(0);
         arr.borrow_mut()
             .set_property(index_key, JsValue::Number(match_start as f64));
 
         // Add input property
-        let input_key = interp.key("input");
+        let input_key = PropertyKey::String(interp.intern("input"));
         arr.borrow_mut()
             .set_property(input_key, JsValue::String(JsString::from(s.clone())));
 

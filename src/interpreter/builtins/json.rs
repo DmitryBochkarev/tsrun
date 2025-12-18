@@ -3,7 +3,7 @@
 use crate::error::JsError;
 use crate::gc::{Gc, Guard};
 use crate::interpreter::Interpreter;
-use crate::value::{ExoticObject, Guarded, JsObject, JsString, JsValue};
+use crate::value::{ExoticObject, Guarded, JsObject, JsString, JsValue, PropertyKey};
 
 /// Initialize JSON object and add it to globals
 pub fn init_json(interp: &mut Interpreter) {
@@ -14,7 +14,7 @@ pub fn init_json(interp: &mut Interpreter) {
     interp.register_method(&json, "stringify", json_stringify, 1);
     interp.register_method(&json, "parse", json_parse, 1);
 
-    let json_key = interp.key("JSON");
+    let json_key = PropertyKey::String(interp.intern("JSON"));
     interp
         .global
         .borrow_mut()
@@ -240,7 +240,7 @@ fn json_to_js_value_with_guard(
             let obj = interp.create_object(guard);
             for (key, value) in map {
                 let js_value = json_to_js_value_with_guard(interp, value, guard)?;
-                let interned_key = interp.key(key);
+                let interned_key = PropertyKey::String(interp.intern(key));
                 obj.borrow_mut().set_property(interned_key, js_value);
             }
             JsValue::Object(obj)

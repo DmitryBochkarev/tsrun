@@ -16,6 +16,7 @@ use crate::error::JsError;
 use crate::gc::{Gc, Guard};
 use crate::value::{
     Binding, CheapClone, ExoticObject, Guarded, JsObject, JsString, JsValue, PromiseStatus,
+    PropertyKey,
 };
 use std::rc::Rc;
 
@@ -2658,8 +2659,8 @@ impl Interpreter {
         };
 
         // Get done and value from result
-        let done_key = self.key("done");
-        let value_key = self.key("value");
+        let done_key = PropertyKey::String(self.intern("done"));
+        let value_key = PropertyKey::String(self.intern("value"));
 
         let (done, value) = match &result {
             JsValue::Object(obj) => {
@@ -3250,7 +3251,7 @@ impl Interpreter {
                 crate::ast::ImportSpecifier::Named {
                     local, imported, ..
                 } => {
-                    let import_key = self.key(imported.name.as_str());
+                    let import_key = PropertyKey::String(self.intern(imported.name.as_str()));
                     let value = module_obj
                         .borrow()
                         .get_property(&import_key)
@@ -3258,7 +3259,7 @@ impl Interpreter {
                     self.env_define(local.name.cheap_clone(), value, false);
                 }
                 crate::ast::ImportSpecifier::Default { local, .. } => {
-                    let default_key = self.key("default");
+                    let default_key = PropertyKey::String(self.intern("default"));
                     let value = module_obj
                         .borrow()
                         .get_property(&default_key)
@@ -3350,7 +3351,7 @@ impl Interpreter {
         if let Some(source) = &export.source {
             let module_obj = self.resolve_module(source.value.as_ref())?;
             for spec in &export.specifiers {
-                let import_key = self.key(spec.local.name.as_str());
+                let import_key = PropertyKey::String(self.intern(spec.local.name.as_str()));
                 let value = module_obj
                     .borrow()
                     .get_property(&import_key)

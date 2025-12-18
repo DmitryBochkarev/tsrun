@@ -13,8 +13,8 @@ pub fn init_error(interp: &mut Interpreter) {
     error_proto.borrow_mut().prototype = Some(interp.object_prototype.clone());
 
     // Set default name and message on prototype
-    let name_key = interp.key("name");
-    let message_key = interp.key("message");
+    let name_key = PropertyKey::String(interp.intern("name"));
+    let message_key = PropertyKey::String(interp.intern("message"));
     {
         let mut p = error_proto.borrow_mut();
         p.set_property(name_key, JsValue::String(JsString::from("Error")));
@@ -29,13 +29,13 @@ pub fn init_error(interp: &mut Interpreter) {
     interp.root_guard.guard(error_fn.clone());
 
     // Set up prototype chain
-    let proto_key = interp.key("prototype");
+    let proto_key = PropertyKey::String(interp.intern("prototype"));
     error_fn
         .borrow_mut()
         .set_property(proto_key, JsValue::Object(error_proto.clone()));
 
     // Register Error globally
-    let error_key = interp.key("Error");
+    let error_key = PropertyKey::String(interp.intern("Error"));
     interp
         .global
         .borrow_mut()
@@ -70,8 +70,8 @@ fn create_derived_error(
     derived_proto.borrow_mut().prototype = Some(error_proto.clone());
 
     // Set name on prototype
-    let name_key = interp.key("name");
-    let message_key = interp.key("message");
+    let name_key = PropertyKey::String(interp.intern("name"));
+    let message_key = PropertyKey::String(interp.intern("message"));
     {
         let mut p = derived_proto.borrow_mut();
         p.set_property(name_key, JsValue::String(JsString::from(name)));
@@ -83,13 +83,13 @@ fn create_derived_error(
     interp.root_guard.guard(constructor.clone());
 
     // Set up prototype chain
-    let proto_key = interp.key("prototype");
+    let proto_key = PropertyKey::String(interp.intern("prototype"));
     constructor
         .borrow_mut()
         .set_property(proto_key, JsValue::Object(derived_proto));
 
     // Register globally
-    let key = interp.key(name);
+    let key = PropertyKey::String(interp.intern(name));
     interp
         .global
         .borrow_mut()
@@ -108,8 +108,8 @@ pub fn error_to_string(
     };
 
     // Pre-intern keys
-    let name_key = interp.key("name");
-    let message_key = interp.key("message");
+    let name_key = PropertyKey::String(interp.intern("name"));
+    let message_key = PropertyKey::String(interp.intern("message"));
 
     let obj_ref = obj.borrow();
 

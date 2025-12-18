@@ -27,13 +27,13 @@ pub fn init_map(interp: &mut Interpreter) {
     interp.root_guard.guard(constructor.clone());
 
     // Set prototype property on constructor
-    let proto_key = interp.key("prototype");
+    let proto_key = PropertyKey::String(interp.intern("prototype"));
     constructor
         .borrow_mut()
         .set_property(proto_key, JsValue::Object(interp.map_prototype.clone()));
 
     // Register globally
-    let map_key = interp.key("Map");
+    let map_key = PropertyKey::String(interp.intern("Map"));
     interp
         .global
         .borrow_mut()
@@ -64,7 +64,7 @@ pub fn map_constructor(
     _this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    let size_key = interp.key("size");
+    let size_key = PropertyKey::String(interp.intern("size"));
 
     let guard = interp.heap.create_guard();
     let map_obj = interp.create_object(&guard);
@@ -103,7 +103,7 @@ pub fn map_constructor(
         };
 
         // Now add all pairs to the map
-        let size_key = interp.key("size");
+        let size_key = PropertyKey::String(interp.intern("size"));
         let mut map = map_obj.borrow_mut();
         if let ExoticObject::Map { ref mut entries } = map.exotic {
             for (key, value) in pairs {
@@ -164,7 +164,7 @@ pub fn map_set(
         ));
     };
 
-    let size_key = interp.key("size");
+    let size_key = PropertyKey::String(interp.intern("size"));
 
     let key = args.first().cloned().unwrap_or(JsValue::Undefined);
     let value = args.get(1).cloned().unwrap_or(JsValue::Undefined);
@@ -226,7 +226,7 @@ pub fn map_delete(
         ));
     };
 
-    let size_key = interp.key("size");
+    let size_key = PropertyKey::String(interp.intern("size"));
 
     let key = args.first().cloned().unwrap_or(JsValue::Undefined);
     let mut map = map_obj.borrow_mut();
@@ -254,7 +254,7 @@ pub fn map_clear(
         ));
     };
 
-    let size_key = interp.key("size");
+    let size_key = PropertyKey::String(interp.intern("size"));
 
     let mut map = map_obj.borrow_mut();
 

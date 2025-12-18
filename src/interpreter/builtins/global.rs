@@ -2,14 +2,14 @@
 
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
-use crate::value::{Guarded, JsString, JsValue};
+use crate::value::{Guarded, JsString, JsValue, PropertyKey};
 
 /// Register global functions (parseInt, parseFloat, isNaN, isFinite, URI functions)
 pub fn init_global_functions(interp: &mut Interpreter) {
     // parseInt
     let parseint_fn = interp.create_native_function("parseInt", global_parse_int, 2);
     interp.root_guard.guard(parseint_fn.clone());
-    let key = interp.key("parseInt");
+    let key = PropertyKey::String(interp.intern("parseInt"));
     interp
         .global
         .borrow_mut()
@@ -18,7 +18,7 @@ pub fn init_global_functions(interp: &mut Interpreter) {
     // parseFloat
     let parsefloat_fn = interp.create_native_function("parseFloat", global_parse_float, 1);
     interp.root_guard.guard(parsefloat_fn.clone());
-    let key = interp.key("parseFloat");
+    let key = PropertyKey::String(interp.intern("parseFloat"));
     interp
         .global
         .borrow_mut()
@@ -27,7 +27,7 @@ pub fn init_global_functions(interp: &mut Interpreter) {
     // isNaN
     let isnan_fn = interp.create_native_function("isNaN", global_is_nan, 1);
     interp.root_guard.guard(isnan_fn.clone());
-    let key = interp.key("isNaN");
+    let key = PropertyKey::String(interp.intern("isNaN"));
     interp
         .global
         .borrow_mut()
@@ -36,7 +36,7 @@ pub fn init_global_functions(interp: &mut Interpreter) {
     // isFinite
     let isfinite_fn = interp.create_native_function("isFinite", global_is_finite, 1);
     interp.root_guard.guard(isfinite_fn.clone());
-    let key = interp.key("isFinite");
+    let key = PropertyKey::String(interp.intern("isFinite"));
     interp
         .global
         .borrow_mut()
@@ -45,7 +45,7 @@ pub fn init_global_functions(interp: &mut Interpreter) {
     // encodeURI
     let encodeuri_fn = interp.create_native_function("encodeURI", global_encode_uri, 1);
     interp.root_guard.guard(encodeuri_fn.clone());
-    let key = interp.key("encodeURI");
+    let key = PropertyKey::String(interp.intern("encodeURI"));
     interp
         .global
         .borrow_mut()
@@ -54,7 +54,7 @@ pub fn init_global_functions(interp: &mut Interpreter) {
     // decodeURI
     let decodeuri_fn = interp.create_native_function("decodeURI", global_decode_uri, 1);
     interp.root_guard.guard(decodeuri_fn.clone());
-    let key = interp.key("decodeURI");
+    let key = PropertyKey::String(interp.intern("decodeURI"));
     interp
         .global
         .borrow_mut()
@@ -64,7 +64,7 @@ pub fn init_global_functions(interp: &mut Interpreter) {
     let encodeuricomponent_fn =
         interp.create_native_function("encodeURIComponent", global_encode_uri_component, 1);
     interp.root_guard.guard(encodeuricomponent_fn.clone());
-    let key = interp.key("encodeURIComponent");
+    let key = PropertyKey::String(interp.intern("encodeURIComponent"));
     interp
         .global
         .borrow_mut()
@@ -74,7 +74,7 @@ pub fn init_global_functions(interp: &mut Interpreter) {
     let decodeuricomponent_fn =
         interp.create_native_function("decodeURIComponent", global_decode_uri_component, 1);
     interp.root_guard.guard(decodeuricomponent_fn.clone());
-    let key = interp.key("decodeURIComponent");
+    let key = PropertyKey::String(interp.intern("decodeURIComponent"));
     interp
         .global
         .borrow_mut()

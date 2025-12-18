@@ -64,7 +64,7 @@ pub fn create_array_constructor(interp: &mut Interpreter) -> JsObjectRef {
     interp.register_method(&constructor, "of", array_of, 0);
     interp.register_method(&constructor, "from", array_from, 1);
 
-    let proto_key = interp.key("prototype");
+    let proto_key = PropertyKey::String(interp.intern("prototype"));
     constructor
         .borrow_mut()
         .set_property(proto_key, JsValue::Object(interp.array_prototype.clone()));

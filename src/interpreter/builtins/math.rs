@@ -3,7 +3,7 @@
 use crate::error::JsError;
 use crate::gc::Gc;
 use crate::interpreter::Interpreter;
-use crate::value::{Guarded, JsObject, JsValue};
+use crate::value::{Guarded, JsObject, JsValue, PropertyKey};
 
 /// Initialize Math object and bind it to global scope.
 /// Returns the Math object for rooting.
@@ -13,14 +13,14 @@ pub fn init_math(interp: &mut Interpreter) -> Gc<JsObject> {
     math_obj.borrow_mut().prototype = Some(interp.object_prototype.clone());
 
     // Constants
-    let pi_key = interp.key("PI");
-    let e_key = interp.key("E");
-    let ln2_key = interp.key("LN2");
-    let ln10_key = interp.key("LN10");
-    let log2e_key = interp.key("LOG2E");
-    let log10e_key = interp.key("LOG10E");
-    let sqrt2_key = interp.key("SQRT2");
-    let sqrt1_2_key = interp.key("SQRT1_2");
+    let pi_key = PropertyKey::String(interp.intern("PI"));
+    let e_key = PropertyKey::String(interp.intern("E"));
+    let ln2_key = PropertyKey::String(interp.intern("LN2"));
+    let ln10_key = PropertyKey::String(interp.intern("LN10"));
+    let log2e_key = PropertyKey::String(interp.intern("LOG2E"));
+    let log10e_key = PropertyKey::String(interp.intern("LOG10E"));
+    let sqrt2_key = PropertyKey::String(interp.intern("SQRT2"));
+    let sqrt1_2_key = PropertyKey::String(interp.intern("SQRT1_2"));
 
     {
         let mut math = math_obj.borrow_mut();
@@ -85,7 +85,7 @@ pub fn init_math(interp: &mut Interpreter) -> Gc<JsObject> {
 
     // Root Math object and bind to global
     interp.root_guard.guard(math_obj.clone());
-    let math_key = interp.key("Math");
+    let math_key = PropertyKey::String(interp.intern("Math"));
     let result = math_obj.clone();
     interp
         .global

@@ -3,7 +3,7 @@
 use super::map::same_value_zero;
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
-use crate::value::{ExoticObject, Guarded, JsValue};
+use crate::value::{ExoticObject, Guarded, JsValue, PropertyKey};
 
 /// Initialize Set.prototype with add, has, delete, clear, forEach methods
 pub fn init_set_prototype(interp: &mut Interpreter) {
@@ -27,13 +27,13 @@ pub fn init_set(interp: &mut Interpreter) {
     interp.root_guard.guard(constructor.clone());
 
     // Set prototype property on constructor
-    let proto_key = interp.key("prototype");
+    let proto_key = PropertyKey::String(interp.intern("prototype"));
     constructor
         .borrow_mut()
         .set_property(proto_key, JsValue::Object(interp.set_prototype.clone()));
 
     // Register globally
-    let set_key = interp.key("Set");
+    let set_key = PropertyKey::String(interp.intern("Set"));
     interp
         .global
         .borrow_mut()
@@ -45,7 +45,7 @@ pub fn set_constructor(
     _this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    let size_key = interp.key("size");
+    let size_key = PropertyKey::String(interp.intern("size"));
 
     let guard = interp.heap.create_guard();
     let set_obj = interp.create_object(&guard);
@@ -65,7 +65,7 @@ pub fn set_constructor(
             let items: Vec<JsValue> = elements.to_vec();
             drop(arr_ref);
 
-            let size_key = interp.key("size");
+            let size_key = PropertyKey::String(interp.intern("size"));
             let mut set = set_obj.borrow_mut();
             if let ExoticObject::Set { ref mut entries } = set.exotic {
                 for value in items {
@@ -95,7 +95,7 @@ pub fn set_add(
         ));
     };
 
-    let size_key = interp.key("size");
+    let size_key = PropertyKey::String(interp.intern("size"));
 
     let value = args.first().cloned().unwrap_or(JsValue::Undefined);
 
@@ -151,7 +151,7 @@ pub fn set_delete(
         ));
     };
 
-    let size_key = interp.key("size");
+    let size_key = PropertyKey::String(interp.intern("size"));
 
     let value = args.first().cloned().unwrap_or(JsValue::Undefined);
     let mut set = set_obj.borrow_mut();
@@ -179,7 +179,7 @@ pub fn set_clear(
         ));
     };
 
-    let size_key = interp.key("size");
+    let size_key = PropertyKey::String(interp.intern("size"));
 
     let mut set = set_obj.borrow_mut();
 

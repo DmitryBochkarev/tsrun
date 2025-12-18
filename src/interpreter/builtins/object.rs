@@ -268,7 +268,7 @@ pub fn object_from_entries(
                     .unwrap_or(JsValue::Undefined);
                 let key_str = key.to_js_string().to_string();
                 drop(entry_borrow);
-                let interned_key = interp.key(&key_str);
+                let interned_key = PropertyKey::String(interp.intern(&key_str));
                 result.borrow_mut().set_property(interned_key, value);
             }
         }
@@ -290,7 +290,7 @@ pub fn object_has_own(
     };
 
     let key_str = key.to_js_string().to_string();
-    let interned_key = interp.key(&key_str);
+    let interned_key = PropertyKey::String(interp.intern(&key_str));
 
     let borrowed = obj_ref.borrow();
     let has = if let ExoticObject::Enum(ref data) = borrowed.exotic {
@@ -426,7 +426,7 @@ pub fn object_has_own_property(
         .first()
         .map(|v| v.to_js_string().to_string())
         .unwrap_or_default();
-    let key = interp.key(&prop_name);
+    let key = PropertyKey::String(interp.intern(&prop_name));
 
     let obj_ref = obj.borrow();
     let has_prop = if let ExoticObject::Enum(ref data) = obj_ref.exotic {
@@ -532,12 +532,12 @@ pub fn object_get_own_property_descriptor(
 
     if let Some(property) = obj_borrowed.get_own_property(&key) {
         // Pre-intern all descriptor property keys
-        let get_key = interp.key("get");
-        let set_key = interp.key("set");
-        let value_key = interp.key("value");
-        let writable_key = interp.key("writable");
-        let enumerable_key = interp.key("enumerable");
-        let configurable_key = interp.key("configurable");
+        let get_key = PropertyKey::String(interp.intern("get"));
+        let set_key = PropertyKey::String(interp.intern("set"));
+        let value_key = PropertyKey::String(interp.intern("value"));
+        let writable_key = PropertyKey::String(interp.intern("writable"));
+        let enumerable_key = PropertyKey::String(interp.intern("enumerable"));
+        let configurable_key = PropertyKey::String(interp.intern("configurable"));
 
         // Create a descriptor object
         let desc_guard = interp.heap.create_guard();
@@ -656,12 +656,12 @@ pub fn object_define_property(
     let key = PropertyKey::from_value(&prop);
 
     // Pre-intern descriptor property keys
-    let value_key = interp.key("value");
-    let writable_key = interp.key("writable");
-    let enumerable_key = interp.key("enumerable");
-    let configurable_key = interp.key("configurable");
-    let get_key = interp.key("get");
-    let set_key = interp.key("set");
+    let value_key = PropertyKey::String(interp.intern("value"));
+    let writable_key = PropertyKey::String(interp.intern("writable"));
+    let enumerable_key = PropertyKey::String(interp.intern("enumerable"));
+    let configurable_key = PropertyKey::String(interp.intern("configurable"));
+    let get_key = PropertyKey::String(interp.intern("get"));
+    let set_key = PropertyKey::String(interp.intern("set"));
 
     // Get descriptor properties
     let desc_borrowed = desc_ref.borrow();
@@ -735,12 +735,12 @@ pub fn object_define_properties(
     };
 
     // Pre-intern descriptor property keys
-    let value_key = interp.key("value");
-    let writable_key = interp.key("writable");
-    let enumerable_key = interp.key("enumerable");
-    let configurable_key = interp.key("configurable");
-    let get_key = interp.key("get");
-    let set_key = interp.key("set");
+    let value_key = PropertyKey::String(interp.intern("value"));
+    let writable_key = PropertyKey::String(interp.intern("writable"));
+    let enumerable_key = PropertyKey::String(interp.intern("enumerable"));
+    let configurable_key = PropertyKey::String(interp.intern("configurable"));
+    let get_key = PropertyKey::String(interp.intern("get"));
+    let set_key = PropertyKey::String(interp.intern("set"));
 
     // Iterate over all properties in the descriptor object
     let prop_keys: Vec<PropertyKey> = {

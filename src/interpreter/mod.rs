@@ -1004,15 +1004,15 @@ impl Interpreter {
         flags: &str,
     ) -> Gc<JsObject> {
         // Pre-intern all property keys
-        let source_key = self.key("source");
-        let flags_key = self.key("flags");
-        let global_key = self.key("global");
-        let ignore_case_key = self.key("ignoreCase");
-        let multiline_key = self.key("multiline");
-        let dot_all_key = self.key("dotAll");
-        let unicode_key = self.key("unicode");
-        let sticky_key = self.key("sticky");
-        let last_index_key = self.key("lastIndex");
+        let source_key = PropertyKey::String(self.intern("source"));
+        let flags_key = PropertyKey::String(self.intern("flags"));
+        let global_key = PropertyKey::String(self.intern("global"));
+        let ignore_case_key = PropertyKey::String(self.intern("ignoreCase"));
+        let multiline_key = PropertyKey::String(self.intern("multiline"));
+        let dot_all_key = PropertyKey::String(self.intern("dotAll"));
+        let unicode_key = PropertyKey::String(self.intern("unicode"));
+        let sticky_key = PropertyKey::String(self.intern("sticky"));
+        let last_index_key = PropertyKey::String(self.intern("lastIndex"));
 
         let regexp_obj = self.create_object_raw(guard);
         {
@@ -1120,12 +1120,6 @@ impl Interpreter {
         self.string_dict.get_or_insert(s)
     }
 
-    /// Create a PropertyKey from a string
-    // FIXME: over-used candidate to removal
-    pub fn key(&mut self, s: &str) -> PropertyKey {
-        PropertyKey::String(self.intern(s))
-    }
-
     /// Extract string key from ObjectPropertyKey (for destructuring)
     fn extract_property_key_string(&self, key: &ObjectPropertyKey) -> Option<JsString> {
         match key {
@@ -1191,7 +1185,7 @@ impl Interpreter {
         arity: usize,
     ) {
         let func_obj = self.create_native_function(name, func, arity);
-        let key = self.key(name);
+        let key = PropertyKey::String(self.intern(name));
         obj.borrow_mut()
             .set_property(key, JsValue::Object(func_obj));
     }
@@ -1660,7 +1654,7 @@ impl Interpreter {
         let module_obj = self.create_object(guard);
 
         for (name, export) in exports {
-            let key = self.key(name);
+            let key = PropertyKey::String(self.intern(name));
             let value = match export {
                 crate::InternalExport::Function {
                     name: fn_name,
@@ -2038,7 +2032,9 @@ impl Interpreter {
 
         // If we have a superclass, set up prototype chain
         if let Some(ref super_ctor) = super_constructor {
-            let super_proto = super_ctor.borrow().get_property(&self.key("prototype"));
+            let super_proto = super_ctor
+                .borrow()
+                .get_property(&PropertyKey::String(self.intern("prototype")));
             if let Some(JsValue::Object(sp)) = super_proto {
                 prototype.borrow_mut().prototype = Some(sp.cheap_clone());
             }
@@ -2111,7 +2107,7 @@ impl Interpreter {
             // Store __super__ on method so super.method() works
             if let Some(ref super_ctor) = super_constructor {
                 func_obj.borrow_mut().set_property(
-                    self.key("__super__"),
+                    PropertyKey::String(self.intern("__super__")),
                     JsValue::Object(super_ctor.cheap_clone()),
                 );
             }
@@ -2189,7 +2185,7 @@ impl Interpreter {
 
         // Store prototype on constructor
         constructor_fn.borrow_mut().set_property(
-            self.key("prototype"),
+            PropertyKey::String(self.intern("prototype")),
             JsValue::Object(prototype.cheap_clone()),
         );
 
@@ -2217,7 +2213,7 @@ impl Interpreter {
 
             let fields_array = self.create_array_from(guard, field_pairs);
 
-            let fields_key = self.key("__fields__");
+            let fields_key = PropertyKey::String(self.intern("__fields__"));
             constructor_fn
                 .borrow_mut()
                 .set_property(fields_key, JsValue::Object(fields_array));
@@ -2226,7 +2222,7 @@ impl Interpreter {
         // Store super constructor if we have one
         if let Some(ref super_ctor) = super_constructor {
             constructor_fn.borrow_mut().set_property(
-                self.key("__super__"),
+                PropertyKey::String(self.intern("__super__")),
                 JsValue::Object(super_ctor.cheap_clone()),
             );
         }
@@ -2317,7 +2313,7 @@ impl Interpreter {
 
         // Set prototype.constructor = constructor
         prototype.borrow_mut().set_property(
-            self.key("constructor"),
+            PropertyKey::String(self.intern("constructor")),
             JsValue::Object(constructor_fn.cheap_clone()),
         );
 
@@ -2553,8 +2549,8 @@ impl Interpreter {
                             // Check if it's a generator - delegate to it
                             if let ExoticObject::Generator(gen_state) = &obj.borrow().exotic {
                                 let gen_state = gen_state.clone();
-                                let done_key = self.key("done");
-                                let value_key = self.key("value");
+                                let done_key = PropertyKey::String(self.intern("done"));
+                                let value_key = PropertyKey::String(self.intern("value"));
                                 loop {
                                     let result = self.resume_generator(&gen_state)?;
                                     let JsValue::Object(res_obj) = &result.value else {
@@ -2915,7 +2911,7 @@ impl Interpreter {
                 };
 
                 // Get right.prototype
-                let proto_key = self.key("prototype");
+                let proto_key = PropertyKey::String(self.intern("prototype"));
                 let right_proto = right_obj.borrow().get_property(&proto_key);
                 let Some(JsValue::Object(right_proto_obj)) = right_proto else {
                     return Err(JsError::type_error(
@@ -3467,7 +3463,7 @@ impl Interpreter {
                 // Get the method from super's prototype
                 let key = self.get_member_key(&member.property)?;
                 let func = if let JsValue::Object(super_obj) = &super_constructor {
-                    let proto_key = self.key("prototype");
+                    let proto_key = PropertyKey::String(self.intern("prototype"));
                     if let Some(JsValue::Object(proto)) =
                         super_obj.borrow().get_property(&proto_key)
                     {

@@ -3,7 +3,7 @@
 use crate::error::JsError;
 use crate::gc::Gc;
 use crate::interpreter::Interpreter;
-use crate::value::{ExoticObject, Guarded, JsObject, JsString, JsValue};
+use crate::value::{ExoticObject, Guarded, JsObject, JsString, JsValue, PropertyKey};
 
 /// Initialize RegExp.prototype with test and exec methods
 pub fn init_regexp_prototype(interp: &mut Interpreter) {
@@ -17,7 +17,7 @@ pub fn init_regexp_prototype(interp: &mut Interpreter) {
 pub fn create_regexp_constructor(interp: &mut Interpreter) -> Gc<JsObject> {
     let constructor = interp.create_native_function("RegExp", regexp_constructor, 2);
 
-    let proto_key = interp.key("prototype");
+    let proto_key = PropertyKey::String(interp.intern("prototype"));
     constructor
         .borrow_mut()
         .set_property(proto_key, JsValue::Object(interp.regexp_prototype.clone()));
@@ -44,15 +44,15 @@ pub fn regexp_constructor(
         .to_string();
 
     // Pre-intern all property keys
-    let source_key = interp.key("source");
-    let flags_key = interp.key("flags");
-    let global_key = interp.key("global");
-    let ignore_case_key = interp.key("ignoreCase");
-    let multiline_key = interp.key("multiline");
-    let dot_all_key = interp.key("dotAll");
-    let unicode_key = interp.key("unicode");
-    let sticky_key = interp.key("sticky");
-    let last_index_key = interp.key("lastIndex");
+    let source_key = PropertyKey::String(interp.intern("source"));
+    let flags_key = PropertyKey::String(interp.intern("flags"));
+    let global_key = PropertyKey::String(interp.intern("global"));
+    let ignore_case_key = PropertyKey::String(interp.intern("ignoreCase"));
+    let multiline_key = PropertyKey::String(interp.intern("multiline"));
+    let dot_all_key = PropertyKey::String(interp.intern("dotAll"));
+    let unicode_key = PropertyKey::String(interp.intern("unicode"));
+    let sticky_key = PropertyKey::String(interp.intern("sticky"));
+    let last_index_key = PropertyKey::String(interp.intern("lastIndex"));
 
     let guard = interp.heap.create_guard();
     let regexp_obj = interp.create_object(&guard);
@@ -160,9 +160,9 @@ pub fn regexp_exec(
     let is_sticky = flags.contains('y');
 
     // Pre-intern property keys
-    let last_index_key = interp.key("lastIndex");
-    let index_key = interp.key("index");
-    let input_key = interp.key("input");
+    let last_index_key = PropertyKey::String(interp.intern("lastIndex"));
+    let index_key = PropertyKey::String(interp.intern("index"));
+    let input_key = PropertyKey::String(interp.intern("input"));
 
     // Get lastIndex for global/sticky regexes
     let last_index = if is_global || is_sticky {

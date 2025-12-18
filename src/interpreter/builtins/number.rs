@@ -3,7 +3,7 @@
 use crate::error::JsError;
 use crate::gc::Gc;
 use crate::interpreter::Interpreter;
-use crate::value::{Guarded, JsObject, JsString, JsValue};
+use crate::value::{Guarded, JsObject, JsString, JsValue, PropertyKey};
 
 /// Initialize Number.prototype with toFixed, toString, toPrecision, toExponential
 pub fn init_number_prototype(interp: &mut Interpreter) {
@@ -43,14 +43,14 @@ pub fn create_number_constructor(interp: &mut Interpreter) -> Gc<JsObject> {
     interp.register_method(&constructor, "parseInt", number_parse_int, 2);
 
     // Constants
-    let max_value_key = interp.key("MAX_VALUE");
-    let min_value_key = interp.key("MIN_VALUE");
-    let max_safe_key = interp.key("MAX_SAFE_INTEGER");
-    let min_safe_key = interp.key("MIN_SAFE_INTEGER");
-    let nan_key = interp.key("NaN");
-    let pos_inf_key = interp.key("POSITIVE_INFINITY");
-    let neg_inf_key = interp.key("NEGATIVE_INFINITY");
-    let epsilon_key = interp.key("EPSILON");
+    let max_value_key = PropertyKey::String(interp.intern("MAX_VALUE"));
+    let min_value_key = PropertyKey::String(interp.intern("MIN_VALUE"));
+    let max_safe_key = PropertyKey::String(interp.intern("MAX_SAFE_INTEGER"));
+    let min_safe_key = PropertyKey::String(interp.intern("MIN_SAFE_INTEGER"));
+    let nan_key = PropertyKey::String(interp.intern("NaN"));
+    let pos_inf_key = PropertyKey::String(interp.intern("POSITIVE_INFINITY"));
+    let neg_inf_key = PropertyKey::String(interp.intern("NEGATIVE_INFINITY"));
+    let epsilon_key = PropertyKey::String(interp.intern("EPSILON"));
 
     {
         let mut c = constructor.borrow_mut();
@@ -64,7 +64,7 @@ pub fn create_number_constructor(interp: &mut Interpreter) -> Gc<JsObject> {
         c.set_property(epsilon_key, JsValue::Number(f64::EPSILON));
     }
 
-    let proto_key = interp.key("prototype");
+    let proto_key = PropertyKey::String(interp.intern("prototype"));
     constructor
         .borrow_mut()
         .set_property(proto_key, JsValue::Object(interp.number_prototype.clone()));

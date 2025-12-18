@@ -54,7 +54,7 @@ pub fn init_console(interp: &mut Interpreter) {
     interp.register_method(&console, "group", console_group, 0);
     interp.register_method(&console, "groupEnd", console_group_end, 0);
 
-    let console_key = interp.key("console");
+    let console_key = PropertyKey::String(interp.intern("console"));
     interp
         .global
         .borrow_mut()
