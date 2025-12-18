@@ -7,9 +7,11 @@ use crate::error::JsError;
 use crate::gc::Gc;
 use crate::interpreter::Interpreter;
 use crate::value::{
-    ExoticObject, GeneratorState, GeneratorStatus, Guarded, JsObject, JsString, JsValue,
+    ExoticObject, GeneratorState, GeneratorStatus, Guarded, JsObject, JsString, JsSymbol, JsValue,
     PropertyKey,
 };
+
+use super::symbol::get_well_known_symbols;
 
 /// Initialize Generator.prototype
 pub fn init_generator_prototype(interp: &mut Interpreter) {
@@ -24,6 +26,32 @@ pub fn init_generator_prototype(interp: &mut Interpreter) {
     interp.register_method(&proto, "next", generator_next, 1);
     interp.register_method(&proto, "return", generator_return, 1);
     interp.register_method(&proto, "throw", generator_throw, 1);
+
+    // Add Symbol.asyncIterator - returns the generator itself
+    // This makes async generators work with for-await-of
+    let well_known = get_well_known_symbols();
+    let async_iterator_symbol = JsSymbol::new(
+        well_known.async_iterator,
+        Some("Symbol.asyncIterator".to_string()),
+    );
+    let async_iterator_key = PropertyKey::Symbol(Box::new(async_iterator_symbol));
+
+    // Create the [Symbol.asyncIterator]() method that returns `this`
+    let async_iterator_fn =
+        interp.create_native_function("[Symbol.asyncIterator]", generator_async_iterator, 0);
+    proto
+        .borrow_mut()
+        .set_property(async_iterator_key, JsValue::Object(async_iterator_fn));
+}
+
+/// Generator.prototype[Symbol.asyncIterator]() - returns the generator itself
+fn generator_async_iterator(
+    _interp: &mut Interpreter,
+    this: JsValue,
+    _args: &[JsValue],
+) -> Result<Guarded, JsError> {
+    // Simply return `this` - the generator is its own async iterator
+    Ok(Guarded::unguarded(this))
 }
 
 /// Create a generator result object { value, done }

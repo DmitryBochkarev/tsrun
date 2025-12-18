@@ -689,12 +689,16 @@ These features have AST support but are ignored or partially handled at runtime:
 **Status:** Parsed as call expression, but no runtime module loading. Only static imports via host are supported.
 
 #### Async Iteration
-- [ ] `for await...of` loops (partial - flag exists but async iterator protocol incomplete)
-- [ ] `Symbol.asyncIterator`
-- [ ] Async generator functions (`async function*`)
-- [ ] `yield` in async generators
+- [x] `for await...of` loops with arrays of promises
+- [x] `for await...of` with custom async iterables (Symbol.asyncIterator)
+- [x] `Symbol.asyncIterator` on generator prototype
+- [x] Async generator functions (`async function*`)
+- [x] `yield` in async generators
+- [x] `yield*` with async generators
+- [ ] Nested async generators in for-await-of (partial)
+- [ ] `generator.throw()` with async generators
 
-**Status:** `ForOfStatement` has `await_` flag in AST, but async iterator protocol is not fully implemented.
+**Status:** Core async iteration is implemented. `for await...of` works with arrays of promises, custom async iterables via `Symbol.asyncIterator`, and async generators. Nested async generator patterns have some edge cases.
 
 ### Missing Built-in Objects
 

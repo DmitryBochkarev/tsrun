@@ -752,6 +752,10 @@ impl<'a> Parser<'a> {
     fn parse_for_statement(&mut self) -> Result<Statement, JsError> {
         let start = self.current.span;
         self.require_token(&TokenKind::For)?;
+
+        // Check for 'for await' (async iteration)
+        let is_await = self.match_token(&TokenKind::Await);
+
         self.require_token(&TokenKind::LParen)?;
 
         // Check for for-in or for-of
@@ -805,10 +809,13 @@ impl<'a> Parser<'a> {
                         left,
                         right: Rc::new(right),
                         body,
-                        await_: false,
+                        await_: is_await,
                         span,
                     }))
                 } else {
+                    if is_await {
+                        return Err(self.error("for await is only valid with for-of loops"));
+                    }
                     Ok(Statement::ForIn(ForInStatement {
                         left,
                         right: Rc::new(right),
@@ -816,6 +823,11 @@ impl<'a> Parser<'a> {
                         span,
                     }))
                 };
+            }
+
+            // Regular for loop - 'await' is not valid here
+            if is_await {
+                return Err(self.error("for await is only valid with for-of loops"));
             }
 
             // Regular for loop - type_ann already parsed above
@@ -862,10 +874,13 @@ impl<'a> Parser<'a> {
                         left,
                         right: Rc::new(right),
                         body,
-                        await_: false,
+                        await_: is_await,
                         span,
                     }))
                 } else {
+                    if is_await {
+                        return Err(self.error("for await is only valid with for-of loops"));
+                    }
                     Ok(Statement::ForIn(ForInStatement {
                         left,
                         right: Rc::new(right),
@@ -873,6 +888,11 @@ impl<'a> Parser<'a> {
                         span,
                     }))
                 };
+            }
+
+            // Regular for loop - 'await' is not valid here
+            if is_await {
+                return Err(self.error("for await is only valid with for-of loops"));
             }
 
             Some(ForInit::Expression(Rc::new(expr)))

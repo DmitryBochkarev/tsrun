@@ -18,6 +18,7 @@
 
 mod array;
 mod async_await;
+mod async_iter;
 mod basics;
 mod class;
 mod console;

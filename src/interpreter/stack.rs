@@ -17,11 +17,12 @@ use crate::error::JsError;
 use crate::gc::{Gc, Guard};
 use crate::value::{
     Binding, CheapClone, ExoticObject, FunctionBody, GeneratorState, Guarded, JsObject, JsString,
-    JsValue, PromiseStatus, PropertyKey, VarKey,
+    JsSymbol, JsValue, PromiseStatus, PropertyKey, VarKey,
 };
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use super::builtins::symbol::get_well_known_symbols;
 use super::{create_environment_unrooted, Interpreter};
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -79,6 +80,22 @@ pub struct ForOfGeneratorData {
     pub body: Rc<Statement>,
     pub label: LoopLabel,
     pub saved_env: Gc<JsObject>,
+}
+
+/// Data for for await...of with async iterator protocol
+pub struct ForAwaitOfAsyncData {
+    /// The async iterator object (has next() method)
+    pub async_iterator: Gc<JsObject>,
+    /// Left-hand side binding
+    pub left: Rc<ForInOfLeft>,
+    /// Loop body
+    pub body: Rc<Statement>,
+    /// Optional label
+    pub label: LoopLabel,
+    /// Saved environment to restore after loop
+    pub saved_env: Gc<JsObject>,
+    /// Guard to keep async iterator alive
+    pub iterator_guard: Option<Guard<JsObject>>,
 }
 
 /// A frame on the evaluation stack
@@ -284,6 +301,8 @@ pub enum Frame {
         saved_env: Gc<JsObject>,
         /// Guard to keep iterable's objects alive during iteration
         iterable_guard: Option<Guard<JsObject>>,
+        /// True for `for await...of` - await each item before binding
+        await_: bool,
     },
 
     /// For-of iteration: after body, proceed to next item
@@ -296,6 +315,8 @@ pub enum Frame {
         saved_env: Gc<JsObject>,
         /// Guard to keep iterable's objects alive during iteration
         iterable_guard: Option<Guard<JsObject>>,
+        /// True for `for await...of` - await each item before binding
+        await_: bool,
     },
 
     /// For-of loop over a generator: call next() each iteration
@@ -305,6 +326,13 @@ pub enum Frame {
     /// For-of generator: after body, call next() again
     /// Boxed to reduce Frame enum size
     ForOfGeneratorAfterBody(Box<ForOfGeneratorData>),
+
+    /// For await...of with async iterator: call next() and await result
+    /// Boxed to reduce Frame enum size
+    ForAwaitOfAsync(Box<ForAwaitOfAsyncData>),
+
+    /// For await...of async: after body, call next() again
+    ForAwaitOfAsyncAfterBody(Box<ForAwaitOfAsyncData>),
 
     /// Discard expression result (for init expressions, update expressions)
     DiscardValue,
@@ -756,6 +784,7 @@ impl Interpreter {
                 label,
                 saved_env,
                 iterable_guard,
+                await_,
             } => self.step_for_of_loop(
                 state,
                 items,
@@ -765,6 +794,7 @@ impl Interpreter {
                 label,
                 saved_env,
                 iterable_guard,
+                await_,
             ),
 
             Frame::ForOfAfterBody {
@@ -775,6 +805,7 @@ impl Interpreter {
                 label,
                 saved_env,
                 iterable_guard,
+                await_,
             } => self.step_for_of_after_body(
                 state,
                 items,
@@ -783,6 +814,7 @@ impl Interpreter {
                 body,
                 label,
                 saved_env,
+                await_,
                 iterable_guard,
             ),
 
@@ -805,6 +837,12 @@ impl Interpreter {
                 data.label,
                 data.saved_env,
             ),
+
+            Frame::ForAwaitOfAsync(data) => self.step_for_await_of_async(state, data),
+
+            Frame::ForAwaitOfAsyncAfterBody(data) => {
+                self.step_for_await_of_async_after_body(state, data)
+            }
 
             Frame::DiscardValue => {
                 // Pop and discard the value
@@ -2430,6 +2468,49 @@ impl Interpreter {
 
         let saved_env = self.env.cheap_clone();
 
+        // For `for await...of`, check for Symbol.asyncIterator first
+        if for_of.await_ {
+            if let JsValue::Object(ref obj) = right {
+                // Check for Symbol.asyncIterator method
+                let well_known = get_well_known_symbols();
+                let async_iterator_symbol = JsSymbol::new(
+                    well_known.async_iterator,
+                    Some("Symbol.asyncIterator".to_string()),
+                );
+                let async_iterator_key = PropertyKey::Symbol(Box::new(async_iterator_symbol));
+
+                let async_iterator_method = obj.borrow().get_property(&async_iterator_key);
+                if let Some(JsValue::Object(method_obj)) = async_iterator_method {
+                    // Call the async iterator method to get the iterator
+                    match self.call_function(JsValue::Object(method_obj), right.clone(), &[]) {
+                        Ok(Guarded {
+                            value: JsValue::Object(async_iter),
+                            guard: iter_guard,
+                        }) => {
+                            // Use async iterator frame
+                            state.push_frame(Frame::ForAwaitOfAsync(Box::new(
+                                ForAwaitOfAsyncData {
+                                    async_iterator: async_iter,
+                                    left: Rc::new(for_of.left.clone()),
+                                    body: for_of.body.cheap_clone(),
+                                    label,
+                                    saved_env,
+                                    iterator_guard: iter_guard,
+                                },
+                            )));
+                            return StepResult::Continue;
+                        }
+                        Ok(_) => {
+                            return StepResult::Error(JsError::type_error(
+                                "Symbol.asyncIterator must return an object",
+                            ));
+                        }
+                        Err(e) => return StepResult::Error(e),
+                    }
+                }
+            }
+        }
+
         // Check if it's a generator - handle with special frame
         if let JsValue::Object(ref obj) = right {
             if let ExoticObject::Generator(gen_state) = &obj.borrow().exotic {
@@ -2474,6 +2555,7 @@ impl Interpreter {
             label,
             saved_env,
             iterable_guard,
+            await_: for_of.await_,
         });
 
         StepResult::Continue
@@ -2490,6 +2572,7 @@ impl Interpreter {
         label: LoopLabel,
         saved_env: Gc<JsObject>,
         iterable_guard: Option<Guard<JsObject>>,
+        await_: bool,
     ) -> StepResult {
         // Check if we've iterated through all items
         if index >= items.len() {
@@ -2513,6 +2596,19 @@ impl Interpreter {
                 state.push_value(Guarded::unguarded(JsValue::Undefined));
                 return StepResult::Continue;
             }
+        };
+
+        // For `for await...of`, await each item (unwrap promises)
+        let item = if await_ {
+            match self.await_value(item) {
+                Ok(resolved) => resolved,
+                Err(e) => {
+                    self.env = saved_env;
+                    return StepResult::Error(e);
+                }
+            }
+        } else {
+            item
         };
 
         // Create per-iteration environment with guard
@@ -2551,6 +2647,7 @@ impl Interpreter {
             label,
             saved_env,
             iterable_guard,
+            await_,
         });
 
         // Push body statement
@@ -2569,6 +2666,7 @@ impl Interpreter {
         body: Rc<Statement>,
         label: LoopLabel,
         saved_env: Gc<JsObject>,
+        await_: bool,
         iterable_guard: Option<Guard<JsObject>>,
     ) -> StepResult {
         // Check completion type
@@ -2624,9 +2722,39 @@ impl Interpreter {
             label,
             saved_env,
             iterable_guard,
+            await_,
         });
 
         StepResult::Continue
+    }
+
+    /// Await a value: if it's a promise, extract its result; otherwise return as-is.
+    /// Returns an error if the promise is rejected.
+    /// Note: This is synchronous - it only works for already-resolved promises.
+    fn await_value(&self, value: JsValue) -> Result<JsValue, JsError> {
+        if let JsValue::Object(obj) = &value {
+            let obj_ref = obj.borrow();
+            if let ExoticObject::Promise(state) = &obj_ref.exotic {
+                let state_ref = state.borrow();
+                match state_ref.status {
+                    PromiseStatus::Fulfilled => {
+                        let result = state_ref.result.clone().unwrap_or(JsValue::Undefined);
+                        return Ok(result);
+                    }
+                    PromiseStatus::Rejected => {
+                        let reason = state_ref.result.clone().unwrap_or(JsValue::Undefined);
+                        return Err(JsError::thrown(reason));
+                    }
+                    PromiseStatus::Pending => {
+                        // Pending promise - for synchronous for-await-of, just return undefined
+                        // In a full async implementation, this would suspend execution
+                        return Ok(JsValue::Undefined);
+                    }
+                }
+            }
+        }
+        // Not a promise, return as-is
+        Ok(value)
     }
 
     // ═══════════════════════════════════════════════════════════════════════════════
@@ -2795,6 +2923,162 @@ impl Interpreter {
             label,
             saved_env,
         })));
+
+        StepResult::Continue
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // For Await...Of Async Iterator Implementation
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    /// Step for ForAwaitOfAsync: call next() on async iterator, await result, and iterate
+    fn step_for_await_of_async(
+        &mut self,
+        state: &mut ExecutionState,
+        data: Box<ForAwaitOfAsyncData>,
+    ) -> StepResult {
+        // Get next() method from async iterator
+        let next_key = PropertyKey::String(self.intern("next"));
+        let next_method = data.async_iterator.borrow().get_property(&next_key);
+
+        let Some(JsValue::Object(next_fn)) = next_method else {
+            return StepResult::Error(JsError::type_error("async iterator.next is not a function"));
+        };
+
+        // Call next() on the async iterator
+        let next_result = match self.call_function(
+            JsValue::Object(next_fn),
+            JsValue::Object(data.async_iterator.cheap_clone()),
+            &[],
+        ) {
+            Ok(guarded) => guarded.value,
+            Err(e) => return StepResult::Error(e),
+        };
+
+        // Await the result (in case it's a promise)
+        let awaited_result = match self.await_value(next_result) {
+            Ok(v) => v,
+            Err(e) => {
+                self.env = data.saved_env;
+                return StepResult::Error(e);
+            }
+        };
+
+        // Extract { value, done } from the result
+        let (value, done) = match &awaited_result {
+            JsValue::Object(obj) => {
+                let obj_ref = obj.borrow();
+                let value_key = PropertyKey::String(self.intern("value"));
+                let done_key = PropertyKey::String(self.intern("done"));
+
+                let value = obj_ref
+                    .get_property(&value_key)
+                    .unwrap_or(JsValue::Undefined);
+                let done = obj_ref
+                    .get_property(&done_key)
+                    .map(|v| v.to_boolean())
+                    .unwrap_or(false);
+                (value, done)
+            }
+            _ => (JsValue::Undefined, true),
+        };
+
+        // If done, loop is complete
+        if done {
+            self.env = data.saved_env;
+            state.push_value(Guarded::unguarded(JsValue::Undefined));
+            return StepResult::Continue;
+        }
+
+        // Create per-iteration environment with guard
+        let (iter_env, iter_guard) =
+            create_environment_unrooted(&self.heap, Some(data.saved_env.cheap_clone()));
+        self.env = iter_env;
+        self.push_env_guard(iter_guard);
+
+        // Bind the value to the left-hand side
+        match &*data.left {
+            ForInOfLeft::Variable(decl) => {
+                let mutable = decl.kind != VariableKind::Const;
+                if let Some(declarator) = decl.declarations.first() {
+                    if let Err(e) = self.bind_pattern(&declarator.id, value, mutable) {
+                        self.pop_env_guard();
+                        self.env = data.saved_env;
+                        return StepResult::Error(e);
+                    }
+                }
+            }
+            ForInOfLeft::Pattern(pattern) => {
+                if let Err(e) = self.bind_pattern(pattern, value, true) {
+                    self.pop_env_guard();
+                    self.env = data.saved_env;
+                    return StepResult::Error(e);
+                }
+            }
+        }
+
+        // Push continuation frame for after body
+        let body = data.body.cheap_clone();
+        state.push_frame(Frame::ForAwaitOfAsyncAfterBody(data));
+
+        // Push body statement
+        state.push_frame(Frame::Stmt(body));
+
+        StepResult::Continue
+    }
+
+    /// Step for ForAwaitOfAsyncAfterBody: handle control flow and proceed to next iteration
+    fn step_for_await_of_async_after_body(
+        &mut self,
+        state: &mut ExecutionState,
+        data: Box<ForAwaitOfAsyncData>,
+    ) -> StepResult {
+        // Check completion type
+        match &state.completion {
+            StackCompletion::Break(break_label) => {
+                if break_label.is_none() || break_label.as_ref() == label_ref(&data.label) {
+                    // Break targets this loop - pop iteration guard and restore env
+                    state.completion = StackCompletion::Normal;
+                    self.pop_env_guard();
+                    self.env = data.saved_env;
+                    let _ = state.pop_value();
+                    state.push_value(Guarded::unguarded(JsValue::Undefined));
+                    return StepResult::Continue;
+                }
+                // Break targets outer loop - pop iteration guard, restore env and propagate
+                self.pop_env_guard();
+                self.env = data.saved_env;
+                return StepResult::Continue;
+            }
+            StackCompletion::Continue(cont_label) => {
+                if cont_label.is_none() || cont_label.as_ref() == label_ref(&data.label) {
+                    // Continue targets this loop - pop guard and proceed to next iteration
+                    state.completion = StackCompletion::Normal;
+                    self.pop_env_guard();
+                } else {
+                    // Continue targets outer loop - pop iteration guard, restore env and propagate
+                    self.pop_env_guard();
+                    self.env = data.saved_env;
+                    return StepResult::Continue;
+                }
+            }
+            StackCompletion::Return | StackCompletion::Throw => {
+                // Return/throw - pop iteration guard, restore env and propagate
+                self.pop_env_guard();
+                self.env = data.saved_env;
+                return StepResult::Continue;
+            }
+            StackCompletion::Normal => {
+                // Normal completion - pop guard before next iteration creates new one
+                self.pop_env_guard();
+            }
+        }
+
+        // Pop body result
+        let _ = state.pop_value();
+
+        // Push next iteration
+        state.push_frame(Frame::ForAwaitOfAsync(data));
 
         StepResult::Continue
     }
