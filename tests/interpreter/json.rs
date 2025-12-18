@@ -15,7 +15,7 @@ fn test_json_stringify_simple_object() {
 fn test_json_stringify_with_indent() {
     // With indentation
     let result = eval(r#"JSON.stringify({ a: 1 }, null, 2)"#);
-    if let JsValue::String(s) = result {
+    if let JsValue::String(s) = &*result {
         assert!(
             s.as_str().contains("{\n"),
             "Expected formatted JSON with newlines"
@@ -92,7 +92,7 @@ fn test_json_stringify_async_nested_object() {
     "#,
     );
     // Object property order may vary, so check content rather than exact string
-    if let JsValue::String(s) = result {
+    if let JsValue::String(s) = &*result {
         assert!(
             s.as_str().contains(r#""name":"Alice""#),
             "Should contain name"

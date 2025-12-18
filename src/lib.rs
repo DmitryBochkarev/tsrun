@@ -48,13 +48,15 @@ use std::rc::Rc;
 pub struct OrderId(pub u64);
 
 /// An order is a request for an external effect.
-/// The payload is a JsValue that the host interprets to perform side effects.
+/// The payload is a RuntimeValue that the host interprets to perform side effects.
+/// The RuntimeValue keeps the payload alive until the order is fulfilled or dropped.
 #[derive(Debug)]
 pub struct Order {
     /// Unique identifier for this order
     pub id: OrderId,
-    /// The JS value describing what operation to perform
-    pub payload: JsValue,
+    /// The JS value describing what operation to perform.
+    /// Wrapped in RuntimeValue to keep it alive until the order is processed.
+    pub payload: RuntimeValue,
 }
 
 /// Response to fulfill an order from the host
@@ -63,6 +65,94 @@ pub struct OrderResponse {
     pub id: OrderId,
     /// The result of the operation (success or error)
     pub result: Result<JsValue, JsError>,
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Runtime Value
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// A JS value with an attached guard that keeps it alive until dropped.
+///
+/// This struct ensures that GC-managed objects remain valid for as long as
+/// the `RuntimeValue` exists. The guard is private to prevent accidental
+/// extraction of the value without the guard.
+///
+/// # Example
+/// ```ignore
+/// let result = runtime.eval("{ foo: 42 }")?;
+/// match result {
+///     RuntimeResult::Complete(runtime_value) => {
+///         // Value is guaranteed alive while runtime_value exists
+///         let value = runtime_value.value();
+///         println!("{:?}", value);
+///     }
+///     _ => {}
+/// }
+/// // Guard dropped here, object may be collected
+/// ```
+pub struct RuntimeValue {
+    value: JsValue,
+    _guard: Option<Guard<JsObject>>,
+}
+
+impl RuntimeValue {
+    /// Create a RuntimeValue from an internal Guarded value
+    pub(crate) fn from_guarded(guarded: Guarded) -> Self {
+        Self {
+            value: guarded.value,
+            _guard: guarded.guard,
+        }
+    }
+
+    /// Create a RuntimeValue with an explicit guard
+    pub(crate) fn with_guard(value: JsValue, guard: Guard<JsObject>) -> Self {
+        Self {
+            value,
+            _guard: Some(guard),
+        }
+    }
+
+    /// Create an unguarded RuntimeValue (for primitives)
+    pub(crate) fn unguarded(value: JsValue) -> Self {
+        Self {
+            value,
+            _guard: None,
+        }
+    }
+
+    /// Get a reference to the value
+    pub fn value(&self) -> &JsValue {
+        &self.value
+    }
+}
+
+impl std::ops::Deref for RuntimeValue {
+    type Target = JsValue;
+
+    fn deref(&self) -> &Self::Target {
+        &self.value
+    }
+}
+
+impl std::fmt::Debug for RuntimeValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RuntimeValue")
+            .field("value", &self.value)
+            .field("guarded", &self._guard.is_some())
+            .finish()
+    }
+}
+
+impl PartialEq<JsValue> for RuntimeValue {
+    fn eq(&self, other: &JsValue) -> bool {
+        &self.value == other
+    }
+}
+
+impl PartialEq<RuntimeValue> for JsValue {
+    fn eq(&self, other: &RuntimeValue) -> bool {
+        self == &other.value
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -199,8 +289,9 @@ pub struct ImportRequest {
 /// Result of running the interpreter
 #[derive(Debug)]
 pub enum RuntimeResult {
-    /// Execution completed with a final value
-    Complete(JsValue),
+    /// Execution completed with a final value.
+    /// The RuntimeValue keeps the result alive until dropped.
+    Complete(RuntimeValue),
 
     /// Need these modules before execution can start.
     /// Contains import requests with resolved paths and importer context.

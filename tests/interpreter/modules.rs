@@ -748,8 +748,8 @@ fn test_external_module_mixed_exports() {
             let result2 = runtime.continue_eval().unwrap();
 
             match result2 {
-                RuntimeResult::Complete(value) => {
-                    if let JsValue::Number(n) = value {
+                RuntimeResult::Complete(rv) => {
+                    if let JsValue::Number(n) = *rv {
                         assert!((n - 5.85987).abs() < 0.0001);
                     } else {
                         panic!("Expected Number");
@@ -1038,18 +1038,9 @@ fn test_export_class() {
 fn test_module_path_normalize() {
     // Test that paths are normalized correctly
     assert_eq!(ModulePath::resolve("./utils", None).as_str(), "utils");
-    assert_eq!(
-        ModulePath::resolve("./foo/bar", None).as_str(),
-        "foo/bar"
-    );
-    assert_eq!(
-        ModulePath::resolve("./a/b/../c", None).as_str(),
-        "a/c"
-    );
-    assert_eq!(
-        ModulePath::resolve("./a/./b/./c", None).as_str(),
-        "a/b/c"
-    );
+    assert_eq!(ModulePath::resolve("./foo/bar", None).as_str(), "foo/bar");
+    assert_eq!(ModulePath::resolve("./a/b/../c", None).as_str(), "a/c");
+    assert_eq!(ModulePath::resolve("./a/./b/./c", None).as_str(), "a/b/c");
 }
 
 #[test]
@@ -1095,14 +1086,8 @@ fn test_module_path_bare_specifier() {
 #[test]
 fn test_module_path_absolute() {
     // Absolute paths should just be normalized
-    assert_eq!(
-        ModulePath::resolve("/foo/bar", None).as_str(),
-        "/foo/bar"
-    );
-    assert_eq!(
-        ModulePath::resolve("/foo/../bar", None).as_str(),
-        "/bar"
-    );
+    assert_eq!(ModulePath::resolve("/foo/bar", None).as_str(), "/foo/bar");
+    assert_eq!(ModulePath::resolve("/foo/../bar", None).as_str(), "/bar");
 }
 
 #[test]
@@ -1111,10 +1096,7 @@ fn test_eval_with_path_resolves_imports() {
 
     // Eval with a base path
     let result = runtime
-        .eval_with_path(
-            r#"import { foo } from "./utils";"#,
-            "/project/src/main.ts",
-        )
+        .eval_with_path(r#"import { foo } from "./utils";"#, "/project/src/main.ts")
         .unwrap();
 
     match result {

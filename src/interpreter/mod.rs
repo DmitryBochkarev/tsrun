@@ -198,11 +198,9 @@ pub struct Interpreter {
     /// Counter for generating unique order IDs
     pub(crate) next_order_id: u64,
 
-    /// Pending orders waiting for host fulfillment
+    /// Pending orders waiting for host fulfillment.
+    /// Each Order contains a RuntimeValue that keeps the payload alive.
     pub(crate) pending_orders: Vec<crate::Order>,
-
-    /// Guards keeping pending order payloads alive
-    pub(crate) pending_order_guards: Vec<Guard<JsObject>>,
 
     /// Map from OrderId -> (resolve_fn, reject_fn) for pending promises
     pub(crate) order_callbacks: FxHashMap<crate::OrderId, (Gc<JsObject>, Gc<JsObject>)>,
@@ -309,7 +307,6 @@ impl Interpreter {
             // Order system
             next_order_id: 1,
             pending_orders: Vec::new(),
-            pending_order_guards: Vec::new(),
             order_callbacks: FxHashMap::default(),
             cancelled_orders: Vec::new(),
             suspended_state: None,
@@ -608,15 +605,18 @@ impl Interpreter {
                         let cancelled = std::mem::take(&mut self.cancelled_orders);
                         return Ok(crate::RuntimeResult::Suspended { pending, cancelled });
                     }
-                    // FIXME: return guarded value properly
-                    return Ok(crate::RuntimeResult::Complete(guarded.value));
+                    return Ok(crate::RuntimeResult::Complete(
+                        crate::RuntimeValue::from_guarded(guarded),
+                    ));
                 }
                 StepResult::Error(error) => {
                     // Try to find a TryBlock frame to catch the error
                     if let Some(result) = self.handle_error(state, error) {
                         return match result {
                             StepResult::Error(e) => Err(e),
-                            StepResult::Done(g) => Ok(crate::RuntimeResult::Complete(g.value)),
+                            StepResult::Done(g) => Ok(crate::RuntimeResult::Complete(
+                                crate::RuntimeValue::from_guarded(g),
+                            )),
                             _ => continue,
                         };
                     }
@@ -805,7 +805,9 @@ impl Interpreter {
         }
 
         // No pending orders - execution is complete
-        Ok(crate::RuntimeResult::Complete(JsValue::Undefined))
+        Ok(crate::RuntimeResult::Complete(
+            crate::RuntimeValue::unguarded(JsValue::Undefined),
+        ))
     }
 
     /// Fulfill orders with responses from the host

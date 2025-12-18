@@ -5,7 +5,7 @@
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
 use crate::value::{CheapClone, Guarded, JsFunction, JsValue};
-use crate::{InternalModule, Order, OrderId};
+use crate::{InternalModule, Order, OrderId, RuntimeValue};
 
 use super::promise::create_promise;
 
@@ -52,24 +52,23 @@ fn order_syscall(
     // Store callbacks for order fulfillment
     interp.order_callbacks.insert(id, (resolve_fn, reject_fn));
 
-    // Record the pending order
-    interp.pending_orders.push(Order {
-        id,
-        payload: payload.clone(),
-    });
-
-    // If payload is an object, guard it to keep it alive until fulfilled
-    if let JsValue::Object(ref obj) = payload {
+    // Create payload RuntimeValue with guard if it's an object
+    let payload_rv = if let JsValue::Object(ref obj) = payload {
         let guard = interp.heap.create_guard();
         guard.guard(obj.clone());
-        interp.pending_order_guards.push(guard);
-    }
+        RuntimeValue::with_guard(payload, guard)
+    } else {
+        RuntimeValue::unguarded(payload)
+    };
 
-    // Keep the promise alive
-    interp.pending_order_guards.push(promise_guard);
+    // Record the pending order - RuntimeValue keeps payload alive
+    interp.pending_orders.push(Order {
+        id,
+        payload: payload_rv,
+    });
 
-    // Return the promise
-    Ok(Guarded::unguarded(JsValue::Object(promise)))
+    // Return the promise with its guard
+    Ok(Guarded::with_guard(JsValue::Object(promise), promise_guard))
 }
 
 /// Native implementation of __cancelOrder__

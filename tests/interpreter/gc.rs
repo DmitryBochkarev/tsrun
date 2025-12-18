@@ -1,6 +1,6 @@
 //! Tests for garbage collection of JavaScript objects
 
-use typescript_eval::{GcStats, JsString, JsValue, Runtime, RuntimeResult};
+use typescript_eval::{GcStats, JsString, JsValue, Runtime, RuntimeResult, RuntimeValue};
 
 /// Get baseline object count (builtins only, no user code)
 fn get_baseline_live_count() -> usize {
@@ -9,10 +9,10 @@ fn get_baseline_live_count() -> usize {
     runtime.gc_stats().live_objects
 }
 
-fn eval_with_gc_stats(source: &str) -> (JsValue, GcStats) {
+fn eval_with_gc_stats(source: &str) -> (RuntimeValue, GcStats) {
     let mut runtime = Runtime::new();
     let result = match runtime.eval(source).unwrap() {
-        RuntimeResult::Complete(value) => value,
+        RuntimeResult::Complete(rv) => rv,
         other => panic!("Expected Complete, got {:?}", other),
     };
     // Force GC to run
@@ -510,11 +510,11 @@ results
     // Disable timeout for this long-running test
     runtime.set_timeout_ms(0);
     let result = match runtime.eval(source).unwrap() {
-        RuntimeResult::Complete(value) => value,
+        RuntimeResult::Complete(rv) => rv,
         other => panic!("Expected Complete, got {:?}", other),
     };
 
-    if let JsValue::Object(arr) = result {
+    if let JsValue::Object(arr) = &*result {
         let arr_ref = arr.borrow();
         let get = |i: usize| -> f64 {
             if let Some(JsValue::Number(n)) =
@@ -550,12 +550,12 @@ results
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// Helper to evaluate with gc_threshold=1 (most aggressive GC)
-fn eval_with_threshold_1(source: &str) -> JsValue {
+fn eval_with_threshold_1(source: &str) -> RuntimeValue {
     let mut runtime = Runtime::new();
     runtime.set_gc_threshold(1);
     runtime.set_timeout_ms(0); // Disable timeout for GC stress tests
     match runtime.eval(source).unwrap() {
-        RuntimeResult::Complete(value) => value,
+        RuntimeResult::Complete(rv) => rv,
         other => panic!("Expected Complete, got {:?}", other),
     }
 }

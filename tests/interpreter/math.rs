@@ -47,10 +47,10 @@ fn test_math_log_exp() {
 #[test]
 fn test_math_constants() {
     assert!(
-        matches!(eval("Math.PI"), JsValue::Number(n) if (n - std::f64::consts::PI).abs() < 0.0001)
+        matches!(*eval("Math.PI"), JsValue::Number(n) if (n - std::f64::consts::PI).abs() < 0.0001)
     );
     assert!(
-        matches!(eval("Math.E"), JsValue::Number(n) if (n - std::f64::consts::E).abs() < 0.0001)
+        matches!(*eval("Math.E"), JsValue::Number(n) if (n - std::f64::consts::E).abs() < 0.0001)
     );
 }
 
@@ -58,7 +58,7 @@ fn test_math_constants() {
 fn test_math_random() {
     // Random should return a number between 0 and 1
     let result = eval("Math.random()");
-    if let JsValue::Number(n) = result {
+    if let JsValue::Number(n) = *result {
         assert!(n >= 0.0 && n < 1.0);
     } else {
         panic!("Math.random() should return a number");

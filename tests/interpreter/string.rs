@@ -375,7 +375,10 @@ fn test_string_code_point_at_negative() {
 #[test]
 fn test_string_normalize_default() {
     // Default is NFC
-    assert_eq!(eval("'café'.normalize()"), eval("'café'.normalize('NFC')"));
+    assert_eq!(
+        *eval("'café'.normalize()"),
+        *eval("'café'.normalize('NFC')")
+    );
 }
 
 #[test]
@@ -398,7 +401,7 @@ fn test_string_normalize_nfd() {
 
     // NFC should be 1 character (composed)
     // NFD should be 2 characters (decomposed: e + combining accent)
-    if let (JsValue::Number(nfc), JsValue::Number(nfd)) = (nfc_len, nfd_len) {
+    if let (JsValue::Number(nfc), JsValue::Number(nfd)) = (&*nfc_len, &*nfd_len) {
         assert!(
             nfd > nfc,
             "NFD should produce a longer string than NFC for composed characters"

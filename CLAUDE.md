@@ -479,10 +479,14 @@ The stack-based execution model is now fully implemented.
 **Key Types:**
 ```rust
 pub enum RuntimeResult {
-    Complete(JsValue),                              // Finished
-    ImportAwaited { slot: PendingSlot, specifier }, // Need module
-    AsyncAwaited { slot: PendingSlot, promise },    // Need promise resolution
+    Complete(RuntimeValue),                         // Finished with guarded value
+    NeedImports(Vec<ImportRequest>),                // Need modules
+    Suspended { pending, cancelled },               // Waiting for orders
 }
+
+/// A value with a guard that keeps it alive until dropped.
+/// Access via .value() - the guard is private to prevent extraction.
+pub struct RuntimeValue { ... }
 ```
 
 **Host Loop Pattern:**
@@ -490,14 +494,22 @@ pub enum RuntimeResult {
 let mut result = runtime.eval(source)?;
 loop {
     match result {
-        RuntimeResult::Complete(value) => break value,
-        RuntimeResult::ImportAwaited { slot, specifier } => {
-            let module = load_module(&specifier)?;
-            slot.set_success(module);
+        RuntimeResult::Complete(rv) => {
+            // rv keeps value alive - use rv.value() to access &JsValue
+            break;
         }
-        RuntimeResult::AsyncAwaited { slot, .. } => {
-            let value = resolve_async()?;
-            slot.set_success(value);
+        RuntimeResult::NeedImports(imports) => {
+            for req in imports {
+                let source = load_module(&req.resolved_path)?;
+                runtime.provide_module(req.resolved_path, &source)?;
+            }
+        }
+        RuntimeResult::Suspended { pending, .. } => {
+            // Handle orders from host
+            for order in pending {
+                let response = handle_order(order.payload.value())?;
+                runtime.fulfill_orders(vec![OrderResponse { id: order.id, result: Ok(response) }])?;
+            }
         }
     }
     result = runtime.continue_eval()?;

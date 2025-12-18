@@ -63,8 +63,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     // Module loading loop
     loop {
         match result {
-            RuntimeResult::Complete(value) => {
-                print_value(&value);
+            RuntimeResult::Complete(runtime_value) => {
+                print_value(runtime_value.value());
                 return Ok(());
             }
             RuntimeResult::NeedImports(import_requests) => {
