@@ -278,10 +278,6 @@ impl<T: Default + Reset + Traceable> Drop for Gc<T> {
                 space.pool_object(gc_box.index, self.ptr);
             }
         }
-
-        // Note: We intentionally do NOT reset/pool when ref_count hits 0 here.
-        // The object may still be referenced by other pointers (e.g., as a parent environment).
-        // Let the GC sweep collect unreachable objects instead.
     }
 }
 
