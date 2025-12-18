@@ -57,6 +57,11 @@ impl<'a> Parser<'a> {
             return self.parse_labeled_statement();
         }
 
+        // Check for const enum before variable declaration
+        if self.check(&TokenKind::Const) && self.peek_is(&TokenKind::Enum) {
+            return Ok(Statement::EnumDeclaration(self.parse_enum()?));
+        }
+
         match &self.current.kind {
             TokenKind::Let | TokenKind::Const | TokenKind::Var => Ok(
                 Statement::VariableDeclaration(self.parse_variable_declaration()?),
@@ -3904,6 +3909,77 @@ mod tests {
     fn test_enum_declaration() {
         let prog = parse("enum Color { Red, Green, Blue }");
         assert_eq!(prog.body.len(), 1);
+        if let Statement::EnumDeclaration(e) = &prog.body[0] {
+            assert_eq!(e.id.name.as_str(), "Color");
+            assert_eq!(e.members.len(), 3);
+            assert!(!e.const_);
+        } else {
+            panic!("Expected EnumDeclaration");
+        }
+    }
+
+    #[test]
+    fn test_enum_with_values() {
+        let prog = parse("enum Status { Pending = 0, Active = 1, Closed = 2 }");
+        assert_eq!(prog.body.len(), 1);
+        if let Statement::EnumDeclaration(e) = &prog.body[0] {
+            assert_eq!(e.members.len(), 3);
+            assert!(e.members[0].initializer.is_some());
+        } else {
+            panic!("Expected EnumDeclaration");
+        }
+    }
+
+    #[test]
+    fn test_enum_string_values() {
+        let prog = parse(r#"enum Color { Red = "red", Green = "green" }"#);
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_const_enum() {
+        let prog = parse("const enum Direction { Up, Down, Left, Right }");
+        assert_eq!(prog.body.len(), 1);
+        if let Statement::EnumDeclaration(e) = &prog.body[0] {
+            assert_eq!(e.id.name.as_str(), "Direction");
+            assert!(e.const_);
+        } else {
+            panic!("Expected EnumDeclaration");
+        }
+    }
+
+    #[test]
+    fn test_const_enum_with_values() {
+        let prog = parse("const enum Bits { Read = 1, Write = 2, Execute = 4 }");
+        assert_eq!(prog.body.len(), 1);
+        if let Statement::EnumDeclaration(e) = &prog.body[0] {
+            assert!(e.const_);
+            assert_eq!(e.members.len(), 3);
+        } else {
+            panic!("Expected EnumDeclaration");
+        }
+    }
+
+    #[test]
+    fn test_enum_empty() {
+        let prog = parse("enum Empty {}");
+        assert_eq!(prog.body.len(), 1);
+        if let Statement::EnumDeclaration(e) = &prog.body[0] {
+            assert_eq!(e.members.len(), 0);
+        } else {
+            panic!("Expected EnumDeclaration");
+        }
+    }
+
+    #[test]
+    fn test_enum_trailing_comma() {
+        let prog = parse("enum Color { Red, Green, Blue, }");
+        assert_eq!(prog.body.len(), 1);
+        if let Statement::EnumDeclaration(e) = &prog.body[0] {
+            assert_eq!(e.members.len(), 3);
+        } else {
+            panic!("Expected EnumDeclaration");
+        }
     }
 
     #[test]

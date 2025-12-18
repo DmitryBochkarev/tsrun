@@ -174,7 +174,27 @@ pub fn js_value_to_json(value: &JsValue) -> Result<serde_json::Value, JsError> {
                     ExoticObject::Generator(_) => serde_json::Value::Null,
                     ExoticObject::Promise(_) => serde_json::Value::Null,
                     ExoticObject::Environment(_) => serde_json::Value::Null, // Internal type
+                    ExoticObject::Enum(data) => {
+                        // Enums serialize with forward and reverse mappings
+                        let mut map = serde_json::Map::new();
+                        // Add forward mappings (name -> value)
+                        for member in &data.members {
+                            let json_val = js_value_to_json(&member.value)?;
+                            map.insert(member.name.to_string(), json_val);
+                        }
+                        // Add reverse mappings (numeric value -> name)
+                        for member in &data.members {
+                            if let JsValue::Number(n) = &member.value {
+                                map.insert(
+                                    n.to_string(),
+                                    serde_json::Value::String(member.name.to_string()),
+                                );
+                            }
+                        }
+                        serde_json::Value::Object(map)
+                    }
                     ExoticObject::Ordinary => {
+                        // Ordinary objects serialize with their properties
                         let mut map = serde_json::Map::new();
                         for (key, prop) in obj_ref.properties.iter() {
                             if prop.enumerable() {

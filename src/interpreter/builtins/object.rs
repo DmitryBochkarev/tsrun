@@ -102,13 +102,25 @@ pub fn object_keys(
         return Err(JsError::type_error("Object.keys requires an object"));
     };
 
-    let keys: Vec<JsValue> = obj_ref
-        .borrow()
-        .properties
-        .iter()
-        .filter(|(_, prop)| prop.enumerable())
-        .map(|(key, _)| JsValue::String(JsString::from(key.to_string())))
-        .collect();
+    let keys: Vec<JsValue> = {
+        let obj = obj_ref.borrow();
+
+        // For enums, get keys from EnumData
+        if let ExoticObject::Enum(ref data) = obj.exotic {
+            data.keys()
+                .into_iter()
+                .filter(|k| !k.is_symbol())
+                .map(|k| JsValue::String(JsString::from(k.to_string())))
+                .collect()
+        } else {
+            // Standard object - get from properties
+            obj.properties
+                .iter()
+                .filter(|(_, prop)| prop.enumerable())
+                .map(|(key, _)| JsValue::String(JsString::from(key.to_string())))
+                .collect()
+        }
+    };
 
     let guard = interp.heap.create_guard();
     let arr = interp.create_array_from(&guard, keys);
@@ -125,13 +137,21 @@ pub fn object_values(
         return Err(JsError::type_error("Object.values requires an object"));
     };
 
-    let values: Vec<JsValue> = obj_ref
-        .borrow()
-        .properties
-        .iter()
-        .filter(|(_, prop)| prop.enumerable())
-        .map(|(_, prop)| prop.value.clone())
-        .collect();
+    let values: Vec<JsValue> = {
+        let obj = obj_ref.borrow();
+
+        // For enums, get values from EnumData
+        if let ExoticObject::Enum(ref data) = obj.exotic {
+            data.values()
+        } else {
+            // Standard object - get from properties
+            obj.properties
+                .iter()
+                .filter(|(_, prop)| prop.enumerable())
+                .map(|(_, prop)| prop.value.clone())
+                .collect()
+        }
+    };
 
     let guard = interp.heap.create_guard();
     let arr = interp.create_array_from(&guard, values);
@@ -149,13 +169,21 @@ pub fn object_entries(
     };
 
     // Collect key-value pairs first to release the borrow
-    let pairs: Vec<(String, JsValue)> = obj_ref
-        .borrow()
-        .properties
-        .iter()
-        .filter(|(_, prop)| prop.enumerable())
-        .map(|(key, prop)| (key.to_string(), prop.value.clone()))
-        .collect();
+    let pairs: Vec<(String, JsValue)> = {
+        let obj = obj_ref.borrow();
+
+        // For enums, get entries from EnumData
+        if let ExoticObject::Enum(ref data) = obj.exotic {
+            data.entries()
+        } else {
+            // Standard object - get from properties
+            obj.properties
+                .iter()
+                .filter(|(_, prop)| prop.enumerable())
+                .map(|(key, prop)| (key.to_string(), prop.value.clone()))
+                .collect()
+        }
+    };
 
     // Use single guard for all entry arrays
     let guard = interp.heap.create_guard();
@@ -263,7 +291,15 @@ pub fn object_has_own(
 
     let key_str = key.to_js_string().to_string();
     let interned_key = interp.key(&key_str);
-    let has = obj_ref.borrow().properties.contains_key(&interned_key);
+
+    let borrowed = obj_ref.borrow();
+    let has = if let ExoticObject::Enum(ref data) = borrowed.exotic {
+        // For enums, check EnumData
+        data.has_property(&interned_key)
+    } else {
+        // Standard object - check properties
+        borrowed.properties.contains_key(&interned_key)
+    };
     Ok(Guarded::unguarded(JsValue::Boolean(has)))
 }
 
@@ -392,7 +428,14 @@ pub fn object_has_own_property(
         .unwrap_or_default();
     let key = interp.key(&prop_name);
 
-    let has_prop = obj.borrow().properties.contains_key(&key);
+    let obj_ref = obj.borrow();
+    let has_prop = if let ExoticObject::Enum(ref data) = obj_ref.exotic {
+        // For enums, check EnumData
+        data.has_property(&key)
+    } else {
+        // Standard object - check properties
+        obj_ref.properties.contains_key(&key)
+    };
     Ok(Guarded::unguarded(JsValue::Boolean(has_prop)))
 }
 
@@ -446,6 +489,12 @@ pub fn object_to_string(
                 ExoticObject::Environment(_) => Ok(Guarded::unguarded(JsValue::String(
                     JsString::from("[object Environment]"),
                 ))),
+                ExoticObject::Enum(_) => {
+                    // Enums return [object Object] for TypeScript compatibility
+                    Ok(Guarded::unguarded(JsValue::String(JsString::from(
+                        "[object Object]",
+                    ))))
+                }
             }
         }
         _ => Ok(Guarded::unguarded(JsValue::String(JsString::from(

@@ -22,6 +22,7 @@ mod console;
 mod control_flow;
 mod date;
 // mod dynamic_import;
+mod enum_test;
 mod error;
 // mod exports;
 mod cycle_leak;

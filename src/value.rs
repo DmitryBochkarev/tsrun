@@ -257,6 +257,9 @@ impl fmt::Debug for JsValue {
                     ExoticObject::Environment(env_data) => {
                         write!(f, "[Environment {} bindings]", env_data.bindings.len())
                     }
+                    ExoticObject::Enum(data) => {
+                        write!(f, "enum {}", data.name)
+                    }
                 }
             }
         }
@@ -577,7 +580,12 @@ impl Traceable for JsObject {
                     }
                 }
             }
-            ExoticObject::Ordinary | ExoticObject::Date { .. } | ExoticObject::RegExp { .. } => {}
+            ExoticObject::Ordinary
+            | ExoticObject::Date { .. }
+            | ExoticObject::RegExp { .. }
+            | ExoticObject::Enum(_) => {
+                // Enum values are stored in properties which are traced above
+            }
         }
     }
 }
@@ -666,6 +674,31 @@ impl JsObject {
             }
         }
 
+        // For enums, handle member lookups from EnumData
+        if let ExoticObject::Enum(ref data) = self.exotic {
+            match key {
+                PropertyKey::String(s) => {
+                    // Forward mapping: member name -> value
+                    if let Some(val) = data.get_by_name(s.as_str()) {
+                        return Some(val);
+                    }
+                    // Also check if this is a numeric string for reverse mapping
+                    if let Ok(n) = s.as_str().parse::<f64>() {
+                        if let Some(name) = data.get_by_value(n) {
+                            return Some(JsValue::String(name));
+                        }
+                    }
+                }
+                PropertyKey::Index(idx) => {
+                    // Reverse mapping: numeric index -> member name
+                    if let Some(name) = data.get_by_value(*idx as f64) {
+                        return Some(JsValue::String(name));
+                    }
+                }
+                PropertyKey::Symbol(_) => {}
+            }
+        }
+
         if let Some(prop) = self.properties.get(key) {
             return Some(prop.value.clone());
         }
@@ -696,6 +729,31 @@ impl JsObject {
                     ));
                 }
                 _ => {}
+            }
+        }
+
+        // For enums, handle member lookups from EnumData
+        if let ExoticObject::Enum(ref data) = self.exotic {
+            match key {
+                PropertyKey::String(s) => {
+                    // Forward mapping: member name -> value
+                    if let Some(val) = data.get_by_name(s.as_str()) {
+                        return Some((Property::data(val), false));
+                    }
+                    // Also check if this is a numeric string for reverse mapping
+                    if let Ok(n) = s.as_str().parse::<f64>() {
+                        if let Some(name) = data.get_by_value(n) {
+                            return Some((Property::data(JsValue::String(name)), false));
+                        }
+                    }
+                }
+                PropertyKey::Index(idx) => {
+                    // Reverse mapping: numeric index -> member name
+                    if let Some(name) = data.get_by_value(*idx as f64) {
+                        return Some((Property::data(JsValue::String(name)), false));
+                    }
+                }
+                PropertyKey::Symbol(_) => {}
             }
         }
 
@@ -742,6 +800,31 @@ impl JsObject {
                     }
                     return;
                 }
+            }
+        }
+
+        // For enums, handle member access via EnumData
+        if let ExoticObject::Enum(ref mut data) = self.exotic {
+            if let PropertyKey::String(ref s) = key {
+                // Update existing member or add new one
+                if data.set_by_name(s.as_str(), value.clone()) {
+                    // Also update reverse mapping if value is numeric
+                    if let JsValue::Number(n) = &value {
+                        // Find and update the reverse mapping entry
+                        let reverse_key = if n.fract() == 0.0 && *n >= 0.0 && *n <= u32::MAX as f64
+                        {
+                            PropertyKey::Index(*n as u32)
+                        } else {
+                            PropertyKey::String(JsString::from(n.to_string()))
+                        };
+                        self.properties.insert(
+                            reverse_key,
+                            Property::data(JsValue::String(s.cheap_clone())),
+                        );
+                    }
+                    return;
+                }
+                // If not an existing member, allow adding new properties
             }
         }
 
@@ -1480,6 +1563,136 @@ pub enum ExoticObject {
     Promise(Rc<RefCell<PromiseState>>),
     /// Environment exotic object - stores variable bindings
     Environment(EnvironmentData),
+    /// Enum exotic object - stores enum metadata
+    Enum(EnumData),
+}
+
+/// Enum member - stores name and value
+#[derive(Debug, Clone)]
+pub struct EnumMember {
+    /// Member name (e.g., "Up", "Down")
+    pub name: JsString,
+    /// Member value (number or string)
+    pub value: JsValue,
+}
+
+/// Enum internal state
+///
+/// Stores enum members directly for efficient access.
+/// Forward mappings (name → value) and reverse mappings (numeric value → name)
+/// are computed from the members list.
+#[derive(Debug, Clone)]
+pub struct EnumData {
+    /// Enum name (for debugging/toString)
+    pub name: JsString,
+    /// Whether this is a const enum
+    pub const_: bool,
+    /// Enum members in declaration order
+    pub members: Vec<EnumMember>,
+}
+
+impl EnumData {
+    /// Get value by member name (forward mapping)
+    pub fn get_by_name(&self, name: &str) -> Option<JsValue> {
+        self.members
+            .iter()
+            .find(|m| m.name.as_str() == name)
+            .map(|m| m.value.clone())
+    }
+
+    /// Get member name by numeric value (reverse mapping)
+    /// Only works for numeric values, returns None for string values
+    pub fn get_by_value(&self, value: f64) -> Option<JsString> {
+        self.members.iter().find_map(|m| {
+            if let JsValue::Number(n) = &m.value {
+                if *n == value {
+                    return Some(m.name.cheap_clone());
+                }
+            }
+            None
+        })
+    }
+
+    /// Get all property keys (member names + reverse mapping keys for numeric values)
+    pub fn keys(&self) -> Vec<PropertyKey> {
+        let mut keys = Vec::with_capacity(self.members.len() * 2);
+
+        for member in &self.members {
+            // Forward mapping key (member name)
+            keys.push(PropertyKey::String(member.name.cheap_clone()));
+
+            // Reverse mapping key for numeric values
+            if let JsValue::Number(_) = &member.value {
+                keys.push(PropertyKey::from_value(&member.value));
+            }
+        }
+
+        keys
+    }
+
+    /// Get all values (member values + reverse mapping values)
+    pub fn values(&self) -> Vec<JsValue> {
+        let mut values = Vec::with_capacity(self.members.len() * 2);
+
+        for member in &self.members {
+            // Forward mapping value
+            values.push(member.value.clone());
+
+            // Reverse mapping value for numeric values (the member name)
+            if let JsValue::Number(_) = &member.value {
+                values.push(JsValue::String(member.name.cheap_clone()));
+            }
+        }
+
+        values
+    }
+
+    /// Get all entries as (key_string, value) pairs for Object.entries
+    pub fn entries(&self) -> Vec<(String, JsValue)> {
+        let mut entries = Vec::with_capacity(self.members.len() * 2);
+
+        for member in &self.members {
+            // Forward mapping entry (member name -> value)
+            entries.push((member.name.to_string(), member.value.clone()));
+
+            // Reverse mapping entry for numeric values (value string -> name)
+            if let JsValue::Number(n) = &member.value {
+                entries.push((n.to_string(), JsValue::String(member.name.cheap_clone())));
+            }
+        }
+
+        entries
+    }
+
+    /// Check if the enum has a property with the given key
+    pub fn has_property(&self, key: &PropertyKey) -> bool {
+        match key {
+            PropertyKey::String(s) => {
+                // Check forward mapping
+                if self.members.iter().any(|m| m.name.as_str() == s.as_str()) {
+                    return true;
+                }
+                // Check reverse mapping for numeric string keys
+                if let Ok(n) = s.as_str().parse::<f64>() {
+                    return self.get_by_value(n).is_some();
+                }
+                false
+            }
+            PropertyKey::Index(idx) => self.get_by_value(*idx as f64).is_some(),
+            PropertyKey::Symbol(_) => false,
+        }
+    }
+
+    /// Set a member value by name (for mutability support)
+    /// Returns true if the member was found and updated
+    pub fn set_by_name(&mut self, name: &str, value: JsValue) -> bool {
+        if let Some(member) = self.members.iter_mut().find(|m| m.name.as_str() == name) {
+            member.value = value;
+            true
+        } else {
+            false
+        }
+    }
 }
 
 /// Promise internal state

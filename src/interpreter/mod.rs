@@ -24,9 +24,10 @@ use crate::lexer::Span;
 use crate::parser::Parser;
 use crate::string_dict::StringDict;
 use crate::value::{
-    create_environment_unrooted, Binding, CheapClone, EnvRef, EnvironmentData, ExoticObject,
-    FunctionBody, GeneratorState, GeneratorStatus, Guarded, InterpretedFunction, JsFunction,
-    JsObject, JsString, JsValue, NativeFn, NativeFunction, PromiseStatus, Property, PropertyKey,
+    create_environment_unrooted, Binding, CheapClone, EnumData, EnvRef, EnvironmentData,
+    ExoticObject, FunctionBody, GeneratorState, GeneratorStatus, Guarded, InterpretedFunction,
+    JsFunction, JsObject, JsString, JsValue, NativeFn, NativeFunction, PromiseStatus, Property,
+    PropertyKey,
 };
 use rustc_hash::FxHashMap;
 use std::cell::RefCell;
@@ -1728,14 +1729,15 @@ impl Interpreter {
         Ok(())
     }
 
-    /// Execute an enum declaration - creates an object with name->value mappings
-    /// and reverse mappings for numeric values
-    // FIXME: make enum as exotic object
+    /// Execute an enum declaration - creates an enum exotic object with name->value mappings
+    /// and reverse mappings for numeric values stored directly in EnumData
     pub fn execute_enum_declaration(
         &mut self,
         enum_decl: &crate::ast::EnumDeclaration,
     ) -> Result<(), JsError> {
-        // Create an object for the enum
+        use crate::value::EnumMember;
+
+        // Create an object for the enum with object prototype
         let guard = self.heap.create_guard();
         let enum_obj = self.create_object(&guard);
 
@@ -1744,10 +1746,15 @@ impl Interpreter {
         // FIXME: guard in proper scope of namespace/module
         self.root_guard.guard(enum_obj.cheap_clone());
         let enum_name = enum_decl.id.name.cheap_clone();
-        self.env_define(enum_name, JsValue::Object(enum_obj.cheap_clone()), false);
+        self.env_define(
+            enum_name.cheap_clone(),
+            JsValue::Object(enum_obj.cheap_clone()),
+            false,
+        );
 
         // Track the current numeric value for auto-incrementing
         let mut current_value: f64 = 0.0;
+        let mut members = Vec::with_capacity(enum_decl.members.len());
 
         for member in &enum_decl.members {
             // Evaluate initializer or use auto-incremented value
@@ -1765,28 +1772,23 @@ impl Interpreter {
                 val
             };
 
-            // Set name -> value mapping on the enum object
-            enum_obj.borrow_mut().set_property(
-                PropertyKey::String(member.id.name.cheap_clone()),
-                value.clone(),
-            );
+            // Add member to the list
+            members.push(EnumMember {
+                name: member.id.name.cheap_clone(),
+                value: value.clone(),
+            });
 
             // Also define the member name in the current scope so later members can reference it
             // (e.g., in `ReadWrite = Read | Write`, `Read` needs to be in scope)
-            self.env_define(member.id.name.cheap_clone(), value.clone(), false);
-
-            // For numeric values, also set reverse mapping (value -> name)
-            if let JsValue::Number(n) = &value {
-                // Only add reverse mapping for non-negative integer values
-                if n.fract() == 0.0 && *n >= 0.0 && *n <= u32::MAX as f64 {
-                    // Use Index key for numeric reverse mapping so obj[0] works
-                    let reverse_key = PropertyKey::Index(*n as u32);
-                    enum_obj
-                        .borrow_mut()
-                        .set_property(reverse_key, JsValue::String(member.id.name.cheap_clone()));
-                }
-            }
+            self.env_define(member.id.name.cheap_clone(), value, false);
         }
+
+        // Set the exotic type to Enum with all members
+        enum_obj.borrow_mut().exotic = ExoticObject::Enum(EnumData {
+            name: enum_name,
+            const_: enum_decl.const_,
+            members,
+        });
 
         Ok(())
     }

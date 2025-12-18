@@ -2214,10 +2214,19 @@ impl Interpreter {
                     }
                 }
 
-                // Then include enumerable properties
-                for (key, prop) in obj_ref.properties.iter() {
-                    if prop.enumerable() && !key.is_symbol() {
-                        keys.push(key.to_string());
+                // For enums, get keys from EnumData
+                if let ExoticObject::Enum(ref data) = obj_ref.exotic {
+                    for key in data.keys() {
+                        if !key.is_symbol() {
+                            keys.push(key.to_string());
+                        }
+                    }
+                } else {
+                    // Then include enumerable properties for non-enum objects
+                    for (key, prop) in obj_ref.properties.iter() {
+                        if prop.enumerable() && !key.is_symbol() {
+                            keys.push(key.to_string());
+                        }
                     }
                 }
 
