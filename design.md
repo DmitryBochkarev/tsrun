@@ -668,17 +668,17 @@ These features have AST support but are ignored or partially handled at runtime:
 - [x] Class decorators (`@decorator class Foo {}`)
 - [x] Method decorators (`@decorator method() {}`)
 - [x] Property/field decorators (`@decorator prop = value`)
-- [ ] Parameter decorators (`method(@decorator param) {}`)
+- [x] Parameter decorators (`method(@decorator param) {}`)
 - [x] Decorator factories (`@decorator() class Foo {}`)
 - [x] Decorator composition (multiple decorators)
 - [x] Static member decorators
 - [x] Private member decorators
 - [x] Getter/setter decorators
-- [x] Decorator context object (`kind`, `name`, `static`, `private`)
-- [ ] `context.addInitializer()`
+- [x] Decorator context object (`kind`, `name`, `static`, `private`, `function`, `index`)
+- [x] `context.addInitializer()`
 - [ ] Auto-accessor decorators (`accessor` keyword)
 
-**Status:** Implemented for class, method, getter/setter, and field decorators. Context provides `kind`, `name`, `static`, `private` properties. Parameter decorators and auto-accessors not yet supported.
+**Status:** Fully implemented for class, method, getter/setter, field, and parameter decorators. Context provides `addInitializer()` for class decorators. Auto-accessors not yet supported.
 
 #### Dynamic Import
 - [ ] `import("./module")` expression at runtime

@@ -443,6 +443,9 @@ impl<'a> Parser<'a> {
         while !self.check(&TokenKind::RParen) && !self.is_at_end() {
             let param_start = self.current.span;
 
+            // Parse parameter decorators (e.g., @inject param)
+            let decorators = self.parse_decorators()?;
+
             // Check for rest parameter
             let pattern = if self.match_token(&TokenKind::DotDotDot) {
                 let arg = self.parse_binding_pattern()?;
@@ -482,6 +485,7 @@ impl<'a> Parser<'a> {
                 pattern,
                 type_annotation,
                 optional,
+                decorators,
                 span,
             });
 
@@ -574,6 +578,7 @@ impl<'a> Parser<'a> {
 
         let accessibility = self.parse_accessibility();
         let readonly = self.match_token(&TokenKind::Readonly);
+        let accessor = self.match_token(&TokenKind::Accessor);
 
         // Check for async method
         let is_async = self.match_token(&TokenKind::Async);
@@ -661,6 +666,7 @@ impl<'a> Parser<'a> {
                 static_,
                 readonly,
                 optional,
+                accessor,
                 accessibility,
                 decorators,
                 span,
@@ -2008,6 +2014,7 @@ impl<'a> Parser<'a> {
                             pattern: Pattern::Identifier(id),
                             type_annotation: None,
                             optional: false,
+                            decorators: vec![],
                             span: self.span_from(start),
                         }],
                         start,
@@ -2345,6 +2352,7 @@ impl<'a> Parser<'a> {
                         }),
                         type_annotation: None,
                         optional: false,
+                        decorators: vec![],
                         span: rest_span,
                     });
 
@@ -2389,6 +2397,9 @@ impl<'a> Parser<'a> {
         while !self.check(&TokenKind::RParen) && !self.is_at_end() {
             let param_start = self.current.span;
 
+            // Parse parameter decorators (e.g., @inject param)
+            let decorators = self.parse_decorators()?;
+
             // Check for rest parameter
             let pattern = if self.match_token(&TokenKind::DotDotDot) {
                 let arg = self.parse_binding_pattern()?;
@@ -2428,6 +2439,7 @@ impl<'a> Parser<'a> {
                 pattern,
                 type_annotation,
                 optional,
+                decorators,
                 span,
             });
 
@@ -2503,6 +2515,7 @@ impl<'a> Parser<'a> {
                         pattern: Pattern::Rest(rest_elem),
                         type_annotation: None,
                         optional: false,
+                        decorators: vec![],
                         span: rest_span,
                     });
                     break;
@@ -2525,6 +2538,7 @@ impl<'a> Parser<'a> {
                 pattern: Pattern::Identifier(id),
                 type_annotation: None,
                 optional: false,
+                decorators: vec![],
                 span: param_span,
             }];
             return self.parse_arrow_function_from_params_async(params, start, true);
@@ -2535,6 +2549,8 @@ impl<'a> Parser<'a> {
 
     fn parse_function_param(&mut self) -> Result<FunctionParam, JsError> {
         let start = self.current.span;
+        // Parse parameter decorators (e.g., @inject param)
+        let decorators = self.parse_decorators()?;
         let pattern = self.parse_binding_pattern()?;
         let optional = self.match_token(&TokenKind::Question);
         let type_annotation = if self.match_token(&TokenKind::Colon) {
@@ -2552,6 +2568,7 @@ impl<'a> Parser<'a> {
             pattern,
             type_annotation,
             optional,
+            decorators,
             span,
         })
     }
@@ -3103,6 +3120,7 @@ impl<'a> Parser<'a> {
                 pattern,
                 type_annotation,
                 optional,
+                decorators: vec![],
                 span,
             });
 
@@ -3590,6 +3608,7 @@ impl<'a> Parser<'a> {
                 | TokenKind::Type
                 | TokenKind::Interface
                 | TokenKind::Enum
+                | TokenKind::Accessor
         )
     }
 
@@ -3636,6 +3655,7 @@ impl<'a> Parser<'a> {
             TokenKind::Is => "is",
             TokenKind::Asserts => "asserts",
             TokenKind::Readonly => "readonly",
+            TokenKind::Accessor => "accessor",
             // Reserved words that can be used as property names
             TokenKind::Delete => "delete",
             TokenKind::Typeof => "typeof",
@@ -3658,9 +3678,87 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn peek_is_property_name(&self) -> bool {
-        // Would need lookahead - simplified for now
-        true
+    fn peek_is_property_name(&mut self) -> bool {
+        // Peek at the next token to determine if it's a property name
+        // Used for distinguishing `get: ...` (property named "get") from `get x() {}` (getter)
+        let checkpoint = self.lexer.checkpoint();
+        let next = self.lexer.next_token();
+        self.lexer.restore(checkpoint);
+
+        // If next token is `:` or `,` or `}`, current is the property name itself
+        // If next token is identifier, string, number, or `[`, current is get/set keyword
+        match next.kind {
+            // These indicate the current token is used as a property name
+            TokenKind::Colon | TokenKind::Comma | TokenKind::RBrace => false,
+            // These indicate the current token is a get/set/async keyword and next is the property name
+            TokenKind::Identifier(_)
+            | TokenKind::String(_)
+            | TokenKind::Number(_)
+            | TokenKind::LBracket => true,
+            // Keywords can be property names
+            _ if self.is_keyword_kind(&next.kind) => true,
+            // Anything else is unclear, assume it's a property name (not get/set keyword)
+            _ => false,
+        }
+    }
+
+    fn is_keyword_kind(&self, kind: &TokenKind) -> bool {
+        matches!(
+            kind,
+            TokenKind::If
+                | TokenKind::Else
+                | TokenKind::While
+                | TokenKind::For
+                | TokenKind::Function
+                | TokenKind::Return
+                | TokenKind::Var
+                | TokenKind::Let
+                | TokenKind::Const
+                | TokenKind::Class
+                | TokenKind::Extends
+                | TokenKind::New
+                | TokenKind::This
+                | TokenKind::Delete
+                | TokenKind::Typeof
+                | TokenKind::Void
+                | TokenKind::Instanceof
+                | TokenKind::In
+                | TokenKind::Switch
+                | TokenKind::Case
+                | TokenKind::Default
+                | TokenKind::Break
+                | TokenKind::Continue
+                | TokenKind::Try
+                | TokenKind::Catch
+                | TokenKind::Finally
+                | TokenKind::Throw
+                | TokenKind::Do
+                | TokenKind::Import
+                | TokenKind::Export
+                | TokenKind::From
+                | TokenKind::As
+                | TokenKind::Of
+                | TokenKind::True
+                | TokenKind::False
+                | TokenKind::Null
+                | TokenKind::Yield
+                | TokenKind::Await
+                | TokenKind::Super
+                | TokenKind::Async
+                | TokenKind::Static
+                | TokenKind::Type
+                | TokenKind::Interface
+                | TokenKind::Enum
+                | TokenKind::Namespace
+                | TokenKind::Private
+                | TokenKind::Public
+                | TokenKind::Protected
+                | TokenKind::Declare
+                | TokenKind::Implements
+                | TokenKind::Abstract
+                | TokenKind::Readonly
+                | TokenKind::Accessor
+        )
     }
 
     fn span_from(&self, start: Span) -> Span {
@@ -3893,6 +3991,7 @@ impl<'a> Parser<'a> {
                     }),
                     type_annotation: None,
                     optional: false,
+                    decorators: vec![],
                     span,
                 });
             }
@@ -3903,6 +4002,7 @@ impl<'a> Parser<'a> {
             pattern,
             type_annotation: None,
             optional: false,
+            decorators: vec![],
             span,
         })
     }
@@ -5237,5 +5337,82 @@ export function parseLinks(text: string): ParsedElement[] {
         // Export default decorated class
         let prog = parse("export default @decorator class Foo {}");
         assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_parameter_decorator_basic() {
+        // Parameter decorator in method
+        let prog = parse(
+            r#"class Service {
+            greet(@inject name: string): void {}
+        }"#,
+        );
+        assert_eq!(prog.body.len(), 1);
+        let Statement::ClassDeclaration(class) = &prog.body[0] else {
+            panic!("Expected class declaration");
+        };
+        let ClassMember::Method(method) = &class.body.members[0] else {
+            panic!("Expected method");
+        };
+        assert_eq!(method.value.params.len(), 1);
+        assert_eq!(method.value.params[0].decorators.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_parameter_decorator_multiple() {
+        // Multiple parameter decorators
+        let prog = parse(
+            r#"class Service {
+            greet(@logParam name: string, @logParam age: number): void {}
+        }"#,
+        );
+        assert_eq!(prog.body.len(), 1);
+        let Statement::ClassDeclaration(class) = &prog.body[0] else {
+            panic!("Expected class declaration");
+        };
+        let ClassMember::Method(method) = &class.body.members[0] else {
+            panic!("Expected method");
+        };
+        assert_eq!(method.value.params.len(), 2);
+        assert_eq!(method.value.params[0].decorators.len(), 1);
+        assert_eq!(method.value.params[1].decorators.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_parameter_decorator_factory() {
+        // Parameter decorator factory with arguments
+        let prog = parse(
+            r#"class Controller {
+            handle(@Query("id") id: string): void {}
+        }"#,
+        );
+        assert_eq!(prog.body.len(), 1);
+        let Statement::ClassDeclaration(class) = &prog.body[0] else {
+            panic!("Expected class declaration");
+        };
+        let ClassMember::Method(method) = &class.body.members[0] else {
+            panic!("Expected method");
+        };
+        assert_eq!(method.value.params.len(), 1);
+        assert_eq!(method.value.params[0].decorators.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_parameter_decorator_constructor() {
+        // Parameter decorator in constructor
+        let prog = parse(
+            r#"class Service {
+            constructor(@inject db: Database) {}
+        }"#,
+        );
+        assert_eq!(prog.body.len(), 1);
+        let Statement::ClassDeclaration(class) = &prog.body[0] else {
+            panic!("Expected class declaration");
+        };
+        let ClassMember::Constructor(ctor) = &class.body.members[0] else {
+            panic!("Expected constructor");
+        };
+        assert_eq!(ctor.params.len(), 1);
+        assert_eq!(ctor.params[0].decorators.len(), 1);
     }
 }

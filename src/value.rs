@@ -559,7 +559,9 @@ impl Traceable for JsObject {
                         // Trace the closure environment
                         visitor(interp.closure.copy_ref());
                     }
-                    JsFunction::Native(_) => {}
+                    JsFunction::Native(_)
+                    | JsFunction::AccessorGetter
+                    | JsFunction::AccessorSetter => {}
                 }
             }
             ExoticObject::Map { entries } => {
@@ -1823,6 +1825,10 @@ pub enum JsFunction {
     PromiseResolve(JsObjectRef),
     /// Promise reject function (has internal [[Promise]] slot)
     PromiseReject(JsObjectRef),
+    /// Auto-accessor getter (metadata stored in object properties)
+    AccessorGetter,
+    /// Auto-accessor setter (metadata stored in object properties)
+    AccessorSetter,
 }
 
 /// Data for a bound function
@@ -1844,6 +1850,8 @@ impl JsFunction {
             JsFunction::Bound(_) => Some("bound"),
             JsFunction::PromiseResolve(_) => Some("resolve"),
             JsFunction::PromiseReject(_) => Some("reject"),
+            JsFunction::AccessorGetter => Some("get"),
+            JsFunction::AccessorSetter => Some("set"),
         }
     }
 }

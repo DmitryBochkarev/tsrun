@@ -1860,6 +1860,7 @@ impl Interpreter {
             self.apply_class_decorators(
                 JsValue::Object(constructor_fn.cheap_clone()),
                 evaluated_decorators,
+                class.id.as_ref().map(|id| id.name.cheap_clone()),
                 &class_guard,
             )?
         } else {
@@ -2169,6 +2170,8 @@ impl Interpreter {
         let mut static_fields: Vec<&ClassProperty> = Vec::new();
         let mut instance_methods: Vec<&ClassMethod> = Vec::new();
         let mut static_methods: Vec<&ClassMethod> = Vec::new();
+        let mut instance_accessors_props: Vec<&ClassProperty> = Vec::new();
+        let mut static_accessors_props: Vec<&ClassProperty> = Vec::new();
 
         for member in &class.body.members {
             match member {
@@ -2183,7 +2186,14 @@ impl Interpreter {
                     }
                 }
                 ClassMember::Property(prop) => {
-                    if prop.static_ {
+                    if prop.accessor {
+                        // Auto-accessor properties are treated differently
+                        if prop.static_ {
+                            static_accessors_props.push(prop);
+                        } else {
+                            instance_accessors_props.push(prop);
+                        }
+                    } else if prop.static_ {
                         static_fields.push(prop);
                     } else {
                         instance_fields.push(prop);
@@ -2238,6 +2248,16 @@ impl Interpreter {
                 );
             }
 
+            // Apply parameter decorators if any (before method decorators)
+            // TC39-style: decorators receive (target, context) where context.kind = "parameter"
+            self.apply_parameter_decorators(
+                JsValue::Object(prototype.cheap_clone()),
+                method_name.cheap_clone(),
+                &func.params,
+                false, // is_static
+                guard,
+            )?;
+
             // Apply method decorators if any (in reverse order - bottom to top)
             // Push guards to all_method_guards to keep wrapped functions alive until stored on prototype
             if !method.decorators.is_empty() {
@@ -2284,6 +2304,30 @@ impl Interpreter {
             prototype.borrow_mut().define_property(
                 PropertyKey::String(name),
                 Property::accessor(getter, setter),
+            );
+        }
+
+        // Process instance auto-accessor properties
+        for prop in &instance_accessors_props {
+            let name: JsString = match &prop.key {
+                ObjectPropertyKey::Identifier(id) => id.name.cheap_clone(),
+                ObjectPropertyKey::String(s) => s.value.cheap_clone(),
+                _ => continue,
+            };
+
+            // Create the auto-accessor (returns getter/setter pair, possibly decorated)
+            let (getter_obj, setter_obj) = self.create_auto_accessor(
+                guard,
+                name.cheap_clone(),
+                prop.value.as_ref(),
+                &prop.decorators,
+                false, // is_static
+            )?;
+
+            // Add as accessor property on prototype
+            prototype.borrow_mut().define_property(
+                PropertyKey::String(name),
+                Property::accessor(Some(getter_obj), Some(setter_obj)),
             );
         }
 
@@ -2336,13 +2380,24 @@ impl Interpreter {
         let constructor_fn = self.create_interpreted_function(
             guard,
             class.id.as_ref().map(|id| id.name.cheap_clone()),
-            Rc::from(ctor_params),
+            Rc::from(ctor_params.clone()),
             Rc::new(FunctionBody::Block(Rc::new(ctor_body))),
             self.env.clone(),
             class.span,
             false,
             false,
         );
+
+        // Apply constructor parameter decorators if any
+        // TC39-style: decorators receive (target, context) where context.function = "constructor"
+        let ctor_key = self.intern("constructor");
+        self.apply_parameter_decorators(
+            JsValue::Object(constructor_fn.cheap_clone()),
+            ctor_key,
+            &ctor_params,
+            false, // constructors are not static
+            guard,
+        )?;
 
         // Store prototype on constructor
         constructor_fn.borrow_mut().set_property(
@@ -2449,6 +2504,16 @@ impl Interpreter {
                 func.async_,
             );
 
+            // Apply parameter decorators if any (before method decorators)
+            // TC39-style: decorators receive (target, context) where context.static = true
+            self.apply_parameter_decorators(
+                JsValue::Object(constructor_fn.cheap_clone()),
+                method_name.cheap_clone(),
+                &func.params,
+                true, // is_static
+                guard,
+            )?;
+
             // Apply method decorators if any (in reverse order - bottom to top)
             // Push guards to all_static_method_guards to keep wrapped functions alive
             if !method.decorators.is_empty() {
@@ -2495,6 +2560,30 @@ impl Interpreter {
             constructor_fn.borrow_mut().define_property(
                 PropertyKey::String(name),
                 Property::accessor(getter, setter),
+            );
+        }
+
+        // Process static auto-accessor properties
+        for prop in &static_accessors_props {
+            let name: JsString = match &prop.key {
+                ObjectPropertyKey::Identifier(id) => id.name.cheap_clone(),
+                ObjectPropertyKey::String(s) => s.value.cheap_clone(),
+                _ => continue,
+            };
+
+            // Create the auto-accessor (returns getter/setter pair, possibly decorated)
+            let (getter_obj, setter_obj) = self.create_auto_accessor(
+                guard,
+                name.cheap_clone(),
+                prop.value.as_ref(),
+                &prop.decorators,
+                true, // is_static
+            )?;
+
+            // Add as accessor property on constructor (not prototype)
+            constructor_fn.borrow_mut().define_property(
+                PropertyKey::String(name),
+                Property::accessor(Some(getter_obj), Some(setter_obj)),
             );
         }
 
@@ -2594,6 +2683,21 @@ impl Interpreter {
         is_static: bool,
         is_private: bool,
     ) -> Gc<JsObject> {
+        self.create_decorator_context_with_initializers(
+            guard, kind, name, is_static, is_private, None,
+        )
+    }
+
+    /// Create a decorator context object with addInitializer support
+    fn create_decorator_context_with_initializers(
+        &mut self,
+        guard: &Guard<JsObject>,
+        kind: &str,
+        name: Option<JsString>,
+        is_static: bool,
+        is_private: bool,
+        initializers: Option<Gc<JsObject>>,
+    ) -> Gc<JsObject> {
         let ctx = self.create_object(guard);
         ctx.borrow_mut().set_property(
             PropertyKey::String(self.intern("kind")),
@@ -2611,7 +2715,36 @@ impl Interpreter {
             PropertyKey::String(self.intern("private")),
             JsValue::Boolean(is_private),
         );
+
+        // Add addInitializer method if initializers array is provided
+        if let Some(init_array) = initializers {
+            // Create addInitializer function that captures the initializers array
+            let add_init_fn = self.create_add_initializer_function(guard, init_array);
+            ctx.borrow_mut().set_property(
+                PropertyKey::String(self.intern("addInitializer")),
+                JsValue::Object(add_init_fn),
+            );
+        }
+
         ctx
+    }
+
+    /// Create the addInitializer function that pushes to the initializers array
+    fn create_add_initializer_function(
+        &mut self,
+        guard: &Guard<JsObject>,
+        initializers: Gc<JsObject>,
+    ) -> Gc<JsObject> {
+        // Create a native function that captures the initializers array
+        let func = self.create_native_fn(guard, "addInitializer", add_initializer_impl, 1);
+
+        // Store the initializers array in the function's __initializers__ property
+        func.borrow_mut().set_property(
+            PropertyKey::String(self.intern("__initializers__")),
+            JsValue::Object(initializers),
+        );
+
+        func
     }
 
     /// Evaluate all decorators in order (top-to-bottom for evaluation, bottom-to-top for application)
@@ -2636,16 +2769,28 @@ impl Interpreter {
 
     /// Apply class decorators to a class constructor
     /// Decorators are applied in reverse order (bottom-to-top)
+    /// Initializers registered via context.addInitializer() are run after all decorators
     fn apply_class_decorators(
         &mut self,
         mut class_value: JsValue,
         decorators: Vec<(JsValue, Guard<JsObject>)>,
+        class_name: Option<JsString>,
         guard: &Guard<JsObject>,
     ) -> Result<JsValue, JsError> {
+        // Create an array to collect initializers from all decorators
+        let initializers = self.create_empty_array(guard);
+
         // Apply decorators in reverse order (bottom-to-top)
         for (decorator, _dec_guard) in decorators.into_iter().rev() {
-            // Create context for class decorator
-            let ctx = self.create_decorator_context(guard, "class", None, false, false);
+            // Create context for class decorator with addInitializer support
+            let ctx = self.create_decorator_context_with_initializers(
+                guard,
+                "class",
+                class_name.cheap_clone(),
+                false,
+                false,
+                Some(initializers.cheap_clone()),
+            );
 
             // Call the decorator with (class, context)
             let result = self.call_function(
@@ -2660,7 +2805,35 @@ impl Interpreter {
                 class_value = result.value;
             }
         }
+
+        // Run all registered initializers
+        self.run_decorator_initializers(&initializers)?;
+
         Ok(class_value)
+    }
+
+    /// Run initializers registered via context.addInitializer()
+    fn run_decorator_initializers(&mut self, initializers: &Gc<JsObject>) -> Result<(), JsError> {
+        let length = {
+            let arr_ref = initializers.borrow();
+            arr_ref.array_length().unwrap_or(0)
+        };
+
+        for i in 0..length {
+            let init_fn = {
+                let arr_ref = initializers.borrow();
+                arr_ref
+                    .get_property(&PropertyKey::Index(i))
+                    .unwrap_or(JsValue::Undefined)
+            };
+
+            if matches!(&init_fn, JsValue::Object(obj) if obj.borrow().is_callable()) {
+                // Call initializer with undefined as this
+                self.call_function(init_fn, JsValue::Undefined, &[])?;
+            }
+        }
+
+        Ok(())
     }
 
     /// Apply method decorator and return the (possibly wrapped) method
@@ -2742,6 +2915,225 @@ impl Interpreter {
             value = result.value;
         }
         Ok(value)
+    }
+
+    /// Create an auto-accessor property (TC39 Stage 3)
+    /// Returns a (getter, setter) pair
+    #[allow(clippy::too_many_arguments)]
+    fn create_auto_accessor(
+        &mut self,
+        guard: &Guard<JsObject>,
+        name: JsString,
+        initial_value: Option<&Expression>,
+        decorators: &[Decorator],
+        is_static: bool,
+    ) -> Result<(Gc<JsObject>, Gc<JsObject>), JsError> {
+        // Create a unique storage key for this accessor
+        let storage_key = self.intern(&format!("__accessor_{}__", name.as_str()));
+
+        // Evaluate initial value if any
+        let init_value = if let Some(expr) = initial_value {
+            self.evaluate_expression(expr)?.value
+        } else {
+            JsValue::Undefined
+        };
+
+        // Create getter function
+        let getter =
+            self.create_accessor_getter(guard, storage_key.cheap_clone(), init_value.clone());
+
+        // Create setter function
+        let setter = self.create_accessor_setter(guard, storage_key);
+
+        // If no decorators, return raw getter/setter
+        if decorators.is_empty() {
+            return Ok((getter, setter));
+        }
+
+        // Create target object with get/set methods for decorator
+        let target = self.create_object(guard);
+        target.borrow_mut().set_property(
+            PropertyKey::String(self.intern("get")),
+            JsValue::Object(getter.cheap_clone()),
+        );
+        target.borrow_mut().set_property(
+            PropertyKey::String(self.intern("set")),
+            JsValue::Object(setter.cheap_clone()),
+        );
+
+        // Apply decorators (bottom-to-top)
+        let evaluated = self.evaluate_decorators(decorators)?;
+        let mut current_target = JsValue::Object(target);
+
+        for (decorator, _dec_guard) in evaluated.into_iter().rev() {
+            // Create context for accessor decorator
+            let ctx = self.create_decorator_context(
+                guard,
+                "accessor",
+                Some(name.cheap_clone()),
+                is_static,
+                false,
+            );
+
+            // Call decorator with (target, context)
+            let result = self.call_function(
+                decorator,
+                JsValue::Undefined,
+                &[current_target.clone(), JsValue::Object(ctx)],
+            )?;
+
+            // If decorator returns an object, use it as new target
+            if let JsValue::Object(_) = &result.value {
+                current_target = result.value;
+            }
+        }
+
+        // Extract getter/setter from result (or use original if unchanged)
+        if let JsValue::Object(result_obj) = current_target {
+            let result_ref = result_obj.borrow();
+            let get_key = self.intern("get");
+            let set_key = self.intern("set");
+
+            let final_getter = if let Some(JsValue::Object(g)) =
+                result_ref.get_property(&PropertyKey::String(get_key))
+            {
+                g.cheap_clone()
+            } else {
+                getter
+            };
+
+            let final_setter = if let Some(JsValue::Object(s)) =
+                result_ref.get_property(&PropertyKey::String(set_key))
+            {
+                s.cheap_clone()
+            } else {
+                setter
+            };
+
+            Ok((final_getter, final_setter))
+        } else {
+            Ok((getter, setter))
+        }
+    }
+
+    /// Create a getter function for an auto-accessor
+    /// Uses a closure that captures the storage key and initial value
+    fn create_accessor_getter(
+        &mut self,
+        guard: &Guard<JsObject>,
+        storage_key: JsString,
+        init_value: JsValue,
+    ) -> Gc<JsObject> {
+        // Create a function object with accessor metadata
+        let func = self.create_object(guard);
+        func.borrow_mut().prototype = Some(self.function_prototype.cheap_clone());
+
+        // Store accessor metadata
+        func.borrow_mut().set_property(
+            PropertyKey::String(self.intern("__accessor_storage_key__")),
+            JsValue::String(storage_key),
+        );
+        func.borrow_mut().set_property(
+            PropertyKey::String(self.intern("__accessor_init_value__")),
+            init_value,
+        );
+        func.borrow_mut().set_property(
+            PropertyKey::String(self.intern("__accessor_kind__")),
+            JsValue::String(self.intern("getter")),
+        );
+
+        // Mark as callable by adding a special function marker
+        func.borrow_mut().exotic = ExoticObject::Function(JsFunction::AccessorGetter);
+
+        func
+    }
+
+    /// Create a setter function for an auto-accessor
+    /// Uses a closure that captures the storage key
+    fn create_accessor_setter(
+        &mut self,
+        guard: &Guard<JsObject>,
+        storage_key: JsString,
+    ) -> Gc<JsObject> {
+        // Create a function object with accessor metadata
+        let func = self.create_object(guard);
+        func.borrow_mut().prototype = Some(self.function_prototype.cheap_clone());
+
+        // Store accessor metadata
+        func.borrow_mut().set_property(
+            PropertyKey::String(self.intern("__accessor_storage_key__")),
+            JsValue::String(storage_key),
+        );
+        func.borrow_mut().set_property(
+            PropertyKey::String(self.intern("__accessor_kind__")),
+            JsValue::String(self.intern("setter")),
+        );
+
+        // Mark as callable by adding a special function marker
+        func.borrow_mut().exotic = ExoticObject::Function(JsFunction::AccessorSetter);
+
+        func
+    }
+
+    /// Apply parameter decorators to method parameters
+    /// TC39-style context object: { kind: "parameter", name, function, index, ... }
+    fn apply_parameter_decorators(
+        &mut self,
+        target: JsValue,
+        property_key: JsString,
+        params: &[FunctionParam],
+        is_static: bool,
+        guard: &Guard<JsObject>,
+    ) -> Result<(), JsError> {
+        for (index, param) in params.iter().enumerate() {
+            if param.decorators.is_empty() {
+                continue;
+            }
+
+            // Get parameter name if it's a simple identifier
+            let param_name = match &param.pattern {
+                Pattern::Identifier(id) => Some(id.name.cheap_clone()),
+                _ => None,
+            };
+
+            // Evaluate and apply decorators for this parameter
+            let evaluated = self.evaluate_decorators(&param.decorators)?;
+            for (decorator, _dec_guard) in evaluated.into_iter().rev() {
+                // Create TC39-style context object
+                let ctx = self.create_object(guard);
+                ctx.borrow_mut().set_property(
+                    PropertyKey::String(self.intern("kind")),
+                    JsValue::String(self.intern("parameter")),
+                );
+                if let Some(ref name) = param_name {
+                    ctx.borrow_mut().set_property(
+                        PropertyKey::String(self.intern("name")),
+                        JsValue::String(name.cheap_clone()),
+                    );
+                }
+                ctx.borrow_mut().set_property(
+                    PropertyKey::String(self.intern("function")),
+                    JsValue::String(property_key.cheap_clone()),
+                );
+                ctx.borrow_mut().set_property(
+                    PropertyKey::String(self.intern("index")),
+                    JsValue::Number(index as f64),
+                );
+                ctx.borrow_mut().set_property(
+                    PropertyKey::String(self.intern("static")),
+                    JsValue::Boolean(is_static),
+                );
+
+                // Call decorator with (target, context)
+                let _result = self.call_function(
+                    decorator,
+                    JsValue::Undefined,
+                    &[target.clone(), JsValue::Object(ctx)],
+                )?;
+                // Parameter decorators are called for side effects only (like metadata registration)
+            }
+        }
+        Ok(())
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -2863,6 +3255,7 @@ impl Interpreter {
                     self.apply_class_decorators(
                         JsValue::Object(constructor_fn),
                         evaluated_decorators,
+                        class_expr.id.as_ref().map(|id| id.name.cheap_clone()),
                         &guard,
                     )?
                 } else {
@@ -4212,6 +4605,66 @@ impl Interpreter {
                 builtins::promise::reject_promise_value(self, &promise, reason)?;
                 Ok(Guarded::unguarded(JsValue::Undefined))
             }
+
+            JsFunction::AccessorGetter => {
+                // Auto-accessor getter - read from storage slot on `this`
+                let storage_key_prop = self.intern("__accessor_storage_key__");
+                let init_value_prop = self.intern("__accessor_init_value__");
+
+                let func_ref = func_obj.borrow();
+                let storage_key = func_ref
+                    .get_property(&PropertyKey::String(storage_key_prop))
+                    .and_then(|v| {
+                        if let JsValue::String(s) = v {
+                            Some(s)
+                        } else {
+                            None
+                        }
+                    });
+                let init_val = func_ref.get_property(&PropertyKey::String(init_value_prop));
+                drop(func_ref);
+
+                if let Some(key) = storage_key {
+                    if let JsValue::Object(this_obj) = &this_value {
+                        let this_ref = this_obj.borrow();
+                        if let Some(val) = this_ref.get_property(&PropertyKey::String(key)) {
+                            return Ok(Guarded::unguarded(val));
+                        }
+                    }
+                    // Return initial value if not yet set
+                    if let Some(val) = init_val {
+                        return Ok(Guarded::unguarded(val));
+                    }
+                }
+                Ok(Guarded::unguarded(JsValue::Undefined))
+            }
+
+            JsFunction::AccessorSetter => {
+                // Auto-accessor setter - write to storage slot on `this`
+                let storage_key_prop = self.intern("__accessor_storage_key__");
+                let value = args.first().cloned().unwrap_or(JsValue::Undefined);
+
+                let func_ref = func_obj.borrow();
+                let storage_key = func_ref
+                    .get_property(&PropertyKey::String(storage_key_prop))
+                    .and_then(|v| {
+                        if let JsValue::String(s) = v {
+                            Some(s)
+                        } else {
+                            None
+                        }
+                    });
+                drop(func_ref);
+
+                if let Some(key) = storage_key {
+                    if let JsValue::Object(this_obj) = &this_value {
+                        this_obj
+                            .borrow_mut()
+                            .set_property(PropertyKey::String(key), value);
+                    }
+                }
+                Ok(Guarded::unguarded(JsValue::Undefined))
+            }
         }
     }
 
@@ -4612,6 +5065,48 @@ impl Default for Interpreter {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Native implementation of context.addInitializer()
+/// This function captures the initializers array via the __initializers__ property
+fn add_initializer_impl(
+    interp: &mut Interpreter,
+    this: JsValue,
+    args: &[JsValue],
+) -> Result<Guarded, JsError> {
+    // Get the initializer function argument
+    let initializer = args.first().cloned().unwrap_or(JsValue::Undefined);
+
+    // Validate that the argument is a function
+    if !matches!(&initializer, JsValue::Object(obj) if obj.borrow().is_callable()) {
+        return Err(JsError::type_error(
+            "addInitializer callback must be a function",
+        ));
+    }
+
+    // Get the __initializers__ array from the addInitializer function itself
+    // The `this` binding is the context object (since addInitializer is called as context.addInitializer())
+    // We stored the initializers array on the addInitializer function object
+    if let JsValue::Object(ctx) = this {
+        let ctx_ref = ctx.borrow();
+        let key = interp.intern("addInitializer");
+        if let Some(JsValue::Object(add_init_fn)) = ctx_ref.get_property(&PropertyKey::String(key))
+        {
+            let func_ref = add_init_fn.borrow();
+            let init_key = interp.intern("__initializers__");
+            if let Some(JsValue::Object(init_arr)) =
+                func_ref.get_property(&PropertyKey::String(init_key))
+            {
+                // Push the initializer to the array using set_property which handles array growth
+                drop(func_ref);
+                let mut arr_ref = init_arr.borrow_mut();
+                let index = arr_ref.array_length().unwrap_or(0);
+                arr_ref.set_property(PropertyKey::Index(index), initializer);
+            }
+        }
+    }
+
+    Ok(Guarded::unguarded(JsValue::Undefined))
 }
 
 #[cfg(test)]

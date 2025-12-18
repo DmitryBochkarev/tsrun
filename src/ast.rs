@@ -114,6 +114,7 @@ pub struct FunctionParam {
     pub pattern: Pattern,
     pub type_annotation: Option<TypeAnnotation>,
     pub optional: bool,
+    pub decorators: Vec<Decorator>,
     pub span: Span,
 }
 
@@ -178,6 +179,7 @@ pub struct ClassProperty {
     pub static_: bool,
     pub readonly: bool,
     pub optional: bool,
+    pub accessor: bool,
     pub accessibility: Option<Accessibility>,
     pub decorators: Vec<Decorator>,
     pub span: Span,
