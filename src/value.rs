@@ -314,6 +314,54 @@ impl From<JsString> for JsValue {
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct JsString(Rc<str>);
 
+/// A key for variable lookups that uses pointer-based hashing.
+///
+/// This wrapper around JsString uses the pointer address for hashing and equality,
+/// which is O(1) instead of O(n) for content-based hashing. This is safe because
+/// all variable names are interned through StringDict, so identical names share
+/// the same Rc allocation.
+///
+/// WARNING: Only use this for interned strings! Using non-interned strings will
+/// cause incorrect lookups (two equal strings might not be found).
+#[derive(Clone)]
+pub struct VarKey(pub JsString);
+
+impl std::hash::Hash for VarKey {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        // Hash the pointer address, not the content
+        // Use the data pointer from the fat pointer (Rc<str> is a fat pointer)
+        let ptr = Rc::as_ptr(&self.0 .0) as *const () as usize;
+        ptr.hash(state);
+    }
+}
+
+impl PartialEq for VarKey {
+    fn eq(&self, other: &Self) -> bool {
+        // Compare pointer addresses, not content
+        Rc::ptr_eq(&self.0 .0, &other.0 .0)
+    }
+}
+
+impl Eq for VarKey {}
+
+impl std::fmt::Debug for VarKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "VarKey({:?})", self.0)
+    }
+}
+
+impl std::fmt::Display for VarKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl From<JsString> for VarKey {
+    fn from(s: JsString) -> Self {
+        VarKey(s)
+    }
+}
+
 // JsString wraps Rc<str>, so clone is cheap (just reference count increment)
 impl CheapClone for JsString {}
 
@@ -1510,7 +1558,8 @@ impl<'a> Iterator for PropertyStorageIterMut<'a> {
 #[derive(Debug)]
 pub struct EnvironmentData {
     /// Variable bindings in this scope
-    pub bindings: FxHashMap<JsString, Binding>,
+    /// Uses VarKey for O(1) pointer-based lookups (all var names are interned)
+    pub bindings: FxHashMap<VarKey, Binding>,
     /// Parent environment (if any) - now a GC reference
     pub outer: Option<JsObjectRef>,
 }

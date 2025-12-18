@@ -16,7 +16,7 @@ use crate::error::JsError;
 use crate::gc::{Gc, Guard};
 use crate::value::{
     Binding, CheapClone, ExoticObject, Guarded, JsObject, JsString, JsValue, PromiseStatus,
-    PropertyKey,
+    PropertyKey, VarKey,
 };
 use std::rc::Rc;
 
@@ -1907,6 +1907,8 @@ impl Interpreter {
         let saved_env = self.push_scope();
 
         // Extract loop variable names for let/const (for per-iteration binding)
+        // IMPORTANT: Use id.name directly - it's already interned from parsing.
+        // Creating JsString::from() would bypass interning and break VarKey pointer equality.
         let loop_vars: Vec<(JsString, bool)> = match &for_stmt.init {
             Some(ForInit::Variable(decl)) if decl.kind != VariableKind::Var => {
                 let mutable = decl.kind == VariableKind::Let;
@@ -1914,7 +1916,7 @@ impl Interpreter {
                     .iter()
                     .filter_map(|d| {
                         if let Pattern::Identifier(id) = &d.id {
-                            Some((JsString::from(id.name.as_str()), mutable))
+                            Some((id.name.cheap_clone(), mutable))
                         } else {
                             None
                         }
@@ -1994,7 +1996,7 @@ impl Interpreter {
                 let mut env_ref = iter_env.borrow_mut();
                 if let Some(data) = env_ref.as_environment_mut() {
                     data.bindings.insert(
-                        name.cheap_clone(),
+                        VarKey(name.cheap_clone()),
                         Binding {
                             value,
                             mutable: *mutable,
@@ -2133,11 +2135,12 @@ impl Interpreter {
 
             // Copy loop variables from current to new environment
             for (name, mutable) in loop_vars.iter() {
+                let key = VarKey(name.cheap_clone());
                 let value = {
                     let env_ref = current_env.borrow();
                     if let Some(data) = env_ref.as_environment() {
                         data.bindings
-                            .get(name)
+                            .get(&key)
                             .map(|b| b.value.clone())
                             .unwrap_or(JsValue::Undefined)
                     } else {
@@ -2147,7 +2150,7 @@ impl Interpreter {
                 let mut env_ref = new_iter_env.borrow_mut();
                 if let Some(data) = env_ref.as_environment_mut() {
                     data.bindings.insert(
-                        name.cheap_clone(),
+                        key,
                         Binding {
                             value,
                             mutable: *mutable,

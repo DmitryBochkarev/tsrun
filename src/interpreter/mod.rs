@@ -27,7 +27,7 @@ use crate::value::{
     create_environment_unrooted, Binding, CheapClone, EnumData, EnvRef, EnvironmentData,
     ExoticObject, FunctionBody, GeneratorState, GeneratorStatus, Guarded, InterpretedFunction,
     JsFunction, JsObject, JsString, JsValue, NativeFn, NativeFunction, PromiseStatus, Property,
-    PropertyKey,
+    PropertyKey, VarKey,
 };
 use rustc_hash::FxHashMap;
 use std::cell::RefCell;
@@ -949,7 +949,7 @@ impl Interpreter {
         let mut env_ref = self.env.borrow_mut();
         if let Some(data) = env_ref.as_environment_mut() {
             data.bindings.insert(
-                name,
+                VarKey(name),
                 Binding {
                     value,
                     mutable,
@@ -964,11 +964,13 @@ impl Interpreter {
     pub fn env_get(&self, name: &JsString) -> Result<JsValue, JsError> {
         let mut current = Some(self.env.cheap_clone());
         let mut depth = 0;
+        // Create VarKey once for pointer-based lookup
+        let key = VarKey(name.cheap_clone());
 
         while let Some(env) = current {
             let env_ref = env.borrow();
             if let Some(data) = env_ref.as_environment() {
-                if let Some(binding) = data.bindings.get(name) {
+                if let Some(binding) = data.bindings.get(&key) {
                     if !binding.initialized {
                         return Err(JsError::reference_error(format!(
                             "Cannot access '{}' before initialization",
@@ -998,11 +1000,13 @@ impl Interpreter {
     /// Set a variable in the environment chain
     pub fn env_set(&mut self, name: &JsString, value: JsValue) -> Result<(), JsError> {
         let mut current = Some(self.env.clone());
+        // Create VarKey once for pointer-based lookup
+        let key = VarKey(name.cheap_clone());
 
         while let Some(env) = current {
             let mut env_ref = env.borrow_mut();
             if let Some(data) = env_ref.as_environment_mut() {
-                if let Some(binding) = data.bindings.get_mut(name) {
+                if let Some(binding) = data.bindings.get_mut(&key) {
                     if !binding.mutable {
                         return Err(JsError::type_error(format!(
                             "Assignment to constant variable '{}'",
@@ -3680,7 +3684,7 @@ impl Interpreter {
                     let this_name = self.intern("this");
                     if let Some(data) = func_env.borrow_mut().as_environment_mut() {
                         data.bindings.insert(
-                            this_name,
+                            VarKey(this_name),
                             Binding {
                                 value: this_value.clone(),
                                 mutable: false,
@@ -3697,7 +3701,7 @@ impl Interpreter {
                     if let Some(super_val) = func_obj.borrow().get_property(&super_key) {
                         if let Some(data) = func_env.borrow_mut().as_environment_mut() {
                             data.bindings.insert(
-                                super_name,
+                                VarKey(super_name),
                                 Binding {
                                     value: super_val,
                                     mutable: false,
@@ -4243,7 +4247,8 @@ impl Interpreter {
     fn env_has_own_binding(&self, name: &JsString) -> bool {
         let env_ref = self.env.borrow();
         if let Some(data) = env_ref.as_environment() {
-            data.bindings.contains_key(name)
+            let key = VarKey(name.cheap_clone());
+            data.bindings.contains_key(&key)
         } else {
             false
         }

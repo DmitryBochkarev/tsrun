@@ -3,17 +3,16 @@
 use typescript_eval::ast::Statement;
 use typescript_eval::interpreter::stack::{ExecutionState, Frame, StepResult};
 use typescript_eval::parser::Parser;
-use typescript_eval::{Interpreter, JsValue, StringDict};
+use typescript_eval::{Interpreter, JsValue};
 
 use std::rc::Rc;
 
 /// Helper to evaluate using stack-based execution
 fn stack_eval(source: &str) -> JsValue {
     let mut interp = Interpreter::new();
-    let mut string_dict = StringDict::new();
 
-    // Parse the source to get an expression
-    let program = Parser::new(source, &mut string_dict)
+    // Parse using the interpreter's string dictionary for proper interning
+    let program = Parser::new(source, &mut interp.string_dict)
         .parse_program()
         .expect("parse failed");
 
@@ -171,11 +170,11 @@ fn test_stack_string_concat() {
 #[test]
 fn test_stack_await_resolved_promise() {
     let mut interp = Interpreter::new();
-    let mut string_dict = StringDict::new();
 
     // Create a resolved promise using Promise.resolve(42)
     let source = "Promise.resolve(42)";
-    let program = Parser::new(source, &mut string_dict)
+    // Parse using the interpreter's string dictionary for proper interning
+    let program = Parser::new(source, &mut interp.string_dict)
         .parse_program()
         .expect("parse failed");
 
