@@ -409,3 +409,232 @@ fn test_object_entries_inner_arrays_have_methods() {
         JsValue::String(JsString::from("a=1"))
     );
 }
+
+// Object.is tests
+#[test]
+fn test_object_is_basic() {
+    // Same values
+    assert_eq!(eval("Object.is(1, 1)"), JsValue::Boolean(true));
+    assert_eq!(eval("Object.is('foo', 'foo')"), JsValue::Boolean(true));
+    assert_eq!(eval("Object.is(true, true)"), JsValue::Boolean(true));
+    assert_eq!(eval("Object.is(null, null)"), JsValue::Boolean(true));
+    assert_eq!(
+        eval("Object.is(undefined, undefined)"),
+        JsValue::Boolean(true)
+    );
+
+    // Different values
+    assert_eq!(eval("Object.is(1, 2)"), JsValue::Boolean(false));
+    assert_eq!(eval("Object.is('foo', 'bar')"), JsValue::Boolean(false));
+    assert_eq!(eval("Object.is(true, false)"), JsValue::Boolean(false));
+}
+
+#[test]
+fn test_object_is_nan() {
+    // Object.is(NaN, NaN) should be true (unlike === which is false)
+    assert_eq!(eval("Object.is(NaN, NaN)"), JsValue::Boolean(true));
+    assert_eq!(eval("NaN === NaN"), JsValue::Boolean(false));
+}
+
+#[test]
+fn test_object_is_zero() {
+    // Object.is distinguishes +0 and -0 (unlike === which treats them as equal)
+    assert_eq!(eval("Object.is(0, 0)"), JsValue::Boolean(true));
+    assert_eq!(eval("Object.is(-0, -0)"), JsValue::Boolean(true));
+    assert_eq!(eval("Object.is(0, -0)"), JsValue::Boolean(false));
+    assert_eq!(eval("Object.is(-0, 0)"), JsValue::Boolean(false));
+    // Verify === treats them as equal
+    assert_eq!(eval("0 === -0"), JsValue::Boolean(true));
+}
+
+#[test]
+fn test_object_is_objects() {
+    // Same object reference
+    assert_eq!(
+        eval("const obj = {}; Object.is(obj, obj)"),
+        JsValue::Boolean(true)
+    );
+    // Different object references
+    assert_eq!(eval("Object.is({}, {})"), JsValue::Boolean(false));
+}
+
+#[test]
+fn test_object_is_symbols() {
+    // Same symbol
+    assert_eq!(
+        eval("const s = Symbol('test'); Object.is(s, s)"),
+        JsValue::Boolean(true)
+    );
+    // Different symbols with same description
+    assert_eq!(
+        eval("Object.is(Symbol('test'), Symbol('test'))"),
+        JsValue::Boolean(false)
+    );
+}
+
+// Object.preventExtensions/isExtensible tests
+#[test]
+fn test_object_prevent_extensions() {
+    // After preventExtensions, new properties cannot be added
+    assert_eq!(
+        eval(
+            r#"
+            const obj: any = { a: 1 };
+            Object.preventExtensions(obj);
+            obj.b = 2;
+            obj.b
+        "#
+        ),
+        JsValue::Undefined
+    );
+}
+
+#[test]
+fn test_object_is_extensible() {
+    // Objects are extensible by default
+    assert_eq!(eval("Object.isExtensible({})"), JsValue::Boolean(true));
+    // After preventExtensions, object is not extensible
+    assert_eq!(
+        eval(
+            r#"
+            const obj = {};
+            Object.preventExtensions(obj);
+            Object.isExtensible(obj)
+        "#
+        ),
+        JsValue::Boolean(false)
+    );
+    // Non-objects are not extensible
+    assert_eq!(eval("Object.isExtensible(1)"), JsValue::Boolean(false));
+    assert_eq!(eval("Object.isExtensible('str')"), JsValue::Boolean(false));
+}
+
+#[test]
+fn test_object_prevent_extensions_existing_props() {
+    // Existing properties can still be modified
+    assert_eq!(
+        eval(
+            r#"
+            const obj: any = { a: 1 };
+            Object.preventExtensions(obj);
+            obj.a = 42;
+            obj.a
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+#[test]
+fn test_object_freeze_prevents_extension() {
+    // Object.freeze also makes object non-extensible
+    assert_eq!(
+        eval(
+            r#"
+            const obj = { a: 1 };
+            Object.freeze(obj);
+            Object.isExtensible(obj)
+        "#
+        ),
+        JsValue::Boolean(false)
+    );
+}
+
+// Object.getOwnPropertyDescriptors tests
+#[test]
+fn test_object_get_own_property_descriptors_basic() {
+    assert_eq!(
+        eval(
+            r#"
+            const obj = { a: 1, b: 2 };
+            const descs = Object.getOwnPropertyDescriptors(obj);
+            descs.a.value
+        "#
+        ),
+        JsValue::Number(1.0)
+    );
+    assert_eq!(
+        eval(
+            r#"
+            const obj = { a: 1, b: 2 };
+            const descs = Object.getOwnPropertyDescriptors(obj);
+            descs.b.value
+        "#
+        ),
+        JsValue::Number(2.0)
+    );
+}
+
+#[test]
+fn test_object_get_own_property_descriptors_attributes() {
+    assert_eq!(
+        eval(
+            r#"
+            const obj = { x: 42 };
+            const descs = Object.getOwnPropertyDescriptors(obj);
+            descs.x.writable
+        "#
+        ),
+        JsValue::Boolean(true)
+    );
+    assert_eq!(
+        eval(
+            r#"
+            const obj = { x: 42 };
+            const descs = Object.getOwnPropertyDescriptors(obj);
+            descs.x.enumerable
+        "#
+        ),
+        JsValue::Boolean(true)
+    );
+    assert_eq!(
+        eval(
+            r#"
+            const obj = { x: 42 };
+            const descs = Object.getOwnPropertyDescriptors(obj);
+            descs.x.configurable
+        "#
+        ),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_object_get_own_property_descriptors_with_define() {
+    assert_eq!(
+        eval(
+            r#"
+            const obj: any = {};
+            Object.defineProperty(obj, 'x', { value: 10, writable: false, enumerable: false, configurable: false });
+            const descs = Object.getOwnPropertyDescriptors(obj);
+            descs.x.writable
+        "#
+        ),
+        JsValue::Boolean(false)
+    );
+    assert_eq!(
+        eval(
+            r#"
+            const obj: any = {};
+            Object.defineProperty(obj, 'x', { value: 10, writable: false, enumerable: false, configurable: false });
+            const descs = Object.getOwnPropertyDescriptors(obj);
+            descs.x.enumerable
+        "#
+        ),
+        JsValue::Boolean(false)
+    );
+}
+
+#[test]
+fn test_object_get_own_property_descriptors_count() {
+    // Test that all properties are returned
+    assert_eq!(
+        eval(
+            r#"
+            const obj = { a: 1, b: 2, c: 3 };
+            Object.keys(Object.getOwnPropertyDescriptors(obj)).length
+        "#
+        ),
+        JsValue::Number(3.0)
+    );
+}

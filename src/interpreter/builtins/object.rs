@@ -31,11 +31,21 @@ pub fn create_object_constructor(interp: &mut Interpreter) -> JsObjectRef {
     // Property checking
     interp.register_method(&constructor, "hasOwn", object_has_own, 2);
 
-    // Freezing/sealing
+    // Freezing/sealing/extensibility
     interp.register_method(&constructor, "freeze", object_freeze, 1);
     interp.register_method(&constructor, "isFrozen", object_is_frozen, 1);
     interp.register_method(&constructor, "seal", object_seal, 1);
     interp.register_method(&constructor, "isSealed", object_is_sealed, 1);
+    interp.register_method(
+        &constructor,
+        "preventExtensions",
+        object_prevent_extensions,
+        1,
+    );
+    interp.register_method(&constructor, "isExtensible", object_is_extensible, 1);
+
+    // Comparison
+    interp.register_method(&constructor, "is", object_is, 2);
 
     // Property descriptors
     interp.register_method(
@@ -54,6 +64,12 @@ pub fn create_object_constructor(interp: &mut Interpreter) -> JsObjectRef {
         &constructor,
         "getOwnPropertySymbols",
         object_get_own_property_symbols,
+        1,
+    );
+    interp.register_method(
+        &constructor,
+        "getOwnPropertyDescriptors",
+        object_get_own_property_descriptors,
         1,
     );
     interp.register_method(&constructor, "defineProperty", object_define_property, 3);
@@ -345,7 +361,8 @@ pub fn object_freeze(
     if let JsValue::Object(obj_ref) = &obj {
         let mut obj_mut = obj_ref.borrow_mut();
         obj_mut.frozen = true;
-        // Mark all properties as non-writable and non-configurable
+        obj_mut.extensible = false; // Frozen objects are not extensible
+                                    // Mark all properties as non-writable and non-configurable
         for (_, prop) in obj_mut.properties.iter_mut() {
             prop.set_writable(false);
             prop.set_configurable(false);
@@ -385,7 +402,8 @@ pub fn object_seal(
     if let JsValue::Object(obj_ref) = &obj {
         let mut obj_mut = obj_ref.borrow_mut();
         obj_mut.sealed = true;
-        // Mark all properties as non-configurable (but still writable)
+        obj_mut.extensible = false; // Sealed objects are not extensible
+                                    // Mark all properties as non-configurable (but still writable)
         for (_, prop) in obj_mut.properties.iter_mut() {
             prop.set_configurable(false);
         }
@@ -859,4 +877,162 @@ pub fn object_set_prototype_of(
     obj_ref.borrow_mut().prototype = new_proto;
     // Object was passed in by caller, already owned - no guard needed
     Ok(Guarded::unguarded(obj))
+}
+
+/// Object.is(value1, value2)
+/// Uses SameValue algorithm which differs from === in handling of NaN and -0
+pub fn object_is(
+    _interp: &mut Interpreter,
+    _this: JsValue,
+    args: &[JsValue],
+) -> Result<Guarded, JsError> {
+    let value1 = args.first().cloned().unwrap_or(JsValue::Undefined);
+    let value2 = args.get(1).cloned().unwrap_or(JsValue::Undefined);
+
+    let result = same_value(&value1, &value2);
+    Ok(Guarded::unguarded(JsValue::Boolean(result)))
+}
+
+/// SameValue algorithm (used by Object.is)
+/// Different from strict equality (===) in that:
+/// - NaN is equal to NaN
+/// - +0 is NOT equal to -0
+fn same_value(x: &JsValue, y: &JsValue) -> bool {
+    match (x, y) {
+        (JsValue::Undefined, JsValue::Undefined) => true,
+        (JsValue::Null, JsValue::Null) => true,
+        (JsValue::Boolean(a), JsValue::Boolean(b)) => a == b,
+        (JsValue::Number(a), JsValue::Number(b)) => {
+            // Handle NaN: NaN is equal to NaN
+            if a.is_nan() && b.is_nan() {
+                return true;
+            }
+            // Handle -0 vs +0: they are NOT equal
+            if *a == 0.0 && *b == 0.0 {
+                // Check sign bit: 1/0.0 = Infinity, 1/-0.0 = -Infinity
+                return a.signum() == b.signum() || (a.is_nan() && b.is_nan());
+            }
+            a == b
+        }
+        (JsValue::String(a), JsValue::String(b)) => a == b,
+        (JsValue::Symbol(a), JsValue::Symbol(b)) => a == b,
+        (JsValue::Object(a), JsValue::Object(b)) => a == b,
+        _ => false,
+    }
+}
+
+/// Object.preventExtensions(obj)
+/// Prevents new properties from being added to an object
+pub fn object_prevent_extensions(
+    interp: &mut Interpreter,
+    _this: JsValue,
+    args: &[JsValue],
+) -> Result<Guarded, JsError> {
+    let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
+
+    if let JsValue::Object(obj_ref) = &obj {
+        obj_ref.borrow_mut().extensible = false;
+    }
+
+    // Return with guard to protect the object until caller stores it
+    let guard = interp.guard_value(&obj);
+    Ok(Guarded { value: obj, guard })
+}
+
+/// Object.isExtensible(obj)
+/// Returns true if new properties can be added to the object
+pub fn object_is_extensible(
+    _interp: &mut Interpreter,
+    _this: JsValue,
+    args: &[JsValue],
+) -> Result<Guarded, JsError> {
+    let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
+
+    let is_extensible = match obj {
+        JsValue::Object(obj_ref) => obj_ref.borrow().extensible,
+        _ => false, // Non-objects are not extensible
+    };
+
+    Ok(Guarded::unguarded(JsValue::Boolean(is_extensible)))
+}
+
+/// Object.getOwnPropertyDescriptors(obj)
+/// Returns an object containing all own property descriptors
+pub fn object_get_own_property_descriptors(
+    interp: &mut Interpreter,
+    _this: JsValue,
+    args: &[JsValue],
+) -> Result<Guarded, JsError> {
+    let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
+
+    let JsValue::Object(obj_ref) = obj else {
+        return Err(JsError::type_error(
+            "Object.getOwnPropertyDescriptors requires an object",
+        ));
+    };
+
+    // Pre-intern descriptor property keys
+    let get_key = PropertyKey::String(interp.intern("get"));
+    let set_key = PropertyKey::String(interp.intern("set"));
+    let value_key = PropertyKey::String(interp.intern("value"));
+    let writable_key = PropertyKey::String(interp.intern("writable"));
+    let enumerable_key = PropertyKey::String(interp.intern("enumerable"));
+    let configurable_key = PropertyKey::String(interp.intern("configurable"));
+
+    // Collect all property keys first
+    let prop_keys: Vec<PropertyKey> = {
+        let obj_borrowed = obj_ref.borrow();
+        obj_borrowed.properties.keys().cloned().collect()
+    };
+
+    // Create result object
+    let result_guard = interp.heap.create_guard();
+    let result = interp.create_object(&result_guard);
+
+    for key in prop_keys {
+        let property = {
+            let obj_borrowed = obj_ref.borrow();
+            obj_borrowed.get_own_property(&key).cloned()
+        };
+
+        if let Some(property) = property {
+            // Create descriptor object for this property
+            let desc = interp.create_object(&result_guard);
+            {
+                let mut desc_ref = desc.borrow_mut();
+
+                if property.is_accessor() {
+                    // Accessor descriptor
+                    if let Some(getter) = property.getter() {
+                        desc_ref.set_property(get_key.clone(), JsValue::Object(getter.clone()));
+                    } else {
+                        desc_ref.set_property(get_key.clone(), JsValue::Undefined);
+                    }
+                    if let Some(setter) = property.setter() {
+                        desc_ref.set_property(set_key.clone(), JsValue::Object(setter.clone()));
+                    } else {
+                        desc_ref.set_property(set_key.clone(), JsValue::Undefined);
+                    }
+                } else {
+                    // Data descriptor
+                    desc_ref.set_property(value_key.clone(), property.value.clone());
+                    desc_ref
+                        .set_property(writable_key.clone(), JsValue::Boolean(property.writable()));
+                }
+
+                desc_ref.set_property(
+                    enumerable_key.clone(),
+                    JsValue::Boolean(property.enumerable()),
+                );
+                desc_ref.set_property(
+                    configurable_key.clone(),
+                    JsValue::Boolean(property.configurable()),
+                );
+            }
+
+            result.borrow_mut().set_property(key, JsValue::Object(desc));
+        }
+    }
+
+    Ok(Guarded::with_guard(JsValue::Object(result), result_guard))
 }

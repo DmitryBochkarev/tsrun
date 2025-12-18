@@ -84,3 +84,79 @@ fn test_decodeuricomponent() {
         JsValue::from("a=1&b=2")
     );
 }
+
+// btoa tests (base64 encode)
+#[test]
+fn test_btoa_basic() {
+    assert_eq!(eval("btoa('Hello')"), JsValue::from("SGVsbG8="));
+    assert_eq!(
+        eval("btoa('Hello, World!')"),
+        JsValue::from("SGVsbG8sIFdvcmxkIQ==")
+    );
+}
+
+#[test]
+fn test_btoa_empty() {
+    assert_eq!(eval("btoa('')"), JsValue::from(""));
+}
+
+#[test]
+fn test_btoa_binary() {
+    // ASCII characters
+    assert_eq!(eval("btoa('abc')"), JsValue::from("YWJj"));
+    assert_eq!(eval("btoa('AB')"), JsValue::from("QUI="));
+    assert_eq!(eval("btoa('A')"), JsValue::from("QQ=="));
+}
+
+#[test]
+fn test_btoa_special_chars() {
+    // Characters in the Latin-1 range
+    assert_eq!(eval(r#"btoa('\x00')"#), JsValue::from("AA=="));
+    assert_eq!(eval(r#"btoa('\xff')"#), JsValue::from("/w=="));
+}
+
+// atob tests (base64 decode)
+#[test]
+fn test_atob_basic() {
+    assert_eq!(eval("atob('SGVsbG8=')"), JsValue::from("Hello"));
+    assert_eq!(
+        eval("atob('SGVsbG8sIFdvcmxkIQ==')"),
+        JsValue::from("Hello, World!")
+    );
+}
+
+#[test]
+fn test_atob_empty() {
+    assert_eq!(eval("atob('')"), JsValue::from(""));
+}
+
+#[test]
+fn test_atob_no_padding() {
+    // When length is divisible by 3, no padding needed
+    assert_eq!(eval("atob('YWJj')"), JsValue::from("abc"));
+}
+
+#[test]
+fn test_atob_single_padding() {
+    // When (len % 3) == 2, one padding char
+    assert_eq!(eval("atob('QUI=')"), JsValue::from("AB"));
+}
+
+#[test]
+fn test_atob_double_padding() {
+    // When (len % 3) == 1, two padding chars
+    assert_eq!(eval("atob('QQ==')"), JsValue::from("A"));
+}
+
+#[test]
+fn test_btoa_atob_roundtrip() {
+    // Roundtrip test
+    assert_eq!(
+        eval("atob(btoa('Hello, World!'))"),
+        JsValue::from("Hello, World!")
+    );
+    assert_eq!(
+        eval("atob(btoa('test string'))"),
+        JsValue::from("test string")
+    );
+}

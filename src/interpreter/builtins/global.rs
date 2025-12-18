@@ -79,6 +79,24 @@ pub fn init_global_functions(interp: &mut Interpreter) {
         .global
         .borrow_mut()
         .set_property(key, JsValue::Object(decodeuricomponent_fn));
+
+    // btoa (base64 encode)
+    let btoa_fn = interp.create_native_function("btoa", global_btoa, 1);
+    interp.root_guard.guard(btoa_fn.clone());
+    let key = PropertyKey::String(interp.intern("btoa"));
+    interp
+        .global
+        .borrow_mut()
+        .set_property(key, JsValue::Object(btoa_fn));
+
+    // atob (base64 decode)
+    let atob_fn = interp.create_native_function("atob", global_atob, 1);
+    interp.root_guard.guard(atob_fn.clone());
+    let key = PropertyKey::String(interp.intern("atob"));
+    interp
+        .global
+        .borrow_mut()
+        .set_property(key, JsValue::Object(atob_fn));
 }
 
 pub fn global_parse_int(
@@ -335,4 +353,159 @@ fn percent_decode(s: &str, preserve_reserved: bool) -> String {
         }
     }
     result
+}
+
+// Base64 encoding alphabet
+const BASE64_ALPHABET: &[u8; 64] =
+    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+/// btoa - Binary to ASCII (base64 encode)
+/// Encodes a string of binary data to a base64 encoded ASCII string
+pub fn global_btoa(
+    _interp: &mut Interpreter,
+    _this: JsValue,
+    args: &[JsValue],
+) -> Result<Guarded, JsError> {
+    let s = args
+        .first()
+        .map(|v| v.to_js_string())
+        .unwrap_or_else(|| JsString::from(""));
+
+    // Check that all characters are in the Latin-1 range (0-255)
+    for c in s.as_str().chars() {
+        if c as u32 > 255 {
+            return Err(JsError::type_error(
+                "The string to be encoded contains characters outside of the Latin1 range",
+            ));
+        }
+    }
+
+    let bytes: Vec<u8> = s.as_str().chars().map(|c| c as u8).collect();
+    let encoded = base64_encode(&bytes);
+    Ok(Guarded::unguarded(JsValue::String(JsString::from(encoded))))
+}
+
+/// atob - ASCII to Binary (base64 decode)
+/// Decodes a base64 encoded string to a string of binary data
+pub fn global_atob(
+    _interp: &mut Interpreter,
+    _this: JsValue,
+    args: &[JsValue],
+) -> Result<Guarded, JsError> {
+    let s = args
+        .first()
+        .map(|v| v.to_js_string())
+        .unwrap_or_else(|| JsString::from(""));
+
+    // Remove whitespace as per spec
+    let cleaned: String = s.as_str().chars().filter(|c| !c.is_whitespace()).collect();
+
+    match base64_decode(&cleaned) {
+        Ok(bytes) => {
+            // Convert bytes to Latin-1 string
+            let decoded: String = bytes.iter().map(|&b| b as char).collect();
+            Ok(Guarded::unguarded(JsValue::String(JsString::from(decoded))))
+        }
+        Err(msg) => Err(JsError::type_error(format!(
+            "The string to be decoded is not correctly encoded: {}",
+            msg
+        ))),
+    }
+}
+
+fn base64_encode(data: &[u8]) -> String {
+    let mut result = String::new();
+    let mut i = 0;
+
+    while i < data.len() {
+        let b0 = data.get(i).copied().unwrap_or(0);
+        let b1 = data.get(i + 1).copied();
+        let b2 = data.get(i + 2).copied();
+
+        // First character: top 6 bits of b0
+        // Index is guaranteed to be 0-63 (6 bits)
+        if let Some(&c) = BASE64_ALPHABET.get((b0 >> 2) as usize) {
+            result.push(c as char);
+        }
+
+        // Second character: bottom 2 bits of b0 + top 4 bits of b1
+        let idx1 = ((b0 & 0x03) << 4) | (b1.unwrap_or(0) >> 4);
+        if let Some(&c) = BASE64_ALPHABET.get(idx1 as usize) {
+            result.push(c as char);
+        }
+
+        // Third character: bottom 4 bits of b1 + top 2 bits of b2, or padding
+        if b1.is_some() {
+            let idx2 = ((b1.unwrap_or(0) & 0x0F) << 2) | (b2.unwrap_or(0) >> 6);
+            if let Some(&c) = BASE64_ALPHABET.get(idx2 as usize) {
+                result.push(c as char);
+            }
+        } else {
+            result.push('=');
+        }
+
+        // Fourth character: bottom 6 bits of b2, or padding
+        if b2.is_some() {
+            if let Some(&c) = BASE64_ALPHABET.get((b2.unwrap_or(0) & 0x3F) as usize) {
+                result.push(c as char);
+            }
+        } else {
+            result.push('=');
+        }
+
+        i += 3;
+    }
+
+    result
+}
+
+fn base64_decode(data: &str) -> Result<Vec<u8>, &'static str> {
+    let mut result = Vec::new();
+    let chars: Vec<char> = data.chars().collect();
+
+    if chars.len() % 4 != 0 {
+        return Err("invalid length");
+    }
+
+    let mut i = 0;
+    while i < chars.len() {
+        let c0 = chars.get(i).copied().unwrap_or('=');
+        let c1 = chars.get(i + 1).copied().unwrap_or('=');
+        let c2 = chars.get(i + 2).copied().unwrap_or('=');
+        let c3 = chars.get(i + 3).copied().unwrap_or('=');
+
+        let v0 = base64_char_value(c0)?;
+        let v1 = base64_char_value(c1)?;
+
+        // First byte
+        result.push((v0 << 2) | (v1 >> 4));
+
+        // Second byte (if not padding)
+        if c2 != '=' {
+            let v2 = base64_char_value(c2)?;
+            result.push(((v1 & 0x0F) << 4) | (v2 >> 2));
+
+            // Third byte (if not padding)
+            if c3 != '=' {
+                let v3 = base64_char_value(c3)?;
+                result.push(((v2 & 0x03) << 6) | v3);
+            }
+        }
+
+        i += 4;
+    }
+
+    Ok(result)
+}
+
+fn base64_char_value(c: char) -> Result<u8, &'static str> {
+    match c {
+        'A'..='Z' => Ok(c as u8 - b'A'),
+        'a'..='z' => Ok(c as u8 - b'a' + 26),
+        '0'..='9' => Ok(c as u8 - b'0' + 52),
+        '+' => Ok(62),
+        '/' => Ok(63),
+        '=' => Ok(0), // Padding, handled separately
+        _ => Err("invalid character"),
+    }
 }

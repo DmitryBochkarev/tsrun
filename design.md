@@ -4,7 +4,7 @@
 
 **Project:** `typescript-eval`
 **Purpose:** Execute TypeScript for config/manifest generation from Rust
-**Status:** Milestone 10 Complete (Decorators, 843 tests passing)
+**Status:** Milestone 10 Complete (Decorators, 909 tests passing)
 
 ### Requirements
 
@@ -761,10 +761,10 @@ These features have AST support but are ignored or partially handled at runtime:
 ### Missing Object Methods
 
 #### Object
-- [ ] `Object.is(value1, value2)`
-- [ ] `Object.preventExtensions(obj)`
-- [ ] `Object.isExtensible(obj)`
-- [ ] `Object.getOwnPropertyDescriptors(obj)`
+- [x] `Object.is(value1, value2)`
+- [x] `Object.preventExtensions(obj)`
+- [x] `Object.isExtensible(obj)`
+- [x] `Object.getOwnPropertyDescriptors(obj)`
 
 #### Array
 - [ ] `Array.fromAsync(asyncIterable)`
@@ -783,8 +783,8 @@ These features have AST support but are ignored or partially handled at runtime:
 - [ ] `setImmediate(callback)` - Host-dependent
 - [ ] `queueMicrotask(callback)` - Requires microtask queue
 - [ ] `structuredClone(value)` - Deep cloning
-- [ ] `atob(encoded)` - Base64 decode
-- [ ] `btoa(string)` - Base64 encode
+- [x] `atob(encoded)` - Base64 decode
+- [x] `btoa(string)` - Base64 encode
 
 **Note:** Timer functions are intentionally not built-in. They should be implemented via the order system by the host.
 
@@ -826,17 +826,13 @@ These are parsed but not enforced at runtime (by design - matches TypeScript beh
 ### Potential Future Additions
 
 #### High Priority (Common Use Cases)
-1. Decorator evaluation
-2. `Object.is()`
-3. `Object.preventExtensions()` / `Object.isExtensible()`
-4. Full BigInt support
+1. Full BigInt support
+2. `structuredClone()`
 
 #### Medium Priority (Improved Compatibility)
 1. WeakMap / WeakSet
 2. Async iterators (`for await...of`)
 3. `import.meta`
-4. `structuredClone()`
-5. `atob()` / `btoa()`
 
 #### Low Priority (Specialized Use)
 1. Proxy & Reflect
@@ -1128,7 +1124,7 @@ src/
 
 ## Testing
 
-### Current Status: 839 tests passing
+### Current Status: 909 tests passing
 
 ```bash
 cargo test                     # Run all tests
