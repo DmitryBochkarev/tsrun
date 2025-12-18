@@ -571,11 +571,8 @@ impl Interpreter {
             match self.step(state) {
                 StepResult::Continue => continue,
                 StepResult::Done(guarded) => {
-                    // Execution complete
-                    // FIXME: what backward compatibility?
-                    // Check if there are pending orders (for backward compatibility)
+                    // Execution complete - check if there are pending orders to return
                     if !self.pending_orders.is_empty() {
-                        // FIXME: should be kept in interpreter state
                         let pending = std::mem::take(&mut self.pending_orders);
                         let cancelled = std::mem::take(&mut self.cancelled_orders);
                         return Ok(crate::RuntimeResult::Suspended { pending, cancelled });
@@ -598,7 +595,6 @@ impl Interpreter {
                 StepResult::Suspend(_promise) => {
                     // Await on pending promise - save state and return Suspended
                     self.suspended_state = Some(std::mem::take(state));
-                    // FIXME: should be kept in interpreter state
                     let pending = std::mem::take(&mut self.pending_orders);
                     let cancelled = std::mem::take(&mut self.cancelled_orders);
                     return Ok(crate::RuntimeResult::Suspended { pending, cancelled });
@@ -770,15 +766,14 @@ impl Interpreter {
             return result;
         }
 
-        // Check if there are pending orders (for backward compatibility)
+        // Check if there are pending orders to return
         if !self.pending_orders.is_empty() {
-            // FIXME: should be kept in interpreter state
             let pending = std::mem::take(&mut self.pending_orders);
             let cancelled = std::mem::take(&mut self.cancelled_orders);
             return Ok(crate::RuntimeResult::Suspended { pending, cancelled });
         }
 
-        // Otherwise, execution is complete
+        // No pending orders - execution is complete
         Ok(crate::RuntimeResult::Complete(JsValue::Undefined))
     }
 
