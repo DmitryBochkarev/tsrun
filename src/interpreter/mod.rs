@@ -2169,20 +2169,15 @@ impl Interpreter {
                 field_values.push((name, value));
             }
 
-            // Create the fields array
-            let fields_guard = self.heap.create_guard();
+            // Create the fields array using ctor_guard - fields are stored on constructor
+            // so they'll be protected once set as a property
             let mut field_pairs: Vec<JsValue> = Vec::new();
             for (name, value) in field_values {
-                let pair =
-                    self.create_array_from(&fields_guard, vec![JsValue::String(name), value]);
-                // FIXME: should be constructor guard
-                self.root_guard.guard(pair.clone());
+                let pair = self.create_array_from(&ctor_guard, vec![JsValue::String(name), value]);
                 field_pairs.push(JsValue::Object(pair));
             }
 
-            let fields_array = self.create_array_from(&fields_guard, field_pairs);
-            // FIXME: should be constructor guard
-            self.root_guard.guard(fields_array.clone());
+            let fields_array = self.create_array_from(&ctor_guard, field_pairs);
 
             let fields_key = self.key("__fields__");
             constructor_fn
