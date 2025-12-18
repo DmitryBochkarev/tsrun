@@ -1864,6 +1864,7 @@ pub struct InterpretedFunction {
 }
 
 /// Function body (block or expression for arrow functions)
+// FIXME: do not need to wrap in rc
 #[derive(Debug, Clone)]
 pub enum FunctionBody {
     Block(Rc<BlockStatement>),
@@ -1872,16 +1873,9 @@ pub enum FunctionBody {
 
 impl From<Rc<ArrowFunctionBody>> for FunctionBody {
     fn from(body: Rc<ArrowFunctionBody>) -> Self {
-        // Try to avoid cloning the inner data if we're the only owner
-        match Rc::try_unwrap(body) {
-            Ok(owned) => match owned {
-                ArrowFunctionBody::Block(block) => FunctionBody::Block(Rc::new(block)),
-                ArrowFunctionBody::Expression(expr) => FunctionBody::Expression(expr),
-            },
-            Err(shared) => match shared.as_ref() {
-                ArrowFunctionBody::Block(block) => FunctionBody::Block(Rc::new(block.clone())),
-                ArrowFunctionBody::Expression(expr) => FunctionBody::Expression(expr.clone()),
-            },
+        match body.as_ref() {
+            ArrowFunctionBody::Block(block) => FunctionBody::Block(block.clone()),
+            ArrowFunctionBody::Expression(expr) => FunctionBody::Expression(expr.clone()),
         }
     }
 }

@@ -587,10 +587,11 @@ pub struct ArrowFunctionExpression {
     pub span: Span,
 }
 
+// FIXME: do not need to wrap in rc
 #[derive(Debug, Clone)]
 pub enum ArrowFunctionBody {
     Expression(Rc<Expression>),
-    Block(BlockStatement),
+    Block(Rc<BlockStatement>),
 }
 
 #[derive(Debug, Clone)]

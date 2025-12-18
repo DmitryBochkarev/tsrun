@@ -2458,7 +2458,7 @@ impl<'a> Parser<'a> {
         self.require_token(&TokenKind::Arrow)?;
 
         let body = if self.check(&TokenKind::LBrace) {
-            ArrowFunctionBody::Block(self.parse_block_statement()?)
+            ArrowFunctionBody::Block(Rc::new(self.parse_block_statement()?))
         } else {
             ArrowFunctionBody::Expression(Rc::new(self.parse_assignment_expression()?))
         };
