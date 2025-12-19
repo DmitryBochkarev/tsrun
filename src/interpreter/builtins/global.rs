@@ -222,6 +222,10 @@ pub fn eval_code_in_scope(
     // but can still read from it via the scope chain
     let eval_scope = interp.push_scope();
 
+    // Hoist var declarations in the eval scope
+    // This ensures `var` declarations are visible throughout the eval code
+    interp.hoist_var_declarations(&program.body);
+
     // Execute the program and get the result
     let result = interp.execute_program_with_stack(&program);
 

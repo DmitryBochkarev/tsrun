@@ -642,6 +642,302 @@ fn test_tdz_function_can_reference_later_let() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Var Hoisting Tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_var_hoisting_global_scope() {
+    // var should be hoisted at global/script scope
+    assert_eq!(
+        eval(
+            r#"
+            const before: any = x;
+            var x: number = 5;
+            before
+            "#
+        ),
+        JsValue::Undefined
+    );
+}
+
+#[test]
+fn test_var_hoisting_global_scope_value_after() {
+    // var is hoisted as undefined, but assigned later
+    assert_eq!(
+        eval(
+            r#"
+            const before: any = x;
+            var x: number = 5;
+            x
+            "#
+        ),
+        JsValue::Number(5.0)
+    );
+}
+
+#[test]
+fn test_var_hoisting_inside_if() {
+    // var inside if block should be hoisted to function/global scope
+    assert_eq!(
+        eval(
+            r#"
+            const before: any = x;
+            if (true) {
+                var x: number = 10;
+            }
+            before
+            "#
+        ),
+        JsValue::Undefined
+    );
+}
+
+#[test]
+fn test_var_hoisting_inside_for() {
+    // var inside for loop init should be hoisted
+    assert_eq!(
+        eval(
+            r#"
+            const before: any = i;
+            for (var i: number = 0; i < 3; i++) {}
+            before
+            "#
+        ),
+        JsValue::Undefined
+    );
+}
+
+#[test]
+fn test_var_hoisting_inside_for_body() {
+    // var inside for loop body should be hoisted
+    assert_eq!(
+        eval(
+            r#"
+            const before: any = x;
+            for (let i: number = 0; i < 1; i++) {
+                var x: number = 42;
+            }
+            before
+            "#
+        ),
+        JsValue::Undefined
+    );
+}
+
+#[test]
+fn test_var_hoisting_inside_while() {
+    // var inside while loop should be hoisted
+    assert_eq!(
+        eval(
+            r#"
+            const before: any = x;
+            let count: number = 0;
+            while (count < 1) {
+                var x: number = 100;
+                count = count + 1;
+            }
+            before
+            "#
+        ),
+        JsValue::Undefined
+    );
+}
+
+#[test]
+fn test_var_hoisting_inside_try_catch() {
+    // var inside try-catch should be hoisted
+    assert_eq!(
+        eval(
+            r#"
+            const before: any = x;
+            try {
+                var x: number = 1;
+            } catch (e) {
+                var y: number = 2;
+            }
+            before
+            "#
+        ),
+        JsValue::Undefined
+    );
+}
+
+#[test]
+fn test_var_hoisting_catch_block() {
+    // var declared in catch block should be visible outside
+    assert_eq!(
+        eval(
+            r#"
+            try {
+                throw new Error("test");
+            } catch (e) {
+                var caughtVar: string = "caught";
+            }
+            caughtVar
+            "#
+        ),
+        JsValue::String("caught".into())
+    );
+}
+
+#[test]
+fn test_var_hoisting_catch_block_debug() {
+    // Comprehensive test: var in catch block should be hoisted to outer scope
+    // and assignment should persist after catch completes
+    assert_eq!(
+        eval(
+            r#"
+            var result: any[] = [];
+            try {
+                result.push("before throw");
+                throw new Error("test");
+                result.push("after throw");
+            } catch (e) {
+                result.push("in catch before var");
+                var caughtVar: string = "caught";
+                result.push("in catch after var: " + caughtVar);
+            }
+            result.push("after try-catch: " + caughtVar);
+            result.join(", ")
+            "#
+        ),
+        JsValue::String("before throw, in catch before var, in catch after var: caught, after try-catch: caught".into())
+    );
+}
+
+#[test]
+fn test_var_hoisting_catch_block_typeof_before() {
+    // var should be hoisted to global scope, making typeof return "undefined" before the catch
+    assert_eq!(
+        eval(
+            r#"
+            var beforeCatch: any = typeof caughtVar;
+            try {
+                throw new Error("test");
+            } catch (e) {
+                var caughtVar: string = "caught";
+            }
+            beforeCatch
+            "#
+        ),
+        JsValue::String("undefined".into())
+    );
+}
+
+#[test]
+fn test_var_hoisting_multiple_declarations() {
+    // Multiple var declarations of same name should all hoist to same binding
+    assert_eq!(
+        eval(
+            r#"
+            const before: any = x;
+            var x: number = 1;
+            var x: number = 2;
+            var x: number = 3;
+            before
+            "#
+        ),
+        JsValue::Undefined
+    );
+}
+
+#[test]
+fn test_var_hoisting_does_not_affect_let() {
+    // let should NOT be hoisted
+    use super::throws_error;
+    assert!(throws_error(
+        r#"
+        const before: any = x;
+        let x: number = 5;
+        before
+        "#,
+        "ReferenceError"
+    ));
+}
+
+#[test]
+fn test_var_hoisting_does_not_affect_const() {
+    // const should NOT be hoisted
+    use super::throws_error;
+    assert!(throws_error(
+        r#"
+        const before: any = x;
+        const x: number = 5;
+        before
+        "#,
+        "ReferenceError"
+    ));
+}
+
+#[test]
+fn test_var_hoisting_destructuring() {
+    // var with destructuring pattern should hoist all identifiers
+    assert_eq!(
+        eval(
+            r#"
+            const beforeA: any = a;
+            const beforeB: any = b;
+            var { a, b }: { a: number; b: number } = { a: 1, b: 2 };
+            beforeA === undefined && beforeB === undefined
+            "#
+        ),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_var_hoisting_array_destructuring() {
+    // var with array destructuring should hoist all identifiers
+    assert_eq!(
+        eval(
+            r#"
+            const beforeX: any = x;
+            const beforeY: any = y;
+            var [x, y]: number[] = [1, 2];
+            beforeX === undefined && beforeY === undefined
+            "#
+        ),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_var_hoisting_switch_case() {
+    // var inside switch case should be hoisted
+    assert_eq!(
+        eval(
+            r#"
+            const before: any = x;
+            switch (1) {
+                case 1:
+                    var x: number = 42;
+                    break;
+            }
+            before
+            "#
+        ),
+        JsValue::Undefined
+    );
+}
+
+#[test]
+fn test_var_hoisting_labeled_statement() {
+    // var inside labeled statement should be hoisted
+    assert_eq!(
+        eval(
+            r#"
+            const before: any = x;
+            outer: {
+                var x: number = 10;
+            }
+            before
+            "#
+        ),
+        JsValue::Undefined
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Bitwise operations
 // ═══════════════════════════════════════════════════════════════════════════
 

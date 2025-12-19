@@ -28,14 +28,8 @@ pub fn init_error(interp: &mut Interpreter) {
     let eval_error_key = PropertyKey::String(interp.intern("EvalError"));
     {
         let mut p = error_proto.borrow_mut();
-        p.set_property(
-            name_key.clone(),
-            JsValue::String(JsString::from("Error")),
-        );
-        p.set_property(
-            message_key.clone(),
-            JsValue::String(JsString::from("")),
-        );
+        p.set_property(name_key.clone(), JsValue::String(JsString::from("Error")));
+        p.set_property(message_key.clone(), JsValue::String(JsString::from("")));
     }
 
     // Add toString method to Error.prototype
@@ -51,10 +45,9 @@ pub fn init_error(interp: &mut Interpreter) {
         .set_property(proto_key.clone(), JsValue::Object(error_proto.clone()));
 
     // Set constructor property on Error.prototype
-    error_proto.borrow_mut().set_property(
-        constructor_key.clone(),
-        JsValue::Object(error_fn.clone()),
-    );
+    error_proto
+        .borrow_mut()
+        .set_property(constructor_key.clone(), JsValue::Object(error_fn.clone()));
 
     // Register Error globally
     interp
@@ -70,10 +63,7 @@ pub fn init_error(interp: &mut Interpreter) {
             name_key.clone(),
             JsValue::String(JsString::from("TypeError")),
         );
-        p.set_property(
-            message_key.clone(),
-            JsValue::String(JsString::from("")),
-        );
+        p.set_property(message_key.clone(), JsValue::String(JsString::from("")));
     }
     let type_error_fn = interp.create_native_function("TypeError", type_error_constructor, 1);
     interp.root_guard.guard(type_error_fn.clone());
@@ -96,10 +86,7 @@ pub fn init_error(interp: &mut Interpreter) {
             name_key.clone(),
             JsValue::String(JsString::from("ReferenceError")),
         );
-        p.set_property(
-            message_key.clone(),
-            JsValue::String(JsString::from("")),
-        );
+        p.set_property(message_key.clone(), JsValue::String(JsString::from("")));
     }
     let reference_error_fn =
         interp.create_native_function("ReferenceError", reference_error_constructor, 1);
@@ -124,16 +111,14 @@ pub fn init_error(interp: &mut Interpreter) {
             name_key.clone(),
             JsValue::String(JsString::from("RangeError")),
         );
-        p.set_property(
-            message_key.clone(),
-            JsValue::String(JsString::from("")),
-        );
+        p.set_property(message_key.clone(), JsValue::String(JsString::from("")));
     }
     let range_error_fn = interp.create_native_function("RangeError", range_error_constructor, 1);
     interp.root_guard.guard(range_error_fn.clone());
-    range_error_fn
-        .borrow_mut()
-        .set_property(proto_key.clone(), JsValue::Object(range_error_proto.clone()));
+    range_error_fn.borrow_mut().set_property(
+        proto_key.clone(),
+        JsValue::Object(range_error_proto.clone()),
+    );
     range_error_proto.borrow_mut().set_property(
         constructor_key.clone(),
         JsValue::Object(range_error_fn.clone()),
@@ -152,12 +137,12 @@ pub fn init_error(interp: &mut Interpreter) {
         );
         p.set_property(message_key.clone(), JsValue::String(JsString::from("")));
     }
-    let syntax_error_fn =
-        interp.create_native_function("SyntaxError", syntax_error_constructor, 1);
+    let syntax_error_fn = interp.create_native_function("SyntaxError", syntax_error_constructor, 1);
     interp.root_guard.guard(syntax_error_fn.clone());
-    syntax_error_fn
-        .borrow_mut()
-        .set_property(proto_key.clone(), JsValue::Object(syntax_error_proto.clone()));
+    syntax_error_fn.borrow_mut().set_property(
+        proto_key.clone(),
+        JsValue::Object(syntax_error_proto.clone()),
+    );
     syntax_error_proto.borrow_mut().set_property(
         constructor_key.clone(),
         JsValue::Object(syntax_error_fn.clone()),
@@ -205,10 +190,9 @@ pub fn init_error(interp: &mut Interpreter) {
     eval_error_fn
         .borrow_mut()
         .set_property(proto_key, JsValue::Object(eval_error_proto.clone()));
-    eval_error_proto.borrow_mut().set_property(
-        constructor_key,
-        JsValue::Object(eval_error_fn.clone()),
-    );
+    eval_error_proto
+        .borrow_mut()
+        .set_property(constructor_key, JsValue::Object(eval_error_fn.clone()));
     interp
         .global
         .borrow_mut()
@@ -383,17 +367,21 @@ pub fn create_error_object(
     let guard = interp.heap.create_guard();
 
     let (prototype, name, message) = match error {
-        JsError::TypeError { message } => {
-            (interp.type_error_prototype.clone(), "TypeError", message.clone())
-        }
+        JsError::TypeError { message } => (
+            interp.type_error_prototype.clone(),
+            "TypeError",
+            message.clone(),
+        ),
         JsError::ReferenceError { name } => (
             interp.reference_error_prototype.clone(),
             "ReferenceError",
             format!("{} is not defined", name),
         ),
-        JsError::RangeError { message } => {
-            (interp.range_error_prototype.clone(), "RangeError", message.clone())
-        }
+        JsError::RangeError { message } => (
+            interp.range_error_prototype.clone(),
+            "RangeError",
+            message.clone(),
+        ),
         JsError::SyntaxError { message, location } => (
             interp.syntax_error_prototype.clone(),
             "SyntaxError",
@@ -449,10 +437,7 @@ pub fn create_error_object(
             PropertyKey::from("name"),
             JsValue::String(JsString::from(name)),
         );
-        obj.set_property(
-            PropertyKey::from("message"),
-            JsValue::String(msg_str),
-        );
+        obj.set_property(PropertyKey::from("message"), JsValue::String(msg_str));
         obj.set_property(PropertyKey::from("stack"), JsValue::String(stack_str));
     }
 

@@ -195,10 +195,15 @@ pub enum Frame {
         declarators: Rc<[VariableDeclarator]>,
         index: usize,
         mutable: bool,
+        is_var: bool,
     },
 
     /// Bind variable after init expression evaluated
-    VarBind { pattern: Rc<Pattern>, mutable: bool },
+    VarBind {
+        pattern: Rc<Pattern>,
+        mutable: bool,
+        is_var: bool,
+    },
 
     // ═══════════════════════════════════════════════════════════════════════
     // Control Flow
@@ -805,9 +810,14 @@ impl Interpreter {
                 declarators,
                 index,
                 mutable,
-            } => self.step_var_decl(state, declarators, index, mutable),
+                is_var,
+            } => self.step_var_decl(state, declarators, index, mutable, is_var),
 
-            Frame::VarBind { pattern, mutable } => self.step_var_bind(state, &pattern, mutable),
+            Frame::VarBind {
+                pattern,
+                mutable,
+                is_var,
+            } => self.step_var_bind(state, &pattern, mutable, is_var),
 
             // ═══════════════════════════════════════════════════════════════
             // Control Flow
@@ -1355,6 +1365,7 @@ impl Interpreter {
 
             Statement::VariableDeclaration(decl) => {
                 let mutable = matches!(decl.kind, VariableKind::Let | VariableKind::Var);
+                let is_var = decl.kind == VariableKind::Var;
                 if decl.declarations.is_empty() {
                     state.push_value(Guarded::unguarded(JsValue::Undefined));
                     StepResult::Continue
@@ -1363,6 +1374,7 @@ impl Interpreter {
                         declarators: decl.declarations.cheap_clone(),
                         index: 0,
                         mutable,
+                        is_var,
                     });
                     StepResult::Continue
                 }
@@ -1975,6 +1987,7 @@ impl Interpreter {
         declarators: Rc<[VariableDeclarator]>,
         index: usize,
         mutable: bool,
+        is_var: bool,
     ) -> StepResult {
         if index >= declarators.len() {
             // All declarators processed
@@ -1996,6 +2009,7 @@ impl Interpreter {
                 declarators: declarators.clone(),
                 index: index + 1,
                 mutable,
+                is_var,
             });
         }
 
@@ -2003,6 +2017,7 @@ impl Interpreter {
         state.push_frame(Frame::VarBind {
             pattern: Rc::new(declarator.id.clone()),
             mutable,
+            is_var,
         });
 
         // Evaluate init expression (or undefined)
@@ -2024,6 +2039,7 @@ impl Interpreter {
         state: &mut ExecutionState,
         pattern: &Pattern,
         mutable: bool,
+        is_var: bool,
     ) -> StepResult {
         let Guarded {
             value: init_value,
@@ -2032,8 +2048,17 @@ impl Interpreter {
             .pop_value()
             .unwrap_or(Guarded::unguarded(JsValue::Undefined));
 
-        // bind_pattern calls env_define which establishes ownership
-        match self.bind_pattern(pattern, init_value, mutable) {
+        let result = if is_var {
+            // For var, use assignment to the hoisted binding
+            // The variable was already hoisted to undefined, now we just assign
+            self.assign_pattern(pattern, init_value)
+        } else {
+            // For let/const, define in current scope
+            // bind_pattern calls env_define which establishes ownership
+            self.bind_pattern(pattern, init_value, mutable)
+        };
+
+        match result {
             Ok(()) => StepResult::Continue,
             Err(e) => StepResult::Error(e),
         }
@@ -2304,6 +2329,7 @@ impl Interpreter {
                     declarators: decl.declarations.cheap_clone(),
                     index: 0,
                     mutable: decl.kind == VariableKind::Let,
+                    is_var: false, // This branch is only for let/const
                 });
             }
             Some(ForInit::Expression(expr)) => {

@@ -628,6 +628,10 @@ impl Interpreter {
 
         // All imports satisfied - execute using stack-based evaluation
         self.start_execution();
+
+        // Hoist var declarations at program/global scope
+        self.hoist_var_declarations(&program.body);
+
         let mut state = self.get_execution_state();
         state.init_for_program(&program);
         let result = self.run_to_completion_or_suspend(&mut state);
@@ -1964,6 +1968,7 @@ impl Interpreter {
 
     fn execute_variable_declaration(&mut self, decl: &VariableDeclaration) -> Result<(), JsError> {
         let mutable = matches!(decl.kind, VariableKind::Let | VariableKind::Var);
+        let is_var = decl.kind == VariableKind::Var;
 
         for declarator in decl.declarations.iter() {
             // Keep guard alive until bind_pattern transfers ownership to env
@@ -1975,8 +1980,15 @@ impl Interpreter {
                 None => Guarded::unguarded(JsValue::Undefined),
             };
 
-            // bind_pattern calls env_define which establishes ownership
-            self.bind_pattern(&declarator.id, init_value, mutable)?;
+            if is_var {
+                // For var, use assignment to the hoisted binding in outer scope
+                // The variable was already hoisted to undefined, now we just assign
+                self.assign_pattern(&declarator.id, init_value)?;
+            } else {
+                // For let/const, define in current scope
+                // bind_pattern calls env_define which establishes ownership
+                self.bind_pattern(&declarator.id, init_value, mutable)?;
+            }
             // _init_guard dropped here after ownership transferred
         }
 
