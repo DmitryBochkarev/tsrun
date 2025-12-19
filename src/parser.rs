@@ -1372,6 +1372,7 @@ impl<'a> Parser<'a> {
                     declaration: Some(Box::new(Statement::TypeAlias(type_alias))),
                     specifiers: vec![],
                     source: None,
+                    namespace_export: None,
                     default: false,
                     type_only: false,
                     span,
@@ -1431,6 +1432,7 @@ impl<'a> Parser<'a> {
                 declaration,
                 specifiers: vec![],
                 source: None,
+                namespace_export: None,
                 default: true,
                 type_only,
                 span,
@@ -1477,14 +1479,22 @@ impl<'a> Parser<'a> {
                 declaration: None,
                 specifiers,
                 source,
+                namespace_export: None,
                 default: false,
                 type_only,
                 span,
             });
         }
 
-        // export * from
+        // export * from OR export * as ns from
         if self.match_token(&TokenKind::Star) {
+            // Check for "as <identifier>" for namespace exports
+            let namespace_export = if self.match_token(&TokenKind::As) {
+                Some(self.parse_identifier()?)
+            } else {
+                None
+            };
+
             self.require_token(&TokenKind::From)?;
             let source = Some(self.parse_string_literal()?);
             self.expect_semicolon()?;
@@ -1494,6 +1504,7 @@ impl<'a> Parser<'a> {
                 declaration: None,
                 specifiers: vec![],
                 source,
+                namespace_export,
                 default: false,
                 type_only,
                 span,
@@ -1537,6 +1548,7 @@ impl<'a> Parser<'a> {
             declaration,
             specifiers: vec![],
             source: None,
+            namespace_export: None,
             default: false,
             type_only,
             span,
@@ -5498,5 +5510,66 @@ export function parseLinks(text: string): ParsedElement[] {
             panic!("Expected new expression");
         };
         assert!(new_expr.type_arguments.is_some());
+    }
+
+    #[test]
+    fn test_parse_export_star_as_namespace() {
+        // export * as utils from "./utils"
+        let prog = parse(r#"export * as utils from "./utils";"#);
+        assert_eq!(prog.body.len(), 1);
+
+        let Statement::Export(export) = &prog.body[0] else {
+            panic!("Expected Export statement");
+        };
+
+        // Should have a namespace export
+        assert!(export.namespace_export.is_some());
+        let ns = export.namespace_export.as_ref().unwrap();
+        assert_eq!(ns.name.as_str(), "utils");
+
+        // Should have source
+        assert!(export.source.is_some());
+        assert_eq!(export.source.as_ref().unwrap().value.as_str(), "./utils");
+
+        // Should not have specifiers or declaration
+        assert!(export.specifiers.is_empty());
+        assert!(export.declaration.is_none());
+        assert!(!export.default);
+    }
+
+    #[test]
+    fn test_parse_export_star_as_namespace_with_type() {
+        // export type * as Types from "./types"
+        let prog = parse(r#"export type * as Types from "./types";"#);
+        assert_eq!(prog.body.len(), 1);
+
+        let Statement::Export(export) = &prog.body[0] else {
+            panic!("Expected Export statement");
+        };
+
+        assert!(export.type_only);
+        assert!(export.namespace_export.is_some());
+        let ns = export.namespace_export.as_ref().unwrap();
+        assert_eq!(ns.name.as_str(), "Types");
+    }
+
+    #[test]
+    fn test_parse_export_star_without_as() {
+        // export * from "./utils" - existing behavior, should still work
+        let prog = parse(r#"export * from "./utils";"#);
+        assert_eq!(prog.body.len(), 1);
+
+        let Statement::Export(export) = &prog.body[0] else {
+            panic!("Expected Export statement");
+        };
+
+        // No namespace export
+        assert!(export.namespace_export.is_none());
+
+        // Should have source
+        assert!(export.source.is_some());
+
+        // Empty specifiers
+        assert!(export.specifiers.is_empty());
     }
 }

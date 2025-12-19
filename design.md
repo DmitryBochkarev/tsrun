@@ -830,7 +830,7 @@ These are parsed but not enforced at runtime (by design - matches TypeScript beh
 
 - [ ] Circular dependency detection/handling
 - [ ] Live bindings for exports
-- [ ] `export * as ns from "module"`
+- [x] `export * as ns from "module"`
 - [ ] Dynamic import with variable specifiers
 
 ### Potential Future Additions

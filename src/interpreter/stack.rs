@@ -3877,13 +3877,22 @@ impl Interpreter {
         // Handle re-exports: export { foo } from "module"
         if let Some(source) = &export.source {
             let module_obj = self.resolve_module(source.value.as_ref())?;
-            for spec in &export.specifiers {
-                let import_key = PropertyKey::String(self.intern(spec.local.name.as_str()));
-                let value = module_obj
-                    .borrow()
-                    .get_property(&import_key)
-                    .unwrap_or(JsValue::Undefined);
-                self.exports.insert(spec.exported.name.cheap_clone(), value);
+
+            // Handle namespace re-export: export * as ns from "module"
+            if let Some(ns_id) = &export.namespace_export {
+                // Export the entire module object under the namespace name
+                self.exports
+                    .insert(ns_id.name.cheap_clone(), JsValue::Object(module_obj));
+            } else {
+                // Handle named re-exports: export { foo } from "module"
+                for spec in &export.specifiers {
+                    let import_key = PropertyKey::String(self.intern(spec.local.name.as_str()));
+                    let value = module_obj
+                        .borrow()
+                        .get_property(&import_key)
+                        .unwrap_or(JsValue::Undefined);
+                    self.exports.insert(spec.exported.name.cheap_clone(), value);
+                }
             }
         } else if !export.specifiers.is_empty() {
             // Handle named exports: export { foo, bar }

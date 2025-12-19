@@ -392,6 +392,8 @@ pub struct ExportDeclaration {
     pub declaration: Option<Box<Statement>>,
     pub specifiers: Vec<ExportSpecifier>,
     pub source: Option<StringLiteral>,
+    /// For `export * as ns from "module"` - the namespace identifier
+    pub namespace_export: Option<Identifier>,
     pub default: bool,
     pub type_only: bool,
     pub span: Span,

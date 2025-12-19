@@ -1189,3 +1189,255 @@ fn test_same_module_different_paths_deduplicated() {
         _ => panic!("Expected NeedImports for deduplication test"),
     }
 }
+
+// ============ NAMESPACE RE-EXPORT TESTS ============
+
+#[test]
+fn test_export_star_as_namespace_basic() {
+    // Test: export * as utils from "./utils"
+    // The intermediate module re-exports everything from utils as a namespace
+    let mut runtime = Runtime::new();
+
+    let result = runtime
+        .eval(
+            r#"
+        import { utils } from "./reexport";
+        utils.add(2, 3) + utils.BASE;
+    "#,
+        )
+        .unwrap();
+
+    match result {
+        RuntimeResult::NeedImports(imports) => {
+            assert_eq!(imports.len(), 1);
+            assert_eq!(imports[0].specifier, "./reexport");
+
+            // Provide the re-export module
+            runtime
+                .provide_module(
+                    imports[0].resolved_path.clone(),
+                    r#"export * as utils from "./utils";"#,
+                )
+                .unwrap();
+
+            let result2 = runtime.continue_eval().unwrap();
+
+            match result2 {
+                RuntimeResult::NeedImports(imports2) => {
+                    // Now it needs the actual utils module
+                    assert_eq!(imports2.len(), 1);
+                    assert_eq!(imports2[0].specifier, "./utils");
+
+                    runtime
+                        .provide_module(
+                            imports2[0].resolved_path.clone(),
+                            r#"
+                            export const BASE: number = 10;
+                            export function add(a: number, b: number): number {
+                                return a + b;
+                            }
+                        "#,
+                        )
+                        .unwrap();
+
+                    let result3 = runtime.continue_eval().unwrap();
+
+                    match result3 {
+                        RuntimeResult::Complete(value) => {
+                            // add(2, 3) + BASE = 5 + 10 = 15
+                            assert_eq!(value, JsValue::Number(15.0));
+                        }
+                        _ => panic!("Expected Complete, got {:?}", result3),
+                    }
+                }
+                _ => panic!("Expected NeedImports for utils, got {:?}", result2),
+            }
+        }
+        _ => panic!("Expected NeedImports"),
+    }
+}
+
+#[test]
+fn test_export_star_as_namespace_multiple() {
+    // Test: multiple namespace re-exports in one module
+    let mut runtime = Runtime::new();
+
+    let result = runtime
+        .eval(
+            r#"
+        import { math, str } from "./combined";
+        math.double(3) + str.len("hello");
+    "#,
+        )
+        .unwrap();
+
+    match result {
+        RuntimeResult::NeedImports(imports) => {
+            runtime
+                .provide_module(
+                    imports[0].resolved_path.clone(),
+                    r#"
+                    export * as math from "./mathUtils";
+                    export * as str from "./strUtils";
+                "#,
+                )
+                .unwrap();
+
+            let result2 = runtime.continue_eval().unwrap();
+
+            match result2 {
+                RuntimeResult::NeedImports(imports2) => {
+                    // Should need both utility modules
+                    assert_eq!(imports2.len(), 2);
+
+                    for req in &imports2 {
+                        if req.specifier == "./mathUtils" {
+                            runtime
+                                .provide_module(
+                                    req.resolved_path.clone(),
+                                    r#"export function double(x: number): number { return x * 2; }"#,
+                                )
+                                .unwrap();
+                        } else if req.specifier == "./strUtils" {
+                            runtime
+                                .provide_module(
+                                    req.resolved_path.clone(),
+                                    r#"export function len(s: string): number { return s.length; }"#,
+                                )
+                                .unwrap();
+                        }
+                    }
+
+                    let result3 = runtime.continue_eval().unwrap();
+
+                    match result3 {
+                        RuntimeResult::Complete(value) => {
+                            // double(3) + len("hello") = 6 + 5 = 11
+                            assert_eq!(value, JsValue::Number(11.0));
+                        }
+                        _ => panic!("Expected Complete"),
+                    }
+                }
+                _ => panic!("Expected NeedImports for utility modules"),
+            }
+        }
+        _ => panic!("Expected NeedImports"),
+    }
+}
+
+#[test]
+fn test_export_star_as_namespace_with_other_exports() {
+    // Test: namespace re-export alongside regular exports
+    let mut runtime = Runtime::new();
+
+    let result = runtime
+        .eval(
+            r#"
+        import { helpers, VERSION } from "./api";
+        helpers.greet() + " v" + VERSION;
+    "#,
+        )
+        .unwrap();
+
+    match result {
+        RuntimeResult::NeedImports(imports) => {
+            runtime
+                .provide_module(
+                    imports[0].resolved_path.clone(),
+                    r#"
+                    export * as helpers from "./helpers";
+                    export const VERSION: string = "1.0";
+                "#,
+                )
+                .unwrap();
+
+            let result2 = runtime.continue_eval().unwrap();
+
+            match result2 {
+                RuntimeResult::NeedImports(imports2) => {
+                    runtime
+                        .provide_module(
+                            imports2[0].resolved_path.clone(),
+                            r#"export function greet(): string { return "Hello"; }"#,
+                        )
+                        .unwrap();
+
+                    let result3 = runtime.continue_eval().unwrap();
+
+                    match result3 {
+                        RuntimeResult::Complete(value) => {
+                            assert_eq!(value, JsValue::String("Hello v1.0".into()));
+                        }
+                        _ => panic!("Expected Complete"),
+                    }
+                }
+                _ => panic!("Expected NeedImports for helpers"),
+            }
+        }
+        _ => panic!("Expected NeedImports"),
+    }
+}
+
+#[test]
+fn test_export_star_as_namespace_nested() {
+    // Test: import a namespace that was re-exported as namespace
+    let mut runtime = Runtime::new();
+
+    let result = runtime
+        .eval(
+            r#"
+        import { nested } from "./level1";
+        nested.inner.value;
+    "#,
+        )
+        .unwrap();
+
+    match result {
+        RuntimeResult::NeedImports(imports) => {
+            runtime
+                .provide_module(
+                    imports[0].resolved_path.clone(),
+                    r#"export * as nested from "./level2";"#,
+                )
+                .unwrap();
+
+            let result2 = runtime.continue_eval().unwrap();
+
+            match result2 {
+                RuntimeResult::NeedImports(imports2) => {
+                    runtime
+                        .provide_module(
+                            imports2[0].resolved_path.clone(),
+                            r#"export * as inner from "./level3";"#,
+                        )
+                        .unwrap();
+
+                    let result3 = runtime.continue_eval().unwrap();
+
+                    match result3 {
+                        RuntimeResult::NeedImports(imports3) => {
+                            runtime
+                                .provide_module(
+                                    imports3[0].resolved_path.clone(),
+                                    r#"export const value: number = 42;"#,
+                                )
+                                .unwrap();
+
+                            let result4 = runtime.continue_eval().unwrap();
+
+                            match result4 {
+                                RuntimeResult::Complete(value) => {
+                                    assert_eq!(value, JsValue::Number(42.0));
+                                }
+                                _ => panic!("Expected Complete"),
+                            }
+                        }
+                        _ => panic!("Expected NeedImports for level3"),
+                    }
+                }
+                _ => panic!("Expected NeedImports for level2"),
+            }
+        }
+        _ => panic!("Expected NeedImports"),
+    }
+}
