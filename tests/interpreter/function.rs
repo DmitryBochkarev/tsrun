@@ -331,3 +331,371 @@ fn test_infinite_recursion_caught() {
         err
     );
 }
+
+// ============================================================
+// Function constructor tests
+// ============================================================
+
+#[test]
+fn test_function_constructor_no_args() {
+    // new Function(body) - no parameters, just body
+    assert_eq!(
+        eval("const f = new Function('return 42'); f()"),
+        JsValue::Number(42.0)
+    );
+}
+
+#[test]
+fn test_function_constructor_one_arg() {
+    // new Function(param, body)
+    assert_eq!(
+        eval("const f = new Function('x', 'return x * 2'); f(21)"),
+        JsValue::Number(42.0)
+    );
+}
+
+#[test]
+fn test_function_constructor_two_args() {
+    // new Function(param1, param2, body)
+    assert_eq!(
+        eval("const f = new Function('a', 'b', 'return a + b'); f(10, 32)"),
+        JsValue::Number(42.0)
+    );
+}
+
+#[test]
+fn test_function_constructor_three_args() {
+    // new Function(param1, param2, param3, body)
+    assert_eq!(
+        eval("const f = new Function('a', 'b', 'c', 'return a + b + c'); f(10, 20, 12)"),
+        JsValue::Number(42.0)
+    );
+}
+
+#[test]
+fn test_function_constructor_comma_separated_params() {
+    // Parameters can be comma-separated in a single string
+    assert_eq!(
+        eval("const f = new Function('a, b', 'return a + b'); f(10, 32)"),
+        JsValue::Number(42.0)
+    );
+}
+
+#[test]
+fn test_function_constructor_mixed_params() {
+    // Mix of single params and comma-separated
+    assert_eq!(
+        eval("const f = new Function('a', 'b, c', 'return a + b + c'); f(10, 20, 12)"),
+        JsValue::Number(42.0)
+    );
+}
+
+#[test]
+fn test_function_constructor_no_body() {
+    // Empty body returns undefined
+    assert_eq!(eval("const f = new Function(''); f()"), JsValue::Undefined);
+}
+
+#[test]
+fn test_function_constructor_empty_no_args() {
+    // No arguments at all - should create a function with no params and empty body
+    assert_eq!(eval("const f = new Function(); f()"), JsValue::Undefined);
+}
+
+#[test]
+fn test_function_constructor_returns_string() {
+    assert_eq!(
+        eval("const f = new Function('return \"hello\"'); f()"),
+        JsValue::from("hello")
+    );
+}
+
+#[test]
+fn test_function_constructor_multiple_statements() {
+    // Body can have multiple statements
+    assert_eq!(
+        eval("const f = new Function('x', 'let y = x * 2; return y + 1'); f(20)"),
+        JsValue::Number(41.0)
+    );
+}
+
+#[test]
+fn test_function_constructor_global_scope() {
+    // Function constructor creates functions in global scope
+    // They should NOT have access to local variables
+    // Accessing undefined variable throws ReferenceError, so we use try-catch
+    assert_eq!(
+        eval(
+            r#"
+            const outer = 100;
+            function test(): string {
+                const inner = 50;
+                const f = new Function('try { return inner; } catch(e) { return "not accessible"; }');
+                return f();
+            }
+            test()
+        "#
+        ),
+        JsValue::from("not accessible")
+    );
+}
+
+#[test]
+fn test_function_constructor_access_global() {
+    // But they CAN access global variables
+    assert_eq!(
+        eval(
+            r#"
+            var globalVar = 42;
+            const f = new Function('return globalVar');
+            f()
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+#[test]
+fn test_function_constructor_this_binding() {
+    // Function constructor creates functions that respect this binding
+    assert_eq!(
+        eval(
+            r#"
+            const f = new Function('return this.value');
+            const obj = { value: 42 };
+            f.call(obj)
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+#[test]
+fn test_function_constructor_call_without_new() {
+    // Function() without new should work the same as new Function()
+    assert_eq!(
+        eval("const f = Function('x', 'return x + 1'); f(41)"),
+        JsValue::Number(42.0)
+    );
+}
+
+#[test]
+fn test_function_constructor_with_array_operations() {
+    // Create a function that uses array methods
+    assert_eq!(
+        eval(
+            r#"
+            const mapper = new Function('arr', 'return arr.map(x => x * 2)');
+            const result = mapper([1, 2, 3]);
+            result.join(',')
+        "#
+        ),
+        JsValue::from("2,4,6")
+    );
+}
+
+#[test]
+fn test_function_constructor_with_object() {
+    // Create a function that returns an object
+    assert_eq!(
+        eval(
+            r#"
+            const makeObj = new Function('x', 'y', 'return { sum: x + y, product: x * y }');
+            const obj = makeObj(3, 4);
+            obj.sum + obj.product
+        "#
+        ),
+        JsValue::Number(19.0) // 7 + 12
+    );
+}
+
+#[test]
+fn test_function_constructor_recursive() {
+    // Create a recursive function using Function constructor
+    assert_eq!(
+        eval(
+            r#"
+            var factorial = new Function('n', 'return n <= 1 ? 1 : n * factorial(n - 1)');
+            factorial(5)
+        "#
+        ),
+        JsValue::Number(120.0)
+    );
+}
+
+#[test]
+fn test_function_constructor_closure_in_body() {
+    // Body can create closures
+    assert_eq!(
+        eval(
+            r#"
+            const makeAdder = new Function('x', 'return function(y) { return x + y; }');
+            const add10 = makeAdder(10);
+            add10(32)
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+#[test]
+fn test_function_constructor_with_default_params() {
+    // Parameters with default values in the parameter string
+    assert_eq!(
+        eval("const f = new Function('x = 10', 'return x * 2'); f()"),
+        JsValue::Number(20.0)
+    );
+    assert_eq!(
+        eval("const f = new Function('x = 10', 'return x * 2'); f(5)"),
+        JsValue::Number(10.0)
+    );
+}
+
+#[test]
+fn test_function_constructor_rest_params() {
+    // Rest parameters
+    assert_eq!(
+        eval(
+            r#"
+            const f = new Function('...args', 'return args.length');
+            f(1, 2, 3, 4, 5)
+        "#
+        ),
+        JsValue::Number(5.0)
+    );
+}
+
+#[test]
+fn test_function_constructor_rest_params_sum() {
+    assert_eq!(
+        eval(
+            r#"
+            const sum = new Function('...nums', 'return nums.reduce((a, b) => a + b, 0)');
+            sum(1, 2, 3, 4, 5)
+        "#
+        ),
+        JsValue::Number(15.0)
+    );
+}
+
+#[test]
+fn test_function_constructor_destructuring_param() {
+    // Destructuring in parameters
+    assert_eq!(
+        eval(
+            r#"
+            const f = new Function('{x, y}', 'return x + y');
+            f({x: 10, y: 32})
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+#[test]
+fn test_function_constructor_array_destructuring() {
+    assert_eq!(
+        eval(
+            r#"
+            const f = new Function('[a, b]', 'return a * b');
+            f([6, 7])
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+#[test]
+fn test_function_constructor_length_property() {
+    // Function.length should be the number of formal parameters
+    assert_eq!(
+        eval("const f = new Function('a', 'b', 'c', 'return 0'); f.length"),
+        JsValue::Number(3.0)
+    );
+}
+
+#[test]
+fn test_function_constructor_name_property() {
+    // Function created by constructor should have name "anonymous"
+    assert_eq!(
+        eval("const f = new Function('return 0'); f.name"),
+        JsValue::from("anonymous")
+    );
+}
+
+#[test]
+fn test_function_constructor_is_callable() {
+    assert_eq!(
+        eval("typeof new Function('return 1')"),
+        JsValue::from("function")
+    );
+}
+
+#[test]
+fn test_function_constructor_bind() {
+    // Bound function created from Function constructor
+    assert_eq!(
+        eval(
+            r#"
+            const f = new Function('a', 'b', 'return a + b');
+            const bound = f.bind(null, 10);
+            bound(32)
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+#[test]
+fn test_function_constructor_apply() {
+    assert_eq!(
+        eval(
+            r#"
+            const f = new Function('a', 'b', 'return a + b');
+            f.apply(null, [10, 32])
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+#[test]
+fn test_function_constructor_call() {
+    assert_eq!(
+        eval(
+            r#"
+            const f = new Function('a', 'b', 'return a + b');
+            f.call(null, 10, 32)
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+#[test]
+fn test_function_constructor_syntax_error() {
+    // Invalid syntax should throw SyntaxError
+    use super::throws_error;
+    assert!(throws_error(
+        "const f = new Function('return return');",
+        "SyntaxError"
+    ));
+}
+
+#[test]
+fn test_function_constructor_whitespace_in_params() {
+    // Whitespace around parameter names should be trimmed
+    assert_eq!(
+        eval("const f = new Function('  x  ', '  y  ', 'return x + y'); f(10, 32)"),
+        JsValue::Number(42.0)
+    );
+}
+
+#[test]
+fn test_function_prototype_constructor() {
+    // Function.prototype.constructor should be Function
+    assert_eq!(
+        eval("Function.prototype.constructor === Function"),
+        JsValue::Boolean(true)
+    );
+}

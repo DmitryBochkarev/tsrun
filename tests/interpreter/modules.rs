@@ -1485,10 +1485,18 @@ fn test_live_binding_let_variable() {
                     // Without live bindings (snapshot): before=0, after=0
                     if let JsValue::Object(arr) = &*value {
                         let arr_ref = arr.borrow();
-                        let before = arr_ref.get_property(&PropertyKey::Index(0)).unwrap_or(JsValue::Undefined);
-                        let after = arr_ref.get_property(&PropertyKey::Index(1)).unwrap_or(JsValue::Undefined);
+                        let before = arr_ref
+                            .get_property(&PropertyKey::Index(0))
+                            .unwrap_or(JsValue::Undefined);
+                        let after = arr_ref
+                            .get_property(&PropertyKey::Index(1))
+                            .unwrap_or(JsValue::Undefined);
                         assert_eq!(before, JsValue::Number(0.0), "before should be 0");
-                        assert_eq!(after, JsValue::Number(1.0), "after should be 1 (live binding)");
+                        assert_eq!(
+                            after,
+                            JsValue::Number(1.0),
+                            "after should be 1 (live binding)"
+                        );
                     } else {
                         panic!("Expected array result");
                     }
@@ -1583,8 +1591,12 @@ fn test_live_binding_object_mutation() {
                 RuntimeResult::Complete(value) => {
                     if let JsValue::Object(arr) = &*value {
                         let arr_ref = arr.borrow();
-                        let before = arr_ref.get_property(&PropertyKey::Index(0)).unwrap_or(JsValue::Undefined);
-                        let after = arr_ref.get_property(&PropertyKey::Index(1)).unwrap_or(JsValue::Undefined);
+                        let before = arr_ref
+                            .get_property(&PropertyKey::Index(0))
+                            .unwrap_or(JsValue::Undefined);
+                        let after = arr_ref
+                            .get_property(&PropertyKey::Index(1))
+                            .unwrap_or(JsValue::Undefined);
                         assert_eq!(before, JsValue::Number(0.0));
                         assert_eq!(after, JsValue::Number(42.0));
                     } else {
@@ -1635,9 +1647,15 @@ fn test_live_binding_reassignment() {
                 RuntimeResult::Complete(value) => {
                     if let JsValue::Object(arr) = &*value {
                         let arr_ref = arr.borrow();
-                        let before_name = arr_ref.get_property(&PropertyKey::Index(0)).unwrap_or(JsValue::Undefined);
-                        let after_name = arr_ref.get_property(&PropertyKey::Index(1)).unwrap_or(JsValue::Undefined);
-                        let after_value = arr_ref.get_property(&PropertyKey::Index(2)).unwrap_or(JsValue::Undefined);
+                        let before_name = arr_ref
+                            .get_property(&PropertyKey::Index(0))
+                            .unwrap_or(JsValue::Undefined);
+                        let after_name = arr_ref
+                            .get_property(&PropertyKey::Index(1))
+                            .unwrap_or(JsValue::Undefined);
+                        let after_value = arr_ref
+                            .get_property(&PropertyKey::Index(2))
+                            .unwrap_or(JsValue::Undefined);
                         assert_eq!(before_name, JsValue::String("initial".into()));
                         assert_eq!(after_name, JsValue::String("updated".into()));
                         assert_eq!(after_value, JsValue::Number(42.0));
@@ -1690,8 +1708,12 @@ fn test_live_binding_namespace_import() {
                 RuntimeResult::Complete(value) => {
                     if let JsValue::Object(arr) = &*value {
                         let arr_ref = arr.borrow();
-                        let before = arr_ref.get_property(&PropertyKey::Index(0)).unwrap_or(JsValue::Undefined);
-                        let after = arr_ref.get_property(&PropertyKey::Index(1)).unwrap_or(JsValue::Undefined);
+                        let before = arr_ref
+                            .get_property(&PropertyKey::Index(0))
+                            .unwrap_or(JsValue::Undefined);
+                        let after = arr_ref
+                            .get_property(&PropertyKey::Index(1))
+                            .unwrap_or(JsValue::Undefined);
                         assert_eq!(before, JsValue::Number(0.0));
                         assert_eq!(after, JsValue::Number(2.0));
                     } else {
@@ -1757,8 +1779,12 @@ fn test_live_binding_through_reexport() {
                         RuntimeResult::Complete(value) => {
                             if let JsValue::Object(arr) = &*value {
                                 let arr_ref = arr.borrow();
-                                let before = arr_ref.get_property(&PropertyKey::Index(0)).unwrap_or(JsValue::Undefined);
-                                let after = arr_ref.get_property(&PropertyKey::Index(1)).unwrap_or(JsValue::Undefined);
+                                let before = arr_ref
+                                    .get_property(&PropertyKey::Index(0))
+                                    .unwrap_or(JsValue::Undefined);
+                                let after = arr_ref
+                                    .get_property(&PropertyKey::Index(1))
+                                    .unwrap_or(JsValue::Undefined);
                                 assert_eq!(before, JsValue::Number(0.0));
                                 // With proper live bindings, the re-exported value reflects changes
                                 // made in the original module
@@ -1816,8 +1842,12 @@ fn test_live_binding_aliased_import() {
                 RuntimeResult::Complete(value) => {
                     if let JsValue::Object(arr) = &*value {
                         let arr_ref = arr.borrow();
-                        let before = arr_ref.get_property(&PropertyKey::Index(0)).unwrap_or(JsValue::Undefined);
-                        let after = arr_ref.get_property(&PropertyKey::Index(1)).unwrap_or(JsValue::Undefined);
+                        let before = arr_ref
+                            .get_property(&PropertyKey::Index(0))
+                            .unwrap_or(JsValue::Undefined);
+                        let after = arr_ref
+                            .get_property(&PropertyKey::Index(1))
+                            .unwrap_or(JsValue::Undefined);
                         assert_eq!(before, JsValue::Number(0.0));
                         assert_eq!(after, JsValue::Number(3.0));
                     } else {
@@ -1994,8 +2024,12 @@ fn test_live_binding_imported_value_is_readonly() {
             let err = result2.unwrap_err();
             let msg = err.to_string();
             assert!(
-                msg.contains("const") || msg.contains("assign") || msg.contains("immutable") || msg.contains("read"),
-                "Error should mention const/assign/immutable/read, got: {}", msg
+                msg.contains("const")
+                    || msg.contains("assign")
+                    || msg.contains("immutable")
+                    || msg.contains("read"),
+                "Error should mention const/assign/immutable/read, got: {}",
+                msg
             );
         }
         _ => panic!("Expected NeedImports"),

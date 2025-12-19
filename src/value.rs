@@ -8,7 +8,7 @@ use std::rc::Rc;
 
 use rustc_hash::FxHashMap;
 
-use crate::ast::{ArrowFunctionBody, BlockStatement, Expression, FunctionParam};
+use crate::ast::{ArrowFunctionBody, BlockStatement, Expression, FunctionParam, Pattern};
 use crate::error::JsError;
 use crate::gc::{Gc, GcPtr, Guard, Heap, Reset, Traceable};
 use crate::lexer::Span;
@@ -751,6 +751,78 @@ impl JsObject {
             }
         }
 
+        // For functions, handle name and length properties
+        if let ExoticObject::Function(ref func) = self.exotic {
+            if let PropertyKey::String(s) = key {
+                match s.as_str() {
+                    "name" => {
+                        let name = match func {
+                            JsFunction::Interpreted(f) => f.name.clone(),
+                            JsFunction::Native(f) => Some(f.name.clone()),
+                            JsFunction::Bound(b) => {
+                                // Bound functions have name "bound <target name>"
+                                if let ExoticObject::Function(target_func) =
+                                    &b.target.borrow().exotic
+                                {
+                                    match target_func {
+                                        JsFunction::Interpreted(f) => f
+                                            .name
+                                            .as_ref()
+                                            .map(|n| JsString::from(format!("bound {}", n))),
+                                        JsFunction::Native(f) => {
+                                            Some(JsString::from(format!("bound {}", f.name)))
+                                        }
+                                        _ => Some(JsString::from("bound ")),
+                                    }
+                                } else {
+                                    Some(JsString::from("bound "))
+                                }
+                            }
+                            _ => None,
+                        };
+                        return Some(match name {
+                            Some(n) => JsValue::String(n),
+                            None => JsValue::String(JsString::from("")),
+                        });
+                    }
+                    "length" => {
+                        let arity = match func {
+                            JsFunction::Interpreted(f) => {
+                                // Count parameters, excluding rest parameters
+                                f.params
+                                    .iter()
+                                    .filter(|p| !matches!(p.pattern, Pattern::Rest(_)))
+                                    .count()
+                            }
+                            JsFunction::Native(f) => f.arity,
+                            JsFunction::Bound(b) => {
+                                // Bound functions have length = target.length - bound_args.length (min 0)
+                                if let ExoticObject::Function(target_func) =
+                                    &b.target.borrow().exotic
+                                {
+                                    let target_length = match target_func {
+                                        JsFunction::Interpreted(f) => f
+                                            .params
+                                            .iter()
+                                            .filter(|p| !matches!(p.pattern, Pattern::Rest(_)))
+                                            .count(),
+                                        JsFunction::Native(f) => f.arity,
+                                        _ => 0,
+                                    };
+                                    target_length.saturating_sub(b.bound_args.len())
+                                } else {
+                                    0
+                                }
+                            }
+                            _ => 0,
+                        };
+                        return Some(JsValue::Number(arity as f64));
+                    }
+                    _ => {}
+                }
+            }
+        }
+
         // For enums, handle member lookups from EnumData
         if let ExoticObject::Enum(ref data) = self.exotic {
             match key {
@@ -823,6 +895,81 @@ impl JsObject {
             if let PropertyKey::String(s) = key {
                 if s.as_str() == "size" {
                     return Some((Property::data(JsValue::Number(entries.len() as f64)), false));
+                }
+            }
+        }
+
+        // For functions, handle name and length properties
+        if let ExoticObject::Function(ref func) = self.exotic {
+            if let PropertyKey::String(s) = key {
+                match s.as_str() {
+                    "name" => {
+                        let name = match func {
+                            JsFunction::Interpreted(f) => f.name.clone(),
+                            JsFunction::Native(f) => Some(f.name.clone()),
+                            JsFunction::Bound(b) => {
+                                // Bound functions have name "bound <target name>"
+                                if let ExoticObject::Function(target_func) =
+                                    &b.target.borrow().exotic
+                                {
+                                    match target_func {
+                                        JsFunction::Interpreted(f) => f
+                                            .name
+                                            .as_ref()
+                                            .map(|n| JsString::from(format!("bound {}", n))),
+                                        JsFunction::Native(f) => {
+                                            Some(JsString::from(format!("bound {}", f.name)))
+                                        }
+                                        _ => Some(JsString::from("bound ")),
+                                    }
+                                } else {
+                                    Some(JsString::from("bound "))
+                                }
+                            }
+                            _ => None,
+                        };
+                        return Some((
+                            Property::data(match name {
+                                Some(n) => JsValue::String(n),
+                                None => JsValue::String(JsString::from("")),
+                            }),
+                            false,
+                        ));
+                    }
+                    "length" => {
+                        let arity = match func {
+                            JsFunction::Interpreted(f) => {
+                                // Count parameters, excluding rest parameters
+                                f.params
+                                    .iter()
+                                    .filter(|p| !matches!(p.pattern, Pattern::Rest(_)))
+                                    .count()
+                            }
+                            JsFunction::Native(f) => f.arity,
+                            JsFunction::Bound(b) => {
+                                // Bound functions have length = target.length - bound_args.length (min 0)
+                                if let ExoticObject::Function(target_func) =
+                                    &b.target.borrow().exotic
+                                {
+                                    let target_length = match target_func {
+                                        JsFunction::Interpreted(f) => f
+                                            .params
+                                            .iter()
+                                            .filter(|p| !matches!(p.pattern, Pattern::Rest(_)))
+                                            .count(),
+                                        JsFunction::Native(f) => f.arity,
+                                        _ => 0,
+                                    };
+                                    target_length.saturating_sub(b.bound_args.len())
+                                } else {
+                                    0
+                                }
+                            }
+                            _ => 0,
+                        };
+                        return Some((Property::data(JsValue::Number(arity as f64)), false));
+                    }
+                    _ => {}
                 }
             }
         }

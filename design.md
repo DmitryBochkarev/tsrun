@@ -290,6 +290,9 @@ fn run_script(source: &str, config: RuntimeConfig) -> Result<JsValue, Error> {
 - [x] `Function.prototype.call`
 - [x] `Function.prototype.apply`
 - [x] `Function.prototype.bind`
+- [x] `new Function(...)` constructor (dynamic function creation)
+- [x] `Function.name` property
+- [x] `Function.length` property
 
 #### Objects
 - [x] Object literals

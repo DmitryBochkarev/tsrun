@@ -358,6 +358,11 @@ impl Interpreter {
         // Initialize Function.prototype (call, apply, bind)
         builtins::init_function_prototype(self);
 
+        // Initialize Function constructor (global Function function)
+        let function_constructor = builtins::create_function_constructor(self);
+        let function_name = self.intern("Function");
+        self.env_define(function_name, JsValue::Object(function_constructor), false);
+
         // Initialize Math global object
         builtins::init_math(self);
 
