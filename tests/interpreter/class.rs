@@ -418,3 +418,73 @@ fn test_static_private_field_in_instance() {
         JsValue::Number(3.0) // 1 + 2
     );
 }
+
+// Test spread in new expression
+#[test]
+fn test_spread_in_new() {
+    assert_eq!(
+        eval(
+            r#"
+            class Point {
+                x: number;
+                y: number;
+                constructor(x: number, y: number) {
+                    this.x = x;
+                    this.y = y;
+                }
+            }
+            const args: number[] = [10, 20];
+            const p = new Point(...args);
+            p.x + p.y
+        "#
+        ),
+        JsValue::Number(30.0)
+    );
+}
+
+// Test spread in new with mixed args
+#[test]
+fn test_spread_in_new_mixed_args() {
+    assert_eq!(
+        eval(
+            r#"
+            class Triple {
+                a: number;
+                b: number;
+                c: number;
+                constructor(a: number, b: number, c: number) {
+                    this.a = a;
+                    this.b = b;
+                    this.c = c;
+                }
+            }
+            const rest: number[] = [2, 3];
+            const t = new Triple(1, ...rest);
+            t.a * 100 + t.b * 10 + t.c
+        "#
+        ),
+        JsValue::Number(123.0)
+    );
+}
+
+// Test spread in new with multiple spreads
+#[test]
+fn test_spread_in_new_multiple() {
+    assert_eq!(
+        eval(
+            r#"
+            class Sum {
+                total: number;
+                constructor(a: number, b: number, c: number, d: number) {
+                    this.total = a + b + c + d;
+                }
+            }
+            const first: number[] = [1, 2];
+            const second: number[] = [3, 4];
+            const s = new Sum(...first, ...second);
+            s.total
+        "#
+        ),
+        JsValue::Number(10.0)
+    );
+}

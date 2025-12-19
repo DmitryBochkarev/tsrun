@@ -3898,8 +3898,18 @@ impl Interpreter {
                         _arg_guards.push(g);
                     }
                 }
-                Argument::Spread(_) => {
-                    return Err(JsError::type_error("Spread in new not yet supported"));
+                Argument::Spread(spread) => {
+                    let Guarded { value, guard } = self.evaluate_expression(&spread.argument)?;
+                    if let Some(g) = guard {
+                        _arg_guards.push(g);
+                    }
+                    // Spread the array elements into arguments
+                    if let JsValue::Object(obj) = value {
+                        let obj_ref = obj.borrow();
+                        if let Some(elements) = obj_ref.array_elements() {
+                            args.extend(elements.iter().cloned());
+                        }
+                    }
                 }
             }
         }
