@@ -474,7 +474,7 @@ fn base64_decode(data: &str) -> Result<Vec<u8>, &'static str> {
     let mut result = Vec::new();
     let chars: Vec<char> = data.chars().collect();
 
-    if chars.len() % 4 != 0 {
+    if !chars.len().is_multiple_of(4) {
         return Err("invalid length");
     }
 
