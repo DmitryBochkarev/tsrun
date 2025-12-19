@@ -773,6 +773,8 @@ pub struct MemberExpression {
     pub object: Rc<Expression>,
     pub property: MemberProperty,
     pub computed: bool,
+    /// Whether this is optional chaining (obj?.prop)
+    pub optional: bool,
     pub span: Span,
 }
 

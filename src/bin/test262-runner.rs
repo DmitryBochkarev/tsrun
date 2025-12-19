@@ -58,6 +58,7 @@ struct TestOutcome {
     result: TestResult,
     mode: &'static str, // "strict" or "non-strict"
     error: Option<String>,
+    #[allow(dead_code)]
     duration: Duration,
 }
 

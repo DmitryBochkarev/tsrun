@@ -1183,13 +1183,13 @@ fn define_property_from_descriptor(
     let value = desc.get_property(&value_key).unwrap_or(JsValue::Undefined);
     let writable = desc
         .get_property(&writable_key)
-        .map_or(true, |v| v.to_boolean());
+        .is_none_or(|v| v.to_boolean());
     let enumerable = desc
         .get_property(&enumerable_key)
-        .map_or(true, |v| v.to_boolean());
+        .is_none_or(|v| v.to_boolean());
     let configurable = desc
         .get_property(&configurable_key)
-        .map_or(true, |v| v.to_boolean());
+        .is_none_or(|v| v.to_boolean());
 
     drop(desc);
 
@@ -1222,7 +1222,7 @@ fn get_own_keys(interp: &mut Interpreter, obj: &JsObjectRef) -> Result<Guarded, 
             obj_ref
                 .properties
                 .keys()
-                .map(|k| property_key_to_value(k))
+                .map(property_key_to_value)
                 .collect()
         }
     };

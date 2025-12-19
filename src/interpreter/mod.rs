@@ -33,6 +33,9 @@ use rustc_hash::FxHashMap;
 use std::cell::RefCell;
 use std::rc::Rc;
 
+/// Type alias for accessor map: property key -> (getter, setter)
+type AccessorMap = FxHashMap<PropertyKey, (Option<Gc<JsObject>>, Option<Gc<JsObject>>)>;
+
 /// Completion record for control flow
 /// Control flow completion type
 #[derive(Debug)]
@@ -3853,6 +3856,30 @@ impl Interpreter {
     }
 
     fn evaluate_new(&mut self, new_expr: &NewExpression) -> Result<Guarded, JsError> {
+        // Check if this is `new eval(...)` - eval is not a constructor
+        if let Expression::Identifier(id) = &*new_expr.callee {
+            if id.name.as_str() == "eval" {
+                // Check that 'eval' refers to the global eval function
+                if let Ok(JsValue::Object(eval_obj)) = self.env_get(&id.name) {
+                    let eval_name = self.intern("eval");
+                    let is_global_eval = {
+                        if let Ok(JsValue::Object(global_eval)) = self.env_get(&eval_name) {
+                            std::ptr::eq(
+                                &*eval_obj.borrow() as *const _,
+                                &*global_eval.borrow() as *const _,
+                            )
+                        } else {
+                            false
+                        }
+                    };
+
+                    if is_global_eval {
+                        return Err(JsError::type_error("eval is not a constructor"));
+                    }
+                }
+            }
+        }
+
         // Evaluate the constructor, keeping guard alive during the call
         let Guarded {
             value: constructor,
@@ -4197,6 +4224,26 @@ impl Interpreter {
         // Handle delete specially - it needs to work on member expressions
         if un.operator == UnaryOp::Delete {
             return self.evaluate_delete(&un.argument);
+        }
+
+        // Handle typeof specially for identifiers - ECMAScript spec says
+        // typeof on an undeclared variable should return "undefined", not throw
+        if un.operator == UnaryOp::Typeof {
+            // Handle TypeScript non-null assertion (x!)
+            let arg = if let Expression::NonNull(non_null) = un.argument.as_ref() {
+                non_null.expression.as_ref()
+            } else {
+                un.argument.as_ref()
+            };
+
+            if let Expression::Identifier(id) = arg {
+                // Try to resolve identifier - if it fails, return "undefined"
+                let result = match self.env_get(&id.name) {
+                    Ok(value) => JsValue::String(JsString::from(value.type_of())),
+                    Err(_) => JsValue::String(JsString::from("undefined")),
+                };
+                return Ok(Guarded::unguarded(result));
+            }
         }
 
         let Guarded {
@@ -4760,6 +4807,33 @@ impl Interpreter {
     }
 
     fn evaluate_call(&mut self, call: &CallExpression) -> Result<Guarded, JsError> {
+        // Check for direct eval call: eval(...)
+        // Direct eval has access to the current scope, unlike indirect eval
+        if let Expression::Identifier(id) = &*call.callee {
+            if id.name.as_str() == "eval" {
+                // Check that 'eval' refers to the global eval function
+                if let Ok(JsValue::Object(eval_obj)) = self.env_get(&id.name) {
+                    let eval_name = self.intern("eval");
+                    let is_global_eval = {
+                        if let Ok(JsValue::Object(global_eval)) = self.env_get(&eval_name) {
+                            // Compare by Gc identity (same object)
+                            std::ptr::eq(
+                                &*eval_obj.borrow() as *const _,
+                                &*global_eval.borrow() as *const _,
+                            )
+                        } else {
+                            false
+                        }
+                    };
+
+                    if is_global_eval {
+                        // This is a direct eval call - execute in current scope
+                        return self.execute_direct_eval(call);
+                    }
+                }
+            }
+        }
+
         let (callee, this_value, obj_guard) = match &*call.callee {
             // super(args) - call parent constructor
             Expression::Super(_) => {
@@ -4895,6 +4969,32 @@ impl Interpreter {
 
         // Call function - propagate guard from result
         self.call_function(callee, this_value, &args)
+    }
+
+    /// Execute a direct eval call in the current scope.
+    ///
+    /// Direct eval (`eval(...)` where eval is the identifier) has access to the
+    /// calling scope. This is different from indirect eval which uses global scope.
+    fn execute_direct_eval(&mut self, call: &CallExpression) -> Result<Guarded, JsError> {
+        // Evaluate the first argument
+        let arg = match call.arguments.first() {
+            None => return Ok(Guarded::unguarded(JsValue::Undefined)),
+            Some(crate::ast::Argument::Expression(expr)) => self.evaluate_expression(expr)?.value,
+            Some(crate::ast::Argument::Spread(_)) => {
+                return Err(JsError::syntax_error_simple(
+                    "Spread argument not allowed in eval",
+                ))
+            }
+        };
+
+        // If argument is not a string, return it directly
+        let code = match arg {
+            JsValue::String(s) => s.to_string(),
+            _ => return Ok(Guarded::unguarded(arg)),
+        };
+
+        // Execute the code in current scope (direct eval behavior)
+        builtins::global::eval_code_in_scope(self, &code, false)
     }
 
     pub fn call_function(
@@ -5281,6 +5381,12 @@ impl Interpreter {
             value: obj,
             guard: obj_guard,
         } = self.evaluate_expression(&member.object)?;
+
+        // Handle optional chaining - if object is null/undefined, return undefined
+        if member.optional && matches!(obj, JsValue::Null | JsValue::Undefined) {
+            return Ok(Guarded::unguarded(JsValue::Undefined));
+        }
+
         let key = self.get_member_key(&member.property)?;
 
         // Get the value from the member access
@@ -5373,7 +5479,26 @@ impl Interpreter {
                     (JsValue::Undefined, None)
                 }
             }
-            _ => (JsValue::Undefined, None),
+            JsValue::Boolean(_) => {
+                // Look up methods on Object.prototype (Boolean primitives use Object.prototype)
+                if let Some(method) = self.object_prototype.borrow().get_property(&key) {
+                    (method, None)
+                } else {
+                    (JsValue::Undefined, None)
+                }
+            }
+            JsValue::Null => {
+                return Err(JsError::type_error(format!(
+                    "Cannot read properties of null (reading '{}')",
+                    key
+                )));
+            }
+            JsValue::Undefined => {
+                return Err(JsError::type_error(format!(
+                    "Cannot read properties of undefined (reading '{}')",
+                    key
+                )));
+            }
         };
 
         // Use getter's guard if present, otherwise the object's guard
@@ -5444,9 +5569,7 @@ impl Interpreter {
         let mut _prop_guards = Vec::new();
 
         // Collect accessors (getters/setters) by property key
-        // Key -> (Option<getter>, Option<setter>)
-        let mut accessors: FxHashMap<PropertyKey, (Option<Gc<JsObject>>, Option<Gc<JsObject>>)> =
-            FxHashMap::default();
+        let mut accessors: AccessorMap = FxHashMap::default();
 
         for prop in &obj_expr.properties {
             match prop {

@@ -1813,6 +1813,7 @@ impl<'a> Parser<'a> {
                         object: Rc::new(expr),
                         property: MemberProperty::PrivateIdentifier(name),
                         computed: false,
+                        optional: false,
                         span,
                     });
                 } else {
@@ -1823,6 +1824,7 @@ impl<'a> Parser<'a> {
                         object: Rc::new(expr),
                         property: MemberProperty::Identifier(property),
                         computed: false,
+                        optional: false,
                         span,
                     });
                 }
@@ -1834,6 +1836,7 @@ impl<'a> Parser<'a> {
                     object: Rc::new(expr),
                     property: MemberProperty::Expression(Rc::new(property)),
                     computed: true,
+                    optional: false,
                     span,
                 });
             } else if let TokenKind::TemplateHead(s) = self.current.kind.clone() {
@@ -1887,6 +1890,7 @@ impl<'a> Parser<'a> {
                         object: Rc::new(expr),
                         property: MemberProperty::Expression(Rc::new(property)),
                         computed: true,
+                        optional: true,
                         span,
                     });
                 } else {
@@ -1897,6 +1901,7 @@ impl<'a> Parser<'a> {
                         object: Rc::new(expr),
                         property: MemberProperty::Identifier(property),
                         computed: false,
+                        optional: true,
                         span,
                     });
                 }
@@ -1943,6 +1948,7 @@ impl<'a> Parser<'a> {
                         object: Rc::new(expr),
                         property: MemberProperty::PrivateIdentifier(name),
                         computed: false,
+                        optional: false,
                         span,
                     });
                 } else {
@@ -1953,6 +1959,7 @@ impl<'a> Parser<'a> {
                         object: Rc::new(expr),
                         property: MemberProperty::Identifier(property),
                         computed: false,
+                        optional: false,
                         span,
                     });
                 }
@@ -1964,6 +1971,7 @@ impl<'a> Parser<'a> {
                     object: Rc::new(expr),
                     property: MemberProperty::Expression(Rc::new(property)),
                     computed: true,
+                    optional: false,
                     span,
                 });
             } else {

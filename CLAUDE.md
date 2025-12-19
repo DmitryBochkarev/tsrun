@@ -51,7 +51,9 @@ Tests are located in:
 - **No tech debt**: Fix failing tests immediately before moving on. Do not leave TODO/FIXME comments for known bugs - implement the fix or ask for clarification
 - **Use TDD**: If a test fails because a feature is not implemented, implement the feature first rather than deleting or modifying the test to work around the limitation
 - **Never change failing test cases** - if a test fails because a syntax/feature is not yet supported, write additional simpler tests to verify the current implementation scope, but keep the original test as a goal to implement the missing feature
-- **Debugging tests** - write debug tests in test files and run with `cargo test test_name -- --nocapture` to see output. Do not use heredoc/echo commands in bash to run code.
+- **Fix pre-existing bugs**: If you discover a pre-existing bug while working on a feature (e.g., `null.foo` returning undefined instead of throwing TypeError), write a test that covers the bug and fix it before continuing. Do not work around pre-existing issues.
+- **Proper fixes over workarounds**: If fixing a bug requires changes to the AST, parser, or interpreter architecture, make those changes properly. Write tests first, then implement the fix. Do not implement partial fixes or workarounds that leave the codebase in an inconsistent state.
+- **Debugging tests** - write debug tests in test files and run with `cargo test test_name -- --nocapture` to see output. Use `console.log()` in test code to inspect runtime behavior. Do not use heredoc/echo commands in bash or create ad-hoc script files to run code - always write proper tests in the test files instead.
 
 ## Zero-Panic Policy
 

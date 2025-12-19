@@ -3,7 +3,8 @@
 use crate::error::JsError;
 use crate::gc::{Gc, Guard};
 use crate::interpreter::Interpreter;
-use crate::value::{ExoticObject, Guarded, JsObject, JsString, JsValue, PropertyKey};
+use crate::parser::Parser;
+use crate::value::{ExoticObject, Guarded, JsObject, JsString, JsValue, Property, PropertyKey};
 
 /// Register global functions (parseInt, parseFloat, isNaN, isFinite, URI functions)
 pub fn init_global_functions(interp: &mut Interpreter) {
@@ -117,6 +118,125 @@ pub fn init_global_functions(interp: &mut Interpreter) {
         .global
         .borrow_mut()
         .set_property(key, JsValue::Object(structured_clone_fn));
+
+    // eval - dynamic code execution
+    // Note: This creates the indirect eval function. Direct eval calls are handled
+    // specially in the interpreter to preserve the calling scope.
+    let eval_fn = create_eval_function(interp);
+    interp.root_guard.guard(eval_fn.clone());
+
+    // Set eval on global with proper property descriptor:
+    // { writable: true, enumerable: false, configurable: true }
+    let key = PropertyKey::String(interp.intern("eval"));
+    interp.global.borrow_mut().properties.insert(
+        key,
+        Property::with_attributes(JsValue::Object(eval_fn), true, false, true),
+    );
+}
+
+/// Create the global eval function with proper name and length properties.
+///
+/// This function implements **indirect eval** - it executes code in the global scope.
+/// Direct eval (where `eval(...)` is called directly) is handled specially by the
+/// interpreter to preserve the calling scope.
+fn create_eval_function(interp: &mut Interpreter) -> Gc<JsObject> {
+    let func = interp.create_native_function("eval", global_eval, 1);
+
+    // Set name property with correct descriptor:
+    // { value: "eval", writable: false, enumerable: false, configurable: true }
+    let name_key = PropertyKey::String(interp.intern("name"));
+    func.borrow_mut().properties.insert(
+        name_key,
+        Property::with_attributes(JsValue::String(JsString::from("eval")), false, false, true),
+    );
+
+    // Set length property with correct descriptor:
+    // { value: 1, writable: false, enumerable: false, configurable: true }
+    let length_key = PropertyKey::String(interp.intern("length"));
+    func.borrow_mut().properties.insert(
+        length_key,
+        Property::with_attributes(JsValue::Number(1.0), false, false, true),
+    );
+
+    func
+}
+
+/// The eval function (implements indirect eval - uses global scope).
+///
+/// For direct eval calls (`eval(...)`), the interpreter handles this specially
+/// to preserve the calling scope. This native function is used when eval is
+/// called indirectly (e.g., `(1, eval)(...)` or `var e = eval; e(...)`).
+pub fn global_eval(
+    interp: &mut Interpreter,
+    _this: JsValue,
+    args: &[JsValue],
+) -> Result<Guarded, JsError> {
+    // If no argument, return undefined
+    let arg = match args.first() {
+        None => return Ok(Guarded::unguarded(JsValue::Undefined)),
+        Some(v) => v,
+    };
+
+    // If argument is not a string, return it directly
+    let code = match arg {
+        JsValue::String(s) => s.to_string(),
+        _ => return Ok(Guarded::unguarded(arg.clone())),
+    };
+
+    // Execute the code in global scope (indirect eval behavior)
+    eval_code_in_scope(interp, &code, true)
+}
+
+/// Execute eval code in the specified scope.
+///
+/// If `use_global_scope` is true, executes in global scope (indirect eval).
+/// If false, executes in the current scope (direct eval).
+pub fn eval_code_in_scope(
+    interp: &mut Interpreter,
+    code: &str,
+    use_global_scope: bool,
+) -> Result<Guarded, JsError> {
+    // Empty or whitespace-only code returns undefined
+    if code.trim().is_empty() {
+        return Ok(Guarded::unguarded(JsValue::Undefined));
+    }
+
+    // Parse the code
+    let mut parser = Parser::new(code, &mut interp.string_dict);
+    let program = parser
+        .parse_program()
+        .map_err(|e| JsError::syntax_error_simple(format!("eval: {}", e)))?;
+
+    // Save current environment
+    let saved_env = interp.env.clone();
+
+    // If using global scope (indirect eval), switch to global environment
+    if use_global_scope {
+        interp.env = interp.global_env.clone();
+    }
+
+    // In strict mode, eval code runs in its own lexical environment
+    // This ensures let/const declarations don't leak to the outer scope
+    // but can still read from it via the scope chain
+    let eval_scope = interp.push_scope();
+
+    // Execute the program and get the result
+    let result = interp.execute_program_with_stack(&program);
+
+    // Pop the eval scope
+    interp.pop_scope(eval_scope);
+
+    // Restore original environment (needed for indirect eval case)
+    interp.env = saved_env;
+
+    match result {
+        Ok(value) => {
+            // Create a guard for the result if it's an object
+            let guard = interp.guard_value(&value);
+            Ok(Guarded { value, guard })
+        }
+        Err(e) => Err(e),
+    }
 }
 
 pub fn global_parse_int(

@@ -1565,6 +1565,27 @@ impl Interpreter {
                     }
                 }
 
+                // Handle typeof specially for identifiers - ECMAScript spec says
+                // typeof on an undeclared variable should return "undefined", not throw
+                if un.operator == UnaryOp::Typeof {
+                    // Handle TypeScript non-null assertion (x!)
+                    let arg = if let Expression::NonNull(non_null) = un.argument.as_ref() {
+                        non_null.expression.as_ref()
+                    } else {
+                        un.argument.as_ref()
+                    };
+
+                    if let Expression::Identifier(id) = arg {
+                        // Try to resolve identifier - if it fails, return "undefined"
+                        let result = match self.env_get(&id.name) {
+                            Ok(value) => JsValue::String(JsString::from(value.type_of())),
+                            Err(_) => JsValue::String(JsString::from("undefined")),
+                        };
+                        state.push_value(Guarded::unguarded(result));
+                        return StepResult::Continue;
+                    }
+                }
+
                 state.push_frame(Frame::UnaryComplete { op: un.operator });
                 state.push_frame(Frame::Expr(un.argument.cheap_clone()));
                 StepResult::Continue

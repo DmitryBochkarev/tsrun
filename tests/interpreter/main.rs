@@ -28,6 +28,7 @@ mod date;
 mod decorator;
 mod enum_test;
 mod error;
+mod eval;
 mod function;
 mod gc;
 mod generator;
