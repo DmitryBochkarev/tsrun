@@ -639,6 +639,48 @@ fn test_example() {
 }
 ```
 
+### Test262 Conformance Testing
+
+The project includes a runner for the [Test262](https://github.com/tc39/test262) ECMAScript conformance test suite. See `test262.md` for full documentation.
+
+**Setup:**
+```bash
+git submodule update --init --depth 1  # Initialize test262 submodule
+cargo build --release --bin test262-runner
+```
+
+**Basic usage:**
+```bash
+# Run tests in a directory (use --strict-only for accurate results)
+./target/release/test262-runner --strict-only language/types
+
+# Verbose output with stop on first failure (good for debugging)
+./target/release/test262-runner --verbose --stop-on-fail language/statements
+
+# List tests without running
+./target/release/test262-runner --list language/expressions/addition
+```
+
+**Important:** The interpreter runs all code in strict mode, so use `--strict-only` for meaningful pass rates.
+
+**Key options:**
+| Option | Description |
+|--------|-------------|
+| `--strict-only` | Only run strict mode variants (recommended) |
+| `--verbose` / `-v` | Show detailed output for each test |
+| `--stop-on-fail` | Stop on first failure |
+| `--filter <PATTERN>` | Filter tests by path pattern |
+| `--skip-features <LIST>` | Skip tests requiring specific features |
+
+**Skipped features:** BigInt, WeakRef/WeakMap/WeakSet, TypedArray, Atomics, Temporal, eval, with statement, tail-call-optimization, and various parser limitations (see test262.md for full list).
+
+**Debugging a specific test:**
+```bash
+./target/release/test262-runner --verbose --stop-on-fail \
+  test262/test/language/expressions/addition/S11.6.1_A1.js
+cat test262/test/language/expressions/addition/S11.6.1_A1.js
+```
+
 ### Key Types
 
 - `JsValue`: Enum with `Undefined`, `Null`, `Boolean(bool)`, `Number(f64)`, `String(JsString)`, `Object(JsObjectRef)`
