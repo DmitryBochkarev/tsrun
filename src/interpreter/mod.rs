@@ -4780,20 +4780,42 @@ impl Interpreter {
                     value: obj_val,
                     guard: _obj_guard,
                 } = self.evaluate_expression(&member.object)?;
-                let JsValue::Object(obj) = obj_val else {
+                let JsValue::Object(obj) = obj_val.clone() else {
                     return Err(JsError::type_error("Cannot update property of non-object"));
                 };
                 let key = self.get_member_key(&member.property)?;
-                let current = obj
-                    .borrow()
-                    .get_property(&key)
-                    .unwrap_or(JsValue::Undefined);
+
+                // Check if this is a proxy - use proxy_get/proxy_set to properly delegate
+                let is_proxy = matches!(obj.borrow().exotic, ExoticObject::Proxy(_));
+                let current = if is_proxy {
+                    let Guarded {
+                        value,
+                        guard: _guard,
+                    } = builtins::proxy::proxy_get(
+                        self,
+                        obj.clone(),
+                        key.clone(),
+                        obj_val.clone(),
+                    )?;
+                    value
+                } else {
+                    obj.borrow()
+                        .get_property(&key)
+                        .unwrap_or(JsValue::Undefined)
+                };
+
                 let num = current.to_number();
                 let new_val = match update.operator {
                     UpdateOp::Increment => JsValue::Number(num + 1.0),
                     UpdateOp::Decrement => JsValue::Number(num - 1.0),
                 };
-                obj.borrow_mut().set_property(key, new_val.clone());
+
+                if is_proxy {
+                    builtins::proxy::proxy_set(self, obj, key, new_val.clone(), obj_val)?;
+                } else {
+                    obj.borrow_mut().set_property(key, new_val.clone());
+                }
+
                 // Prefix returns new value, postfix returns old value
                 if update.prefix {
                     Ok(Guarded::unguarded(new_val))
@@ -4890,26 +4912,41 @@ impl Interpreter {
                 // Get the function, invoking getters if the property is an accessor
                 let (func, extra_guard) = match &obj {
                     JsValue::Object(o) => {
-                        // Check for accessor property - need to invoke getter
-                        let prop_desc = o.borrow().get_property_descriptor(&key);
-                        match prop_desc {
-                            Some((prop, _)) if prop.is_accessor() => {
-                                // Invoke getter
-                                if let Some(getter) = prop.getter() {
-                                    let Guarded {
-                                        value: getter_val,
-                                        guard: getter_guard,
-                                    } = self.call_function(
-                                        JsValue::Object(getter.clone()),
-                                        obj.clone(),
-                                        &[],
-                                    )?;
-                                    (Some(getter_val), getter_guard)
-                                } else {
-                                    (None, None)
+                        // Check if this is a proxy - use proxy_get to properly delegate
+                        let is_proxy = matches!(o.borrow().exotic, ExoticObject::Proxy(_));
+                        if is_proxy {
+                            let Guarded { value, guard } = builtins::proxy::proxy_get(
+                                self,
+                                o.clone(),
+                                key.clone(),
+                                obj.clone(),
+                            )?;
+                            (
+                                Some(value).filter(|v| !matches!(v, JsValue::Undefined)),
+                                guard,
+                            )
+                        } else {
+                            // Check for accessor property - need to invoke getter
+                            let prop_desc = o.borrow().get_property_descriptor(&key);
+                            match prop_desc {
+                                Some((prop, _)) if prop.is_accessor() => {
+                                    // Invoke getter
+                                    if let Some(getter) = prop.getter() {
+                                        let Guarded {
+                                            value: getter_val,
+                                            guard: getter_guard,
+                                        } = self.call_function(
+                                            JsValue::Object(getter.clone()),
+                                            obj.clone(),
+                                            &[],
+                                        )?;
+                                        (Some(getter_val), getter_guard)
+                                    } else {
+                                        (None, None)
+                                    }
                                 }
+                                _ => (o.borrow().get_property(&key), None),
                             }
-                            _ => (o.borrow().get_property(&key), None),
                         }
                     }
                     JsValue::Number(_) => (self.number_prototype.borrow().get_property(&key), None),
