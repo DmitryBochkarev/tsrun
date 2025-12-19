@@ -4,7 +4,7 @@
 
 **Project:** `typescript-eval`
 **Purpose:** Execute TypeScript for config/manifest generation from Rust
-**Status:** Milestone 10 Complete (Decorators, 909 tests passing)
+**Status:** Milestone 11 Complete (Generators & Async Iteration, 970 tests passing)
 
 ### Requirements
 
@@ -81,6 +81,12 @@ The interpreter uses an **order-based suspension model**:
   - Decorator factories and composition
   - Static and private member decorators
   - Context object with `kind`, `name`, `static`, `private`
+- ~~**Generators & Async Iteration**~~ ✅
+  - Generator functions (`function*`) with `yield` and `yield*`
+  - Async generators (`async function*`)
+  - `for await...of` with arrays, async iterables, and generators
+  - Generator.prototype.next(), return(), throw()
+  - State-saving execution model for proper suspension
 
 ---
 
@@ -695,10 +701,10 @@ These features have AST support but are ignored or partially handled at runtime:
 - [x] Async generator functions (`async function*`)
 - [x] `yield` in async generators
 - [x] `yield*` with async generators
-- [ ] Nested async generators in for-await-of (partial)
-- [ ] `generator.throw()` with async generators
+- [x] Nested async generators in for-await-of
+- [x] `generator.throw()` with async generators
 
-**Status:** Core async iteration is implemented. `for await...of` works with arrays of promises, custom async iterables via `Symbol.asyncIterator`, and async generators. Nested async generator patterns have some edge cases.
+**Status:** Fully implemented. `for await...of` works with arrays of promises, custom async iterables via `Symbol.asyncIterator`, and async generators including nested patterns and generator.throw().
 
 ### Missing Built-in Objects
 
@@ -834,8 +840,7 @@ These are parsed but not enforced at runtime (by design - matches TypeScript beh
 
 #### Medium Priority (Improved Compatibility)
 1. WeakMap / WeakSet
-2. Async iterators (`for await...of`)
-3. `import.meta`
+2. `import.meta`
 
 #### Low Priority (Specialized Use)
 1. Proxy & Reflect
