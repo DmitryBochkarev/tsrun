@@ -3998,8 +3998,12 @@ impl Interpreter {
         );
 
         // Create prototype property for the function (used when function is called as constructor)
-        // Every function in JS has a prototype property
+        // Every function in JS has a prototype property with constructor back-reference
         let prototype = self.create_object(&guard);
+        let constructor_key = PropertyKey::String(self.intern("constructor"));
+        prototype
+            .borrow_mut()
+            .set_property(constructor_key, JsValue::Object(func_obj.clone()));
         let proto_key = PropertyKey::String(self.intern("prototype"));
         func_obj
             .borrow_mut()

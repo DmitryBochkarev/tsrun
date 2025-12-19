@@ -2685,6 +2685,17 @@ impl Interpreter {
             func.async_,
         );
 
+        // Create prototype property with constructor back-reference
+        let prototype = self.create_object(&guard);
+        let constructor_key = PropertyKey::String(self.intern("constructor"));
+        prototype
+            .borrow_mut()
+            .set_property(constructor_key, JsValue::Object(func_obj.clone()));
+        let proto_key = PropertyKey::String(self.intern("prototype"));
+        func_obj
+            .borrow_mut()
+            .set_property(proto_key, JsValue::Object(prototype));
+
         // Transfer ownership to environment before guard is dropped
         if let Some(js_name) = name {
             self.env_define(js_name, JsValue::Object(func_obj), false);
@@ -3778,6 +3789,18 @@ impl Interpreter {
                     func.generator,
                     func.async_,
                 );
+
+                // Set up prototype property with constructor back-reference
+                // (regular functions, not arrow functions, have this)
+                let proto_obj = self.create_object(&guard);
+                let constructor_key = PropertyKey::String(self.intern("constructor"));
+                proto_obj
+                    .borrow_mut()
+                    .set_property(constructor_key, JsValue::Object(func_obj.clone()));
+                let prototype_key = PropertyKey::String(self.intern("prototype"));
+                func_obj
+                    .borrow_mut()
+                    .set_property(prototype_key, JsValue::Object(proto_obj));
 
                 Ok(Guarded::with_guard(JsValue::Object(func_obj), guard))
             }

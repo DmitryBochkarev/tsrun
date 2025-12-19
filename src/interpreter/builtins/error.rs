@@ -18,6 +18,7 @@ pub fn init_error(interp: &mut Interpreter) {
     let name_key = PropertyKey::String(interp.intern("name"));
     let message_key = PropertyKey::String(interp.intern("message"));
     let proto_key = PropertyKey::String(interp.intern("prototype"));
+    let constructor_key = PropertyKey::String(interp.intern("constructor"));
     let error_key = PropertyKey::String(interp.intern("Error"));
     let type_error_key = PropertyKey::String(interp.intern("TypeError"));
     let reference_error_key = PropertyKey::String(interp.intern("ReferenceError"));
@@ -47,7 +48,13 @@ pub fn init_error(interp: &mut Interpreter) {
     // Set up prototype chain
     error_fn
         .borrow_mut()
-        .set_property(proto_key.clone(), JsValue::Object(error_proto));
+        .set_property(proto_key.clone(), JsValue::Object(error_proto.clone()));
+
+    // Set constructor property on Error.prototype
+    error_proto.borrow_mut().set_property(
+        constructor_key.clone(),
+        JsValue::Object(error_fn.clone()),
+    );
 
     // Register Error globally
     interp
@@ -72,7 +79,11 @@ pub fn init_error(interp: &mut Interpreter) {
     interp.root_guard.guard(type_error_fn.clone());
     type_error_fn
         .borrow_mut()
-        .set_property(proto_key.clone(), JsValue::Object(type_error_proto));
+        .set_property(proto_key.clone(), JsValue::Object(type_error_proto.clone()));
+    type_error_proto.borrow_mut().set_property(
+        constructor_key.clone(),
+        JsValue::Object(type_error_fn.clone()),
+    );
     interp
         .global
         .borrow_mut()
@@ -95,7 +106,11 @@ pub fn init_error(interp: &mut Interpreter) {
     interp.root_guard.guard(reference_error_fn.clone());
     reference_error_fn.borrow_mut().set_property(
         proto_key.clone(),
-        JsValue::Object(reference_error_proto),
+        JsValue::Object(reference_error_proto.clone()),
+    );
+    reference_error_proto.borrow_mut().set_property(
+        constructor_key.clone(),
+        JsValue::Object(reference_error_fn.clone()),
     );
     interp
         .global
@@ -118,7 +133,11 @@ pub fn init_error(interp: &mut Interpreter) {
     interp.root_guard.guard(range_error_fn.clone());
     range_error_fn
         .borrow_mut()
-        .set_property(proto_key.clone(), JsValue::Object(range_error_proto));
+        .set_property(proto_key.clone(), JsValue::Object(range_error_proto.clone()));
+    range_error_proto.borrow_mut().set_property(
+        constructor_key.clone(),
+        JsValue::Object(range_error_fn.clone()),
+    );
     interp
         .global
         .borrow_mut()
@@ -138,7 +157,11 @@ pub fn init_error(interp: &mut Interpreter) {
     interp.root_guard.guard(syntax_error_fn.clone());
     syntax_error_fn
         .borrow_mut()
-        .set_property(proto_key.clone(), JsValue::Object(syntax_error_proto));
+        .set_property(proto_key.clone(), JsValue::Object(syntax_error_proto.clone()));
+    syntax_error_proto.borrow_mut().set_property(
+        constructor_key.clone(),
+        JsValue::Object(syntax_error_fn.clone()),
+    );
     interp
         .global
         .borrow_mut()
@@ -159,7 +182,11 @@ pub fn init_error(interp: &mut Interpreter) {
     interp.root_guard.guard(uri_error_fn.clone());
     uri_error_fn
         .borrow_mut()
-        .set_property(proto_key.clone(), JsValue::Object(uri_error_proto));
+        .set_property(proto_key.clone(), JsValue::Object(uri_error_proto.clone()));
+    uri_error_proto.borrow_mut().set_property(
+        constructor_key.clone(),
+        JsValue::Object(uri_error_fn.clone()),
+    );
     interp
         .global
         .borrow_mut()
@@ -177,7 +204,11 @@ pub fn init_error(interp: &mut Interpreter) {
     interp.root_guard.guard(eval_error_fn.clone());
     eval_error_fn
         .borrow_mut()
-        .set_property(proto_key, JsValue::Object(eval_error_proto));
+        .set_property(proto_key, JsValue::Object(eval_error_proto.clone()));
+    eval_error_proto.borrow_mut().set_property(
+        constructor_key,
+        JsValue::Object(eval_error_fn.clone()),
+    );
     interp
         .global
         .borrow_mut()

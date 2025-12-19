@@ -858,3 +858,123 @@ fn test_runtime_error_tostring() {
         JsValue::Boolean(true)
     );
 }
+
+// Constructor property tests
+#[test]
+fn test_error_constructor_property() {
+    // Error instances should have constructor property pointing to Error
+    assert_eq!(
+        eval("new Error('test').constructor === Error"),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_typeerror_constructor_property() {
+    // TypeError instances should have constructor property pointing to TypeError
+    assert_eq!(
+        eval("new TypeError('test').constructor === TypeError"),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_referenceerror_constructor_property() {
+    // ReferenceError instances should have constructor property pointing to ReferenceError
+    assert_eq!(
+        eval("new ReferenceError('test').constructor === ReferenceError"),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_rangeerror_constructor_property() {
+    // RangeError instances should have constructor property pointing to RangeError
+    assert_eq!(
+        eval("new RangeError('test').constructor === RangeError"),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_syntaxerror_constructor_property() {
+    // SyntaxError instances should have constructor property pointing to SyntaxError
+    assert_eq!(
+        eval("new SyntaxError('test').constructor === SyntaxError"),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_urierror_constructor_property() {
+    // URIError instances should have constructor property pointing to URIError
+    assert_eq!(
+        eval("new URIError('test').constructor === URIError"),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_evalerror_constructor_property() {
+    // EvalError instances should have constructor property pointing to EvalError
+    assert_eq!(
+        eval("new EvalError('test').constructor === EvalError"),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_error_constructor_name() {
+    // Error constructor should have name property
+    assert_eq!(
+        eval("new Error('test').constructor.name"),
+        JsValue::from("Error")
+    );
+}
+
+#[test]
+fn test_typeerror_constructor_name() {
+    // TypeError constructor should have name property
+    assert_eq!(
+        eval("new TypeError('test').constructor.name"),
+        JsValue::from("TypeError")
+    );
+}
+
+#[test]
+fn test_runtime_typeerror_constructor() {
+    // Runtime TypeError should have constructor === TypeError
+    assert_eq!(
+        eval(
+            r#"
+            let result: boolean = false;
+            try {
+                (null as any)();
+            } catch (e) {
+                result = e.constructor === TypeError;
+            }
+            result
+        "#
+        ),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_runtime_referenceerror_constructor() {
+    // Runtime ReferenceError should have constructor === ReferenceError
+    assert_eq!(
+        eval(
+            r#"
+            let result: boolean = false;
+            try {
+                undefinedVariable;
+            } catch (e) {
+                result = e.constructor === ReferenceError;
+            }
+            result
+        "#
+        ),
+        JsValue::Boolean(true)
+    );
+}
