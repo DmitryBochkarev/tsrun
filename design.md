@@ -9,11 +9,27 @@
 ### Requirements
 
 - Full TypeScript syntax support (types stripped, not checked at runtime)
+- **Strict mode only** - all code runs in strict mode (`"use strict"` semantics)
 - Static import resolution with host-provided modules
 - Order-based async model (host fulfills external effects)
 - Internal module system (native Rust or TypeScript source)
 - Guard-based garbage collection
 - **Zero-panic policy** - no runtime panics in production code
+
+### Strict Mode Only
+
+This interpreter executes all code in strict mode. Non-strict (sloppy) mode features are not supported:
+
+- **No `with` statement** - throws SyntaxError
+- **No octal literals** - `0777` is invalid (use `0o777`)
+- **No duplicate parameters** - `function f(a, a) {}` is invalid
+- **No `arguments.callee`** - throws TypeError
+- **No assigning to undeclared variables** - throws ReferenceError
+- **`this` is `undefined` in functions** - not coerced to global object
+- **`eval` and `arguments` cannot be bound** - throws SyntaxError
+- **Reserved words enforced** - `implements`, `interface`, `let`, `package`, `private`, `protected`, `public`, `static`, `yield`
+
+This simplifies implementation and matches modern JavaScript best practices. TypeScript itself encourages strict mode via `"strict": true` in tsconfig.json.
 
 ### Execution Model
 
