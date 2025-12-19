@@ -136,7 +136,6 @@ pub fn error_to_string(
 
 /// Initialize error properties on an existing object
 fn initialize_error_on_this(obj: &Gc<JsObject>, name: &str, message: JsValue) {
-    eprintln!("[initialize_error_on_this] Error object id={}", obj.id());
     let msg_str = match &message {
         JsValue::Undefined => JsString::from(""),
         other => other.to_js_string(),

@@ -14,9 +14,9 @@ use crate::ast::{
     ClassExpression, ClassMember, ClassMethod, ClassProperty, ConditionalExpression, Decorator,
     Expression, ForInOfLeft, ForInit, FunctionParam, LiteralValue, LogicalExpression, LogicalOp,
     MemberExpression, MemberProperty, MethodKind, NewExpression, ObjectExpression,
-    ObjectPatternProperty, ObjectProperty, ObjectPropertyKey, Pattern, Program, SequenceExpression,
-    Statement, TaggedTemplateExpression, TemplateLiteral, UnaryExpression, UnaryOp,
-    UpdateExpression, UpdateOp, VariableDeclaration, VariableKind,
+    ObjectPatternProperty, ObjectProperty, ObjectPropertyKey, Pattern, Program, PropertyKind,
+    SequenceExpression, Statement, TaggedTemplateExpression, TemplateLiteral, UnaryExpression,
+    UnaryOp, UpdateExpression, UpdateOp, VariableDeclaration, VariableKind,
 };
 use crate::error::JsError;
 use crate::gc::{Gc, Guard, Heap};
@@ -428,6 +428,9 @@ impl Interpreter {
 
         // Initialize Generator prototype
         builtins::init_generator_prototype(self);
+
+        // Initialize Proxy constructor and Reflect object
+        builtins::proxy::init_proxy(self);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -574,11 +577,54 @@ impl Interpreter {
         let mut state = self.get_execution_state();
         state.init_for_program(&program);
         let result = self.run_to_completion_or_suspend(&mut state);
+
         // Return state to pool if execution completed (not suspended)
         if self.suspended_state.is_none() {
             self.return_execution_state(state);
         }
-        result
+
+        // Convert ThrownValue errors to RuntimeError before returning
+        // This is important because ThrownValue contains a Gc pointer that
+        // will become invalid once the interpreter/heap is dropped
+        result.map_err(|e| self.materialize_thrown_error(e))
+    }
+
+    /// Convert ThrownValue errors to RuntimeError with string data
+    ///
+    /// JsError::ThrownValue contains a JsValue that may have Gc pointers.
+    /// These pointers become invalid when the interpreter/heap is dropped.
+    /// This function extracts the error information while it's still valid.
+    fn materialize_thrown_error(&self, error: JsError) -> JsError {
+        match error {
+            JsError::ThrownValue { value } => {
+                // Extract error name and message from the thrown value
+                if let JsValue::Object(obj) = &value {
+                    let obj_ref = obj.borrow();
+                    let name = obj_ref
+                        .get_property(&PropertyKey::from("name"))
+                        .map(|v| v.to_js_string().to_string())
+                        .unwrap_or_else(|| "Error".to_string());
+                    let message = obj_ref
+                        .get_property(&PropertyKey::from("message"))
+                        .map(|v| v.to_js_string().to_string())
+                        .unwrap_or_default();
+                    JsError::RuntimeError {
+                        kind: name,
+                        message,
+                        stack: Vec::new(),
+                    }
+                } else {
+                    // Non-object thrown value - convert to string
+                    JsError::RuntimeError {
+                        kind: "Error".to_string(),
+                        message: value.to_js_string().to_string(),
+                        stack: Vec::new(),
+                    }
+                }
+            }
+            // Pass through other error types unchanged
+            other => other,
+        }
     }
 
     /// Run execution until completion or suspension
@@ -3831,6 +3877,19 @@ impl Interpreter {
             }
         }
 
+        // Check if this is a proxy - use construct trap
+        if let JsValue::Object(ctor_obj) = &constructor {
+            let is_proxy = matches!(ctor_obj.borrow().exotic, ExoticObject::Proxy(_));
+            if is_proxy {
+                return builtins::proxy::proxy_construct(
+                    self,
+                    ctor_obj.clone(),
+                    args,
+                    constructor.clone(),
+                );
+            }
+        }
+
         // Create a new object
         let new_guard = self.heap.create_guard();
         let new_obj = self.create_object(&new_guard);
@@ -4112,7 +4171,15 @@ impl Interpreter {
                     ));
                 };
                 let key = PropertyKey::from(left.to_js_string());
-                JsValue::Boolean(obj.borrow().has_own_property(&key))
+
+                // Check if this is a proxy - use has trap
+                let is_proxy = matches!(obj.borrow().exotic, ExoticObject::Proxy(_));
+                if is_proxy {
+                    let result = builtins::proxy::proxy_has(self, obj.clone(), &key)?;
+                    JsValue::Boolean(result)
+                } else {
+                    JsValue::Boolean(obj.borrow().has_own_property(&key))
+                }
             }
         }))
     }
@@ -4127,6 +4194,11 @@ impl Interpreter {
     }
 
     fn evaluate_unary(&mut self, un: &UnaryExpression) -> Result<Guarded, JsError> {
+        // Handle delete specially - it needs to work on member expressions
+        if un.operator == UnaryOp::Delete {
+            return self.evaluate_delete(&un.argument);
+        }
+
         let Guarded {
             value: operand,
             guard: _guard,
@@ -4139,8 +4211,70 @@ impl Interpreter {
             UnaryOp::BitNot => JsValue::Number(!(operand.to_number() as i32) as f64),
             UnaryOp::Typeof => JsValue::String(JsString::from(operand.type_of())),
             UnaryOp::Void => JsValue::Undefined,
-            UnaryOp::Delete => JsValue::Boolean(true),
+            UnaryOp::Delete => JsValue::Boolean(true), // Unreachable due to early return
         }))
+    }
+
+    fn evaluate_delete(&mut self, expr: &Expression) -> Result<Guarded, JsError> {
+        // Handle TypeScript non-null assertion (x!)
+        let expr = if let Expression::NonNull(non_null) = expr {
+            non_null.expression.as_ref()
+        } else {
+            expr
+        };
+
+        match expr {
+            Expression::Member(member) => {
+                // Evaluate ONLY the object, not the full member expression
+                let Guarded {
+                    value: obj_val,
+                    guard: _guard,
+                } = self.evaluate_expression(&member.object)?;
+
+                let JsValue::Object(obj) = obj_val else {
+                    // Deleting from non-object returns true
+                    return Ok(Guarded::unguarded(JsValue::Boolean(true)));
+                };
+
+                // Get the property key WITHOUT triggering proxy get trap
+                let key = match &member.property {
+                    crate::ast::MemberProperty::Identifier(id) => {
+                        PropertyKey::String(id.name.cheap_clone())
+                    }
+                    crate::ast::MemberProperty::Expression(expr) => {
+                        let Guarded {
+                            value: val,
+                            guard: _val_guard,
+                        } = self.evaluate_expression(expr)?;
+                        PropertyKey::from_value(&val)
+                    }
+                    crate::ast::MemberProperty::PrivateIdentifier(id) => {
+                        PropertyKey::String(id.name.cheap_clone())
+                    }
+                };
+
+                // Check if this is a proxy - use deleteProperty trap
+                let is_proxy = matches!(obj.borrow().exotic, ExoticObject::Proxy(_));
+                if is_proxy {
+                    let result = builtins::proxy::proxy_delete_property(self, obj, &key)?;
+                    return Ok(Guarded::unguarded(JsValue::Boolean(result)));
+                }
+
+                // Normal delete
+                obj.borrow_mut().properties.remove(&key);
+                Ok(Guarded::unguarded(JsValue::Boolean(true)))
+            }
+            Expression::Identifier(_) => {
+                // Cannot delete local variables - always returns false
+                Ok(Guarded::unguarded(JsValue::Boolean(false)))
+            }
+            other => {
+                // For any other expression type, just evaluate it (for side effects)
+                // and return true since we can't actually delete anything
+                let _ = self.evaluate_expression(other)?;
+                Ok(Guarded::unguarded(JsValue::Boolean(true)))
+            }
+        }
     }
 
     fn evaluate_logical(&mut self, log: &LogicalExpression) -> Result<Guarded, JsError> {
@@ -4371,6 +4505,20 @@ impl Interpreter {
                         // If no setter, silently ignore in strict mode would throw, but we're lenient
                         return Ok(Guarded::unguarded(final_value));
                     }
+                }
+
+                // Check if this is a proxy
+                let is_proxy = matches!(obj.borrow().exotic, ExoticObject::Proxy(_));
+                if is_proxy {
+                    // Use proxy set trap
+                    builtins::proxy::proxy_set(
+                        self,
+                        obj.clone(),
+                        key,
+                        final_value.clone(),
+                        obj_val.clone(),
+                    )?;
+                    return Ok(Guarded::unguarded(final_value));
                 }
 
                 // Handle __proto__ special property - set prototype instead of property
@@ -4767,6 +4915,12 @@ impl Interpreter {
             return Err(JsError::type_error("Not a function"));
         };
 
+        // Check if this is a proxy - use apply trap
+        let is_proxy = matches!(func_obj.borrow().exotic, ExoticObject::Proxy(_));
+        if is_proxy {
+            return builtins::proxy::proxy_apply(self, func_obj, this_value, args.to_vec());
+        }
+
         let func = {
             let obj_ref = func_obj.borrow();
             match &obj_ref.exotic {
@@ -5110,6 +5264,15 @@ impl Interpreter {
                 let value = self.resolve_module_property(&source_module, &source_key)?;
                 Ok(Guarded::unguarded(value))
             }
+
+            JsFunction::ProxyRevoke(proxy) => {
+                // Revoke the associated proxy
+                let mut proxy_ref = proxy.borrow_mut();
+                if let ExoticObject::Proxy(ref mut data) = proxy_ref.exotic {
+                    data.revoked = true;
+                }
+                Ok(Guarded::unguarded(JsValue::Undefined))
+            }
         }
     }
 
@@ -5124,8 +5287,15 @@ impl Interpreter {
         // Returns (value, optional_extra_guard) - extra guard for values from getter calls
         let (value, extra_guard) = match &obj {
             JsValue::Object(o) => {
-                // Handle __proto__ special property
-                if key.eq_str("__proto__") {
+                // Check if this is a proxy
+                let is_proxy = matches!(o.borrow().exotic, ExoticObject::Proxy(_));
+                if is_proxy {
+                    // Use proxy get trap
+                    let Guarded { value, guard } =
+                        builtins::proxy::proxy_get(self, o.clone(), key, obj.clone())?;
+                    (value, guard)
+                } else if key.eq_str("__proto__") {
+                    // Handle __proto__ special property
                     let proto = o.borrow().prototype.clone();
                     match proto {
                         Some(p) => (JsValue::Object(p), None),
@@ -5273,6 +5443,11 @@ impl Interpreter {
         // Keep property value guards alive until ownership is transferred to obj
         let mut _prop_guards = Vec::new();
 
+        // Collect accessors (getters/setters) by property key
+        // Key -> (Option<getter>, Option<setter>)
+        let mut accessors: FxHashMap<PropertyKey, (Option<Gc<JsObject>>, Option<Gc<JsObject>>)> =
+            FxHashMap::default();
+
         for prop in &obj_expr.properties {
             match prop {
                 ObjectProperty::Property(p) => {
@@ -5299,6 +5474,47 @@ impl Interpreter {
                             PropertyKey::String(id.name.cheap_clone())
                         }
                     };
+
+                    // Handle getter/setter properties
+                    match p.kind {
+                        PropertyKind::Get => {
+                            // Evaluate the getter function
+                            let Guarded {
+                                value: getter_val,
+                                guard: getter_guard,
+                            } = self.evaluate_expression(&p.value)?;
+
+                            if let Some(g) = getter_guard {
+                                _prop_guards.push(g);
+                            }
+
+                            if let JsValue::Object(getter_fn) = getter_val {
+                                let entry = accessors.entry(prop_key).or_insert((None, None));
+                                entry.0 = Some(getter_fn);
+                            }
+                            continue;
+                        }
+                        PropertyKind::Set => {
+                            // Evaluate the setter function
+                            let Guarded {
+                                value: setter_val,
+                                guard: setter_guard,
+                            } = self.evaluate_expression(&p.value)?;
+
+                            if let Some(g) = setter_guard {
+                                _prop_guards.push(g);
+                            }
+
+                            if let JsValue::Object(setter_fn) = setter_val {
+                                let entry = accessors.entry(prop_key).or_insert((None, None));
+                                entry.1 = Some(setter_fn);
+                            }
+                            continue;
+                        }
+                        PropertyKind::Init => {
+                            // Regular property - continue with normal processing
+                        }
+                    }
 
                     let Guarded {
                         value: prop_val,
@@ -5368,6 +5584,12 @@ impl Interpreter {
                     // Other primitives are also skipped
                 }
             }
+        }
+
+        // Now define accessor properties
+        for (key, (getter, setter)) in accessors {
+            let accessor_prop = Property::accessor(getter, setter);
+            obj.borrow_mut().properties.insert(key, accessor_prop);
         }
 
         Ok(Guarded::with_guard(JsValue::Object(obj), obj_guard))

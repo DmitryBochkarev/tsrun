@@ -10,8 +10,8 @@
 use crate::ast::{
     BinaryOp, BlockStatement, CatchClause, ExportDeclaration, Expression, ForInOfLeft,
     ForInStatement, ForInit, ForOfStatement, ForStatement, ImportDeclaration, ImportSpecifier,
-    LiteralValue, LogicalOp, Pattern, Program, Statement, SwitchCase, SwitchStatement, UnaryOp,
-    VariableDeclarator, VariableKind,
+    LiteralValue, LogicalOp, MemberProperty, Pattern, Program, Statement, SwitchCase,
+    SwitchStatement, UnaryOp, VariableDeclarator, VariableKind,
 };
 use crate::error::JsError;
 use crate::gc::{Gc, Guard};
@@ -22,6 +22,7 @@ use crate::value::{
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use super::builtins::proxy::{proxy_get_own_property_descriptor, proxy_own_keys};
 use super::builtins::symbol::get_well_known_symbols;
 use super::{create_environment_unrooted, Interpreter};
 
@@ -148,6 +149,12 @@ pub enum Frame {
 
     /// Unary: operand done, apply operator
     UnaryComplete { op: UnaryOp },
+
+    /// Delete: object evaluated, now get key and delete property
+    DeleteComplete {
+        /// Property to delete
+        property: MemberProperty,
+    },
 
     /// Conditional: condition done, pick branch
     ConditionalBranch {
@@ -691,6 +698,8 @@ impl Interpreter {
             Frame::LogicalCheck { op, right } => self.step_logical_check(state, op, right),
 
             Frame::UnaryComplete { op } => self.step_unary_complete(state, op),
+
+            Frame::DeleteComplete { property } => self.step_delete_complete(state, property),
 
             Frame::ConditionalBranch {
                 consequent,
@@ -1529,6 +1538,33 @@ impl Interpreter {
             }
 
             Expression::Unary(un) => {
+                // Handle delete specially - don't evaluate the member expression normally
+                if un.operator == UnaryOp::Delete {
+                    // Handle TypeScript non-null assertion (x!)
+                    let arg = if let Expression::NonNull(non_null) = un.argument.as_ref() {
+                        non_null.expression.as_ref()
+                    } else {
+                        un.argument.as_ref()
+                    };
+
+                    if let Expression::Member(member) = arg {
+                        // For member expression delete, evaluate only the object
+                        state.push_frame(Frame::DeleteComplete {
+                            property: member.property.clone(),
+                        });
+                        state.push_frame(Frame::Expr(member.object.cheap_clone()));
+                        return StepResult::Continue;
+                    } else if let Expression::Identifier(_) = arg {
+                        // Cannot delete local variables - always returns false
+                        state.push_value(Guarded::unguarded(JsValue::Boolean(false)));
+                        return StepResult::Continue;
+                    } else {
+                        // Deleting non-references returns true
+                        state.push_value(Guarded::unguarded(JsValue::Boolean(true)));
+                        return StepResult::Continue;
+                    }
+                }
+
                 state.push_frame(Frame::UnaryComplete { op: un.operator });
                 state.push_frame(Frame::Expr(un.argument.cheap_clone()));
                 StepResult::Continue
@@ -1745,9 +1781,61 @@ impl Interpreter {
             UnaryOp::BitNot => JsValue::Number(!(operand.to_number() as i32) as f64),
             UnaryOp::Typeof => JsValue::String(JsString::from(operand.type_of())),
             UnaryOp::Void => JsValue::Undefined,
-            UnaryOp::Delete => JsValue::Boolean(true),
+            UnaryOp::Delete => JsValue::Boolean(true), // Should be handled specially, not reach here
         };
         state.push_value(Guarded::unguarded(result));
+        StepResult::Continue
+    }
+
+    /// Step for delete operation - object has been evaluated, now get key and delete
+    fn step_delete_complete(
+        &mut self,
+        state: &mut ExecutionState,
+        property: MemberProperty,
+    ) -> StepResult {
+        use super::builtins::proxy::proxy_delete_property;
+
+        let obj_val = state
+            .pop_value()
+            .map(|v| v.value)
+            .unwrap_or(JsValue::Undefined);
+
+        let JsValue::Object(obj) = obj_val else {
+            // Deleting from non-object returns true
+            state.push_value(Guarded::unguarded(JsValue::Boolean(true)));
+            return StepResult::Continue;
+        };
+
+        // Get the property key WITHOUT triggering proxy get trap
+        let key = match property {
+            MemberProperty::Identifier(id) => PropertyKey::String(id.name.cheap_clone()),
+            MemberProperty::Expression(expr) => {
+                // Need to evaluate the expression to get the key
+                // But we already popped the object, so push back and schedule evaluation
+                // For simplicity, just evaluate synchronously using tree-walking
+                match self.evaluate_expression(&expr) {
+                    Ok(Guarded { value, .. }) => PropertyKey::from_value(&value),
+                    Err(e) => return StepResult::Error(e),
+                }
+            }
+            MemberProperty::PrivateIdentifier(id) => PropertyKey::String(id.name.cheap_clone()),
+        };
+
+        // Check if this is a proxy - use deleteProperty trap
+        let is_proxy = matches!(obj.borrow().exotic, ExoticObject::Proxy(_));
+        if is_proxy {
+            match proxy_delete_property(self, obj, &key) {
+                Ok(result) => {
+                    state.push_value(Guarded::unguarded(JsValue::Boolean(result)));
+                }
+                Err(e) => return StepResult::Error(e),
+            }
+        } else {
+            // Normal delete
+            obj.borrow_mut().properties.remove(&key);
+            state.push_value(Guarded::unguarded(JsValue::Boolean(true)));
+        }
+
         StepResult::Continue
     }
 
@@ -2408,41 +2496,10 @@ impl Interpreter {
             Err(e) => return StepResult::Error(e),
         };
 
-        // Collect enumerable keys
-        let keys = match &right {
-            JsValue::Object(obj) => {
-                let obj_ref = obj.borrow();
-                let mut keys = Vec::new();
-
-                // For arrays, include numeric indices first
-                if let Some(length) = obj_ref.array_length() {
-                    for i in 0..length {
-                        // FIXME: use string intern
-                        keys.push(i.to_string());
-                    }
-                }
-
-                // For enums, get keys from EnumData
-                if let ExoticObject::Enum(ref data) = obj_ref.exotic {
-                    for key in data.keys() {
-                        if !key.is_symbol() {
-                            // FIXME: use string intern
-                            keys.push(key.to_string());
-                        }
-                    }
-                } else {
-                    // Then include enumerable properties for non-enum objects
-                    for (key, prop) in obj_ref.properties.iter() {
-                        if prop.enumerable() && !key.is_symbol() {
-                            // FIXME: use string intern
-                            keys.push(key.to_string());
-                        }
-                    }
-                }
-
-                keys
-            }
-            _ => vec![],
+        // Collect enumerable keys (respecting proxy traps)
+        let keys = match self.collect_enumerable_keys(&right) {
+            Ok(keys) => keys,
+            Err(e) => return StepResult::Error(e),
         };
 
         let saved_env = self.env.cheap_clone();
@@ -2451,7 +2508,6 @@ impl Interpreter {
         state.push_frame(Frame::ForInLoop {
             keys: Rc::new(keys),
             index: 0,
-            // FIXME: eliminate clone?
             left: Rc::new(for_in.left.clone()),
             body: for_in.body.cheap_clone(),
             label,
@@ -2459,6 +2515,87 @@ impl Interpreter {
         });
 
         StepResult::Continue
+    }
+
+    /// Collect enumerable keys from an object, respecting proxy traps
+    fn collect_enumerable_keys(&mut self, value: &JsValue) -> Result<Vec<String>, JsError> {
+        let obj = match value {
+            JsValue::Object(obj) => obj.clone(),
+            _ => return Ok(vec![]),
+        };
+
+        // Check if this is a proxy - if so, use ownKeys trap
+        let is_proxy = matches!(obj.borrow().exotic, ExoticObject::Proxy(_));
+
+        if is_proxy {
+            // Collect all key strings first through proxy_own_keys
+            let key_strings: Vec<String> = {
+                let keys_result = proxy_own_keys(self, obj.clone())?;
+                match &keys_result.value {
+                    JsValue::Object(arr) => {
+                        let arr_ref = arr.borrow();
+                        if let ExoticObject::Array { ref elements } = arr_ref.exotic {
+                            elements
+                                .iter()
+                                .map(|v| v.to_js_string().to_string())
+                                .collect()
+                        } else {
+                            vec![]
+                        }
+                    }
+                    _ => vec![],
+                }
+            };
+
+            // Now check each key for enumerability via getOwnPropertyDescriptor trap
+            let mut keys = Vec::new();
+            for key_str in key_strings {
+                let key = PropertyKey::from(key_str.as_str());
+                let desc = proxy_get_own_property_descriptor(self, obj.clone(), &key)?;
+                if let JsValue::Object(desc_obj) = desc.value {
+                    let enumerable_key = PropertyKey::from("enumerable");
+                    let is_enumerable = desc_obj
+                        .borrow()
+                        .get_property(&enumerable_key)
+                        .map(|v| v.to_boolean())
+                        .unwrap_or(false);
+                    if is_enumerable {
+                        keys.push(key_str);
+                    }
+                }
+            }
+
+            Ok(keys)
+        } else {
+            // Normal object - collect keys directly
+            let obj_ref = obj.borrow();
+            let mut keys = Vec::new();
+
+            // For arrays, include numeric indices first
+            if let Some(length) = obj_ref.array_length() {
+                for i in 0..length {
+                    keys.push(i.to_string());
+                }
+            }
+
+            // For enums, get keys from EnumData
+            if let ExoticObject::Enum(ref data) = obj_ref.exotic {
+                for key in data.keys() {
+                    if !key.is_symbol() {
+                        keys.push(key.to_string());
+                    }
+                }
+            } else {
+                // Then include enumerable properties for non-enum objects
+                for (key, prop) in obj_ref.properties.iter() {
+                    if prop.enumerable() && !key.is_symbol() {
+                        keys.push(key.to_string());
+                    }
+                }
+            }
+
+            Ok(keys)
+        }
     }
 
     /// Step for ForInLoop: bind current key and execute body
@@ -2718,11 +2855,49 @@ impl Interpreter {
         // Collect items to iterate over for non-generators
         let items = match &right {
             JsValue::Object(obj) => {
-                let obj_ref = obj.borrow();
-                if let Some(elements) = obj_ref.array_elements() {
-                    elements.to_vec()
+                // Check if this is a proxy - need to use get trap
+                let is_proxy = matches!(obj.borrow().exotic, ExoticObject::Proxy(_));
+
+                if is_proxy {
+                    // Get the target's length directly (not through proxy trap)
+                    // This matches JS behavior where for-of uses the iterator protocol
+                    // and the iterator sees the original array's length
+                    let target = {
+                        let obj_ref = obj.borrow();
+                        if let ExoticObject::Proxy(data) = &obj_ref.exotic {
+                            Some(data.target.clone())
+                        } else {
+                            None
+                        }
+                    };
+                    let length = match target {
+                        Some(t) => t.borrow().array_length().unwrap_or(0) as usize,
+                        None => 0,
+                    };
+
+                    // Get each element via get trap (this allows the get trap to transform values)
+                    let mut items = Vec::with_capacity(length);
+                    for i in 0..length {
+                        let index_key = PropertyKey::Index(i as u32);
+                        let elem = match super::builtins::proxy::proxy_get(
+                            self,
+                            obj.clone(),
+                            index_key,
+                            right.clone(),
+                        ) {
+                            Ok(g) => g,
+                            Err(e) => return StepResult::Error(e),
+                        };
+                        items.push(elem.value);
+                    }
+                    items
                 } else {
-                    vec![]
+                    let obj_ref = obj.borrow();
+                    if let Some(elements) = obj_ref.array_elements() {
+                        elements.to_vec()
+                    } else {
+                        vec![]
+                    }
                 }
             }
             JsValue::String(s) => s
@@ -3760,6 +3935,14 @@ impl Interpreter {
             func.generator,
             func.async_,
         );
+
+        // Create prototype property for the function (used when function is called as constructor)
+        // Every function in JS has a prototype property
+        let prototype = self.create_object(&guard);
+        let proto_key = PropertyKey::String(self.intern("prototype"));
+        func_obj
+            .borrow_mut()
+            .set_property(proto_key, JsValue::Object(prototype));
 
         // Transfer ownership to environment before guard is dropped
         if let Some(js_name) = name {

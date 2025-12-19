@@ -41,6 +41,7 @@ mod number;
 mod object;
 mod orders;
 mod promise;
+mod proxy;
 mod regexp;
 mod set;
 mod stack;

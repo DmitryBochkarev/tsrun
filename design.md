@@ -732,10 +732,10 @@ These features have AST support but are ignored or partially handled at runtime:
 - [ ] `FinalizationRegistry.prototype.unregister()`
 
 #### Proxy & Reflect
-- [ ] `new Proxy(target, handler)`
-- [ ] All proxy traps (get, set, has, deleteProperty, etc.)
-- [ ] `Reflect.get()`, `Reflect.set()`, `Reflect.has()`, etc.
-- [ ] Revocable proxies (`Proxy.revocable()`)
+- [x] `new Proxy(target, handler)`
+- [x] All proxy traps (get, set, has, deleteProperty, apply, construct, ownKeys, getOwnPropertyDescriptor, defineProperty, getPrototypeOf, setPrototypeOf, isExtensible, preventExtensions)
+- [x] `Reflect.get()`, `Reflect.set()`, `Reflect.has()`, `Reflect.deleteProperty()`, `Reflect.apply()`, `Reflect.construct()`, `Reflect.ownKeys()`, `Reflect.getOwnPropertyDescriptor()`, `Reflect.defineProperty()`, `Reflect.getPrototypeOf()`, `Reflect.setPrototypeOf()`, `Reflect.isExtensible()`, `Reflect.preventExtensions()`
+- [x] Revocable proxies (`Proxy.revocable()`)
 
 #### ArrayBuffer & TypedArrays
 - [ ] `ArrayBuffer`
@@ -846,7 +846,7 @@ These are parsed but not enforced at runtime (by design - matches TypeScript beh
 2. `import.meta`
 
 #### Low Priority (Specialized Use)
-1. Proxy & Reflect
+1. ~~Proxy & Reflect~~ (Implemented)
 2. TypedArrays / ArrayBuffer
 3. Intl API
 4. Atomics / SharedArrayBuffer

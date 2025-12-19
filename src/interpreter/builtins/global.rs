@@ -769,6 +769,11 @@ fn clone_object(
 
             Ok(JsValue::Object(cloned_obj))
         }
+
+        // Proxies cannot be cloned with structuredClone
+        ExoticObject::Proxy(_) => Err(JsError::type_error(
+            "Proxy cannot be cloned with structuredClone",
+        )),
     }
 }
 

@@ -638,3 +638,77 @@ fn test_object_get_own_property_descriptors_count() {
         JsValue::Number(3.0)
     );
 }
+
+// =============================================================================
+// Object Literal Getter/Setter Tests
+// =============================================================================
+
+#[test]
+fn test_object_literal_getter_basic() {
+    // Basic getter in object literal
+    assert_eq!(
+        eval(
+            r#"
+            let obj = {
+                get value() { return 42; }
+            };
+            obj.value
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+#[test]
+fn test_object_literal_getter_with_this() {
+    // Getter that uses this
+    assert_eq!(
+        eval(
+            r#"
+            let obj = {
+                x: 10,
+                get double() { return this.x * 2; }
+            };
+            obj.double
+        "#
+        ),
+        JsValue::Number(20.0)
+    );
+}
+
+#[test]
+fn test_object_literal_setter_basic() {
+    // Basic setter in object literal
+    assert_eq!(
+        eval(
+            r#"
+            let obj = {
+                _value: 0,
+                set value(v: number) { this._value = v; }
+            };
+            obj.value = 42;
+            obj._value
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+#[test]
+fn test_object_literal_getter_setter_pair() {
+    // Getter/setter pair
+    assert_eq!(
+        eval(
+            r#"
+            let obj = {
+                _count: 0,
+                get count() { return this._count; },
+                set count(v: number) { this._count = v; }
+            };
+            obj.count = 5;
+            obj.count
+        "#
+        ),
+        JsValue::Number(5.0)
+    );
+}

@@ -699,3 +699,176 @@ fn test_function_prototype_constructor() {
         JsValue::Boolean(true)
     );
 }
+
+// ============================================================
+// Function.prototype methods on proxied functions
+// ============================================================
+
+#[test]
+fn test_function_has_call_method() {
+    // Regular functions should have access to call method
+    assert_eq!(
+        eval(
+            r#"
+            let fn = function() { return this.value; };
+            typeof fn.call
+        "#
+        ),
+        JsValue::from("function")
+    );
+}
+
+#[test]
+fn test_proxied_function_has_call_method() {
+    // Proxied functions should have access to call method via prototype chain
+    assert_eq!(
+        eval(
+            r#"
+            let fn = function() { return this.value; };
+            let p = new Proxy(fn, {});
+            typeof p.call
+        "#
+        ),
+        JsValue::from("function")
+    );
+}
+
+#[test]
+fn test_proxied_function_call_method_stored() {
+    // Store the call method in a variable, then invoke it
+    assert_eq!(
+        eval(
+            r#"
+            let fn = function() { return this.value; };
+            let p = new Proxy(fn, {});
+            let callMethod = p.call;
+            let obj = { value: 42 };
+            callMethod.call(fn, obj)
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+#[test]
+fn test_function_call_on_function_value() {
+    // Get function from proxy, use call on it with proxy as this
+    assert_eq!(
+        eval(
+            r#"
+            let fn = function() { return this.value; };
+            let p = new Proxy(fn, {});
+            let obj = { value: 42 };
+            Function.prototype.call.call(p, obj)
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+#[test]
+fn test_proxied_function_call_method() {
+    // Proxied functions should have access to Function.prototype.call
+    assert_eq!(
+        eval(
+            r#"
+            let fn = function() { return this.value; };
+            let p = new Proxy(fn, {});
+            let obj = { value: 42 };
+            p.call(obj)
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+#[test]
+fn test_proxied_function_apply_method() {
+    // Proxied functions should have access to Function.prototype.apply
+    assert_eq!(
+        eval(
+            r#"
+            let fn = function(a: number, b: number) { return a + b; };
+            let p = new Proxy(fn, {});
+            p.apply(null, [10, 32])
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+#[test]
+fn test_proxied_function_bind_method() {
+    // Proxied functions should have access to Function.prototype.bind
+    assert_eq!(
+        eval(
+            r#"
+            let fn = function() { return this.value; };
+            let p = new Proxy(fn, {});
+            let bound = p.bind({ value: 42 });
+            bound()
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+// ============================================================
+// Spread in new expressions
+// ============================================================
+
+#[test]
+fn test_spread_in_new_basic() {
+    // Basic spread in new expression
+    assert_eq!(
+        eval(
+            r#"
+            function Point(x: number, y: number) {
+                this.x = x;
+                this.y = y;
+            }
+            let args: number[] = [10, 20];
+            let p = new Point(...args);
+            p.x + p.y
+        "#
+        ),
+        JsValue::Number(30.0)
+    );
+}
+
+#[test]
+fn test_spread_in_new_with_regular_args() {
+    // Spread combined with regular arguments
+    assert_eq!(
+        eval(
+            r#"
+            function Triple(a: number, b: number, c: number) {
+                this.sum = a + b + c;
+            }
+            let rest: number[] = [2, 3];
+            let t = new Triple(1, ...rest);
+            t.sum
+        "#
+        ),
+        JsValue::Number(6.0)
+    );
+}
+
+#[test]
+fn test_spread_in_new_multiple_spreads() {
+    // Multiple spreads in new expression
+    assert_eq!(
+        eval(
+            r#"
+            function Sum(a: number, b: number, c: number, d: number) {
+                this.total = a + b + c + d;
+            }
+            let arr1: number[] = [1, 2];
+            let arr2: number[] = [3, 4];
+            let s = new Sum(...arr1, ...arr2);
+            s.total
+        "#
+        ),
+        JsValue::Number(10.0)
+    );
+}

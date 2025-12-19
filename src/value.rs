@@ -236,7 +236,22 @@ impl fmt::Debug for JsValue {
             JsValue::Object(obj) => {
                 let obj = obj.borrow();
                 match &obj.exotic {
-                    ExoticObject::Ordinary => write!(f, "{{...}}"),
+                    ExoticObject::Ordinary => {
+                        // Check if this is an Error object (has name and message properties)
+                        let name_key = PropertyKey::from("name");
+                        let message_key = PropertyKey::from("message");
+
+                        if let (Some(name_prop), Some(message_prop)) = (
+                            obj.properties.get(&name_key),
+                            obj.properties.get(&message_key),
+                        ) {
+                            let name = name_prop.value.to_js_string();
+                            let msg = message_prop.value.to_js_string();
+                            write!(f, "{}: {}", name.as_ref(), msg.as_ref())
+                        } else {
+                            write!(f, "{{...}}")
+                        }
+                    }
                     ExoticObject::Array { .. } => write!(f, "[...]"),
                     ExoticObject::Function(func) => {
                         let name = func.name().unwrap_or("anonymous");
@@ -260,6 +275,13 @@ impl fmt::Debug for JsValue {
                     }
                     ExoticObject::Enum(data) => {
                         write!(f, "enum {}", data.name)
+                    }
+                    ExoticObject::Proxy(proxy_data) => {
+                        if proxy_data.revoked {
+                            write!(f, "[Proxy (revoked)]")
+                        } else {
+                            write!(f, "[Proxy]")
+                        }
                     }
                 }
             }
@@ -585,6 +607,10 @@ impl Traceable for JsObject {
                         // Trace the source module for re-export live bindings
                         visitor(source_module.copy_ref());
                     }
+                    JsFunction::ProxyRevoke(proxy) => {
+                        // Trace the associated proxy object
+                        visitor(proxy.copy_ref());
+                    }
                     JsFunction::Native(_)
                     | JsFunction::AccessorGetter
                     | JsFunction::AccessorSetter => {}
@@ -663,6 +689,11 @@ impl Traceable for JsObject {
             | ExoticObject::Enum(_) => {
                 // Enum values are stored in properties which are traced above
             }
+            ExoticObject::Proxy(proxy_data) => {
+                // Trace target and handler objects
+                visitor(proxy_data.target.copy_ref());
+                visitor(proxy_data.handler.copy_ref());
+            }
         }
     }
 }
@@ -728,7 +759,14 @@ impl JsObject {
 
     /// Check if this object is callable
     pub fn is_callable(&self) -> bool {
-        matches!(self.exotic, ExoticObject::Function(_))
+        match &self.exotic {
+            ExoticObject::Function(_) => true,
+            ExoticObject::Proxy(data) => {
+                // A proxy is callable if its target is callable
+                !data.revoked && data.target.borrow().is_callable()
+            }
+            _ => false,
+        }
     }
 
     /// Get an own property
@@ -1810,6 +1848,22 @@ pub enum ExoticObject {
     Environment(EnvironmentData),
     /// Enum exotic object - stores enum metadata
     Enum(EnumData),
+    /// Proxy exotic object - wraps target with handler traps
+    Proxy(ProxyData),
+}
+
+/// Proxy internal state
+///
+/// Stores the target object and handler object for the proxy.
+/// If revoked is true, all operations on the proxy will throw TypeError.
+#[derive(Debug, Clone)]
+pub struct ProxyData {
+    /// The wrapped target object
+    pub target: JsObjectRef,
+    /// The handler object containing traps
+    pub handler: JsObjectRef,
+    /// Whether this proxy has been revoked
+    pub revoked: bool,
 }
 
 /// Enum member - stores name and value
@@ -2065,6 +2119,9 @@ pub enum JsFunction {
         source_module: JsObjectRef,
         source_key: PropertyKey,
     },
+    /// Proxy revoke function - revokes the associated proxy
+    /// Contains the proxy object reference
+    ProxyRevoke(JsObjectRef),
 }
 
 /// Shared state for Promise.all tracking
@@ -2106,6 +2163,7 @@ impl JsFunction {
             JsFunction::AccessorSetter => Some("set"),
             JsFunction::ModuleExportGetter { .. } => Some("get"),
             JsFunction::ModuleReExportGetter { .. } => Some("get"),
+            JsFunction::ProxyRevoke(_) => Some("revoke"),
         }
     }
 }

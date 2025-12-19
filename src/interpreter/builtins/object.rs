@@ -1,6 +1,10 @@
 //! Object built-in methods
 
 use crate::error::JsError;
+use crate::interpreter::builtins::proxy::{
+    is_proxy, proxy_define_property, proxy_get_own_property_descriptor, proxy_get_prototype_of,
+    proxy_is_extensible, proxy_own_keys, proxy_prevent_extensions, proxy_set_prototype_of,
+};
 use crate::interpreter::Interpreter;
 use crate::value::{ExoticObject, Guarded, JsObjectRef, JsString, JsValue, Property, PropertyKey};
 
@@ -117,6 +121,33 @@ pub fn object_keys(
     let JsValue::Object(obj_ref) = obj else {
         return Err(JsError::type_error("Object.keys requires an object"));
     };
+
+    // Use proxy trap if it's a proxy - ownKeys trap returns all keys
+    if is_proxy(&obj_ref) {
+        // Call ownKeys trap and filter for enumerable string keys
+        let Guarded {
+            value: keys_result, ..
+        } = proxy_own_keys(interp, obj_ref)?;
+        // Filter for enumerable string keys only (not symbols)
+        if let JsValue::Object(keys_arr) = keys_result {
+            let keys_ref = keys_arr.borrow();
+            if let Some(elements) = keys_ref.array_elements() {
+                let string_keys: Vec<JsValue> = elements
+                    .iter()
+                    .filter(|k| matches!(k, JsValue::String(_)))
+                    .cloned()
+                    .collect();
+                drop(keys_ref);
+                let guard = interp.heap.create_guard();
+                let arr = interp.create_array_from(&guard, string_keys);
+                return Ok(Guarded::with_guard(JsValue::Object(arr), guard));
+            }
+        }
+        // Fallback to empty array
+        let guard = interp.heap.create_guard();
+        let arr = interp.create_array_from(&guard, vec![]);
+        return Ok(Guarded::with_guard(JsValue::Object(arr), guard));
+    }
 
     let keys: Vec<JsValue> = {
         let obj = obj_ref.borrow();
@@ -513,6 +544,9 @@ pub fn object_to_string(
                         "[object Object]",
                     ))))
                 }
+                ExoticObject::Proxy(_) => Ok(Guarded::unguarded(JsValue::String(JsString::from(
+                    "[object Object]",
+                )))),
             }
         }
         _ => Ok(Guarded::unguarded(JsValue::String(JsString::from(
@@ -546,6 +580,12 @@ pub fn object_get_own_property_descriptor(
     };
 
     let key = PropertyKey::from_value(&prop);
+
+    // Use proxy trap if it's a proxy
+    if is_proxy(&obj_ref) {
+        return proxy_get_own_property_descriptor(interp, obj_ref, &key);
+    }
+
     let obj_borrowed = obj_ref.borrow();
 
     if let Some(property) = obj_borrowed.get_own_property(&key) {
@@ -667,11 +707,17 @@ pub fn object_define_property(
         ));
     };
 
-    let JsValue::Object(desc_ref) = descriptor else {
+    let JsValue::Object(ref desc_ref) = descriptor else {
         return Err(JsError::type_error("Property descriptor must be an object"));
     };
 
     let key = PropertyKey::from_value(&prop);
+
+    // Use proxy trap if it's a proxy
+    if is_proxy(&obj_ref) {
+        proxy_define_property(interp, obj_ref, key, descriptor)?;
+        return Ok(Guarded::unguarded(obj));
+    }
 
     // Pre-intern descriptor property keys
     let value_key = PropertyKey::String(interp.intern("value"));
@@ -830,7 +876,7 @@ pub fn object_define_properties(
 
 /// Object.getPrototypeOf(obj)
 pub fn object_get_prototype_of(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
@@ -842,6 +888,11 @@ pub fn object_get_prototype_of(
         ));
     };
 
+    // Use proxy trap if it's a proxy
+    if is_proxy(&obj_ref) {
+        return proxy_get_prototype_of(interp, obj_ref);
+    }
+
     let obj_borrowed = obj_ref.borrow();
     match &obj_borrowed.prototype {
         Some(proto) => Ok(Guarded::unguarded(JsValue::Object(proto.clone()))),
@@ -851,7 +902,7 @@ pub fn object_get_prototype_of(
 
 /// Object.setPrototypeOf(obj, proto)
 pub fn object_set_prototype_of(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
@@ -863,6 +914,12 @@ pub fn object_set_prototype_of(
             "Object.setPrototypeOf requires an object",
         ));
     };
+
+    // Use proxy trap if it's a proxy
+    if is_proxy(&obj_ref) {
+        proxy_set_prototype_of(interp, obj_ref, proto)?;
+        return Ok(Guarded::unguarded(obj));
+    }
 
     let new_proto = match proto {
         JsValue::Object(p) => Some(p),
@@ -931,7 +988,12 @@ pub fn object_prevent_extensions(
     let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
 
     if let JsValue::Object(obj_ref) = &obj {
-        obj_ref.borrow_mut().extensible = false;
+        // Use proxy trap if it's a proxy
+        if is_proxy(obj_ref) {
+            proxy_prevent_extensions(interp, obj_ref.clone())?;
+        } else {
+            obj_ref.borrow_mut().extensible = false;
+        }
     }
 
     // Return with guard to protect the object until caller stores it
@@ -942,13 +1004,16 @@ pub fn object_prevent_extensions(
 /// Object.isExtensible(obj)
 /// Returns true if new properties can be added to the object
 pub fn object_is_extensible(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
     let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
 
     let is_extensible = match obj {
+        JsValue::Object(ref obj_ref) if is_proxy(obj_ref) => {
+            proxy_is_extensible(interp, obj_ref.clone())?
+        }
         JsValue::Object(obj_ref) => obj_ref.borrow().extensible,
         _ => false, // Non-objects are not extensible
     };

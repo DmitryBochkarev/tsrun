@@ -209,6 +209,11 @@ pub fn js_value_to_json(value: &JsValue) -> Result<serde_json::Value, JsError> {
                         }
                         serde_json::Value::Object(map)
                     }
+                    ExoticObject::Proxy(_) => {
+                        // Proxies are serialized as their target (or could trap toJSON)
+                        // For now, serialize as null to match JSON.stringify behavior
+                        serde_json::Value::Null
+                    }
                 }
             }
         }
