@@ -17,7 +17,7 @@ use crate::error::JsError;
 use crate::gc::{Gc, Guard};
 use crate::value::{
     Binding, CheapClone, ExoticObject, FunctionBody, GeneratorState, Guarded, JsObject, JsString,
-    JsSymbol, JsValue, PromiseStatus, PropertyKey, VarKey,
+    JsSymbol, JsValue, ModuleExport, PromiseStatus, PropertyKey, VarKey,
 };
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -2201,6 +2201,7 @@ impl Interpreter {
                             value,
                             mutable: *mutable,
                             initialized: true,
+                            import_binding: None,
                         },
                     );
                 }
@@ -2355,6 +2356,7 @@ impl Interpreter {
                             value,
                             mutable: *mutable,
                             initialized: true,
+                            import_binding: None,
                         },
                     );
                 }
@@ -3775,26 +3777,28 @@ impl Interpreter {
         // Resolve the module
         let module_obj = self.resolve_module(&specifier)?;
 
-        // Bind imported names to current environment
+        // Bind imported names to current environment using import bindings for live bindings
         for spec in &import.specifiers {
             match spec {
                 ImportSpecifier::Named {
                     local, imported, ..
                 } => {
                     let import_key = PropertyKey::String(imported.name.cheap_clone());
-                    let value = module_obj
-                        .borrow()
-                        .get_property(&import_key)
-                        .unwrap_or(JsValue::Undefined);
-                    self.env_define(local.name.cheap_clone(), value, false);
+                    // Create import binding for live bindings
+                    self.env_define_import(
+                        local.name.cheap_clone(),
+                        module_obj.clone(),
+                        import_key,
+                    );
                 }
                 ImportSpecifier::Default { local, .. } => {
                     let default_key = PropertyKey::String(self.intern("default"));
-                    let value = module_obj
-                        .borrow()
-                        .get_property(&default_key)
-                        .unwrap_or(JsValue::Undefined);
-                    self.env_define(local.name.cheap_clone(), value, false);
+                    // Create import binding for live bindings
+                    self.env_define_import(
+                        local.name.cheap_clone(),
+                        module_obj.clone(),
+                        default_key,
+                    );
                 }
                 ImportSpecifier::Namespace { local, .. } => {
                     self.env_define(
@@ -3824,7 +3828,13 @@ impl Interpreter {
                         } else {
                             id.name.cheap_clone()
                         };
-                        self.exports.insert(export_name, value);
+                        self.exports.insert(
+                            export_name.cheap_clone(),
+                            ModuleExport::Direct {
+                                name: export_name,
+                                value,
+                            },
+                        );
                     }
                 }
                 Statement::VariableDeclaration(var_decl) => {
@@ -3832,7 +3842,13 @@ impl Interpreter {
                     for declarator in var_decl.declarations.iter() {
                         if let Pattern::Identifier(id) = &declarator.id {
                             let value = self.env_get(&id.name)?;
-                            self.exports.insert(id.name.cheap_clone(), value);
+                            self.exports.insert(
+                                id.name.cheap_clone(),
+                                ModuleExport::Direct {
+                                    name: id.name.cheap_clone(),
+                                    value,
+                                },
+                            );
                         }
                     }
                 }
@@ -3845,7 +3861,13 @@ impl Interpreter {
                         } else {
                             id.name.cheap_clone()
                         };
-                        self.exports.insert(export_name, value);
+                        self.exports.insert(
+                            export_name.cheap_clone(),
+                            ModuleExport::Direct {
+                                name: export_name,
+                                value,
+                            },
+                        );
                     }
                 }
                 Statement::EnumDeclaration(enum_decl) => {
@@ -3856,7 +3878,13 @@ impl Interpreter {
                     } else {
                         enum_decl.id.name.cheap_clone()
                     };
-                    self.exports.insert(export_name, value);
+                    self.exports.insert(
+                        export_name.cheap_clone(),
+                        ModuleExport::Direct {
+                            name: export_name,
+                            value,
+                        },
+                    );
                 }
                 Statement::NamespaceDeclaration(ns_decl) => {
                     self.execute_namespace_declaration(ns_decl)?;
@@ -3866,7 +3894,13 @@ impl Interpreter {
                     } else {
                         ns_decl.id.name.cheap_clone()
                     };
-                    self.exports.insert(export_name, value);
+                    self.exports.insert(
+                        export_name.cheap_clone(),
+                        ModuleExport::Direct {
+                            name: export_name,
+                            value,
+                        },
+                    );
                 }
                 // TypeScript-only declarations - no runtime effect
                 Statement::InterfaceDeclaration(_) | Statement::TypeAlias(_) => {}
@@ -3881,24 +3915,39 @@ impl Interpreter {
             // Handle namespace re-export: export * as ns from "module"
             if let Some(ns_id) = &export.namespace_export {
                 // Export the entire module object under the namespace name
-                self.exports
-                    .insert(ns_id.name.cheap_clone(), JsValue::Object(module_obj));
+                // This is a direct export of the namespace object itself
+                self.exports.insert(
+                    ns_id.name.cheap_clone(),
+                    ModuleExport::Direct {
+                        name: ns_id.name.cheap_clone(),
+                        value: JsValue::Object(module_obj),
+                    },
+                );
             } else {
                 // Handle named re-exports: export { foo } from "module"
+                // Use ModuleExport::ReExport for proper live binding delegation
                 for spec in &export.specifiers {
-                    let import_key = PropertyKey::String(self.intern(spec.local.name.as_str()));
-                    let value = module_obj
-                        .borrow()
-                        .get_property(&import_key)
-                        .unwrap_or(JsValue::Undefined);
-                    self.exports.insert(spec.exported.name.cheap_clone(), value);
+                    let source_key = PropertyKey::String(self.intern(spec.local.name.as_str()));
+                    self.exports.insert(
+                        spec.exported.name.cheap_clone(),
+                        ModuleExport::ReExport {
+                            source_module: module_obj.cheap_clone(),
+                            source_key,
+                        },
+                    );
                 }
             }
         } else if !export.specifiers.is_empty() {
             // Handle named exports: export { foo, bar }
             for spec in &export.specifiers {
                 let value = self.env_get(&spec.local.name)?;
-                self.exports.insert(spec.exported.name.cheap_clone(), value);
+                self.exports.insert(
+                    spec.exported.name.cheap_clone(),
+                    ModuleExport::Direct {
+                        name: spec.local.name.cheap_clone(),
+                        value,
+                    },
+                );
             }
         }
 

@@ -25,9 +25,9 @@ use crate::parser::Parser;
 use crate::string_dict::StringDict;
 use crate::value::{
     create_environment_unrooted, Binding, CheapClone, EnumData, EnvRef, EnvironmentData,
-    ExoticObject, FunctionBody, GeneratorState, GeneratorStatus, Guarded, InterpretedFunction,
-    JsFunction, JsObject, JsString, JsValue, NativeFn, NativeFunction, PromiseStatus, Property,
-    PropertyKey, VarKey,
+    ExoticObject, FunctionBody, GeneratorState, GeneratorStatus, Guarded, ImportBinding,
+    InterpretedFunction, JsFunction, JsObject, JsString, JsValue, ModuleExport, NativeFn,
+    NativeFunction, PromiseStatus, Property, PropertyKey, VarKey,
 };
 use rustc_hash::FxHashMap;
 use std::cell::RefCell;
@@ -156,7 +156,8 @@ pub struct Interpreter {
     thrown_guard: Option<Guard<JsObject>>,
 
     /// Exported values from the module
-    pub exports: FxHashMap<JsString, JsValue>,
+    /// Uses ModuleExport to distinguish direct exports (with live bindings) from re-exports
+    pub exports: FxHashMap<JsString, ModuleExport>,
 
     /// Call stack for stack traces
     pub call_stack: Vec<StackFrame>,
@@ -705,9 +706,11 @@ impl Interpreter {
         // Set current module path for resolving nested imports
         self.current_module_path = Some(module_path.clone());
 
-        // Create module environment
+        // Create module environment (rooted so it persists for live bindings)
         let module_env = self.create_module_environment();
-        self.env = module_env;
+        // Root the module environment - it must persist for live bindings
+        self.root_guard.guard(module_env.clone());
+        self.env = module_env.cheap_clone();
 
         // Execute module using stack-based evaluation
         let result = self.execute_program_with_stack(&program);
@@ -725,14 +728,74 @@ impl Interpreter {
         // Drain exports to a vector to avoid borrow conflict
         let exports: Vec<_> = self.exports.drain().collect();
 
-        // Copy exports to module object
-        for (name, value) in exports {
-            module_obj
-                .borrow_mut()
-                .set_property(PropertyKey::String(name), value);
+        // Create properties for exports with proper live binding support
+        for (export_name, module_export) in exports {
+            match module_export {
+                ModuleExport::Direct { name, value } => {
+                    // Check if there's a binding in the module environment
+                    let has_binding = {
+                        let env_ref = module_env.borrow();
+                        if let Some(env_data) = env_ref.as_environment() {
+                            let var_key = VarKey(name.cheap_clone());
+                            env_data.bindings.contains_key(&var_key)
+                        } else {
+                            false
+                        }
+                    };
+
+                    if has_binding {
+                        // Direct export with binding: create getter for live binding
+                        let getter_obj = guard.alloc();
+                        {
+                            let mut getter_ref = getter_obj.borrow_mut();
+                            getter_ref.prototype = Some(self.function_prototype.cheap_clone());
+                            getter_ref.exotic =
+                                ExoticObject::Function(JsFunction::ModuleExportGetter {
+                                    module_env: module_env.cheap_clone(),
+                                    binding_name: name,
+                                });
+                        }
+
+                        // Set as accessor property (getter only, no setter)
+                        module_obj.borrow_mut().properties.insert(
+                            PropertyKey::String(export_name),
+                            Property::accessor(Some(getter_obj), None),
+                        );
+                    } else {
+                        // Direct export without binding (e.g., namespace re-export: export * as ns)
+                        // Use the stored value directly
+                        module_obj
+                            .borrow_mut()
+                            .set_property(PropertyKey::String(export_name), value);
+                    }
+                }
+                ModuleExport::ReExport {
+                    source_module,
+                    source_key,
+                } => {
+                    // Re-export: create getter that delegates to source module's property
+                    // This enables live bindings through re-exports
+                    let getter_obj = guard.alloc();
+                    {
+                        let mut getter_ref = getter_obj.borrow_mut();
+                        getter_ref.prototype = Some(self.function_prototype.cheap_clone());
+                        getter_ref.exotic =
+                            ExoticObject::Function(JsFunction::ModuleReExportGetter {
+                                source_module,
+                                source_key,
+                            });
+                    }
+
+                    // Set as accessor property (getter only, no setter)
+                    module_obj.borrow_mut().properties.insert(
+                        PropertyKey::String(export_name),
+                        Property::accessor(Some(getter_obj), None),
+                    );
+                }
+            }
         }
 
-        // Root the module (lives forever)
+        // Root the module namespace object (lives forever)
         self.root_guard.guard(module_obj.clone());
 
         // Cache it by normalized path
@@ -1001,6 +1064,31 @@ impl Interpreter {
                     value,
                     mutable,
                     initialized: true,
+                    import_binding: None,
+                },
+            );
+        }
+    }
+
+    /// Define an import binding in the current environment (for live bindings)
+    pub fn env_define_import(
+        &mut self,
+        name: JsString,
+        module_obj: Gc<JsObject>,
+        property_key: PropertyKey,
+    ) {
+        let mut env_ref = self.env.borrow_mut();
+        if let Some(data) = env_ref.as_environment_mut() {
+            data.bindings.insert(
+                VarKey(name),
+                Binding {
+                    value: JsValue::Undefined, // Not used for import bindings
+                    mutable: false,            // Imports are always read-only
+                    initialized: true,
+                    import_binding: Some(ImportBinding {
+                        module_obj,
+                        property_key,
+                    }),
                 },
             );
         }
@@ -1024,6 +1112,10 @@ impl Interpreter {
                             name
                         )));
                     }
+                    // Handle import bindings (for live bindings)
+                    if let Some(ref import_binding) = binding.import_binding {
+                        return self.resolve_import_binding(import_binding);
+                    }
                     return Ok(binding.value.clone());
                 }
                 current = data.outer.cheap_clone();
@@ -1042,6 +1134,59 @@ impl Interpreter {
         }
 
         Err(JsError::reference_error(format!("{} is not defined", name)))
+    }
+
+    /// Resolve an import binding by reading from the module's environment
+    /// This handles both direct exports (ModuleExportGetter) and re-exports (ModuleReExportGetter)
+    fn resolve_import_binding(&self, import_binding: &ImportBinding) -> Result<JsValue, JsError> {
+        self.resolve_module_property(&import_binding.module_obj, &import_binding.property_key)
+    }
+
+    /// Resolve a property from a module namespace object, handling live bindings
+    /// This recursively resolves through re-export chains
+    #[allow(clippy::only_used_in_recursion)]
+    fn resolve_module_property(
+        &self,
+        module_obj: &Gc<JsObject>,
+        prop_key: &PropertyKey,
+    ) -> Result<JsValue, JsError> {
+        // Get the property descriptor from the module namespace object
+        let prop_desc = module_obj.borrow().get_property_descriptor(prop_key);
+
+        match prop_desc {
+            Some((prop, _)) if prop.is_accessor() => {
+                // The property has a getter - could be ModuleExportGetter or ModuleReExportGetter
+                if let Some(getter) = prop.getter() {
+                    let getter_ref = getter.borrow();
+                    match &getter_ref.exotic {
+                        ExoticObject::Function(JsFunction::ModuleExportGetter {
+                            module_env,
+                            binding_name,
+                        }) => {
+                            // Direct export: read from the module's environment
+                            let env_ref = module_env.borrow();
+                            if let Some(env_data) = env_ref.as_environment() {
+                                let var_key = VarKey(binding_name.cheap_clone());
+                                if let Some(binding) = env_data.bindings.get(&var_key) {
+                                    return Ok(binding.value.clone());
+                                }
+                            }
+                        }
+                        ExoticObject::Function(JsFunction::ModuleReExportGetter {
+                            source_module,
+                            source_key,
+                        }) => {
+                            // Re-export: recursively resolve from source module
+                            return self.resolve_module_property(source_module, source_key);
+                        }
+                        _ => {}
+                    }
+                }
+                Ok(JsValue::Undefined)
+            }
+            Some((prop, _)) => Ok(prop.value.clone()),
+            None => Ok(JsValue::Undefined),
+        }
     }
 
     /// Set a variable in the environment chain
@@ -2012,9 +2157,11 @@ impl Interpreter {
         let saved_env = self.env.cheap_clone();
         let saved_exports = std::mem::take(&mut self.exports);
 
-        // Create module environment
+        // Create module environment (rooted so it persists for live bindings)
         let module_env = self.create_module_environment();
-        self.env = module_env;
+        // Root the module environment - it must persist for live bindings
+        self.root_guard.guard(module_env.clone());
+        self.env = module_env.cheap_clone();
 
         // Execute the module body using stack-based evaluation
         let result = self.execute_program_with_stack(&program);
@@ -2031,11 +2178,70 @@ impl Interpreter {
         // Drain exports to a vector to avoid borrow conflict
         let exports: Vec<_> = self.exports.drain().collect();
 
-        // Copy exports to module object
-        for (name, value) in exports {
-            module_obj
-                .borrow_mut()
-                .set_property(PropertyKey::String(name), value);
+        // Create properties for exports with proper live binding support
+        for (export_name, module_export) in exports {
+            match module_export {
+                ModuleExport::Direct { name, value } => {
+                    // Check if there's a binding in the module environment
+                    let has_binding = {
+                        let env_ref = module_env.borrow();
+                        if let Some(env_data) = env_ref.as_environment() {
+                            let var_key = VarKey(name.cheap_clone());
+                            env_data.bindings.contains_key(&var_key)
+                        } else {
+                            false
+                        }
+                    };
+
+                    if has_binding {
+                        // Direct export with binding: create getter for live binding
+                        let getter_obj = guard.alloc();
+                        {
+                            let mut getter_ref = getter_obj.borrow_mut();
+                            getter_ref.prototype = Some(self.function_prototype.cheap_clone());
+                            getter_ref.exotic =
+                                ExoticObject::Function(JsFunction::ModuleExportGetter {
+                                    module_env: module_env.cheap_clone(),
+                                    binding_name: name,
+                                });
+                        }
+
+                        // Set as accessor property (getter only, no setter)
+                        module_obj.borrow_mut().properties.insert(
+                            PropertyKey::String(export_name),
+                            Property::accessor(Some(getter_obj), None),
+                        );
+                    } else {
+                        // Direct export without binding (e.g., namespace re-export)
+                        // Use the stored value directly
+                        module_obj
+                            .borrow_mut()
+                            .set_property(PropertyKey::String(export_name), value);
+                    }
+                }
+                ModuleExport::ReExport {
+                    source_module,
+                    source_key,
+                } => {
+                    // Re-export: create getter that delegates to source module's property
+                    let getter_obj = guard.alloc();
+                    {
+                        let mut getter_ref = getter_obj.borrow_mut();
+                        getter_ref.prototype = Some(self.function_prototype.cheap_clone());
+                        getter_ref.exotic =
+                            ExoticObject::Function(JsFunction::ModuleReExportGetter {
+                                source_module,
+                                source_key,
+                            });
+                    }
+
+                    // Set as accessor property (getter only, no setter)
+                    module_obj.borrow_mut().properties.insert(
+                        PropertyKey::String(export_name),
+                        Property::accessor(Some(getter_obj), None),
+                    );
+                }
+            }
         }
 
         // Restore saved exports
@@ -2216,7 +2422,19 @@ impl Interpreter {
         // Copy namespace exports to the namespace object
         // Drain to vec first to avoid borrow conflict
         let exports: Vec<_> = self.exports.drain().collect();
-        for (name, value) in exports {
+        for (name, module_export) in exports {
+            // For namespaces, extract the value from ModuleExport
+            let value = match module_export {
+                ModuleExport::Direct { value, .. } => value,
+                ModuleExport::ReExport {
+                    source_module,
+                    source_key,
+                } => {
+                    // Resolve the re-export value
+                    self.resolve_module_property(&source_module, &source_key)
+                        .unwrap_or(JsValue::Undefined)
+                }
+            };
             ns_obj
                 .borrow_mut()
                 .set_property(PropertyKey::String(name), value);
@@ -2245,7 +2463,13 @@ impl Interpreter {
                             self.execute_function_declaration(func)?;
                             if let Some(id) = &func.id {
                                 let value = self.env_get(&id.name)?;
-                                self.exports.insert(id.name.cheap_clone(), value);
+                                self.exports.insert(
+                                    id.name.cheap_clone(),
+                                    ModuleExport::Direct {
+                                        name: id.name.cheap_clone(),
+                                        value,
+                                    },
+                                );
                             }
                         }
                         Statement::VariableDeclaration(var_decl) => {
@@ -2253,7 +2477,13 @@ impl Interpreter {
                             for declarator in var_decl.declarations.iter() {
                                 if let Pattern::Identifier(id) = &declarator.id {
                                     let value = self.env_get(&id.name)?;
-                                    self.exports.insert(id.name.cheap_clone(), value);
+                                    self.exports.insert(
+                                        id.name.cheap_clone(),
+                                        ModuleExport::Direct {
+                                            name: id.name.cheap_clone(),
+                                            value,
+                                        },
+                                    );
                                 }
                             }
                         }
@@ -2261,19 +2491,37 @@ impl Interpreter {
                             self.execute_class_declaration(class)?;
                             if let Some(id) = &class.id {
                                 let value = self.env_get(&id.name)?;
-                                self.exports.insert(id.name.cheap_clone(), value);
+                                self.exports.insert(
+                                    id.name.cheap_clone(),
+                                    ModuleExport::Direct {
+                                        name: id.name.cheap_clone(),
+                                        value,
+                                    },
+                                );
                             }
                         }
                         Statement::EnumDeclaration(enum_decl) => {
                             self.execute_enum_declaration(enum_decl)?;
                             let value = self.env_get(&enum_decl.id.name)?;
-                            self.exports.insert(enum_decl.id.name.cheap_clone(), value);
+                            self.exports.insert(
+                                enum_decl.id.name.cheap_clone(),
+                                ModuleExport::Direct {
+                                    name: enum_decl.id.name.cheap_clone(),
+                                    value,
+                                },
+                            );
                         }
                         Statement::NamespaceDeclaration(nested_ns) => {
                             // Handle nested namespace
                             self.execute_namespace_declaration(nested_ns)?;
                             let value = self.env_get(&nested_ns.id.name)?;
-                            self.exports.insert(nested_ns.id.name.cheap_clone(), value);
+                            self.exports.insert(
+                                nested_ns.id.name.cheap_clone(),
+                                ModuleExport::Direct {
+                                    name: nested_ns.id.name.cheap_clone(),
+                                    value,
+                                },
+                            );
                         }
                         // TypeScript-only declarations (interfaces, type aliases) - no runtime effect
                         Statement::InterfaceDeclaration(_) | Statement::TypeAlias(_) => {}
@@ -4402,24 +4650,50 @@ impl Interpreter {
                 } = self.evaluate_expression(&member.object)?;
                 let key = self.get_member_key(&member.property)?;
 
-                let func = match &obj {
-                    JsValue::Object(o) => o.borrow().get_property(&key),
-                    JsValue::Number(_) => self.number_prototype.borrow().get_property(&key),
+                // Get the function, invoking getters if the property is an accessor
+                let (func, extra_guard) = match &obj {
+                    JsValue::Object(o) => {
+                        // Check for accessor property - need to invoke getter
+                        let prop_desc = o.borrow().get_property_descriptor(&key);
+                        match prop_desc {
+                            Some((prop, _)) if prop.is_accessor() => {
+                                // Invoke getter
+                                if let Some(getter) = prop.getter() {
+                                    let Guarded {
+                                        value: getter_val,
+                                        guard: getter_guard,
+                                    } = self.call_function(
+                                        JsValue::Object(getter.clone()),
+                                        obj.clone(),
+                                        &[],
+                                    )?;
+                                    (Some(getter_val), getter_guard)
+                                } else {
+                                    (None, None)
+                                }
+                            }
+                            _ => (o.borrow().get_property(&key), None),
+                        }
+                    }
+                    JsValue::Number(_) => (self.number_prototype.borrow().get_property(&key), None),
                     JsValue::String(_) => {
                         // First check string-specific properties
                         if let PropertyKey::String(ref k) = key {
                             if k.as_str() == "length" {
-                                None // length is not a function
+                                (None, None) // length is not a function
                             } else {
-                                self.string_prototype.borrow().get_property(&key)
+                                (self.string_prototype.borrow().get_property(&key), None)
                             }
                         } else {
-                            None
+                            (None, None)
                         }
                     }
-                    JsValue::Symbol(_) => self.symbol_prototype.borrow().get_property(&key),
-                    _ => None,
+                    JsValue::Symbol(_) => (self.symbol_prototype.borrow().get_property(&key), None),
+                    _ => (None, None),
                 };
+
+                // Keep extra guard alive (for values from getter calls)
+                let _extra_guard = extra_guard;
 
                 match func {
                     Some(f) => (f, obj, obj_guard),
@@ -4553,6 +4827,7 @@ impl Interpreter {
                                 value: this_value.clone(),
                                 mutable: false,
                                 initialized: true,
+                                import_binding: None,
                             },
                         );
                     }
@@ -4570,6 +4845,7 @@ impl Interpreter {
                                     value: super_val,
                                     mutable: false,
                                     initialized: true,
+                                    import_binding: None,
                                 },
                             );
                         }
@@ -4804,6 +5080,30 @@ impl Interpreter {
                     }
                 }
                 Ok(Guarded::unguarded(JsValue::Undefined))
+            }
+
+            JsFunction::ModuleExportGetter {
+                module_env,
+                binding_name,
+            } => {
+                // Module export getter - read binding from module's environment
+                let env_ref = module_env.borrow();
+                if let Some(env_data) = env_ref.as_environment() {
+                    let key = VarKey(binding_name.cheap_clone());
+                    if let Some(binding) = env_data.bindings.get(&key) {
+                        return Ok(Guarded::unguarded(binding.value.clone()));
+                    }
+                }
+                Ok(Guarded::unguarded(JsValue::Undefined))
+            }
+
+            JsFunction::ModuleReExportGetter {
+                source_module,
+                source_key,
+            } => {
+                // Re-export getter - delegate to source module's property
+                let value = self.resolve_module_property(&source_module, &source_key)?;
+                Ok(Guarded::unguarded(value))
             }
         }
     }

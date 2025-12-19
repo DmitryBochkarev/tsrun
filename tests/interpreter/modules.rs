@@ -1,8 +1,8 @@
 //! Tests for the module system and order API
 
 use typescript_eval::{
-    Guarded, InternalModule, Interpreter, JsError, JsValue, ModulePath, OrderResponse, Runtime,
-    RuntimeConfig, RuntimeResult, RuntimeValue,
+    value::PropertyKey, Guarded, InternalModule, Interpreter, JsError, JsValue, ModulePath,
+    OrderResponse, Runtime, RuntimeConfig, RuntimeResult, RuntimeValue,
 };
 
 #[test]
@@ -1437,6 +1437,566 @@ fn test_export_star_as_namespace_nested() {
                 }
                 _ => panic!("Expected NeedImports for level2"),
             }
+        }
+        _ => panic!("Expected NeedImports"),
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Live Bindings Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_live_binding_let_variable() {
+    // Test: imported let variable reflects changes made by exported function
+    let mut runtime = Runtime::new();
+
+    let result = runtime
+        .eval(
+            r#"
+        import { count, increment } from "./counter";
+        const before = count;
+        increment();
+        const after = count;
+        [before, after];
+    "#,
+        )
+        .unwrap();
+
+    match result {
+        RuntimeResult::NeedImports(imports) => {
+            runtime
+                .provide_module(
+                    imports[0].resolved_path.clone(),
+                    r#"
+                    export let count: number = 0;
+                    export function increment(): void {
+                        count++;
+                    }
+                "#,
+                )
+                .unwrap();
+
+            let result2 = runtime.continue_eval().unwrap();
+
+            match result2 {
+                RuntimeResult::Complete(value) => {
+                    // With live bindings: before=0, after=1
+                    // Without live bindings (snapshot): before=0, after=0
+                    if let JsValue::Object(arr) = &*value {
+                        let arr_ref = arr.borrow();
+                        let before = arr_ref.get_property(&PropertyKey::Index(0)).unwrap_or(JsValue::Undefined);
+                        let after = arr_ref.get_property(&PropertyKey::Index(1)).unwrap_or(JsValue::Undefined);
+                        assert_eq!(before, JsValue::Number(0.0), "before should be 0");
+                        assert_eq!(after, JsValue::Number(1.0), "after should be 1 (live binding)");
+                    } else {
+                        panic!("Expected array result");
+                    }
+                }
+                _ => panic!("Expected Complete, got {:?}", result2),
+            }
+        }
+        _ => panic!("Expected NeedImports"),
+    }
+}
+
+#[test]
+fn test_live_binding_multiple_increments() {
+    // Test: multiple updates are all visible
+    let mut runtime = Runtime::new();
+
+    let result = runtime
+        .eval(
+            r#"
+        import { value, add } from "./accumulator";
+        add(10);
+        add(20);
+        add(12);
+        value;
+    "#,
+        )
+        .unwrap();
+
+    match result {
+        RuntimeResult::NeedImports(imports) => {
+            runtime
+                .provide_module(
+                    imports[0].resolved_path.clone(),
+                    r#"
+                    export let value: number = 0;
+                    export function add(n: number): void {
+                        value += n;
+                    }
+                "#,
+                )
+                .unwrap();
+
+            let result2 = runtime.continue_eval().unwrap();
+
+            match result2 {
+                RuntimeResult::Complete(value) => {
+                    // 0 + 10 + 20 + 12 = 42
+                    assert_eq!(value, JsValue::Number(42.0));
+                }
+                _ => panic!("Expected Complete"),
+            }
+        }
+        _ => panic!("Expected NeedImports"),
+    }
+}
+
+#[test]
+fn test_live_binding_object_mutation() {
+    // Test: object property mutations are visible (this works even without live bindings
+    // because objects are references, but let's verify)
+    let mut runtime = Runtime::new();
+
+    let result = runtime
+        .eval(
+            r#"
+        import { state, setState } from "./state";
+        const before = state.value;
+        setState(42);
+        const after = state.value;
+        [before, after];
+    "#,
+        )
+        .unwrap();
+
+    match result {
+        RuntimeResult::NeedImports(imports) => {
+            runtime
+                .provide_module(
+                    imports[0].resolved_path.clone(),
+                    r#"
+                    export const state = { value: 0 };
+                    export function setState(v: number): void {
+                        state.value = v;
+                    }
+                "#,
+                )
+                .unwrap();
+
+            let result2 = runtime.continue_eval().unwrap();
+
+            match result2 {
+                RuntimeResult::Complete(value) => {
+                    if let JsValue::Object(arr) = &*value {
+                        let arr_ref = arr.borrow();
+                        let before = arr_ref.get_property(&PropertyKey::Index(0)).unwrap_or(JsValue::Undefined);
+                        let after = arr_ref.get_property(&PropertyKey::Index(1)).unwrap_or(JsValue::Undefined);
+                        assert_eq!(before, JsValue::Number(0.0));
+                        assert_eq!(after, JsValue::Number(42.0));
+                    } else {
+                        panic!("Expected array result");
+                    }
+                }
+                _ => panic!("Expected Complete"),
+            }
+        }
+        _ => panic!("Expected NeedImports"),
+    }
+}
+
+#[test]
+fn test_live_binding_reassignment() {
+    // Test: complete reassignment of exported variable is visible
+    let mut runtime = Runtime::new();
+
+    let result = runtime
+        .eval(
+            r#"
+        import { config, updateConfig } from "./config";
+        const before = config;
+        updateConfig({ name: "updated", value: 42 });
+        const after = config;
+        [before.name, after.name, after.value];
+    "#,
+        )
+        .unwrap();
+
+    match result {
+        RuntimeResult::NeedImports(imports) => {
+            runtime
+                .provide_module(
+                    imports[0].resolved_path.clone(),
+                    r#"
+                    export let config = { name: "initial", value: 0 };
+                    export function updateConfig(newConfig: { name: string, value: number }): void {
+                        config = newConfig;
+                    }
+                "#,
+                )
+                .unwrap();
+
+            let result2 = runtime.continue_eval().unwrap();
+
+            match result2 {
+                RuntimeResult::Complete(value) => {
+                    if let JsValue::Object(arr) = &*value {
+                        let arr_ref = arr.borrow();
+                        let before_name = arr_ref.get_property(&PropertyKey::Index(0)).unwrap_or(JsValue::Undefined);
+                        let after_name = arr_ref.get_property(&PropertyKey::Index(1)).unwrap_or(JsValue::Undefined);
+                        let after_value = arr_ref.get_property(&PropertyKey::Index(2)).unwrap_or(JsValue::Undefined);
+                        assert_eq!(before_name, JsValue::String("initial".into()));
+                        assert_eq!(after_name, JsValue::String("updated".into()));
+                        assert_eq!(after_value, JsValue::Number(42.0));
+                    } else {
+                        panic!("Expected array result");
+                    }
+                }
+                _ => panic!("Expected Complete"),
+            }
+        }
+        _ => panic!("Expected NeedImports"),
+    }
+}
+
+#[test]
+fn test_live_binding_namespace_import() {
+    // Test: namespace imports also see live updates
+    let mut runtime = Runtime::new();
+
+    let result = runtime
+        .eval(
+            r#"
+        import * as counter from "./counter";
+        const before = counter.count;
+        counter.increment();
+        counter.increment();
+        const after = counter.count;
+        [before, after];
+    "#,
+        )
+        .unwrap();
+
+    match result {
+        RuntimeResult::NeedImports(imports) => {
+            runtime
+                .provide_module(
+                    imports[0].resolved_path.clone(),
+                    r#"
+                    export let count: number = 0;
+                    export function increment(): void {
+                        count++;
+                    }
+                "#,
+                )
+                .unwrap();
+
+            let result2 = runtime.continue_eval().unwrap();
+
+            match result2 {
+                RuntimeResult::Complete(value) => {
+                    if let JsValue::Object(arr) = &*value {
+                        let arr_ref = arr.borrow();
+                        let before = arr_ref.get_property(&PropertyKey::Index(0)).unwrap_or(JsValue::Undefined);
+                        let after = arr_ref.get_property(&PropertyKey::Index(1)).unwrap_or(JsValue::Undefined);
+                        assert_eq!(before, JsValue::Number(0.0));
+                        assert_eq!(after, JsValue::Number(2.0));
+                    } else {
+                        panic!("Expected array result");
+                    }
+                }
+                _ => panic!("Expected Complete"),
+            }
+        }
+        _ => panic!("Expected NeedImports"),
+    }
+}
+
+#[test]
+fn test_live_binding_through_reexport() {
+    // Test: re-exports properly propagate live bindings.
+    // When module A re-exports from module B, reading the re-exported value
+    // delegates to module B's live binding, so changes are visible.
+    let mut runtime = Runtime::new();
+
+    let result = runtime
+        .eval(
+            r#"
+        import { count, increment } from "./reexport";
+        const before = count;
+        increment();
+        const after = count;
+        [before, after];
+    "#,
+        )
+        .unwrap();
+
+    match result {
+        RuntimeResult::NeedImports(imports) => {
+            runtime
+                .provide_module(
+                    imports[0].resolved_path.clone(),
+                    r#"
+                    export { count, increment } from "./counter";
+                "#,
+                )
+                .unwrap();
+
+            let result2 = runtime.continue_eval().unwrap();
+
+            match result2 {
+                RuntimeResult::NeedImports(imports2) => {
+                    runtime
+                        .provide_module(
+                            imports2[0].resolved_path.clone(),
+                            r#"
+                            export let count: number = 0;
+                            export function increment(): void {
+                                count++;
+                            }
+                        "#,
+                        )
+                        .unwrap();
+
+                    let result3 = runtime.continue_eval().unwrap();
+
+                    match result3 {
+                        RuntimeResult::Complete(value) => {
+                            if let JsValue::Object(arr) = &*value {
+                                let arr_ref = arr.borrow();
+                                let before = arr_ref.get_property(&PropertyKey::Index(0)).unwrap_or(JsValue::Undefined);
+                                let after = arr_ref.get_property(&PropertyKey::Index(1)).unwrap_or(JsValue::Undefined);
+                                assert_eq!(before, JsValue::Number(0.0));
+                                // With proper live bindings, the re-exported value reflects changes
+                                // made in the original module
+                                assert_eq!(after, JsValue::Number(1.0));
+                            } else {
+                                panic!("Expected array result");
+                            }
+                        }
+                        _ => panic!("Expected Complete"),
+                    }
+                }
+                _ => panic!("Expected NeedImports for counter"),
+            }
+        }
+        _ => panic!("Expected NeedImports"),
+    }
+}
+
+#[test]
+fn test_live_binding_aliased_import() {
+    // Test: aliased imports also get live binding
+    let mut runtime = Runtime::new();
+
+    let result = runtime
+        .eval(
+            r#"
+        import { count as myCount, increment as inc } from "./counter";
+        const before = myCount;
+        inc();
+        inc();
+        inc();
+        const after = myCount;
+        [before, after];
+    "#,
+        )
+        .unwrap();
+
+    match result {
+        RuntimeResult::NeedImports(imports) => {
+            runtime
+                .provide_module(
+                    imports[0].resolved_path.clone(),
+                    r#"
+                    export let count: number = 0;
+                    export function increment(): void {
+                        count++;
+                    }
+                "#,
+                )
+                .unwrap();
+
+            let result2 = runtime.continue_eval().unwrap();
+
+            match result2 {
+                RuntimeResult::Complete(value) => {
+                    if let JsValue::Object(arr) = &*value {
+                        let arr_ref = arr.borrow();
+                        let before = arr_ref.get_property(&PropertyKey::Index(0)).unwrap_or(JsValue::Undefined);
+                        let after = arr_ref.get_property(&PropertyKey::Index(1)).unwrap_or(JsValue::Undefined);
+                        assert_eq!(before, JsValue::Number(0.0));
+                        assert_eq!(after, JsValue::Number(3.0));
+                    } else {
+                        panic!("Expected array result");
+                    }
+                }
+                _ => panic!("Expected Complete"),
+            }
+        }
+        _ => panic!("Expected NeedImports"),
+    }
+}
+
+// Debug test for namespace import - just accessing a value
+#[test]
+fn test_live_binding_namespace_simple() {
+    let mut runtime = Runtime::new();
+
+    let result = runtime
+        .eval(
+            r#"
+        import * as counter from "./counter";
+        counter.count;
+    "#,
+        )
+        .unwrap();
+
+    match result {
+        RuntimeResult::NeedImports(imports) => {
+            runtime
+                .provide_module(
+                    imports[0].resolved_path.clone(),
+                    r#"export let count: number = 42;"#,
+                )
+                .unwrap();
+
+            let result2 = runtime.continue_eval().unwrap();
+
+            match result2 {
+                RuntimeResult::Complete(value) => {
+                    assert_eq!(value, JsValue::Number(42.0));
+                }
+                other => panic!("Expected Complete, got {:?}", other),
+            }
+        }
+        _ => panic!("Expected NeedImports"),
+    }
+}
+
+// Debug test for namespace import - calling a function
+#[test]
+fn test_live_binding_namespace_call() {
+    let mut runtime = Runtime::new();
+
+    let result = runtime
+        .eval(
+            r#"
+        import * as counter from "./counter";
+        counter.getValue();
+    "#,
+        )
+        .unwrap();
+
+    match result {
+        RuntimeResult::NeedImports(imports) => {
+            runtime
+                .provide_module(
+                    imports[0].resolved_path.clone(),
+                    r#"
+                    export function getValue(): number {
+                        return 42;
+                    }
+                "#,
+                )
+                .unwrap();
+
+            let result2 = runtime.continue_eval().unwrap();
+
+            match result2 {
+                RuntimeResult::Complete(value) => {
+                    assert_eq!(value, JsValue::Number(42.0));
+                }
+                other => panic!("Expected Complete, got {:?}", other),
+            }
+        }
+        _ => panic!("Expected NeedImports"),
+    }
+}
+
+// Debug test for re-export issue
+#[test]
+fn test_live_binding_reexport_debug() {
+    // Simpler test: just check if we can import through re-export and call a function
+    let mut runtime = Runtime::new();
+
+    let result = runtime
+        .eval(
+            r#"
+        import { getValue } from "./reexport";
+        getValue();
+    "#,
+        )
+        .unwrap();
+
+    match result {
+        RuntimeResult::NeedImports(imports) => {
+            runtime
+                .provide_module(
+                    imports[0].resolved_path.clone(),
+                    r#"export { getValue } from "./source";"#,
+                )
+                .unwrap();
+
+            let result2 = runtime.continue_eval().unwrap();
+
+            match result2 {
+                RuntimeResult::NeedImports(imports2) => {
+                    runtime
+                        .provide_module(
+                            imports2[0].resolved_path.clone(),
+                            r#"
+                            export function getValue(): number {
+                                return 42;
+                            }
+                        "#,
+                        )
+                        .unwrap();
+
+                    let result3 = runtime.continue_eval().unwrap();
+
+                    match result3 {
+                        RuntimeResult::Complete(value) => {
+                            assert_eq!(value, JsValue::Number(42.0));
+                        }
+                        _ => panic!("Expected Complete, got {:?}", result3),
+                    }
+                }
+                _ => panic!("Expected NeedImports for source"),
+            }
+        }
+        _ => panic!("Expected NeedImports"),
+    }
+}
+
+#[test]
+fn test_live_binding_imported_value_is_readonly() {
+    // Test: attempting to assign to imported binding should error
+    let mut runtime = Runtime::new();
+
+    let result = runtime
+        .eval(
+            r#"
+        import { count } from "./counter";
+        count = 100;  // Should error - imports are read-only
+    "#,
+        )
+        .unwrap();
+
+    match result {
+        RuntimeResult::NeedImports(imports) => {
+            runtime
+                .provide_module(
+                    imports[0].resolved_path.clone(),
+                    r#"
+                    export let count: number = 0;
+                "#,
+                )
+                .unwrap();
+
+            let result2 = runtime.continue_eval();
+
+            // Should be an error - cannot assign to import binding
+            assert!(result2.is_err(), "Assigning to import should error");
+            let err = result2.unwrap_err();
+            let msg = err.to_string();
+            assert!(
+                msg.contains("const") || msg.contains("assign") || msg.contains("immutable") || msg.contains("read"),
+                "Error should mention const/assign/immutable/read, got: {}", msg
+            );
         }
         _ => panic!("Expected NeedImports"),
     }

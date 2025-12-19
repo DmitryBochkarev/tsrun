@@ -577,6 +577,14 @@ impl Traceable for JsObject {
                         // Trace the closure environment
                         visitor(interp.closure.copy_ref());
                     }
+                    JsFunction::ModuleExportGetter { module_env, .. } => {
+                        // Trace the module environment for live bindings
+                        visitor(module_env.copy_ref());
+                    }
+                    JsFunction::ModuleReExportGetter { source_module, .. } => {
+                        // Trace the source module for re-export live bindings
+                        visitor(source_module.copy_ref());
+                    }
                     JsFunction::Native(_)
                     | JsFunction::AccessorGetter
                     | JsFunction::AccessorSetter => {}
@@ -1898,6 +1906,18 @@ pub enum JsFunction {
     AccessorGetter,
     /// Auto-accessor setter (metadata stored in object properties)
     AccessorSetter,
+    /// Module export getter for live bindings
+    /// Contains (module_environment, binding_name)
+    ModuleExportGetter {
+        module_env: JsObjectRef,
+        binding_name: JsString,
+    },
+    /// Re-export getter for live bindings through re-exports
+    /// Delegates to another module's namespace object property
+    ModuleReExportGetter {
+        source_module: JsObjectRef,
+        source_key: PropertyKey,
+    },
 }
 
 /// Shared state for Promise.all tracking
@@ -1937,6 +1957,8 @@ impl JsFunction {
             JsFunction::PromiseAllReject(_) => Some("promiseAllReject"),
             JsFunction::AccessorGetter => Some("get"),
             JsFunction::AccessorSetter => Some("set"),
+            JsFunction::ModuleExportGetter { .. } => Some("get"),
+            JsFunction::ModuleReExportGetter { .. } => Some("get"),
         }
     }
 }
@@ -2003,6 +2025,31 @@ pub struct Binding {
     pub value: JsValue,
     pub mutable: bool,
     pub initialized: bool,
+    /// For import bindings: reference to module object and property key for live bindings.
+    /// When set, `value` is ignored and the actual value is read from the module object.
+    pub import_binding: Option<ImportBinding>,
+}
+
+/// Reference to a module export for live bindings
+#[derive(Debug, Clone)]
+pub struct ImportBinding {
+    pub module_obj: JsObjectRef,
+    pub property_key: PropertyKey,
+}
+
+/// Represents a module export entry - either a direct export from this module's
+/// environment, or a re-export from another module.
+#[derive(Debug, Clone)]
+pub enum ModuleExport {
+    /// Direct export: the binding exists in this module's environment
+    /// The value is stored but the actual live value comes from the environment
+    Direct { name: JsString, value: JsValue },
+    /// Re-export: delegates to another module's export
+    /// Contains the source module namespace object and the property key
+    ReExport {
+        source_module: JsObjectRef,
+        source_key: PropertyKey,
+    },
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

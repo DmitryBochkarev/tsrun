@@ -4,7 +4,7 @@
 
 **Project:** `typescript-eval`
 **Purpose:** Execute TypeScript for config/manifest generation from Rust
-**Status:** Milestone 11 Complete (Generators & Async Iteration, 970 tests passing)
+**Status:** Milestone 11 Complete (Generators & Async Iteration, 1023 tests passing)
 
 ### Requirements
 
@@ -829,7 +829,7 @@ These are parsed but not enforced at runtime (by design - matches TypeScript beh
 ### Module System Gaps
 
 - [ ] Circular dependency detection/handling
-- [ ] Live bindings for exports
+- [x] Live bindings for exports (direct exports and re-exports)
 - [x] `export * as ns from "module"`
 - [ ] Dynamic import with variable specifiers
 
@@ -1132,7 +1132,7 @@ src/
 
 ## Testing
 
-### Current Status: 909 tests passing
+### Current Status: 1023 tests passing
 
 ```bash
 cargo test                     # Run all tests
