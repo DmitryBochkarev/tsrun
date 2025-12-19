@@ -60,6 +60,10 @@ pub fn create_generator_result(interp: &mut Interpreter, value: JsValue, done: b
     let done_key = PropertyKey::String(interp.intern("done"));
 
     let guard = interp.heap.create_guard();
+    // Guard the value if it's an object to prevent GC
+    if let JsValue::Object(ref val_obj) = value {
+        guard.guard(val_obj.clone());
+    }
     let obj = interp.create_object(&guard);
     {
         let mut o = obj.borrow_mut();
@@ -97,7 +101,7 @@ pub fn generator_next(
     // Check if generator is already completed
     {
         let state = gen_state.borrow();
-        if state.state == GeneratorStatus::Completed {
+        if state.status == GeneratorStatus::Completed {
             return Ok(create_generator_result(interp, JsValue::Undefined, true));
         }
     }
@@ -139,10 +143,11 @@ pub fn generator_return(
 
     // Mark as completed and return the value
     let value = args.first().cloned().unwrap_or(JsValue::Undefined);
-    {
-        let mut state = gen_state.borrow_mut();
-        state.state = GeneratorStatus::Completed;
-    }
+    let gen_id = gen_state.borrow().id;
+
+    // Clean up saved execution state
+    interp.saved_generator_states.remove(&gen_id);
+    gen_state.borrow_mut().status = GeneratorStatus::Completed;
 
     Ok(create_generator_result(interp, value, true))
 }
@@ -177,7 +182,7 @@ pub fn generator_throw(
     // Check if generator is completed
     {
         let state = gen_state.borrow();
-        if state.state == GeneratorStatus::Completed {
+        if state.status == GeneratorStatus::Completed {
             // If generator is completed, throw the exception directly
             return Err(JsError::ThrownValue { value: exception });
         }

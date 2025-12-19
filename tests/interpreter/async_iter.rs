@@ -4,6 +4,443 @@ use super::eval;
 use typescript_eval::JsValue;
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Debug tests for isolating issues
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_debug_single_await_gen_next() {
+    // Simplest: single await on generator.next()
+    let result = eval(
+        r#"
+        async function* source(): AsyncGenerator<number> {
+            yield 1;
+        }
+        async function test(): Promise<number> {
+            const gen = source();
+            const r = await gen.next();
+            return r.value;
+        }
+        await test()
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(1.0));
+}
+
+#[test]
+fn test_debug_double_await_gen_next() {
+    // Two await calls
+    let result = eval(
+        r#"
+        async function* source(): AsyncGenerator<number> {
+            yield 1;
+            yield 2;
+        }
+        async function test(): Promise<number> {
+            const gen = source();
+            const r1 = await gen.next();
+            const r2 = await gen.next();
+            return r1.value + r2.value;
+        }
+        await test()
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(3.0)); // 1 + 2
+}
+
+#[test]
+fn test_debug_await_in_while_loop() {
+    // Using let r with reassignment in loop
+    let result = eval(
+        r#"
+        async function* source(): AsyncGenerator<number> {
+            yield 1;
+            yield 2;
+        }
+        async function test(): Promise<number> {
+            const gen = source();
+            let sum = 0;
+            let r = await gen.next();
+            while (!r.done) {
+                sum += r.value;
+                r = await gen.next();
+            }
+            return sum;
+        }
+        await test()
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(3.0)); // 1 + 2
+}
+
+#[test]
+fn test_debug_three_await_sequential() {
+    // Three sequential awaits without loop
+    let result = eval(
+        r#"
+        async function* source(): AsyncGenerator<number> {
+            yield 1;
+            yield 2;
+            yield 3;
+        }
+        async function test(): Promise<number> {
+            const gen = source();
+            let sum = 0;
+            let r = await gen.next();
+            sum += r.value;
+            r = await gen.next();
+            sum += r.value;
+            r = await gen.next();
+            sum += r.value;
+            return sum;
+        }
+        await test()
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(6.0)); // 1 + 2 + 3
+}
+
+#[test]
+fn test_debug_simple_while_no_await_in_loop() {
+    // While loop but await BEFORE the loop, not inside
+    let result = eval(
+        r#"
+        async function* source(): AsyncGenerator<number> {
+            yield 1;
+        }
+        async function test(): Promise<number> {
+            const gen = source();
+            let r = await gen.next();  // Only one await
+            let sum = 0;
+            let count = 0;
+            while (count < 3) {
+                sum += r.value;
+                count++;
+            }
+            return sum;
+        }
+        await test()
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(3.0)); // 1 + 1 + 1
+}
+
+#[test]
+fn test_debug_two_await_with_let_reassign() {
+    // Two awaits with let reassignment (no loop)
+    let result = eval(
+        r#"
+        async function* source(): AsyncGenerator<number> {
+            yield 1;
+            yield 2;
+        }
+        async function test(): Promise<number> {
+            const gen = source();
+            let r = await gen.next();
+            const first = r.value;
+            r = await gen.next();  // Reassign r
+            return first + r.value;
+        }
+        await test()
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(3.0)); // 1 + 2
+}
+
+#[test]
+fn test_debug_while_with_done_check() {
+    // Just while with done check, one iteration
+    let result = eval(
+        r#"
+        async function* source(): AsyncGenerator<number> {
+            yield 1;
+        }
+        async function test(): Promise<number> {
+            const gen = source();
+            let r = await gen.next();
+            let sum = 0;
+            while (!r.done) {
+                sum += r.value;
+                break;  // Just one iteration
+            }
+            return sum;
+        }
+        await test()
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(1.0));
+}
+
+#[test]
+fn test_debug_await_in_while_with_counter() {
+    // Await inside while, but use counter to limit iterations
+    let result = eval(
+        r#"
+        async function* source(): AsyncGenerator<number> {
+            yield 1;
+            yield 2;
+            yield 3;
+        }
+        async function test(): Promise<number> {
+            const gen = source();
+            let sum = 0;
+            let count = 0;
+            while (count < 2) {
+                const res = await gen.next();  // Use const instead of reassigning
+                sum += res.value;
+                count++;
+            }
+            return sum;
+        }
+        await test()
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(3.0)); // 1 + 2
+}
+
+#[test]
+fn test_debug_while_r_done_with_second_await() {
+    // while (!r.done) with a second await - THE FAILING PATTERN
+    // Let's try with just one yield to see if the second iteration is the issue
+    let result = eval(
+        r#"
+        async function* source(): AsyncGenerator<number> {
+            yield 1;
+            // No second yield - r.done will be true after first next()
+        }
+        async function test(): Promise<number> {
+            const gen = source();
+            let sum = 0;
+            let r = await gen.next();  // First: {value: 1, done: false}
+            while (!r.done) {
+                sum += r.value;
+                r = await gen.next();  // Second: {value: undefined, done: true}
+                // Loop should exit after this
+            }
+            return sum;
+        }
+        await test()
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(1.0));
+}
+
+#[test]
+fn test_debug_minimal_failing_case() {
+    // Minimal reproduction: while with await and assignment
+    let result = eval(
+        r#"
+        async function test(): Promise<number> {
+            let x = 0;
+            let r = { done: false, value: 1 };
+            while (!r.done) {
+                x += r.value;
+                r = await Promise.resolve({ done: true, value: 0 });
+            }
+            return x;
+        }
+        await test()
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(1.0));
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Debug tests for nested async generators
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_debug_nested_async_gen_simple() {
+    // Simplest nested case: async gen that iterates over another async gen
+    let result = eval(
+        r#"
+        async function* inner(): AsyncGenerator<number> {
+            yield 1;
+            yield 2;
+        }
+        async function* outer(): AsyncGenerator<number> {
+            for await (const x of inner()) {
+                yield x;
+            }
+        }
+        async function test(): Promise<number> {
+            let sum = 0;
+            for await (const x of outer()) {
+                sum += x;
+            }
+            return sum;
+        }
+        await test()
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(3.0)); // 1 + 2
+}
+
+#[test]
+fn test_debug_nested_async_gen_three_yields() {
+    // Three yields to match the transform test
+    let result = eval(
+        r#"
+        async function* inner(): AsyncGenerator<number> {
+            yield 1;
+            yield 2;
+            yield 3;
+        }
+        async function* outer(): AsyncGenerator<number> {
+            for await (const x of inner()) {
+                yield x;
+            }
+        }
+        async function test(): Promise<number> {
+            let sum = 0;
+            for await (const x of outer()) {
+                sum += x;
+            }
+            return sum;
+        }
+        await test()
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(6.0)); // 1 + 2 + 3
+}
+
+#[test]
+fn test_debug_nested_async_gen_transform() {
+    // Transform like the failing test
+    let result = eval(
+        r#"
+        async function* inner(): AsyncGenerator<number> {
+            yield 1;
+            yield 2;
+            yield 3;
+        }
+        async function* outer(): AsyncGenerator<number> {
+            for await (const x of inner()) {
+                yield x * 2;
+            }
+        }
+        async function test(): Promise<number> {
+            let sum = 0;
+            for await (const x of outer()) {
+                sum += x;
+            }
+            return sum;
+        }
+        await test()
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(12.0)); // 2 + 4 + 6
+}
+
+#[test]
+fn test_debug_nested_with_parameter() {
+    // Pass generator as parameter like the failing test
+    let result = eval(
+        r#"
+        async function* source(): AsyncGenerator<number> {
+            yield 1;
+            yield 2;
+            yield 3;
+        }
+        async function* double(gen: AsyncGenerator<number>): AsyncGenerator<number> {
+            for await (const x of gen) {
+                yield x * 2;
+            }
+        }
+        async function test(): Promise<number> {
+            let sum = 0;
+            for await (const x of double(source())) {
+                sum += x;
+            }
+            return sum;
+        }
+        await test()
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(12.0)); // 2 + 4 + 6
+}
+
+#[test]
+fn test_debug_simple_double_manual() {
+    // Manually iterate without nesting
+    let result = eval(
+        r#"
+        async function* source(): AsyncGenerator<number> {
+            yield 1;
+            yield 2;
+            yield 3;
+        }
+        async function test(): Promise<string> {
+            const gen = source();
+            const results: number[] = [];
+            let r = await gen.next();
+            while (!r.done) {
+                results.push(r.value * 2);
+                r = await gen.next();
+            }
+            return results.join(",");
+        }
+        await test()
+    "#,
+    );
+    assert_eq!(result, JsValue::String("2,4,6".into()));
+}
+
+#[test]
+fn test_debug_double_gen_manual_iteration() {
+    // Manually iterate over double(source()) to see what it produces
+    let result = eval(
+        r#"
+        async function* source(): AsyncGenerator<number> {
+            yield 1;
+            yield 2;
+            yield 3;
+        }
+        async function* double(gen: AsyncGenerator<number>): AsyncGenerator<number> {
+            for await (const x of gen) {
+                yield x * 2;
+            }
+        }
+        async function test(): Promise<string> {
+            const gen = double(source());
+            const results: number[] = [];
+            let r = await gen.next();
+            while (!r.done) {
+                results.push(r.value);
+                r = await gen.next();
+            }
+            return results.join(",");
+        }
+        await test()
+    "#,
+    );
+    assert_eq!(result, JsValue::String("2,4,6".into()));
+}
+
+#[test]
+fn test_debug_for_await_in_async_gen() {
+    // for await inside an async generator without nesting the result
+    let result = eval(
+        r#"
+        async function* gen(): AsyncGenerator<number> {
+            const arr = [Promise.resolve(10), Promise.resolve(20)];
+            for await (const x of arr) {
+                yield x;
+            }
+        }
+        async function test(): Promise<number> {
+            let sum = 0;
+            for await (const x of gen()) {
+                sum += x;
+            }
+            return sum;
+        }
+        await test()
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(30.0)); // 10 + 20
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // for await...of basic syntax
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -774,4 +1211,28 @@ fn test_top_level_for_await_array() {
     "#,
     );
     assert_eq!(result, JsValue::Number(60.0));
+}
+
+#[test]
+fn test_for_await_nested_for_of() {
+    // Test for await with async generator and nested for-of
+    let result = eval(
+        r#"
+        async function* gen(): AsyncGenerator<number[]> {
+            yield [1, 2];
+            yield [3, 4];
+        }
+        async function test(): Promise<string> {
+            const all: number[] = [];
+            for await (const arr of gen()) {
+                for (const x of arr) {
+                    all.push(x);
+                }
+            }
+            return all.join(",");
+        }
+        await test()
+    "#,
+    );
+    assert_eq!(result, JsValue::String("1,2,3,4".into()));
 }

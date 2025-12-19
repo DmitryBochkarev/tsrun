@@ -637,3 +637,27 @@ fn test_recursive_generator_simple() {
         JsValue::String("1,2,3".into())
     );
 }
+
+#[test]
+fn test_generator_throw_with_catch() {
+    // Calling throw() on a generator inside a try/catch should jump to catch
+    assert_eq!(
+        eval(
+            r#"
+            function* gen(): Generator<number> {
+                try {
+                    yield 1;
+                    yield 2;
+                } catch (e) {
+                    yield 100;
+                }
+            }
+            const g = gen();
+            g.next(); // yields 1
+            const result = g.throw(new Error("test"));
+            result.value
+        "#
+        ),
+        JsValue::Number(100.0)
+    );
+}

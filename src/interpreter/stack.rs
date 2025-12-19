@@ -94,8 +94,8 @@ pub struct ForAwaitOfAsyncData {
     pub label: LoopLabel,
     /// Saved environment to restore after loop
     pub saved_env: Gc<JsObject>,
-    /// Guard to keep async iterator alive
-    pub iterator_guard: Option<Guard<JsObject>>,
+    /// Guard to keep async iterator and saved_env alive
+    pub guard: Guard<JsObject>,
 }
 
 /// A frame on the evaluation stack
@@ -157,6 +157,28 @@ pub enum Frame {
 
     /// Await: promise evaluated, check state
     AwaitCheck,
+
+    /// Yield: argument evaluated, will yield the value
+    /// On resume, the sent value will be pushed onto the value stack
+    YieldComplete,
+
+    /// YieldResume: when resuming a generator, this frame pops the sent value
+    /// and uses it as the result of the yield expression
+    YieldResume,
+
+    /// YieldStar: argument evaluated, now determine what to delegate to
+    YieldStarEval,
+
+    /// YieldStar delegating to an array: yield elements one by one
+    YieldStarArray {
+        elements: Vec<JsValue>,
+        index: usize,
+    },
+
+    /// YieldStar delegating to a generator: forward next() calls to inner generator
+    YieldStarGenerator {
+        gen_state: Rc<RefCell<GeneratorState>>,
+    },
 
     // ═══════════════════════════════════════════════════════════════════════
     // Variable Declaration
@@ -402,6 +424,42 @@ pub enum Frame {
 
     /// After labeled body executed
     LabeledComplete { label: JsString },
+}
+
+impl Frame {
+    /// Collect all Gc<JsObject> references in this frame.
+    /// Used for guarding references when saving generator state.
+    pub fn collect_gc_refs(&self, refs: &mut Vec<Gc<JsObject>>) {
+        match self {
+            Frame::ForLoop { saved_env, .. } => refs.push(saved_env.clone()),
+            Frame::ForTestCheck { saved_env, .. } => refs.push(saved_env.clone()),
+            Frame::ForAfterBody { saved_env, .. } => refs.push(saved_env.clone()),
+            Frame::ForCleanup { saved_env } => refs.push(saved_env.clone()),
+            Frame::ForInLoop { saved_env, .. } => refs.push(saved_env.clone()),
+            Frame::ForInAfterBody { saved_env, .. } => refs.push(saved_env.clone()),
+            Frame::ForOfLoop { saved_env, .. } => refs.push(saved_env.clone()),
+            Frame::ForOfAfterBody { saved_env, .. } => refs.push(saved_env.clone()),
+            Frame::ForOfGenerator(data) => {
+                refs.push(data.generator.clone());
+                refs.push(data.saved_env.clone());
+            }
+            Frame::ForOfGeneratorAfterBody(data) => {
+                refs.push(data.generator.clone());
+                refs.push(data.saved_env.clone());
+            }
+            Frame::ForAwaitOfAsync(data) => {
+                refs.push(data.async_iterator.clone());
+                refs.push(data.saved_env.clone());
+            }
+            Frame::ForAwaitOfAsyncAfterBody(data) => {
+                refs.push(data.async_iterator.clone());
+                refs.push(data.saved_env.clone());
+            }
+            Frame::CatchBlock { saved_env, .. } => refs.push(saved_env.clone()),
+            // Other frames don't have Gc<JsObject> references
+            _ => {}
+        }
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -651,6 +709,85 @@ impl Interpreter {
             }
 
             Frame::AwaitCheck => self.step_await_check(state),
+
+            // YieldComplete: value to yield is on the stack
+            // This throws GeneratorYield which is caught by resume_generator
+            Frame::YieldComplete => {
+                let value = state
+                    .pop_value()
+                    .map(|v| v.value)
+                    .unwrap_or(JsValue::Undefined);
+                // Push YieldResume so when we resume, we know to pick up sent value
+                state.push_frame(Frame::YieldResume);
+                StepResult::Error(JsError::GeneratorYield { value })
+            }
+
+            // YieldResume: generator was resumed, sent value is on the value stack
+            // (pushed by resume_generator). Just continue - the value is already there.
+            Frame::YieldResume => {
+                // The sent value was pushed onto the value stack by resume_generator
+                // Just continue execution - the value is available as the yield result
+                StepResult::Continue
+            }
+
+            // YieldStarEval: argument has been evaluated, now determine delegation type
+            Frame::YieldStarEval => {
+                let iterable = state
+                    .pop_value()
+                    .map(|v| v.value)
+                    .unwrap_or(JsValue::Undefined);
+
+                // Check if it's an object
+                let JsValue::Object(obj) = iterable else {
+                    return StepResult::Error(JsError::type_error("yield* on non-iterable"));
+                };
+
+                // Check if it's an array
+                let elements: Option<Vec<JsValue>> = {
+                    let obj_ref = obj.borrow();
+                    obj_ref.array_elements().map(|e| e.to_vec())
+                };
+                if let Some(elements) = elements {
+                    // Delegate to array - start yielding from index 0
+                    state.push_frame(Frame::YieldStarArray { elements, index: 0 });
+                    return StepResult::Continue;
+                }
+
+                // Check if it's a generator
+                if let ExoticObject::Generator(gen_state) = &obj.borrow().exotic {
+                    let gen_state = gen_state.clone();
+                    state.push_frame(Frame::YieldStarGenerator { gen_state });
+                    return StepResult::Continue;
+                }
+
+                // Not a supported iterable
+                StepResult::Error(JsError::type_error("yield* on non-iterable"))
+            }
+
+            // YieldStarArray: yield elements from an array one by one
+            Frame::YieldStarArray { elements, index } => {
+                if index < elements.len() {
+                    // Get the current element
+                    let value = elements.get(index).cloned().unwrap_or(JsValue::Undefined);
+                    // Push frame for next element (incremented index)
+                    state.push_frame(Frame::YieldStarArray {
+                        elements,
+                        index: index + 1,
+                    });
+                    // Yield this element
+                    StepResult::Error(JsError::GeneratorYield { value })
+                } else {
+                    // Done with array delegation - push undefined as the result
+                    // (arrays don't have a return value)
+                    state.push_value(Guarded::unguarded(JsValue::Undefined));
+                    StepResult::Continue
+                }
+            }
+
+            // YieldStarGenerator: delegate to inner generator
+            Frame::YieldStarGenerator { gen_state } => {
+                self.step_yield_star_generator(state, gen_state)
+            }
 
             // ═══════════════════════════════════════════════════════════════
             // Variable Declaration
@@ -1411,6 +1548,30 @@ impl Interpreter {
                 state.push_frame(Frame::AwaitCheck);
                 state.push_frame(Frame::Expr(await_expr.argument.cheap_clone()));
                 StepResult::Continue
+            }
+
+            Expression::Yield(yield_expr) => {
+                if yield_expr.delegate {
+                    // yield* - need to handle delegation specially
+                    if let Some(arg) = &yield_expr.argument {
+                        // First evaluate the argument
+                        state.push_frame(Frame::YieldStarEval);
+                        state.push_frame(Frame::Expr(arg.cheap_clone()));
+                        StepResult::Continue
+                    } else {
+                        StepResult::Error(JsError::type_error("yield* requires an expression"))
+                    }
+                } else {
+                    // Regular yield - evaluate argument then yield
+                    if let Some(arg) = &yield_expr.argument {
+                        state.push_frame(Frame::YieldComplete);
+                        state.push_frame(Frame::Expr(arg.cheap_clone()));
+                    } else {
+                        state.push_frame(Frame::YieldComplete);
+                        state.push_value(Guarded::unguarded(JsValue::Undefined));
+                    }
+                    StepResult::Continue
+                }
             }
 
             // For complex expressions, fall back to recursive evaluation
@@ -2408,9 +2569,10 @@ impl Interpreter {
             }
             StackCompletion::Continue(cont_label) => {
                 if cont_label.is_none() || cont_label.as_ref() == label_ref(&label) {
-                    // Continue targets this loop - pop guard and proceed to next iteration
+                    // Continue targets this loop - pop guard and restore env before next iteration
                     state.completion = StackCompletion::Normal;
                     self.pop_env_guard();
+                    self.env = saved_env.cheap_clone();
                 } else {
                     // Continue targets outer loop - pop iteration guard, restore env and propagate
                     self.pop_env_guard();
@@ -2425,8 +2587,9 @@ impl Interpreter {
                 return StepResult::Continue;
             }
             StackCompletion::Normal => {
-                // Normal completion - pop guard before next iteration creates new one
+                // Normal completion - pop guard and restore env before next iteration
                 self.pop_env_guard();
+                self.env = saved_env.cheap_clone();
             }
         }
 
@@ -2485,9 +2648,31 @@ impl Interpreter {
                     match self.call_function(JsValue::Object(method_obj), right.clone(), &[]) {
                         Ok(Guarded {
                             value: JsValue::Object(async_iter),
-                            guard: iter_guard,
+                            guard: _iter_guard,
                         }) => {
-                            // Use async iterator frame
+                            // Check if the async iterator is actually a generator
+                            // If so, use the generator-specific iteration which properly handles
+                            // yields and resumption
+                            if let ExoticObject::Generator(gen_state) = &async_iter.borrow().exotic
+                            {
+                                state.push_frame(Frame::ForOfGenerator(Box::new(
+                                    ForOfGeneratorData {
+                                        generator: async_iter.cheap_clone(),
+                                        gen_state: gen_state.cheap_clone(),
+                                        left: Rc::new(for_of.left.clone()),
+                                        body: for_of.body.cheap_clone(),
+                                        label,
+                                        saved_env,
+                                    },
+                                )));
+                                return StepResult::Continue;
+                            }
+
+                            // Use async iterator frame for non-generator async iterables
+                            // Create a guard that protects both async_iterator and saved_env
+                            let guard = self.heap.create_guard();
+                            guard.guard(async_iter.cheap_clone());
+                            guard.guard(saved_env.cheap_clone());
                             state.push_frame(Frame::ForAwaitOfAsync(Box::new(
                                 ForAwaitOfAsyncData {
                                     async_iterator: async_iter,
@@ -2495,7 +2680,7 @@ impl Interpreter {
                                     body: for_of.body.cheap_clone(),
                                     label,
                                     saved_env,
-                                    iterator_guard: iter_guard,
+                                    guard,
                                 },
                             )));
                             return StepResult::Continue;
@@ -2688,9 +2873,10 @@ impl Interpreter {
             }
             StackCompletion::Continue(cont_label) => {
                 if cont_label.is_none() || cont_label.as_ref() == label_ref(&label) {
-                    // Continue targets this loop - pop guard and proceed to next iteration
+                    // Continue targets this loop - pop guard and restore env before next iteration
                     state.completion = StackCompletion::Normal;
                     self.pop_env_guard();
+                    self.env = saved_env.cheap_clone();
                 } else {
                     // Continue targets outer loop - pop iteration guard, restore env and propagate
                     self.pop_env_guard();
@@ -2705,8 +2891,9 @@ impl Interpreter {
                 return StepResult::Continue;
             }
             StackCompletion::Normal => {
-                // Normal completion - pop guard before next iteration creates new one
+                // Normal completion - pop guard and restore env before next iteration
                 self.pop_env_guard();
+                self.env = saved_env.cheap_clone();
             }
         }
 
@@ -2779,8 +2966,12 @@ impl Interpreter {
         }
 
         // Call next() on the generator
-        let result = match self.resume_generator(&gen_state) {
-            Ok(guarded) => guarded.value,
+        // IMPORTANT: Keep the guard alive to protect the result and value
+        let Guarded {
+            value: result,
+            guard: _result_guard,
+        } = match self.resume_generator(&gen_state) {
+            Ok(guarded) => guarded,
             Err(e) => {
                 self.env = saved_env;
                 return StepResult::Error(e);
@@ -2889,9 +3080,10 @@ impl Interpreter {
             }
             StackCompletion::Continue(cont_label) => {
                 if cont_label.is_none() || cont_label.as_ref() == label_ref(&label) {
-                    // Continue targets this loop - pop guard and proceed to next iteration
+                    // Continue targets this loop - pop guard and restore env before next iteration
                     state.completion = StackCompletion::Normal;
                     self.pop_env_guard();
+                    self.env = saved_env.cheap_clone();
                 } else {
                     // Continue targets outer loop - pop iteration guard, restore env and propagate
                     self.pop_env_guard();
@@ -2906,8 +3098,9 @@ impl Interpreter {
                 return StepResult::Continue;
             }
             StackCompletion::Normal => {
-                // Normal completion - pop guard before next iteration creates new one
+                // Normal completion - pop guard and restore env before next iteration
                 self.pop_env_guard();
+                self.env = saved_env.cheap_clone();
             }
         }
 
@@ -2925,6 +3118,54 @@ impl Interpreter {
         })));
 
         StepResult::Continue
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // Yield* Generator Delegation
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    /// Step for YieldStarGenerator: delegate to inner generator
+    fn step_yield_star_generator(
+        &mut self,
+        state: &mut ExecutionState,
+        gen_state: Rc<RefCell<GeneratorState>>,
+    ) -> StepResult {
+        // Resume the inner generator
+        let result = match self.resume_generator(&gen_state) {
+            Ok(guarded) => guarded,
+            Err(e) => return StepResult::Error(e),
+        };
+
+        // Get done and value from result
+        let done_key = PropertyKey::String(self.intern("done"));
+        let value_key = PropertyKey::String(self.intern("value"));
+
+        let JsValue::Object(res_obj) = &result.value else {
+            // Not an object - treat as done
+            state.push_value(Guarded::unguarded(JsValue::Undefined));
+            return StepResult::Continue;
+        };
+
+        let done = res_obj
+            .borrow()
+            .get_property(&done_key)
+            .map(|v| v.to_boolean())
+            .unwrap_or(false);
+        let value = res_obj
+            .borrow()
+            .get_property(&value_key)
+            .unwrap_or(JsValue::Undefined);
+
+        if done {
+            // Inner generator is complete - its return value becomes the result of yield*
+            state.push_value(Guarded::unguarded(value));
+            StepResult::Continue
+        } else {
+            // Push frame to continue delegation after yielding
+            state.push_frame(Frame::YieldStarGenerator { gen_state });
+            // Yield the value from the inner generator
+            StepResult::Error(JsError::GeneratorYield { value })
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════════════════════
@@ -3052,9 +3293,10 @@ impl Interpreter {
             }
             StackCompletion::Continue(cont_label) => {
                 if cont_label.is_none() || cont_label.as_ref() == label_ref(&data.label) {
-                    // Continue targets this loop - pop guard and proceed to next iteration
+                    // Continue targets this loop - pop guard and restore env before next iteration
                     state.completion = StackCompletion::Normal;
                     self.pop_env_guard();
+                    self.env = data.saved_env.cheap_clone();
                 } else {
                     // Continue targets outer loop - pop iteration guard, restore env and propagate
                     self.pop_env_guard();
@@ -3069,8 +3311,9 @@ impl Interpreter {
                 return StepResult::Continue;
             }
             StackCompletion::Normal => {
-                // Normal completion - pop guard before next iteration creates new one
+                // Normal completion - pop guard and restore env before next iteration
                 self.pop_env_guard();
+                self.env = data.saved_env.cheap_clone();
             }
         }
 

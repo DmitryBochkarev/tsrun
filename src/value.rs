@@ -1800,8 +1800,21 @@ pub struct PromiseHandler {
     pub result_promise: JsObjectRef,
 }
 
-/// Generator state for suspended generators
+/// Saved frame state for generators
+/// This stores the frames and values that need to be restored when resuming
 #[derive(Debug, Clone)]
+pub struct SavedFrameState {
+    /// Serialized frame data - stored as a clonable representation
+    pub frame_data: Vec<u8>,
+    /// Number of frames
+    pub frame_count: usize,
+}
+
+/// Generator state for suspended generators
+///
+/// Note: This struct intentionally does NOT derive Clone because it may hold
+/// a saved ExecutionState which contains Guards that cannot be cloned.
+/// The struct is always wrapped in Rc<RefCell<>> for shared access.
 pub struct GeneratorState {
     /// The generator function's body (Rc for cheap cloning)
     pub body: Rc<BlockStatement>,
@@ -1811,14 +1824,26 @@ pub struct GeneratorState {
     pub args: Vec<JsValue>,
     /// The captured closure environment (GC-managed)
     pub closure: JsObjectRef,
-    /// Current execution state
-    pub state: GeneratorStatus,
-    /// Current statement index
-    pub stmt_index: usize,
+    /// Current execution status
+    pub status: GeneratorStatus,
     /// Value passed in via next(value)
     pub sent_value: JsValue,
     /// Function name for debugging
     pub name: Option<JsString>,
+    /// Unique ID for this generator (used to look up saved execution state)
+    pub id: u64,
+    /// Whether this generator has started execution
+    pub started: bool,
+}
+
+impl std::fmt::Debug for GeneratorState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GeneratorState")
+            .field("status", &self.status)
+            .field("id", &self.id)
+            .field("started", &self.started)
+            .finish()
+    }
 }
 
 /// Status of generator execution
