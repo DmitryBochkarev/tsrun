@@ -714,7 +714,7 @@ self.env.define(id.name.clone(), value, mutable);
 - `Function`: call, apply, bind
 - `Error`: Error, TypeError, ReferenceError, SyntaxError, RangeError, URIError, EvalError
 - `Symbol`: Symbol(), Symbol.for(), Symbol.keyFor(), well-known symbols (iterator, toStringTag, hasInstance)
-- Global: parseInt, parseFloat, isNaN, isFinite, encodeURI, decodeURI, encodeURIComponent, decodeURIComponent, console.log/error/warn/info/debug
+- Global: parseInt, parseFloat, isNaN, isFinite, encodeURI, decodeURI, encodeURIComponent, decodeURIComponent, eval, console.log/error/warn/info/debug
 - Generators: function*, yield, yield*
 - Namespace declarations with export and merging
 - `Promise`: new, resolve, reject, then, catch, finally, all, race, allSettled, any

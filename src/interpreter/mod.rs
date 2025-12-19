@@ -153,6 +153,24 @@ pub struct Interpreter {
     pub generator_prototype: Gc<JsObject>,
 
     // ═══════════════════════════════════════════════════════════════════════════
+    // Error Prototypes (for creating proper error objects from JsError)
+    // ═══════════════════════════════════════════════════════════════════════════
+    /// Error.prototype
+    pub error_prototype: Gc<JsObject>,
+
+    /// TypeError.prototype
+    pub type_error_prototype: Gc<JsObject>,
+
+    /// ReferenceError.prototype
+    pub reference_error_prototype: Gc<JsObject>,
+
+    /// RangeError.prototype
+    pub range_error_prototype: Gc<JsObject>,
+
+    /// SyntaxError.prototype
+    pub syntax_error_prototype: Gc<JsObject>,
+
+    // ═══════════════════════════════════════════════════════════════════════════
     // Execution State
     // ═══════════════════════════════════════════════════════════════════════════
     /// Stores thrown value during exception propagation
@@ -261,6 +279,13 @@ impl Interpreter {
         let promise_prototype = root_guard.alloc();
         let generator_prototype = root_guard.alloc();
 
+        // Create error prototypes (all rooted)
+        let error_prototype = root_guard.alloc();
+        let type_error_prototype = root_guard.alloc();
+        let reference_error_prototype = root_guard.alloc();
+        let range_error_prototype = root_guard.alloc();
+        let syntax_error_prototype = root_guard.alloc();
+
         // Set up prototype chain - all prototypes inherit from object_prototype
         array_prototype.borrow_mut().prototype = Some(object_prototype.clone());
         function_prototype.borrow_mut().prototype = Some(object_prototype.clone());
@@ -274,6 +299,15 @@ impl Interpreter {
         symbol_prototype.borrow_mut().prototype = Some(object_prototype.clone());
         promise_prototype.borrow_mut().prototype = Some(object_prototype.clone());
         generator_prototype.borrow_mut().prototype = Some(object_prototype.clone());
+
+        // Set up error prototype chain
+        // Error.prototype inherits from Object.prototype
+        error_prototype.borrow_mut().prototype = Some(object_prototype.clone());
+        // All specific error prototypes inherit from Error.prototype
+        type_error_prototype.borrow_mut().prototype = Some(error_prototype.clone());
+        reference_error_prototype.borrow_mut().prototype = Some(error_prototype.clone());
+        range_error_prototype.borrow_mut().prototype = Some(error_prototype.clone());
+        syntax_error_prototype.borrow_mut().prototype = Some(error_prototype.clone());
 
         // Create global object (rooted)
         let global = root_guard.alloc();
@@ -310,6 +344,11 @@ impl Interpreter {
             symbol_prototype,
             promise_prototype,
             generator_prototype,
+            error_prototype,
+            type_error_prototype,
+            reference_error_prototype,
+            range_error_prototype,
+            syntax_error_prototype,
             thrown_value: None,
             thrown_guard: None,
             exports: FxHashMap::default(),

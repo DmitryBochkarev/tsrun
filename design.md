@@ -804,7 +804,7 @@ These features have AST support but are ignored or partially handled at runtime:
 
 ### Missing Global Functions
 
-- [ ] `eval(code)` - **Intentionally excluded for security**
+- [x] `eval(code)` - Evaluates JavaScript code string in the current scope
 - [ ] `setTimeout(callback, delay)` - Host-dependent, use orders
 - [ ] `setInterval(callback, delay)` - Host-dependent, use orders
 - [ ] `clearTimeout(id)` - Host-dependent
@@ -825,9 +825,9 @@ These features have AST support but are ignored or partially handled at runtime:
 **Status:** Intentionally not implemented (deprecated, strict mode forbidden).
 
 #### Direct eval
-- [ ] `eval("code")` with access to local scope
+- [x] `eval("code")` with access to local scope
 
-**Status:** Intentionally excluded for security reasons.
+**Status:** Implemented. Direct eval has access to the local scope where it's called.
 
 #### Legacy Features
 - [ ] `__proto__` property access in literals (`{ __proto__: proto }`) - partially supported

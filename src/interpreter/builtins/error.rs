@@ -1,27 +1,43 @@
 //! Error constructor built-in methods
 
 use crate::error::JsError;
-use crate::gc::Gc;
+use crate::gc::{Gc, Guard};
 use crate::interpreter::Interpreter;
-use crate::value::{CheapClone, Guarded, JsObject, JsString, JsValue, NativeFn, PropertyKey};
+use crate::value::{Guarded, JsObject, JsString, JsValue, PropertyKey};
 
 /// Initialize Error and all derived error constructors and add them to globals
 pub fn init_error(interp: &mut Interpreter) {
-    // Create Error.prototype first (base for all error prototypes)
-    // Use root_guard for permanent prototype objects
-    let error_proto = interp.root_guard.alloc();
-    error_proto.borrow_mut().prototype = Some(interp.object_prototype.clone());
+    // Use the pre-created error prototypes from the Interpreter
+    let error_proto = interp.error_prototype.clone();
+    let type_error_proto = interp.type_error_prototype.clone();
+    let reference_error_proto = interp.reference_error_prototype.clone();
+    let range_error_proto = interp.range_error_prototype.clone();
+    let syntax_error_proto = interp.syntax_error_prototype.clone();
 
-    // Set default name and message on prototype
+    // Pre-intern all property keys
     let name_key = PropertyKey::String(interp.intern("name"));
     let message_key = PropertyKey::String(interp.intern("message"));
+    let proto_key = PropertyKey::String(interp.intern("prototype"));
+    let error_key = PropertyKey::String(interp.intern("Error"));
+    let type_error_key = PropertyKey::String(interp.intern("TypeError"));
+    let reference_error_key = PropertyKey::String(interp.intern("ReferenceError"));
+    let range_error_key = PropertyKey::String(interp.intern("RangeError"));
+    let syntax_error_key = PropertyKey::String(interp.intern("SyntaxError"));
+    let uri_error_key = PropertyKey::String(interp.intern("URIError"));
+    let eval_error_key = PropertyKey::String(interp.intern("EvalError"));
     {
         let mut p = error_proto.borrow_mut();
-        p.set_property(name_key, JsValue::String(JsString::from("Error")));
-        p.set_property(message_key, JsValue::String(JsString::from("")));
+        p.set_property(
+            name_key.clone(),
+            JsValue::String(JsString::from("Error")),
+        );
+        p.set_property(
+            message_key.clone(),
+            JsValue::String(JsString::from("")),
+        );
     }
 
-    // Add toString method
+    // Add toString method to Error.prototype
     interp.register_method(&error_proto, "toString", error_to_string, 0);
 
     // Create Error constructor function
@@ -29,71 +45,143 @@ pub fn init_error(interp: &mut Interpreter) {
     interp.root_guard.guard(error_fn.clone());
 
     // Set up prototype chain
-    let proto_key = PropertyKey::String(interp.intern("prototype"));
     error_fn
         .borrow_mut()
-        .set_property(proto_key, JsValue::Object(error_proto.clone()));
+        .set_property(proto_key.clone(), JsValue::Object(error_proto));
 
     // Register Error globally
-    let error_key = PropertyKey::String(interp.intern("Error"));
     interp
         .global
         .borrow_mut()
         .set_property(error_key, JsValue::Object(error_fn));
 
-    // Create derived error types
-    let derived_errors: &[(&str, NativeFn)] = &[
-        ("TypeError", type_error_constructor),
-        ("RangeError", range_error_constructor),
-        ("ReferenceError", reference_error_constructor),
-        ("SyntaxError", syntax_error_constructor),
-        ("URIError", uri_error_constructor),
-        ("EvalError", eval_error_constructor),
-    ];
-
-    for (name, constructor_fn) in derived_errors {
-        create_derived_error(interp, name, *constructor_fn, &error_proto);
-    }
-}
-
-/// Create a derived error type (TypeError, RangeError, etc.)
-fn create_derived_error(
-    interp: &mut Interpreter,
-    name: &str,
-    constructor_fn: NativeFn,
-    error_proto: &Gc<JsObject>,
-) {
-    // Create prototype that inherits from Error.prototype
-    // Use root_guard for permanent prototype objects
-    let derived_proto = interp.root_guard.alloc();
-    // Set prototype chain to Error.prototype
-    derived_proto.borrow_mut().prototype = Some(error_proto.clone());
-
-    // Set name on prototype
-    let name_key = PropertyKey::String(interp.intern("name"));
-    let message_key = PropertyKey::String(interp.intern("message"));
+    // Initialize derived error types using pre-created prototypes
+    // TypeError
     {
-        let mut p = derived_proto.borrow_mut();
-        p.set_property(name_key, JsValue::String(JsString::from(name)));
-        p.set_property(message_key, JsValue::String(JsString::from("")));
+        let mut p = type_error_proto.borrow_mut();
+        p.set_property(
+            name_key.clone(),
+            JsValue::String(JsString::from("TypeError")),
+        );
+        p.set_property(
+            message_key.clone(),
+            JsValue::String(JsString::from("")),
+        );
     }
-
-    // Create constructor function
-    let constructor = interp.create_native_function(name, constructor_fn, 1);
-    interp.root_guard.guard(constructor.clone());
-
-    // Set up prototype chain
-    let proto_key = PropertyKey::String(interp.intern("prototype"));
-    constructor
+    let type_error_fn = interp.create_native_function("TypeError", type_error_constructor, 1);
+    interp.root_guard.guard(type_error_fn.clone());
+    type_error_fn
         .borrow_mut()
-        .set_property(proto_key, JsValue::Object(derived_proto));
-
-    // Register globally
-    let key = PropertyKey::String(interp.intern(name));
+        .set_property(proto_key.clone(), JsValue::Object(type_error_proto));
     interp
         .global
         .borrow_mut()
-        .set_property(key, JsValue::Object(constructor));
+        .set_property(type_error_key, JsValue::Object(type_error_fn));
+
+    // ReferenceError
+    {
+        let mut p = reference_error_proto.borrow_mut();
+        p.set_property(
+            name_key.clone(),
+            JsValue::String(JsString::from("ReferenceError")),
+        );
+        p.set_property(
+            message_key.clone(),
+            JsValue::String(JsString::from("")),
+        );
+    }
+    let reference_error_fn =
+        interp.create_native_function("ReferenceError", reference_error_constructor, 1);
+    interp.root_guard.guard(reference_error_fn.clone());
+    reference_error_fn.borrow_mut().set_property(
+        proto_key.clone(),
+        JsValue::Object(reference_error_proto),
+    );
+    interp
+        .global
+        .borrow_mut()
+        .set_property(reference_error_key, JsValue::Object(reference_error_fn));
+
+    // RangeError
+    {
+        let mut p = range_error_proto.borrow_mut();
+        p.set_property(
+            name_key.clone(),
+            JsValue::String(JsString::from("RangeError")),
+        );
+        p.set_property(
+            message_key.clone(),
+            JsValue::String(JsString::from("")),
+        );
+    }
+    let range_error_fn = interp.create_native_function("RangeError", range_error_constructor, 1);
+    interp.root_guard.guard(range_error_fn.clone());
+    range_error_fn
+        .borrow_mut()
+        .set_property(proto_key.clone(), JsValue::Object(range_error_proto));
+    interp
+        .global
+        .borrow_mut()
+        .set_property(range_error_key, JsValue::Object(range_error_fn));
+
+    // SyntaxError
+    {
+        let mut p = syntax_error_proto.borrow_mut();
+        p.set_property(
+            name_key.clone(),
+            JsValue::String(JsString::from("SyntaxError")),
+        );
+        p.set_property(message_key.clone(), JsValue::String(JsString::from("")));
+    }
+    let syntax_error_fn =
+        interp.create_native_function("SyntaxError", syntax_error_constructor, 1);
+    interp.root_guard.guard(syntax_error_fn.clone());
+    syntax_error_fn
+        .borrow_mut()
+        .set_property(proto_key.clone(), JsValue::Object(syntax_error_proto));
+    interp
+        .global
+        .borrow_mut()
+        .set_property(syntax_error_key, JsValue::Object(syntax_error_fn));
+
+    // URIError (uses error_prototype since we don't have a dedicated prototype)
+    let uri_error_proto = interp.root_guard.alloc();
+    uri_error_proto.borrow_mut().prototype = Some(interp.error_prototype.clone());
+    {
+        let mut p = uri_error_proto.borrow_mut();
+        p.set_property(
+            name_key.clone(),
+            JsValue::String(JsString::from("URIError")),
+        );
+        p.set_property(message_key.clone(), JsValue::String(JsString::from("")));
+    }
+    let uri_error_fn = interp.create_native_function("URIError", uri_error_constructor, 1);
+    interp.root_guard.guard(uri_error_fn.clone());
+    uri_error_fn
+        .borrow_mut()
+        .set_property(proto_key.clone(), JsValue::Object(uri_error_proto));
+    interp
+        .global
+        .borrow_mut()
+        .set_property(uri_error_key, JsValue::Object(uri_error_fn));
+
+    // EvalError (uses error_prototype since we don't have a dedicated prototype)
+    let eval_error_proto = interp.root_guard.alloc();
+    eval_error_proto.borrow_mut().prototype = Some(interp.error_prototype.clone());
+    {
+        let mut p = eval_error_proto.borrow_mut();
+        p.set_property(name_key, JsValue::String(JsString::from("EvalError")));
+        p.set_property(message_key, JsValue::String(JsString::from("")));
+    }
+    let eval_error_fn = interp.create_native_function("EvalError", eval_error_constructor, 1);
+    interp.root_guard.guard(eval_error_fn.clone());
+    eval_error_fn
+        .borrow_mut()
+        .set_property(proto_key, JsValue::Object(eval_error_proto));
+    interp
+        .global
+        .borrow_mut()
+        .set_property(eval_error_key, JsValue::Object(eval_error_fn));
 }
 
 /// Error.prototype.toString()
@@ -155,7 +243,7 @@ fn initialize_error_on_this(obj: &Gc<JsObject>, name: &str, message: JsValue) {
     );
     obj_ref.set_property(
         PropertyKey::from("message"),
-        JsValue::String(msg_str.cheap_clone()),
+        JsValue::String(msg_str.clone()),
     );
     obj_ref.set_property(PropertyKey::from("stack"), JsValue::String(stack));
 }
@@ -253,4 +341,89 @@ pub fn eval_error_constructor(
         initialize_error_on_this(this_obj, "EvalError", message);
     }
     Ok(Guarded::unguarded(JsValue::Undefined))
+}
+
+/// Create an error object from a JsError
+/// Returns the error object and a guard to keep it alive
+pub fn create_error_object(
+    interp: &mut Interpreter,
+    error: &JsError,
+) -> (JsValue, Option<Guard<JsObject>>) {
+    let guard = interp.heap.create_guard();
+
+    let (prototype, name, message) = match error {
+        JsError::TypeError { message } => {
+            (interp.type_error_prototype.clone(), "TypeError", message.clone())
+        }
+        JsError::ReferenceError { name } => (
+            interp.reference_error_prototype.clone(),
+            "ReferenceError",
+            format!("{} is not defined", name),
+        ),
+        JsError::RangeError { message } => {
+            (interp.range_error_prototype.clone(), "RangeError", message.clone())
+        }
+        JsError::SyntaxError { message, location } => (
+            interp.syntax_error_prototype.clone(),
+            "SyntaxError",
+            format!("{} at {}", message, location),
+        ),
+        JsError::RuntimeError { kind, message, .. } => {
+            // Map to appropriate prototype based on kind
+            let proto = match kind.as_str() {
+                "TypeError" => interp.type_error_prototype.clone(),
+                "ReferenceError" => interp.reference_error_prototype.clone(),
+                "RangeError" => interp.range_error_prototype.clone(),
+                "SyntaxError" => interp.syntax_error_prototype.clone(),
+                _ => interp.error_prototype.clone(),
+            };
+            (proto, kind.as_str(), message.clone())
+        }
+        JsError::ModuleError { message } => {
+            (interp.error_prototype.clone(), "Error", message.clone())
+        }
+        JsError::Internal(msg) => (interp.error_prototype.clone(), "Error", msg.clone()),
+        JsError::Timeout {
+            timeout_ms,
+            elapsed_ms,
+        } => (
+            interp.error_prototype.clone(),
+            "Error",
+            format!(
+                "execution exceeded {}ms timeout (limit: {}ms)",
+                elapsed_ms, timeout_ms
+            ),
+        ),
+        // These should not reach here, but handle them anyway
+        JsError::Thrown | JsError::ThrownValue { .. } | JsError::GeneratorYield { .. } => {
+            return (JsValue::Undefined, None);
+        }
+    };
+
+    // Create the error object
+    let error_obj = guard.alloc();
+    error_obj.borrow_mut().prototype = Some(prototype);
+
+    // Set name, message, and stack properties
+    let msg_str = JsString::from(message.as_str());
+    let stack_str = if msg_str.is_empty() {
+        JsString::from(name)
+    } else {
+        JsString::from(format!("{}: {}", name, msg_str))
+    };
+
+    {
+        let mut obj = error_obj.borrow_mut();
+        obj.set_property(
+            PropertyKey::from("name"),
+            JsValue::String(JsString::from(name)),
+        );
+        obj.set_property(
+            PropertyKey::from("message"),
+            JsValue::String(msg_str),
+        );
+        obj.set_property(PropertyKey::from("stack"), JsValue::String(stack_str));
+    }
+
+    (JsValue::Object(error_obj), Some(guard))
 }

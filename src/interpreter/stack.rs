@@ -1114,12 +1114,19 @@ impl Interpreter {
         state: &mut ExecutionState,
         error: JsError,
     ) -> Option<StepResult> {
-        // Extract error value for catch
-        let error_value = match &error {
-            JsError::Thrown => self.thrown_value.take().unwrap_or(JsValue::Undefined),
-            JsError::ThrownValue { value } => value.clone(),
-            _ => JsValue::from(error.to_string()),
+        // Extract error value for catch - create proper error objects for Rust errors
+        let (error_value, error_guard) = match &error {
+            JsError::Thrown => (self.thrown_value.take().unwrap_or(JsValue::Undefined), None),
+            JsError::ThrownValue { value } => (value.clone(), None),
+            _ => {
+                // Create a proper error object instead of a string
+                super::builtins::create_error_object(self, &error)
+            }
         };
+        // Store the guard to keep the error object alive during exception handling
+        if let Some(guard) = error_guard {
+            self.thrown_guard = Some(guard);
+        }
 
         // Search for TryBlock frame
         let mut found_try_idx = None;

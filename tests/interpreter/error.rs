@@ -629,3 +629,232 @@ fn test_error_instanceof_hierarchy() {
         JsValue::Boolean(true)
     );
 }
+
+// Tests for runtime errors being proper objects (not strings)
+#[test]
+fn test_runtime_typeerror_is_object() {
+    // Calling null as function should throw TypeError that is an object
+    assert_eq!(
+        eval(
+            r#"
+            let caught: any;
+            try {
+                (null as any)();
+            } catch (e) {
+                caught = e;
+            }
+            typeof caught
+        "#
+        ),
+        JsValue::from("object")
+    );
+}
+
+#[test]
+fn test_runtime_typeerror_instanceof_error() {
+    // Runtime TypeError should be instanceof Error
+    assert_eq!(
+        eval(
+            r#"
+            let isError: boolean = false;
+            try {
+                (null as any)();
+            } catch (e) {
+                isError = e instanceof Error;
+            }
+            isError
+        "#
+        ),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_runtime_typeerror_instanceof_typeerror() {
+    // Runtime TypeError should be instanceof TypeError
+    assert_eq!(
+        eval(
+            r#"
+            let isTypeError: boolean = false;
+            try {
+                (null as any)();
+            } catch (e) {
+                isTypeError = e instanceof TypeError;
+            }
+            isTypeError
+        "#
+        ),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_runtime_typeerror_has_name() {
+    // Runtime TypeError should have name property
+    assert_eq!(
+        eval(
+            r#"
+            let name: string = "";
+            try {
+                (null as any)();
+            } catch (e) {
+                name = e.name;
+            }
+            name
+        "#
+        ),
+        JsValue::from("TypeError")
+    );
+}
+
+#[test]
+fn test_runtime_typeerror_has_message() {
+    // Runtime TypeError should have a message property
+    assert_eq!(
+        eval(
+            r#"
+            let hasMessage: boolean = false;
+            try {
+                (null as any)();
+            } catch (e) {
+                hasMessage = typeof e.message === "string" && e.message.length > 0;
+            }
+            hasMessage
+        "#
+        ),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_runtime_referenceerror_is_object() {
+    // ReferenceError for undefined variable should be an object
+    assert_eq!(
+        eval(
+            r#"
+            let caught: any;
+            try {
+                undefinedVariable;
+            } catch (e) {
+                caught = e;
+            }
+            typeof caught
+        "#
+        ),
+        JsValue::from("object")
+    );
+}
+
+#[test]
+fn test_runtime_referenceerror_instanceof_error() {
+    // Runtime ReferenceError should be instanceof Error
+    assert_eq!(
+        eval(
+            r#"
+            let isError: boolean = false;
+            try {
+                undefinedVariable;
+            } catch (e) {
+                isError = e instanceof Error;
+            }
+            isError
+        "#
+        ),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_runtime_referenceerror_instanceof_referenceerror() {
+    // Runtime ReferenceError should be instanceof ReferenceError
+    assert_eq!(
+        eval(
+            r#"
+            let isReferenceError: boolean = false;
+            try {
+                undefinedVariable;
+            } catch (e) {
+                isReferenceError = e instanceof ReferenceError;
+            }
+            isReferenceError
+        "#
+        ),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_runtime_referenceerror_has_name() {
+    // Runtime ReferenceError should have name property
+    assert_eq!(
+        eval(
+            r#"
+            let name: string = "";
+            try {
+                undefinedVariable;
+            } catch (e) {
+                name = e.name;
+            }
+            name
+        "#
+        ),
+        JsValue::from("ReferenceError")
+    );
+}
+
+#[test]
+fn test_runtime_rangeerror_is_object() {
+    // RangeError from toFixed should be an object
+    assert_eq!(
+        eval(
+            r#"
+            let caught: any;
+            try {
+                (1.5).toFixed(-1);
+            } catch (e) {
+                caught = e;
+            }
+            typeof caught
+        "#
+        ),
+        JsValue::from("object")
+    );
+}
+
+#[test]
+fn test_runtime_rangeerror_instanceof_rangeerror() {
+    // Runtime RangeError should be instanceof RangeError
+    assert_eq!(
+        eval(
+            r#"
+            let isRangeError: boolean = false;
+            try {
+                (1.5).toFixed(-1);
+            } catch (e) {
+                isRangeError = e instanceof RangeError;
+            }
+            isRangeError
+        "#
+        ),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_runtime_error_tostring() {
+    // Runtime errors should have working toString()
+    assert_eq!(
+        eval(
+            r#"
+            let str: string = "";
+            try {
+                (null as any)();
+            } catch (e) {
+                str = e.toString();
+            }
+            str.startsWith("TypeError:")
+        "#
+        ),
+        JsValue::Boolean(true)
+    );
+}
