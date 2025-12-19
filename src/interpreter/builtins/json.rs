@@ -215,8 +215,10 @@ pub fn js_value_to_json(value: &JsValue) -> Result<serde_json::Value, JsError> {
     })
 }
 
-/// Convert a serde_json value to a JsValue using a provided guard
-fn json_to_js_value_with_guard(
+/// Convert a serde_json value to a JsValue using a provided guard.
+/// The guard keeps any created objects alive until it is dropped.
+/// This is the preferred method when you need to control the lifetime of the result.
+pub fn json_to_js_value_with_guard(
     interp: &mut Interpreter,
     json: &serde_json::Value,
     guard: &Guard<JsObject>,

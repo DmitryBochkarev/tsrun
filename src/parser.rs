@@ -1762,11 +1762,13 @@ impl<'a> Parser<'a> {
 
         let mut expr = if self.match_token(&TokenKind::New) {
             let callee = Rc::new(self.parse_member_expression()?);
-            let (arguments, type_arguments) = if self.check(&TokenKind::LParen) {
-                self.parse_call_arguments()?
-            } else {
-                (vec![], None)
-            };
+            // Check for type arguments (<T>) or arguments (()
+            let (arguments, type_arguments) =
+                if self.check(&TokenKind::LParen) || self.check(&TokenKind::Lt) {
+                    self.parse_call_arguments()?
+                } else {
+                    (vec![], None)
+                };
             let span = self.span_from(start);
             Expression::New(NewExpression {
                 callee,
@@ -5434,5 +5436,67 @@ export function parseLinks(text: string): ParsedElement[] {
         };
         assert_eq!(ctor.params.len(), 1);
         assert_eq!(ctor.params[0].decorators.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_new_with_type_arguments() {
+        // new Promise<void>(...)
+        let prog = parse("new Promise<void>((resolve) => resolve());");
+        assert_eq!(prog.body.len(), 1);
+        let Statement::Expression(expr_stmt) = &prog.body[0] else {
+            panic!("Expected expression statement");
+        };
+        let Expression::New(new_expr) = &*expr_stmt.expression else {
+            panic!("Expected new expression");
+        };
+        assert!(new_expr.type_arguments.is_some());
+        let type_args = new_expr.type_arguments.as_ref().unwrap();
+        assert_eq!(type_args.params.len(), 1);
+        assert_eq!(new_expr.arguments.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_new_with_multiple_type_arguments() {
+        // new Map<string, number>()
+        let prog = parse("new Map<string, number>();");
+        assert_eq!(prog.body.len(), 1);
+        let Statement::Expression(expr_stmt) = &prog.body[0] else {
+            panic!("Expected expression statement");
+        };
+        let Expression::New(new_expr) = &*expr_stmt.expression else {
+            panic!("Expected new expression");
+        };
+        assert!(new_expr.type_arguments.is_some());
+        let type_args = new_expr.type_arguments.as_ref().unwrap();
+        assert_eq!(type_args.params.len(), 2);
+    }
+
+    #[test]
+    fn test_parse_new_without_type_arguments() {
+        // new Promise((resolve) => resolve())
+        let prog = parse("new Promise((resolve) => resolve());");
+        assert_eq!(prog.body.len(), 1);
+        let Statement::Expression(expr_stmt) = &prog.body[0] else {
+            panic!("Expected expression statement");
+        };
+        let Expression::New(new_expr) = &*expr_stmt.expression else {
+            panic!("Expected new expression");
+        };
+        assert!(new_expr.type_arguments.is_none());
+        assert_eq!(new_expr.arguments.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_new_generic_with_callback() {
+        // new Promise<void>((resolve) => { setTimeout(() => resolve(), 100); })
+        let prog = parse("new Promise<void>((resolve) => { setTimeout(() => resolve(), 100); });");
+        assert_eq!(prog.body.len(), 1);
+        let Statement::Expression(expr_stmt) = &prog.body[0] else {
+            panic!("Expected expression statement");
+        };
+        let Expression::New(new_expr) = &*expr_stmt.expression else {
+            panic!("Expected new expression");
+        };
+        assert!(new_expr.type_arguments.is_some());
     }
 }

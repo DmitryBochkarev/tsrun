@@ -31,7 +31,9 @@ pub use value::JsString;
 pub use value::JsValue;
 
 // Re-export serde conversion functions for JsValue <-> serde_json::Value
-pub use interpreter::builtins::json::{js_value_to_json, json_to_js_value_with_interp};
+pub use interpreter::builtins::json::{
+    js_value_to_json, json_to_js_value_with_guard, json_to_js_value_with_interp,
+};
 
 // Re-export order system types
 // Note: Order, OrderId, OrderResponse, RuntimeResult, ModulePath, ImportRequest are defined in this module
@@ -63,8 +65,10 @@ pub struct Order {
 pub struct OrderResponse {
     /// The order ID this response is for
     pub id: OrderId,
-    /// The result of the operation (success or error)
-    pub result: Result<JsValue, JsError>,
+    /// The result of the operation (success or error).
+    /// Use `RuntimeValue::unguarded()` for primitives or
+    /// `Runtime::create_response_object()` for objects.
+    pub result: Result<RuntimeValue, JsError>,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -112,8 +116,9 @@ impl RuntimeValue {
         }
     }
 
-    /// Create an unguarded RuntimeValue (for primitives)
-    pub(crate) fn unguarded(value: JsValue) -> Self {
+    /// Create an unguarded RuntimeValue (for primitives).
+    /// Use this for values that don't need GC protection (strings, numbers, booleans, null, undefined).
+    pub fn unguarded(value: JsValue) -> Self {
         Self {
             value,
             _guard: None,
@@ -124,6 +129,11 @@ impl RuntimeValue {
     pub fn value(&self) -> &JsValue {
         &self.value
     }
+
+    // NOTE: Do NOT add `into_value(self) -> JsValue` or similar methods that
+    // extract the value without the guard. The guard must stay alive as long
+    // as the value is in use. If you need to pass the value somewhere, pass
+    // the entire RuntimeValue and let the receiver access it via .value().
 }
 
 impl std::ops::Deref for RuntimeValue {
@@ -585,6 +595,39 @@ impl Runtime {
     /// Get GC statistics
     pub fn gc_stats(&self) -> gc::GcStats {
         self.interpreter.heap.stats()
+    }
+
+    /// Create a RuntimeValue from a serde_json value for use in OrderResponse.
+    ///
+    /// This is the recommended way to create object responses for orders.
+    /// The returned RuntimeValue keeps the object alive until it is consumed.
+    ///
+    /// # Example
+    /// ```ignore
+    /// use serde_json::json;
+    ///
+    /// let response_value = runtime.create_response_object(&json!({
+    ///     "id": 1,
+    ///     "name": "John",
+    ///     "items": [1, 2, 3]
+    /// }))?;
+    ///
+    /// let response = OrderResponse {
+    ///     id: order.id,
+    ///     result: Ok(response_value),
+    /// };
+    /// ```
+    pub fn create_response_object(
+        &mut self,
+        json: &serde_json::Value,
+    ) -> Result<RuntimeValue, JsError> {
+        let guard = self.interpreter.heap.create_guard();
+        let value = interpreter::builtins::json::json_to_js_value_with_guard(
+            &mut self.interpreter,
+            json,
+            &guard,
+        )?;
+        Ok(RuntimeValue::with_guard(value, guard))
     }
 }
 

@@ -49,6 +49,11 @@ fn order_syscall(
         JsFunction::PromiseReject(promise.cheap_clone()),
     );
 
+    // Root the callback functions so they survive until order is fulfilled.
+    // These are stored in order_callbacks and will be removed when the order is fulfilled.
+    interp.root_guard.guard(resolve_fn.clone());
+    interp.root_guard.guard(reject_fn.clone());
+
     // Store callbacks for order fulfillment
     interp.order_callbacks.insert(id, (resolve_fn, reject_fn));
 

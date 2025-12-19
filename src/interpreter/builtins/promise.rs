@@ -9,8 +9,8 @@ use crate::error::JsError;
 use crate::gc::{Gc, Guard};
 use crate::interpreter::Interpreter;
 use crate::value::{
-    CheapClone, ExoticObject, Guarded, JsFunction, JsObject, JsValue, PromiseHandler, PromiseState,
-    PromiseStatus, PropertyKey,
+    CheapClone, ExoticObject, Guarded, JsFunction, JsObject, JsValue, PromiseAllSharedState,
+    PromiseHandler, PromiseState, PromiseStatus, PropertyKey,
 };
 
 /// Initialize Promise.prototype with then, catch, finally methods
@@ -239,6 +239,14 @@ fn trigger_handler(
     let guard = interp.heap.create_guard();
     guard.guard(handler.result_promise.clone());
 
+    // Guard the callbacks too - they've been removed from the promise and need protection
+    if let Some(JsValue::Object(ref cb)) = handler.on_fulfilled {
+        guard.guard(cb.clone());
+    }
+    if let Some(JsValue::Object(ref cb)) = handler.on_rejected {
+        guard.guard(cb.clone());
+    }
+
     let callback = if is_fulfilled {
         handler.on_fulfilled.clone()
     } else {
@@ -247,10 +255,25 @@ fn trigger_handler(
 
     match callback {
         Some(cb) => {
-            // Call the callback and resolve result_promise with the return value
+            // Check if this is a Promise.all handler - these manage their own result promise
+            let is_promise_all_handler = if let JsValue::Object(ref cb_obj) = cb {
+                let cb_ref = cb_obj.borrow();
+                matches!(
+                    cb_ref.exotic,
+                    ExoticObject::Function(JsFunction::PromiseAllFulfill { .. })
+                        | ExoticObject::Function(JsFunction::PromiseAllReject(_))
+                )
+            } else {
+                false
+            };
+
+            // Call the callback
             match interp.call_function(cb, JsValue::Undefined, std::slice::from_ref(value)) {
                 Ok(Guarded { value: result, .. }) => {
-                    resolve_promise(interp, &handler.result_promise, result)?;
+                    // Promise.all handlers manage their own result promise resolution
+                    if !is_promise_all_handler {
+                        resolve_promise(interp, &handler.result_promise, result)?;
+                    }
                 }
                 Err(e) => {
                     // If callback throws, reject the result promise
@@ -336,6 +359,15 @@ pub fn promise_then(
 
     let on_fulfilled = args.first().cloned();
     let on_rejected = args.get(1).cloned();
+
+    // Guard the callbacks BEFORE creating the result promise
+    // This ensures they (and their closures) survive GC during allocation
+    if let Some(JsValue::Object(ref cb)) = on_fulfilled {
+        guard.guard(cb.clone());
+    }
+    if let Some(JsValue::Object(ref cb)) = on_rejected {
+        guard.guard(cb.clone());
+    }
 
     // Filter out non-callable values
     let on_fulfilled = on_fulfilled.filter(|v| v.is_callable());
@@ -533,45 +565,156 @@ pub fn promise_all(
         return Ok(Guarded::with_guard(JsValue::Object(promise), guard));
     }
 
-    // Collect status info
-    let mut results: Vec<JsValue> = Vec::with_capacity(promises.len());
-    let mut rejected_reason: Option<JsValue> = None;
+    // First pass: check for already-rejected promises and count pending
+    let mut results: Vec<JsValue> = vec![JsValue::Undefined; promises.len()];
+    let mut pending_count = 0;
+    let mut pending_indices: Vec<usize> = Vec::new();
 
-    for promise_value in &promises {
+    for (i, promise_value) in promises.iter().enumerate() {
         let (status, result) = if let JsValue::Object(obj) = promise_value {
             let obj_ref = obj.borrow();
             if let ExoticObject::Promise(ref state) = obj_ref.exotic {
                 let state_ref = state.borrow();
                 (state_ref.status.clone(), state_ref.result.clone())
             } else {
+                // Non-promise object is treated as fulfilled with that value
                 (PromiseStatus::Fulfilled, Some(promise_value.clone()))
             }
         } else {
+            // Non-object value is treated as fulfilled with that value
             (PromiseStatus::Fulfilled, Some(promise_value.clone()))
         };
 
         match status {
             PromiseStatus::Fulfilled => {
-                results.push(result.unwrap_or(JsValue::Undefined));
+                if let Some(idx) = results.get_mut(i) {
+                    *idx = result.unwrap_or(JsValue::Undefined);
+                }
             }
             PromiseStatus::Rejected => {
-                rejected_reason = Some(result.unwrap_or(JsValue::Undefined));
-                break;
+                // Short-circuit: reject immediately
+                let reason = result.unwrap_or(JsValue::Undefined);
+                let promise = create_rejected_promise(interp, &guard, reason);
+                return Ok(Guarded::with_guard(JsValue::Object(promise), guard));
             }
             PromiseStatus::Pending => {
-                results.push(JsValue::Undefined);
+                pending_count += 1;
+                pending_indices.push(i);
             }
         }
     }
 
-    if let Some(reason) = rejected_reason {
-        let promise = create_rejected_promise(interp, &guard, reason);
+    // If no pending promises, all are fulfilled - return fulfilled promise
+    if pending_count == 0 {
+        let arr = interp.create_array_from(&guard, results);
+        let promise = create_fulfilled_promise(interp, &guard, JsValue::Object(arr));
         return Ok(Guarded::with_guard(JsValue::Object(promise), guard));
     }
 
-    let arr = interp.create_array_from(&guard, results);
-    let promise = create_fulfilled_promise(interp, &guard, JsValue::Object(arr));
-    Ok(Guarded::with_guard(JsValue::Object(promise), guard))
+    // Create the result promise (pending)
+    let result_promise = create_promise(interp, &guard);
+
+    // Create shared state for tracking - shared by all handlers
+    let shared_state = Rc::new(PromiseAllSharedState {
+        remaining: std::cell::Cell::new(pending_count),
+        results: RefCell::new(results),
+        result_promise: result_promise.cheap_clone(),
+        rejected: std::cell::Cell::new(false),
+    });
+
+    // Attach handlers to each pending promise
+    for &idx in &pending_indices {
+        if let Some(JsValue::Object(promise_obj)) = promises.get(idx) {
+            let promise_obj_ref = promise_obj.borrow();
+            if let ExoticObject::Promise(ref state) = promise_obj_ref.exotic {
+                // Create on_fulfilled callback using PromiseAllFulfill variant
+                // Each handler shares the same state but has its own index
+                let on_fulfilled = interp.create_object(&guard);
+                {
+                    let mut f = on_fulfilled.borrow_mut();
+                    f.prototype = Some(interp.function_prototype.cheap_clone());
+                    f.exotic = ExoticObject::Function(JsFunction::PromiseAllFulfill {
+                        state: shared_state.clone(),
+                        index: idx,
+                    });
+                }
+
+                // Create on_rejected callback using PromiseAllReject variant
+                let on_rejected = interp.create_object(&guard);
+                {
+                    let mut f = on_rejected.borrow_mut();
+                    f.prototype = Some(interp.function_prototype.cheap_clone());
+                    f.exotic =
+                        ExoticObject::Function(JsFunction::PromiseAllReject(shared_state.clone()));
+                }
+
+                // Add handler to the pending promise
+                let mut state_mut = state.borrow_mut();
+                state_mut.handlers.push(PromiseHandler {
+                    on_fulfilled: Some(JsValue::Object(on_fulfilled)),
+                    on_rejected: Some(JsValue::Object(on_rejected)),
+                    result_promise: result_promise.cheap_clone(),
+                });
+            }
+        }
+    }
+
+    Ok(Guarded::with_guard(JsValue::Object(result_promise), guard))
+}
+
+/// Handle Promise.all fulfill - called when one of the input promises resolves
+pub fn handle_promise_all_fulfill(
+    interp: &mut Interpreter,
+    state: &Rc<PromiseAllSharedState>,
+    index: usize,
+    value: JsValue,
+) -> Result<(), JsError> {
+    if state.rejected.get() {
+        // Already rejected, ignore
+        return Ok(());
+    }
+
+    // Store result at the correct index
+    {
+        let mut results = state.results.borrow_mut();
+        if let Some(slot) = results.get_mut(index) {
+            *slot = value;
+        }
+    }
+
+    let remaining = state.remaining.get();
+    state.remaining.set(remaining - 1);
+
+    if remaining - 1 == 0 {
+        // All promises fulfilled - fulfill the result promise
+        let results = std::mem::take(&mut *state.results.borrow_mut());
+        let result_promise = state.result_promise.cheap_clone();
+
+        let guard = interp.heap.create_guard();
+        let arr = interp.create_array_from(&guard, results);
+        fulfill_promise(interp, &result_promise, JsValue::Object(arr))?;
+    }
+
+    Ok(())
+}
+
+/// Handle Promise.all reject - called when any of the input promises rejects
+pub fn handle_promise_all_reject(
+    interp: &mut Interpreter,
+    state: &Rc<PromiseAllSharedState>,
+    reason: JsValue,
+) -> Result<(), JsError> {
+    if state.rejected.get() {
+        // Already rejected, ignore
+        return Ok(());
+    }
+
+    state.rejected.set(true);
+    let result_promise = state.result_promise.cheap_clone();
+
+    reject_promise(interp, &result_promise, reason)?;
+
+    Ok(())
 }
 
 /// Promise.race(iterable)

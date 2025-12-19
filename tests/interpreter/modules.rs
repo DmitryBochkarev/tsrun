@@ -2,7 +2,7 @@
 
 use typescript_eval::{
     Guarded, InternalModule, Interpreter, JsError, JsValue, ModulePath, OrderResponse, Runtime,
-    RuntimeConfig, RuntimeResult,
+    RuntimeConfig, RuntimeResult, RuntimeValue,
 };
 
 #[test]
@@ -425,7 +425,7 @@ fn test_order_fulfillment() {
             // Fulfill the order
             let response = OrderResponse {
                 id: order_id,
-                result: Ok(JsValue::Number(42.0)),
+                result: Ok(RuntimeValue::unguarded(JsValue::Number(42.0))),
             };
 
             let result2 = runtime.fulfill_orders(vec![response]).unwrap();
@@ -528,7 +528,7 @@ fn test_await_pending_promise_suspends_and_resumes() {
             // Fulfill the order with value 21
             let response = typescript_eval::OrderResponse {
                 id: pending[0].id,
-                result: Ok(JsValue::Number(21.0)),
+                result: Ok(RuntimeValue::unguarded(JsValue::Number(21.0))),
             };
 
             let result2 = runtime.fulfill_orders(vec![response]).unwrap();
@@ -581,7 +581,7 @@ fn test_await_suspension_with_multiple_awaits() {
             // Fulfill first order
             let response = typescript_eval::OrderResponse {
                 id: pending[0].id,
-                result: Ok(JsValue::Number(10.0)),
+                result: Ok(RuntimeValue::unguarded(JsValue::Number(10.0))),
             };
 
             let result2 = runtime.fulfill_orders(vec![response]).unwrap();
@@ -596,7 +596,7 @@ fn test_await_suspension_with_multiple_awaits() {
                     // Fulfill second order
                     let response2 = typescript_eval::OrderResponse {
                         id: pending2[0].id,
-                        result: Ok(JsValue::Number(32.0)),
+                        result: Ok(RuntimeValue::unguarded(JsValue::Number(32.0))),
                     };
 
                     let result3 = runtime.fulfill_orders(vec![response2]).unwrap();

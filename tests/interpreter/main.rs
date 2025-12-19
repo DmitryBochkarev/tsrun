@@ -38,6 +38,7 @@ mod math;
 mod modules;
 mod number;
 mod object;
+mod orders;
 mod promise;
 mod regexp;
 mod set;

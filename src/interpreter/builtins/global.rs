@@ -7,6 +7,15 @@ use crate::value::{ExoticObject, Guarded, JsObject, JsString, JsValue, PropertyK
 
 /// Register global functions (parseInt, parseFloat, isNaN, isFinite, URI functions)
 pub fn init_global_functions(interp: &mut Interpreter) {
+    // globalThis - reference to the global object itself
+    let global_clone = interp.global.clone();
+    interp.root_guard.guard(global_clone.clone());
+    let key = PropertyKey::String(interp.intern("globalThis"));
+    interp
+        .global
+        .borrow_mut()
+        .set_property(key, JsValue::Object(global_clone));
+
     // parseInt
     let parseint_fn = interp.create_native_function("parseInt", global_parse_int, 2);
     interp.root_guard.guard(parseint_fn.clone());

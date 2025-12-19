@@ -630,6 +630,16 @@ impl Interpreter {
                         let cancelled = std::mem::take(&mut self.cancelled_orders);
                         return Ok(crate::RuntimeResult::Suspended { pending, cancelled });
                     }
+                    // Also check for unfulfilled orders from previous suspension
+                    // (e.g., Promise.all where only some orders were fulfilled)
+                    if !self.order_callbacks.is_empty() {
+                        // Return suspended with no new orders - the host already has them
+                        let cancelled = std::mem::take(&mut self.cancelled_orders);
+                        return Ok(crate::RuntimeResult::Suspended {
+                            pending: Vec::new(),
+                            cancelled,
+                        });
+                    }
                     return Ok(crate::RuntimeResult::Complete(
                         crate::RuntimeValue::from_guarded(guarded),
                     ));
@@ -829,6 +839,15 @@ impl Interpreter {
             return Ok(crate::RuntimeResult::Suspended { pending, cancelled });
         }
 
+        // Also check for unfulfilled orders from previous suspension
+        if !self.order_callbacks.is_empty() {
+            let cancelled = std::mem::take(&mut self.cancelled_orders);
+            return Ok(crate::RuntimeResult::Suspended {
+                pending: Vec::new(),
+                cancelled,
+            });
+        }
+
         // No pending orders - execution is complete
         Ok(crate::RuntimeResult::Complete(
             crate::RuntimeValue::unguarded(JsValue::Undefined),
@@ -837,19 +856,22 @@ impl Interpreter {
 
     /// Fulfill orders with responses from the host
     pub fn fulfill_orders(&mut self, responses: Vec<crate::OrderResponse>) -> Result<(), JsError> {
+        // Process each response, keeping its RuntimeValue alive while we resolve
         for response in responses {
             if let Some((resolve_fn, reject_fn)) = self.order_callbacks.remove(&response.id) {
                 match response.result {
-                    Ok(value) => {
-                        // Call resolve(value)
+                    Ok(runtime_value) => {
+                        // Clone the value while runtime_value (and its guard) is still in scope.
+                        // The guard keeps the object alive during call_function.
+                        let value = runtime_value.value().clone();
                         self.call_function(
                             JsValue::Object(resolve_fn),
                             JsValue::Undefined,
                             &[value],
                         )?;
+                        // runtime_value dropped here after call_function stores the value
                     }
                     Err(error) => {
-                        // Create error object and call reject
                         let error_msg = JsValue::String(JsString::from(error.to_string()));
                         self.call_function(
                             JsValue::Object(reject_fn),
@@ -4709,6 +4731,18 @@ impl Interpreter {
             JsFunction::PromiseReject(promise) => {
                 let reason = args.first().cloned().unwrap_or(JsValue::Undefined);
                 builtins::promise::reject_promise_value(self, &promise, reason)?;
+                Ok(Guarded::unguarded(JsValue::Undefined))
+            }
+
+            JsFunction::PromiseAllFulfill { state, index } => {
+                let value = args.first().cloned().unwrap_or(JsValue::Undefined);
+                builtins::promise::handle_promise_all_fulfill(self, &state, index, value)?;
+                Ok(Guarded::unguarded(JsValue::Undefined))
+            }
+
+            JsFunction::PromiseAllReject(state) => {
+                let reason = args.first().cloned().unwrap_or(JsValue::Undefined);
+                builtins::promise::handle_promise_all_reject(self, &state, reason)?;
                 Ok(Guarded::unguarded(JsValue::Undefined))
             }
 

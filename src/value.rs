@@ -555,6 +555,24 @@ impl Traceable for JsObject {
                     JsFunction::PromiseResolve(promise) | JsFunction::PromiseReject(promise) => {
                         visitor(promise.copy_ref());
                     }
+                    JsFunction::PromiseAllFulfill { state, .. } => {
+                        // Trace the result promise and all results
+                        visitor(state.result_promise.copy_ref());
+                        for result in state.results.borrow().iter() {
+                            if let JsValue::Object(obj) = result {
+                                visitor(obj.copy_ref());
+                            }
+                        }
+                    }
+                    JsFunction::PromiseAllReject(state) => {
+                        // Trace the result promise and all results
+                        visitor(state.result_promise.copy_ref());
+                        for result in state.results.borrow().iter() {
+                            if let JsValue::Object(obj) = result {
+                                visitor(obj.copy_ref());
+                            }
+                        }
+                    }
                     JsFunction::Interpreted(interp) => {
                         // Trace the closure environment
                         visitor(interp.closure.copy_ref());
@@ -1868,10 +1886,32 @@ pub enum JsFunction {
     PromiseResolve(JsObjectRef),
     /// Promise reject function (has internal [[Promise]] slot)
     PromiseReject(JsObjectRef),
+    /// Promise.all fulfill handler (tracks shared state for aggregation)
+    /// Contains (shared_state, index) - index is which promise slot to fill
+    PromiseAllFulfill {
+        state: std::rc::Rc<PromiseAllSharedState>,
+        index: usize,
+    },
+    /// Promise.all reject handler (rejects on first failure)
+    PromiseAllReject(std::rc::Rc<PromiseAllSharedState>),
     /// Auto-accessor getter (metadata stored in object properties)
     AccessorGetter,
     /// Auto-accessor setter (metadata stored in object properties)
     AccessorSetter,
+}
+
+/// Shared state for Promise.all tracking
+/// This is shared across all handlers via Rc
+#[derive(Debug)]
+pub struct PromiseAllSharedState {
+    /// Number of promises still pending
+    pub remaining: std::cell::Cell<usize>,
+    /// Results array (indexed by original position)
+    pub results: std::cell::RefCell<Vec<JsValue>>,
+    /// The result promise to fulfill when all complete
+    pub result_promise: JsObjectRef,
+    /// Whether any promise has already rejected
+    pub rejected: std::cell::Cell<bool>,
 }
 
 /// Data for a bound function
@@ -1893,6 +1933,8 @@ impl JsFunction {
             JsFunction::Bound(_) => Some("bound"),
             JsFunction::PromiseResolve(_) => Some("resolve"),
             JsFunction::PromiseReject(_) => Some("reject"),
+            JsFunction::PromiseAllFulfill { .. } => Some("promiseAllFulfill"),
+            JsFunction::PromiseAllReject(_) => Some("promiseAllReject"),
             JsFunction::AccessorGetter => Some("get"),
             JsFunction::AccessorSetter => Some("set"),
         }
