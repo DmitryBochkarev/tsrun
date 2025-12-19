@@ -33,10 +33,10 @@ fn test_gc_stats_available() {
 fn test_baseline_object_count() {
     let baseline = get_baseline_live_count();
     println!("Baseline live count (builtins only): {}", baseline);
-    // Builtins include: global, prototypes, constructors, Math, JSON, console, etc.
-    // This should be stable and typically around 100-200
+    // Builtins include: global, prototypes, constructors, Math, JSON, console, Boolean, etc.
+    // This should be stable and typically around 100-300
     assert!(baseline > 50, "Should have some builtins");
-    assert!(baseline < 300, "Baseline should be bounded");
+    assert!(baseline < 350, "Baseline should be bounded");
 }
 
 #[test]

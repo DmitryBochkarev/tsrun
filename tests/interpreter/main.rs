@@ -20,6 +20,7 @@ mod array;
 mod async_await;
 mod async_iter;
 mod basics;
+mod boolean;
 mod class;
 mod console;
 mod control_flow;

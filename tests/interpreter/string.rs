@@ -636,3 +636,63 @@ fn test_string_replace_callback_with_capture_group() {
         JsValue::String(JsString::from("myVariableName"))
     );
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// String Wrapper Object Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_string_wrapper_typeof() {
+    // new String creates an object, not a string primitive
+    assert_eq!(
+        eval("typeof new String('hello')"),
+        JsValue::String("object".into())
+    );
+    // String() without new returns primitive
+    assert_eq!(
+        eval("typeof String('hello')"),
+        JsValue::String("string".into())
+    );
+}
+
+#[test]
+fn test_string_wrapper_valueof() {
+    // valueOf returns the primitive string value
+    assert_eq!(
+        eval("new String('hello').valueOf()"),
+        JsValue::String("hello".into())
+    );
+}
+
+#[test]
+fn test_string_wrapper_tostring() {
+    // toString returns the primitive string value
+    assert_eq!(
+        eval("new String('world').toString()"),
+        JsValue::String("world".into())
+    );
+}
+
+#[test]
+fn test_string_wrapper_length() {
+    // String wrapper objects have a length property
+    assert_eq!(eval("new String('hello').length"), JsValue::Number(5.0));
+    assert_eq!(eval("new String('').length"), JsValue::Number(0.0));
+}
+
+#[test]
+fn test_string_wrapper_addition() {
+    // String wrapper in addition uses ToPrimitive
+    assert_eq!(
+        eval("new String('hello') + ' world'"),
+        JsValue::String("hello world".into())
+    );
+    assert_eq!(
+        eval("'hello ' + new String('world')"),
+        JsValue::String("hello world".into())
+    );
+    assert_eq!(
+        eval("new String('foo') + new String('bar')"),
+        JsValue::String("foobar".into())
+    );
+}

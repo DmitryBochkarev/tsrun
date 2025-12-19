@@ -128,6 +128,9 @@ pub struct Interpreter {
     /// Number.prototype (for number primitive methods)
     pub number_prototype: Gc<JsObject>,
 
+    /// Boolean.prototype (for boolean primitive methods)
+    pub boolean_prototype: Gc<JsObject>,
+
     /// RegExp.prototype (for regexp methods)
     pub regexp_prototype: Gc<JsObject>,
 
@@ -249,6 +252,7 @@ impl Interpreter {
         let function_prototype = root_guard.alloc();
         let string_prototype = root_guard.alloc();
         let number_prototype = root_guard.alloc();
+        let boolean_prototype = root_guard.alloc();
         let regexp_prototype = root_guard.alloc();
         let map_prototype = root_guard.alloc();
         let set_prototype = root_guard.alloc();
@@ -262,6 +266,7 @@ impl Interpreter {
         function_prototype.borrow_mut().prototype = Some(object_prototype.clone());
         string_prototype.borrow_mut().prototype = Some(object_prototype.clone());
         number_prototype.borrow_mut().prototype = Some(object_prototype.clone());
+        boolean_prototype.borrow_mut().prototype = Some(object_prototype.clone());
         regexp_prototype.borrow_mut().prototype = Some(object_prototype.clone());
         map_prototype.borrow_mut().prototype = Some(object_prototype.clone());
         set_prototype.borrow_mut().prototype = Some(object_prototype.clone());
@@ -297,6 +302,7 @@ impl Interpreter {
             function_prototype,
             string_prototype,
             number_prototype,
+            boolean_prototype,
             regexp_prototype,
             map_prototype,
             set_prototype,
@@ -422,6 +428,12 @@ impl Interpreter {
         let number_constructor = builtins::create_number_constructor(self);
         let number_name = self.intern("Number");
         self.env_define(number_name, JsValue::Object(number_constructor), false);
+
+        // Initialize Boolean prototype and constructor (global Boolean function)
+        builtins::init_boolean_prototype(self);
+        let boolean_constructor = builtins::create_boolean_constructor(self);
+        let boolean_name = self.intern("Boolean");
+        self.env_define(boolean_name, JsValue::Object(boolean_constructor), false);
 
         // Initialize Promise prototype and constructor
         builtins::promise::init_promise_prototype(self);
@@ -1187,7 +1199,7 @@ impl Interpreter {
             return Ok(prop);
         }
 
-        Err(JsError::reference_error(format!("{} is not defined", name)))
+        Err(JsError::reference_error(name.to_string()))
     }
 
     /// Resolve an import binding by reading from the module's environment
@@ -1271,7 +1283,7 @@ impl Interpreter {
             }
         }
 
-        Err(JsError::reference_error(format!("{} is not defined", name)))
+        Err(JsError::reference_error(name.to_string()))
     }
 
     /// Push a new scope and return the saved environment
@@ -3999,17 +4011,26 @@ impl Interpreter {
         }
 
         // Call the constructor with `this` set to the new object
-        let this = JsValue::Object(new_obj);
+        let this = JsValue::Object(new_obj.cheap_clone());
         let result = self.call_function(constructor, this.clone(), &args)?;
 
         // If constructor returns an object, use that; otherwise use the created object
         match result.value {
             JsValue::Object(obj) => {
-                // The result already has a guard from call_function
-                Ok(Guarded {
-                    value: JsValue::Object(obj),
-                    guard: result.guard,
-                })
+                // Check if the returned object is the same as `this` (created by us)
+                // If so, use our new_guard. Otherwise, use the result's guard.
+                let is_same_object =
+                    std::ptr::eq(&*obj.borrow() as *const _, &*new_obj.borrow() as *const _);
+                if is_same_object {
+                    Ok(Guarded::with_guard(JsValue::Object(obj), new_guard))
+                } else {
+                    // A different object was returned - use result's guard if any,
+                    // but also keep new_guard since the returned object might reference it
+                    Ok(Guarded {
+                        value: JsValue::Object(obj),
+                        guard: result.guard.or(Some(new_guard)),
+                    })
+                }
             }
             _ => Ok(Guarded::with_guard(this, new_guard)),
         }
@@ -4111,18 +4132,48 @@ impl Interpreter {
             guard: _right_guard,
         } = self.evaluate_expression(&bin.right)?;
 
-        Ok(Guarded::unguarded(match bin.operator {
-            // Arithmetic
-            BinaryOp::Add => match (&left, &right) {
-                (JsValue::String(a), _) => JsValue::String(a.cheap_clone() + &right.to_js_string()),
-                (_, JsValue::String(b)) => JsValue::String(left.to_js_string() + b.as_str()),
-                _ => JsValue::Number(left.to_number() + right.to_number()),
-            },
-            BinaryOp::Sub => JsValue::Number(left.to_number() - right.to_number()),
-            BinaryOp::Mul => JsValue::Number(left.to_number() * right.to_number()),
-            BinaryOp::Div => JsValue::Number(left.to_number() / right.to_number()),
-            BinaryOp::Mod => JsValue::Number(left.to_number() % right.to_number()),
-            BinaryOp::Exp => JsValue::Number(left.to_number().powf(right.to_number())),
+        let result = match bin.operator {
+            // Arithmetic - need ToPrimitive for object operands
+            BinaryOp::Add => {
+                // First convert objects to primitives with "default" hint (same as "number" for most cases)
+                let left_prim = self.coerce_to_primitive(&left, "default")?;
+                let right_prim = self.coerce_to_primitive(&right, "default")?;
+
+                match (&left_prim, &right_prim) {
+                    (JsValue::String(a), _) => {
+                        JsValue::String(a.cheap_clone() + &right_prim.to_js_string())
+                    }
+                    (_, JsValue::String(b)) => {
+                        JsValue::String(left_prim.to_js_string() + b.as_str())
+                    }
+                    _ => JsValue::Number(left_prim.to_number() + right_prim.to_number()),
+                }
+            }
+            BinaryOp::Sub => {
+                let left_num = self.coerce_to_number(&left)?;
+                let right_num = self.coerce_to_number(&right)?;
+                JsValue::Number(left_num - right_num)
+            }
+            BinaryOp::Mul => {
+                let left_num = self.coerce_to_number(&left)?;
+                let right_num = self.coerce_to_number(&right)?;
+                JsValue::Number(left_num * right_num)
+            }
+            BinaryOp::Div => {
+                let left_num = self.coerce_to_number(&left)?;
+                let right_num = self.coerce_to_number(&right)?;
+                JsValue::Number(left_num / right_num)
+            }
+            BinaryOp::Mod => {
+                let left_num = self.coerce_to_number(&left)?;
+                let right_num = self.coerce_to_number(&right)?;
+                JsValue::Number(left_num % right_num)
+            }
+            BinaryOp::Exp => {
+                let left_num = self.coerce_to_number(&left)?;
+                let right_num = self.coerce_to_number(&right)?;
+                JsValue::Number(left_num.powf(right_num))
+            }
 
             // Comparison
             BinaryOp::Lt => JsValue::Boolean(left.to_number() < right.to_number()),
@@ -4218,7 +4269,8 @@ impl Interpreter {
                     JsValue::Boolean(obj.borrow().has_own_property(&key))
                 }
             }
-        }))
+        };
+        Ok(Guarded::unguarded(result))
     }
 
     fn abstract_equals(&self, left: &JsValue, right: &JsValue) -> bool {
@@ -4227,6 +4279,66 @@ impl Interpreter {
             (JsValue::Number(a), JsValue::String(b)) => *a == b.parse().unwrap_or(f64::NAN),
             (JsValue::String(a), JsValue::Number(b)) => a.parse().unwrap_or(f64::NAN) == *b,
             _ => left.strict_equals(right),
+        }
+    }
+
+    /// ToPrimitive: Convert an object to a primitive value.
+    /// For wrapper objects (Number, String, Boolean), this calls valueOf/toString.
+    /// `hint` specifies preference: "number" tries valueOf first, "string" tries toString first.
+    fn coerce_to_primitive(&mut self, value: &JsValue, hint: &str) -> Result<JsValue, JsError> {
+        let obj = match value {
+            JsValue::Object(obj) => obj,
+            // Already primitive
+            _ => return Ok(value.clone()),
+        };
+
+        // Determine method order based on hint
+        let (first_method, second_method) = if hint == "string" {
+            ("toString", "valueOf")
+        } else {
+            // "number" or "default" - try valueOf first
+            ("valueOf", "toString")
+        };
+
+        // Try first method
+        let first_key = PropertyKey::String(self.intern(first_method));
+        let first_prop = obj.borrow().get_property(&first_key);
+        if let Some(JsValue::Object(method)) = first_prop {
+            if matches!(method.borrow().exotic, ExoticObject::Function(_)) {
+                let result = self.call_function(JsValue::Object(method), value.clone(), &[])?;
+                if !matches!(result.value, JsValue::Object(_)) {
+                    return Ok(result.value);
+                }
+            }
+        }
+
+        // Try second method
+        let second_key = PropertyKey::String(self.intern(second_method));
+        if let Some(JsValue::Object(method)) = obj.borrow().get_property(&second_key) {
+            if matches!(method.borrow().exotic, ExoticObject::Function(_)) {
+                let result = self.call_function(JsValue::Object(method), value.clone(), &[])?;
+                if !matches!(result.value, JsValue::Object(_)) {
+                    return Ok(result.value);
+                }
+            }
+        }
+
+        // Fallback: return NaN for number hint, "[object Object]" for string hint
+        if hint == "string" {
+            Ok(JsValue::String(JsString::from("[object Object]")))
+        } else {
+            Ok(JsValue::Number(f64::NAN))
+        }
+    }
+
+    /// Convert value to number, handling ToPrimitive for objects
+    fn coerce_to_number(&mut self, value: &JsValue) -> Result<f64, JsError> {
+        match value {
+            JsValue::Object(_) => {
+                let prim = self.coerce_to_primitive(value, "number")?;
+                Ok(prim.to_number())
+            }
+            _ => Ok(value.to_number()),
         }
     }
 
@@ -4963,6 +5075,9 @@ impl Interpreter {
                         }
                     }
                     JsValue::Symbol(_) => (self.symbol_prototype.borrow().get_property(&key), None),
+                    JsValue::Boolean(_) => {
+                        (self.boolean_prototype.borrow().get_property(&key), None)
+                    }
                     _ => (None, None),
                 };
 
@@ -5527,8 +5642,8 @@ impl Interpreter {
                 }
             }
             JsValue::Boolean(_) => {
-                // Look up methods on Object.prototype (Boolean primitives use Object.prototype)
-                if let Some(method) = self.object_prototype.borrow().get_property(&key) {
+                // Look up methods on Boolean.prototype
+                if let Some(method) = self.boolean_prototype.borrow().get_property(&key) {
                     (method, None)
                 } else {
                     (JsValue::Undefined, None)

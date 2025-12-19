@@ -214,6 +214,25 @@ pub fn js_value_to_json(value: &JsValue) -> Result<serde_json::Value, JsError> {
                         // For now, serialize as null to match JSON.stringify behavior
                         serde_json::Value::Null
                     }
+                    ExoticObject::Boolean(b) => {
+                        // Boolean wrapper objects serialize as their primitive value
+                        serde_json::Value::Bool(*b)
+                    }
+                    ExoticObject::Number(n) => {
+                        // Number wrapper objects serialize as their primitive value
+                        if n.is_finite() {
+                            serde_json::Value::Number(
+                                serde_json::Number::from_f64(*n)
+                                    .unwrap_or(serde_json::Number::from(0)),
+                            )
+                        } else {
+                            serde_json::Value::Null
+                        }
+                    }
+                    ExoticObject::StringObj(s) => {
+                        // String wrapper objects serialize as their primitive value
+                        serde_json::Value::String(s.to_string())
+                    }
                 }
             }
         }

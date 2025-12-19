@@ -3,9 +3,9 @@
 use crate::error::JsError;
 use crate::gc::Gc;
 use crate::interpreter::Interpreter;
-use crate::value::{Guarded, JsObject, JsString, JsValue, PropertyKey};
+use crate::value::{ExoticObject, Guarded, JsObject, JsString, JsValue, PropertyKey};
 
-/// Initialize Number.prototype with toFixed, toString, toPrecision, toExponential
+/// Initialize Number.prototype with toFixed, toString, toPrecision, toExponential, valueOf
 pub fn init_number_prototype(interp: &mut Interpreter) {
     let proto = interp.number_prototype.clone();
 
@@ -13,21 +13,80 @@ pub fn init_number_prototype(interp: &mut Interpreter) {
     interp.register_method(&proto, "toString", number_to_string, 1);
     interp.register_method(&proto, "toPrecision", number_to_precision, 1);
     interp.register_method(&proto, "toExponential", number_to_exponential, 1);
+    interp.register_method(&proto, "valueOf", number_value_of, 0);
 }
 
 /// Number constructor function - Number(value) converts value to number
+/// When called without `new`, returns a primitive number
+/// When called with `new`, returns a Number wrapper object
 pub fn number_constructor_fn(
-    _interp: &mut Interpreter,
-    _this: JsValue,
+    interp: &mut Interpreter,
+    this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    // Number() with no arguments returns 0
-    if args.is_empty() {
-        return Ok(Guarded::unguarded(JsValue::Number(0.0)));
+    // Get the number value from argument
+    let num_val = args
+        .first()
+        .cloned()
+        .unwrap_or(JsValue::Number(0.0))
+        .to_number();
+
+    // Check if called with `new` (this will be a fresh object with Number.prototype)
+    if let JsValue::Object(obj) = &this {
+        // Check if this object was created by the `new` operator
+        // by checking if it has number_prototype as its prototype
+        let is_new_call = {
+            let borrowed = obj.borrow();
+            if let Some(ref proto) = borrowed.prototype {
+                std::ptr::eq(
+                    &*proto.borrow() as *const _,
+                    &*interp.number_prototype.borrow() as *const _,
+                )
+            } else {
+                false
+            }
+        };
+
+        if is_new_call {
+            // Called with `new` - set the internal number value to make it a Number wrapper
+            obj.borrow_mut().exotic = ExoticObject::Number(num_val);
+            return Ok(Guarded::unguarded(this));
+        }
     }
-    // Number(value) converts value to number
-    let value = args.first().cloned().unwrap_or(JsValue::Undefined);
-    Ok(Guarded::unguarded(JsValue::Number(value.to_number())))
+
+    // Called as function - return primitive number
+    Ok(Guarded::unguarded(JsValue::Number(num_val)))
+}
+
+/// Number.prototype.valueOf()
+/// Returns the primitive number value
+pub fn number_value_of(
+    _interp: &mut Interpreter,
+    this: JsValue,
+    _args: &[JsValue],
+) -> Result<Guarded, JsError> {
+    let num_val = get_number_value(&this)?;
+    Ok(Guarded::unguarded(JsValue::Number(num_val)))
+}
+
+/// Helper to extract number value from `this`
+/// Works for both primitive numbers and Number wrapper objects
+fn get_number_value(this: &JsValue) -> Result<f64, JsError> {
+    match this {
+        JsValue::Number(n) => Ok(*n),
+        JsValue::Object(obj) => {
+            let borrowed = obj.borrow();
+            match borrowed.exotic {
+                ExoticObject::Number(n) => Ok(n),
+                _ => Err(JsError::type_error(
+                    "Number.prototype method called on incompatible receiver",
+                )),
+            }
+        }
+        _ => Err(JsError::type_error(
+            "Number.prototype method called on incompatible receiver",
+        )),
+    }
 }
 
 /// Create Number constructor with static methods and constants
@@ -183,7 +242,7 @@ pub fn number_to_fixed(
     this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    let n = this.to_number();
+    let n = get_number_value(&this)?;
     let digits = args.first().map(|v| v.to_number() as i32).unwrap_or(0);
 
     if !(0..=100).contains(&digits) {
@@ -202,7 +261,7 @@ pub fn number_to_string(
     this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    let n = this.to_number();
+    let n = get_number_value(&this)?;
     let radix = args.first().map(|v| v.to_number() as i32).unwrap_or(10);
 
     if !(2..=36).contains(&radix) {
@@ -264,7 +323,7 @@ pub fn number_to_precision(
     this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    let n = this.to_number();
+    let n = get_number_value(&this)?;
 
     if args.is_empty() || matches!(args.first(), Some(JsValue::Undefined)) {
         return Ok(Guarded::unguarded(JsValue::String(JsString::from(
@@ -329,7 +388,7 @@ pub fn number_to_exponential(
     this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    let n = this.to_number();
+    let n = get_number_value(&this)?;
 
     if !n.is_finite() {
         return Ok(Guarded::unguarded(JsValue::String(JsString::from(

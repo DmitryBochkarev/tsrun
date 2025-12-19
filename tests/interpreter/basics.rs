@@ -3,6 +3,32 @@
 use super::eval;
 use typescript_eval::JsValue;
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Whitespace Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_vertical_tab_whitespace() {
+    // Vertical tab (\u000B) should be treated as whitespace
+    assert_eq!(eval("1\u{000B}+\u{000B}2"), JsValue::Number(3.0));
+}
+
+#[test]
+fn test_form_feed_whitespace() {
+    // Form feed (\u000C) should be treated as whitespace
+    assert_eq!(eval("1\u{000C}+\u{000C}2"), JsValue::Number(3.0));
+}
+
+#[test]
+fn test_no_break_space_whitespace() {
+    // No-break space (\u00A0) should be treated as whitespace
+    assert_eq!(eval("1\u{00A0}+\u{00A0}2"), JsValue::Number(3.0));
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Arithmetic Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
 #[test]
 fn test_arithmetic() {
     assert_eq!(eval("(1 as number) + (2 as number)"), JsValue::Number(3.0));

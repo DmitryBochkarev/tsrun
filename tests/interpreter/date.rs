@@ -305,3 +305,35 @@ fn test_date_day_zero() {
         JsValue::Number(28.0)
     );
 }
+
+#[test]
+fn test_date_called_as_function() {
+    // Date() called without 'new' returns a string, not a Date object
+    let result = eval("typeof Date()");
+    assert_eq!(result, JsValue::String("string".into()));
+
+    // Date() ignores arguments and returns current date as string
+    let result = eval("typeof Date(2024, 0, 1)");
+    assert_eq!(result, JsValue::String("string".into()));
+
+    // Date() returns a formatted date string
+    let result = eval("Date()");
+    // Should match pattern like "Thu Dec 19 2024 12:34:56 GMT+0000 (UTC)"
+    if let JsValue::String(s) = &*result {
+        // Check it contains expected parts
+        assert!(
+            s.as_str().contains("GMT"),
+            "Date() should contain 'GMT': {}",
+            s
+        );
+    } else {
+        panic!("Date() should return a string");
+    }
+}
+
+#[test]
+fn test_new_date_creates_object() {
+    // new Date() creates an object, not a string
+    assert_eq!(eval("typeof new Date()"), JsValue::String("object".into()));
+    assert_eq!(eval("typeof new Date(0)"), JsValue::String("object".into()));
+}

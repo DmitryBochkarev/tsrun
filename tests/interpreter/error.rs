@@ -4,6 +4,28 @@ use super::eval;
 use typescript_eval::JsValue;
 
 #[test]
+fn test_reference_error_message_format() {
+    use super::eval_result;
+
+    // ReferenceError message should not have duplicate "is not defined"
+    let err = eval_result("undefinedVariable").unwrap_err();
+    let err_debug = format!("{:?}", err);
+    println!("Error debug: {}", err_debug);
+
+    // Should contain the variable name
+    assert!(
+        err_debug.contains("undefinedVariable"),
+        "Error should contain variable name"
+    );
+
+    // Should NOT contain duplicate text
+    assert!(
+        !err_debug.contains("is not defined is not defined"),
+        "Should NOT have duplicate 'is not defined'"
+    );
+}
+
+#[test]
 fn test_error_constructor() {
     assert_eq!(eval("new Error('oops').message"), JsValue::from("oops"));
     assert_eq!(eval("new Error('oops').name"), JsValue::from("Error"));

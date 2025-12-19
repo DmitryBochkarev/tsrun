@@ -439,7 +439,14 @@ impl<'a> Lexer<'a> {
 
         loop {
             match self.peek() {
-                Some(' ' | '\t' | '\r') => {
+                // ECMAScript whitespace characters:
+                // - \u0009 (tab)
+                // - \u000B (vertical tab)
+                // - \u000C (form feed)
+                // - \u0020 (space)
+                // - \u00A0 (no-break space)
+                // - \uFEFF (BOM / zero-width no-break space)
+                Some(' ' | '\t' | '\r' | '\u{000B}' | '\u{000C}' | '\u{00A0}' | '\u{FEFF}') => {
                     self.advance();
                 }
                 Some('\n') => {

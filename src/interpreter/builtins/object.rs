@@ -547,6 +547,15 @@ pub fn object_to_string(
                 ExoticObject::Proxy(_) => Ok(Guarded::unguarded(JsValue::String(JsString::from(
                     "[object Object]",
                 )))),
+                ExoticObject::Boolean(_) => Ok(Guarded::unguarded(JsValue::String(
+                    JsString::from("[object Boolean]"),
+                ))),
+                ExoticObject::Number(_) => Ok(Guarded::unguarded(JsValue::String(JsString::from(
+                    "[object Number]",
+                )))),
+                ExoticObject::StringObj(_) => Ok(Guarded::unguarded(JsValue::String(
+                    JsString::from("[object String]"),
+                ))),
             }
         }
         _ => Ok(Guarded::unguarded(JsValue::String(JsString::from(

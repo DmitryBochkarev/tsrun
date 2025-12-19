@@ -44,6 +44,17 @@ fn make_date_from_components(
     adjusted_date.timestamp_millis() as f64 + ms as f64
 }
 
+/// Format a timestamp for Date.prototype.toString()
+/// Returns a string like "Thu Jan 01 1970 00:00:00 GMT+0000 (UTC)"
+fn format_date_for_tostring(ts: f64) -> String {
+    if ts.is_nan() || ts.is_infinite() {
+        return "Invalid Date".to_string();
+    }
+    let dt =
+        chrono::DateTime::from_timestamp_millis(ts as i64).unwrap_or(chrono::DateTime::UNIX_EPOCH);
+    dt.format("%a %b %d %Y %H:%M:%S GMT+0000 (UTC)").to_string()
+}
+
 /// Parse a date string in various formats, returning timestamp in milliseconds
 fn parse_date_string(s: &str) -> f64 {
     // Try RFC3339 format (with timezone, e.g., "2024-12-25T10:30:00Z")
@@ -144,9 +155,35 @@ pub fn init_date(interp: &mut Interpreter) {
 
 pub fn date_constructor(
     interp: &mut Interpreter,
-    _this: JsValue,
+    this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
+    // Check if called with `new` (this will be a fresh object with Date.prototype)
+    let is_new_call = if let JsValue::Object(obj) = &this {
+        let borrowed = obj.borrow();
+        if let Some(ref proto) = borrowed.prototype {
+            std::ptr::eq(
+                &*proto.borrow() as *const _,
+                &*interp.date_prototype.borrow() as *const _,
+            )
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+
+    // When called as a function (without `new`), return the current date/time as a string
+    // ECMAScript spec: Date() returns a string, ignoring all arguments
+    if !is_new_call {
+        let now = Utc::now();
+        let date_string = format_date_for_tostring(now.timestamp_millis() as f64);
+        return Ok(Guarded::unguarded(JsValue::String(JsString::from(
+            date_string,
+        ))));
+    }
+
+    // Called with `new` - create a Date object
     let timestamp = if args.is_empty() {
         // new Date() - current time
         Utc::now().timestamp_millis() as f64
@@ -172,15 +209,12 @@ pub fn date_constructor(
         make_date_from_components(year, month, day, hours, minutes, seconds, ms)
     };
 
-    let guard = interp.heap.create_guard();
-    let date_obj = interp.create_object(&guard);
-    {
-        let mut obj = date_obj.borrow_mut();
-        obj.exotic = ExoticObject::Date { timestamp };
-        obj.prototype = Some(interp.date_prototype.clone());
+    // Set the exotic Date object on the this object
+    if let JsValue::Object(obj) = &this {
+        obj.borrow_mut().exotic = ExoticObject::Date { timestamp };
     }
 
-    Ok(Guarded::with_guard(JsValue::Object(date_obj), guard))
+    Ok(Guarded::unguarded(this))
 }
 
 pub fn date_now(

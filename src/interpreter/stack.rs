@@ -1657,16 +1657,19 @@ impl Interpreter {
 
     /// Step for binary operation completion
     fn step_binary_complete(&mut self, state: &mut ExecutionState, op: BinaryOp) -> StepResult {
-        let right = state
+        // Keep guards alive during operation to prevent GC from collecting operands
+        let right_guarded = state
             .pop_value()
-            .map(|v| v.value)
-            .unwrap_or(JsValue::Undefined);
-        let left = state
+            .unwrap_or(Guarded::unguarded(JsValue::Undefined));
+        let left_guarded = state
             .pop_value()
-            .map(|v| v.value)
-            .unwrap_or(JsValue::Undefined);
+            .unwrap_or(Guarded::unguarded(JsValue::Undefined));
 
-        let result = self.apply_binary_op_stack(op, &left, &right);
+        let result = self.apply_binary_op_stack(op, &left_guarded.value, &right_guarded.value);
+        // Guards dropped here after operation is complete
+        drop(left_guarded);
+        drop(right_guarded);
+
         match result {
             Ok(value) => {
                 state.push_value(Guarded::unguarded(value));
@@ -1684,17 +1687,47 @@ impl Interpreter {
         right: &JsValue,
     ) -> Result<JsValue, JsError> {
         Ok(match op {
-            // Arithmetic
-            BinaryOp::Add => match (left, right) {
-                (JsValue::String(a), _) => JsValue::String(a.cheap_clone() + &right.to_js_string()),
-                (_, JsValue::String(b)) => JsValue::String(left.to_js_string() + b.as_str()),
-                _ => JsValue::Number(left.to_number() + right.to_number()),
-            },
-            BinaryOp::Sub => JsValue::Number(left.to_number() - right.to_number()),
-            BinaryOp::Mul => JsValue::Number(left.to_number() * right.to_number()),
-            BinaryOp::Div => JsValue::Number(left.to_number() / right.to_number()),
-            BinaryOp::Mod => JsValue::Number(left.to_number() % right.to_number()),
-            BinaryOp::Exp => JsValue::Number(left.to_number().powf(right.to_number())),
+            // Arithmetic - need ToPrimitive for object operands
+            BinaryOp::Add => {
+                // First convert objects to primitives with "default" hint
+                let left_prim = self.coerce_to_primitive(left, "default")?;
+                let right_prim = self.coerce_to_primitive(right, "default")?;
+
+                match (&left_prim, &right_prim) {
+                    (JsValue::String(a), _) => {
+                        JsValue::String(a.cheap_clone() + &right_prim.to_js_string())
+                    }
+                    (_, JsValue::String(b)) => {
+                        JsValue::String(left_prim.to_js_string() + b.as_str())
+                    }
+                    _ => JsValue::Number(left_prim.to_number() + right_prim.to_number()),
+                }
+            }
+            BinaryOp::Sub => {
+                let left_num = self.coerce_to_number(left)?;
+                let right_num = self.coerce_to_number(right)?;
+                JsValue::Number(left_num - right_num)
+            }
+            BinaryOp::Mul => {
+                let left_num = self.coerce_to_number(left)?;
+                let right_num = self.coerce_to_number(right)?;
+                JsValue::Number(left_num * right_num)
+            }
+            BinaryOp::Div => {
+                let left_num = self.coerce_to_number(left)?;
+                let right_num = self.coerce_to_number(right)?;
+                JsValue::Number(left_num / right_num)
+            }
+            BinaryOp::Mod => {
+                let left_num = self.coerce_to_number(left)?;
+                let right_num = self.coerce_to_number(right)?;
+                JsValue::Number(left_num % right_num)
+            }
+            BinaryOp::Exp => {
+                let left_num = self.coerce_to_number(left)?;
+                let right_num = self.coerce_to_number(right)?;
+                JsValue::Number(left_num.powf(right_num))
+            }
 
             // Comparison
             BinaryOp::Lt => JsValue::Boolean(left.to_number() < right.to_number()),

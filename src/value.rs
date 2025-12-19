@@ -283,6 +283,9 @@ impl fmt::Debug for JsValue {
                             write!(f, "[Proxy]")
                         }
                     }
+                    ExoticObject::Boolean(b) => write!(f, "[Boolean: {}]", b),
+                    ExoticObject::Number(n) => write!(f, "[Number: {}]", n),
+                    ExoticObject::StringObj(s) => write!(f, "[String: \"{}\"]", s),
                 }
             }
         }
@@ -686,8 +689,11 @@ impl Traceable for JsObject {
             ExoticObject::Ordinary
             | ExoticObject::Date { .. }
             | ExoticObject::RegExp { .. }
-            | ExoticObject::Enum(_) => {
-                // Enum values are stored in properties which are traced above
+            | ExoticObject::Enum(_)
+            | ExoticObject::Boolean(_)
+            | ExoticObject::Number(_)
+            | ExoticObject::StringObj(_) => {
+                // These exotic types don't contain object references that need tracing
             }
             ExoticObject::Proxy(proxy_data) => {
                 // Trace target and handler objects
@@ -1827,6 +1833,12 @@ pub enum ExoticObject {
     Ordinary,
     /// Array exotic object - stores elements directly for O(1) indexed access
     Array { elements: Vec<JsValue> },
+    /// Boolean wrapper object - stores primitive boolean value
+    Boolean(bool),
+    /// Number wrapper object - stores primitive number value
+    Number(f64),
+    /// String wrapper object - stores primitive string value
+    StringObj(JsString),
     /// Function exotic object
     Function(JsFunction),
     /// Map exotic object - stores key-value pairs preserving insertion order

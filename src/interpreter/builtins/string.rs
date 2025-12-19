@@ -4,7 +4,7 @@ use unicode_normalization::UnicodeNormalization;
 
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
-use crate::value::{Guarded, JsObjectRef, JsString, JsValue, PropertyKey};
+use crate::value::{CheapClone, Guarded, JsObjectRef, JsString, JsValue, PropertyKey};
 
 /// Initialize String.prototype with all string methods.
 /// The prototype object must already exist in `interp.string_prototype`.
@@ -53,21 +53,63 @@ pub fn init_string_prototype(interp: &mut Interpreter) {
 
     // Comparison
     interp.register_method(&proto, "localeCompare", string_locale_compare, 1);
+
+    // Primitive conversion
+    interp.register_method(&proto, "valueOf", string_value_of, 0);
+    interp.register_method(&proto, "toString", string_to_string, 0);
 }
 
 /// String constructor function - String(value) converts value to string
+/// When called without `new`, returns a primitive string
+/// When called with `new`, returns a String wrapper object
 pub fn string_constructor_fn(
     interp: &mut Interpreter,
-    _this: JsValue,
+    this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    // String() with no arguments returns ""
-    if args.is_empty() {
-        return Ok(Guarded::unguarded(JsValue::String(interp.intern(""))));
+    use crate::value::ExoticObject;
+
+    // Get the string value from argument
+    let str_val = if args.is_empty() {
+        interp.intern("")
+    } else {
+        args.first()
+            .cloned()
+            .unwrap_or(JsValue::Undefined)
+            .to_js_string()
+    };
+
+    // Check if called with `new` (this will be a fresh object with String.prototype)
+    if let JsValue::Object(obj) = &this {
+        // Check if this object was created by the `new` operator
+        // by checking if it has string_prototype as its prototype
+        let is_new_call = {
+            let borrowed = obj.borrow();
+            if let Some(ref proto) = borrowed.prototype {
+                std::ptr::eq(
+                    &*proto.borrow() as *const _,
+                    &*interp.string_prototype.borrow() as *const _,
+                )
+            } else {
+                false
+            }
+        };
+
+        if is_new_call {
+            // Called with `new` - set the internal string value to make it a String wrapper
+            obj.borrow_mut().exotic = ExoticObject::StringObj(str_val.cheap_clone());
+            // Also set the length property (String objects have a read-only length)
+            let length_key = PropertyKey::String(interp.intern("length"));
+            obj.borrow_mut().set_property(
+                length_key,
+                JsValue::Number(str_val.as_str().chars().count() as f64),
+            );
+            return Ok(Guarded::unguarded(this));
+        }
     }
-    // String(value) converts value to string
-    let value = args.first().cloned().unwrap_or(JsValue::Undefined);
-    Ok(Guarded::unguarded(JsValue::String(value.to_js_string())))
+
+    // Called as function - return primitive string
+    Ok(Guarded::unguarded(JsValue::String(str_val)))
 }
 
 /// Create String constructor with static methods (fromCharCode, fromCodePoint)
@@ -83,6 +125,50 @@ pub fn create_string_constructor(interp: &mut Interpreter) -> JsObjectRef {
         .set_property(proto_key, JsValue::Object(interp.string_prototype.clone()));
 
     constructor
+}
+
+/// String.prototype.valueOf()
+/// Returns the primitive string value
+pub fn string_value_of(
+    _interp: &mut Interpreter,
+    this: JsValue,
+    _args: &[JsValue],
+) -> Result<Guarded, JsError> {
+    let str_val = get_string_value(&this)?;
+    Ok(Guarded::unguarded(JsValue::String(str_val)))
+}
+
+/// String.prototype.toString()
+/// Returns the primitive string value (same as valueOf for String)
+pub fn string_to_string(
+    _interp: &mut Interpreter,
+    this: JsValue,
+    _args: &[JsValue],
+) -> Result<Guarded, JsError> {
+    let str_val = get_string_value(&this)?;
+    Ok(Guarded::unguarded(JsValue::String(str_val)))
+}
+
+/// Helper to extract string value from `this`
+/// Works for both primitive strings and String wrapper objects
+fn get_string_value(this: &JsValue) -> Result<JsString, JsError> {
+    use crate::value::ExoticObject;
+
+    match this {
+        JsValue::String(s) => Ok(s.cheap_clone()),
+        JsValue::Object(obj) => {
+            let borrowed = obj.borrow();
+            match &borrowed.exotic {
+                ExoticObject::StringObj(s) => Ok(s.cheap_clone()),
+                _ => Err(JsError::type_error(
+                    "String.prototype method called on incompatible receiver",
+                )),
+            }
+        }
+        _ => Err(JsError::type_error(
+            "String.prototype method called on incompatible receiver",
+        )),
+    }
 }
 
 pub fn string_char_at(

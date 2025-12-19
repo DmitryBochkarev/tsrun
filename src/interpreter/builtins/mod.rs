@@ -1,6 +1,7 @@
 //! Built-in function implementations for JavaScript standard library
 
 pub mod array;
+pub mod boolean;
 pub mod console;
 pub mod date;
 pub mod error;
@@ -22,6 +23,7 @@ pub mod symbol;
 
 // Re-export public functions from enabled modules
 pub use array::*;
+pub use boolean::*;
 pub use console::*;
 pub use date::*;
 pub use error::*;

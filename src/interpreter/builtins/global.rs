@@ -4,7 +4,9 @@ use crate::error::JsError;
 use crate::gc::{Gc, Guard};
 use crate::interpreter::Interpreter;
 use crate::parser::Parser;
-use crate::value::{ExoticObject, Guarded, JsObject, JsString, JsValue, Property, PropertyKey};
+use crate::value::{
+    CheapClone, ExoticObject, Guarded, JsObject, JsString, JsValue, Property, PropertyKey,
+};
 
 /// Register global functions (parseInt, parseFloat, isNaN, isFinite, URI functions)
 pub fn init_global_functions(interp: &mut Interpreter) {
@@ -844,6 +846,54 @@ fn clone_object(
                 regexp_ref.set_property(PropertyKey::from("lastIndex"), JsValue::Number(0.0));
             }
             Ok(JsValue::Object(regexp_obj))
+        }
+
+        // Booleans - clone the boolean value
+        ExoticObject::Boolean(b) => {
+            let bool_val = *b;
+            drop(obj_ref);
+
+            let bool_obj = interp.create_object(guard);
+            {
+                let mut bool_ref = bool_obj.borrow_mut();
+                bool_ref.prototype = Some(interp.boolean_prototype.clone());
+                bool_ref.exotic = ExoticObject::Boolean(bool_val);
+            }
+            Ok(JsValue::Object(bool_obj))
+        }
+
+        // Numbers - clone the number value
+        ExoticObject::Number(n) => {
+            let num_val = *n;
+            drop(obj_ref);
+
+            let num_obj = interp.create_object(guard);
+            {
+                let mut num_ref = num_obj.borrow_mut();
+                num_ref.prototype = Some(interp.number_prototype.clone());
+                num_ref.exotic = ExoticObject::Number(num_val);
+            }
+            Ok(JsValue::Object(num_obj))
+        }
+
+        // Strings - clone the string value
+        ExoticObject::StringObj(s) => {
+            let str_val = s.cheap_clone();
+            drop(obj_ref);
+
+            let str_obj = interp.create_object(guard);
+            {
+                let mut str_ref = str_obj.borrow_mut();
+                str_ref.prototype = Some(interp.string_prototype.clone());
+                str_ref.exotic = ExoticObject::StringObj(str_val.cheap_clone());
+                // Also set length property
+                let length_key = PropertyKey::String(interp.intern("length"));
+                str_ref.set_property(
+                    length_key,
+                    JsValue::Number(str_val.as_str().chars().count() as f64),
+                );
+            }
+            Ok(JsValue::Object(str_obj))
         }
 
         // Enums - clone the enum data
