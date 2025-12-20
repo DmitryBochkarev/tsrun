@@ -1182,3 +1182,143 @@ fn test_debug_array_method_lookup() {
         "This test is for debugging"
     );
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Array methods on array-like objects (Test262 conformance)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_array_map_on_array_like() {
+    // Array.prototype.map should work on array-like objects
+    assert_eq!(
+        eval(
+            r#"
+            const obj: { length: number; 0: number; 1: number } = { length: 2, 0: 10, 1: 20 };
+            const result: number[] = Array.prototype.map.call(obj, function(x: number): number { return x * 2; });
+            result[0]
+            "#
+        ),
+        JsValue::Number(20.0)
+    );
+}
+
+#[test]
+fn test_array_map_on_array_like_result_length() {
+    assert_eq!(
+        eval(
+            r#"
+            const obj: { length: number; 0: number; 1: number } = { length: 2, 0: 10, 1: 20 };
+            const result: number[] = Array.prototype.map.call(obj, function(x: number): number { return x * 2; });
+            result.length
+            "#
+        ),
+        JsValue::Number(2.0)
+    );
+}
+
+#[test]
+fn test_array_filter_on_array_like() {
+    assert_eq!(
+        eval(
+            r#"
+            const obj: { length: number; 0: number; 1: number; 2: number } = { length: 3, 0: 1, 1: 2, 2: 3 };
+            const result: number[] = Array.prototype.filter.call(obj, function(x: number): boolean { return x > 1; });
+            result.length
+            "#
+        ),
+        JsValue::Number(2.0)
+    );
+}
+
+#[test]
+fn test_array_foreach_on_array_like() {
+    assert_eq!(
+        eval(
+            r#"
+            const obj: { length: number; 0: number; 1: number } = { length: 2, 0: 10, 1: 20 };
+            let sum: number = 0;
+            Array.prototype.forEach.call(obj, function(x: number): void { sum += x; });
+            sum
+            "#
+        ),
+        JsValue::Number(30.0)
+    );
+}
+
+#[test]
+fn test_array_reduce_on_array_like() {
+    assert_eq!(
+        eval(
+            r#"
+            const obj: { length: number; 0: number; 1: number; 2: number } = { length: 3, 0: 1, 1: 2, 2: 3 };
+            Array.prototype.reduce.call(obj, function(acc: number, x: number): number { return acc + x; }, 0)
+            "#
+        ),
+        JsValue::Number(6.0)
+    );
+}
+
+#[test]
+fn test_array_some_on_array_like() {
+    assert_eq!(
+        eval(
+            r#"
+            const obj: { length: number; 0: number; 1: number } = { length: 2, 0: 1, 1: 5 };
+            Array.prototype.some.call(obj, function(x: number): boolean { return x > 3; })
+            "#
+        ),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_array_every_on_array_like() {
+    assert_eq!(
+        eval(
+            r#"
+            const obj: { length: number; 0: number; 1: number } = { length: 2, 0: 1, 1: 2 };
+            Array.prototype.every.call(obj, function(x: number): boolean { return x > 0; })
+            "#
+        ),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_array_find_on_array_like() {
+    assert_eq!(
+        eval(
+            r#"
+            const obj: { length: number; 0: number; 1: number; 2: number } = { length: 3, 0: 1, 1: 5, 2: 10 };
+            Array.prototype.find.call(obj, function(x: number): boolean { return x > 3; })
+            "#
+        ),
+        JsValue::Number(5.0)
+    );
+}
+
+#[test]
+fn test_array_indexof_on_array_like() {
+    assert_eq!(
+        eval(
+            r#"
+            const obj: { length: number; 0: string; 1: string; 2: string } = { length: 3, 0: "a", 1: "b", 2: "c" };
+            Array.prototype.indexOf.call(obj, "b")
+            "#
+        ),
+        JsValue::Number(1.0)
+    );
+}
+
+#[test]
+fn test_array_includes_on_array_like() {
+    assert_eq!(
+        eval(
+            r#"
+            const obj: { length: number; 0: number; 1: number } = { length: 2, 0: 10, 1: 20 };
+            Array.prototype.includes.call(obj, 20)
+            "#
+        ),
+        JsValue::Boolean(true)
+    );
+}

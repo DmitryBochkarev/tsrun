@@ -1,8 +1,60 @@
 //! Array built-in methods
 
 use crate::error::JsError;
+use crate::gc::Gc;
 use crate::interpreter::Interpreter;
-use crate::value::{ExoticObject, Guarded, JsObjectRef, JsString, JsValue, PropertyKey};
+use crate::value::{ExoticObject, Guarded, JsObject, JsObjectRef, JsString, JsValue, PropertyKey};
+
+/// Get the length of an array-like object.
+/// Works on both real arrays (ExoticObject::Array) and array-like objects with length property.
+fn get_array_like_length(obj: &Gc<JsObject>) -> u32 {
+    let borrowed = obj.borrow();
+    // First check if it's a real array
+    if let ExoticObject::Array { ref elements } = borrowed.exotic {
+        return elements.len() as u32;
+    }
+    // Otherwise, get the length property
+    let length_key = PropertyKey::String(JsString::from("length"));
+    match borrowed.get_property(&length_key) {
+        Some(JsValue::Number(n)) => {
+            // ToLength: clamp to [0, 2^32 - 1]
+            if n.is_nan() || n < 0.0 {
+                0
+            } else if n > u32::MAX as f64 {
+                u32::MAX
+            } else {
+                n as u32
+            }
+        }
+        _ => 0,
+    }
+}
+
+/// Get an element from an array-like object by index.
+/// Works on both real arrays and array-like objects.
+fn get_array_like_element(obj: &Gc<JsObject>, index: u32) -> JsValue {
+    let borrowed = obj.borrow();
+    // First check if it's a real array with dense storage
+    if let ExoticObject::Array { ref elements } = borrowed.exotic {
+        return elements.get(index as usize).cloned().unwrap_or(JsValue::Undefined);
+    }
+    // Otherwise, get by property index
+    borrowed
+        .get_property(&PropertyKey::Index(index))
+        .unwrap_or(JsValue::Undefined)
+}
+
+/// Check if an array-like object has an element at the given index.
+/// Works on both real arrays and array-like objects.
+fn has_array_like_element(obj: &Gc<JsObject>, index: u32) -> bool {
+    let borrowed = obj.borrow();
+    // First check if it's a real array with dense storage
+    if let ExoticObject::Array { ref elements } = borrowed.exotic {
+        return index < elements.len() as u32;
+    }
+    // Otherwise, check property existence
+    borrowed.has_own_property(&PropertyKey::Index(index))
+}
 
 /// Initialize Array.prototype with all array methods.
 /// The prototype object must already exist in `interp.array_prototype`.
@@ -188,28 +240,29 @@ pub fn array_map(
     let _this_arg_guard = interp.guard_value(&this_arg);
     let _arr_guard = interp.guard_value(&this);
 
-    let length = arr
-        .borrow()
-        .array_length()
-        .ok_or_else(|| JsError::type_error("Not an array"))?;
+    // Use array-like length (works on both arrays and array-like objects)
+    let length = get_array_like_length(&arr);
 
     let mut result = Vec::with_capacity(length as usize);
     for i in 0..length {
-        let elem = arr
-            .borrow()
-            .get_property(&PropertyKey::Index(i))
-            .unwrap_or(JsValue::Undefined);
+        // Check if property exists (sparse arrays / array-likes may have holes)
+        if has_array_like_element(&arr, i) {
+            let elem = get_array_like_element(&arr, i);
 
-        let Guarded {
-            value: mapped,
-            guard: _mapped_guard,
-        } = interp.call_function(
-            callback.clone(),
-            this_arg.clone(),
-            &[elem, JsValue::Number(i as f64), this.clone()],
-        )?;
+            let Guarded {
+                value: mapped,
+                guard: _mapped_guard,
+            } = interp.call_function(
+                callback.clone(),
+                this_arg.clone(),
+                &[elem, JsValue::Number(i as f64), this.clone()],
+            )?;
 
-        result.push(mapped);
+            result.push(mapped);
+        } else {
+            // Preserve holes as undefined in the result
+            result.push(JsValue::Undefined);
+        }
     }
 
     let guard = interp.heap.create_guard();
@@ -243,29 +296,26 @@ pub fn array_filter(
     let _this_arg_guard = interp.guard_value(&this_arg);
     let _arr_guard = interp.guard_value(&this);
 
-    let length = arr
-        .borrow()
-        .array_length()
-        .ok_or_else(|| JsError::type_error("Not an array"))?;
+    // Use array-like length (works on both arrays and array-like objects)
+    let length = get_array_like_length(&arr);
 
     let mut result = Vec::new();
     for i in 0..length {
-        let elem = arr
-            .borrow()
-            .get_property(&PropertyKey::Index(i))
-            .unwrap_or(JsValue::Undefined);
+        if has_array_like_element(&arr, i) {
+            let elem = get_array_like_element(&arr, i);
 
-        let Guarded {
-            value: keep,
-            guard: _keep_guard,
-        } = interp.call_function(
-            callback.clone(),
-            this_arg.clone(),
-            &[elem.clone(), JsValue::Number(i as f64), this.clone()],
-        )?;
+            let Guarded {
+                value: keep,
+                guard: _keep_guard,
+            } = interp.call_function(
+                callback.clone(),
+                this_arg.clone(),
+                &[elem.clone(), JsValue::Number(i as f64), this.clone()],
+            )?;
 
-        if keep.to_boolean() {
-            result.push(elem);
+            if keep.to_boolean() {
+                result.push(elem);
+            }
         }
     }
 
@@ -299,22 +349,19 @@ pub fn array_foreach(
     let _this_arg_guard = interp.guard_value(&this_arg);
     let _arr_guard = interp.guard_value(&this);
 
-    let length = arr
-        .borrow()
-        .array_length()
-        .ok_or_else(|| JsError::type_error("Not an array"))?;
+    // Use array-like length (works on both arrays and array-like objects)
+    let length = get_array_like_length(&arr);
 
     for i in 0..length {
-        let elem = arr
-            .borrow()
-            .get_property(&PropertyKey::Index(i))
-            .unwrap_or(JsValue::Undefined);
+        if has_array_like_element(&arr, i) {
+            let elem = get_array_like_element(&arr, i);
 
-        interp.call_function(
-            callback.clone(),
-            this_arg.clone(),
-            &[elem, JsValue::Number(i as f64), this.clone()],
-        )?;
+            interp.call_function(
+                callback.clone(),
+                this_arg.clone(),
+                &[elem, JsValue::Number(i as f64), this.clone()],
+            )?;
+        }
     }
 
     Ok(Guarded::unguarded(JsValue::Undefined))
@@ -342,10 +389,8 @@ pub fn array_reduce(
     let _callback_guard = interp.guard_value(&callback);
     let _arr_guard = interp.guard_value(&this);
 
-    let length = arr
-        .borrow()
-        .array_length()
-        .ok_or_else(|| JsError::type_error("Not an array"))?;
+    // Use array-like length (works on both arrays and array-like objects)
+    let length = get_array_like_length(&arr);
 
     let (mut accumulator, start_index) = if let Some(initial) = args.get(1) {
         (initial.clone(), 0)
@@ -355,28 +400,24 @@ pub fn array_reduce(
                 "Reduce of empty array with no initial value",
             ));
         }
-        let first = arr
-            .borrow()
-            .get_property(&PropertyKey::Index(0))
-            .unwrap_or(JsValue::Undefined);
+        let first = get_array_like_element(&arr, 0);
         (first, 1)
     };
 
     for i in start_index..length {
-        let elem = arr
-            .borrow()
-            .get_property(&PropertyKey::Index(i))
-            .unwrap_or(JsValue::Undefined);
+        if has_array_like_element(&arr, i) {
+            let elem = get_array_like_element(&arr, i);
 
-        let Guarded {
-            value: acc,
-            guard: _acc_guard,
-        } = interp.call_function(
-            callback.clone(),
-            JsValue::Undefined,
-            &[accumulator, elem, JsValue::Number(i as f64), this.clone()],
-        )?;
-        accumulator = acc;
+            let Guarded {
+                value: acc,
+                guard: _acc_guard,
+            } = interp.call_function(
+                callback.clone(),
+                JsValue::Undefined,
+                &[accumulator, elem, JsValue::Number(i as f64), this.clone()],
+            )?;
+            accumulator = acc;
+        }
     }
 
     // Accumulator is a derived value - no guard needed as it's either a primitive
@@ -409,16 +450,11 @@ pub fn array_find(
     let _this_arg_guard = interp.guard_value(&this_arg);
     let _arr_guard = interp.guard_value(&this);
 
-    let length = arr
-        .borrow()
-        .array_length()
-        .ok_or_else(|| JsError::type_error("Not an array"))?;
+    // Use array-like length (works on both arrays and array-like objects)
+    let length = get_array_like_length(&arr);
 
     for i in 0..length {
-        let elem = arr
-            .borrow()
-            .get_property(&PropertyKey::Index(i))
-            .unwrap_or(JsValue::Undefined);
+        let elem = get_array_like_element(&arr, i);
 
         let Guarded {
             value: result,
@@ -505,10 +541,8 @@ pub fn array_index_of(
     let search_element = args.first().cloned().unwrap_or(JsValue::Undefined);
     let from_index = args.get(1).map(|v| v.to_number() as i64).unwrap_or(0);
 
-    let length = arr
-        .borrow()
-        .array_length()
-        .ok_or_else(|| JsError::type_error("Not an array"))? as i64;
+    // Use array-like length (works on both arrays and array-like objects)
+    let length = get_array_like_length(&arr) as i64;
 
     let start = if from_index < 0 {
         (length + from_index).max(0) as u32
@@ -517,13 +551,12 @@ pub fn array_index_of(
     };
 
     for i in start..(length as u32) {
-        let elem = arr
-            .borrow()
-            .get_property(&PropertyKey::Index(i))
-            .unwrap_or(JsValue::Undefined);
+        if has_array_like_element(&arr, i) {
+            let elem = get_array_like_element(&arr, i);
 
-        if elem.strict_equals(&search_element) {
-            return Ok(Guarded::unguarded(JsValue::Number(i as f64)));
+            if elem.strict_equals(&search_element) {
+                return Ok(Guarded::unguarded(JsValue::Number(i as f64)));
+            }
         }
     }
 
@@ -544,10 +577,8 @@ pub fn array_includes(
     let search_element = args.first().cloned().unwrap_or(JsValue::Undefined);
     let from_index = args.get(1).map(|v| v.to_number() as i64).unwrap_or(0);
 
-    let length = arr
-        .borrow()
-        .array_length()
-        .ok_or_else(|| JsError::type_error("Not an array"))? as i64;
+    // Use array-like length (works on both arrays and array-like objects)
+    let length = get_array_like_length(&arr) as i64;
 
     let start = if from_index < 0 {
         (length + from_index).max(0) as u32
@@ -556,18 +587,17 @@ pub fn array_includes(
     };
 
     for i in start..(length as u32) {
-        let elem = arr
-            .borrow()
-            .get_property(&PropertyKey::Index(i))
-            .unwrap_or(JsValue::Undefined);
+        if has_array_like_element(&arr, i) {
+            let elem = get_array_like_element(&arr, i);
 
-        let found = match (&elem, &search_element) {
-            (JsValue::Number(a), JsValue::Number(b)) if a.is_nan() && b.is_nan() => true,
-            _ => elem.strict_equals(&search_element),
-        };
+            let found = match (&elem, &search_element) {
+                (JsValue::Number(a), JsValue::Number(b)) if a.is_nan() && b.is_nan() => true,
+                _ => elem.strict_equals(&search_element),
+            };
 
-        if found {
-            return Ok(Guarded::unguarded(JsValue::Boolean(true)));
+            if found {
+                return Ok(Guarded::unguarded(JsValue::Boolean(true)));
+            }
         }
     }
 
@@ -738,28 +768,25 @@ pub fn array_every(
     let _this_arg_guard = interp.guard_value(&this_arg);
     let _arr_guard = interp.guard_value(&this);
 
-    let length = arr
-        .borrow()
-        .array_length()
-        .ok_or_else(|| JsError::type_error("Not an array"))?;
+    // Use array-like length (works on both arrays and array-like objects)
+    let length = get_array_like_length(&arr);
 
     for i in 0..length {
-        let elem = arr
-            .borrow()
-            .get_property(&PropertyKey::Index(i))
-            .unwrap_or(JsValue::Undefined);
+        if has_array_like_element(&arr, i) {
+            let elem = get_array_like_element(&arr, i);
 
-        let Guarded {
-            value: result,
-            guard: _result_guard,
-        } = interp.call_function(
-            callback.clone(),
-            this_arg.clone(),
-            &[elem, JsValue::Number(i as f64), this.clone()],
-        )?;
+            let Guarded {
+                value: result,
+                guard: _result_guard,
+            } = interp.call_function(
+                callback.clone(),
+                this_arg.clone(),
+                &[elem, JsValue::Number(i as f64), this.clone()],
+            )?;
 
-        if !result.to_boolean() {
-            return Ok(Guarded::unguarded(JsValue::Boolean(false)));
+            if !result.to_boolean() {
+                return Ok(Guarded::unguarded(JsValue::Boolean(false)));
+            }
         }
     }
 
@@ -791,28 +818,25 @@ pub fn array_some(
     let _this_arg_guard = interp.guard_value(&this_arg);
     let _arr_guard = interp.guard_value(&this);
 
-    let length = arr
-        .borrow()
-        .array_length()
-        .ok_or_else(|| JsError::type_error("Not an array"))?;
+    // Use array-like length (works on both arrays and array-like objects)
+    let length = get_array_like_length(&arr);
 
     for i in 0..length {
-        let elem = arr
-            .borrow()
-            .get_property(&PropertyKey::Index(i))
-            .unwrap_or(JsValue::Undefined);
+        if has_array_like_element(&arr, i) {
+            let elem = get_array_like_element(&arr, i);
 
-        let Guarded {
-            value: result,
-            guard: _result_guard,
-        } = interp.call_function(
-            callback.clone(),
-            this_arg.clone(),
-            &[elem, JsValue::Number(i as f64), this.clone()],
-        )?;
+            let Guarded {
+                value: result,
+                guard: _result_guard,
+            } = interp.call_function(
+                callback.clone(),
+                this_arg.clone(),
+                &[elem, JsValue::Number(i as f64), this.clone()],
+            )?;
 
-        if result.to_boolean() {
-            return Ok(Guarded::unguarded(JsValue::Boolean(true)));
+            if result.to_boolean() {
+                return Ok(Guarded::unguarded(JsValue::Boolean(true)));
+            }
         }
     }
 
