@@ -336,6 +336,29 @@ fn test_number_from_invalid_string() {
 // Decimal Literal With Exponent Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Number Literal Method Calls (1..toString() syntax)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_number_literal_double_dot_method_call() {
+    // 1..toString() - the first dot terminates the number literal, second is member access
+    assert_eq!(eval("1..toString()"), JsValue::String(JsString::from("1")));
+    assert_eq!(
+        eval("1.1.toFixed(5)"),
+        JsValue::String(JsString::from("1.10000"))
+    );
+    assert_eq!(
+        eval("1[\"toString\"]()"),
+        JsValue::String(JsString::from("1"))
+    );
+    // 1. followed by bracket access
+    assert_eq!(
+        eval("1.[\"toFixed\"](5)"),
+        JsValue::String(JsString::from("1.00000"))
+    );
+}
+
 #[test]
 fn test_decimal_with_exponent_no_fraction() {
     // Format: DecimalIntegerLiteral. ExponentPart (no fractional digits)

@@ -1061,10 +1061,37 @@ impl<'a> Lexer<'a> {
                 }
             }
         } else if self.peek() == Some('.') {
-            // Check if it's really a decimal or could be method call
-            // A dot followed by a digit means decimal (e.g., 1.5)
-            // A dot followed by e/E means decimal with exponent (e.g., 1.e5)
-            if matches!(self.peek_next(), Some('0'..='9' | 'e' | 'E')) {
+            // Check what follows the dot to determine if it's part of the number.
+            // In JavaScript:
+            // - 1.5 = decimal number
+            // - 1.e5 = decimal with exponent (1.0 × 10^5)
+            // - 1. = valid number literal (trailing dot, no fractional digits)
+            // - 1.. = 1. (number) followed by . (member access)
+            // - 1.[ = 1. (number) followed by [ (computed member access)
+            // - 1.toString() = syntax error (dot is consumed as decimal point, but no digits follow)
+            //
+            // The rule: consume the dot as part of the number UNLESS it would start an identifier
+            // (which would be a syntax error in parsing anyway).
+            let next = self.peek_next();
+            let should_consume_dot = match next {
+                // Digit after dot = decimal number
+                Some('0'..='9') => true,
+                // e/E after dot = decimal with exponent (1.e5)
+                Some('e' | 'E') => true,
+                // Another dot = this dot is part of number, next dot is member access (1..toString())
+                Some('.') => true,
+                // Left bracket = this dot is part of number, bracket is computed access (1.["foo"])
+                Some('[') => true,
+                // Underscore can be numeric separator (1._5 is not valid but 1.5_0 is)
+                // But 1._ by itself is not valid, so don't consume
+                Some('_') => false,
+                // Identifier start = don't consume dot (1.foo would be error anyway)
+                Some(c) if is_id_start(c) => false,
+                // Anything else (operators, whitespace, EOF, etc) = consume dot as trailing decimal
+                _ => true,
+            };
+
+            if should_consume_dot {
                 self.advance();
                 num_str.push('.');
                 while let Some(ch) = self.peek() {
@@ -1242,6 +1269,45 @@ mod tests {
         assert_eq!(lex("0xff"), vec![TokenKind::Number(255.0)]);
         assert_eq!(lex("0b1010"), vec![TokenKind::Number(10.0)]);
         assert_eq!(lex("0o17"), vec![TokenKind::Number(15.0)]);
+    }
+
+    #[test]
+    fn test_number_literal_with_trailing_dot() {
+        // 1. followed by non-digit should keep dot as part of number
+        // 1.. becomes Number(1.0), Dot
+        assert_eq!(
+            lex("1..toString()"),
+            vec![
+                TokenKind::Number(1.0),
+                TokenKind::Dot,
+                TokenKind::Identifier(JsString::from("toString")),
+                TokenKind::LParen,
+                TokenKind::RParen
+            ]
+        );
+        // 1.1 followed by dot for method call
+        assert_eq!(
+            lex("1.1.toFixed(5)"),
+            vec![
+                TokenKind::Number(1.1),
+                TokenKind::Dot,
+                TokenKind::Identifier(JsString::from("toFixed")),
+                TokenKind::LParen,
+                TokenKind::Number(5.0),
+                TokenKind::RParen
+            ]
+        );
+        // 1. followed by bracket access - the dot is part of the number
+        // In JS, 1.["toFixed"] means (1.)["toFixed"] - computed member access on number literal
+        assert_eq!(
+            lex("1.[\"toFixed\"]"),
+            vec![
+                TokenKind::Number(1.0),
+                TokenKind::LBracket,
+                TokenKind::String(JsString::from("toFixed")),
+                TokenKind::RBracket
+            ]
+        );
     }
 
     #[test]
