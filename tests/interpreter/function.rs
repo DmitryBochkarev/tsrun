@@ -1190,3 +1190,184 @@ fn test_call_args_not_evaluated_when_callee_throws() {
         JsValue::Boolean(false)
     );
 }
+
+// ============================================================
+// Function.prototype Tests (ES5/ES6 conformance)
+// ============================================================
+
+#[test]
+fn test_function_prototype_is_function() {
+    // The Function prototype object is itself a Function object
+    // Object.prototype.toString.call(Function.prototype) should return "[object Function]"
+    assert_eq!(
+        eval(r#"Object.prototype.toString.call(Function.prototype)"#),
+        JsValue::from("[object Function]")
+    );
+}
+
+#[test]
+fn test_function_prototype_typeof() {
+    // typeof Function.prototype should be "function"
+    assert_eq!(
+        eval(r#"typeof Function.prototype"#),
+        JsValue::from("function")
+    );
+}
+
+#[test]
+fn test_function_prototype_callable() {
+    // Function.prototype should be callable and return undefined
+    assert_eq!(eval(r#"Function.prototype()"#), JsValue::Undefined);
+}
+
+#[test]
+fn test_function_prototype_callable_with_args() {
+    // Function.prototype accepts any arguments and returns undefined
+    assert_eq!(
+        eval(r#"Function.prototype(1, 2, 3, "test", {})"#),
+        JsValue::Undefined
+    );
+}
+
+#[test]
+fn test_function_prototype_callable_with_this() {
+    // Function.prototype can be called with any this value
+    assert_eq!(
+        eval(r#"Function.prototype.call({value: 42})"#),
+        JsValue::Undefined
+    );
+}
+
+#[test]
+fn test_function_prototype_length() {
+    // Function.prototype.length should be 0
+    assert_eq!(eval(r#"Function.prototype.length"#), JsValue::Number(0.0));
+}
+
+#[test]
+fn test_function_prototype_name() {
+    // Function.prototype.name should be empty string
+    assert_eq!(eval(r#"Function.prototype.name"#), JsValue::from(""));
+}
+
+#[test]
+fn test_function_prototype_has_call() {
+    // Function.prototype should have call method
+    assert_eq!(
+        eval(r#"typeof Function.prototype.call"#),
+        JsValue::from("function")
+    );
+}
+
+#[test]
+fn test_function_prototype_has_apply() {
+    // Function.prototype should have apply method
+    assert_eq!(
+        eval(r#"typeof Function.prototype.apply"#),
+        JsValue::from("function")
+    );
+}
+
+#[test]
+fn test_function_prototype_has_bind() {
+    // Function.prototype should have bind method
+    assert_eq!(
+        eval(r#"typeof Function.prototype.bind"#),
+        JsValue::from("function")
+    );
+}
+
+#[test]
+fn test_function_inherits_from_function_prototype() {
+    // Regular functions should inherit from Function.prototype
+    assert_eq!(
+        eval(r#"function foo() {} Object.getPrototypeOf(foo) === Function.prototype"#),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_arrow_inherits_from_function_prototype() {
+    // Arrow functions should inherit from Function.prototype
+    assert_eq!(
+        eval(r#"const f = () => {}; Object.getPrototypeOf(f) === Function.prototype"#),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_function_prototype_inherits_from_object_prototype() {
+    // Function.prototype should inherit from Object.prototype
+    assert_eq!(
+        eval(r#"Object.getPrototypeOf(Function.prototype) === Object.prototype"#),
+        JsValue::Boolean(true)
+    );
+}
+
+// ============================================================
+// Symbol.hasInstance tests
+// ============================================================
+
+#[test]
+fn test_function_has_symbol_hasinstance() {
+    // Function.prototype should have Symbol.hasInstance
+    assert_eq!(
+        eval(r#"typeof Function.prototype[Symbol.hasInstance]"#),
+        JsValue::from("function")
+    );
+}
+
+#[test]
+fn test_instanceof_uses_symbol_hasinstance() {
+    // instanceof should use Symbol.hasInstance
+    assert_eq!(
+        eval(
+            r#"
+            function Foo() {}
+            const obj = new Foo();
+            obj instanceof Foo
+        "#
+        ),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_symbol_hasinstance_direct_call() {
+    // Can call Symbol.hasInstance directly
+    assert_eq!(
+        eval(
+            r#"
+            function Foo() {}
+            const obj = new Foo();
+            Foo[Symbol.hasInstance](obj)
+        "#
+        ),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_symbol_hasinstance_non_instance() {
+    // Symbol.hasInstance returns false for non-instances
+    assert_eq!(
+        eval(
+            r#"
+            function Foo() {}
+            function Bar() {}
+            const obj = new Bar();
+            Foo[Symbol.hasInstance](obj)
+        "#
+        ),
+        JsValue::Boolean(false)
+    );
+}
+
+#[test]
+fn test_symbol_hasinstance_primitive() {
+    // Symbol.hasInstance returns false for primitives
+    assert_eq!(
+        eval(r#"Function.prototype[Symbol.hasInstance].call(Object, 42)"#),
+        JsValue::Boolean(false)
+    );
+}

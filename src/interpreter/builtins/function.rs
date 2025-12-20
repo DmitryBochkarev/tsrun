@@ -8,19 +8,106 @@ use crate::gc::Gc;
 use crate::interpreter::Interpreter;
 use crate::parser::Parser;
 use crate::value::{
-    BoundFunctionData, FunctionBody, Guarded, JsFunction, JsObject, JsString, JsValue, PropertyKey,
+    BoundFunctionData, CheapClone, ExoticObject, FunctionBody, Guarded, JsFunction, JsObject,
+    JsString, JsSymbol, JsValue, NativeFunction, PropertyKey,
 };
+
+/// The Function.prototype function itself - accepts any arguments and returns undefined.
+/// Per ES spec, "The Function prototype object is itself a built-in function object."
+pub fn function_prototype_fn(
+    _interp: &mut Interpreter,
+    _this: JsValue,
+    _args: &[JsValue],
+) -> Result<Guarded, JsError> {
+    // Function.prototype() returns undefined
+    Ok(Guarded::unguarded(JsValue::Undefined))
+}
 
 /// Initialize Function.prototype with call, apply, bind methods
 pub fn init_function_prototype(interp: &mut Interpreter) {
     let proto = interp.function_prototype.clone();
 
+    // Make Function.prototype callable by setting it as a native function
+    // This must happen before we register methods on it
+    {
+        let mut proto_ref = proto.borrow_mut();
+        let name = interp.intern("");
+        proto_ref.exotic = ExoticObject::Function(JsFunction::Native(NativeFunction {
+            name: name.cheap_clone(),
+            func: function_prototype_fn,
+            arity: 0,
+        }));
+        // Set length = 0 and name = "" as per spec
+        let length_key = PropertyKey::String(interp.intern("length"));
+        let name_key = PropertyKey::String(interp.intern("name"));
+        proto_ref.set_property(length_key, JsValue::Number(0.0));
+        proto_ref.set_property(name_key, JsValue::String(name));
+    }
+
     interp.register_method(&proto, "call", function_call, 1);
     interp.register_method(&proto, "apply", function_apply, 2);
     interp.register_method(&proto, "bind", function_bind, 1);
 
+    // Add Symbol.hasInstance method
+    let well_known = super::symbol::get_well_known_symbols();
+    let has_instance_symbol = JsSymbol::new(
+        well_known.has_instance,
+        Some("Symbol.hasInstance".to_string()),
+    );
+    let has_instance_key = PropertyKey::Symbol(Box::new(has_instance_symbol));
+    let has_instance_fn =
+        interp.create_native_function("[Symbol.hasInstance]", function_has_instance, 1);
+    proto
+        .borrow_mut()
+        .set_property(has_instance_key, JsValue::Object(has_instance_fn));
+
     // Function.prototype.constructor will be set to the Function constructor
     // after it's created in create_function_constructor
+}
+
+/// Function.prototype[Symbol.hasInstance](V)
+/// Returns true if V is an instance of this function (i.e., V's prototype chain includes this.prototype)
+fn function_has_instance(
+    interp: &mut Interpreter,
+    this: JsValue,
+    args: &[JsValue],
+) -> Result<Guarded, JsError> {
+    let value = args.first().cloned().unwrap_or(JsValue::Undefined);
+
+    // 1. If V is not an object, return false
+    let JsValue::Object(obj) = value else {
+        return Ok(Guarded::unguarded(JsValue::Boolean(false)));
+    };
+
+    // 2. Let F be the this value (the function)
+    let JsValue::Object(func) = this else {
+        return Err(JsError::type_error(
+            "Function.prototype[Symbol.hasInstance] called on non-function",
+        ));
+    };
+
+    // 3. Return OrdinaryHasInstance(F, V)
+    // Get the prototype property of F
+    let prototype_key = PropertyKey::String(interp.intern("prototype"));
+    let prototype_value = func.borrow().get_property(&prototype_key);
+
+    // If F.prototype is not an object, return false
+    let Some(JsValue::Object(prototype)) = prototype_value else {
+        // For functions without a prototype property (like arrow functions),
+        // we should return false, not throw
+        return Ok(Guarded::unguarded(JsValue::Boolean(false)));
+    };
+
+    // Walk the prototype chain of V looking for F.prototype
+    let mut current = obj.borrow().prototype.clone();
+    while let Some(proto) = current {
+        if proto == prototype {
+            return Ok(Guarded::unguarded(JsValue::Boolean(true)));
+        }
+        current = proto.borrow().prototype.clone();
+    }
+
+    Ok(Guarded::unguarded(JsValue::Boolean(false)))
 }
 
 /// Create the global Function constructor
