@@ -3,7 +3,7 @@
 use crate::error::JsError;
 use crate::gc::Gc;
 use crate::interpreter::Interpreter;
-use crate::value::{Guarded, JsObject, JsValue, PropertyKey};
+use crate::value::{Guarded, JsObject, JsValue, Property, PropertyKey};
 
 /// Initialize Math object and bind it to global scope.
 /// Returns the Math object for rooting.
@@ -22,19 +22,21 @@ pub fn init_math(interp: &mut Interpreter) -> Gc<JsObject> {
     let sqrt2_key = PropertyKey::String(interp.intern("SQRT2"));
     let sqrt1_2_key = PropertyKey::String(interp.intern("SQRT1_2"));
 
+    // Math constants are non-writable, non-enumerable, non-configurable per spec
     {
         let mut math = math_obj.borrow_mut();
-        math.set_property(pi_key, JsValue::Number(std::f64::consts::PI));
-        math.set_property(e_key, JsValue::Number(std::f64::consts::E));
-        math.set_property(ln2_key, JsValue::Number(std::f64::consts::LN_2));
-        math.set_property(ln10_key, JsValue::Number(std::f64::consts::LN_10));
-        math.set_property(log2e_key, JsValue::Number(std::f64::consts::LOG2_E));
-        math.set_property(log10e_key, JsValue::Number(std::f64::consts::LOG10_E));
-        math.set_property(sqrt2_key, JsValue::Number(std::f64::consts::SQRT_2));
-        math.set_property(
-            sqrt1_2_key,
-            JsValue::Number(std::f64::consts::FRAC_1_SQRT_2),
-        );
+        // Helper to create a frozen constant property
+        let frozen_const =
+            |v: f64| Property::with_attributes(JsValue::Number(v), false, false, false);
+
+        math.define_property(pi_key, frozen_const(std::f64::consts::PI));
+        math.define_property(e_key, frozen_const(std::f64::consts::E));
+        math.define_property(ln2_key, frozen_const(std::f64::consts::LN_2));
+        math.define_property(ln10_key, frozen_const(std::f64::consts::LN_10));
+        math.define_property(log2e_key, frozen_const(std::f64::consts::LOG2_E));
+        math.define_property(log10e_key, frozen_const(std::f64::consts::LOG10_E));
+        math.define_property(sqrt2_key, frozen_const(std::f64::consts::SQRT_2));
+        math.define_property(sqrt1_2_key, frozen_const(std::f64::consts::FRAC_1_SQRT_2));
     }
 
     // Rounding methods

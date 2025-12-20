@@ -1640,6 +1640,7 @@ impl Interpreter {
     }
 
     /// Register a method on an object (for builtin initialization)
+    /// Per ECMAScript spec, builtin methods are: writable, non-enumerable, configurable
     pub fn register_method(
         &mut self,
         obj: &Gc<JsObject>,
@@ -1649,8 +1650,9 @@ impl Interpreter {
     ) {
         let func_obj = self.create_native_function(name, func, arity);
         let key = PropertyKey::String(self.intern(name));
-        obj.borrow_mut()
-            .set_property(key, JsValue::Object(func_obj));
+        // Builtin methods: writable=true, enumerable=false, configurable=true
+        let prop = Property::with_attributes(JsValue::Object(func_obj), true, false, true);
+        obj.borrow_mut().define_property(key, prop);
     }
 
     /// Guard a value to prevent it from being garbage collected.

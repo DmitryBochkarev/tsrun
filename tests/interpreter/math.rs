@@ -149,3 +149,45 @@ fn test_math_spread_max() {
         JsValue::Number(9.0)
     );
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Property Descriptor Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_math_constant_descriptors() {
+    // Math constants should be non-writable, non-enumerable, non-configurable
+    assert_eq!(
+        eval(
+            r#"
+            const desc = Object.getOwnPropertyDescriptor(Math, 'E');
+            [desc.writable, desc.enumerable, desc.configurable].join(',')
+        "#
+        ),
+        JsValue::from("false,false,false")
+    );
+
+    assert_eq!(
+        eval(
+            r#"
+            const desc = Object.getOwnPropertyDescriptor(Math, 'PI');
+            [desc.writable, desc.enumerable, desc.configurable].join(',')
+        "#
+        ),
+        JsValue::from("false,false,false")
+    );
+}
+
+#[test]
+fn test_math_method_descriptors() {
+    // Math methods should be writable, non-enumerable, configurable
+    assert_eq!(
+        eval(
+            r#"
+            const desc = Object.getOwnPropertyDescriptor(Math, 'abs');
+            [desc.writable, desc.enumerable, desc.configurable].join(',')
+        "#
+        ),
+        JsValue::from("true,false,true")
+    );
+}
