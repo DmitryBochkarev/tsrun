@@ -4354,6 +4354,20 @@ mod tests {
     }
 
     #[test]
+    fn test_getter_leading_decimal_key() {
+        // Leading decimal number as property name: .1 = 0.1
+        let prog = parse("class C { get .1() { return 'get'; } }");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_getter_non_canonical_number_key() {
+        // Non-canonical number as property name: 0.0000001 should work
+        let prog = parse("class C { get 0.0000001() { return 'get'; } }");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
     fn test_static_method() {
         let prog = parse("class Counter { static count: number = 0; static increment(): void { Counter.count++; } }");
         assert_eq!(prog.body.len(), 1);

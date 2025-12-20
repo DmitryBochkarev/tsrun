@@ -985,15 +985,17 @@ impl<'a> Lexer<'a> {
             num_str.push(first);
         }
 
-        // Integer part
-        while let Some(ch) = self.peek() {
-            if ch.is_ascii_digit() || ch == '_' {
-                if ch != '_' {
-                    num_str.push(ch);
+        // Integer part (skip if starting with decimal point)
+        if first != '.' {
+            while let Some(ch) = self.peek() {
+                if ch.is_ascii_digit() || ch == '_' {
+                    if ch != '_' {
+                        num_str.push(ch);
+                    }
+                    self.advance();
+                } else {
+                    break;
                 }
-                self.advance();
-            } else {
-                break;
             }
         }
 

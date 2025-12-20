@@ -24,10 +24,10 @@ use crate::lexer::Span;
 use crate::parser::Parser;
 use crate::string_dict::StringDict;
 use crate::value::{
-    create_environment_unrooted, Binding, CheapClone, EnumData, EnvRef, EnvironmentData,
-    ExoticObject, FunctionBody, GeneratorState, GeneratorStatus, Guarded, ImportBinding,
-    InterpretedFunction, JsFunction, JsObject, JsString, JsValue, ModuleExport, NativeFn,
-    NativeFunction, PromiseStatus, Property, PropertyKey, VarKey,
+    create_environment_unrooted, number_to_string, Binding, CheapClone, EnumData, EnvRef,
+    EnvironmentData, ExoticObject, FunctionBody, GeneratorState, GeneratorStatus, Guarded,
+    ImportBinding, InterpretedFunction, JsFunction, JsObject, JsString, JsValue, ModuleExport,
+    NativeFn, NativeFunction, PromiseStatus, Property, PropertyKey, VarKey,
 };
 use rustc_hash::FxHashMap;
 use std::cell::RefCell;
@@ -2794,27 +2794,53 @@ impl Interpreter {
         }
 
         // Collect getters, setters, and regular methods separately
+        // Use PropertyKey to properly handle computed keys (including numeric)
         #[allow(clippy::type_complexity)]
         let mut accessors: FxHashMap<
-            JsString,
+            PropertyKey,
             (Option<Gc<JsObject>>, Option<Gc<JsObject>>),
         > = FxHashMap::default();
-        let mut regular_methods: Vec<(JsString, Gc<JsObject>)> = Vec::new();
+        let mut regular_methods: Vec<(PropertyKey, Gc<JsObject>)> = Vec::new();
         // Collect all method guards at outer scope to keep decorated methods alive
         // until they are stored on prototype
         let mut all_method_guards: Vec<Guard<JsObject>> = Vec::new();
 
         for method in &instance_methods {
-            let (method_name, is_private): (JsString, bool) = match &method.key {
-                ObjectPropertyKey::Identifier(id) => (id.name.cheap_clone(), false),
-                ObjectPropertyKey::String(s) => (s.value.cheap_clone(), false),
-                ObjectPropertyKey::Number(lit) => match &lit.value {
-                    LiteralValue::Number(n) => (JsString::from(n.to_string()), false),
-                    _ => continue,
-                },
-                ObjectPropertyKey::Computed(_) => continue,
-                ObjectPropertyKey::PrivateIdentifier(id) => (id.name.cheap_clone(), true),
-            };
+            let (method_key, method_name, is_private): (PropertyKey, JsString, bool) =
+                match &method.key {
+                    ObjectPropertyKey::Identifier(id) => (
+                        PropertyKey::String(id.name.cheap_clone()),
+                        id.name.cheap_clone(),
+                        false,
+                    ),
+                    ObjectPropertyKey::String(s) => (
+                        PropertyKey::String(s.value.cheap_clone()),
+                        s.value.cheap_clone(),
+                        false,
+                    ),
+                    ObjectPropertyKey::Number(lit) => match &lit.value {
+                        LiteralValue::Number(n) => {
+                            let key = PropertyKey::from_value(&JsValue::Number(*n));
+                            let name = JsString::from(number_to_string(*n));
+                            (key, name, false)
+                        }
+                        _ => continue,
+                    },
+                    ObjectPropertyKey::Computed(expr) => {
+                        let Guarded {
+                            value: key_val,
+                            guard: _key_guard,
+                        } = self.evaluate_expression(expr)?;
+                        let key = PropertyKey::from_value(&key_val);
+                        let name = key_val.to_js_string();
+                        (key, name, false)
+                    }
+                    ObjectPropertyKey::PrivateIdentifier(id) => (
+                        PropertyKey::String(id.name.cheap_clone()),
+                        id.name.cheap_clone(),
+                        true,
+                    ),
+                };
 
             let func = &method.value;
             let mut func_obj = self.create_interpreted_function(
@@ -2874,25 +2900,24 @@ impl Interpreter {
 
             match method.kind {
                 MethodKind::Get => {
-                    let entry = accessors.entry(method_name).or_insert((None, None));
+                    let entry = accessors.entry(method_key).or_insert((None, None));
                     entry.0 = Some(func_obj);
                 }
                 MethodKind::Set => {
-                    let entry = accessors.entry(method_name).or_insert((None, None));
+                    let entry = accessors.entry(method_key).or_insert((None, None));
                     entry.1 = Some(func_obj);
                 }
                 MethodKind::Method => {
-                    regular_methods.push((method_name, func_obj));
+                    regular_methods.push((method_key, func_obj));
                 }
             }
         }
 
         // Add accessor properties to prototype
-        for (name, (getter, setter)) in accessors {
-            prototype.borrow_mut().define_property(
-                PropertyKey::String(name),
-                Property::accessor(getter, setter),
-            );
+        for (key, (getter, setter)) in accessors {
+            prototype
+                .borrow_mut()
+                .define_property(key, Property::accessor(getter, setter));
         }
 
         // Process instance auto-accessor properties
@@ -2920,10 +2945,10 @@ impl Interpreter {
         }
 
         // Add regular methods to prototype
-        for (name, func_obj) in regular_methods {
+        for (key, func_obj) in regular_methods {
             prototype
                 .borrow_mut()
-                .set_property(PropertyKey::String(name), JsValue::Object(func_obj));
+                .set_property(key, JsValue::Object(func_obj));
         }
         // Now that methods are stored on prototype, guards can be dropped
         let _ = all_method_guards;
@@ -3058,26 +3083,52 @@ impl Interpreter {
         }
 
         // Handle static methods
+        // Use PropertyKey to properly handle computed keys (including numeric)
         #[allow(clippy::type_complexity)]
         let mut static_accessors: FxHashMap<
-            JsString,
+            PropertyKey,
             (Option<Gc<JsObject>>, Option<Gc<JsObject>>),
         > = FxHashMap::default();
-        let mut static_regular_methods: Vec<(JsString, Gc<JsObject>)> = Vec::new();
+        let mut static_regular_methods: Vec<(PropertyKey, Gc<JsObject>)> = Vec::new();
         // Collect all static method guards at outer scope to keep decorated methods alive
         let mut all_static_method_guards: Vec<Guard<JsObject>> = Vec::new();
 
         for method in &static_methods {
-            let (method_name, is_private): (JsString, bool) = match &method.key {
-                ObjectPropertyKey::Identifier(id) => (id.name.cheap_clone(), false),
-                ObjectPropertyKey::String(s) => (s.value.cheap_clone(), false),
-                ObjectPropertyKey::Number(lit) => match &lit.value {
-                    LiteralValue::Number(n) => (JsString::from(n.to_string()), false),
-                    _ => continue,
-                },
-                ObjectPropertyKey::Computed(_) => continue,
-                ObjectPropertyKey::PrivateIdentifier(id) => (id.name.cheap_clone(), true),
-            };
+            let (method_key, method_name, is_private): (PropertyKey, JsString, bool) =
+                match &method.key {
+                    ObjectPropertyKey::Identifier(id) => (
+                        PropertyKey::String(id.name.cheap_clone()),
+                        id.name.cheap_clone(),
+                        false,
+                    ),
+                    ObjectPropertyKey::String(s) => (
+                        PropertyKey::String(s.value.cheap_clone()),
+                        s.value.cheap_clone(),
+                        false,
+                    ),
+                    ObjectPropertyKey::Number(lit) => match &lit.value {
+                        LiteralValue::Number(n) => {
+                            let key = PropertyKey::from_value(&JsValue::Number(*n));
+                            let name = JsString::from(number_to_string(*n));
+                            (key, name, false)
+                        }
+                        _ => continue,
+                    },
+                    ObjectPropertyKey::Computed(expr) => {
+                        let Guarded {
+                            value: key_val,
+                            guard: _key_guard,
+                        } = self.evaluate_expression(expr)?;
+                        let key = PropertyKey::from_value(&key_val);
+                        let name = key_val.to_js_string();
+                        (key, name, false)
+                    }
+                    ObjectPropertyKey::PrivateIdentifier(id) => (
+                        PropertyKey::String(id.name.cheap_clone()),
+                        id.name.cheap_clone(),
+                        true,
+                    ),
+                };
 
             let func = &method.value;
             let mut func_obj = self.create_interpreted_function(
@@ -3130,25 +3181,24 @@ impl Interpreter {
 
             match method.kind {
                 MethodKind::Get => {
-                    let entry = static_accessors.entry(method_name).or_insert((None, None));
+                    let entry = static_accessors.entry(method_key).or_insert((None, None));
                     entry.0 = Some(func_obj);
                 }
                 MethodKind::Set => {
-                    let entry = static_accessors.entry(method_name).or_insert((None, None));
+                    let entry = static_accessors.entry(method_key).or_insert((None, None));
                     entry.1 = Some(func_obj);
                 }
                 MethodKind::Method => {
-                    static_regular_methods.push((method_name, func_obj));
+                    static_regular_methods.push((method_key, func_obj));
                 }
             }
         }
 
         // Add static accessor properties
-        for (name, (getter, setter)) in static_accessors {
-            constructor_fn.borrow_mut().define_property(
-                PropertyKey::String(name),
-                Property::accessor(getter, setter),
-            );
+        for (key, (getter, setter)) in static_accessors {
+            constructor_fn
+                .borrow_mut()
+                .define_property(key, Property::accessor(getter, setter));
         }
 
         // Process static auto-accessor properties
@@ -3176,10 +3226,10 @@ impl Interpreter {
         }
 
         // Add static regular methods
-        for (name, func_obj) in static_regular_methods {
+        for (key, func_obj) in static_regular_methods {
             constructor_fn
                 .borrow_mut()
-                .set_property(PropertyKey::String(name), JsValue::Object(func_obj));
+                .set_property(key, JsValue::Object(func_obj));
         }
         // Now that static methods are stored, guards can be dropped
         let _ = all_static_method_guards;

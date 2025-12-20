@@ -8,6 +8,90 @@ use std::rc::Rc;
 
 use rustc_hash::FxHashMap;
 
+/// Convert a JavaScript number to its canonical string representation.
+///
+/// According to ECMAScript spec (7.1.12.1 NumberToString):
+/// - Very small numbers (< 1e-6) use exponential notation
+/// - Very large numbers (>= 1e21) use exponential notation
+/// - Otherwise use decimal notation
+/// - Integer values are printed without decimal point
+pub fn number_to_string(n: f64) -> String {
+    if n.is_nan() {
+        return "NaN".to_string();
+    }
+    if n.is_infinite() {
+        return if n > 0.0 {
+            "Infinity".to_string()
+        } else {
+            "-Infinity".to_string()
+        };
+    }
+    if n == 0.0 {
+        return "0".to_string();
+    }
+
+    let abs_n = n.abs();
+
+    // Check if it's an integer that can be represented exactly
+    if n.trunc() == n && abs_n < 1e21 {
+        // Format as integer (no decimal point)
+        return format!("{:.0}", n);
+    }
+
+    // Very small numbers (absolute value < 1e-6) use exponential notation
+    // Very large numbers (absolute value >= 1e21) use exponential notation
+    if !(1e-6..1e21).contains(&abs_n) {
+        // Use exponential notation
+        format_exponential(n)
+    } else {
+        // Use decimal notation
+        // We need to produce the shortest representation that round-trips
+        format_decimal(n)
+    }
+}
+
+/// Format a number in exponential notation matching JavaScript's output
+fn format_exponential(n: f64) -> String {
+    // Get the exponent
+    let abs_n = n.abs();
+    let exponent = abs_n.log10().floor() as i32;
+    let mantissa = n / 10_f64.powi(exponent);
+
+    // Format mantissa - remove trailing zeros after decimal point
+    let mantissa_str = if mantissa.trunc() == mantissa {
+        format!("{:.0}", mantissa)
+    } else {
+        let s = format!("{}", mantissa);
+        // Remove trailing zeros but keep at least one digit after decimal
+        s.trim_end_matches('0').to_string()
+    };
+
+    // Format exponent with sign
+    if exponent >= 0 {
+        format!("{}e+{}", mantissa_str, exponent)
+    } else {
+        format!("{}e{}", mantissa_str, exponent)
+    }
+}
+
+/// Format a number in decimal notation matching JavaScript's output
+fn format_decimal(n: f64) -> String {
+    // Use Rust's default formatting which handles most cases
+    let s = format!("{}", n);
+
+    // Remove trailing zeros after decimal point (but keep at least one digit)
+    if s.contains('.') {
+        let trimmed = s.trim_end_matches('0');
+        if trimmed.ends_with('.') {
+            format!("{}0", trimmed)
+        } else {
+            trimmed.to_string()
+        }
+    } else {
+        s
+    }
+}
+
 use crate::ast::{ArrowFunctionBody, BlockStatement, Expression, FunctionParam, Pattern};
 use crate::error::JsError;
 use crate::gc::{Gc, GcPtr, Guard, Heap, Reset, Traceable};
@@ -172,21 +256,7 @@ impl JsValue {
             JsValue::Null => JsString::from("null"),
             JsValue::Boolean(true) => JsString::from("true"),
             JsValue::Boolean(false) => JsString::from("false"),
-            JsValue::Number(n) => {
-                if n.is_nan() {
-                    JsString::from("NaN")
-                } else if n.is_infinite() {
-                    if *n > 0.0 {
-                        JsString::from("Infinity")
-                    } else {
-                        JsString::from("-Infinity")
-                    }
-                } else if *n == 0.0 {
-                    JsString::from("0")
-                } else {
-                    JsString::from(n.to_string())
-                }
-            }
+            JsValue::Number(n) => JsString::from(number_to_string(*n)),
             JsValue::String(s) => s.clone(),
             JsValue::Symbol(s) => {
                 // Symbol.prototype.toString returns "Symbol(description)"
@@ -2543,5 +2613,69 @@ mod tests {
         assert!(!JsValue::Undefined.strict_equals(&JsValue::Null));
         assert!(JsValue::Number(1.0).strict_equals(&JsValue::Number(1.0)));
         assert!(!JsValue::Number(f64::NAN).strict_equals(&JsValue::Number(f64::NAN)));
+    }
+
+    #[test]
+    fn test_to_js_string_number_canonical() {
+        // JavaScript uses canonical string representations for numbers
+        // Very small numbers use exponential notation
+        assert_eq!(
+            JsValue::Number(0.0000001).to_js_string().as_str(),
+            "1e-7",
+            "0.0000001 should be '1e-7'"
+        );
+
+        // Normal decimals
+        assert_eq!(
+            JsValue::Number(0.1).to_js_string().as_str(),
+            "0.1",
+            "0.1 should be '0.1'"
+        );
+
+        // Very large numbers use exponential notation
+        assert_eq!(
+            JsValue::Number(1e21).to_js_string().as_str(),
+            "1e+21",
+            "1e21 should be '1e+21'"
+        );
+    }
+
+    #[test]
+    fn test_property_key_from_decimal() {
+        // PropertyKey::from_value should use canonical string representation
+        let key = PropertyKey::from_value(&JsValue::Number(0.1));
+        match key {
+            PropertyKey::String(s) => assert_eq!(s.as_str(), "0.1"),
+            PropertyKey::Index(_) => panic!("0.1 should not be an index"),
+            PropertyKey::Symbol(_) => panic!("0.1 should not be a symbol"),
+        }
+    }
+
+    #[test]
+    fn test_rust_parse_leading_decimal() {
+        // Check what Rust does with ".1"
+        let parsed: f64 = ".1".parse().unwrap();
+        println!("Parsed .1 as: {}", parsed);
+        assert_eq!(parsed, 0.1);
+    }
+
+    #[test]
+    fn test_property_key_from_value_decimal_debug() {
+        let n = 0.1_f64;
+        println!("n = {}", n);
+        let key = PropertyKey::from_value(&JsValue::Number(n));
+        println!("PropertyKey = {:?}", key);
+        println!("PropertyKey display = {}", key);
+        match key {
+            PropertyKey::String(s) => {
+                println!("It's a String: '{}'", s);
+                assert_eq!(s.as_str(), "0.1");
+            }
+            PropertyKey::Index(i) => {
+                println!("It's an Index: {}", i);
+                panic!("0.1 should not be an index!");
+            }
+            PropertyKey::Symbol(_) => panic!("0.1 should not be a symbol"),
+        }
     }
 }

@@ -296,6 +296,109 @@ fn test_class_getter_only() {
     );
 }
 
+// Test accessing getter via prototype (test262 style)
+#[test]
+fn test_class_getter_via_prototype() {
+    // This is how test262 tests class getters - accessing via prototype
+    assert_eq!(
+        eval(
+            r#"
+            var C = class {
+                get foo() { return 'get string'; }
+            };
+            C.prototype['foo']
+        "#
+        ),
+        JsValue::String("get string".into())
+    );
+}
+
+// Test accessing getter via prototype with numeric key
+#[test]
+fn test_class_getter_numeric_key_via_prototype() {
+    // Binary literal 0b10 = 2
+    assert_eq!(
+        eval(
+            r#"
+            var C = class {
+                get 2() { return 'get string'; }
+            };
+            C.prototype['2']
+        "#
+        ),
+        JsValue::String("get string".into())
+    );
+}
+
+// Test getter with leading decimal numeric key (.1 = 0.1)
+#[test]
+fn test_class_getter_leading_decimal_key() {
+    // .1 should be parsed as 0.1 and stored with key "0.1"
+    assert_eq!(
+        eval(
+            r#"
+            var C = class {
+                get .1() { return 'get string'; }
+            };
+            C.prototype['0.1']
+        "#
+        ),
+        JsValue::String("get string".into())
+    );
+}
+
+// Test getter with non-canonical numeric key (0.0000001 = 1e-7)
+#[test]
+fn test_class_getter_non_canonical_key() {
+    assert_eq!(
+        eval(
+            r#"
+            var C = class {
+                get 0.0000001() { return 'get string'; }
+            };
+            C.prototype['1e-7']
+        "#
+        ),
+        JsValue::String("get string".into())
+    );
+}
+
+// Test getter with computed key
+#[test]
+fn test_class_getter_computed_key() {
+    assert_eq!(
+        eval(
+            r#"
+            var key = 'myProp';
+            var C = class {
+                get [key]() { return 'computed get'; }
+            };
+            C.prototype['myProp']
+        "#
+        ),
+        JsValue::String("computed get".into())
+    );
+}
+
+// Test setter via prototype
+#[test]
+fn test_class_setter_via_prototype() {
+    assert_eq!(
+        eval(
+            r#"
+            var stringSet;
+            var C = class {
+                get foo() { return 'get string'; }
+                set foo(param) { stringSet = param; }
+            };
+            C.prototype['foo'] = 'set string';
+            stringSet
+        "#
+        ),
+        JsValue::String("set string".into())
+    );
+}
+
 // Test static getter/setter
 #[test]
 fn test_class_static_getter_setter() {
