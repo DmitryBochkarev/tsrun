@@ -231,7 +231,6 @@ use crate::ast::{ArrowFunctionBody, BlockStatement, Expression, FunctionParam, P
 use crate::error::JsError;
 use crate::gc::{Gc, GcPtr, Guard, Heap, Reset, Traceable};
 use crate::lexer::Span;
-use crate::string_dict::StringDict;
 
 /// Trait for types that have cheap (O(1), reference-counted) clones.
 ///
@@ -2508,90 +2507,6 @@ pub enum ModuleExport {
         source_module: JsObjectRef,
         source_key: PropertyKey,
     },
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// Helper functions for creating GC-managed objects
-//
-// These functions use the temporary guard pattern:
-// - Allocate with a temporary guard
-// - Return both the object and the guard
-// - Caller transfers ownership, then drops the guard
-// ═══════════════════════════════════════════════════════════════════════════════
-
-/// Create a new ordinary object with a temporary guard.
-///
-/// Returns `(object, temp_guard)`. The caller should:
-/// 2. Drop or let the temp_guard go out of scope
-pub fn create_object_with_guard(guard: &Guard<JsObject>) -> JsObjectRef {
-    // Object is default-initialized by Reset trait
-    guard.alloc()
-}
-
-/// Create a new array object with a temporary guard.
-///
-/// Returns the array object. Caller is responsible for ownership transfer.
-pub fn create_array_with_guard(
-    guard: &Guard<JsObject>,
-    _dict: &mut StringDict,
-    elements: Vec<JsValue>,
-) -> JsObjectRef {
-    let arr = guard.alloc();
-    {
-        let mut arr_ref = arr.borrow_mut();
-        arr_ref.exotic = ExoticObject::Array { elements };
-    }
-    arr
-}
-
-/// Create a function object with a temporary guard.
-///
-/// Returns the function object. Caller is responsible for ownership transfer.
-pub fn create_function_with_guard(
-    guard: &Guard<JsObject>,
-    dict: &mut StringDict,
-    func: JsFunction,
-) -> JsObjectRef {
-    let f = guard.alloc();
-    {
-        let mut f_ref = f.borrow_mut();
-        f_ref.exotic = ExoticObject::Function(func);
-
-        // Add length property
-        let length_key = PropertyKey::String(dict.get_or_insert("length"));
-        f_ref.properties.insert(
-            length_key,
-            Property::with_attributes(JsValue::Number(0.0), false, false, true),
-        );
-    }
-    f
-}
-
-/// Register a native method on a prototype object.
-///
-/// Uses the given guard for allocation. The function object is owned by the
-/// prototype through the property assignment (clone increments ref_count).
-pub fn register_method_with_guard(
-    guard: &Guard<JsObject>,
-    dict: &mut StringDict,
-    obj: &JsObjectRef,
-    name: &str,
-    func: NativeFn,
-    arity: usize,
-) {
-    let interned_name = dict.get_or_insert(name);
-    let f = create_function_with_guard(
-        guard,
-        dict,
-        JsFunction::Native(NativeFunction {
-            name: interned_name.cheap_clone(),
-            func,
-            arity,
-        }),
-    );
-    // Prototype owns the function via property assignment (clone increments ref_count)
-    let key = PropertyKey::String(interned_name);
-    obj.borrow_mut().set_property(key, JsValue::Object(f));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

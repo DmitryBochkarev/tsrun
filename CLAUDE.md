@@ -194,16 +194,6 @@ let obj2 = self.create_object(&guard);
 let arr = self.create_array_from(&guard, vec![JsValue::Object(obj1), JsValue::Object(obj2)]);
 ```
 
-**Deprecated API (to be removed):** Methods that create their own guards internally:
-```rust
-// DEPRECATED: Creates guard internally, less control
-let (obj, guard) = self.create_object_with_guard();  // Use create_object(&guard)
-let (arr, guard) = self.create_array_with_guard(elements);  // Use create_array_from(&guard, elements)
-let (func, guard) = self.create_function_with_guard(...);  // Use create_interpreted_function(&guard, ...)
-let func = self.create_native_function(...);  // Use create_native_fn(&guard, ...)
-let func = self.create_function(js_func);  // Use create_js_function(&guard, js_func)
-```
-
 **Method variants:**
 | Method | Description |
 |--------|-------------|

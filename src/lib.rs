@@ -38,9 +38,6 @@ pub use interpreter::builtins::json::{
 // Re-export order system types
 // Note: Order, OrderId, OrderResponse, RuntimeResult, ModulePath, ImportRequest are defined in this module
 
-use std::cell::RefCell;
-use std::rc::Rc;
-
 // ═══════════════════════════════════════════════════════════════════════════════
 // Order System Types
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -418,57 +415,6 @@ pub struct RuntimeConfig {
     pub internal_modules: Vec<InternalModule>,
     /// Timeout in milliseconds (0 = no timeout)
     pub timeout_ms: u64,
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// Legacy Pending Slot (internal use)
-// ═══════════════════════════════════════════════════════════════════════════════
-
-/// A slot that can be filled with a value or error (internal use)
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
-pub(crate) struct PendingSlot {
-    id: u64,
-    value: Rc<RefCell<Option<Result<JsValue, JsError>>>>,
-}
-
-// PendingSlot is cheap to clone - just u64 + Rc increment
-impl CheapClone for PendingSlot {}
-
-#[allow(dead_code)]
-impl PendingSlot {
-    /// Create a new pending slot
-    pub fn new(id: u64) -> Self {
-        PendingSlot {
-            id,
-            value: Rc::new(RefCell::new(None)),
-        }
-    }
-
-    /// Fill the slot with a successful value
-    pub fn set_success(&self, value: JsValue) {
-        *self.value.borrow_mut() = Some(Ok(value));
-    }
-
-    /// Fill the slot with an error (will be thrown at resume point)
-    pub fn set_error(&self, error: JsError) {
-        *self.value.borrow_mut() = Some(Err(error));
-    }
-
-    /// Check if the slot has been filled
-    pub fn is_filled(&self) -> bool {
-        self.value.borrow().is_some()
-    }
-
-    /// Take the value out of the slot (used internally)
-    pub(crate) fn take(&self) -> Option<Result<JsValue, JsError>> {
-        self.value.borrow_mut().take()
-    }
-
-    /// Get the slot's unique ID
-    pub fn id(&self) -> u64 {
-        self.id
-    }
 }
 
 /// The main runtime for executing TypeScript code
