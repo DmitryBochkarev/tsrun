@@ -1130,9 +1130,119 @@ fn test_bytecode_array_destructure_rest() {
     );
 }
 
-// TODO: Destructuring in function parameters requires additional work
-// to handle pattern parameters in bytecode compilation
-// #[test]
-// fn test_bytecode_destructure_in_function_params() { ... }
-// #[test]
-// fn test_bytecode_destructure_array_in_params() { ... }
+#[test]
+fn test_bytecode_destructure_in_function_params_single() {
+    // Test just accessing a single destructured value
+    assert_eq!(
+        eval_bytecode(
+            "
+            function getA({ a }: { a: number }): number {
+                return a;
+            }
+            getA({ a: 42 })
+        "
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+#[test]
+fn test_bytecode_destructure_in_function_params_two() {
+    // Test accessing each destructured value individually
+    assert_eq!(
+        eval_bytecode(
+            "
+            function getA({ a, b }: { a: number, b: number }): number {
+                return a;
+            }
+            getA({ a: 3, b: 7 })
+        "
+        ),
+        JsValue::Number(3.0)
+    );
+
+    assert_eq!(
+        eval_bytecode(
+            "
+            function getB({ a, b }: { a: number, b: number }): number {
+                return b;
+            }
+            getB({ a: 3, b: 7 })
+        "
+        ),
+        JsValue::Number(7.0)
+    );
+
+    // Then test with both
+    assert_eq!(
+        eval_bytecode(
+            "
+            function sum({ a, b }: { a: number, b: number }): number {
+                return a + b;
+            }
+            sum({ a: 3, b: 7 })
+        "
+        ),
+        JsValue::Number(10.0)
+    );
+}
+
+#[test]
+fn test_bytecode_destructure_array_in_params() {
+    assert_eq!(
+        eval_bytecode(
+            "
+            function getFirst([first]: number[]): number {
+                return first;
+            }
+            getFirst([42, 1, 2])
+        "
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+#[test]
+fn test_bytecode_destructure_default_param() {
+    assert_eq!(
+        eval_bytecode(
+            "
+            function greet(name: string = 'World'): string {
+                return 'Hello ' + name;
+            }
+            greet()
+        "
+        ),
+        JsValue::String("Hello World".into())
+    );
+}
+
+#[test]
+fn test_bytecode_destructure_default_param_with_value() {
+    assert_eq!(
+        eval_bytecode(
+            "
+            function add(a: number, b: number = 10): number {
+                return a + b;
+            }
+            add(5)
+        "
+        ),
+        JsValue::Number(15.0)
+    );
+}
+
+#[test]
+fn test_bytecode_destructure_nested_object_param() {
+    assert_eq!(
+        eval_bytecode(
+            "
+            function getInner({ outer: { value } }: { outer: { value: number } }): number {
+                return value;
+            }
+            getInner({ outer: { value: 42 } })
+        "
+        ),
+        JsValue::Number(42.0)
+    );
+}

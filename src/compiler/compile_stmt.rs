@@ -805,18 +805,25 @@ impl Compiler {
         // Create a new compiler for the function body
         let mut func_compiler = Compiler::new();
 
+        // Reserve registers for parameters - they are passed in registers 0, 1, 2...
+        // We must reserve these before any other register allocation
+        if !params.is_empty() {
+            func_compiler.builder.reserve_registers(params.len() as u8)?;
+        }
+
         // Compile parameter declarations
         // Parameters will be passed via registers and need to be bound to the environment
         let mut param_names = Vec::with_capacity(params.len());
         let mut rest_param = None;
 
         for (idx, param) in params.iter().enumerate() {
+            let arg_reg = idx as u8;
+
             match &param.pattern {
                 crate::ast::Pattern::Identifier(id) => {
                     param_names.push(id.name.cheap_clone());
 
                     // Load argument from register and declare variable
-                    let arg_reg = idx as u8;
                     let name_idx = func_compiler.builder.add_string(id.name.cheap_clone())?;
                     func_compiler.builder.emit(Op::DeclareVar {
                         name: name_idx,
@@ -830,7 +837,6 @@ impl Compiler {
                         param_names.push(id.name.cheap_clone());
 
                         // For rest params, we'll need special handling (not fully implemented)
-                        let arg_reg = idx as u8;
                         let name_idx = func_compiler.builder.add_string(id.name.cheap_clone())?;
                         func_compiler.builder.emit(Op::DeclareVar {
                             name: name_idx,
@@ -839,8 +845,56 @@ impl Compiler {
                         });
                     }
                 }
-                // TODO: Handle destructuring patterns
-                _ => {}
+                crate::ast::Pattern::Object(_) | crate::ast::Pattern::Array(_) => {
+                    // Handle destructuring patterns in function parameters
+                    // The argument is in arg_reg, compile the pattern binding
+                    param_names.push(JsString::from(format!("__param{}__", idx)));
+                    func_compiler.compile_pattern_binding(&param.pattern, arg_reg, true, false)?;
+                }
+                crate::ast::Pattern::Assignment(assign_pat) => {
+                    // Parameter with default value: param = defaultValue
+                    // If argument is undefined, use default value
+                    let actual_value = func_compiler.builder.alloc_register()?;
+
+                    // Check if arg is undefined
+                    let is_undefined = func_compiler.builder.alloc_register()?;
+                    func_compiler
+                        .builder
+                        .emit(Op::LoadUndefined { dst: is_undefined });
+                    func_compiler.builder.emit(Op::StrictEq {
+                        dst: is_undefined,
+                        left: arg_reg,
+                        right: is_undefined,
+                    });
+
+                    let skip_default = func_compiler.builder.emit_jump_if_false(is_undefined);
+                    func_compiler.builder.free_register(is_undefined);
+
+                    // Use default value
+                    func_compiler.compile_expression(&assign_pat.right, actual_value)?;
+                    let skip_arg = func_compiler.builder.emit_jump();
+
+                    // Use provided argument
+                    func_compiler.builder.patch_jump(skip_default);
+                    func_compiler.builder.emit(Op::Move {
+                        dst: actual_value,
+                        src: arg_reg,
+                    });
+
+                    func_compiler.builder.patch_jump(skip_arg);
+
+                    // Bind the inner pattern
+                    func_compiler.compile_pattern_binding(&assign_pat.left, actual_value, true, false)?;
+
+                    // Extract name for param_names
+                    if let crate::ast::Pattern::Identifier(id) = assign_pat.left.as_ref() {
+                        param_names.push(id.name.cheap_clone());
+                    } else {
+                        param_names.push(JsString::from(format!("__param{}__", idx)));
+                    }
+
+                    func_compiler.builder.free_register(actual_value);
+                }
             }
         }
 
