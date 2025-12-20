@@ -1042,3 +1042,64 @@ fn test_abstract_equality_boolean_coercion() {
     assert_eq!(eval("2 == true"), JsValue::Boolean(false)); // 2 != 1
     assert_eq!(eval("'1' == true"), JsValue::Boolean(true)); // '1' -> 1, true -> 1
 }
+
+// =============================================================================
+// Reserved Words as Property Names Tests
+// =============================================================================
+
+#[test]
+fn test_object_literal_true_property_name() {
+    // 'true' should be allowed as a property name in object literals
+    assert_eq!(
+        eval("var obj = { true: 1 }; obj.true"),
+        JsValue::Number(1.0)
+    );
+    assert_eq!(
+        eval("var obj = { true: 1 }; obj['true']"),
+        JsValue::Number(1.0)
+    );
+}
+
+#[test]
+fn test_object_literal_false_property_name() {
+    // 'false' should be allowed as a property name in object literals
+    assert_eq!(
+        eval("var obj = { false: 2 }; obj.false"),
+        JsValue::Number(2.0)
+    );
+    assert_eq!(
+        eval("var obj = { false: 2 }; obj['false']"),
+        JsValue::Number(2.0)
+    );
+}
+
+#[test]
+fn test_object_literal_null_property_name() {
+    // 'null' should be allowed as a property name in object literals
+    assert_eq!(
+        eval("var obj = { null: 3 }; obj.null"),
+        JsValue::Number(3.0)
+    );
+    assert_eq!(
+        eval("var obj = { null: 3 }; obj['null']"),
+        JsValue::Number(3.0)
+    );
+}
+
+#[test]
+fn test_object_literal_reserved_words_as_properties() {
+    // Various reserved words should work as property names
+    assert_eq!(
+        eval("var obj = { if: 1, else: 2, for: 3, while: 4 }; obj.if + obj.else + obj.for + obj.while"),
+        JsValue::Number(10.0)
+    );
+}
+
+#[test]
+fn test_object_literal_mixed_properties() {
+    // Mix of regular and reserved word properties
+    assert_eq!(
+        eval("var obj = { true: 1, false: 0, null: -1, x: 10 }; obj.true + obj.false + obj.null + obj.x"),
+        JsValue::Number(10.0)
+    );
+}

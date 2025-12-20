@@ -3738,6 +3738,21 @@ impl<'a> Parser<'a> {
                 | TokenKind::Interface
                 | TokenKind::Enum
                 | TokenKind::Accessor
+                // Literals that can be used as property names
+                | TokenKind::True
+                | TokenKind::False
+                | TokenKind::Null
+                // Other reserved words that can be used as property names
+                | TokenKind::Delete
+                | TokenKind::Typeof
+                | TokenKind::Void
+                | TokenKind::Instanceof
+                | TokenKind::Yield
+                | TokenKind::Await
+                | TokenKind::Super
+                | TokenKind::Async
+                | TokenKind::In
+                | TokenKind::Of
         )
     }
 
