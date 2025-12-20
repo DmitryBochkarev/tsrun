@@ -1,7 +1,41 @@
 //! Function-related tests
 
 use super::eval;
+use typescript_eval::value::JsString;
 use typescript_eval::JsValue;
+
+#[test]
+fn test_function_name_property() {
+    // Named function declaration
+    assert_eq!(
+        eval("function foo() {} foo.name"),
+        JsValue::String(JsString::from("foo"))
+    );
+    // Named function expression
+    assert_eq!(
+        eval("const f = function bar() {}; f.name"),
+        JsValue::String(JsString::from("bar"))
+    );
+    // Built-in function
+    assert_eq!(
+        eval("[].push.name"),
+        JsValue::String(JsString::from("push"))
+    );
+}
+
+#[test]
+fn test_function_name_from_assignment() {
+    // Anonymous function expression assigned to variable gets the variable name
+    assert_eq!(
+        eval("const myFunc = function() {}; myFunc.name"),
+        JsValue::String(JsString::from("myFunc"))
+    );
+    // Arrow function
+    assert_eq!(
+        eval("const arrow = () => {}; arrow.name"),
+        JsValue::String(JsString::from("arrow"))
+    );
+}
 
 #[test]
 fn test_function() {

@@ -1521,6 +1521,20 @@ impl Interpreter {
         self.string_dict.get_or_insert(s)
     }
 
+    /// Set the name of an anonymous function (for function name inference).
+    /// This is called when an anonymous function/arrow function is assigned to a variable.
+    /// Only sets the name if the function doesn't already have one.
+    fn set_function_name(&self, value: &JsValue, name: JsString) {
+        if let JsValue::Object(obj) = value {
+            let mut obj_ref = obj.borrow_mut();
+            if let ExoticObject::Function(JsFunction::Interpreted(interp)) = &mut obj_ref.exotic {
+                if interp.name.is_none() {
+                    interp.name = Some(name);
+                }
+            }
+        }
+    }
+
     /// Extract string key from ObjectPropertyKey (for destructuring)
     fn extract_property_key_string(&self, key: &ObjectPropertyKey) -> Option<JsString> {
         match key {
@@ -1979,6 +1993,12 @@ impl Interpreter {
                 Some(expr) => self.evaluate_expression(expr)?,
                 None => Guarded::unguarded(JsValue::Undefined),
             };
+
+            // Function name inference: if binding a simple identifier to an anonymous function,
+            // set the function's name to the variable name
+            if let Pattern::Identifier(id) = &declarator.id {
+                self.set_function_name(&init_value, id.name.cheap_clone());
+            }
 
             if is_var {
                 // For var, use assignment to the hoisted binding in outer scope
@@ -5915,7 +5935,7 @@ impl Interpreter {
                         ObjectPropertyKey::Identifier(id) => {
                             PropertyKey::String(id.name.cheap_clone())
                         }
-                        ObjectPropertyKey::String(s) => PropertyKey::String(s.value.cheap_clone()),
+                        ObjectPropertyKey::String(s) => PropertyKey::from(s.value.cheap_clone()),
                         ObjectPropertyKey::Number(lit) => {
                             if let LiteralValue::Number(n) = &lit.value {
                                 PropertyKey::from_value(&JsValue::Number(*n))

@@ -5,6 +5,27 @@ use typescript_eval::value::JsString;
 use typescript_eval::JsValue;
 
 #[test]
+fn test_object_string_numeric_keys() {
+    // String keys that look like numbers should work correctly
+    assert_eq!(
+        eval(r#"var obj = {"1": "x"}; obj["1"]"#),
+        JsValue::String(JsString::from("x"))
+    );
+    assert_eq!(
+        eval(r#"var obj = {0: 1, "1": "x", o: {}}; obj["1"]"#),
+        JsValue::String(JsString::from("x"))
+    );
+    assert_eq!(
+        eval(r#"var obj = {0: 1, "1": "x", o: {}}; obj[0]"#),
+        JsValue::Number(1.0)
+    );
+    assert_eq!(
+        eval(r#"var obj = {0: 1, "1": "x", o: {}}; typeof obj.o"#),
+        JsValue::String(JsString::from("object"))
+    );
+}
+
+#[test]
 fn test_object() {
     assert_eq!(
         eval("const obj: { a: number } = { a: 1 }; obj.a"),
@@ -37,6 +58,20 @@ fn test_object_tostring() {
     assert_eq!(
         eval("([1,2,3] as number[]).toString()"),
         JsValue::String(JsString::from("1,2,3"))
+    );
+}
+
+#[test]
+fn test_object_tolocalestring() {
+    // Basic toLocaleString should call toString
+    assert_eq!(
+        eval("({} as object).toLocaleString()"),
+        JsValue::String(JsString::from("[object Object]"))
+    );
+    // Object(null) also has toLocaleString
+    assert_eq!(
+        eval("Object(null).toLocaleString()"),
+        JsValue::String(JsString::from("[object Object]"))
     );
 }
 

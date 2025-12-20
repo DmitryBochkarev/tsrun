@@ -2108,6 +2108,12 @@ impl Interpreter {
             .pop_value()
             .unwrap_or(Guarded::unguarded(JsValue::Undefined));
 
+        // Function name inference: if binding a simple identifier to an anonymous function,
+        // set the function's name to the variable name
+        if let Pattern::Identifier(id) = pattern {
+            self.set_function_name(&init_value, id.name.cheap_clone());
+        }
+
         let result = if is_var {
             // For var, use assignment to the hoisted binding
             // The variable was already hoisted to undefined, now we just assign

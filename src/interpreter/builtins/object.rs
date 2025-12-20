@@ -15,6 +15,7 @@ pub fn init_object_prototype(interp: &mut Interpreter) {
 
     interp.register_method(&proto, "hasOwnProperty", object_has_own_property, 1);
     interp.register_method(&proto, "toString", object_to_string, 0);
+    interp.register_method(&proto, "toLocaleString", object_to_locale_string, 0);
     interp.register_method(&proto, "valueOf", object_value_of, 0);
 }
 
@@ -587,6 +588,19 @@ pub fn object_value_of(
 ) -> Result<Guarded, JsError> {
     // Returns the object itself, which is already owned by caller
     Ok(Guarded::unguarded(this))
+}
+
+/// Object.prototype.toLocaleString()
+/// Simply calls this.toString() per the spec.
+/// For the base Object.prototype, this just calls toString.
+pub fn object_to_locale_string(
+    interp: &mut Interpreter,
+    this: JsValue,
+    args: &[JsValue],
+) -> Result<Guarded, JsError> {
+    // The default toLocaleString just calls toString
+    // Other types (Number, Date, Array) may override with locale-specific behavior
+    object_to_string(interp, this, args)
 }
 
 /// Object.getOwnPropertyDescriptor(obj, prop)
