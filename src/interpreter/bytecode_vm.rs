@@ -583,6 +583,11 @@ impl BytecodeVM {
                     Some(Constant::Chunk(_)) => {
                         return Err(JsError::internal_error("Cannot load chunk as value"));
                     }
+                    Some(Constant::TemplateStrings { .. }) => {
+                        return Err(JsError::internal_error(
+                            "Cannot load template strings as value",
+                        ));
+                    }
                     None => return Err(JsError::internal_error("Invalid constant index")),
                 };
                 self.set_reg(dst, value);
@@ -2057,9 +2062,62 @@ impl BytecodeVM {
                 Ok(OpResult::Continue)
             }
 
-            Op::TaggedTemplate { .. } => Err(JsError::internal_error(
-                "TaggedTemplate not yet implemented in VM",
-            )),
+            Op::TaggedTemplate {
+                dst,
+                tag,
+                this,
+                template,
+                exprs_start,
+                exprs_count,
+            } => {
+                // Get the template strings constant
+                let template_const =
+                    self.chunk.constants.get(template as usize).ok_or_else(|| {
+                        JsError::internal_error("Invalid template constant index")
+                    })?;
+
+                let (cooked, raw) = match template_const {
+                    Constant::TemplateStrings { cooked, raw } => (cooked.clone(), raw.clone()),
+                    _ => return Err(JsError::internal_error("Expected TemplateStrings constant")),
+                };
+
+                // Create the strings array (cooked strings)
+                let guard = interp.heap.create_guard();
+                let strings: Vec<JsValue> = cooked
+                    .iter()
+                    .map(|s| JsValue::String(s.cheap_clone()))
+                    .collect();
+                let strings_arr = interp.create_array_from(&guard, strings);
+
+                // Create the raw strings array
+                let raw_strings: Vec<JsValue> = raw
+                    .iter()
+                    .map(|s| JsValue::String(s.cheap_clone()))
+                    .collect();
+                let raw_arr = interp.create_array_from(&guard, raw_strings);
+
+                // Add 'raw' property to strings array
+                let raw_key = PropertyKey::String(JsString::from("raw"));
+                strings_arr
+                    .borrow_mut()
+                    .set_property(raw_key, JsValue::Object(raw_arr));
+
+                // Build args: [strings_array, ...expressions]
+                let mut args = vec![JsValue::Object(strings_arr)];
+                for i in 0..exprs_count {
+                    args.push(self.get_reg(exprs_start + i).clone());
+                }
+
+                // Get the tag function and this value
+                let tag_fn = self.get_reg(tag).clone();
+                let this_val = self.get_reg(this).clone();
+
+                // Call the tag function
+                let result = interp.call_function(tag_fn, this_val, &args)?;
+
+                self.set_reg(dst, result.value);
+                Ok(OpResult::Continue)
+            }
 
             // ═══════════════════════════════════════════════════════════════════════════
             // Miscellaneous

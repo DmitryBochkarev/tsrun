@@ -1492,13 +1492,106 @@ impl Compiler {
     /// Compile tagged template
     fn compile_tagged_template(
         &mut self,
-        _tagged: &crate::ast::TaggedTemplateExpression,
-        _dst: Register,
+        tagged: &crate::ast::TaggedTemplateExpression,
+        dst: Register,
     ) -> Result<(), JsError> {
-        // TODO: Implement tagged templates
-        Err(JsError::syntax_error_simple(
-            "Tagged templates not yet supported in bytecode compiler",
-        ))
+        // Create template strings constant (cooked and raw arrays)
+        let cooked: Vec<crate::value::JsString> = tagged
+            .quasi
+            .quasis
+            .iter()
+            .map(|q| q.value.cheap_clone())
+            .collect();
+        let raw: Vec<crate::value::JsString> = tagged
+            .quasi
+            .quasis
+            .iter()
+            .map(|q| q.value.cheap_clone())
+            .collect();
+
+        let template_idx = self
+            .builder
+            .add_constant(super::bytecode::Constant::TemplateStrings { cooked, raw })?;
+
+        // Compile the tag function
+        let tag_reg = self.builder.alloc_register()?;
+
+        // Check if it's a method call (obj.tag`template`)
+        let this_reg = if let Expression::Member(member) = tagged.tag.as_ref() {
+            // Compile object for `this`
+            let obj_reg = self.builder.alloc_register()?;
+            self.compile_expression(&member.object, obj_reg)?;
+
+            // Get the method
+            match &member.property {
+                MemberProperty::Identifier(id) => {
+                    let key_idx = self.builder.add_string(id.name.cheap_clone())?;
+                    self.builder.emit(Op::GetPropertyConst {
+                        dst: tag_reg,
+                        obj: obj_reg,
+                        key: key_idx,
+                    });
+                }
+                MemberProperty::Expression(expr) => {
+                    let key_reg = self.builder.alloc_register()?;
+                    self.compile_expression(expr, key_reg)?;
+                    self.builder.emit(Op::GetProperty {
+                        dst: tag_reg,
+                        obj: obj_reg,
+                        key: key_reg,
+                    });
+                    self.builder.free_register(key_reg);
+                }
+                MemberProperty::PrivateIdentifier(_) => {
+                    return Err(JsError::syntax_error_simple(
+                        "Private fields not yet supported in bytecode compiler",
+                    ));
+                }
+            }
+            Some(obj_reg)
+        } else {
+            // Regular call - no `this`
+            self.compile_expression(&tagged.tag, tag_reg)?;
+            None
+        };
+
+        // Compile expression arguments
+        let exprs_count = tagged.quasi.expressions.len();
+        let exprs_start = if exprs_count > 0 {
+            let start = self.builder.reserve_registers(exprs_count as u8)?;
+            for (i, expr) in tagged.quasi.expressions.iter().enumerate() {
+                self.compile_expression(expr, start + i as u8)?;
+            }
+            start
+        } else {
+            0
+        };
+
+        // Set up `this` for the call (undefined if not a method call)
+        let final_this_reg = match this_reg {
+            Some(obj_reg) => obj_reg,
+            None => {
+                let reg = self.builder.alloc_register()?;
+                self.builder.emit(Op::LoadUndefined { dst: reg });
+                reg
+            }
+        };
+
+        // Emit the tagged template call
+        self.builder.emit(Op::TaggedTemplate {
+            dst,
+            tag: tag_reg,
+            this: final_this_reg,
+            template: template_idx,
+            exprs_start,
+            exprs_count: exprs_count as u8,
+        });
+
+        // Clean up
+        self.builder.free_register(final_this_reg);
+        self.builder.free_register(tag_reg);
+
+        Ok(())
     }
 
     /// Compile function expression

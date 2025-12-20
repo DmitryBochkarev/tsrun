@@ -2051,3 +2051,98 @@ fn test_bytecode_optional_chain_computed_null() {
         JsValue::Undefined
     );
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Tagged Template Literal Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_bytecode_tagged_template_basic() {
+    // Basic tagged template - returns the strings array
+    let result = eval_bytecode(
+        r#"
+        function tag(strings: TemplateStringsArray): string {
+            return strings[0];
+        }
+        tag`hello`
+    "#,
+    );
+    assert_eq!(result, JsValue::String("hello".into()));
+}
+
+#[test]
+fn test_bytecode_tagged_template_with_expression() {
+    // Tagged template with interpolated expression - simpler version without rest params
+    let result = eval_bytecode(
+        r#"
+        function tag(strings: TemplateStringsArray, val: number): string {
+            return strings[0] + val + strings[1];
+        }
+        const x = 42;
+        tag`value is ${x}!`
+    "#,
+    );
+    assert_eq!(result, JsValue::String("value is 42!".into()));
+}
+
+#[test]
+fn test_bytecode_tagged_template_multiple_expressions() {
+    // Tagged template with multiple interpolations - simpler version without rest params
+    let result = eval_bytecode(
+        r#"
+        function tag(strings: TemplateStringsArray, a: number, b: number, sum: number): number {
+            return a + b;
+        }
+        const a = 10;
+        const b = 20;
+        tag`${a} + ${b} = ${a + b}`
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(30.0));
+}
+
+#[test]
+fn test_bytecode_tagged_template_raw() {
+    // Tagged template with raw strings access
+    let result = eval_bytecode(
+        r#"
+        function tag(strings: TemplateStringsArray): boolean {
+            return strings.hasOwnProperty('raw');
+        }
+        tag`hello`
+    "#,
+    );
+    assert_eq!(result, JsValue::Boolean(true));
+}
+
+#[test]
+fn test_bytecode_tagged_template_returns_value() {
+    // Tagged template function can return an object
+    let result = eval_bytecode(
+        r#"
+        function makeObj(strings: TemplateStringsArray, val: number): { strings: number, val: number } {
+            return { strings: strings.length, val: val };
+        }
+        const x = 1;
+        const obj = makeObj`a${x}b`;
+        obj.val
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(1.0));
+}
+
+#[test]
+fn test_bytecode_tagged_template_method_call() {
+    // Tagged template on a method
+    let result = eval_bytecode(
+        r#"
+        const obj = {
+            tag(strings: TemplateStringsArray): string {
+                return "tagged: " + strings[0];
+            }
+        };
+        obj.tag`test`
+    "#,
+    );
+    assert_eq!(result, JsValue::String("tagged: test".into()));
+}

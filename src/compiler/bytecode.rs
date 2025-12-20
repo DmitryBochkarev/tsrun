@@ -546,6 +546,7 @@ pub enum Op {
     TaggedTemplate {
         dst: Register,
         tag: Register,
+        this: Register,
         template: ConstantIndex,
         exprs_start: Register,
         exprs_count: u8,
@@ -621,6 +622,12 @@ pub enum Constant {
 
     /// Regular expression (pattern, flags)
     RegExp { pattern: JsString, flags: JsString },
+
+    /// Template strings for tagged templates (cooked strings, raw strings)
+    TemplateStrings {
+        cooked: Vec<JsString>,
+        raw: Vec<JsString>,
+    },
 }
 
 /// Function metadata
