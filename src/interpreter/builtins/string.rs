@@ -773,7 +773,8 @@ pub fn string_replace(
     }
 
     // String search - only replace first occurrence
-    let search = search_arg.to_js_string().to_string();
+    // Use coerce_to_string to properly call toString() on objects
+    let search = interp.coerce_to_string(&search_arg)?.to_string();
 
     if is_replacement_function {
         // Function replacement for string search

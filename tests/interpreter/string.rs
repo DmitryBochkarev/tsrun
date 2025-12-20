@@ -706,6 +706,62 @@ fn test_string_replace_callback_with_capture_group() {
     );
 }
 
+#[test]
+fn test_string_replace_callback_with_string_search() {
+    // Replace with callback function and string search value (not regex)
+    assert_eq!(
+        eval(r#""hello world".replace("world", () => "universe")"#),
+        JsValue::String(JsString::from("hello universe"))
+    );
+}
+
+#[test]
+fn test_string_replace_callback_returning_undefined() {
+    // Callback that returns undefined should replace with "undefined"
+    assert_eq!(
+        eval(
+            r#"
+            let x;
+            "hello".replace("l", () => x)
+        "#
+        ),
+        JsValue::String(JsString::from("heundefinedlo"))
+    );
+}
+
+#[test]
+fn test_string_replace_callback_with_object_search() {
+    // Test with object search value that has toString()
+    assert_eq!(
+        eval(
+            r#"
+            const obj = {
+                toString() { return "AB"; }
+            };
+            "ABBABABAB".replace(obj, () => "X")
+        "#
+        ),
+        JsValue::String(JsString::from("XBABABAB"))
+    );
+}
+
+#[test]
+fn test_string_replace_callback_undefined_variable() {
+    // Test262 case: callback returns undefined variable
+    assert_eq!(
+        eval(
+            r#"
+            var x;
+            var __obj = {
+                toString: function() { return "AB"; }
+            };
+            "ABBABABAB".replace(__obj, function() { return x; })
+        "#
+        ),
+        JsValue::String(JsString::from("undefinedBABABAB"))
+    );
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // String Wrapper Object Tests
 // ═══════════════════════════════════════════════════════════════════════════════
