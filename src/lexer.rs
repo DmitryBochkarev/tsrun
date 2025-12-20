@@ -751,7 +751,32 @@ impl<'a> Lexer<'a> {
                         Some((_, '\\')) => value.push('\\'),
                         Some((_, '\'')) => value.push('\''),
                         Some((_, '"')) => value.push('"'),
-                        Some((_, '0')) => value.push('\0'),
+                        Some((_, '0')) => {
+                            // \0 is allowed only if not followed by another digit (strict mode)
+                            // \01, \07, \077 etc are octal escapes which are forbidden
+                            if matches!(self.peek(), Some('0'..='7')) {
+                                // Octal escape - not allowed in strict mode
+                                // Consume remaining octal digits and return error
+                                while matches!(self.peek(), Some('0'..='7')) {
+                                    self.advance();
+                                }
+                                return TokenKind::Invalid('\\');
+                            }
+                            value.push('\0');
+                        }
+                        Some((_, c @ '1'..='7')) => {
+                            // Octal escape sequence (e.g., \7, \77, \377)
+                            // Not allowed in strict mode
+                            let mut octal = String::new();
+                            octal.push(c);
+                            while matches!(self.peek(), Some('0'..='7')) && octal.len() < 3 {
+                                if let Some(ch) = self.peek() {
+                                    octal.push(ch);
+                                    self.advance();
+                                }
+                            }
+                            return TokenKind::Invalid('\\');
+                        }
                         Some((_, 'x')) => {
                             // Hex escape \xNN
                             if let Some(hex) = self.scan_hex_escape(2) {
@@ -978,6 +1003,18 @@ impl<'a> Lexer<'a> {
                         return TokenKind::BigInt(value.to_string());
                     }
                     return TokenKind::Number(i64::from_str_radix(&num_str, 2).unwrap_or(0) as f64);
+                }
+                Some('0'..='7') => {
+                    // Legacy octal literal (e.g., 0777) - not allowed in strict mode
+                    // Consume all the digits to give a better error
+                    while matches!(self.peek(), Some('0'..='9')) {
+                        self.advance();
+                    }
+                    return TokenKind::Invalid('0'); // Signal legacy octal error
+                }
+                Some('8' | '9') => {
+                    // 08 or 09 - invalid in strict mode but we parse as decimal for better error
+                    num_str.push(first);
                 }
                 _ => num_str.push(first),
             }

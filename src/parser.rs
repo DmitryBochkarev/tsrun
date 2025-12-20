@@ -234,6 +234,7 @@ impl<'a> Parser<'a> {
         match &self.current.kind {
             TokenKind::Identifier(_) => {
                 let id = self.parse_identifier()?;
+                self.validate_binding_identifier(&id)?;
                 Ok(Pattern::Identifier(id))
             }
             // Allow contextual keywords as binding identifiers (e.g., function param names)
@@ -250,12 +251,30 @@ impl<'a> Parser<'a> {
             | TokenKind::Asserts
             | TokenKind::Readonly => {
                 let id = self.parse_identifier()?;
+                self.validate_binding_identifier(&id)?;
                 Ok(Pattern::Identifier(id))
             }
             TokenKind::LBrace => self.parse_object_pattern(),
             TokenKind::LBracket => self.parse_array_pattern(),
             _ => Err(self.unexpected_token("binding pattern")),
         }
+    }
+
+    /// Validate that an identifier can be used as a binding name in strict mode.
+    /// In strict mode, 'eval' and 'arguments' cannot be used as binding identifiers.
+    fn validate_binding_identifier(&self, id: &Identifier) -> Result<(), JsError> {
+        let name = id.name.as_ref();
+        if name == "eval" || name == "arguments" {
+            return Err(JsError::syntax_error(
+                format!(
+                    "'{}' cannot be used as a binding identifier in strict mode",
+                    name
+                ),
+                id.span.line,
+                id.span.column,
+            ));
+        }
+        Ok(())
     }
 
     fn parse_object_pattern(&mut self) -> Result<Pattern, JsError> {
@@ -439,6 +458,7 @@ impl<'a> Parser<'a> {
         self.require_token(&TokenKind::LParen)?;
 
         let mut params = vec![];
+        let mut seen_names: std::collections::HashSet<JsString> = std::collections::HashSet::new();
 
         while !self.check(&TokenKind::RParen) && !self.is_at_end() {
             let param_start = self.current.span;
@@ -458,6 +478,9 @@ impl<'a> Parser<'a> {
             } else {
                 self.parse_binding_pattern()?
             };
+
+            // Check for duplicate parameter names in strict mode
+            self.check_duplicate_params(&pattern, &mut seen_names)?;
 
             let optional = self.match_token(&TokenKind::Question);
 
@@ -496,6 +519,50 @@ impl<'a> Parser<'a> {
 
         self.require_token(&TokenKind::RParen)?;
         Ok(params)
+    }
+
+    /// Check for duplicate parameter names in strict mode.
+    /// Collects all binding names from a pattern and checks against seen names.
+    fn check_duplicate_params(
+        &self,
+        pattern: &Pattern,
+        seen: &mut std::collections::HashSet<JsString>,
+    ) -> Result<(), JsError> {
+        match pattern {
+            Pattern::Identifier(id) => {
+                if !seen.insert(id.name.clone()) {
+                    return Err(JsError::syntax_error(
+                        format!("Duplicate parameter name '{}' not allowed", id.name),
+                        id.span.line,
+                        id.span.column,
+                    ));
+                }
+            }
+            Pattern::Object(obj) => {
+                for prop in &obj.properties {
+                    match prop {
+                        ObjectPatternProperty::KeyValue { value, .. } => {
+                            self.check_duplicate_params(value, seen)?;
+                        }
+                        ObjectPatternProperty::Rest(rest) => {
+                            self.check_duplicate_params(&rest.argument, seen)?;
+                        }
+                    }
+                }
+            }
+            Pattern::Array(arr) => {
+                for elem in arr.elements.iter().flatten() {
+                    self.check_duplicate_params(elem, seen)?;
+                }
+            }
+            Pattern::Rest(rest) => {
+                self.check_duplicate_params(&rest.argument, seen)?;
+            }
+            Pattern::Assignment(assign) => {
+                self.check_duplicate_params(&assign.left, seen)?;
+            }
+        }
+        Ok(())
     }
 
     fn parse_class_declaration(&mut self) -> Result<ClassDeclaration, JsError> {
@@ -1723,6 +1790,21 @@ impl<'a> Parser<'a> {
         if let Some(op) = self.current_unary_op() {
             self.advance();
             let argument = Rc::new(self.parse_unary_expression()?);
+
+            // In strict mode, delete on unqualified identifier is a SyntaxError
+            if op == UnaryOp::Delete {
+                if let Expression::Identifier(id) = argument.as_ref() {
+                    return Err(JsError::syntax_error(
+                        format!(
+                            "Delete of an unqualified identifier '{}' in strict mode",
+                            id.name
+                        ),
+                        id.span.line,
+                        id.span.column,
+                    ));
+                }
+            }
+
             let span = self.span_from(start);
             return Ok(Expression::Unary(UnaryExpression {
                 operator: op,
@@ -2508,6 +2590,12 @@ impl<'a> Parser<'a> {
         start: Span,
         is_async: bool,
     ) -> Result<Expression, JsError> {
+        // Check for duplicate parameter names in strict mode
+        let mut seen_names: std::collections::HashSet<JsString> = std::collections::HashSet::new();
+        for param in &params {
+            self.check_duplicate_params(&param.pattern, &mut seen_names)?;
+        }
+
         let return_type = self.parse_optional_return_type()?;
         self.require_token(&TokenKind::Arrow)?;
 
