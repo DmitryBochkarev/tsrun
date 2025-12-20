@@ -884,6 +884,23 @@ pub fn string_char_code_at(
     }
 }
 
+/// ToUint16 abstract operation per ECMAScript spec
+/// Converts a number to a 16-bit unsigned integer (0-65535)
+fn to_uint16(n: f64) -> u16 {
+    // Step 1: Already have the number
+    // Step 2: If NaN, +0, -0, +∞, -∞, return 0
+    if n.is_nan() || n == 0.0 || n.is_infinite() {
+        return 0;
+    }
+    // Step 3: posInt = sign(n) * floor(abs(n))
+    let pos_int = n.signum() * n.abs().floor();
+    // Step 4: int16bit = posInt modulo 2^16
+    // Rust's rem_euclid gives the correct mathematical modulo (always positive)
+    let int16bit = pos_int.rem_euclid(65536.0);
+    // Step 5: Return int16bit
+    int16bit as u16
+}
+
 pub fn string_from_char_code(
     _interp: &mut Interpreter,
     _this: JsValue,
@@ -892,8 +909,10 @@ pub fn string_from_char_code(
     let chars: String = args
         .iter()
         .map(|v| {
-            let code = v.to_number() as u32;
-            char::from_u32(code).unwrap_or('\u{FFFD}')
+            // Apply ToUint16 conversion as per ECMAScript spec
+            let code = to_uint16(v.to_number());
+            // u16 is always a valid Unicode code unit (char is UTF-32)
+            char::from_u32(code as u32).unwrap_or('\u{FFFD}')
         })
         .collect();
     Ok(Guarded::unguarded(JsValue::String(JsString::from(chars))))

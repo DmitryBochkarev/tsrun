@@ -175,6 +175,53 @@ fn test_string_fromcharcode() {
 }
 
 #[test]
+fn test_string_fromcharcode_touint16() {
+    // ToUint16 wraps values to 0-65535 range
+    // -1 should wrap to 65535
+    assert_eq!(
+        eval("String.fromCharCode(-1).charCodeAt(0)"),
+        JsValue::Number(65535.0)
+    );
+    // 65536 should wrap to 0
+    assert_eq!(
+        eval("String.fromCharCode(65536).charCodeAt(0)"),
+        JsValue::Number(0.0)
+    );
+    // 65537 should wrap to 1
+    assert_eq!(
+        eval("String.fromCharCode(65537).charCodeAt(0)"),
+        JsValue::Number(1.0)
+    );
+    // Large negative number
+    assert_eq!(
+        eval("String.fromCharCode(-65536).charCodeAt(0)"),
+        JsValue::Number(0.0)
+    );
+}
+
+#[test]
+fn test_string_fromcharcode_infinity() {
+    // Infinity should convert to 0
+    assert_eq!(
+        eval("String.fromCharCode(Infinity).charCodeAt(0)"),
+        JsValue::Number(0.0)
+    );
+    assert_eq!(
+        eval("String.fromCharCode(-Infinity).charCodeAt(0)"),
+        JsValue::Number(0.0)
+    );
+}
+
+#[test]
+fn test_string_fromcharcode_nan() {
+    // NaN should convert to 0
+    assert_eq!(
+        eval("String.fromCharCode(NaN).charCodeAt(0)"),
+        JsValue::Number(0.0)
+    );
+}
+
+#[test]
 fn test_string_lastindexof() {
     assert_eq!(eval("'hello world'.lastIndexOf('o')"), JsValue::Number(7.0));
     assert_eq!(eval("'hello world'.lastIndexOf('l')"), JsValue::Number(9.0));
