@@ -212,9 +212,10 @@ pub fn object_keys(
                 .collect()
         } else {
             // Standard object - get from properties
+            // Only include enumerable string keys, not symbols
             obj.properties
                 .iter()
-                .filter(|(_, prop)| prop.enumerable())
+                .filter(|(key, prop)| prop.enumerable() && !key.is_symbol())
                 .map(|(key, _)| JsValue::String(JsString::from(key.to_string())))
                 .collect()
         }
@@ -243,9 +244,10 @@ pub fn object_values(
             data.values()
         } else {
             // Standard object - get from properties
+            // Only include enumerable string keys, not symbols
             obj.properties
                 .iter()
-                .filter(|(_, prop)| prop.enumerable())
+                .filter(|(key, prop)| prop.enumerable() && !key.is_symbol())
                 .map(|(_, prop)| prop.value.clone())
                 .collect()
         }
@@ -275,9 +277,10 @@ pub fn object_entries(
             data.entries()
         } else {
             // Standard object - get from properties
+            // Only include enumerable string keys, not symbols
             obj.properties
                 .iter()
-                .filter(|(_, prop)| prop.enumerable())
+                .filter(|(key, prop)| prop.enumerable() && !key.is_symbol())
                 .map(|(key, prop)| (key.to_string(), prop.value.clone()))
                 .collect()
         }
@@ -522,11 +525,15 @@ pub fn object_has_own_property(
         return Ok(Guarded::unguarded(JsValue::Boolean(false)));
     };
 
-    let prop_name = args
-        .first()
-        .map(|v| v.to_js_string().to_string())
-        .unwrap_or_default();
-    let key = PropertyKey::String(interp.intern(&prop_name));
+    let arg = args.first().cloned().unwrap_or(JsValue::Undefined);
+
+    // Handle symbol arguments directly
+    let key = if let JsValue::Symbol(ref sym) = arg {
+        PropertyKey::Symbol(sym.clone())
+    } else {
+        let prop_name = arg.to_js_string().to_string();
+        PropertyKey::String(interp.intern(&prop_name))
+    };
 
     let obj_ref = obj.borrow();
     let has_prop = if let ExoticObject::Enum(ref data) = obj_ref.exotic {

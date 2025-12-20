@@ -318,6 +318,61 @@ fn test_object_get_prototype_of() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// Object spread with Symbol properties
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_object_spread_symbol_properties() {
+    // Symbol properties should be copied during object spread
+    assert_eq!(
+        eval(
+            r#"
+            const sym = Symbol('test');
+            const o: any = {};
+            o[sym] = 42;
+            const copy = {...o};
+            copy[sym]
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+#[test]
+fn test_object_spread_symbol_has_own_property() {
+    // Symbol properties should be own properties on the spread result
+    assert_eq!(
+        eval(
+            r#"
+            const sym = Symbol('test');
+            const o: any = {};
+            o[sym] = 1;
+            const copy = {...o};
+            Object.prototype.hasOwnProperty.call(copy, sym)
+        "#
+        ),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_object_spread_mixed_properties() {
+    // Spread should copy both string and symbol properties
+    assert_eq!(
+        eval(
+            r#"
+            const sym = Symbol('test');
+            const o: any = { a: 1 };
+            o[sym] = 2;
+            const copy = {...o, b: 3};
+            [copy.a, copy[sym], copy.b].join(',')
+        "#
+        ),
+        JsValue::String("1,2,3".into())
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // Object.prototype.isPrototypeOf tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
