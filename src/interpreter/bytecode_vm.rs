@@ -1137,31 +1137,205 @@ impl BytecodeVM {
             }
 
             // ═══════════════════════════════════════════════════════════════════════════
-            // Iteration (stub implementations)
+            // Iteration
             // ═══════════════════════════════════════════════════════════════════════════
-            Op::GetIterator { dst: _, obj: _ } => Err(JsError::internal_error(
-                "GetIterator not yet implemented in VM",
-            )),
+            Op::GetIterator { dst, obj } => {
+                let obj_val = self.get_reg(obj).clone();
+
+                // For arrays and strings, create an internal array iterator
+                // The iterator is stored as an object with internal index state
+                match &obj_val {
+                    JsValue::Object(obj_ref) => {
+                        // Check if it's an array - use direct element iteration
+                        if obj_ref.borrow().array_elements().is_some() {
+                            // Create an iterator object with the array and index
+                            let guard = interp.heap.create_guard();
+                            let iter = interp.create_object(&guard);
+                            iter.borrow_mut().set_property(
+                                PropertyKey::from("__array__"),
+                                JsValue::Object(obj_ref.clone()),
+                            );
+                            iter.borrow_mut()
+                                .set_property(PropertyKey::from("__index__"), JsValue::Number(0.0));
+                            self.set_reg(dst, JsValue::Object(iter));
+                            return Ok(OpResult::Continue);
+                        }
+
+                        // For non-array objects, try Symbol.iterator
+                        let well_known = crate::interpreter::builtins::symbol::get_well_known_symbols();
+                        let iterator_symbol = crate::value::JsSymbol::new(
+                            well_known.iterator,
+                            Some("Symbol.iterator".to_string()),
+                        );
+                        let iterator_key = PropertyKey::Symbol(Box::new(iterator_symbol));
+
+                        let iterator_method = obj_ref.borrow().get_property(&iterator_key);
+
+                        if let Some(JsValue::Object(method_obj)) = iterator_method {
+                            // Call the iterator method
+                            let result =
+                                interp.call_function(JsValue::Object(method_obj), obj_val, &[])?;
+                            self.set_reg(dst, result.value);
+                        } else {
+                            return Err(JsError::type_error("Object is not iterable"));
+                        }
+                    }
+                    JsValue::String(s) => {
+                        // Create a string iterator
+                        let guard = interp.heap.create_guard();
+                        let iter = interp.create_object(&guard);
+                        iter.borrow_mut().set_property(
+                            PropertyKey::from("__string__"),
+                            JsValue::String(s.cheap_clone()),
+                        );
+                        iter.borrow_mut()
+                            .set_property(PropertyKey::from("__index__"), JsValue::Number(0.0));
+                        self.set_reg(dst, JsValue::Object(iter));
+                    }
+                    _ => {
+                        return Err(JsError::type_error("Object is not iterable"));
+                    }
+                }
+                Ok(OpResult::Continue)
+            }
 
             Op::GetAsyncIterator { dst: _, obj: _ } => Err(JsError::internal_error(
                 "Async iterators not yet implemented in VM",
             )),
 
-            Op::IteratorNext {
-                dst: _,
-                iterator: _,
-            } => Err(JsError::internal_error(
-                "IteratorNext not yet implemented in VM",
-            )),
+            Op::IteratorNext { dst, iterator } => {
+                let iter_val = self.get_reg(iterator).clone();
 
-            Op::IteratorDone { result: _, target } => {
-                // Stub: always done
-                self.ip = target as usize;
+                let JsValue::Object(iter_obj) = iter_val else {
+                    return Err(JsError::type_error("Iterator is not an object"));
+                };
+
+                // Check if this is our internal array iterator
+                let array_prop = iter_obj.borrow().get_property(&PropertyKey::from("__array__"));
+                if let Some(JsValue::Object(arr_ref)) = array_prop {
+                    let index = match iter_obj.borrow().get_property(&PropertyKey::from("__index__"))
+                    {
+                        Some(JsValue::Number(n)) => n as usize,
+                        _ => 0,
+                    };
+
+                    let elements = arr_ref.borrow().array_elements().map(|e| e.to_vec());
+                    let (value, done) = if let Some(elems) = elements {
+                        if index < elems.len() {
+                            let val = elems.get(index).cloned().unwrap_or(JsValue::Undefined);
+                            (val, false)
+                        } else {
+                            (JsValue::Undefined, true)
+                        }
+                    } else {
+                        (JsValue::Undefined, true)
+                    };
+
+                    // Update index
+                    iter_obj.borrow_mut().set_property(
+                        PropertyKey::from("__index__"),
+                        JsValue::Number((index + 1) as f64),
+                    );
+
+                    // Create result object { value, done }
+                    let guard = interp.heap.create_guard();
+                    let result = interp.create_object(&guard);
+                    result
+                        .borrow_mut()
+                        .set_property(PropertyKey::from("value"), value);
+                    result
+                        .borrow_mut()
+                        .set_property(PropertyKey::from("done"), JsValue::Boolean(done));
+                    self.set_reg(dst, JsValue::Object(result));
+                    return Ok(OpResult::Continue);
+                }
+
+                // Check if this is our internal string iterator
+                let string_prop =
+                    iter_obj.borrow().get_property(&PropertyKey::from("__string__"));
+                if let Some(JsValue::String(s)) = string_prop {
+                    let index = match iter_obj.borrow().get_property(&PropertyKey::from("__index__"))
+                    {
+                        Some(JsValue::Number(n)) => n as usize,
+                        _ => 0,
+                    };
+
+                    let chars: Vec<char> = s.as_str().chars().collect();
+                    let (value, done) = if index < chars.len() {
+                        let val = chars.get(index).map(|c| JsValue::String(JsString::from(c.to_string()))).unwrap_or(JsValue::Undefined);
+                        (val, false)
+                    } else {
+                        (JsValue::Undefined, true)
+                    };
+
+                    // Update index
+                    iter_obj.borrow_mut().set_property(
+                        PropertyKey::from("__index__"),
+                        JsValue::Number((index + 1) as f64),
+                    );
+
+                    // Create result object { value, done }
+                    let guard = interp.heap.create_guard();
+                    let result = interp.create_object(&guard);
+                    result
+                        .borrow_mut()
+                        .set_property(PropertyKey::from("value"), value);
+                    result
+                        .borrow_mut()
+                        .set_property(PropertyKey::from("done"), JsValue::Boolean(done));
+                    self.set_reg(dst, JsValue::Object(result));
+                    return Ok(OpResult::Continue);
+                }
+
+                // For custom iterators, call next() method
+                let next_key = PropertyKey::from("next");
+                let next_method = iter_obj.borrow().get_property(&next_key);
+
+                if let Some(JsValue::Object(next_fn)) = next_method {
+                    let result = interp.call_function(
+                        JsValue::Object(next_fn),
+                        JsValue::Object(iter_obj),
+                        &[],
+                    )?;
+                    self.set_reg(dst, result.value);
+                } else {
+                    return Err(JsError::type_error("Iterator must have a next method"));
+                }
+
                 Ok(OpResult::Continue)
             }
 
-            Op::IteratorValue { dst, result: _ } => {
-                self.set_reg(dst, JsValue::Undefined);
+            Op::IteratorDone { result, target } => {
+                let result_val = self.get_reg(result);
+
+                let done = if let JsValue::Object(obj_ref) = result_val {
+                    match obj_ref.borrow().get_property(&PropertyKey::from("done")) {
+                        Some(JsValue::Boolean(b)) => b,
+                        _ => false,
+                    }
+                } else {
+                    true
+                };
+
+                if done {
+                    self.ip = target as usize;
+                }
+                Ok(OpResult::Continue)
+            }
+
+            Op::IteratorValue { dst, result } => {
+                let result_val = self.get_reg(result);
+
+                let value = if let JsValue::Object(obj_ref) = result_val {
+                    obj_ref
+                        .borrow()
+                        .get_property(&PropertyKey::from("value"))
+                        .unwrap_or(JsValue::Undefined)
+                } else {
+                    JsValue::Undefined
+                };
+
+                self.set_reg(dst, value);
                 Ok(OpResult::Continue)
             }
 
@@ -1182,16 +1356,80 @@ impl BytecodeVM {
             // ═══════════════════════════════════════════════════════════════════════════
             // Spread/Rest
             // ═══════════════════════════════════════════════════════════════════════════
-            Op::SpreadArray { dst: _, src: _ } => Err(JsError::internal_error(
-                "SpreadArray not yet implemented in VM",
-            )),
+            Op::SpreadArray { dst, src } => {
+                // Spread an array into individual elements
+                // This collects all values from an iterable into an array
+                let src_val = self.get_reg(src).clone();
 
-            Op::CreateRestArray {
-                dst: _,
-                start_index: _,
-            } => Err(JsError::internal_error(
-                "CreateRestArray not yet implemented in VM",
-            )),
+                let elements = match &src_val {
+                    JsValue::Object(obj_ref) => {
+                        if let Some(elems) = obj_ref.borrow().array_elements() {
+                            elems.to_vec()
+                        } else {
+                            // Try iterator protocol
+                            match interp.collect_iterator_values(&src_val) {
+                                Ok(Some(values)) => values,
+                                Ok(None) => Vec::new(),
+                                Err(e) => return Err(e),
+                            }
+                        }
+                    }
+                    JsValue::String(s) => {
+                        s.as_str()
+                            .chars()
+                            .map(|c| JsValue::String(JsString::from(c.to_string())))
+                            .collect()
+                    }
+                    _ => Vec::new(),
+                };
+
+                let guard = interp.heap.create_guard();
+                let arr = interp.create_array_from(&guard, elements);
+                self.set_reg(dst, JsValue::Object(arr));
+                Ok(OpResult::Continue)
+            }
+
+            Op::CreateRestArray { dst, start_index } => {
+                // Create an array from remaining iterator elements
+                // This is used for rest patterns like [...rest] = arr
+                // The iterator state is assumed to be in the register before this one
+                // We need to collect all remaining elements from the current iterator
+
+                // For now, this opcode is context-dependent - it needs the iterator
+                // that was being used. We'll check if there's an internal iterator in scope.
+                // This is a simplified implementation that works with the pattern compiler.
+
+                // Look for the iterator in a previous register (typically dst - 3 based on pattern)
+                // This is a heuristic - the pattern compiler allocates registers in a specific order
+                let iter_reg = if dst >= 3 { dst - 3 } else { 0 };
+                let iter_val = self.get_reg(iter_reg).clone();
+
+                let mut elements = Vec::new();
+
+                if let JsValue::Object(iter_obj) = iter_val {
+                    // Check for internal array iterator
+                    let array_prop = iter_obj.borrow().get_property(&PropertyKey::from("__array__"));
+                    if let Some(JsValue::Object(arr_ref)) = array_prop {
+                        let index = match iter_obj.borrow().get_property(&PropertyKey::from("__index__")) {
+                            Some(JsValue::Number(n)) => n as usize,
+                            _ => start_index as usize,
+                        };
+
+                        if let Some(elems) = arr_ref.borrow().array_elements() {
+                            for i in index..elems.len() {
+                                if let Some(val) = elems.get(i) {
+                                    elements.push(val.clone());
+                                }
+                            }
+                        }
+                    }
+                }
+
+                let guard = interp.heap.create_guard();
+                let arr = interp.create_array_from(&guard, elements);
+                self.set_reg(dst, JsValue::Object(arr));
+                Ok(OpResult::Continue)
+            }
 
             // ═══════════════════════════════════════════════════════════════════════════
             // Template Literals

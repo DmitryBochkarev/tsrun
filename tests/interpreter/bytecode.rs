@@ -1009,3 +1009,130 @@ fn test_bytecode_typeof_function() {
         JsValue::String("function".into())
     );
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Object Destructuring
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_bytecode_object_destructure_basic() {
+    assert_eq!(
+        eval_bytecode(
+            "
+            const obj = { a: 1, b: 2 };
+            const { a, b } = obj;
+            a + b
+        "
+        ),
+        JsValue::Number(3.0)
+    );
+}
+
+#[test]
+fn test_bytecode_object_destructure_rename() {
+    assert_eq!(
+        eval_bytecode(
+            "
+            const obj = { x: 10, y: 20 };
+            const { x: first, y: second } = obj;
+            first + second
+        "
+        ),
+        JsValue::Number(30.0)
+    );
+}
+
+#[test]
+fn test_bytecode_object_destructure_default() {
+    assert_eq!(
+        eval_bytecode(
+            "
+            const obj = { a: 1 };
+            const { a, b = 5 } = obj;
+            a + b
+        "
+        ),
+        JsValue::Number(6.0)
+    );
+}
+
+#[test]
+fn test_bytecode_object_destructure_nested() {
+    assert_eq!(
+        eval_bytecode(
+            "
+            const obj = { outer: { inner: 42 } };
+            const { outer: { inner } } = obj;
+            inner
+        "
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Array Destructuring
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_bytecode_array_destructure_basic() {
+    assert_eq!(
+        eval_bytecode(
+            "
+            const arr: number[] = [1, 2, 3];
+            const [a, b, c] = arr;
+            a + b + c
+        "
+        ),
+        JsValue::Number(6.0)
+    );
+}
+
+#[test]
+fn test_bytecode_array_destructure_skip() {
+    assert_eq!(
+        eval_bytecode(
+            "
+            const arr: number[] = [1, 2, 3, 4];
+            const [first, , third] = arr;
+            first + third
+        "
+        ),
+        JsValue::Number(4.0)
+    );
+}
+
+#[test]
+fn test_bytecode_array_destructure_default() {
+    assert_eq!(
+        eval_bytecode(
+            "
+            const arr: number[] = [1];
+            const [a, b = 10] = arr;
+            a + b
+        "
+        ),
+        JsValue::Number(11.0)
+    );
+}
+
+#[test]
+fn test_bytecode_array_destructure_rest() {
+    assert_eq!(
+        eval_bytecode(
+            "
+            const arr: number[] = [1, 2, 3, 4, 5];
+            const [first, ...rest] = arr;
+            first + rest.length
+        "
+        ),
+        JsValue::Number(5.0) // 1 + 4
+    );
+}
+
+// TODO: Destructuring in function parameters requires additional work
+// to handle pattern parameters in bytecode compilation
+// #[test]
+// fn test_bytecode_destructure_in_function_params() { ... }
+// #[test]
+// fn test_bytecode_destructure_array_in_params() { ... }
