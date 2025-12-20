@@ -246,8 +246,8 @@ pub struct Interpreter {
     /// Cancelled order IDs (from Promise.race losing, etc.)
     pub(crate) cancelled_orders: Vec<crate::OrderId>,
 
-    /// Suspended execution state (if any)
-    pub(crate) suspended_state: Option<stack::ExecutionState>,
+    /// Suspended bytecode VM state (if any)
+    pub(crate) suspended_vm_state: Option<bytecode_vm::VmSuspension>,
 
     /// Pending program waiting for imports to be provided
     pub(crate) pending_program: Option<crate::ast::Program>,
@@ -255,10 +255,6 @@ pub struct Interpreter {
     /// Pending module sources waiting for their imports to be satisfied
     /// Maps normalized path -> parsed program
     pub(crate) pending_module_sources: FxHashMap<crate::ModulePath, crate::ast::Program>,
-
-    /// Pool of reusable ExecutionState objects to avoid repeated allocations.
-    /// When an execution completes, its state is reset and returned to the pool.
-    execution_state_pool: Vec<stack::ExecutionState>,
 }
 
 impl Interpreter {
@@ -373,10 +369,9 @@ impl Interpreter {
             pending_orders: Vec::new(),
             order_callbacks: FxHashMap::default(),
             cancelled_orders: Vec::new(),
-            suspended_state: None,
+            suspended_vm_state: None,
             pending_program: None,
             pending_module_sources: FxHashMap::default(),
-            execution_state_pool: Vec::new(),
         };
 
         // Initialize built-in globals
@@ -605,6 +600,9 @@ impl Interpreter {
         source: &str,
         module_path: Option<crate::ModulePath>,
     ) -> Result<crate::RuntimeResult, JsError> {
+        use crate::compiler::Compiler;
+        use bytecode_vm::BytecodeVM;
+
         // Set main module path if this is the entry point
         if self.main_module_path.is_none() {
             self.main_module_path = module_path.clone();
@@ -629,25 +627,64 @@ impl Interpreter {
             return Ok(crate::RuntimeResult::NeedImports(missing));
         }
 
-        // All imports satisfied - execute using stack-based evaluation
+        // All imports satisfied - compile to bytecode and execute
         self.start_execution();
 
-        // Hoist var declarations at program/global scope
-        self.hoist_var_declarations(&program.body);
+        // Compile the program to bytecode
+        let chunk = Compiler::compile_program(&program)?;
 
-        let mut state = self.get_execution_state();
-        state.init_for_program(&program);
-        let result = self.run_to_completion_or_suspend(&mut state);
+        // Run the bytecode VM
+        let vm_guard = self.heap.create_guard();
+        let vm = BytecodeVM::with_guard(
+            chunk,
+            JsValue::Object(self.global.clone()),
+            vm_guard,
+        );
 
-        // Return state to pool if execution completed (not suspended)
-        if self.suspended_state.is_none() {
-            self.return_execution_state(state);
+        self.run_vm_to_completion(vm)
+    }
+
+    /// Run a bytecode VM to completion or suspension
+    fn run_vm_to_completion(
+        &mut self,
+        mut vm: bytecode_vm::BytecodeVM,
+    ) -> Result<crate::RuntimeResult, JsError> {
+        use bytecode_vm::VmResult;
+
+        let result = vm.run(self);
+
+        match result {
+            VmResult::Complete(guarded) => {
+                // Check if there are pending orders to return
+                if !self.pending_orders.is_empty() {
+                    let pending = std::mem::take(&mut self.pending_orders);
+                    let cancelled = std::mem::take(&mut self.cancelled_orders);
+                    return Ok(crate::RuntimeResult::Suspended { pending, cancelled });
+                }
+                // Check for unfulfilled orders from previous suspension
+                if !self.order_callbacks.is_empty() {
+                    let cancelled = std::mem::take(&mut self.cancelled_orders);
+                    return Ok(crate::RuntimeResult::Suspended {
+                        pending: Vec::new(),
+                        cancelled,
+                    });
+                }
+                Ok(crate::RuntimeResult::Complete(
+                    crate::RuntimeValue::from_guarded(guarded),
+                ))
+            }
+            VmResult::Error(err) => Err(self.materialize_thrown_error(err)),
+            VmResult::Suspend(suspension) => {
+                // Save VM state for resumption
+                self.suspended_vm_state = Some(suspension);
+                let pending = std::mem::take(&mut self.pending_orders);
+                let cancelled = std::mem::take(&mut self.cancelled_orders);
+                Ok(crate::RuntimeResult::Suspended { pending, cancelled })
+            }
+            VmResult::Yield(_) | VmResult::YieldStar(_) => Err(JsError::internal_error(
+                "Bytecode execution cannot yield at top level",
+            )),
         }
-
-        // Convert ThrownValue errors to RuntimeError before returning
-        // This is important because ThrownValue contains a Gc pointer that
-        // will become invalid once the interpreter/heap is dropped
-        result.map_err(|e| self.materialize_thrown_error(e))
     }
 
     /// Convert ThrownValue errors to RuntimeError with string data
@@ -685,100 +722,6 @@ impl Interpreter {
             }
             // Pass through other error types unchanged
             other => other,
-        }
-    }
-
-    /// Run execution until completion or suspension
-    fn run_to_completion_or_suspend(
-        &mut self,
-        state: &mut stack::ExecutionState,
-    ) -> Result<crate::RuntimeResult, JsError> {
-        use stack::StepResult;
-
-        // If we're resuming from suspension, check if the promise was resolved
-        if let Some(promise) = state.waiting_on.take() {
-            let obj_ref = promise.borrow();
-            if let ExoticObject::Promise(promise_state) = &obj_ref.exotic {
-                let status = promise_state.borrow().status.clone();
-                let result = promise_state.borrow().result.clone();
-                drop(obj_ref);
-
-                match status {
-                    PromiseStatus::Fulfilled => {
-                        let value = result.unwrap_or(JsValue::Undefined);
-                        // Guard the value to prevent GC during execution
-                        let guard = self.guard_value(&value);
-                        state.push_value(Guarded { value, guard });
-                    }
-                    PromiseStatus::Rejected => {
-                        let reason = result.unwrap_or(JsValue::Undefined);
-                        // Guard the reason to prevent GC during error propagation
-                        self.thrown_guard = self.guard_value(&reason);
-                        return Err(JsError::thrown(reason));
-                    }
-                    PromiseStatus::Pending => {
-                        // Still pending - should not happen after fulfill_orders
-                        // Re-suspend
-                        state.waiting_on = Some(promise);
-                        self.suspended_state = Some(std::mem::take(state));
-                        let pending = std::mem::take(&mut self.pending_orders);
-                        let cancelled = std::mem::take(&mut self.cancelled_orders);
-                        return Ok(crate::RuntimeResult::Suspended { pending, cancelled });
-                    }
-                }
-            } else {
-                drop(obj_ref);
-                // Not a promise anymore? Push undefined
-                state.push_value(Guarded::unguarded(JsValue::Undefined));
-            }
-        }
-
-        loop {
-            match self.step(state) {
-                StepResult::Continue => continue,
-                StepResult::Done(guarded) => {
-                    // Execution complete - check if there are pending orders to return
-                    if !self.pending_orders.is_empty() {
-                        let pending = std::mem::take(&mut self.pending_orders);
-                        let cancelled = std::mem::take(&mut self.cancelled_orders);
-                        return Ok(crate::RuntimeResult::Suspended { pending, cancelled });
-                    }
-                    // Also check for unfulfilled orders from previous suspension
-                    // (e.g., Promise.all where only some orders were fulfilled)
-                    if !self.order_callbacks.is_empty() {
-                        // Return suspended with no new orders - the host already has them
-                        let cancelled = std::mem::take(&mut self.cancelled_orders);
-                        return Ok(crate::RuntimeResult::Suspended {
-                            pending: Vec::new(),
-                            cancelled,
-                        });
-                    }
-                    return Ok(crate::RuntimeResult::Complete(
-                        crate::RuntimeValue::from_guarded(guarded),
-                    ));
-                }
-                StepResult::Error(error) => {
-                    // Try to find a TryBlock frame to catch the error
-                    if let Some(result) = self.handle_error(state, error) {
-                        return match result {
-                            StepResult::Error(e) => Err(e),
-                            StepResult::Done(g) => Ok(crate::RuntimeResult::Complete(
-                                crate::RuntimeValue::from_guarded(g),
-                            )),
-                            _ => continue,
-                        };
-                    }
-                    // Error was handled, continue execution
-                    continue;
-                }
-                StepResult::Suspend(_promise) => {
-                    // Await on pending promise - save state and return Suspended
-                    self.suspended_state = Some(std::mem::take(state));
-                    let pending = std::mem::take(&mut self.pending_orders);
-                    let cancelled = std::mem::take(&mut self.cancelled_orders);
-                    return Ok(crate::RuntimeResult::Suspended { pending, cancelled });
-                }
-            }
         }
     }
 
@@ -824,8 +767,8 @@ impl Interpreter {
         self.root_guard.guard(module_env.clone());
         self.env = module_env.cheap_clone();
 
-        // Execute module using stack-based evaluation
-        let result = self.execute_program_with_stack(&program);
+        // Execute module using bytecode compilation
+        let result = self.execute_program_bytecode(&program);
 
         // Restore state
         self.env = saved_env;
@@ -918,10 +861,65 @@ impl Interpreter {
 
     /// Continue evaluation after providing modules or fulfilling orders
     pub fn continue_eval(&mut self) -> Result<crate::RuntimeResult, JsError> {
-        // If we have a suspended execution state, resume it
-        if let Some(mut state) = self.suspended_state.take() {
-            // Resume execution from where we left off
-            return self.run_to_completion_or_suspend(&mut state);
+        use crate::compiler::Compiler;
+        use bytecode_vm::BytecodeVM;
+
+        // If we have a suspended VM state, resume it
+        if let Some(suspension) = self.suspended_vm_state.take() {
+            // Check if the promise was resolved
+            let promise_status = {
+                let obj_ref = suspension.waiting_on.borrow();
+                if let ExoticObject::Promise(promise_state) = &obj_ref.exotic {
+                    let status = promise_state.borrow().status.clone();
+                    let result = promise_state.borrow().result.clone();
+                    Some((status, result))
+                } else {
+                    None
+                }
+            };
+
+            if let Some((status, result)) = promise_status {
+                match status {
+                    PromiseStatus::Fulfilled => {
+                        let value = result.unwrap_or(JsValue::Undefined);
+                        // Guard the value to prevent GC during execution
+                        let vm_guard = self.heap.create_guard();
+                        if let JsValue::Object(ref obj) = value {
+                            vm_guard.guard(obj.cheap_clone());
+                        }
+
+                        // Create VM from saved state and resume
+                        let mut vm = BytecodeVM::from_saved_state(
+                            suspension.state,
+                            JsValue::Object(self.global.clone()),
+                            vm_guard,
+                        );
+
+                        // Set the resolved value in the resume register
+                        vm.set_resume_value(suspension.resume_register, value);
+
+                        return self.run_vm_to_completion(vm);
+                    }
+                    PromiseStatus::Rejected => {
+                        let reason = result.unwrap_or(JsValue::Undefined);
+                        // Guard the reason to prevent GC during error propagation
+                        self.thrown_guard = self.guard_value(&reason);
+                        return Err(JsError::thrown(reason));
+                    }
+                    PromiseStatus::Pending => {
+                        // Still pending - re-suspend
+                        self.suspended_vm_state = Some(suspension);
+                        let pending = std::mem::take(&mut self.pending_orders);
+                        let cancelled = std::mem::take(&mut self.cancelled_orders);
+                        return Ok(crate::RuntimeResult::Suspended { pending, cancelled });
+                    }
+                }
+            } else {
+                // Not a promise - should not happen
+                return Err(JsError::internal_error(
+                    "Suspended VM was waiting on non-promise",
+                ));
+            }
         }
 
         // First, try to execute any pending modules that have all their imports
@@ -995,16 +993,21 @@ impl Interpreter {
                 return Ok(crate::RuntimeResult::NeedImports(missing));
             }
 
-            // All imports satisfied - execute the program
+            // All imports satisfied - compile to bytecode and execute
             self.start_execution();
-            let mut state = self.get_execution_state();
-            state.init_for_program(&program);
-            let result = self.run_to_completion_or_suspend(&mut state);
-            // Return state to pool if execution completed (not suspended)
-            if self.suspended_state.is_none() {
-                self.return_execution_state(state);
-            }
-            return result;
+
+            // Compile the program to bytecode
+            let chunk = Compiler::compile_program(&program)?;
+
+            // Run the bytecode VM
+            let vm_guard = self.heap.create_guard();
+            let vm = BytecodeVM::with_guard(
+                chunk,
+                JsValue::Object(self.global.clone()),
+                vm_guard,
+            );
+
+            return self.run_vm_to_completion(vm);
         }
 
         // Check if there are pending orders to return
@@ -1732,29 +1735,6 @@ impl Interpreter {
         } else {
             None
         }
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // ExecutionState Pool
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    /// Maximum number of ExecutionStates to keep in the pool.
-    const EXECUTION_STATE_POOL_MAX: usize = 4;
-
-    /// Get an ExecutionState from the pool, or create a new one.
-    /// The state is reset before being returned.
-    fn get_execution_state(&mut self) -> stack::ExecutionState {
-        self.execution_state_pool.pop().unwrap_or_default()
-    }
-
-    /// Return an ExecutionState to the pool for reuse.
-    /// The state is reset before being added to the pool.
-    fn return_execution_state(&mut self, mut state: stack::ExecutionState) {
-        if self.execution_state_pool.len() < Self::EXECUTION_STATE_POOL_MAX {
-            state.reset();
-            self.execution_state_pool.push(state);
-        }
-        // Otherwise drop it - pool is full
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -2489,25 +2469,42 @@ impl Interpreter {
         Ok(result.value)
     }
 
+    /// Execute a program (AST) using bytecode compilation
+    fn execute_program_bytecode(&mut self, program: &crate::ast::Program) -> Result<JsValue, JsError> {
+        use crate::compiler::Compiler;
+
+        let chunk = Compiler::compile_program(program)?;
+        let result = self.run_bytecode(chunk)?;
+        Ok(result.value)
+    }
+
     // ═══════════════════════════════════════════════════════════════════════════
-    // Declaration Execution (used by stack-based execution)
+    // Declaration Execution
     // ═══════════════════════════════════════════════════════════════════════════
 
-    /// Execute a single statement using stack-based execution
+    /// Execute a single statement using bytecode compilation
     /// Used for static blocks and other simple statement execution contexts
     fn execute_simple_statement(&mut self, stmt: &Statement) -> Result<JsValue, JsError> {
-        let mut state = self.get_execution_state();
-        state.init_for_statement(stmt);
-        let result = match self.run(&mut state) {
-            stack::StepResult::Done(g) => Ok(g.value),
-            stack::StepResult::Error(e) => Err(e),
-            stack::StepResult::Suspend(_) => Err(JsError::type_error(
+        use crate::compiler::Compiler;
+        use bytecode_vm::{BytecodeVM, VmResult};
+
+        // Compile the statement to bytecode
+        let chunk = Compiler::compile_statement(stmt)?;
+
+        // Execute with bytecode VM
+        let vm_guard = self.heap.create_guard();
+        let mut vm = BytecodeVM::with_guard(chunk, JsValue::Object(self.global.clone()), vm_guard);
+
+        match vm.run(self) {
+            VmResult::Complete(guarded) => Ok(guarded.value),
+            VmResult::Error(e) => Err(e),
+            VmResult::Suspend(_) => Err(JsError::type_error(
                 "Statement execution cannot be suspended",
             )),
-            stack::StepResult::Continue => Ok(JsValue::Undefined),
-        };
-        self.return_execution_state(state);
-        result
+            VmResult::Yield(_) | VmResult::YieldStar(_) => Err(JsError::internal_error(
+                "Statement execution cannot yield",
+            )),
+        }
     }
 
     fn execute_variable_declaration(&mut self, decl: &VariableDeclaration) -> Result<(), JsError> {

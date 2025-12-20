@@ -65,10 +65,18 @@ impl Compiler {
         Ok(Rc::new(compiler.builder.finish()))
     }
 
+    /// Compile a single statement to bytecode
+    pub fn compile_statement(stmt: &crate::ast::Statement) -> Result<Rc<BytecodeChunk>, JsError> {
+        let mut compiler = Compiler::new();
+        compiler.compile_statement_impl(stmt)?;
+        compiler.builder.emit_halt();
+        Ok(Rc::new(compiler.builder.finish()))
+    }
+
     /// Compile a sequence of statements
     fn compile_statements(&mut self, statements: &[crate::ast::Statement]) -> Result<(), JsError> {
         for stmt in statements {
-            self.compile_statement(stmt)?;
+            self.compile_statement_impl(stmt)?;
         }
         Ok(())
     }

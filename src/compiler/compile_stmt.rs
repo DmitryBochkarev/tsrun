@@ -16,7 +16,7 @@ use crate::value::{CheapClone, JsString};
 
 impl Compiler {
     /// Compile a statement
-    pub fn compile_statement(&mut self, stmt: &Statement) -> Result<(), JsError> {
+    pub fn compile_statement_impl(&mut self, stmt: &Statement) -> Result<(), JsError> {
         match stmt {
             Statement::Expression(expr_stmt) => {
                 self.builder.set_span(expr_stmt.span);
@@ -126,7 +126,7 @@ impl Compiler {
 
         // Compile statements
         for stmt in block.body.iter() {
-            self.compile_statement(stmt)?;
+            self.compile_statement_impl(stmt)?;
         }
 
         // Pop scope
@@ -148,7 +148,7 @@ impl Compiler {
         self.builder.free_register(test_reg);
 
         // Compile consequent
-        self.compile_statement(&if_stmt.consequent)?;
+        self.compile_statement_impl(&if_stmt.consequent)?;
 
         if let Some(alternate) = &if_stmt.alternate {
             // Jump over else block
@@ -158,7 +158,7 @@ impl Compiler {
             self.builder.patch_jump(jump_to_else);
 
             // Compile alternate
-            self.compile_statement(alternate)?;
+            self.compile_statement_impl(alternate)?;
 
             // Patch jump to end
             self.builder.patch_jump(jump_to_end);
@@ -190,7 +190,7 @@ impl Compiler {
         self.builder.free_register(test_reg);
 
         // Compile body
-        self.compile_statement(&while_stmt.body)?;
+        self.compile_statement_impl(&while_stmt.body)?;
 
         // Jump back to start
         self.builder.emit_jump_to(loop_start);
@@ -215,7 +215,7 @@ impl Compiler {
         self.push_loop(None);
 
         // Compile body first
-        self.compile_statement(&do_while.body)?;
+        self.compile_statement_impl(&do_while.body)?;
 
         // Continue target is here (after body, before test)
         let continue_target = self.builder.current_offset();
@@ -277,7 +277,7 @@ impl Compiler {
         };
 
         // Compile body
-        self.compile_statement(&for_stmt.body)?;
+        self.compile_statement_impl(&for_stmt.body)?;
 
         // Continue target (before update)
         let continue_target = self.builder.current_offset();
@@ -359,7 +359,7 @@ impl Compiler {
         self.compile_for_in_of_left(&for_in.left, value_reg)?;
 
         // Compile body
-        self.compile_statement(&for_in.body)?;
+        self.compile_statement_impl(&for_in.body)?;
 
         // Jump back to start
         self.builder.emit_jump_to(loop_start);
@@ -449,7 +449,7 @@ impl Compiler {
         self.compile_for_in_of_left(&for_of.left, value_reg)?;
 
         // Compile body
-        self.compile_statement(&for_of.body)?;
+        self.compile_statement_impl(&for_of.body)?;
 
         // Jump back to start
         self.builder.emit_jump_to(loop_start);
@@ -560,7 +560,7 @@ impl Compiler {
 
             // Compile case statements
             for stmt in case.consequent.iter() {
-                self.compile_statement(stmt)?;
+                self.compile_statement_impl(stmt)?;
             }
         }
 
@@ -664,7 +664,7 @@ impl Compiler {
 
             // Compile catch body
             for stmt in handler.body.body.iter() {
-                self.compile_statement(stmt)?;
+                self.compile_statement_impl(stmt)?;
             }
 
             // Pop scope
@@ -681,7 +681,7 @@ impl Compiler {
 
             // Compile finally block
             for stmt in finalizer.body.iter() {
-                self.compile_statement(stmt)?;
+                self.compile_statement_impl(stmt)?;
             }
         }
 
@@ -731,7 +731,7 @@ impl Compiler {
         self.push_loop(Some(labeled.label.name.cheap_clone()));
 
         // Compile the body
-        self.compile_statement(&labeled.body)?;
+        self.compile_statement_impl(&labeled.body)?;
 
         // Pop loop context
         self.pop_loop();
@@ -908,7 +908,7 @@ impl Compiler {
 
         // Compile the body statements
         for stmt in body {
-            func_compiler.compile_statement(stmt)?;
+            func_compiler.compile_statement_impl(stmt)?;
         }
 
         // Emit implicit return undefined at end
@@ -1267,7 +1267,7 @@ impl Compiler {
 
         // Compile constructor body
         for stmt in ctor.body.body.iter() {
-            func_compiler.compile_statement(stmt)?;
+            func_compiler.compile_statement_impl(stmt)?;
         }
 
         // Return this implicitly (constructor returns `this`)

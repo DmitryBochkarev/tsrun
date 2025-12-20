@@ -53,6 +53,8 @@ pub struct VmSuspension {
     pub waiting_on: Gc<JsObject>,
     /// Saved VM state for resumption
     pub state: SavedVmState,
+    /// Register to store the resume value (for await)
+    pub resume_register: Register,
 }
 
 /// Saved VM state for suspension/resumption
@@ -379,12 +381,16 @@ impl BytecodeVM {
                 Ok(OpResult::Halt(value)) => {
                     return VmResult::Complete(value);
                 }
-                Ok(OpResult::Suspend(guarded)) => {
+                Ok(OpResult::Suspend {
+                    promise,
+                    resume_register,
+                }) => {
                     // Extract the object from the guarded value
-                    if let JsValue::Object(obj) = guarded.value {
+                    if let JsValue::Object(obj) = promise.value {
                         return VmResult::Suspend(VmSuspension {
                             waiting_on: obj,
                             state: self.save_state(interp),
+                            resume_register,
                         });
                     } else {
                         return VmResult::Error(JsError::internal_error(
@@ -630,6 +636,16 @@ impl BytecodeVM {
             arguments: state.arguments,
             new_target: state.new_target,
         }
+    }
+
+    /// Set the resume value for await resumption
+    /// This stores the resolved promise value in the specified register
+    pub fn set_resume_value(&mut self, register: Register, value: JsValue) {
+        // Guard the value if it's an object
+        if let JsValue::Object(ref obj) = value {
+            self.register_guard.guard(obj.cheap_clone());
+        }
+        self.set_reg(register, value);
     }
 
     /// Execute a single opcode
@@ -1592,12 +1608,13 @@ impl BytecodeVM {
                                 return Err(JsError::thrown(reason));
                             }
                             PromiseStatus::Pending => {
-                                // For pending promises, we would need to suspend
-                                // For now, return undefined
+                                // Suspend execution and wait for promise resolution
                                 drop(state_ref);
                                 drop(obj_ref);
-                                self.set_reg(dst, JsValue::Undefined);
-                                return Ok(OpResult::Continue);
+                                return Ok(OpResult::Suspend {
+                                    promise: guarded_js_value(promise_val, interp),
+                                    resume_register: dst,
+                                });
                             }
                         }
                     }
@@ -2544,9 +2561,11 @@ enum OpResult {
     Continue,
     /// Halt with a value
     Halt(Guarded),
-    /// Suspend execution (for await) - reserved for future use
-    #[allow(dead_code)]
-    Suspend(Guarded),
+    /// Suspend execution (for await)
+    Suspend {
+        promise: Guarded,
+        resume_register: Register,
+    },
     /// Yield a value (for generators)
     Yield {
         value: Guarded,
