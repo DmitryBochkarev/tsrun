@@ -1322,3 +1322,362 @@ fn test_array_includes_on_array_like() {
         JsValue::Boolean(true)
     );
 }
+
+// =============================================================================
+// Array-like object tests with ToLength coercion
+// =============================================================================
+// Per ECMAScript spec, Array methods should work with array-like objects.
+// The `length` property is coerced via ToLength, which calls ToNumber first.
+// This means objects with valueOf/toString should work.
+
+#[test]
+fn test_array_map_on_array_like_with_object_length() {
+    // Test262: 15.4.4.19-3-19
+    // length property is an object with toString returning a number string
+    assert_eq!(
+        eval(
+            r#"
+            function callbackfn(val: number, idx: number, obj: any): boolean {
+                return val < 10;
+            }
+            const obj: any = {
+                0: 11,
+                1: 9,
+                length: {
+                    toString: function(): string {
+                        return '2';
+                    }
+                }
+            };
+            const newArr: boolean[] = Array.prototype.map.call(obj, callbackfn);
+            newArr.length
+            "#
+        ),
+        JsValue::Number(2.0)
+    );
+}
+
+#[test]
+fn test_array_map_on_array_like_with_valueof_length() {
+    // length property is an object with valueOf returning a number
+    assert_eq!(
+        eval(
+            r#"
+            const obj: any = {
+                0: 'a',
+                1: 'b',
+                2: 'c',
+                length: {
+                    valueOf: function(): number {
+                        return 3;
+                    }
+                }
+            };
+            const newArr: string[] = Array.prototype.map.call(obj, (x: string) => x.toUpperCase());
+            newArr.length
+            "#
+        ),
+        JsValue::Number(3.0)
+    );
+}
+
+#[test]
+fn test_array_map_on_array_like_valueof_result() {
+    // Verify the actual mapped values
+    assert_eq!(
+        eval(
+            r#"
+            const obj: any = {
+                0: 'a',
+                1: 'b',
+                length: { valueOf: () => 2 }
+            };
+            const arr: string[] = Array.prototype.map.call(obj, (x: string) => x.toUpperCase());
+            arr[0] + arr[1]
+            "#
+        ),
+        JsValue::String(JsString::from("AB"))
+    );
+}
+
+#[test]
+fn test_array_filter_on_array_like_with_object_length() {
+    assert_eq!(
+        eval(
+            r#"
+            const obj: any = {
+                0: 1,
+                1: 2,
+                2: 3,
+                3: 4,
+                length: { toString: () => '4' }
+            };
+            const arr: number[] = Array.prototype.filter.call(obj, (x: number) => x > 2);
+            arr.length
+            "#
+        ),
+        JsValue::Number(2.0)
+    );
+}
+
+#[test]
+fn test_array_filter_on_array_like_result_values() {
+    assert_eq!(
+        eval(
+            r#"
+            const obj: any = {
+                0: 1,
+                1: 2,
+                2: 3,
+                length: { valueOf: () => 3 }
+            };
+            const arr: number[] = Array.prototype.filter.call(obj, (x: number) => x >= 2);
+            arr[0] + arr[1]
+            "#
+        ),
+        JsValue::Number(5.0) // 2 + 3
+    );
+}
+
+#[test]
+fn test_array_foreach_on_array_like_with_object_length() {
+    assert_eq!(
+        eval(
+            r#"
+            const obj: any = {
+                0: 10,
+                1: 20,
+                2: 30,
+                length: { toString: () => '3' }
+            };
+            let sum: number = 0;
+            Array.prototype.forEach.call(obj, (x: number) => { sum = sum + x; });
+            sum
+            "#
+        ),
+        JsValue::Number(60.0)
+    );
+}
+
+#[test]
+fn test_array_reduce_on_array_like_with_object_length() {
+    assert_eq!(
+        eval(
+            r#"
+            const obj: any = {
+                0: 1,
+                1: 2,
+                2: 3,
+                length: { valueOf: () => 3 }
+            };
+            Array.prototype.reduce.call(obj, (acc: number, x: number) => acc + x, 0)
+            "#
+        ),
+        JsValue::Number(6.0)
+    );
+}
+
+#[test]
+fn test_array_every_on_array_like_with_object_length() {
+    assert_eq!(
+        eval(
+            r#"
+            const obj: any = {
+                0: 2,
+                1: 4,
+                2: 6,
+                length: { toString: () => '3' }
+            };
+            Array.prototype.every.call(obj, (x: number) => x % 2 === 0)
+            "#
+        ),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_array_some_on_array_like_with_object_length() {
+    assert_eq!(
+        eval(
+            r#"
+            const obj: any = {
+                0: 1,
+                1: 3,
+                2: 5,
+                length: { valueOf: () => 3 }
+            };
+            Array.prototype.some.call(obj, (x: number) => x > 4)
+            "#
+        ),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_array_find_on_array_like_with_object_length() {
+    assert_eq!(
+        eval(
+            r#"
+            const obj: any = {
+                0: 'apple',
+                1: 'banana',
+                2: 'cherry',
+                length: { toString: () => '3' }
+            };
+            Array.prototype.find.call(obj, (x: string) => x.startsWith('b'))
+            "#
+        ),
+        JsValue::String(JsString::from("banana"))
+    );
+}
+
+#[test]
+fn test_array_findindex_on_array_like_with_object_length() {
+    assert_eq!(
+        eval(
+            r#"
+            const obj: any = {
+                0: 10,
+                1: 20,
+                2: 30,
+                length: { valueOf: () => 3 }
+            };
+            Array.prototype.findIndex.call(obj, (x: number) => x === 20)
+            "#
+        ),
+        JsValue::Number(1.0)
+    );
+}
+
+#[test]
+fn test_array_indexof_on_array_like_with_object_length() {
+    assert_eq!(
+        eval(
+            r#"
+            const obj: any = {
+                0: 'x',
+                1: 'y',
+                2: 'z',
+                length: { toString: () => '3' }
+            };
+            Array.prototype.indexOf.call(obj, 'y')
+            "#
+        ),
+        JsValue::Number(1.0)
+    );
+}
+
+#[test]
+fn test_array_includes_on_array_like_with_object_length() {
+    assert_eq!(
+        eval(
+            r#"
+            const obj: any = {
+                0: 100,
+                1: 200,
+                length: { valueOf: () => 2 }
+            };
+            Array.prototype.includes.call(obj, 200)
+            "#
+        ),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_array_length_coercion_boolean_true() {
+    // Boolean true should coerce to 1
+    assert_eq!(
+        eval(
+            r#"
+            const obj: any = { 0: 'first', length: true };
+            Array.prototype.map.call(obj, (x: string) => x).length
+            "#
+        ),
+        JsValue::Number(1.0)
+    );
+}
+
+#[test]
+fn test_array_length_coercion_boolean_false() {
+    // Boolean false should coerce to 0
+    assert_eq!(
+        eval(
+            r#"
+            const obj: any = { 0: 'first', length: false };
+            Array.prototype.map.call(obj, (x: string) => x).length
+            "#
+        ),
+        JsValue::Number(0.0)
+    );
+}
+
+#[test]
+fn test_array_length_coercion_null() {
+    // null should coerce to 0
+    assert_eq!(
+        eval(
+            r#"
+            const obj: any = { 0: 'first', length: null };
+            Array.prototype.map.call(obj, (x: string) => x).length
+            "#
+        ),
+        JsValue::Number(0.0)
+    );
+}
+
+#[test]
+fn test_array_length_coercion_undefined() {
+    // undefined should coerce to 0 (NaN -> 0)
+    assert_eq!(
+        eval(
+            r#"
+            const obj: any = { 0: 'first', length: undefined };
+            Array.prototype.map.call(obj, (x: string) => x).length
+            "#
+        ),
+        JsValue::Number(0.0)
+    );
+}
+
+#[test]
+fn test_array_length_coercion_string_number() {
+    // String "3" should coerce to 3
+    assert_eq!(
+        eval(
+            r#"
+            const obj: any = { 0: 'a', 1: 'b', 2: 'c', length: '3' };
+            Array.prototype.map.call(obj, (x: string) => x).length
+            "#
+        ),
+        JsValue::Number(3.0)
+    );
+}
+
+#[test]
+fn test_array_length_coercion_float_truncated() {
+    // Float 2.9 should be truncated to 2
+    assert_eq!(
+        eval(
+            r#"
+            const obj: any = { 0: 'a', 1: 'b', 2: 'c', length: 2.9 };
+            Array.prototype.map.call(obj, (x: string) => x).length
+            "#
+        ),
+        JsValue::Number(2.0)
+    );
+}
+
+#[test]
+fn test_array_length_coercion_negative() {
+    // Negative numbers should be clamped to 0
+    assert_eq!(
+        eval(
+            r#"
+            const obj: any = { 0: 'a', length: -5 };
+            Array.prototype.map.call(obj, (x: string) => x).length
+            "#
+        ),
+        JsValue::Number(0.0)
+    );
+}

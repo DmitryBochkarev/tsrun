@@ -5,28 +5,56 @@ use crate::gc::Gc;
 use crate::interpreter::Interpreter;
 use crate::value::{ExoticObject, Guarded, JsObject, JsObjectRef, JsString, JsValue, PropertyKey};
 
-/// Get the length of an array-like object.
-/// Works on both real arrays (ExoticObject::Array) and array-like objects with length property.
-fn get_array_like_length(obj: &Gc<JsObject>) -> u32 {
+/// Convert a number to a length value per ECMAScript ToLength.
+/// Clamps to [0, 2^53 - 1] (MAX_SAFE_INTEGER) and truncates.
+fn to_length(n: f64) -> u32 {
+    if n.is_nan() || n <= 0.0 {
+        0
+    } else if n > u32::MAX as f64 {
+        u32::MAX
+    } else {
+        n as u32
+    }
+}
+
+/// Parse a string to a number for ToNumber coercion.
+fn string_to_number(s: &str) -> f64 {
+    let s = s.trim();
+    if s.is_empty() {
+        return 0.0;
+    }
+    s.parse::<f64>().unwrap_or(f64::NAN)
+}
+
+/// Get the length of an array-like object with full ToLength coercion.
+/// This version properly handles objects with valueOf/toString by calling the interpreter.
+fn get_array_like_length(interp: &mut Interpreter, obj: &Gc<JsObject>) -> Result<u32, JsError> {
     let borrowed = obj.borrow();
     // First check if it's a real array
     if let ExoticObject::Array { ref elements } = borrowed.exotic {
-        return elements.len() as u32;
+        return Ok(elements.len() as u32);
     }
-    // Otherwise, get the length property
+    // Otherwise, get the length property and coerce it
     let length_key = PropertyKey::String(JsString::from("length"));
-    match borrowed.get_property(&length_key) {
-        Some(JsValue::Number(n)) => {
-            // ToLength: clamp to [0, 2^32 - 1]
-            if n.is_nan() || n < 0.0 {
-                0
-            } else if n > u32::MAX as f64 {
-                u32::MAX
-            } else {
-                n as u32
-            }
+    let length_val = borrowed
+        .get_property(&length_key)
+        .unwrap_or(JsValue::Undefined);
+    drop(borrowed); // Release borrow before calling interpreter methods
+
+    // Handle simple cases without calling interpreter
+    match &length_val {
+        JsValue::Number(n) => Ok(to_length(*n)),
+        JsValue::Boolean(true) => Ok(1),
+        JsValue::Boolean(false) => Ok(0),
+        JsValue::Null => Ok(0),
+        JsValue::Undefined => Ok(0),
+        JsValue::String(s) => Ok(to_length(string_to_number(s.as_str()))),
+        JsValue::Symbol(_) => Ok(0), // Symbols can't be converted to number
+        JsValue::Object(_) => {
+            // Call ToPrimitive with "number" hint, then ToNumber
+            let n = interp.coerce_to_number(&length_val)?;
+            Ok(to_length(n))
         }
-        _ => 0,
     }
 }
 
@@ -36,7 +64,10 @@ fn get_array_like_element(obj: &Gc<JsObject>, index: u32) -> JsValue {
     let borrowed = obj.borrow();
     // First check if it's a real array with dense storage
     if let ExoticObject::Array { ref elements } = borrowed.exotic {
-        return elements.get(index as usize).cloned().unwrap_or(JsValue::Undefined);
+        return elements
+            .get(index as usize)
+            .cloned()
+            .unwrap_or(JsValue::Undefined);
     }
     // Otherwise, get by property index
     borrowed
@@ -240,8 +271,8 @@ pub fn array_map(
     let _this_arg_guard = interp.guard_value(&this_arg);
     let _arr_guard = interp.guard_value(&this);
 
-    // Use array-like length (works on both arrays and array-like objects)
-    let length = get_array_like_length(&arr);
+    // Use array-like length with full ToLength coercion (works on both arrays and array-like objects)
+    let length = get_array_like_length(interp, &arr)?;
 
     let mut result = Vec::with_capacity(length as usize);
     for i in 0..length {
@@ -296,8 +327,8 @@ pub fn array_filter(
     let _this_arg_guard = interp.guard_value(&this_arg);
     let _arr_guard = interp.guard_value(&this);
 
-    // Use array-like length (works on both arrays and array-like objects)
-    let length = get_array_like_length(&arr);
+    // Use array-like length with full ToLength coercion (works on both arrays and array-like objects)
+    let length = get_array_like_length(interp, &arr)?;
 
     let mut result = Vec::new();
     for i in 0..length {
@@ -349,8 +380,8 @@ pub fn array_foreach(
     let _this_arg_guard = interp.guard_value(&this_arg);
     let _arr_guard = interp.guard_value(&this);
 
-    // Use array-like length (works on both arrays and array-like objects)
-    let length = get_array_like_length(&arr);
+    // Use array-like length with full ToLength coercion (works on both arrays and array-like objects)
+    let length = get_array_like_length(interp, &arr)?;
 
     for i in 0..length {
         if has_array_like_element(&arr, i) {
@@ -389,8 +420,8 @@ pub fn array_reduce(
     let _callback_guard = interp.guard_value(&callback);
     let _arr_guard = interp.guard_value(&this);
 
-    // Use array-like length (works on both arrays and array-like objects)
-    let length = get_array_like_length(&arr);
+    // Use array-like length with full ToLength coercion (works on both arrays and array-like objects)
+    let length = get_array_like_length(interp, &arr)?;
 
     let (mut accumulator, start_index) = if let Some(initial) = args.get(1) {
         (initial.clone(), 0)
@@ -450,8 +481,8 @@ pub fn array_find(
     let _this_arg_guard = interp.guard_value(&this_arg);
     let _arr_guard = interp.guard_value(&this);
 
-    // Use array-like length (works on both arrays and array-like objects)
-    let length = get_array_like_length(&arr);
+    // Use array-like length with full ToLength coercion (works on both arrays and array-like objects)
+    let length = get_array_like_length(interp, &arr)?;
 
     for i in 0..length {
         let elem = get_array_like_element(&arr, i);
@@ -499,16 +530,11 @@ pub fn array_find_index(
     let _this_arg_guard = interp.guard_value(&this_arg);
     let _arr_guard = interp.guard_value(&this);
 
-    let length = arr
-        .borrow()
-        .array_length()
-        .ok_or_else(|| JsError::type_error("Not an array"))?;
+    // Use array-like length with full ToLength coercion (works on both arrays and array-like objects)
+    let length = get_array_like_length(interp, &arr)?;
 
     for i in 0..length {
-        let elem = arr
-            .borrow()
-            .get_property(&PropertyKey::Index(i))
-            .unwrap_or(JsValue::Undefined);
+        let elem = get_array_like_element(&arr, i);
 
         let Guarded {
             value: result,
@@ -528,7 +554,7 @@ pub fn array_find_index(
 }
 
 pub fn array_index_of(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
@@ -541,8 +567,8 @@ pub fn array_index_of(
     let search_element = args.first().cloned().unwrap_or(JsValue::Undefined);
     let from_index = args.get(1).map(|v| v.to_number() as i64).unwrap_or(0);
 
-    // Use array-like length (works on both arrays and array-like objects)
-    let length = get_array_like_length(&arr) as i64;
+    // Use array-like length with full ToLength coercion (works on both arrays and array-like objects)
+    let length = get_array_like_length(interp, &arr)? as i64;
 
     let start = if from_index < 0 {
         (length + from_index).max(0) as u32
@@ -564,7 +590,7 @@ pub fn array_index_of(
 }
 
 pub fn array_includes(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
@@ -577,8 +603,8 @@ pub fn array_includes(
     let search_element = args.first().cloned().unwrap_or(JsValue::Undefined);
     let from_index = args.get(1).map(|v| v.to_number() as i64).unwrap_or(0);
 
-    // Use array-like length (works on both arrays and array-like objects)
-    let length = get_array_like_length(&arr) as i64;
+    // Use array-like length with full ToLength coercion (works on both arrays and array-like objects)
+    let length = get_array_like_length(interp, &arr)? as i64;
 
     let start = if from_index < 0 {
         (length + from_index).max(0) as u32
@@ -768,8 +794,8 @@ pub fn array_every(
     let _this_arg_guard = interp.guard_value(&this_arg);
     let _arr_guard = interp.guard_value(&this);
 
-    // Use array-like length (works on both arrays and array-like objects)
-    let length = get_array_like_length(&arr);
+    // Use array-like length with full ToLength coercion (works on both arrays and array-like objects)
+    let length = get_array_like_length(interp, &arr)?;
 
     for i in 0..length {
         if has_array_like_element(&arr, i) {
@@ -818,8 +844,8 @@ pub fn array_some(
     let _this_arg_guard = interp.guard_value(&this_arg);
     let _arr_guard = interp.guard_value(&this);
 
-    // Use array-like length (works on both arrays and array-like objects)
-    let length = get_array_like_length(&arr);
+    // Use array-like length with full ToLength coercion (works on both arrays and array-like objects)
+    let length = get_array_like_length(interp, &arr)?;
 
     for i in 0..length {
         if has_array_like_element(&arr, i) {

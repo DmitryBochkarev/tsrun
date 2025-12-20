@@ -4576,8 +4576,9 @@ impl Interpreter {
         }
     }
 
-    /// Convert value to number, handling ToPrimitive for objects
-    fn coerce_to_number(&mut self, value: &JsValue) -> Result<f64, JsError> {
+    /// Convert value to number, handling ToPrimitive for objects (ToNumber abstract operation).
+    /// This properly calls the object's valueOf/toString methods per ECMAScript spec.
+    pub fn coerce_to_number(&mut self, value: &JsValue) -> Result<f64, JsError> {
         match value {
             JsValue::Object(_) => {
                 let prim = self.coerce_to_primitive(value, "number")?;

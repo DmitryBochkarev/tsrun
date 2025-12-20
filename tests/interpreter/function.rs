@@ -1165,7 +1165,10 @@ fn test_function_prototype_call_has_length() {
 #[test]
 fn test_function_prototype_call_length() {
     // Function.prototype.call has 1 parameter (thisArg)
-    assert_eq!(eval(r#"Function.prototype.call.length"#), JsValue::Number(1.0));
+    assert_eq!(
+        eval(r#"Function.prototype.call.length"#),
+        JsValue::Number(1.0)
+    );
 }
 
 #[test]
