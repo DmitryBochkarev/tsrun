@@ -233,6 +233,52 @@ fn test_object_get_own_property_descriptor() {
 }
 
 #[test]
+fn test_object_get_own_property_descriptor_primitives() {
+    // ES2015+: Should work on primitives by converting to object
+    // Non-existent property on number returns undefined (doesn't throw)
+    assert_eq!(
+        eval(r#"Object.getOwnPropertyDescriptor(42, "foo")"#),
+        JsValue::Undefined
+    );
+    // Non-existent property on boolean returns undefined (doesn't throw)
+    assert_eq!(
+        eval(r#"Object.getOwnPropertyDescriptor(true, "bar")"#),
+        JsValue::Undefined
+    );
+}
+
+#[test]
+fn test_object_get_own_property_descriptor_null_undefined_throws() {
+    // null/undefined should throw TypeError
+    assert_eq!(
+        eval(
+            r#"
+            try {
+                Object.getOwnPropertyDescriptor(null, "x");
+                "no error";
+            } catch (e) {
+                e instanceof TypeError ? "TypeError" : "other error";
+            }
+        "#
+        ),
+        JsValue::String("TypeError".into())
+    );
+    assert_eq!(
+        eval(
+            r#"
+            try {
+                Object.getOwnPropertyDescriptor(undefined, "x");
+                "no error";
+            } catch (e) {
+                e instanceof TypeError ? "TypeError" : "other error";
+            }
+        "#
+        ),
+        JsValue::String("TypeError".into())
+    );
+}
+
+#[test]
 fn test_object_define_property() {
     assert_eq!(
         eval(

@@ -652,11 +652,8 @@ pub fn object_get_own_property_descriptor(
     let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
     let prop = args.get(1).cloned().unwrap_or(JsValue::Undefined);
 
-    let JsValue::Object(obj_ref) = obj else {
-        return Err(JsError::type_error(
-            "Object.getOwnPropertyDescriptor requires an object",
-        ));
-    };
+    // ES2015+: Convert to object (primitives get boxed, null/undefined throw)
+    let obj_ref = interp.to_object(obj)?;
 
     let key = PropertyKey::from_value(&prop);
 
@@ -717,11 +714,8 @@ pub fn object_get_own_property_names(
 ) -> Result<Guarded, JsError> {
     let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
 
-    let JsValue::Object(obj_ref) = obj else {
-        return Err(JsError::type_error(
-            "Object.getOwnPropertyNames requires an object",
-        ));
-    };
+    // ES2015+: Convert to object (primitives get boxed, null/undefined throw)
+    let obj_ref = interp.to_object(obj)?;
 
     // Filter out symbol keys - getOwnPropertyNames only returns string keys
     let names: Vec<JsValue> = obj_ref
@@ -745,11 +739,8 @@ pub fn object_get_own_property_symbols(
 ) -> Result<Guarded, JsError> {
     let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
 
-    let JsValue::Object(obj_ref) = obj else {
-        return Err(JsError::type_error(
-            "Object.getOwnPropertySymbols requires an object",
-        ));
-    };
+    // ES2015+: Convert to object (primitives get boxed, null/undefined throw)
+    let obj_ref = interp.to_object(obj)?;
 
     // Return only symbol keys
     let symbols: Vec<JsValue> = obj_ref
@@ -1109,11 +1100,8 @@ pub fn object_get_own_property_descriptors(
 ) -> Result<Guarded, JsError> {
     let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
 
-    let JsValue::Object(obj_ref) = obj else {
-        return Err(JsError::type_error(
-            "Object.getOwnPropertyDescriptors requires an object",
-        ));
-    };
+    // ES2015+: Convert to object (primitives get boxed, null/undefined throw)
+    let obj_ref = interp.to_object(obj)?;
 
     // Pre-intern descriptor property keys
     let get_key = PropertyKey::String(interp.intern("get"));
