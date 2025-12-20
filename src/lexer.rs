@@ -748,6 +748,9 @@ impl<'a> Lexer<'a> {
                         Some((_, 'n')) => value.push('\n'),
                         Some((_, 'r')) => value.push('\r'),
                         Some((_, 't')) => value.push('\t'),
+                        Some((_, 'b')) => value.push('\x08'), // backspace
+                        Some((_, 'f')) => value.push('\x0C'), // form feed
+                        Some((_, 'v')) => value.push('\x0B'), // vertical tab
                         Some((_, '\\')) => value.push('\\'),
                         Some((_, '\'')) => value.push('\''),
                         Some((_, '"')) => value.push('"'),
@@ -1051,7 +1054,9 @@ impl<'a> Lexer<'a> {
             }
         } else if self.peek() == Some('.') {
             // Check if it's really a decimal or could be method call
-            if matches!(self.peek_next(), Some('0'..='9')) {
+            // A dot followed by a digit means decimal (e.g., 1.5)
+            // A dot followed by e/E means decimal with exponent (e.g., 1.e5)
+            if matches!(self.peek_next(), Some('0'..='9' | 'e' | 'E')) {
                 self.advance();
                 num_str.push('.');
                 while let Some(ch) = self.peek() {

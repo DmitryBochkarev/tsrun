@@ -197,3 +197,98 @@ fn test_number_wrapper_string_concat() {
     assert_eq!(eval("'' + new Number(42)"), JsValue::String("42".into()));
     assert_eq!(eval("new Number(42) + ''"), JsValue::String("42".into()));
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Number() String Conversion Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_number_from_empty_string() {
+    // Empty string should convert to 0
+    assert_eq!(eval("Number('')"), JsValue::Number(0.0));
+}
+
+#[test]
+fn test_number_from_whitespace_string() {
+    // Whitespace-only strings should convert to 0
+    assert_eq!(eval("Number(' ')"), JsValue::Number(0.0));
+    assert_eq!(eval("Number('  ')"), JsValue::Number(0.0));
+    assert_eq!(eval("Number('\\t')"), JsValue::Number(0.0));
+    assert_eq!(eval("Number('\\n')"), JsValue::Number(0.0));
+    assert_eq!(eval("Number('  \\t\\n  ')"), JsValue::Number(0.0));
+}
+
+#[test]
+fn test_number_from_hex_string() {
+    // Hex strings should be parsed correctly
+    assert_eq!(eval("Number('0x0')"), JsValue::Number(0.0));
+    assert_eq!(eval("Number('0X0')"), JsValue::Number(0.0));
+    assert_eq!(eval("Number('0x1')"), JsValue::Number(1.0));
+    assert_eq!(eval("Number('0xff')"), JsValue::Number(255.0));
+    assert_eq!(eval("Number('0xFF')"), JsValue::Number(255.0));
+    assert_eq!(eval("Number('0xA')"), JsValue::Number(10.0));
+}
+
+#[test]
+fn test_number_from_string_with_whitespace() {
+    // Leading/trailing whitespace should be trimmed
+    assert_eq!(eval("Number('  42  ')"), JsValue::Number(42.0));
+    assert_eq!(eval("Number('\\t123\\n')"), JsValue::Number(123.0));
+    assert_eq!(eval("Number('  0x10  ')"), JsValue::Number(16.0));
+}
+
+#[test]
+fn test_number_from_octal_string() {
+    // Octal strings (0o prefix) should be parsed
+    assert_eq!(eval("Number('0o10')"), JsValue::Number(8.0));
+    assert_eq!(eval("Number('0O17')"), JsValue::Number(15.0));
+}
+
+#[test]
+fn test_number_from_binary_string() {
+    // Binary strings (0b prefix) should be parsed
+    assert_eq!(eval("Number('0b10')"), JsValue::Number(2.0));
+    assert_eq!(eval("Number('0B1010')"), JsValue::Number(10.0));
+}
+
+#[test]
+fn test_number_from_infinity_string() {
+    // "Infinity" and "-Infinity" should parse correctly
+    assert_eq!(eval("Number('Infinity')"), JsValue::Number(f64::INFINITY));
+    assert_eq!(
+        eval("Number('-Infinity')"),
+        JsValue::Number(f64::NEG_INFINITY)
+    );
+    assert_eq!(eval("Number('+Infinity')"), JsValue::Number(f64::INFINITY));
+    // But "INFINITY" (uppercase) should be NaN
+    assert!(eval("Number('INFINITY')").to_number().is_nan());
+}
+
+#[test]
+fn test_number_from_invalid_string() {
+    // Invalid strings should return NaN
+    assert!(eval("Number('abc')").to_number().is_nan());
+    assert!(eval("Number('12abc')").to_number().is_nan());
+    assert!(eval("Number('0x')").to_number().is_nan());
+    assert!(eval("Number('0xg')").to_number().is_nan());
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Decimal Literal With Exponent Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_decimal_with_exponent_no_fraction() {
+    // Format: DecimalIntegerLiteral. ExponentPart (no fractional digits)
+    assert_eq!(eval("0.e1"), JsValue::Number(0.0));
+    assert_eq!(eval("1.e1"), JsValue::Number(10.0));
+    assert_eq!(eval("2.e1"), JsValue::Number(20.0));
+    assert_eq!(eval("5.e2"), JsValue::Number(500.0));
+    assert_eq!(eval("1.E1"), JsValue::Number(10.0));
+    assert_eq!(eval("0.e-1"), JsValue::Number(0.0));
+    assert_eq!(eval("1.e-1"), JsValue::Number(0.1));
+    assert_eq!(eval("0.e+1"), JsValue::Number(0.0));
+    assert_eq!(eval("1.e+1"), JsValue::Number(10.0));
+    assert_eq!(eval("0.e0"), JsValue::Number(0.0));
+    assert_eq!(eval("1.e0"), JsValue::Number(1.0));
+}

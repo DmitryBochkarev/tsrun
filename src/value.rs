@@ -92,6 +92,141 @@ fn format_decimal(n: f64) -> String {
     }
 }
 
+/// Convert a JavaScript string to a number according to ECMAScript ToNumber.
+///
+/// The string is first trimmed of leading and trailing whitespace.
+/// Then it is parsed as a numeric literal:
+/// - Empty string → 0
+/// - "Infinity", "+Infinity", "-Infinity" → Infinity, +Infinity, -Infinity
+/// - "0x" or "0X" prefix → hexadecimal
+/// - "0o" or "0O" prefix → octal
+/// - "0b" or "0B" prefix → binary
+/// - Otherwise → decimal (with optional sign, exponent)
+/// - Invalid → NaN
+pub fn string_to_number(s: &str) -> f64 {
+    // ECMAScript whitespace includes more than just ASCII whitespace
+    // Trim using a custom function that matches JS behavior
+    let trimmed = trim_js_whitespace(s);
+
+    // Empty string → 0
+    if trimmed.is_empty() {
+        return 0.0;
+    }
+
+    // Handle Infinity (case-sensitive)
+    if trimmed == "Infinity" || trimmed == "+Infinity" {
+        return f64::INFINITY;
+    }
+    if trimmed == "-Infinity" {
+        return f64::NEG_INFINITY;
+    }
+
+    // Check for hex/octal/binary prefixes (case-insensitive)
+    if trimmed.len() >= 2 {
+        let bytes = trimmed.as_bytes();
+        if bytes.first() == Some(&b'0') {
+            match bytes.get(1) {
+                Some(b'x' | b'X') => {
+                    // Hexadecimal: 0x...
+                    let hex_part = trimmed.get(2..).unwrap_or("");
+                    if hex_part.is_empty() {
+                        return f64::NAN;
+                    }
+                    return match u64::from_str_radix(hex_part, 16) {
+                        Ok(n) => n as f64,
+                        Err(_) => f64::NAN,
+                    };
+                }
+                Some(b'o' | b'O') => {
+                    // Octal: 0o...
+                    let oct_part = trimmed.get(2..).unwrap_or("");
+                    if oct_part.is_empty() {
+                        return f64::NAN;
+                    }
+                    return match u64::from_str_radix(oct_part, 8) {
+                        Ok(n) => n as f64,
+                        Err(_) => f64::NAN,
+                    };
+                }
+                Some(b'b' | b'B') => {
+                    // Binary: 0b...
+                    let bin_part = trimmed.get(2..).unwrap_or("");
+                    if bin_part.is_empty() {
+                        return f64::NAN;
+                    }
+                    return match u64::from_str_radix(bin_part, 2) {
+                        Ok(n) => n as f64,
+                        Err(_) => f64::NAN,
+                    };
+                }
+                _ => {}
+            }
+        }
+    }
+
+    // Reject case-insensitive infinity variants (Rust accepts them, JS doesn't)
+    // We already handled "Infinity", "+Infinity", "-Infinity" above
+    let lower = trimmed.to_lowercase();
+    if lower.contains("infinity") || lower.contains("inf") {
+        return f64::NAN;
+    }
+
+    // Reject NaN (Rust accepts "NaN", "nan", etc., but JS Number() returns NaN for all)
+    // This is subtle: JS parses the string "NaN" as NaN, but so does Rust, so this is fine.
+    // Actually, we need to check if it's a non-standard casing
+    if lower == "nan" && trimmed != "NaN" {
+        // Non-standard casing of NaN - return NaN (which is correct anyway)
+        return f64::NAN;
+    }
+
+    // Try to parse as a decimal number
+    // Rust's parse::<f64> handles most cases, but we need to ensure
+    // the entire string is consumed and matches JS semantics
+    match trimmed.parse::<f64>() {
+        Ok(n) => n,
+        Err(_) => f64::NAN,
+    }
+}
+
+/// Trim JavaScript whitespace from both ends of a string.
+/// JavaScript whitespace includes:
+/// - ASCII whitespace: space, tab, LF, CR, form feed, vertical tab
+/// - Unicode: no-break space (00A0), BOM (FEFF), line separator (2028), paragraph separator (2029)
+/// - And other Unicode space separators
+fn trim_js_whitespace(s: &str) -> &str {
+    fn is_js_whitespace(c: char) -> bool {
+        matches!(
+            c,
+            ' ' | '\t'
+                | '\n'
+                | '\r'
+                | '\x0B'
+                | '\x0C'
+                | '\u{00A0}'
+                | '\u{FEFF}'
+                | '\u{2028}'
+                | '\u{2029}'
+                | '\u{1680}'
+                | '\u{2000}'
+                | '\u{2001}'
+                | '\u{2002}'
+                | '\u{2003}'
+                | '\u{2004}'
+                | '\u{2005}'
+                | '\u{2006}'
+                | '\u{2007}'
+                | '\u{2008}'
+                | '\u{2009}'
+                | '\u{200A}'
+                | '\u{202F}'
+                | '\u{205F}'
+                | '\u{3000}'
+        )
+    }
+
+    s.trim_matches(is_js_whitespace)
+}
+
 use crate::ast::{ArrowFunctionBody, BlockStatement, Expression, FunctionParam, Pattern};
 use crate::error::JsError;
 use crate::gc::{Gc, GcPtr, Guard, Heap, Reset, Traceable};
@@ -240,7 +375,7 @@ impl JsValue {
             JsValue::Boolean(true) => 1.0,
             JsValue::Boolean(false) => 0.0,
             JsValue::Number(n) => *n,
-            JsValue::String(s) => s.parse::<f64>().unwrap_or(f64::NAN),
+            JsValue::String(s) => string_to_number(s.as_str()),
             JsValue::Symbol(_) => f64::NAN, // Cannot convert Symbol to number
             JsValue::Object(_) => {
                 // Would need ToPrimitive then ToNumber
