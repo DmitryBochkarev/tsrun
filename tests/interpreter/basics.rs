@@ -26,6 +26,42 @@ fn test_no_break_space_whitespace() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// Line Terminator Tests (U+2028 Line Separator, U+2029 Paragraph Separator)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_line_separator_u2028() {
+    // U+2028 (Line Separator) should be treated as a line terminator
+    // It should work like \n in expressions
+    assert_eq!(eval("1\u{2028}+\u{2028}2"), JsValue::Number(3.0));
+}
+
+#[test]
+fn test_paragraph_separator_u2029() {
+    // U+2029 (Paragraph Separator) should be treated as a line terminator
+    assert_eq!(eval("1\u{2029}+\u{2029}2"), JsValue::Number(3.0));
+}
+
+#[test]
+fn test_line_separator_in_statement() {
+    // U+2028 should act as line terminator for ASI
+    assert_eq!(eval("let x = 1\u{2028}x + 1"), JsValue::Number(2.0));
+}
+
+#[test]
+fn test_paragraph_separator_in_statement() {
+    // U+2029 should act as line terminator for ASI
+    assert_eq!(eval("let x = 1\u{2029}x + 1"), JsValue::Number(2.0));
+}
+
+#[test]
+fn test_line_terminators_in_multiline_comment() {
+    // U+2028/U+2029 inside multi-line comments should set saw_newline flag
+    assert_eq!(eval("1/*\u{2028}*/+2"), JsValue::Number(3.0));
+    assert_eq!(eval("1/*\u{2029}*/+2"), JsValue::Number(3.0));
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // Arithmetic Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 

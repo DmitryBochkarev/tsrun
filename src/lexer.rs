@@ -395,7 +395,8 @@ impl<'a> Lexer<'a> {
         if let Some((pos, ch)) = result {
             // Add base offset for absolute position (needed when chars is reset from middle of source)
             self.current_pos = self.chars_base_offset + pos + ch.len_utf8();
-            if ch == '\n' {
+            // ECMAScript line terminators: LF, LS (U+2028), PS (U+2029)
+            if ch == '\n' || ch == '\u{2028}' || ch == '\u{2029}' {
                 self.line += 1;
                 self.column = 1;
             } else {
@@ -449,7 +450,12 @@ impl<'a> Lexer<'a> {
                 Some(' ' | '\t' | '\r' | '\u{000B}' | '\u{000C}' | '\u{00A0}' | '\u{FEFF}') => {
                     self.advance();
                 }
-                Some('\n') => {
+                // ECMAScript line terminators:
+                // - \u000A (LF - line feed)
+                // - \u2028 (LS - line separator)
+                // - \u2029 (PS - paragraph separator)
+                // Note: \r (CR) is handled above as whitespace since it doesn't trigger ASI on its own
+                Some('\n' | '\u{2028}' | '\u{2029}') => {
                     self.saw_newline = true;
                     self.advance();
                 }
@@ -460,7 +466,8 @@ impl<'a> Lexer<'a> {
                         self.advance(); // /
                         self.advance(); // /
                         while let Some(ch) = self.peek() {
-                            if ch == '\n' {
+                            // ECMAScript line terminators end single-line comments
+                            if ch == '\n' || ch == '\u{2028}' || ch == '\u{2029}' {
                                 break;
                             }
                             self.advance();
@@ -480,7 +487,8 @@ impl<'a> Lexer<'a> {
                                     self.advance();
                                     depth += 1;
                                 }
-                                Some((_, '\n')) => {
+                                // ECMAScript line terminators: LF, LS (U+2028), PS (U+2029)
+                                Some((_, '\n' | '\u{2028}' | '\u{2029}')) => {
                                     self.saw_newline = true;
                                 }
                                 Some(_) => {}
