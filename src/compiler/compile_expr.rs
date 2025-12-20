@@ -322,7 +322,9 @@ impl Compiler {
                     UnaryOp::Void => Op::Void { dst, src },
                     UnaryOp::Delete => {
                         // Handled above, but need to return something for match completeness
-                        return Err(JsError::internal_error("Delete should be handled separately"));
+                        return Err(JsError::internal_error(
+                            "Delete should be handled separately",
+                        ));
                     }
                 };
                 self.builder.emit(op);
@@ -961,15 +963,270 @@ impl Compiler {
     }
 
     /// Compile optional chain expression
+    /// The optional chain wraps an expression that may contain ?. operators.
+    /// When any ?. encounters null/undefined, the whole chain short-circuits to undefined.
     fn compile_optional_chain(
         &mut self,
-        _opt: &crate::ast::OptionalChainExpression,
-        _dst: Register,
+        opt: &crate::ast::OptionalChainExpression,
+        dst: Register,
     ) -> Result<(), JsError> {
-        // TODO: Implement optional chaining
-        Err(JsError::syntax_error_simple(
-            "Optional chaining not yet supported in bytecode compiler",
-        ))
+        // Compile the base expression, collecting jump placeholders for short-circuits
+        // We use a stack to track all the short-circuit jumps
+        let short_circuit_jumps = self.compile_optional_chain_inner(&opt.base, dst)?;
+
+        // If there were any short-circuit jumps, patch them to jump to here
+        // and load undefined as the result
+        if !short_circuit_jumps.is_empty() {
+            // Jump over the "load undefined" block if we completed normally
+            let skip_undefined = self.builder.emit_jump();
+
+            // This is where all short-circuit jumps land
+            let short_circuit_target = self.builder.current_offset();
+            for jump in short_circuit_jumps {
+                self.builder
+                    .patch_jump_to(jump, short_circuit_target as super::bytecode::JumpTarget);
+            }
+
+            // Load undefined as the short-circuit result
+            self.builder.emit(Op::LoadUndefined { dst });
+
+            // Patch the skip jump to after the undefined load
+            self.builder.patch_jump(skip_undefined);
+        }
+
+        Ok(())
+    }
+
+    /// Recursively compile an optional chain expression, returning jump placeholders
+    /// for each short-circuit point (where ?. encounters null/undefined).
+    fn compile_optional_chain_inner(
+        &mut self,
+        expr: &Expression,
+        dst: Register,
+    ) -> Result<Vec<super::JumpPlaceholder>, JsError> {
+        match expr {
+            Expression::Member(member) => self.compile_member_expression_optional(member, dst),
+            Expression::Call(call) => self.compile_call_expression_optional(call, dst),
+            Expression::OptionalChain(inner) => {
+                // Nested optional chain - compile recursively
+                self.compile_optional_chain_inner(&inner.base, dst)
+            }
+            _ => {
+                // Not a member or call - just compile normally
+                self.compile_expression(expr, dst)?;
+                Ok(Vec::new())
+            }
+        }
+    }
+
+    /// Compile a member expression that may be optional, returning short-circuit jumps
+    fn compile_member_expression_optional(
+        &mut self,
+        member: &crate::ast::MemberExpression,
+        dst: Register,
+    ) -> Result<Vec<super::JumpPlaceholder>, JsError> {
+        let mut short_circuit_jumps = Vec::new();
+
+        // Handle super.x access (no optional chaining for super)
+        if matches!(member.object.as_ref(), Expression::Super(_)) {
+            // Delegate to regular member access for super
+            self.compile_member_expression(member, dst)?;
+            return Ok(short_circuit_jumps);
+        }
+
+        // Compile the object, recursively collecting short-circuit jumps
+        let obj_reg = self.builder.alloc_register()?;
+
+        // If the object is itself a member/call expression, handle it recursively
+        let inner_jumps = match member.object.as_ref() {
+            Expression::Member(inner_member) => {
+                self.compile_member_expression_optional(inner_member, obj_reg)?
+            }
+            Expression::Call(inner_call) => {
+                self.compile_call_expression_optional(inner_call, obj_reg)?
+            }
+            Expression::OptionalChain(inner_opt) => {
+                self.compile_optional_chain_inner(&inner_opt.base, obj_reg)?
+            }
+            _ => {
+                self.compile_expression(&member.object, obj_reg)?;
+                Vec::new()
+            }
+        };
+        short_circuit_jumps.extend(inner_jumps);
+
+        // If this is an optional member access (?.), check for null/undefined
+        if member.optional {
+            // If obj is nullish, short-circuit to the end
+            let jump = self.builder.emit_jump_if_nullish(obj_reg);
+            short_circuit_jumps.push(jump);
+        }
+
+        // Get the property
+        match &member.property {
+            MemberProperty::Identifier(id) => {
+                let key_idx = self.builder.add_string(id.name.cheap_clone())?;
+                self.builder.emit(Op::GetPropertyConst {
+                    dst,
+                    obj: obj_reg,
+                    key: key_idx,
+                });
+            }
+            MemberProperty::Expression(expr) => {
+                let key_reg = self.builder.alloc_register()?;
+                self.compile_expression(expr, key_reg)?;
+                self.builder.emit(Op::GetProperty {
+                    dst,
+                    obj: obj_reg,
+                    key: key_reg,
+                });
+                self.builder.free_register(key_reg);
+            }
+            MemberProperty::PrivateIdentifier(_) => {
+                return Err(JsError::syntax_error_simple(
+                    "Private fields not yet supported in bytecode compiler",
+                ));
+            }
+        }
+
+        self.builder.free_register(obj_reg);
+        Ok(short_circuit_jumps)
+    }
+
+    /// Compile a call expression that may be optional, returning short-circuit jumps
+    fn compile_call_expression_optional(
+        &mut self,
+        call: &crate::ast::CallExpression,
+        dst: Register,
+    ) -> Result<Vec<super::JumpPlaceholder>, JsError> {
+        let mut short_circuit_jumps = Vec::new();
+
+        // Check if this is a method call (obj.method() or obj?.method())
+        if let Expression::Member(member) = call.callee.as_ref() {
+            // Compile the object
+            let obj_reg = self.builder.alloc_register()?;
+
+            // Recursively handle nested optional chains in the object
+            let inner_jumps = match member.object.as_ref() {
+                Expression::Member(inner_member) => {
+                    self.compile_member_expression_optional(inner_member, obj_reg)?
+                }
+                Expression::Call(inner_call) => {
+                    self.compile_call_expression_optional(inner_call, obj_reg)?
+                }
+                Expression::OptionalChain(inner_opt) => {
+                    self.compile_optional_chain_inner(&inner_opt.base, obj_reg)?
+                }
+                _ => {
+                    self.compile_expression(&member.object, obj_reg)?;
+                    Vec::new()
+                }
+            };
+            short_circuit_jumps.extend(inner_jumps);
+
+            // If member access is optional (?.), check for null/undefined
+            if member.optional {
+                let jump = self.builder.emit_jump_if_nullish(obj_reg);
+                short_circuit_jumps.push(jump);
+            }
+
+            // Get the method
+            let method_reg = self.builder.alloc_register()?;
+            match &member.property {
+                MemberProperty::Identifier(id) => {
+                    let key_idx = self.builder.add_string(id.name.cheap_clone())?;
+                    self.builder.emit(Op::GetPropertyConst {
+                        dst: method_reg,
+                        obj: obj_reg,
+                        key: key_idx,
+                    });
+                }
+                MemberProperty::Expression(expr) => {
+                    let key_reg = self.builder.alloc_register()?;
+                    self.compile_expression(expr, key_reg)?;
+                    self.builder.emit(Op::GetProperty {
+                        dst: method_reg,
+                        obj: obj_reg,
+                        key: key_reg,
+                    });
+                    self.builder.free_register(key_reg);
+                }
+                MemberProperty::PrivateIdentifier(_) => {
+                    return Err(JsError::syntax_error_simple(
+                        "Private fields not yet supported in bytecode compiler",
+                    ));
+                }
+            }
+
+            // If call is optional (?.()), check if method is callable
+            if call.optional {
+                let jump = self.builder.emit_jump_if_nullish(method_reg);
+                short_circuit_jumps.push(jump);
+            }
+
+            // Compile arguments
+            let (args_start, argc) = self.compile_arguments(&call.arguments)?;
+
+            // Call the method
+            self.builder.emit(Op::Call {
+                dst,
+                callee: method_reg,
+                this: obj_reg,
+                args_start,
+                argc,
+            });
+
+            self.builder.free_register(method_reg);
+            self.builder.free_register(obj_reg);
+        } else {
+            // Regular call (not method call)
+            let callee_reg = self.builder.alloc_register()?;
+
+            // Handle nested optional chains in callee
+            let inner_jumps = match call.callee.as_ref() {
+                Expression::Member(inner_member) => {
+                    self.compile_member_expression_optional(inner_member, callee_reg)?
+                }
+                Expression::Call(inner_call) => {
+                    self.compile_call_expression_optional(inner_call, callee_reg)?
+                }
+                Expression::OptionalChain(inner_opt) => {
+                    self.compile_optional_chain_inner(&inner_opt.base, callee_reg)?
+                }
+                _ => {
+                    self.compile_expression(&call.callee, callee_reg)?;
+                    Vec::new()
+                }
+            };
+            short_circuit_jumps.extend(inner_jumps);
+
+            // If call is optional (?.()), check if callee is callable
+            if call.optional {
+                let jump = self.builder.emit_jump_if_nullish(callee_reg);
+                short_circuit_jumps.push(jump);
+            }
+
+            // Compile arguments
+            let (args_start, argc) = self.compile_arguments(&call.arguments)?;
+
+            // this is undefined for regular calls
+            let this_reg = self.builder.alloc_register()?;
+            self.builder.emit(Op::LoadUndefined { dst: this_reg });
+
+            // Call
+            self.builder.emit(Op::Call {
+                dst,
+                callee: callee_reg,
+                this: this_reg,
+                args_start,
+                argc,
+            });
+
+            self.builder.free_register(this_reg);
+            self.builder.free_register(callee_reg);
+        }
+
+        Ok(short_circuit_jumps)
     }
 
     /// Compile a call expression

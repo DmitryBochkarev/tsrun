@@ -1919,3 +1919,135 @@ fn test_bytecode_class_getter_setter() {
     );
     assert_eq!(result, JsValue::Number(20.0));
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Optional Chaining Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_bytecode_optional_chain_property() {
+    // Access property on object
+    assert_eq!(
+        eval_bytecode(
+            r#"
+            const obj = { a: 42 };
+            obj?.a
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+#[test]
+fn test_bytecode_optional_chain_null() {
+    // Access property on null returns undefined
+    assert_eq!(
+        eval_bytecode(
+            r#"
+            const obj: { a?: number } | null = null;
+            obj?.a
+        "#
+        ),
+        JsValue::Undefined
+    );
+}
+
+#[test]
+fn test_bytecode_optional_chain_undefined() {
+    // Access property on undefined returns undefined
+    assert_eq!(
+        eval_bytecode(
+            r#"
+            let obj: { a?: number } | undefined;
+            obj?.a
+        "#
+        ),
+        JsValue::Undefined
+    );
+}
+
+#[test]
+fn test_bytecode_optional_chain_nested() {
+    // Nested optional chaining
+    assert_eq!(
+        eval_bytecode(
+            r#"
+            const obj = { a: { b: { c: 100 } } };
+            obj?.a?.b?.c
+        "#
+        ),
+        JsValue::Number(100.0)
+    );
+}
+
+#[test]
+fn test_bytecode_optional_chain_nested_null() {
+    // Nested optional chaining with null in the middle
+    assert_eq!(
+        eval_bytecode(
+            r#"
+            const obj = { a: null };
+            obj?.a?.b?.c
+        "#
+        ),
+        JsValue::Undefined
+    );
+}
+
+#[test]
+fn test_bytecode_optional_chain_call() {
+    // Optional call
+    assert_eq!(
+        eval_bytecode(
+            r#"
+            const obj = { fn: () => 42 };
+            obj.fn?.()
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+#[test]
+fn test_bytecode_optional_chain_call_undefined() {
+    // Optional call on undefined function
+    assert_eq!(
+        eval_bytecode(
+            r#"
+            const obj: { fn?: () => number } = {};
+            obj.fn?.()
+        "#
+        ),
+        JsValue::Undefined
+    );
+}
+
+#[test]
+fn test_bytecode_optional_chain_computed() {
+    // Optional chaining with computed property
+    assert_eq!(
+        eval_bytecode(
+            r#"
+            const obj = { a: 42 };
+            const key = 'a';
+            obj?.[key]
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+#[test]
+fn test_bytecode_optional_chain_computed_null() {
+    // Optional chaining with computed property on null
+    assert_eq!(
+        eval_bytecode(
+            r#"
+            const obj: { [key: string]: number } | null = null;
+            const key = 'a';
+            obj?.[key]
+        "#
+        ),
+        JsValue::Undefined
+    );
+}
