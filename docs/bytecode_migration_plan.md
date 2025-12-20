@@ -2,11 +2,11 @@
 
 ## Overview
 
-Migrate the TypeScript interpreter from AST-based frame interpretation to bytecode-based execution for improved performance, bytecode caching, and debugging support.
+Migrate the TypeScript interpreter from AST-based frame interpretation to bytecode-based execution for improved performance.
 
 **Current state**: The interpreter already uses a stack-based execution model (`src/interpreter/stack.rs`) with `Frame` enum variants representing pending operations. This provides an excellent foundation for bytecode migration.
 
-**Goals**: Performance improvement, bytecode serialization/caching, source map debugging support.
+**Goals**: Performance improvement, cleaner execution model.
 
 **Strategy**: Incremental migration with feature flag, keeping both implementations during transition.
 
@@ -330,53 +330,20 @@ USE_BYTECODE=1 ./target/release/test262-runner --strict-only language/
 
 ---
 
-## Phase 5: Serialization & Caching
+## Phase 5: Cleanup
 
-### 5.1 Binary format
-
-**File**: `src/compiler/serialize.rs`
-
-```rust
-const BYTECODE_MAGIC: [u8; 4] = *b"TSBC";
-const BYTECODE_VERSION: u32 = 1;
-
-pub fn serialize_chunk(chunk: &BytecodeChunk) -> Vec<u8>;
-pub fn deserialize_chunk(data: &[u8]) -> Result<BytecodeChunk, JsError>;
-```
-
-### 5.2 Cache integration
-
-```rust
-impl Runtime {
-    pub fn load_module(&mut self, path: &str, source: &str) -> Result<(), JsError> {
-        let cache_path = format!("{}.tsc", path);
-
-        // Try loading cached bytecode
-        if let Ok(cached) = std::fs::read(&cache_path) {
-            if let Ok(chunk) = deserialize_chunk(&cached) {
-                return self.execute_chunk(chunk);
-            }
-        }
-
-        // Compile and cache
-        let chunk = Compiler::compile_program(&program, &mut self.string_dict)?;
-        let _ = std::fs::write(&cache_path, serialize_chunk(&chunk));
-        self.execute_chunk(chunk)
-    }
-}
-```
-
----
-
-## Phase 6: Cleanup
-
-### 6.1 Remove frame-based execution
+### 5.1 Remove frame-based execution
 
 Once bytecode is stable and passes all tests:
-1. Remove `src/interpreter/stack.rs`
-2. Remove `Frame` enum
-3. Remove `use_bytecode` flag
-4. Update documentation
+1. Remove `src/interpreter/stack.rs` - Frame-based execution stack
+2. Remove `Frame` enum from `src/interpreter/mod.rs`
+3. Remove AST interpreter logic from `src/interpreter/mod.rs`:
+   - `evaluate_expression()` and all `evaluate_*` methods
+   - `execute_statement()` and all `execute_*` methods
+   - `step_expr()`, `step_stmt()` and related frame-stepping logic
+   - Keep only: builtins, GC, environment management, `call_function` (delegates to bytecode)
+4. Remove `use_bytecode` flag - bytecode becomes the only execution path
+5. Update documentation
 
 ---
 
@@ -404,12 +371,11 @@ Once bytecode is stable and passes all tests:
 | `src/compiler/compile_expr.rs` | **NEW** - Expression compilation |
 | `src/compiler/compile_stmt.rs` | **NEW** - Statement compilation |
 | `src/compiler/compile_pattern.rs` | **NEW** - Pattern compilation |
-| `src/compiler/serialize.rs` | **NEW** - Bytecode serialization |
 | `src/interpreter/bytecode_vm.rs` | **NEW** - VM execution loop |
-| `src/interpreter/mod.rs` | **MODIFY** - Add bytecode flag, integrate VM |
+| `src/interpreter/mod.rs` | **MODIFY then CLEANUP** - Add bytecode flag, then remove AST interpreter |
 | `src/lib.rs` | **MODIFY** - Add compile API |
 | `src/ast.rs` | READ-ONLY - Compilation source |
-| `src/interpreter/stack.rs` | DELETE (Phase 6) - Frame-based execution |
+| `src/interpreter/stack.rs` | **DELETE (Phase 5)** - Frame-based execution |
 | `src/value.rs` | READ-ONLY - Runtime values (reused) |
 | `src/gc.rs` | READ-ONLY - GC system (reused) |
 
