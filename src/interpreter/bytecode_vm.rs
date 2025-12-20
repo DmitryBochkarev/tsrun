@@ -1497,12 +1497,29 @@ impl BytecodeVM {
                 Ok(OpResult::Continue)
             }
 
-            Op::CreateAsyncGenerator { dst, chunk_idx: _ } => {
-                // Stub: async generator requires more complex handling
-                self.set_reg(dst, JsValue::Undefined);
-                Err(JsError::internal_error(
-                    "Async generator creation in bytecode VM not yet implemented",
-                ))
+            Op::CreateAsyncGenerator { dst, chunk_idx } => {
+                // Get the async generator function bytecode chunk from constants
+                let chunk = match self.get_constant(chunk_idx) {
+                    Some(Constant::Chunk(c)) => c.clone(),
+                    _ => {
+                        return Err(JsError::internal_error(
+                            "Invalid async generator chunk index",
+                        ))
+                    }
+                };
+
+                // Create a BytecodeAsyncGenerator function with the current environment as closure
+                let bc_func = BytecodeFunction {
+                    chunk,
+                    closure: interp.env.cheap_clone(),
+                    captured_this: None,
+                };
+
+                // Create function object with the BytecodeAsyncGenerator variant
+                let guard = interp.heap.create_guard();
+                let func_obj = interp.create_bytecode_async_generator_function(&guard, bc_func);
+                self.set_reg(dst, JsValue::Object(func_obj));
+                Ok(OpResult::Continue)
             }
 
             // ═══════════════════════════════════════════════════════════════════════════

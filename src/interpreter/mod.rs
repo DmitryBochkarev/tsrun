@@ -1563,6 +1563,22 @@ impl Interpreter {
         func_obj
     }
 
+    /// Create a bytecode async generator function object.
+    /// Caller provides the guard to control object lifetime.
+    pub fn create_bytecode_async_generator_function(
+        &mut self,
+        guard: &Guard<JsObject>,
+        bc_func: BytecodeFunction,
+    ) -> Gc<JsObject> {
+        let func_obj = guard.alloc();
+        {
+            let mut f_ref = func_obj.borrow_mut();
+            f_ref.prototype = Some(self.function_prototype.clone());
+            f_ref.exotic = ExoticObject::Function(JsFunction::BytecodeAsyncGenerator(bc_func));
+        }
+        func_obj
+    }
+
     // ═══════════════════════════════════════════════════════════════════════════
     // Builtin Helper Methods
     // ═══════════════════════════════════════════════════════════════════════════
@@ -6563,6 +6579,11 @@ impl Interpreter {
                 self.call_bytecode_async_function(bc_func, this_value, args)
             }
 
+            JsFunction::BytecodeAsyncGenerator(bc_func) => {
+                // Create a new bytecode async generator object
+                self.create_and_call_bytecode_async_generator(bc_func, args)
+            }
+
             JsFunction::Bound(bound) => {
                 // Call bound function: use bound this and prepend bound args
                 let mut full_args = bound.bound_args.clone();
@@ -6862,9 +6883,48 @@ impl Interpreter {
             func_env: None,           // Will be created on first call to next()
             current_env: None,        // Will be saved at each yield point
             delegated_iterator: None, // For yield* delegation
+            is_async: false,          // Regular generator, not async
         };
 
         // Create the generator object
+        let gen_obj = builtins::generator::create_bytecode_generator_object(self, state);
+
+        Ok(Guarded::unguarded(JsValue::Object(gen_obj)))
+    }
+
+    /// Create a bytecode async generator object when an async generator function is called
+    fn create_and_call_bytecode_async_generator(
+        &mut self,
+        bc_func: BytecodeFunction,
+        args: &[JsValue],
+    ) -> Result<Guarded, JsError> {
+        use crate::value::{BytecodeGeneratorState, GeneratorStatus};
+
+        // Generate a unique ID for this generator
+        let gen_id = self.next_generator_id;
+        self.next_generator_id = self.next_generator_id.wrapping_add(1);
+
+        // Create the generator state with arguments (same as regular generator but with is_async=true)
+        let state = BytecodeGeneratorState {
+            chunk: bc_func.chunk,
+            closure: bc_func.closure,
+            args: args.to_vec(),
+            status: GeneratorStatus::Suspended,
+            sent_value: JsValue::Undefined,
+            id: gen_id,
+            started: false,
+            saved_ip: 0,
+            saved_registers: Vec::new(),
+            saved_call_stack: Vec::new(),
+            saved_try_stack: Vec::new(),
+            yield_result_register: None,
+            func_env: None,           // Will be created on first call to next()
+            current_env: None,        // Will be saved at each yield point
+            delegated_iterator: None, // For yield* delegation
+            is_async: true,           // Async generator - next() returns Promise
+        };
+
+        // Create the generator object (uses same object type, behavior differs based on is_async)
         let gen_obj = builtins::generator::create_bytecode_generator_object(self, state);
 
         Ok(Guarded::unguarded(JsValue::Object(gen_obj)))

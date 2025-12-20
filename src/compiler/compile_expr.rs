@@ -1767,7 +1767,10 @@ impl Compiler {
             .add_constant(super::bytecode::Constant::Chunk(std::rc::Rc::new(chunk)))?;
 
         // Emit the appropriate closure creation opcode
-        if func.generator {
+        if func.generator && func.async_ {
+            self.builder
+                .emit(Op::CreateAsyncGenerator { dst, chunk_idx });
+        } else if func.generator {
             self.builder.emit(Op::CreateGenerator { dst, chunk_idx });
         } else if func.async_ {
             self.builder.emit(Op::CreateAsync { dst, chunk_idx });

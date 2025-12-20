@@ -845,7 +845,8 @@ impl Traceable for JsObject {
                     }
                     JsFunction::Bytecode(bc)
                     | JsFunction::BytecodeGenerator(bc)
-                    | JsFunction::BytecodeAsync(bc) => {
+                    | JsFunction::BytecodeAsync(bc)
+                    | JsFunction::BytecodeAsyncGenerator(bc) => {
                         // Trace the closure environment
                         visitor(bc.closure.copy_ref());
                         // Trace captured this (for arrow functions)
@@ -2404,6 +2405,8 @@ pub struct BytecodeGeneratorState {
     pub current_env: Option<JsObjectRef>,
     /// Delegated iterator for yield* (iterator object and its next method)
     pub delegated_iterator: Option<(JsObjectRef, JsValue)>,
+    /// Whether this is an async generator (next() returns Promise)
+    pub is_async: bool,
 }
 
 impl std::fmt::Debug for BytecodeGeneratorState {
@@ -2428,6 +2431,8 @@ pub enum JsFunction {
     BytecodeGenerator(BytecodeFunction),
     /// Bytecode async function (returns Promise when called)
     BytecodeAsync(BytecodeFunction),
+    /// Bytecode async generator function (creates async generator when called)
+    BytecodeAsyncGenerator(BytecodeFunction),
     /// Native Rust function
     Native(NativeFunction),
     /// Bound function (created by Function.prototype.bind)
@@ -2496,7 +2501,8 @@ impl JsFunction {
             JsFunction::Interpreted(f) => f.name.as_ref().map(|s| s.as_str()),
             JsFunction::Bytecode(f)
             | JsFunction::BytecodeGenerator(f)
-            | JsFunction::BytecodeAsync(f) => f
+            | JsFunction::BytecodeAsync(f)
+            | JsFunction::BytecodeAsyncGenerator(f) => f
                 .chunk
                 .function_info
                 .as_ref()

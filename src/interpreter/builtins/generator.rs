@@ -133,13 +133,19 @@ pub fn generator_next(
         }
         ExoticObject::BytecodeGenerator(state) => {
             let gen_state = state.clone();
+            let is_async = gen_state.borrow().is_async;
             drop(obj_ref); // Release borrow before calling resume_bytecode_generator
 
             // Check if generator is already completed
             {
                 let state = gen_state.borrow();
                 if state.status == GeneratorStatus::Completed {
-                    return Ok(create_generator_result(interp, JsValue::Undefined, true));
+                    let result = create_generator_result(interp, JsValue::Undefined, true);
+                    return if is_async {
+                        wrap_in_fulfilled_promise(interp, result)
+                    } else {
+                        Ok(result)
+                    };
                 }
             }
 
@@ -165,10 +171,20 @@ pub fn generator_next(
                     // Clear delegation and resume outer generator with the return value
                     gen_state.borrow_mut().delegated_iterator = None;
                     gen_state.borrow_mut().sent_value = value;
-                    interp.resume_bytecode_generator(&gen_state)
+                    let result = interp.resume_bytecode_generator(&gen_state)?;
+                    if is_async {
+                        wrap_in_fulfilled_promise(interp, result)
+                    } else {
+                        Ok(result)
+                    }
                 } else {
                     // Yield the delegated value
-                    Ok(create_generator_result(interp, value, false))
+                    let result = create_generator_result(interp, value, false);
+                    if is_async {
+                        wrap_in_fulfilled_promise(interp, result)
+                    } else {
+                        Ok(result)
+                    }
                 }
             } else {
                 // Set the sent value
@@ -178,7 +194,12 @@ pub fn generator_next(
                 }
 
                 // Resume the bytecode generator
-                interp.resume_bytecode_generator(&gen_state)
+                let result = interp.resume_bytecode_generator(&gen_state)?;
+                if is_async {
+                    wrap_in_fulfilled_promise(interp, result)
+                } else {
+                    Ok(result)
+                }
             }
         }
         _ => Err(JsError::type_error(
@@ -217,9 +238,15 @@ pub fn generator_return(
             Ok(create_generator_result(interp, value, true))
         }
         ExoticObject::BytecodeGenerator(state) => {
+            let is_async = state.borrow().is_async;
             state.borrow_mut().status = GeneratorStatus::Completed;
             drop(obj_ref);
-            Ok(create_generator_result(interp, value, true))
+            let result = create_generator_result(interp, value, true);
+            if is_async {
+                wrap_in_fulfilled_promise(interp, result)
+            } else {
+                Ok(result)
+            }
         }
         _ => Err(JsError::type_error(
             "Generator.prototype.return called on non-generator",
@@ -306,4 +333,22 @@ pub fn create_bytecode_generator_object(
         o.prototype = Some(interp.generator_prototype.clone());
     }
     obj
+}
+
+/// Wrap a generator result (Guarded) in a fulfilled Promise.
+/// Used by async generators to return Promise<{value, done}>.
+fn wrap_in_fulfilled_promise(
+    interp: &mut Interpreter,
+    result: Guarded,
+) -> Result<Guarded, JsError> {
+    use super::promise::create_fulfilled_promise;
+
+    let guard = interp.heap.create_guard();
+    // Guard the result value before allocating the promise
+    if let JsValue::Object(ref obj) = result.value {
+        guard.guard(obj.cheap_clone());
+    }
+
+    let promise = create_fulfilled_promise(interp, &guard, result.value);
+    Ok(Guarded::with_guard(JsValue::Object(promise), guard))
 }

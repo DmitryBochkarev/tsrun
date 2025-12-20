@@ -2709,3 +2709,163 @@ fn test_bytecode_unlabeled_break_with_label() {
     // i=1: j=0 (1), j=1 breaks inner
     assert_eq!(result, JsValue::Number(2.0));
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Async Generators
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_bytecode_async_generator_basic() {
+    // Test that async generator function can be created and called
+    let result = eval_bytecode(
+        r#"
+        async function* gen(): AsyncGenerator<number> {
+            yield 1;
+            yield 2;
+            yield 3;
+        }
+        let g = gen();
+        let r = g.next();
+        // Check it's a promise
+        typeof r.then === 'function'
+    "#,
+    );
+    assert_eq!(result, JsValue::Boolean(true));
+}
+
+#[test]
+fn test_bytecode_async_generator_next_returns_promise() {
+    // Verify next() returns a Promise that resolves to {value, done}
+    let result = eval_bytecode(
+        r#"
+        async function* gen(): AsyncGenerator<number> {
+            yield 42;
+        }
+        let g = gen();
+        let promise = g.next();
+        let resolved: {value: number, done: boolean} | null = null;
+        promise.then((r: {value: number, done: boolean}) => {
+            resolved = r;
+        });
+        // After promise resolution, check the result
+        resolved !== null && resolved.value === 42 && resolved.done === false
+    "#,
+    );
+    assert_eq!(result, JsValue::Boolean(true));
+}
+
+#[test]
+fn test_bytecode_async_generator_done() {
+    // Test that done is true after generator completes
+    let result = eval_bytecode(
+        r#"
+        async function* gen(): AsyncGenerator<number> {
+            yield 1;
+        }
+        let g = gen();
+        let firstDone: boolean = false;
+        let secondDone: boolean = false;
+
+        g.next().then((r: {done: boolean}) => { firstDone = r.done; });
+        g.next().then((r: {done: boolean}) => { secondDone = r.done; });
+
+        firstDone === false && secondDone === true
+    "#,
+    );
+    assert_eq!(result, JsValue::Boolean(true));
+}
+
+#[test]
+fn test_bytecode_async_generator_return() {
+    // Test that return() returns a fulfilled Promise
+    let result = eval_bytecode(
+        r#"
+        async function* gen(): AsyncGenerator<number> {
+            yield 1;
+            yield 2;
+        }
+        let g = gen();
+        let returnValue: number = 0;
+        let returnDone: boolean = false;
+
+        g.return(99).then((r: {value: number, done: boolean}) => {
+            returnValue = r.value;
+            returnDone = r.done;
+        });
+
+        returnValue === 99 && returnDone === true
+    "#,
+    );
+    assert_eq!(result, JsValue::Boolean(true));
+}
+
+#[test]
+fn test_bytecode_async_generator_has_async_iterator() {
+    // Async generators should have Symbol.asyncIterator
+    let result = eval_bytecode(
+        r#"
+        async function* gen(): AsyncGenerator<number> {
+            yield 1;
+        }
+        let g = gen();
+        typeof g[Symbol.asyncIterator] === 'function'
+    "#,
+    );
+    assert_eq!(result, JsValue::Boolean(true));
+}
+
+#[test]
+fn test_bytecode_async_generator_async_iterator_method() {
+    // Check that [Symbol.asyncIterator] is a function
+    let result = eval_bytecode(
+        r#"
+        async function* gen(): AsyncGenerator<number> {
+            yield 42;
+        }
+        let g = gen();
+        // Get the method and check it's a function
+        typeof g[Symbol.asyncIterator]
+    "#,
+    );
+    assert_eq!(result, JsValue::String("function".into()));
+}
+
+#[test]
+fn test_bytecode_async_generator_expression() {
+    // Test async generator as an expression
+    let result = eval_bytecode(
+        r#"
+        let gen = async function*(): AsyncGenerator<number> {
+            yield 100;
+        };
+        let g = gen();
+        let val: number = 0;
+        g.next().then((r: {value: number}) => { val = r.value; });
+        val
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(100.0));
+}
+
+#[test]
+fn test_bytecode_async_generator_multiple_yields() {
+    // Test multiple yields with values accumulating
+    let result = eval_bytecode(
+        r#"
+        async function* counter(): AsyncGenerator<number> {
+            yield 1;
+            yield 2;
+            yield 3;
+        }
+        let g = counter();
+        let sum: number = 0;
+
+        g.next().then((r: {value: number, done: boolean}) => { if (!r.done) sum += r.value; });
+        g.next().then((r: {value: number, done: boolean}) => { if (!r.done) sum += r.value; });
+        g.next().then((r: {value: number, done: boolean}) => { if (!r.done) sum += r.value; });
+
+        sum
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(6.0));
+}
