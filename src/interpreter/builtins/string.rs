@@ -119,10 +119,18 @@ pub fn create_string_constructor(interp: &mut Interpreter) -> JsObjectRef {
     interp.register_method(&constructor, "fromCharCode", string_from_char_code, 1);
     interp.register_method(&constructor, "fromCodePoint", string_from_code_point, 1);
 
+    // Set constructor.prototype = String.prototype
     let proto_key = PropertyKey::String(interp.intern("prototype"));
     constructor
         .borrow_mut()
         .set_property(proto_key, JsValue::Object(interp.string_prototype.clone()));
+
+    // Set String.prototype.constructor = String
+    let constructor_key = PropertyKey::String(interp.intern("constructor"));
+    interp
+        .string_prototype
+        .borrow_mut()
+        .set_property(constructor_key, JsValue::Object(constructor.clone()));
 
     constructor
 }

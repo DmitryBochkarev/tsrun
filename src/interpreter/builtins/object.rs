@@ -88,6 +88,19 @@ pub fn create_object_constructor(interp: &mut Interpreter) -> JsObjectRef {
     interp.register_method(&constructor, "getPrototypeOf", object_get_prototype_of, 1);
     interp.register_method(&constructor, "setPrototypeOf", object_set_prototype_of, 2);
 
+    // Set constructor.prototype = Object.prototype
+    let proto_key = PropertyKey::String(interp.intern("prototype"));
+    constructor
+        .borrow_mut()
+        .set_property(proto_key, JsValue::Object(interp.object_prototype.clone()));
+
+    // Set Object.prototype.constructor = Object
+    let constructor_key = PropertyKey::String(interp.intern("constructor"));
+    interp
+        .object_prototype
+        .borrow_mut()
+        .set_property(constructor_key, JsValue::Object(constructor.clone()));
+
     constructor
 }
 

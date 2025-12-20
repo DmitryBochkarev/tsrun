@@ -17,10 +17,18 @@ pub fn init_regexp_prototype(interp: &mut Interpreter) {
 pub fn create_regexp_constructor(interp: &mut Interpreter) -> Gc<JsObject> {
     let constructor = interp.create_native_function("RegExp", regexp_constructor, 2);
 
+    // Set constructor.prototype = RegExp.prototype
     let proto_key = PropertyKey::String(interp.intern("prototype"));
     constructor
         .borrow_mut()
         .set_property(proto_key, JsValue::Object(interp.regexp_prototype.clone()));
+
+    // Set RegExp.prototype.constructor = RegExp
+    let constructor_key = PropertyKey::String(interp.intern("constructor"));
+    interp
+        .regexp_prototype
+        .borrow_mut()
+        .set_property(constructor_key, JsValue::Object(constructor.clone()));
 
     constructor
 }

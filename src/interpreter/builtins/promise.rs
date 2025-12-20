@@ -26,9 +26,17 @@ pub fn init_promise_prototype(interp: &mut Interpreter) {
 pub fn create_promise_constructor(interp: &mut Interpreter) -> Gc<JsObject> {
     let ctor = interp.create_native_function("Promise", promise_constructor, 1);
 
+    // Set constructor.prototype = Promise.prototype
     let proto_key = PropertyKey::String(interp.intern("prototype"));
     ctor.borrow_mut()
         .set_property(proto_key, JsValue::Object(interp.promise_prototype.clone()));
+
+    // Set Promise.prototype.constructor = Promise
+    let constructor_key = PropertyKey::String(interp.intern("constructor"));
+    interp
+        .promise_prototype
+        .borrow_mut()
+        .set_property(constructor_key, JsValue::Object(ctor.clone()));
 
     // Static methods
     interp.register_method(&ctor, "resolve", promise_resolve_static, 1);

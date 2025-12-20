@@ -26,11 +26,18 @@ pub fn init_map(interp: &mut Interpreter) {
     let constructor = interp.create_native_function("Map", map_constructor, 0);
     interp.root_guard.guard(constructor.clone());
 
-    // Set prototype property on constructor
+    // Set constructor.prototype = Map.prototype
     let proto_key = PropertyKey::String(interp.intern("prototype"));
     constructor
         .borrow_mut()
         .set_property(proto_key, JsValue::Object(interp.map_prototype.clone()));
+
+    // Set Map.prototype.constructor = Map
+    let constructor_key = PropertyKey::String(interp.intern("constructor"));
+    interp
+        .map_prototype
+        .borrow_mut()
+        .set_property(constructor_key, JsValue::Object(constructor.clone()));
 
     // Register globally
     let map_key = PropertyKey::String(interp.intern("Map"));

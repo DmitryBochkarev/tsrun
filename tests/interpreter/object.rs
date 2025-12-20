@@ -712,3 +712,119 @@ fn test_object_literal_getter_setter_pair() {
         JsValue::Number(5.0)
     );
 }
+
+// =============================================================================
+// Constructor Property Tests
+// =============================================================================
+
+#[test]
+fn test_object_constructor_property() {
+    // new Object().constructor should be Object
+    assert_eq!(
+        eval("(new Object()).constructor === Object"),
+        JsValue::Boolean(true)
+    );
+    // Object literal's constructor should be Object
+    assert_eq!(eval("({}).constructor === Object"), JsValue::Boolean(true));
+}
+
+#[test]
+fn test_array_constructor_property() {
+    // new Array().constructor should be Array
+    assert_eq!(
+        eval("(new Array()).constructor === Array"),
+        JsValue::Boolean(true)
+    );
+    // Array literal's constructor should be Array
+    assert_eq!(eval("([]).constructor === Array"), JsValue::Boolean(true));
+}
+
+#[test]
+fn test_function_constructor_property() {
+    // Function's constructor should be Function
+    assert_eq!(
+        eval("(function() {}).constructor === Function"),
+        JsValue::Boolean(true)
+    );
+    // Arrow function's constructor should be Function
+    assert_eq!(
+        eval("(() => {}).constructor === Function"),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_string_constructor_property() {
+    // String wrapper object's constructor should be String
+    assert_eq!(
+        eval("(new String('test')).constructor === String"),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_number_constructor_property() {
+    // Number wrapper object's constructor should be Number
+    assert_eq!(
+        eval("(new Number(42)).constructor === Number"),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_boolean_constructor_property() {
+    // Boolean wrapper object's constructor should be Boolean
+    assert_eq!(
+        eval("(new Boolean(true)).constructor === Boolean"),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_regexp_constructor_property() {
+    // RegExp's constructor should be RegExp
+    assert_eq!(
+        eval("(/test/).constructor === RegExp"),
+        JsValue::Boolean(true)
+    );
+    assert_eq!(
+        eval("(new RegExp('test')).constructor === RegExp"),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_map_constructor_property() {
+    // Map's constructor should be Map
+    assert_eq!(
+        eval("(new Map()).constructor === Map"),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_set_constructor_property() {
+    // Set's constructor should be Set
+    assert_eq!(
+        eval("(new Set()).constructor === Set"),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_date_constructor_property() {
+    // Date's constructor should be Date
+    assert_eq!(
+        eval("(new Date()).constructor === Date"),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_promise_constructor_property() {
+    // Promise's constructor should be Promise
+    assert_eq!(
+        eval("(new Promise(() => {})).constructor === Promise"),
+        JsValue::Boolean(true)
+    );
+}

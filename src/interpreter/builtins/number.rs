@@ -123,10 +123,18 @@ pub fn create_number_constructor(interp: &mut Interpreter) -> Gc<JsObject> {
         c.set_property(epsilon_key, JsValue::Number(f64::EPSILON));
     }
 
+    // Set constructor.prototype = Number.prototype
     let proto_key = PropertyKey::String(interp.intern("prototype"));
     constructor
         .borrow_mut()
         .set_property(proto_key, JsValue::Object(interp.number_prototype.clone()));
+
+    // Set Number.prototype.constructor = Number
+    let constructor_key = PropertyKey::String(interp.intern("constructor"));
+    interp
+        .number_prototype
+        .borrow_mut()
+        .set_property(constructor_key, JsValue::Object(constructor.clone()));
 
     constructor
 }

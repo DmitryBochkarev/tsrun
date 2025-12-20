@@ -139,11 +139,18 @@ pub fn init_date(interp: &mut Interpreter) {
     interp.register_method(&constructor, "UTC", date_utc, 7);
     interp.register_method(&constructor, "parse", date_parse, 1);
 
-    // Set prototype property on constructor
+    // Set constructor.prototype = Date.prototype
     let proto_key = PropertyKey::String(interp.intern("prototype"));
     constructor
         .borrow_mut()
         .set_property(proto_key, JsValue::Object(interp.date_prototype.clone()));
+
+    // Set Date.prototype.constructor = Date
+    let constructor_key = PropertyKey::String(interp.intern("constructor"));
+    interp
+        .date_prototype
+        .borrow_mut()
+        .set_property(constructor_key, JsValue::Object(constructor.clone()));
 
     // Register globally
     let date_key = PropertyKey::String(interp.intern("Date"));

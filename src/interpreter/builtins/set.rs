@@ -26,11 +26,18 @@ pub fn init_set(interp: &mut Interpreter) {
     let constructor = interp.create_native_function("Set", set_constructor, 0);
     interp.root_guard.guard(constructor.clone());
 
-    // Set prototype property on constructor
+    // Set constructor.prototype = Set.prototype
     let proto_key = PropertyKey::String(interp.intern("prototype"));
     constructor
         .borrow_mut()
         .set_property(proto_key, JsValue::Object(interp.set_prototype.clone()));
+
+    // Set Set.prototype.constructor = Set
+    let constructor_key = PropertyKey::String(interp.intern("constructor"));
+    interp
+        .set_prototype
+        .borrow_mut()
+        .set_property(constructor_key, JsValue::Object(constructor.clone()));
 
     // Register globally
     let set_key = PropertyKey::String(interp.intern("Set"));

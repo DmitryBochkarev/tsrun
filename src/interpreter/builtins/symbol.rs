@@ -208,6 +208,13 @@ pub fn init_symbol(interp: &mut Interpreter) {
         );
     }
 
+    // Set Symbol.prototype.constructor = Symbol
+    let constructor_key = PropertyKey::String(interp.intern("constructor"));
+    interp
+        .symbol_prototype
+        .borrow_mut()
+        .set_property(constructor_key, JsValue::Object(symbol_fn.clone()));
+
     // Register globally
     let symbol_key = PropertyKey::String(interp.intern("Symbol"));
     interp
