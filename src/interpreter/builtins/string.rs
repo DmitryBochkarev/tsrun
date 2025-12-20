@@ -185,9 +185,22 @@ pub fn string_char_at(
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
     let s = this.to_js_string();
-    let index = args.first().map(|v| v.to_number() as usize).unwrap_or(0);
+    // ToInteger: convert to number, then truncate towards zero
+    let index_num = args.first().map(|v| v.to_number()).unwrap_or(0.0);
 
-    if let Some(ch) = s.as_str().chars().nth(index) {
+    // Handle NaN -> 0, otherwise truncate
+    let index = if index_num.is_nan() {
+        0i64
+    } else {
+        index_num.trunc() as i64
+    };
+
+    // Negative or out of bounds -> empty string
+    if index < 0 || index as usize >= s.as_str().chars().count() {
+        return Ok(Guarded::unguarded(JsValue::String(JsString::from(""))));
+    }
+
+    if let Some(ch) = s.as_str().chars().nth(index as usize) {
         Ok(Guarded::unguarded(JsValue::String(JsString::from(
             ch.to_string(),
         ))))

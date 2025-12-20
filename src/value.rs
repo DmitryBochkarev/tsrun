@@ -195,7 +195,43 @@ impl JsValue {
                     None => JsString::from("Symbol()"),
                 }
             }
-            JsValue::Object(_) => JsString::from("[object Object]"),
+            JsValue::Object(obj) => {
+                // Check for wrapper objects that have primitive values
+                let borrowed = obj.borrow();
+                match &borrowed.exotic {
+                    ExoticObject::Number(n) => {
+                        // Number wrapper - convert the primitive to string
+                        JsValue::Number(*n).to_js_string()
+                    }
+                    ExoticObject::StringObj(s) => {
+                        // String wrapper - return the wrapped string
+                        s.clone()
+                    }
+                    ExoticObject::Boolean(b) => {
+                        // Boolean wrapper - convert the primitive to string
+                        if *b {
+                            JsString::from("true")
+                        } else {
+                            JsString::from("false")
+                        }
+                    }
+                    ExoticObject::Array { elements } => {
+                        // Array.prototype.toString joins elements with comma
+                        let strings: Vec<String> = elements
+                            .iter()
+                            .map(|v| {
+                                // null and undefined become empty strings in join
+                                match v {
+                                    JsValue::Null | JsValue::Undefined => String::new(),
+                                    _ => v.to_js_string().to_string(),
+                                }
+                            })
+                            .collect();
+                        JsString::from(strings.join(","))
+                    }
+                    _ => JsString::from("[object Object]"),
+                }
+            }
         }
     }
 

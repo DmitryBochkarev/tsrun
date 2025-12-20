@@ -696,3 +696,63 @@ fn test_string_wrapper_addition() {
         JsValue::String("foobar".into())
     );
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// charAt ToInteger coercion tests (Test262 conformance)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_charat_with_undefined_index() {
+    // ToInteger(undefined) === 0, so charAt(undefined) should be charAt(0)
+    assert_eq!(
+        eval(
+            r#"
+            let x: any;
+            "lego".charAt(x)
+        "#
+        ),
+        JsValue::String("l".into())
+    );
+}
+
+#[test]
+fn test_charat_with_boolean_index() {
+    // ToInteger(false) === 0, ToInteger(true) === 1
+    assert_eq!(
+        eval(r#""hello".charAt(false)"#),
+        JsValue::String("h".into())
+    );
+    assert_eq!(eval(r#""hello".charAt(true)"#), JsValue::String("e".into()));
+}
+
+#[test]
+fn test_charat_on_number_object() {
+    // String.prototype.charAt called on Number object should coerce to string first
+    assert_eq!(
+        eval(
+            r#"
+            let obj: any = new Object(42);
+            obj.charAt = String.prototype.charAt;
+            obj.charAt(0) + obj.charAt(1)
+        "#
+        ),
+        JsValue::String("42".into())
+    );
+}
+
+// NOTE: ToPrimitive coercion for object index (calling valueOf/toString)
+// is not yet implemented - it requires interpreter access in to_number().
+// Test262 tests S15.5.4.4_A1_T1 through A1_T10 fail because of this.
+
+#[test]
+fn test_charat_out_of_bounds() {
+    // Out of bounds returns empty string
+    assert_eq!(eval(r#""hello".charAt(-1)"#), JsValue::String("".into()));
+    assert_eq!(eval(r#""hello".charAt(10)"#), JsValue::String("".into()));
+}
+
+#[test]
+fn test_charat_no_args() {
+    // charAt() with no args should use index 0
+    assert_eq!(eval(r#""hello".charAt()"#), JsValue::String("h".into()));
+}

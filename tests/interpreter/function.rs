@@ -872,3 +872,78 @@ fn test_spread_in_new_multiple_spreads() {
         JsValue::Number(10.0)
     );
 }
+
+// ============================================================
+// Function name and length property tests (Test262 conformance)
+// ============================================================
+
+#[test]
+fn test_function_declaration_name() {
+    // Function declarations should have a name property
+    assert_eq!(eval(r#"function foo() {} foo.name"#), JsValue::from("foo"));
+}
+
+#[test]
+fn test_function_declaration_length() {
+    // Function.length should be the number of formal parameters
+    assert_eq!(
+        eval(r#"function foo(a: number, b: number, c: number) {} foo.length"#),
+        JsValue::Number(3.0)
+    );
+}
+
+#[test]
+fn test_function_declaration_length_no_params() {
+    assert_eq!(
+        eval(r#"function foo() {} foo.length"#),
+        JsValue::Number(0.0)
+    );
+}
+
+#[test]
+fn test_function_expression_name() {
+    // Named function expression should have the name
+    assert_eq!(
+        eval(r#"const f = function bar() {}; f.name"#),
+        JsValue::from("bar")
+    );
+}
+
+// NOTE: ES6+ name inference for anonymous functions assigned to variables
+// is not yet implemented. These functions should have the variable name
+// but currently have empty strings.
+// - Anonymous function expressions: `const f = function() {}` -> f.name = "f"  (not working)
+// - Arrow functions: `const f = () => {}` -> f.name = "f"  (not working)
+// - Anonymous classes: `const C = class {}` -> C.name = "C"  (not working)
+
+#[test]
+fn test_arrow_function_length() {
+    assert_eq!(
+        eval(r#"const f = (a: number, b: number) => a + b; f.length"#),
+        JsValue::Number(2.0)
+    );
+}
+
+// NOTE: Method shorthand name inference is not yet implemented
+// `{ myMethod() {} }` should give myMethod.name = "myMethod" but currently is ""
+
+#[test]
+fn test_class_constructor_name() {
+    // Class constructor should have the class name
+    assert_eq!(
+        eval(r#"class MyClass {} MyClass.name"#),
+        JsValue::from("MyClass")
+    );
+}
+
+#[test]
+fn test_class_expression_name() {
+    // Named class expression should have the class name
+    assert_eq!(
+        eval(r#"const C = class MyClass {}; C.name"#),
+        JsValue::from("MyClass")
+    );
+}
+
+// test_class_expression_anonymous_name is commented out -
+// see NOTE above about ES6+ name inference for anonymous classes
