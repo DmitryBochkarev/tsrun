@@ -627,6 +627,28 @@ fn test_string_split_regexp_simple() {
     );
 }
 
+#[test]
+fn test_string_split_undefined_separator() {
+    // Per ECMAScript spec: If separator is undefined, return array containing the string
+    // This is different from split("undefined") which would split on the literal string
+    assert_eq!(
+        eval(r#"JSON.stringify("hello".split(undefined))"#),
+        JsValue::String(JsString::from(r#"["hello"]"#))
+    );
+
+    // Also test with explicit undefined
+    assert_eq!(
+        eval(r#"JSON.stringify("undefinedd".split(undefined))"#),
+        JsValue::String(JsString::from(r#"["undefinedd"]"#))
+    );
+
+    // Test no argument (same behavior as undefined)
+    assert_eq!(
+        eval(r#"JSON.stringify("hello".split())"#),
+        JsValue::String(JsString::from(r#"["hello"]"#))
+    );
+}
+
 // === Replace tests ===
 
 #[test]

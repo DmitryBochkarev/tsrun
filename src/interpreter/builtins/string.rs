@@ -580,6 +580,10 @@ pub fn string_split(
     let limit = args.get(1).map(|v| v.to_number() as usize);
 
     let parts: Vec<JsValue> = match separator_arg {
+        // Per ECMAScript spec: if separator is undefined, return array containing original string
+        Some(JsValue::Undefined) | None => {
+            vec![JsValue::String(JsString::from(s.to_string()))]
+        }
         Some(sep) => {
             // Check if separator is a RegExp
             if let JsValue::Object(ref obj) = sep {
@@ -640,7 +644,6 @@ pub fn string_split(
                 }
             }
         }
-        None => vec![JsValue::String(JsString::from(s.to_string()))],
     };
 
     let guard = interp.heap.create_guard();
