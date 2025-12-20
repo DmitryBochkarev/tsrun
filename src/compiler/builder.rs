@@ -353,6 +353,7 @@ impl BytecodeBuilder {
                 | Op::PushScope
                 | Op::PopScope
                 | Op::GetIterator { .. }
+                | Op::GetKeysIterator { .. }
                 | Op::GetAsyncIterator { .. }
                 | Op::IteratorNext { .. }
                 | Op::IteratorValue { .. }

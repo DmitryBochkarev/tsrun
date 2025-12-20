@@ -1622,6 +1622,65 @@ impl BytecodeVM {
                 Ok(OpResult::Continue)
             }
 
+            Op::GetKeysIterator { dst, obj } => {
+                let obj_val = self.get_reg(obj).clone();
+
+                // Create a keys iterator that iterates over enumerable property keys
+                let keys: Vec<JsValue> = match &obj_val {
+                    JsValue::Object(obj_ref) => {
+                        let obj_borrowed = obj_ref.borrow();
+                        let mut result = Vec::new();
+
+                        // For arrays, first add all array indices
+                        if let Some(elements) = obj_borrowed.array_elements() {
+                            for i in 0..elements.len() {
+                                result.push(JsValue::String(JsString::from(i.to_string())));
+                            }
+                        }
+
+                        // Then add own enumerable property keys (excluding indices already added)
+                        for k in obj_borrowed.properties.keys() {
+                            match k {
+                                PropertyKey::String(s) => {
+                                    result.push(JsValue::String(s.cheap_clone()));
+                                }
+                                PropertyKey::Index(i) => {
+                                    // Only add if not an array (arrays already handled above)
+                                    if obj_borrowed.array_elements().is_none() {
+                                        result.push(JsValue::String(JsString::from(i.to_string())));
+                                    }
+                                }
+                                _ => {} // Skip symbols for for-in
+                            }
+                        }
+                        result
+                    }
+                    JsValue::String(s) => {
+                        // For strings, iterate over character indices
+                        (0..s.as_str().chars().count())
+                            .map(|i| JsValue::String(JsString::from(i.to_string())))
+                            .collect()
+                    }
+                    JsValue::Null | JsValue::Undefined => {
+                        // for-in on null/undefined should just not iterate
+                        Vec::new()
+                    }
+                    _ => Vec::new(),
+                };
+
+                // Create a keys array iterator
+                let iter = interp.create_object(&self.register_guard);
+                let keys_arr = interp.create_array_from(&self.register_guard, keys);
+                iter.borrow_mut().set_property(
+                    PropertyKey::from("__keys__"),
+                    JsValue::Object(keys_arr),
+                );
+                iter.borrow_mut()
+                    .set_property(PropertyKey::from("__index__"), JsValue::Number(0.0));
+                self.set_reg(dst, JsValue::Object(iter));
+                Ok(OpResult::Continue)
+            }
+
             Op::GetAsyncIterator { dst: _, obj: _ } => Err(JsError::internal_error(
                 "Async iterators not yet implemented in VM",
             )),
@@ -1697,6 +1756,50 @@ impl BytecodeVM {
                             .map(|c| JsValue::String(JsString::from(c.to_string())))
                             .unwrap_or(JsValue::Undefined);
                         (val, false)
+                    } else {
+                        (JsValue::Undefined, true)
+                    };
+
+                    // Update index
+                    iter_obj.borrow_mut().set_property(
+                        PropertyKey::from("__index__"),
+                        JsValue::Number((index + 1) as f64),
+                    );
+
+                    // Create result object { value, done }
+                    let guard = interp.heap.create_guard();
+                    let result = interp.create_object(&guard);
+                    result
+                        .borrow_mut()
+                        .set_property(PropertyKey::from("value"), value);
+                    result
+                        .borrow_mut()
+                        .set_property(PropertyKey::from("done"), JsValue::Boolean(done));
+                    self.set_reg(dst, JsValue::Object(result));
+                    return Ok(OpResult::Continue);
+                }
+
+                // Check if this is our internal keys iterator (for for-in)
+                let keys_prop = iter_obj
+                    .borrow()
+                    .get_property(&PropertyKey::from("__keys__"));
+                if let Some(JsValue::Object(keys_arr)) = keys_prop {
+                    let index = match iter_obj
+                        .borrow()
+                        .get_property(&PropertyKey::from("__index__"))
+                    {
+                        Some(JsValue::Number(n)) => n as usize,
+                        _ => 0,
+                    };
+
+                    let elements = keys_arr.borrow().array_elements().map(|e| e.to_vec());
+                    let (value, done) = if let Some(elems) = elements {
+                        if index < elems.len() {
+                            let val = elems.get(index).cloned().unwrap_or(JsValue::Undefined);
+                            (val, false)
+                        } else {
+                            (JsValue::Undefined, true)
+                        }
                     } else {
                         (JsValue::Undefined, true)
                     };

@@ -460,6 +460,9 @@ pub enum Op {
     /// Get iterator: r[dst] = r[obj][Symbol.iterator]()
     GetIterator { dst: Register, obj: Register },
 
+    /// Get keys iterator for for-in loops: iterates over own enumerable string keys
+    GetKeysIterator { dst: Register, obj: Register },
+
     /// Get async iterator: r[dst] = r[obj][Symbol.asyncIterator]()
     GetAsyncIterator { dst: Register, obj: Register },
 

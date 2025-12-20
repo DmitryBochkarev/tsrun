@@ -2200,3 +2200,106 @@ fn test_bytecode_arguments_sum() {
 // NOTE: new.target tests are not included because the parser doesn't support
 // the new.target meta-property syntax yet. The VM does support LoadNewTarget
 // opcode, but the compiler can't emit it until parser support is added.
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// For-In Loop Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_bytecode_for_in_object() {
+    // for-in should iterate over object's own enumerable property keys
+    let result = eval_bytecode(
+        r#"
+        const obj = { a: 1, b: 2, c: 3 };
+        let keys = "";
+        for (let key in obj) {
+            keys = keys + key;
+        }
+        keys
+    "#,
+    );
+    // Note: property order is not guaranteed in ES spec, but V8/most engines preserve insertion order
+    assert_eq!(result, JsValue::String("abc".into()));
+}
+
+#[test]
+fn test_bytecode_for_in_with_values() {
+    // Access values using the keys from for-in
+    let result = eval_bytecode(
+        r#"
+        const obj = { x: 10, y: 20, z: 30 };
+        let sum = 0;
+        for (let key in obj) {
+            sum = sum + obj[key];
+        }
+        sum
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(60.0));
+}
+
+#[test]
+fn test_bytecode_for_in_array() {
+    // for-in on array iterates over indices (as strings)
+    let result = eval_bytecode(
+        r#"
+        const arr: number[] = [10, 20, 30];
+        let indices = "";
+        for (let i in arr) {
+            indices = indices + i;
+        }
+        indices
+    "#,
+    );
+    assert_eq!(result, JsValue::String("012".into()));
+}
+
+#[test]
+fn test_bytecode_for_in_empty_object() {
+    // for-in on empty object should not execute body
+    let result = eval_bytecode(
+        r#"
+        const obj = {};
+        let count = 0;
+        for (let key in obj) {
+            count = count + 1;
+        }
+        count
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(0.0));
+}
+
+#[test]
+fn test_bytecode_for_in_with_break() {
+    // break should exit for-in loop
+    let result = eval_bytecode(
+        r#"
+        const obj = { a: 1, b: 2, c: 3 };
+        let count = 0;
+        for (let key in obj) {
+            count = count + 1;
+            if (count >= 2) break;
+        }
+        count
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(2.0));
+}
+
+#[test]
+fn test_bytecode_for_in_with_continue() {
+    // continue should skip to next iteration
+    let result = eval_bytecode(
+        r#"
+        const obj = { a: 1, b: 2, c: 3 };
+        let sum = 0;
+        for (let key in obj) {
+            if (key === "b") continue;
+            sum = sum + obj[key];
+        }
+        sum
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(4.0)); // 1 + 3 = 4
+}

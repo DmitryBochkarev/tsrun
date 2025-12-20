@@ -318,9 +318,9 @@ impl Compiler {
         let obj_reg = self.builder.alloc_register()?;
         self.compile_expression(&for_in.right, obj_reg)?;
 
-        // Get iterator for keys
+        // Get keys iterator for for-in (iterates over enumerable property keys)
         let iter_reg = self.builder.alloc_register()?;
-        self.builder.emit(Op::GetIterator {
+        self.builder.emit(Op::GetKeysIterator {
             dst: iter_reg,
             obj: obj_reg,
         });
