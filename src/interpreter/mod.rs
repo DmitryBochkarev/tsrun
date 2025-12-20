@@ -4751,6 +4751,14 @@ impl Interpreter {
 
         match expr {
             Expression::Member(member) => {
+                // Per ECMAScript spec, deleting super.x is always a ReferenceError
+                // Need to unwrap TypeScript type assertions like (super as any)
+                if Self::is_super_expression(&member.object) {
+                    return Err(JsError::reference_error(
+                        "Cannot delete super property".to_string(),
+                    ));
+                }
+
                 // Evaluate ONLY the object, not the full member expression
                 let Guarded {
                     value: obj_val,
@@ -4821,6 +4829,20 @@ impl Interpreter {
                 let _ = self.evaluate_expression(other)?;
                 Ok(Guarded::unguarded(JsValue::Boolean(true)))
             }
+        }
+    }
+
+    /// Check if an expression is a `super` expression, unwrapping TypeScript wrappers
+    fn is_super_expression(expr: &Expression) -> bool {
+        match expr {
+            Expression::Super(_) => true,
+            // Unwrap TypeScript type assertions like (super as any) or <any>super
+            Expression::TypeAssertion(ta) => Self::is_super_expression(&ta.expression),
+            // Unwrap parenthesized expressions
+            Expression::Parenthesized(inner, _) => Self::is_super_expression(inner),
+            // Unwrap non-null assertions
+            Expression::NonNull(nn) => Self::is_super_expression(&nn.expression),
+            _ => false,
         }
     }
 
@@ -5148,6 +5170,25 @@ impl Interpreter {
                     };
                     obj.borrow_mut().prototype = new_proto;
                     return Ok(Guarded::unguarded(final_value));
+                }
+
+                // Check if property is non-writable (strict mode: throw TypeError)
+                {
+                    let obj_ref = obj.borrow();
+                    if let Some(prop) = obj_ref.properties.get(&key) {
+                        if !prop.writable() {
+                            return Err(JsError::type_error(format!(
+                                "Cannot assign to read only property '{}'",
+                                key
+                            )));
+                        }
+                    } else if obj_ref.frozen || (obj_ref.sealed && !obj_ref.extensible) {
+                        // Cannot add new properties to frozen/non-extensible objects
+                        return Err(JsError::type_error(format!(
+                            "Cannot add property '{}' to non-extensible object",
+                            key
+                        )));
+                    }
                 }
 
                 // Not an accessor - set property directly

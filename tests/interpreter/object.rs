@@ -249,18 +249,22 @@ fn test_object_create_with_properties_writable() {
         ),
         JsValue::Number(42.0)
     );
-    // Test writable: false (default)
+    // Test writable: false - assignment should throw in strict mode
     assert_eq!(
         eval(
             r#"
             const obj: any = Object.create(null, {
                 x: { value: 1, writable: false }
             });
-            obj.x = 42;
-            obj.x
+            try {
+                obj.x = 42;
+                "no error"
+            } catch (e) {
+                e instanceof TypeError ? "TypeError" : "other error"
+            }
         "#
         ),
-        JsValue::Number(1.0)
+        JsValue::String(JsString::from("TypeError"))
     );
 }
 
@@ -593,9 +597,21 @@ fn test_object_create_with_object_prototype() {
 
 #[test]
 fn test_object_freeze() {
+    // Assignment to frozen object property should throw TypeError in strict mode
     assert_eq!(
-        eval("let o: { a: number } = {a: 1}; Object.freeze(o); o.a = 2; o.a"),
-        JsValue::Number(1.0)
+        eval(
+            r#"
+            let o: { a: number } = {a: 1};
+            Object.freeze(o);
+            try {
+                o.a = 2;
+                "no error"
+            } catch (e) {
+                e instanceof TypeError ? "TypeError" : "other error"
+            }
+        "#
+        ),
+        JsValue::String(JsString::from("TypeError"))
     );
     assert_eq!(
         eval("Object.isFrozen(Object.freeze({a: 1} as { a: number }))"),
@@ -704,13 +720,28 @@ fn test_object_define_property() {
         ),
         JsValue::Number(10.0)
     );
-    // Non-writable property
+    // Non-writable property - assignment should throw in strict mode
     assert_eq!(
         eval(
             r#"
             const obj: any = {};
             Object.defineProperty(obj, 'x', { value: 10, writable: false });
-            obj.x = 20;
+            try {
+                obj.x = 20;
+                "no error"
+            } catch (e) {
+                e instanceof TypeError ? "TypeError" : "other error"
+            }
+        "#
+        ),
+        JsValue::String(JsString::from("TypeError"))
+    );
+    // Verify value unchanged
+    assert_eq!(
+        eval(
+            r#"
+            const obj: any = {};
+            Object.defineProperty(obj, 'x', { value: 10, writable: false });
             obj.x
         "#
         ),
@@ -923,7 +954,7 @@ fn test_object_define_properties_returns_object() {
 
 #[test]
 fn test_object_define_properties_attributes() {
-    // Test non-writable property
+    // Test non-writable property - assignment should throw in strict mode
     assert_eq!(
         eval(
             r#"
@@ -931,11 +962,15 @@ fn test_object_define_properties_attributes() {
             Object.defineProperties(obj, {
                 x: { value: 10, writable: false }
             });
-            obj.x = 20;
-            obj.x
+            try {
+                obj.x = 20;
+                "no error"
+            } catch (e) {
+                e instanceof TypeError ? "TypeError" : "other error"
+            }
         "#
         ),
-        JsValue::Number(10.0)
+        JsValue::String(JsString::from("TypeError"))
     );
 }
 

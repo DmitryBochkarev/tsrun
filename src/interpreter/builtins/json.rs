@@ -4,6 +4,7 @@ use crate::error::JsError;
 use crate::gc::{Gc, Guard};
 use crate::interpreter::Interpreter;
 use crate::value::{ExoticObject, Guarded, JsObject, JsString, JsValue, PropertyKey};
+use std::collections::HashSet;
 
 /// Initialize JSON object and add it to globals
 pub fn init_json(interp: &mut Interpreter) {
@@ -43,7 +44,9 @@ pub fn json_stringify(
     // Third argument is space/indent
     let indent = args.get(2).cloned().unwrap_or(JsValue::Undefined);
 
-    let json = js_value_to_json(&value)?;
+    // Track visited objects for circular reference detection
+    let mut visited = HashSet::new();
+    let json = js_value_to_json_with_visited(&value, &mut visited)?;
 
     let output = match indent {
         JsValue::Number(n) if n > 0.0 => {
@@ -123,7 +126,17 @@ pub fn json_parse(
     Ok(Guarded::unguarded(value))
 }
 
+/// Convert a JsValue to JSON, with public API for external callers (without circular detection)
 pub fn js_value_to_json(value: &JsValue) -> Result<serde_json::Value, JsError> {
+    let mut visited = HashSet::new();
+    js_value_to_json_with_visited(value, &mut visited)
+}
+
+/// Convert a JsValue to JSON, tracking visited objects for circular reference detection
+fn js_value_to_json_with_visited(
+    value: &JsValue,
+    visited: &mut HashSet<usize>,
+) -> Result<serde_json::Value, JsError> {
     Ok(match value {
         JsValue::Undefined => serde_json::Value::Null,
         JsValue::Null => serde_json::Value::Null,
@@ -145,96 +158,120 @@ pub fn js_value_to_json(value: &JsValue) -> Result<serde_json::Value, JsError> {
         JsValue::String(s) => serde_json::Value::String(s.to_string()),
         JsValue::Symbol(_) => serde_json::Value::Null, // Symbols are ignored in JSON
         JsValue::Object(obj) => {
-            let obj_ref = obj.borrow();
-            if let Some(elements) = obj_ref.array_elements() {
-                let mut arr = Vec::with_capacity(elements.len());
-                for val in elements {
-                    arr.push(js_value_to_json(val)?);
-                }
-                serde_json::Value::Array(arr)
-            } else {
-                match &obj_ref.exotic {
-                    // Array is handled above by array_elements() check
-                    ExoticObject::Array { .. } | ExoticObject::Function(_) => {
-                        serde_json::Value::Null
+            // Check for circular reference using object's unique ID
+            let obj_id = obj.id();
+            if visited.contains(&obj_id) {
+                return Err(JsError::type_error(
+                    "Converting circular structure to JSON".to_string(),
+                ));
+            }
+            visited.insert(obj_id);
+
+            let result = {
+                let obj_ref = obj.borrow();
+                if let Some(elements) = obj_ref.array_elements() {
+                    let mut arr = Vec::with_capacity(elements.len());
+                    for val in elements {
+                        arr.push(js_value_to_json_with_visited(val, visited)?);
                     }
-                    ExoticObject::Map { .. } => serde_json::Value::Null,
-                    ExoticObject::Set { .. } => serde_json::Value::Null,
-                    ExoticObject::Date { timestamp } => {
-                        // Dates serialize as their ISO string
-                        let datetime = chrono::DateTime::from_timestamp_millis(*timestamp as i64)
-                            .unwrap_or(chrono::DateTime::UNIX_EPOCH);
-                        serde_json::Value::String(
-                            datetime.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
-                        )
-                    }
-                    ExoticObject::RegExp { .. } => {
-                        serde_json::Value::Object(serde_json::Map::new())
-                    }
-                    ExoticObject::Generator(_) => serde_json::Value::Null,
-                    ExoticObject::Promise(_) => serde_json::Value::Null,
-                    ExoticObject::Environment(_) => serde_json::Value::Null, // Internal type
-                    ExoticObject::Enum(data) => {
-                        // Enums serialize with forward and reverse mappings
-                        let mut map = serde_json::Map::new();
-                        // Add forward mappings (name -> value)
-                        for member in &data.members {
-                            let json_val = js_value_to_json(&member.value)?;
-                            map.insert(member.name.to_string(), json_val);
-                        }
-                        // Add reverse mappings (numeric value -> name)
-                        for member in &data.members {
-                            if let JsValue::Number(n) = &member.value {
-                                map.insert(
-                                    n.to_string(),
-                                    serde_json::Value::String(member.name.to_string()),
-                                );
-                            }
-                        }
-                        serde_json::Value::Object(map)
-                    }
-                    ExoticObject::Ordinary => {
-                        // Ordinary objects serialize with their properties
-                        let mut map = serde_json::Map::new();
-                        for (key, prop) in obj_ref.properties.iter() {
-                            if prop.enumerable() {
-                                let json_val = js_value_to_json(&prop.value)?;
-                                // Skip undefined values in objects
-                                if json_val != serde_json::Value::Null
-                                    || !matches!(prop.value, JsValue::Undefined)
-                                {
-                                    map.insert(key.to_string(), json_val);
-                                }
-                            }
-                        }
-                        serde_json::Value::Object(map)
-                    }
-                    ExoticObject::Proxy(_) => {
-                        // Proxies are serialized as their target (or could trap toJSON)
-                        // For now, serialize as null to match JSON.stringify behavior
-                        serde_json::Value::Null
-                    }
-                    ExoticObject::Boolean(b) => {
-                        // Boolean wrapper objects serialize as their primitive value
-                        serde_json::Value::Bool(*b)
-                    }
-                    ExoticObject::Number(n) => {
-                        // Number wrapper objects serialize as their primitive value
-                        if n.is_finite() {
-                            serde_json::Value::Number(
-                                serde_json::Number::from_f64(*n)
-                                    .unwrap_or(serde_json::Number::from(0)),
-                            )
-                        } else {
+                    serde_json::Value::Array(arr)
+                } else {
+                    match &obj_ref.exotic {
+                        // Array is handled above by array_elements() check
+                        ExoticObject::Array { .. } | ExoticObject::Function(_) => {
                             serde_json::Value::Null
                         }
-                    }
-                    ExoticObject::StringObj(s) => {
-                        // String wrapper objects serialize as their primitive value
-                        serde_json::Value::String(s.to_string())
+                        ExoticObject::Map { .. } => serde_json::Value::Null,
+                        ExoticObject::Set { .. } => serde_json::Value::Null,
+                        ExoticObject::Date { timestamp } => {
+                            // Dates serialize as their ISO string
+                            let datetime =
+                                chrono::DateTime::from_timestamp_millis(*timestamp as i64)
+                                    .unwrap_or(chrono::DateTime::UNIX_EPOCH);
+                            serde_json::Value::String(
+                                datetime.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
+                            )
+                        }
+                        ExoticObject::RegExp { .. } => {
+                            serde_json::Value::Object(serde_json::Map::new())
+                        }
+                        ExoticObject::Generator(_) => serde_json::Value::Null,
+                        ExoticObject::Promise(_) => serde_json::Value::Null,
+                        ExoticObject::Environment(_) => serde_json::Value::Null, // Internal type
+                        ExoticObject::Enum(data) => {
+                            // Enums serialize with forward and reverse mappings
+                            let mut map = serde_json::Map::new();
+                            // Add forward mappings (name -> value)
+                            for member in &data.members {
+                                let json_val =
+                                    js_value_to_json_with_visited(&member.value, visited)?;
+                                map.insert(member.name.to_string(), json_val);
+                            }
+                            // Add reverse mappings (numeric value -> name)
+                            for member in &data.members {
+                                if let JsValue::Number(n) = &member.value {
+                                    map.insert(
+                                        n.to_string(),
+                                        serde_json::Value::String(member.name.to_string()),
+                                    );
+                                }
+                            }
+                            serde_json::Value::Object(map)
+                        }
+                        ExoticObject::Ordinary => {
+                            // Ordinary objects serialize with their properties
+                            let mut map = serde_json::Map::new();
+                            // First collect keys to avoid borrowing issues
+                            let props: Vec<_> = obj_ref
+                                .properties
+                                .iter()
+                                .filter(|(_, prop)| prop.enumerable())
+                                .map(|(k, p)| (k.to_string(), p.value.clone()))
+                                .collect();
+                            drop(obj_ref); // Release borrow before recursive calls
+
+                            for (key, val) in props {
+                                let json_val = js_value_to_json_with_visited(&val, visited)?;
+                                // Skip undefined values in objects
+                                if json_val != serde_json::Value::Null
+                                    || !matches!(val, JsValue::Undefined)
+                                {
+                                    map.insert(key, json_val);
+                                }
+                            }
+                            serde_json::Value::Object(map)
+                        }
+                        ExoticObject::Proxy(_) => {
+                            // Proxies are serialized as their target (or could trap toJSON)
+                            // For now, serialize as null to match JSON.stringify behavior
+                            serde_json::Value::Null
+                        }
+                        ExoticObject::Boolean(b) => {
+                            // Boolean wrapper objects serialize as their primitive value
+                            serde_json::Value::Bool(*b)
+                        }
+                        ExoticObject::Number(n) => {
+                            // Number wrapper objects serialize as their primitive value
+                            if n.is_finite() {
+                                serde_json::Value::Number(
+                                    serde_json::Number::from_f64(*n)
+                                        .unwrap_or(serde_json::Number::from(0)),
+                                )
+                            } else {
+                                serde_json::Value::Null
+                            }
+                        }
+                        ExoticObject::StringObj(s) => {
+                            // String wrapper objects serialize as their primitive value
+                            serde_json::Value::String(s.to_string())
+                        }
                     }
                 }
-            }
+            };
+
+            // Remove from visited set after processing
+            visited.remove(&obj_id);
+            result
         }
     })
 }

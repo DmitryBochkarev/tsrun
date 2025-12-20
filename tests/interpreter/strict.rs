@@ -264,3 +264,51 @@ fn test_strict_no_with_statement() {
         "Should not allow with statement in strict mode"
     );
 }
+
+// ============================================================================
+// Delete super.property
+// ============================================================================
+
+#[test]
+fn test_delete_super_property_throws_reference_error() {
+    // delete super.x should throw ReferenceError - simple case without type cast
+    let result = eval_result(
+        r#"
+        class C extends Object {
+            test() {
+                delete super.x;
+            }
+        }
+        new C().test();
+        "#,
+    );
+    assert!(result.is_err(), "delete super.x should throw");
+    let err = result.unwrap_err();
+    assert!(
+        err.to_string().contains("ReferenceError") || err.to_string().contains("super"),
+        "Expected ReferenceError for delete super.x, got: {}",
+        err
+    );
+}
+
+#[test]
+fn test_delete_super_property_with_type_cast() {
+    // delete (super as any).x should also throw ReferenceError
+    let result = eval_result(
+        r#"
+        class C extends Object {
+            test() {
+                delete (super as any).x;
+            }
+        }
+        new C().test();
+        "#,
+    );
+    assert!(result.is_err(), "delete (super as any).x should throw");
+    let err = result.unwrap_err();
+    assert!(
+        err.to_string().contains("ReferenceError") || err.to_string().contains("super"),
+        "Expected ReferenceError for delete super.x with type cast, got: {}",
+        err
+    );
+}

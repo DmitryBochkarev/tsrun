@@ -1627,6 +1627,13 @@ impl Interpreter {
                     };
 
                     if let Expression::Member(member) = arg {
+                        // Per ECMAScript spec, deleting super.x is always a ReferenceError
+                        if Self::is_super_expression(&member.object) {
+                            return StepResult::Error(JsError::reference_error(
+                                "Cannot delete super property".to_string(),
+                            ));
+                        }
+
                         // For member expression delete, evaluate only the object
                         state.push_frame(Frame::DeleteComplete {
                             property: member.property.clone(),
