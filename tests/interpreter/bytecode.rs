@@ -2406,3 +2406,102 @@ fn test_bytecode_spread_in_new() {
     );
     assert_eq!(result, JsValue::Number(10.0));
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Rest Parameter Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_bytecode_rest_param_basic() {
+    // Basic rest parameter
+    let result = eval_bytecode(
+        r#"
+        function sum(...nums: number[]): number {
+            let total = 0;
+            for (let i = 0; i < nums.length; i++) {
+                total = total + nums[i];
+            }
+            return total;
+        }
+        sum(1, 2, 3, 4, 5)
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(15.0));
+}
+
+#[test]
+fn test_bytecode_rest_param_with_leading() {
+    // Rest parameter with leading regular parameters
+    let result = eval_bytecode(
+        r#"
+        function greet(greeting: string, ...names: string[]): string {
+            return greeting + " " + names.join(", ");
+        }
+        greet("Hello", "Alice", "Bob", "Charlie")
+    "#,
+    );
+    assert_eq!(
+        result,
+        JsValue::String("Hello Alice, Bob, Charlie".into())
+    );
+}
+
+#[test]
+fn test_bytecode_rest_param_empty() {
+    // Rest parameter when no extra args passed
+    let result = eval_bytecode(
+        r#"
+        function count(first: number, ...rest: number[]): number {
+            return rest.length;
+        }
+        count(1)
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(0.0));
+}
+
+#[test]
+fn test_bytecode_rest_param_single() {
+    // Rest parameter with single extra arg
+    let result = eval_bytecode(
+        r#"
+        function count(first: number, ...rest: number[]): number {
+            return rest.length;
+        }
+        count(1, 2)
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(1.0));
+}
+
+#[test]
+fn test_bytecode_rest_param_array_methods() {
+    // Use array methods on rest parameter
+    let result = eval_bytecode(
+        r#"
+        function sumDoubled(...nums: number[]): number {
+            return nums.map((n: number): number => n * 2).reduce((a: number, b: number): number => a + b, 0);
+        }
+        sumDoubled(1, 2, 3)
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(12.0)); // (1*2) + (2*2) + (3*2) = 12
+}
+
+#[test]
+fn test_bytecode_rest_param_arrow() {
+    // Rest parameter in arrow function
+    let result = eval_bytecode(
+        r#"
+        const sum = (...nums: number[]): number => {
+            let total = 0;
+            for (let i = 0; i < nums.length; i++) {
+                total = total + nums[i];
+            }
+            return total;
+        };
+        sum(10, 20, 30)
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(60.0));
+}
