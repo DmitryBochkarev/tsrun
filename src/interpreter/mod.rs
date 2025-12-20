@@ -26,8 +26,8 @@ use crate::string_dict::StringDict;
 use crate::value::{
     create_environment_unrooted, number_to_string, Binding, CheapClone, EnumData, EnvRef,
     EnvironmentData, ExoticObject, FunctionBody, GeneratorState, GeneratorStatus, Guarded,
-    ImportBinding, InterpretedFunction, JsFunction, JsObject, JsString, JsValue, ModuleExport,
-    NativeFn, NativeFunction, PromiseStatus, Property, PropertyKey, VarKey,
+    ImportBinding, InterpretedFunction, JsFunction, JsObject, JsString, JsSymbol, JsValue,
+    ModuleExport, NativeFn, NativeFunction, PromiseStatus, Property, PropertyKey, VarKey,
 };
 use rustc_hash::FxHashMap;
 use std::cell::RefCell;
@@ -4120,12 +4120,9 @@ impl Interpreter {
                     if let Some(g) = guard {
                         _arg_guards.push(g);
                     }
-                    // Spread the array elements into arguments
-                    if let JsValue::Object(obj) = value {
-                        let obj_ref = obj.borrow();
-                        if let Some(elements) = obj_ref.array_elements() {
-                            args.extend(elements.iter().cloned());
-                        }
+                    // Spread using the iterator protocol (Symbol.iterator)
+                    if let Some(iter_values) = self.collect_iterator_values(&value)? {
+                        args.extend(iter_values);
                     }
                 }
             }
@@ -5417,12 +5414,9 @@ impl Interpreter {
                     if let Some(g) = guard {
                         _arg_guards.push(g);
                     }
-                    // Spread the array elements into arguments
-                    if let JsValue::Object(obj) = value {
-                        let obj_ref = obj.borrow();
-                        if let Some(elements) = obj_ref.array_elements() {
-                            args.extend(elements.iter().cloned());
-                        }
+                    // Spread using the iterator protocol (Symbol.iterator)
+                    if let Some(iter_values) = self.collect_iterator_values(&value)? {
+                        args.extend(iter_values);
                     }
                 }
             }
@@ -5837,6 +5831,117 @@ impl Interpreter {
         }
     }
 
+    /// Collect all values from an iterable using the Symbol.iterator protocol.
+    /// Returns a Vec of values if the object is iterable, or None if it doesn't have Symbol.iterator.
+    /// For arrays, this falls back to directly reading array elements for efficiency.
+    pub fn collect_iterator_values(
+        &mut self,
+        value: &JsValue,
+    ) -> Result<Option<Vec<JsValue>>, JsError> {
+        let JsValue::Object(obj) = value else {
+            // Strings are iterable but handled separately
+            if let JsValue::String(s) = value {
+                return Ok(Some(
+                    s.as_str()
+                        .chars()
+                        .map(|c| JsValue::String(JsString::from(c.to_string())))
+                        .collect(),
+                ));
+            }
+            return Ok(None);
+        };
+
+        // First check if it's a plain array - use fast path
+        {
+            let obj_ref = obj.borrow();
+            if let Some(elements) = obj_ref.array_elements() {
+                return Ok(Some(elements.to_vec()));
+            }
+        }
+
+        // Check for Symbol.iterator method
+        let well_known = builtins::symbol::get_well_known_symbols();
+        let iterator_symbol =
+            JsSymbol::new(well_known.iterator, Some("Symbol.iterator".to_string()));
+        let iterator_key = PropertyKey::Symbol(Box::new(iterator_symbol));
+
+        let iterator_method = {
+            let obj_ref = obj.borrow();
+            obj_ref.get_property(&iterator_key)
+        };
+
+        let Some(JsValue::Object(method_obj)) = iterator_method else {
+            return Ok(None);
+        };
+
+        // Call the iterator method to get the iterator object
+        let Guarded {
+            value: iterator_obj,
+            guard: _iter_guard,
+        } = self.call_function(JsValue::Object(method_obj), value.clone(), &[])?;
+
+        let JsValue::Object(iterator) = iterator_obj else {
+            return Err(JsError::type_error("Symbol.iterator must return an object"));
+        };
+
+        // Iterate: call next() until done is true
+        let mut values = Vec::new();
+        let next_key = PropertyKey::String(self.intern("next"));
+
+        loop {
+            // Get the next method
+            let next_method = {
+                let iter_ref = iterator.borrow();
+                iter_ref.get_property(&next_key)
+            };
+
+            let Some(JsValue::Object(next_fn)) = next_method else {
+                return Err(JsError::type_error("Iterator must have a next method"));
+            };
+
+            // Call next()
+            let Guarded {
+                value: result,
+                guard: _result_guard,
+            } = self.call_function(
+                JsValue::Object(next_fn),
+                JsValue::Object(iterator.clone()),
+                &[],
+            )?;
+
+            let JsValue::Object(result_obj) = result else {
+                return Err(JsError::type_error("Iterator next() must return an object"));
+            };
+
+            // Check done property
+            let done = {
+                let result_ref = result_obj.borrow();
+                let done_key = PropertyKey::String(self.intern("done"));
+                result_ref
+                    .get_property(&done_key)
+                    .map(|v| v.to_boolean())
+                    .unwrap_or(false)
+            };
+
+            if done {
+                break;
+            }
+
+            // Get value property
+            let iter_value = {
+                let result_ref = result_obj.borrow();
+                let value_key = PropertyKey::String(self.intern("value"));
+                result_ref
+                    .get_property(&value_key)
+                    .unwrap_or(JsValue::Undefined)
+            };
+
+            values.push(iter_value);
+        }
+
+        Ok(Some(values))
+    }
+
     fn evaluate_member(&mut self, member: &MemberExpression) -> Result<Guarded, JsError> {
         let Guarded {
             value: obj,
@@ -6004,12 +6109,9 @@ impl Interpreter {
                     if let Some(g) = guard {
                         _elem_guards.push(g);
                     }
-                    // Spread the array elements into the new array
-                    if let JsValue::Object(obj) = value {
-                        let obj_ref = obj.borrow();
-                        if let Some(arr_elements) = obj_ref.array_elements() {
-                            elements.extend(arr_elements.iter().cloned());
-                        }
+                    // Spread using the iterator protocol (Symbol.iterator)
+                    if let Some(iter_values) = self.collect_iterator_values(&value)? {
+                        elements.extend(iter_values);
                     }
                 }
                 None => elements.push(JsValue::Undefined),

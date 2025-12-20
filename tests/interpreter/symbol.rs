@@ -142,3 +142,89 @@ fn test_object_get_own_property_symbols() {
         JsValue::Number(2.0)
     );
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Custom Iterator / Symbol.iterator Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_spread_with_custom_iterator() {
+    // Test spread operator using Symbol.iterator protocol
+    assert_eq!(
+        eval(
+            r#"
+            const iter = {};
+            iter[Symbol.iterator] = function() {
+                let count = 0;
+                return {
+                    next: function() {
+                        count += 1;
+                        return { done: count === 3, value: count };
+                    }
+                };
+            };
+
+            const result = [...iter];
+            JSON.stringify(result)
+        "#
+        ),
+        JsValue::from("[1,2]")
+    );
+}
+
+#[test]
+fn test_spread_in_function_call_with_custom_iterator() {
+    // Test spread operator in function call using Symbol.iterator
+    assert_eq!(
+        eval(
+            r#"
+            const iter = {};
+            iter[Symbol.iterator] = function() {
+                let count = 0;
+                return {
+                    next: function() {
+                        count += 1;
+                        return { done: count === 3, value: count };
+                    }
+                };
+            };
+
+            function sum(a: number, b: number): number {
+                return a + b;
+            }
+
+            sum(...iter)
+        "#
+        ),
+        JsValue::Number(3.0)
+    );
+}
+
+#[test]
+#[ignore] // TODO: for-of loop doesn't use Symbol.iterator protocol for non-array objects yet
+fn test_for_of_with_custom_iterator() {
+    // Test for-of loop using Symbol.iterator protocol
+    assert_eq!(
+        eval(
+            r#"
+            const iter = {};
+            iter[Symbol.iterator] = function() {
+                let count = 0;
+                return {
+                    next: function() {
+                        count += 1;
+                        return { done: count === 4, value: count * 10 };
+                    }
+                };
+            };
+
+            let sum = 0;
+            for (const v of iter) {
+                sum += v;
+            }
+            sum
+        "#
+        ),
+        JsValue::Number(60.0) // 10 + 20 + 30 = 60
+    );
+}
