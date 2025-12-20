@@ -894,3 +894,116 @@ fn test_promise_constructor_property() {
         JsValue::Boolean(true)
     );
 }
+
+// =============================================================================
+// Object Wrapper Boxing Tests (Object(primitive) == primitive)
+// =============================================================================
+
+#[test]
+fn test_object_wrapper_number_equality() {
+    // Object(number) == number should be true (abstract equality)
+    assert_eq!(eval("Object(42) == 42"), JsValue::Boolean(true));
+    assert_eq!(eval("Object(1.5) == 1.5"), JsValue::Boolean(true));
+    assert_eq!(eval("Object(0) == 0"), JsValue::Boolean(true));
+    assert_eq!(eval("Object(-1) == -1"), JsValue::Boolean(true));
+    // Object(number) === number should be false (strict equality)
+    assert_eq!(eval("Object(42) === 42"), JsValue::Boolean(false));
+}
+
+#[test]
+fn test_object_wrapper_string_equality() {
+    // Object(string) == string should be true
+    assert_eq!(eval("Object('hello') == 'hello'"), JsValue::Boolean(true));
+    assert_eq!(eval("Object('') == ''"), JsValue::Boolean(true));
+    // Object(string) === string should be false
+    assert_eq!(eval("Object('hello') === 'hello'"), JsValue::Boolean(false));
+}
+
+#[test]
+fn test_object_wrapper_boolean_equality() {
+    // Object(boolean) == boolean should be true
+    assert_eq!(eval("Object(true) == true"), JsValue::Boolean(true));
+    assert_eq!(eval("Object(false) == false"), JsValue::Boolean(true));
+    // Object(boolean) === boolean should be false
+    assert_eq!(eval("Object(true) === true"), JsValue::Boolean(false));
+}
+
+#[test]
+fn test_object_wrapper_typeof() {
+    // typeof Object(primitive) should be "object"
+    assert_eq!(
+        eval("typeof Object(42)"),
+        JsValue::String(JsString::from("object"))
+    );
+    assert_eq!(
+        eval("typeof Object('hello')"),
+        JsValue::String(JsString::from("object"))
+    );
+    assert_eq!(
+        eval("typeof Object(true)"),
+        JsValue::String(JsString::from("object"))
+    );
+}
+
+#[test]
+fn test_object_wrapper_valueof() {
+    // valueOf() should return the primitive value
+    assert_eq!(eval("Object(42).valueOf()"), JsValue::Number(42.0));
+    assert_eq!(
+        eval("Object('hello').valueOf()"),
+        JsValue::String(JsString::from("hello"))
+    );
+    assert_eq!(eval("Object(true).valueOf()"), JsValue::Boolean(true));
+}
+
+#[test]
+fn test_object_wrapper_constructor() {
+    // Object(primitive).constructor should be the wrapper constructor
+    assert_eq!(
+        eval("Object(42).constructor === Number"),
+        JsValue::Boolean(true)
+    );
+    assert_eq!(
+        eval("Object('hello').constructor === String"),
+        JsValue::Boolean(true)
+    );
+    assert_eq!(
+        eval("Object(true).constructor === Boolean"),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_object_wrapper_not_same_value() {
+    // Object(primitive) should NOT be the same value as the primitive
+    assert_eq!(eval("Object(42) !== 42"), JsValue::Boolean(true));
+    assert_eq!(eval("Object('hello') !== 'hello'"), JsValue::Boolean(true));
+}
+
+#[test]
+fn test_abstract_equality_object_to_number() {
+    // When comparing object to number, object should be converted to primitive
+    assert_eq!(
+        eval("let obj = { valueOf: function() { return 42; } }; obj == 42"),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_abstract_equality_object_to_string() {
+    // When comparing object to string, object should be converted to primitive
+    assert_eq!(
+        eval("let obj = { toString: function() { return 'hello'; } }; obj == 'hello'"),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_abstract_equality_boolean_coercion() {
+    // When comparing to boolean, boolean is converted to number first
+    // true -> 1, false -> 0
+    assert_eq!(eval("1 == true"), JsValue::Boolean(true));
+    assert_eq!(eval("0 == false"), JsValue::Boolean(true));
+    assert_eq!(eval("2 == true"), JsValue::Boolean(false)); // 2 != 1
+    assert_eq!(eval("'1' == true"), JsValue::Boolean(true)); // '1' -> 1, true -> 1
+}

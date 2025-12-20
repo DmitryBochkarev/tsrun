@@ -4347,12 +4347,63 @@ impl Interpreter {
         Ok(Guarded::unguarded(result))
     }
 
-    fn abstract_equals(&self, left: &JsValue, right: &JsValue) -> bool {
+    /// Abstract Equality Comparison Algorithm (ECMAScript spec 7.2.14)
+    /// Implements the == operator with type coercion
+    fn abstract_equals(&mut self, left: &JsValue, right: &JsValue) -> bool {
+        // If types are the same, use strict equality
+        if std::mem::discriminant(left) == std::mem::discriminant(right) {
+            return left.strict_equals(right);
+        }
+
         match (left, right) {
+            // 1. null == undefined and undefined == null
             (JsValue::Undefined, JsValue::Null) | (JsValue::Null, JsValue::Undefined) => true,
-            (JsValue::Number(a), JsValue::String(b)) => *a == b.parse().unwrap_or(f64::NAN),
-            (JsValue::String(a), JsValue::Number(b)) => a.parse().unwrap_or(f64::NAN) == *b,
-            _ => left.strict_equals(right),
+
+            // 2. Number == String: convert string to number
+            (JsValue::Number(n), JsValue::String(s)) => *n == s.parse().unwrap_or(f64::NAN),
+            (JsValue::String(s), JsValue::Number(n)) => s.parse().unwrap_or(f64::NAN) == *n,
+
+            // 3. Boolean == anything: convert boolean to number and compare again
+            (JsValue::Boolean(b), other) => {
+                let num = if *b { 1.0 } else { 0.0 };
+                self.abstract_equals(&JsValue::Number(num), other)
+            }
+            (other, JsValue::Boolean(b)) => {
+                let num = if *b { 1.0 } else { 0.0 };
+                self.abstract_equals(other, &JsValue::Number(num))
+            }
+
+            // 4. Object == String/Number/Symbol: convert object to primitive
+            (JsValue::Object(_), JsValue::Number(_) | JsValue::String(_)) => {
+                // ToPrimitive with default hint
+                match self.coerce_to_primitive(left, "default") {
+                    Ok(prim) => self.abstract_equals(&prim, right),
+                    Err(_) => false,
+                }
+            }
+            (JsValue::Number(_) | JsValue::String(_), JsValue::Object(_)) => {
+                match self.coerce_to_primitive(right, "default") {
+                    Ok(prim) => self.abstract_equals(left, &prim),
+                    Err(_) => false,
+                }
+            }
+
+            // 5. Object == Symbol: convert object to primitive
+            (JsValue::Object(_), JsValue::Symbol(_)) => {
+                match self.coerce_to_primitive(left, "default") {
+                    Ok(prim) => self.abstract_equals(&prim, right),
+                    Err(_) => false,
+                }
+            }
+            (JsValue::Symbol(_), JsValue::Object(_)) => {
+                match self.coerce_to_primitive(right, "default") {
+                    Ok(prim) => self.abstract_equals(left, &prim),
+                    Err(_) => false,
+                }
+            }
+
+            // All other cases: not equal
+            _ => false,
         }
     }
 
