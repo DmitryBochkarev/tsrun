@@ -1211,6 +1211,154 @@ fn test_nested_try_catch() {
 }
 
 // -----------------------------------------------------------------------------
+// Finally block with continue/break/return
+// -----------------------------------------------------------------------------
+
+#[test]
+fn test_finally_with_continue_in_try() {
+    // Finally must run even when try block has continue
+    assert_eq!(
+        eval(
+            r#"
+            let fin: number = 0;
+            let c: number = 0;
+            while (c < 2) {
+                try {
+                    c = c + 1;
+                    continue;
+                } finally {
+                    fin = 1;
+                }
+                fin = -1;
+            }
+            fin
+        "#
+        ),
+        JsValue::Number(1.0)
+    );
+}
+
+#[test]
+fn test_finally_with_break_in_try() {
+    // Finally must run even when try block has break
+    assert_eq!(
+        eval(
+            r#"
+            let fin: number = 0;
+            let c: number = 0;
+            while (c < 2) {
+                try {
+                    c = c + 1;
+                    break;
+                } finally {
+                    fin = 1;
+                }
+                fin = -1;
+            }
+            fin
+        "#
+        ),
+        JsValue::Number(1.0)
+    );
+}
+
+#[test]
+fn test_finally_with_continue_in_catch() {
+    // Finally must run even when catch block has continue
+    assert_eq!(
+        eval(
+            r#"
+            let fin: number = 0;
+            let c: number = 0;
+            while (c < 2) {
+                try {
+                    throw "ex";
+                } catch (e: any) {
+                    c = c + 1;
+                    continue;
+                } finally {
+                    fin = 1;
+                }
+                fin = -1;
+            }
+            fin
+        "#
+        ),
+        JsValue::Number(1.0)
+    );
+}
+
+#[test]
+fn test_finally_with_break_in_catch() {
+    // Finally must run even when catch block has break
+    assert_eq!(
+        eval(
+            r#"
+            let fin: number = 0;
+            let c: number = 0;
+            while (c < 2) {
+                try {
+                    throw "ex";
+                } catch (e: any) {
+                    c = c + 1;
+                    break;
+                } finally {
+                    fin = 1;
+                }
+                fin = -1;
+            }
+            fin
+        "#
+        ),
+        JsValue::Number(1.0)
+    );
+}
+
+#[test]
+fn test_finally_continue_overrides_try_break() {
+    // When finally has continue, it overrides the break from try
+    assert_eq!(
+        eval(
+            r#"
+            let c: number = 0;
+            while (c < 3) {
+                try {
+                    c = c + 1;
+                    break;  // This should be overridden by finally's continue
+                } finally {
+                    continue;
+                }
+            }
+            c
+        "#
+        ),
+        JsValue::Number(3.0)
+    );
+}
+
+#[test]
+fn test_finally_break_overrides_try_exception() {
+    // When finally has break, it suppresses the exception from try
+    assert_eq!(
+        eval(
+            r#"
+            let result: number = 0;
+            while (true) {
+                try {
+                    throw "error";
+                } finally {
+                    result = 1;
+                    break;
+                }
+            }
+            result
+        "#
+        ),
+        JsValue::Number(1.0)
+    );
+}
+
+// -----------------------------------------------------------------------------
 // Throw Statement
 // -----------------------------------------------------------------------------
 

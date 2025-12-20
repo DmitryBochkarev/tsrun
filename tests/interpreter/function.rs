@@ -947,3 +947,86 @@ fn test_class_expression_name() {
 
 // test_class_expression_anonymous_name is commented out -
 // see NOTE above about ES6+ name inference for anonymous classes
+
+// ============================================================
+// Function.call/apply `this` binding tests (strict mode)
+// ============================================================
+
+// In strict mode, `this` is passed through exactly as provided.
+// Primitives remain primitives, null/undefined remain as-is.
+
+#[test]
+fn test_call_this_null_strict() {
+    // In strict mode, this should be null
+    assert_eq!(
+        eval(r#"function f() { return this; } f.call(null)"#),
+        JsValue::Null
+    );
+}
+
+#[test]
+fn test_call_this_undefined_strict() {
+    // In strict mode, this should be undefined
+    assert_eq!(
+        eval(r#"function f() { return this; } f.call(undefined)"#),
+        JsValue::Undefined
+    );
+}
+
+#[test]
+fn test_call_this_primitive_number() {
+    // In strict mode, primitive this should stay primitive
+    assert_eq!(
+        eval(r#"function f() { return this; } f.call(42)"#),
+        JsValue::Number(42.0)
+    );
+}
+
+#[test]
+fn test_call_this_primitive_string() {
+    assert_eq!(
+        eval(r#"function f() { return this; } f.call("hello")"#),
+        JsValue::from("hello")
+    );
+}
+
+#[test]
+fn test_call_this_primitive_boolean() {
+    assert_eq!(
+        eval(r#"function f() { return this; } f.call(true)"#),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_apply_this_null_strict() {
+    assert_eq!(
+        eval(r#"function f() { return this; } f.apply(null)"#),
+        JsValue::Null
+    );
+}
+
+#[test]
+fn test_apply_this_primitive_number() {
+    assert_eq!(
+        eval(r#"function f() { return this; } f.apply(42)"#),
+        JsValue::Number(42.0)
+    );
+}
+
+#[test]
+fn test_call_with_args_this_preserved() {
+    // this should be preserved while args work correctly
+    assert_eq!(
+        eval(r#"function f(a: number, b: number) { return this + a + b; } f.call(100, 20, 3)"#),
+        JsValue::Number(123.0)
+    );
+}
+
+#[test]
+fn test_apply_with_args_this_preserved() {
+    assert_eq!(
+        eval(r#"function f(a: number, b: number) { return this + a + b; } f.apply(100, [20, 3])"#),
+        JsValue::Number(123.0)
+    );
+}

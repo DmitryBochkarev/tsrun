@@ -4086,6 +4086,9 @@ impl Interpreter {
     }
 
     /// Step for finally block completion - restore original completion/error
+    ///
+    /// Per ECMAScript spec, if finally has its own abrupt completion (throw, return,
+    /// break, continue), that overrides any completion from try/catch.
     fn step_finally_block(
         &mut self,
         state: &mut ExecutionState,
@@ -4093,13 +4096,36 @@ impl Interpreter {
         saved_error: Option<JsError>,
         saved_completion: StackCompletion,
     ) -> StepResult {
-        // Pop finally result (we don't use it unless it threw)
-        let _ = state.pop_value();
+        // Pop finally result (we don't use it unless finally had an abrupt completion)
+        let finally_result = state.pop_value().map(|g| g.value);
 
-        // Check if finally threw
-        if matches!(state.completion, StackCompletion::Throw) {
-            // Finally threw - use its error
-            return StepResult::Continue;
+        // Check if finally has its own abrupt completion - if so, it overrides everything
+        match &state.completion {
+            StackCompletion::Throw => {
+                // Finally threw - use its error, ignore saved error/completion
+                return StepResult::Continue;
+            }
+            StackCompletion::Return => {
+                // Finally returned - use its return, ignore saved error/completion
+                if let Some(val) = finally_result {
+                    state.push_value(Guarded::unguarded(val));
+                } else {
+                    state.push_value(Guarded::unguarded(JsValue::Undefined));
+                }
+                return StepResult::Continue;
+            }
+            StackCompletion::Break(_) | StackCompletion::Continue(_) => {
+                // Finally has break/continue - use it, ignore saved error/completion
+                if let Some(val) = finally_result {
+                    state.push_value(Guarded::unguarded(val));
+                } else {
+                    state.push_value(Guarded::unguarded(JsValue::Undefined));
+                }
+                return StepResult::Continue;
+            }
+            StackCompletion::Normal => {
+                // Finally completed normally - restore saved completion
+            }
         }
 
         // Restore original completion
