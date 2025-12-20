@@ -271,6 +271,93 @@ fn test_object_get_prototype_of() {
     );
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Object.prototype.isPrototypeOf tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_object_prototype_is_prototype_of_basic() {
+    // Object.prototype is in the prototype chain of any object
+    assert_eq!(
+        eval("Object.prototype.isPrototypeOf({})"),
+        JsValue::Boolean(true)
+    );
+    assert_eq!(
+        eval("Object.prototype.isPrototypeOf([])"),
+        JsValue::Boolean(true)
+    );
+    assert_eq!(
+        eval("Object.prototype.isPrototypeOf(function() {})"),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_array_prototype_is_prototype_of() {
+    // Array.prototype is in the prototype chain of arrays
+    assert_eq!(
+        eval("Array.prototype.isPrototypeOf([1, 2, 3])"),
+        JsValue::Boolean(true)
+    );
+    // But not plain objects
+    assert_eq!(
+        eval("Array.prototype.isPrototypeOf({})"),
+        JsValue::Boolean(false)
+    );
+}
+
+#[test]
+fn test_is_prototype_of_custom_chain() {
+    // Test with Object.create
+    assert_eq!(
+        eval(
+            r#"
+            const parent: { x: number } = { x: 1 };
+            const child = Object.create(parent);
+            parent.isPrototypeOf(child)
+        "#
+        ),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_is_prototype_of_primitives() {
+    // Primitives should return false
+    assert_eq!(
+        eval("Object.prototype.isPrototypeOf(42)"),
+        JsValue::Boolean(false)
+    );
+    assert_eq!(
+        eval("Object.prototype.isPrototypeOf('hello')"),
+        JsValue::Boolean(false)
+    );
+    assert_eq!(
+        eval("Object.prototype.isPrototypeOf(null)"),
+        JsValue::Boolean(false)
+    );
+    assert_eq!(
+        eval("Object.prototype.isPrototypeOf(undefined)"),
+        JsValue::Boolean(false)
+    );
+}
+
+#[test]
+fn test_is_prototype_of_class_inheritance() {
+    // Test with class inheritance
+    assert_eq!(
+        eval(
+            r#"
+            class Parent {}
+            class Child extends Parent {}
+            const c = new Child();
+            Parent.prototype.isPrototypeOf(c)
+        "#
+        ),
+        JsValue::Boolean(true)
+    );
+}
+
 #[test]
 fn test_object_get_own_property_names() {
     assert_eq!(

@@ -8,12 +8,13 @@ use crate::interpreter::builtins::proxy::{
 use crate::interpreter::Interpreter;
 use crate::value::{ExoticObject, Guarded, JsObjectRef, JsString, JsValue, Property, PropertyKey};
 
-/// Initialize Object.prototype with hasOwnProperty, toString, valueOf methods.
+/// Initialize Object.prototype with hasOwnProperty, toString, valueOf, isPrototypeOf methods.
 /// The prototype object must already exist in `interp.object_prototype`.
 pub fn init_object_prototype(interp: &mut Interpreter) {
     let proto = interp.object_prototype.clone();
 
     interp.register_method(&proto, "hasOwnProperty", object_has_own_property, 1);
+    interp.register_method(&proto, "isPrototypeOf", object_is_prototype_of, 1);
     interp.register_method(&proto, "toString", object_to_string, 0);
     interp.register_method(&proto, "toLocaleString", object_to_locale_string, 0);
     interp.register_method(&proto, "valueOf", object_value_of, 0);
@@ -536,6 +537,45 @@ pub fn object_has_own_property(
         obj_ref.properties.contains_key(&key)
     };
     Ok(Guarded::unguarded(JsValue::Boolean(has_prop)))
+}
+
+/// Object.prototype.isPrototypeOf
+/// Returns true if this object is in the prototype chain of the given value.
+pub fn object_is_prototype_of(
+    _interp: &mut Interpreter,
+    this: JsValue,
+    args: &[JsValue],
+) -> Result<Guarded, JsError> {
+    // Get the this object
+    let JsValue::Object(this_obj) = this else {
+        // this is not an object - can't be in any prototype chain
+        return Ok(Guarded::unguarded(JsValue::Boolean(false)));
+    };
+
+    // Get the argument - if not an object, return false
+    let arg = args.first().cloned().unwrap_or(JsValue::Undefined);
+    let JsValue::Object(mut check_obj) = arg else {
+        // Primitives don't have prototype chains (in this context)
+        return Ok(Guarded::unguarded(JsValue::Boolean(false)));
+    };
+
+    // Walk up the prototype chain of check_obj, looking for this_obj
+    loop {
+        let proto = check_obj.borrow().prototype.clone();
+        match proto {
+            Some(p) => {
+                // Compare by pointer equality using associated function
+                if crate::gc::Gc::ptr_eq(&this_obj, &p) {
+                    return Ok(Guarded::unguarded(JsValue::Boolean(true)));
+                }
+                check_obj = p;
+            }
+            None => {
+                // Reached the end of the chain
+                return Ok(Guarded::unguarded(JsValue::Boolean(false)));
+            }
+        }
+    }
 }
 
 /// Object.prototype.toString
