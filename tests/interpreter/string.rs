@@ -805,6 +805,122 @@ fn test_charat_no_args() {
 }
 
 // =============================================================================
+// String.replace $ pattern tests
+// =============================================================================
+
+#[test]
+fn test_string_replace_dollar_ampersand() {
+    // $& - inserts the matched substring
+    // "seashells" -> "sea" + "sh" + "sch" + "ells" = "seashschells"
+    assert_eq!(
+        eval(r#""She sells seashells".replace(/sh/g, "$&sch")"#),
+        JsValue::String(JsString::from("She sells seashschells"))
+    );
+    // Full test262 test case
+    assert_eq!(
+        eval(r#""She sells seashells by the seashore.".replace(/sh/g, "$&sch")"#),
+        JsValue::String(JsString::from("She sells seashschells by the seashschore."))
+    );
+}
+
+#[test]
+fn test_string_replace_dollar_ampersand_single() {
+    // $& with non-global regex
+    assert_eq!(
+        eval(r#""She sells seashells".replace(/sh/, "$&sch")"#),
+        JsValue::String(JsString::from("She sells seashschells"))
+    );
+}
+
+#[test]
+fn test_string_replace_dollar_backtick() {
+    // $` - inserts the portion of the string that precedes the match
+    assert_eq!(
+        eval(r#""hello world".replace("world", "$`")"#),
+        JsValue::String(JsString::from("hello hello "))
+    );
+}
+
+#[test]
+fn test_string_replace_dollar_quote() {
+    // $' - inserts the portion of the string that follows the match
+    assert_eq!(
+        eval(r#""hello world".replace("hello", "$'")"#),
+        JsValue::String(JsString::from(" world world"))
+    );
+}
+
+#[test]
+fn test_string_replace_dollar_dollar() {
+    // $$ - inserts a literal "$"
+    assert_eq!(
+        eval(r#""price: 10".replace("10", "$$20")"#),
+        JsValue::String(JsString::from("price: $20"))
+    );
+}
+
+#[test]
+fn test_string_replace_dollar_number() {
+    // $n - inserts the nth capture group
+    assert_eq!(
+        eval(r#""John Smith".replace(/(\w+) (\w+)/, "$2, $1")"#),
+        JsValue::String(JsString::from("Smith, John"))
+    );
+}
+
+#[test]
+fn test_string_replace_dollar_number_double_digit() {
+    // $nn - double digit capture group reference
+    // Note: This test uses a regex with many groups
+    assert_eq!(
+        eval(r#""abcdefghijkl".replace(/(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)(k)(l)/, "$12$11$10")"#),
+        JsValue::String(JsString::from("lkj"))
+    );
+}
+
+#[test]
+fn test_string_replace_dollar_mixed() {
+    // Mix of $ patterns
+    assert_eq!(
+        eval(r#""hello world".replace(/(\w+)/, "[$1] = $&")"#),
+        JsValue::String(JsString::from("[hello] = hello world"))
+    );
+}
+
+#[test]
+fn test_string_replace_dollar_undefined_group() {
+    // $n where group didn't participate - should insert empty string
+    // Replace "a" with "$1$2" = "a" + "" = "a", so "abc" -> "abc"
+    assert_eq!(
+        eval(r#""abc".replace(/(a)(x)?/, "$1$2")"#),
+        JsValue::String(JsString::from("abc"))
+    );
+    // With brackets to verify empty group
+    assert_eq!(
+        eval(r#""abc".replace(/(a)(x)?/, "[$1][$2]")"#),
+        JsValue::String(JsString::from("[a][]bc"))
+    );
+}
+
+#[test]
+fn test_string_replace_dollar_string_search() {
+    // $ patterns should work with string search too
+    assert_eq!(
+        eval(r#""foo bar".replace("bar", "$$100")"#),
+        JsValue::String(JsString::from("foo $100"))
+    );
+}
+
+#[test]
+fn test_string_replace_global_dollar_ampersand() {
+    // Global replacement with $&
+    assert_eq!(
+        eval(r#""a1b2c3".replace(/\d/g, "[$&]")"#),
+        JsValue::String(JsString::from("a[1]b[2]c[3]"))
+    );
+}
+
+// =============================================================================
 // ToPrimitive / String Coercion Tests
 // =============================================================================
 

@@ -735,13 +735,35 @@ pub fn string_replace(
                 result.push_str(s.get(last_end..).unwrap_or(""));
                 return Ok(Guarded::unguarded(JsValue::String(JsString::from(result))));
             } else {
-                // String replacement
-                let replacement = replacement_arg.to_js_string().to_string();
-                let result = if is_global {
-                    re.replace_all(&s, replacement.as_str()).into_owned()
+                // String replacement with $ pattern expansion
+                let replacement_template = replacement_arg.to_js_string().to_string();
+                let mut result = String::new();
+                let mut last_end = 0;
+
+                let captures_iter: Vec<_> = if is_global {
+                    re.captures_iter(&s).collect()
                 } else {
-                    re.replace(&s, replacement.as_str()).into_owned()
+                    re.captures(&s).into_iter().collect()
                 };
+
+                for caps in captures_iter {
+                    let m = caps.get(0).ok_or_else(|| {
+                        JsError::internal_error("regex match missing capture group 0")
+                    })?;
+                    let before = s.get(..m.start()).unwrap_or("");
+                    let after = s.get(m.end()..).unwrap_or("");
+
+                    result.push_str(s.get(last_end..m.start()).unwrap_or(""));
+                    result.push_str(&expand_replacement_pattern(
+                        &replacement_template,
+                        m.as_str(),
+                        before,
+                        after,
+                        Some(&caps),
+                    ));
+                    last_end = m.end();
+                }
+                result.push_str(s.get(last_end..).unwrap_or(""));
                 return Ok(Guarded::unguarded(JsValue::String(JsString::from(result))));
             }
         }
@@ -772,10 +794,26 @@ pub fn string_replace(
         return Ok(Guarded::unguarded(JsValue::String(JsString::from(s))));
     }
 
-    let replacement = replacement_arg.to_js_string().to_string();
-    Ok(Guarded::unguarded(JsValue::String(JsString::from(
-        s.replacen(&search, &replacement, 1),
-    ))))
+    // String replacement with $ pattern expansion
+    let replacement_template = replacement_arg.to_js_string().to_string();
+    if let Some(start) = s.find(&search) {
+        let before = s.get(..start).unwrap_or("");
+        let after = s.get(start + search.len()..).unwrap_or("");
+        let expanded = expand_replacement_pattern(
+            &replacement_template,
+            &search,
+            before,
+            after,
+            None, // No capture groups for string search
+        );
+        let mut result = String::new();
+        result.push_str(before);
+        result.push_str(&expanded);
+        result.push_str(after);
+        Ok(Guarded::unguarded(JsValue::String(JsString::from(result))))
+    } else {
+        Ok(Guarded::unguarded(JsValue::String(JsString::from(s))))
+    }
 }
 
 pub fn string_replace_all(
@@ -1201,6 +1239,101 @@ pub fn string_normalize(
     Ok(Guarded::unguarded(JsValue::String(JsString::from(
         normalized,
     ))))
+}
+
+/// Expand JavaScript replacement string $ patterns
+/// $$ -> $
+/// $& -> matched substring
+/// $` -> portion before match
+/// $' -> portion after match
+/// $n or $nn -> nth capture group (1-99)
+fn expand_replacement_pattern(
+    replacement: &str,
+    matched: &str,
+    before_match: &str,
+    after_match: &str,
+    captures: Option<&regex::Captures>,
+) -> String {
+    let mut result = String::with_capacity(replacement.len());
+    let chars: Vec<char> = replacement.chars().collect();
+    let mut i = 0;
+
+    while i < chars.len() {
+        if chars.get(i) == Some(&'$') && i + 1 < chars.len() {
+            match chars.get(i + 1) {
+                Some('$') => {
+                    // $$ -> literal $
+                    result.push('$');
+                    i += 2;
+                }
+                Some('&') => {
+                    // $& -> matched substring
+                    result.push_str(matched);
+                    i += 2;
+                }
+                Some('`') => {
+                    // $` -> portion before match
+                    result.push_str(before_match);
+                    i += 2;
+                }
+                Some('\'') => {
+                    // $' -> portion after match
+                    result.push_str(after_match);
+                    i += 2;
+                }
+                Some(c) if c.is_ascii_digit() => {
+                    // $n or $nn -> capture group
+                    let first_digit = *c;
+                    let mut group_num = (first_digit as u32 - '0' as u32) as usize;
+                    let mut consumed = 2;
+
+                    // Check for second digit (for $10-$99)
+                    if i + 2 < chars.len() {
+                        if let Some(second) = chars.get(i + 2) {
+                            if second.is_ascii_digit() {
+                                let two_digit =
+                                    group_num * 10 + (*second as u32 - '0' as u32) as usize;
+                                // Only use two-digit if it's a valid group reference
+                                if let Some(caps) = captures {
+                                    if two_digit <= caps.len().saturating_sub(1) && two_digit > 0 {
+                                        group_num = two_digit;
+                                        consumed = 3;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Get the capture group (group 0 is the whole match, groups are 1-indexed in JS)
+                    if group_num > 0 {
+                        if let Some(caps) = captures {
+                            if let Some(m) = caps.get(group_num) {
+                                result.push_str(m.as_str());
+                            }
+                            // Undefined group -> empty string (nothing to push)
+                        }
+                    } else {
+                        // $0 is not valid, treat as literal
+                        result.push('$');
+                        result.push(first_digit);
+                    }
+                    i += consumed;
+                }
+                _ => {
+                    // Unknown $ sequence, treat as literal
+                    result.push('$');
+                    i += 1;
+                }
+            }
+        } else {
+            if let Some(&c) = chars.get(i) {
+                result.push(c);
+            }
+            i += 1;
+        }
+    }
+
+    result
 }
 
 /// String.prototype.localeCompare(compareString)

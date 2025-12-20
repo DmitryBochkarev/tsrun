@@ -99,7 +99,10 @@ fn test_strict_no_let_eval() {
 fn test_strict_no_const_eval() {
     // Cannot use 'eval' as variable name in strict mode
     let result = eval_result("const eval = 1;");
-    assert!(result.is_err(), "Should not allow const eval in strict mode");
+    assert!(
+        result.is_err(),
+        "Should not allow const eval in strict mode"
+    );
 }
 
 #[test]
