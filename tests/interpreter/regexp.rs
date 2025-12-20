@@ -140,6 +140,61 @@ fn test_regexp_combined_flags() {
     assert_eq!(eval("/abc/gimsuy.sticky"), JsValue::Boolean(true));
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// RegExp.exec result is proper Array (Test262 conformance)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_regexp_exec_instanceof_array() {
+    // The result of exec() must be instanceof Array
+    assert_eq!(
+        eval("/abc/.exec('abc') instanceof Array"),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_regexp_exec_result_is_array() {
+    // Verify the result is an Array with Array methods
+    assert_eq!(
+        eval("Array.isArray(/abc/.exec('abc'))"),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_regexp_exec_result_has_index() {
+    // The result should have index property
+    assert_eq!(eval("/bc/.exec('abc').index"), JsValue::Number(1.0));
+}
+
+#[test]
+fn test_regexp_exec_result_has_input() {
+    // The result should have input property
+    assert_eq!(
+        eval("/bc/.exec('abc').input"),
+        JsValue::String("abc".into())
+    );
+}
+
+#[test]
+fn test_regexp_exec_calls_tostring_on_object() {
+    // Test262 conformance: exec should call ToString on the argument
+    assert_eq!(
+        eval("/abc/.exec({toString: function() { return 'xabcy'; }})[0]"),
+        JsValue::String("abc".into())
+    );
+}
+
+#[test]
+fn test_regexp_test_calls_tostring_on_object() {
+    // Test262 conformance: test should call ToString on the argument
+    assert_eq!(
+        eval("/abc/.test({toString: function() { return 'xabcy'; }})"),
+        JsValue::Boolean(true)
+    );
+}
+
 #[test]
 fn test_regexp_while_exec_loop() {
     // Test while loop with exec() - similar to the text-processing example

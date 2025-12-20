@@ -132,17 +132,15 @@ pub fn build_regex(pattern: &str, flags: &str) -> Result<regex::Regex, JsError> 
 }
 
 pub fn regexp_test(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
     let (pattern, flags) = get_regexp_data(&this)?;
-    let input = args
-        .first()
-        .cloned()
-        .unwrap_or(JsValue::Undefined)
-        .to_js_string()
-        .to_string();
+
+    // Use ToString abstract operation (calls object's toString if needed)
+    let input_arg = args.first().cloned().unwrap_or(JsValue::Undefined);
+    let input = interp.coerce_to_string(&input_arg)?.to_string();
 
     let re = build_regex(&pattern, &flags)?;
     Ok(Guarded::unguarded(JsValue::Boolean(re.is_match(&input))))
@@ -158,12 +156,10 @@ pub fn regexp_exec(
     };
 
     let (pattern, flags) = get_regexp_data(&this)?;
-    let input = args
-        .first()
-        .cloned()
-        .unwrap_or(JsValue::Undefined)
-        .to_js_string()
-        .to_string();
+
+    // Use ToString abstract operation (calls object's toString if needed)
+    let input_arg = args.first().cloned().unwrap_or(JsValue::Undefined);
+    let input = interp.coerce_to_string(&input_arg)?.to_string();
 
     let is_global = flags.contains('g');
     let is_sticky = flags.contains('y');
