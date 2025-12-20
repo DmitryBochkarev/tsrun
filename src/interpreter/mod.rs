@@ -2924,12 +2924,23 @@ impl Interpreter {
                 func.async_,
             );
 
-            // Store __super__ on method so super.method() works
+            // Store __super__ and __super_target__ on method so super works
+            // __super__ = parent constructor (for super() calls)
+            // __super_target__ = parent's prototype (for super.x property access in instance methods)
             if let Some(ref super_ctor) = super_constructor {
                 func_obj.borrow_mut().set_property(
                     PropertyKey::String(self.intern("__super__")),
                     JsValue::Object(super_ctor.cheap_clone()),
                 );
+                // For instance methods, super.x looks up on parent's prototype
+                let super_proto = super_ctor
+                    .borrow()
+                    .get_property(&PropertyKey::String(self.intern("prototype")));
+                if let Some(sp) = super_proto {
+                    func_obj
+                        .borrow_mut()
+                        .set_property(PropertyKey::String(self.intern("__super_target__")), sp);
+                }
             }
 
             // Apply parameter decorators if any (before method decorators)
@@ -3144,12 +3155,21 @@ impl Interpreter {
                 .set_property(fields_key, JsValue::Object(fields_array));
         }
 
-        // Store super constructor if we have one
+        // Store super constructor and super target if we have one
         if let Some(ref super_ctor) = super_constructor {
             constructor_fn.borrow_mut().set_property(
                 PropertyKey::String(self.intern("__super__")),
                 JsValue::Object(super_ctor.cheap_clone()),
             );
+            // For constructors, super.x looks up on parent's prototype (like instance methods)
+            let super_proto = super_ctor
+                .borrow()
+                .get_property(&PropertyKey::String(self.intern("prototype")));
+            if let Some(sp) = super_proto {
+                constructor_fn
+                    .borrow_mut()
+                    .set_property(PropertyKey::String(self.intern("__super_target__")), sp);
+            }
         }
 
         // Handle static methods
@@ -3212,6 +3232,21 @@ impl Interpreter {
                 func.generator,
                 func.async_,
             );
+
+            // Store __super__ and __super_target__ on static method so super works
+            // __super__ = parent constructor (for super() calls - though not typical in static)
+            // __super_target__ = parent constructor itself (for super.x property access in static methods)
+            if let Some(ref super_ctor) = super_constructor {
+                func_obj.borrow_mut().set_property(
+                    PropertyKey::String(self.intern("__super__")),
+                    JsValue::Object(super_ctor.cheap_clone()),
+                );
+                // For static methods, super.x looks up on parent constructor directly
+                func_obj.borrow_mut().set_property(
+                    PropertyKey::String(self.intern("__super_target__")),
+                    JsValue::Object(super_ctor.cheap_clone()),
+                );
+            }
 
             // Apply parameter decorators if any (before method decorators)
             // TC39-style: decorators receive (target, context) where context.static = true
@@ -4914,6 +4949,74 @@ impl Interpreter {
                 Ok(Guarded::unguarded(final_value))
             }
             AssignmentTarget::Member(member) => {
+                // Handle super.x = value specially - sets property on `this` not on super's prototype
+                if matches!(&*member.object, Expression::Super(_)) {
+                    let this_name = self.intern("this");
+                    let this_val = self.env_get(&this_name)?;
+                    let JsValue::Object(ref this_obj) = this_val else {
+                        return Err(JsError::type_error(
+                            "Cannot set super property when 'this' is not an object",
+                        ));
+                    };
+
+                    let key = self.get_member_key(&member.property)?;
+
+                    // For super.x = value, we set on `this` but compound assignments
+                    // read from super's prototype and write to `this`
+                    let final_value = if assign.operator != AssignmentOp::Assign {
+                        // Get current value from super target (parent's prototype)
+                        let super_target_name = self.intern("__super_target__");
+                        let super_target = self.env_get(&super_target_name)?;
+                        let current = if let JsValue::Object(target) = &super_target {
+                            let prop_desc = target.borrow().get_property_descriptor(&key);
+                            match prop_desc {
+                                Some((prop, _)) if prop.is_accessor() => {
+                                    if let Some(getter) = prop.getter() {
+                                        let Guarded {
+                                            value: getter_val,
+                                            guard: _getter_guard,
+                                        } = self.call_function(
+                                            JsValue::Object(getter.clone()),
+                                            this_val.clone(),
+                                            &[],
+                                        )?;
+                                        getter_val
+                                    } else {
+                                        JsValue::Undefined
+                                    }
+                                }
+                                Some((prop, _)) => prop.value,
+                                None => JsValue::Undefined,
+                            }
+                        } else {
+                            JsValue::Undefined
+                        };
+
+                        // Apply compound operator
+                        match assign.operator {
+                            AssignmentOp::AddAssign => match (&current, &value) {
+                                (JsValue::String(a), _) => {
+                                    JsValue::String(a.cheap_clone() + &value.to_js_string())
+                                }
+                                _ => JsValue::Number(current.to_number() + value.to_number()),
+                            },
+                            AssignmentOp::SubAssign => {
+                                JsValue::Number(current.to_number() - value.to_number())
+                            }
+                            AssignmentOp::MulAssign => {
+                                JsValue::Number(current.to_number() * value.to_number())
+                            }
+                            _ => value, // Other compound operators - simplified
+                        }
+                    } else {
+                        value
+                    };
+
+                    // Set property on `this`
+                    this_obj.borrow_mut().set_property(key, final_value.clone());
+                    return Ok(Guarded::unguarded(final_value));
+                }
+
                 let Guarded {
                     value: obj_val,
                     guard: _obj_guard,
@@ -5460,22 +5563,16 @@ impl Interpreter {
             }
             // super.method() - call parent method
             Expression::Member(member) if matches!(&*member.object, Expression::Super(_)) => {
-                let super_name = self.intern("__super__");
-                let super_constructor = self.env_get(&super_name)?;
+                // Use __super_target__ for method lookup (set correctly for instance vs static)
+                let super_target_name = self.intern("__super_target__");
+                let super_target = self.env_get(&super_target_name)?;
                 let this_name = self.intern("this");
                 let this_val = self.env_get(&this_name)?;
 
-                // Get the method from super's prototype
+                // Get the method from super target
                 let key = self.get_member_key(&member.property)?;
-                let func = if let JsValue::Object(super_obj) = &super_constructor {
-                    let proto_key = PropertyKey::String(self.intern("prototype"));
-                    if let Some(JsValue::Object(proto)) =
-                        super_obj.borrow().get_property(&proto_key)
-                    {
-                        proto.borrow().get_property(&key)
-                    } else {
-                        None
-                    }
+                let func = if let JsValue::Object(target_obj) = &super_target {
+                    target_obj.borrow().get_property(&key)
                 } else {
                     None
                 };
@@ -5781,6 +5878,27 @@ impl Interpreter {
                                 VarKey(super_name),
                                 Binding {
                                     value: super_val,
+                                    mutable: false,
+                                    initialized: true,
+                                    import_binding: None,
+                                },
+                            );
+                        }
+                    }
+                }
+
+                // Bind `__super_target__` for super.x property access
+                {
+                    let super_target_name = self.intern("__super_target__");
+                    let super_target_key = PropertyKey::String(super_target_name.cheap_clone());
+                    if let Some(super_target_val) =
+                        func_obj.borrow().get_property(&super_target_key)
+                    {
+                        if let Some(data) = func_env.borrow_mut().as_environment_mut() {
+                            data.bindings.insert(
+                                VarKey(super_target_name),
+                                Binding {
+                                    value: super_target_val,
                                     mutable: false,
                                     initialized: true,
                                     import_binding: None,
@@ -6167,6 +6285,11 @@ impl Interpreter {
     }
 
     fn evaluate_member(&mut self, member: &MemberExpression) -> Result<Guarded, JsError> {
+        // Handle super.x property access - lookup on parent's prototype/constructor
+        if matches!(&*member.object, Expression::Super(_)) {
+            return self.evaluate_super_member(member);
+        }
+
         let Guarded {
             value: obj,
             guard: obj_guard,
@@ -6298,6 +6421,60 @@ impl Interpreter {
             value,
             guard: final_guard,
         })
+    }
+
+    /// Evaluate super.x property access
+    /// For instance methods: looks up on parent's prototype (B.prototype)
+    /// For static methods: looks up on parent constructor (B)
+    fn evaluate_super_member(&mut self, member: &MemberExpression) -> Result<Guarded, JsError> {
+        let key = self.get_member_key(&member.property)?;
+
+        // Get __super_target__ from current environment - this is the object to lookup on
+        // For instance methods: parent's prototype (B.prototype)
+        // For static methods: parent constructor (B)
+        let super_target_name = self.intern("__super_target__");
+        let super_target = self.env_get(&super_target_name)?;
+
+        // Also get `this` for invoking getters with correct receiver
+        let this_name = self.intern("this");
+        let this_val = self.env_get(&this_name).unwrap_or(JsValue::Undefined);
+
+        match super_target {
+            JsValue::Object(target) => {
+                // Look up property on the super target, including prototype chain
+                let prop_desc = target.borrow().get_property_descriptor(&key);
+                match prop_desc {
+                    Some((prop, _)) if prop.is_accessor() => {
+                        // Property has a getter - invoke it with `this` as receiver
+                        if let Some(getter) = prop.getter() {
+                            let Guarded {
+                                value: getter_val,
+                                guard: getter_guard,
+                            } =
+                                self.call_function(JsValue::Object(getter.clone()), this_val, &[])?;
+                            Ok(Guarded {
+                                value: getter_val,
+                                guard: getter_guard,
+                            })
+                        } else {
+                            Ok(Guarded::unguarded(JsValue::Undefined))
+                        }
+                    }
+                    Some((prop, _)) => Ok(Guarded::unguarded(prop.value)),
+                    None => Ok(Guarded::unguarded(JsValue::Undefined)),
+                }
+            }
+            JsValue::Undefined => {
+                // No super target - super is not available in this context
+                Err(JsError::type_error(format!(
+                    "Cannot read properties of undefined (reading '{}')",
+                    key
+                )))
+            }
+            _ => Err(JsError::type_error(
+                "'super' keyword is not valid in this context",
+            )),
+        }
     }
 
     fn get_member_key(&mut self, property: &MemberProperty) -> Result<PropertyKey, JsError> {

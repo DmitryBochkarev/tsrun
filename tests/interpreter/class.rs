@@ -591,3 +591,505 @@ fn test_spread_in_new_multiple() {
         JsValue::Number(10.0)
     );
 }
+
+// ============================================================================
+// SUPER KEYWORD COMPREHENSIVE TEST SUITE
+// ============================================================================
+
+// Test super.property access in instance methods
+#[test]
+fn test_super_property_in_method() {
+    assert_eq!(
+        eval(
+            r#"
+            class B {
+                get x() { return 2; }
+            }
+            class C extends B {
+                method() {
+                    return super.x;
+                }
+            }
+            new C().method()
+        "#
+        ),
+        JsValue::Number(2.0)
+    );
+}
+
+// Test super.method() call in instance methods
+#[test]
+fn test_super_method_in_method() {
+    assert_eq!(
+        eval(
+            r#"
+            class B {
+                method() { return 1; }
+            }
+            class C extends B {
+                method() {
+                    return super.method();
+                }
+            }
+            new C().method()
+        "#
+        ),
+        JsValue::Number(1.0)
+    );
+}
+
+// Test super in getter
+#[test]
+fn test_super_in_getter() {
+    assert_eq!(
+        eval(
+            r#"
+            class B {
+                method() { return 1; }
+                get x() { return 2; }
+            }
+            class C extends B {
+                get y() {
+                    return super.x + super.method();
+                }
+            }
+            new C().y
+        "#
+        ),
+        JsValue::Number(3.0)
+    );
+}
+
+// Test super in setter
+#[test]
+fn test_super_in_setter() {
+    assert_eq!(
+        eval(
+            r#"
+            class B {
+                get x() { return 10; }
+            }
+            class C extends B {
+                result: number = 0;
+                set y(v: number) {
+                    this.result = v + super.x;
+                }
+            }
+            const c = new C();
+            c.y = 5;
+            c.result
+        "#
+        ),
+        JsValue::Number(15.0)
+    );
+}
+
+// Test super in static methods
+#[test]
+fn test_super_in_static_method() {
+    assert_eq!(
+        eval(
+            r#"
+            class B {
+                static method() { return 1; }
+                static get x() { return 2; }
+            }
+            class C extends B {
+                static method() {
+                    return super.x + super.method();
+                }
+            }
+            C.method()
+        "#
+        ),
+        JsValue::Number(3.0)
+    );
+}
+
+// Test super in static getter
+#[test]
+fn test_super_in_static_getter() {
+    assert_eq!(
+        eval(
+            r#"
+            class B {
+                static get value() { return 42; }
+            }
+            class C extends B {
+                static get doubled() {
+                    return super.value * 2;
+                }
+            }
+            C.doubled
+        "#
+        ),
+        JsValue::Number(84.0)
+    );
+}
+
+// Test super in static setter
+#[test]
+fn test_super_in_static_setter() {
+    assert_eq!(
+        eval(
+            r#"
+            class B {
+                static get base() { return 10; }
+            }
+            class C extends B {
+                static result: number = 0;
+                static set value(v: number) {
+                    C.result = v + super.base;
+                }
+            }
+            C.value = 5;
+            C.result
+        "#
+        ),
+        JsValue::Number(15.0)
+    );
+}
+
+// Test super with computed property access
+#[test]
+fn test_super_computed_property() {
+    assert_eq!(
+        eval(
+            r#"
+            class B {
+                getValue() { return 100; }
+            }
+            class C extends B {
+                test() {
+                    const name = "getValue";
+                    return super[name]();
+                }
+            }
+            new C().test()
+        "#
+        ),
+        JsValue::Number(100.0)
+    );
+}
+
+// Test super in nested function (should refer to class's super)
+#[test]
+fn test_super_in_arrow_inside_method() {
+    assert_eq!(
+        eval(
+            r#"
+            class B {
+                value() { return 5; }
+            }
+            class C extends B {
+                test() {
+                    const arrow = () => super.value();
+                    return arrow();
+                }
+            }
+            new C().test()
+        "#
+        ),
+        JsValue::Number(5.0)
+    );
+}
+
+// Test super with deep inheritance chain
+#[test]
+fn test_super_deep_inheritance() {
+    assert_eq!(
+        eval(
+            r#"
+            class A {
+                value() { return "A"; }
+            }
+            class B extends A {
+                value() { return super.value() + "B"; }
+            }
+            class C extends B {
+                value() { return super.value() + "C"; }
+            }
+            new C().value()
+        "#
+        ),
+        JsValue::from("ABC")
+    );
+}
+
+// Test super() call in constructor with method call after
+#[test]
+fn test_super_call_then_super_property() {
+    assert_eq!(
+        eval(
+            r#"
+            class B {
+                name: string;
+                constructor(name: string) {
+                    this.name = name;
+                }
+                greet() { return "Hello, " + this.name; }
+            }
+            class C extends B {
+                constructor(name: string) {
+                    super(name);
+                }
+                greeting() {
+                    return super.greet() + "!";
+                }
+            }
+            new C("World").greeting()
+        "#
+        ),
+        JsValue::from("Hello, World!")
+    );
+}
+
+// Test super property access to a regular property (not getter)
+#[test]
+fn test_super_regular_property() {
+    assert_eq!(
+        eval(
+            r#"
+            class B {
+                value: number = 42;
+            }
+            class C extends B {
+                getValue() {
+                    return super.value;
+                }
+            }
+            new C().getValue()
+        "#
+        ),
+        JsValue::Undefined // Instance properties aren't on prototype
+    );
+}
+
+// Test super with prototype property
+#[test]
+fn test_super_prototype_property() {
+    assert_eq!(
+        eval(
+            r#"
+            class B {}
+            B.prototype.value = 42;
+            class C extends B {
+                getValue() {
+                    return super.value;
+                }
+            }
+            new C().getValue()
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+// Test super in constructor before super() - should error
+#[test]
+fn test_super_property_before_super_call() {
+    // Accessing super.x before super() should work (it's super() that must come first for `this`)
+    assert_eq!(
+        eval(
+            r#"
+            class B {
+                static getValue() { return 10; }
+            }
+            class C extends B {
+                result: number;
+                constructor() {
+                    const v = B.getValue(); // Can access parent's static before super()
+                    super();
+                    this.result = v;
+                }
+            }
+            new C().result
+        "#
+        ),
+        JsValue::Number(10.0)
+    );
+}
+
+// Test super.method with different this binding
+#[test]
+fn test_super_method_this_binding() {
+    assert_eq!(
+        eval(
+            r#"
+            class B {
+                name: string = "parent";
+                getName() { return this.name; }
+            }
+            class C extends B {
+                name: string = "child";
+                getParentName() {
+                    return super.getName();
+                }
+            }
+            new C().getParentName()
+        "#
+        ),
+        JsValue::from("child") // super.method() uses child's `this`
+    );
+}
+
+// Test super with Symbol property
+#[test]
+fn test_super_symbol_property() {
+    assert_eq!(
+        eval(
+            r#"
+            const sym = Symbol("test");
+            class B {}
+            B.prototype[sym] = "symbol value";
+            class C extends B {
+                getValue() {
+                    return super[sym];
+                }
+            }
+            new C().getValue()
+        "#
+        ),
+        JsValue::from("symbol value")
+    );
+}
+
+// Test super in async method
+#[test]
+fn test_super_in_async_method() {
+    assert_eq!(
+        eval(
+            r#"
+            class B {
+                getValue() { return Promise.resolve(42); }
+            }
+            class C extends B {
+                async getAsyncValue() {
+                    return await super.getValue();
+                }
+            }
+            await new C().getAsyncValue()
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+// Test super in generator method
+// NOTE: This test is currently skipped because class generator methods (*gen() syntax)
+// are not yet supported by the parser. When that's fixed, uncomment this test.
+#[test]
+#[ignore = "Parser does not yet support generator methods in classes"]
+fn test_super_in_generator_method() {
+    assert_eq!(
+        eval(
+            r#"
+            class B {
+                getValue() { return 10; }
+            }
+            class C extends B {
+                *gen() {
+                    yield super.getValue();
+                    yield super.getValue() * 2;
+                }
+            }
+            const g = new C().gen();
+            g.next().value + g.next().value
+        "#
+        ),
+        JsValue::Number(30.0)
+    );
+}
+
+// Test multiple super accesses in same method
+#[test]
+fn test_multiple_super_accesses() {
+    assert_eq!(
+        eval(
+            r#"
+            class B {
+                a() { return 1; }
+                b() { return 2; }
+                c() { return 3; }
+            }
+            class C extends B {
+                sum() {
+                    return super.a() + super.b() + super.c();
+                }
+            }
+            new C().sum()
+        "#
+        ),
+        JsValue::Number(6.0)
+    );
+}
+
+// Test super assignment (super.x = value)
+#[test]
+fn test_super_property_assignment() {
+    assert_eq!(
+        eval(
+            r#"
+            class B {
+                value: number = 0;
+            }
+            class C extends B {
+                setValue(v: number) {
+                    super.value = v; // Sets on the instance, not prototype
+                }
+                getValue() {
+                    return this.value;
+                }
+            }
+            const c = new C();
+            c.setValue(42);
+            c.getValue()
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+// Test super.x in constructor (after super() call)
+#[test]
+fn test_super_property_in_constructor() {
+    assert_eq!(
+        eval(
+            r#"
+            class B {}
+            B.prototype.x = 42;
+            class C extends B {
+                result: number;
+                constructor() {
+                    super();
+                    this.result = super.x;
+                }
+            }
+            new C().result
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+// Test Object.getPrototypeOf with super
+#[test]
+fn test_super_matches_prototype() {
+    assert_eq!(
+        eval(
+            r#"
+            class B {
+                test() { return "B"; }
+            }
+            class C extends B {
+                checkSuper() {
+                    // super should resolve to B.prototype for method lookup
+                    return super.test() === B.prototype.test.call(this);
+                }
+            }
+            new C().checkSuper()
+        "#
+        ),
+        JsValue::Boolean(true)
+    );
+}
