@@ -41,6 +41,72 @@ fn test_object_tostring() {
 }
 
 #[test]
+fn test_object_prototype_tostring_call() {
+    // Object.prototype.toString.call() should return [object X] for the type
+    assert_eq!(
+        eval("Object.prototype.toString.call([])"),
+        JsValue::String(JsString::from("[object Array]"))
+    );
+    assert_eq!(
+        eval("Object.prototype.toString.call({})"),
+        JsValue::String(JsString::from("[object Object]"))
+    );
+    assert_eq!(
+        eval("Object.prototype.toString.call(function() {})"),
+        JsValue::String(JsString::from("[object Function]"))
+    );
+    assert_eq!(
+        eval("Object.prototype.toString.call(null)"),
+        JsValue::String(JsString::from("[object Null]"))
+    );
+    assert_eq!(
+        eval("Object.prototype.toString.call(undefined)"),
+        JsValue::String(JsString::from("[object Undefined]"))
+    );
+    assert_eq!(
+        eval("Object.prototype.toString.call(42)"),
+        JsValue::String(JsString::from("[object Number]"))
+    );
+    assert_eq!(
+        eval("Object.prototype.toString.call('hello')"),
+        JsValue::String(JsString::from("[object String]"))
+    );
+    assert_eq!(
+        eval("Object.prototype.toString.call(true)"),
+        JsValue::String(JsString::from("[object Boolean]"))
+    );
+    assert_eq!(
+        eval("Object.prototype.toString.call(new Date())"),
+        JsValue::String(JsString::from("[object Date]"))
+    );
+    assert_eq!(
+        eval("Object.prototype.toString.call(/test/)"),
+        JsValue::String(JsString::from("[object RegExp]"))
+    );
+    assert_eq!(
+        eval("Object.prototype.toString.call(new Map())"),
+        JsValue::String(JsString::from("[object Map]"))
+    );
+    assert_eq!(
+        eval("Object.prototype.toString.call(new Set())"),
+        JsValue::String(JsString::from("[object Set]"))
+    );
+    // Object() wrapper should create proper boxed primitives
+    assert_eq!(
+        eval("Object.prototype.toString.call(Object(true))"),
+        JsValue::String(JsString::from("[object Boolean]"))
+    );
+    assert_eq!(
+        eval("Object.prototype.toString.call(Object(42))"),
+        JsValue::String(JsString::from("[object Number]"))
+    );
+    assert_eq!(
+        eval("Object.prototype.toString.call(Object('hello'))"),
+        JsValue::String(JsString::from("[object String]"))
+    );
+}
+
+#[test]
 fn test_object_fromentries() {
     assert_eq!(
         eval("const entries: Array<[string, number]> = [['a', 1], ['b', 2]]; Object.fromEntries(entries).a"),

@@ -25,6 +25,7 @@ pub fn init_array_prototype(interp: &mut Interpreter) {
     interp.register_method(&proto, "concat", array_concat, 1);
     interp.register_method(&proto, "slice", array_slice, 2);
     interp.register_method(&proto, "join", array_join, 1);
+    interp.register_method(&proto, "toString", array_to_string, 0);
     interp.register_method(&proto, "indexOf", array_index_of, 1);
     interp.register_method(&proto, "lastIndexOf", array_last_index_of, 1);
     interp.register_method(&proto, "includes", array_includes, 1);
@@ -699,6 +700,17 @@ pub fn array_join(
     Ok(Guarded::unguarded(JsValue::String(JsString::from(
         parts.join(&separator),
     ))))
+}
+
+/// Array.prototype.toString()
+/// Returns a string of comma-separated elements (equivalent to join()).
+pub fn array_to_string(
+    interp: &mut Interpreter,
+    this: JsValue,
+    _args: &[JsValue],
+) -> Result<Guarded, JsError> {
+    // toString() is equivalent to join() with default separator
+    array_join(interp, this, &[])
 }
 
 pub fn array_every(

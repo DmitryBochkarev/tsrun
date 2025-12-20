@@ -104,6 +104,7 @@ pub fn create_object_constructor(interp: &mut Interpreter) -> JsObjectRef {
     constructor
 }
 
+/// Object constructor - wraps primitives in their respective wrapper objects
 pub fn object_constructor(
     interp: &mut Interpreter,
     _this: JsValue,
@@ -112,12 +113,47 @@ pub fn object_constructor(
     let value = args.first().cloned().unwrap_or(JsValue::Undefined);
     match value {
         JsValue::Null | JsValue::Undefined => {
+            // Return a new plain object
             let guard = interp.heap.create_guard();
             let obj = interp.create_object(&guard);
             Ok(Guarded::with_guard(JsValue::Object(obj), guard))
         }
-        JsValue::Object(_) => Ok(Guarded::unguarded(value)),
-        _ => {
+        JsValue::Object(_) => {
+            // Return the object as-is
+            Ok(Guarded::unguarded(value))
+        }
+        JsValue::Boolean(b) => {
+            // Create Boolean wrapper object
+            let guard = interp.heap.create_guard();
+            let obj = interp.create_object(&guard);
+            obj.borrow_mut().prototype = Some(interp.boolean_prototype.clone());
+            obj.borrow_mut().exotic = ExoticObject::Boolean(b);
+            Ok(Guarded::with_guard(JsValue::Object(obj), guard))
+        }
+        JsValue::Number(n) => {
+            // Create Number wrapper object
+            let guard = interp.heap.create_guard();
+            let obj = interp.create_object(&guard);
+            obj.borrow_mut().prototype = Some(interp.number_prototype.clone());
+            obj.borrow_mut().exotic = ExoticObject::Number(n);
+            Ok(Guarded::with_guard(JsValue::Object(obj), guard))
+        }
+        JsValue::String(ref s) => {
+            // Create String wrapper object
+            let guard = interp.heap.create_guard();
+            let obj = interp.create_object(&guard);
+            obj.borrow_mut().prototype = Some(interp.string_prototype.clone());
+            obj.borrow_mut().exotic = ExoticObject::StringObj(s.clone());
+            // Also set length property for string wrappers
+            let len = s.len();
+            let length_key = PropertyKey::String(interp.intern("length"));
+            obj.borrow_mut()
+                .set_property(length_key, JsValue::Number(len as f64));
+            Ok(Guarded::with_guard(JsValue::Object(obj), guard))
+        }
+        JsValue::Symbol(_) => {
+            // Symbols cannot be wrapped with Object() - this should throw TypeError in strict mode
+            // but for now we return an ordinary object
             let guard = interp.heap.create_guard();
             let obj = interp.create_object(&guard);
             Ok(Guarded::with_guard(JsValue::Object(obj), guard))
@@ -501,80 +537,47 @@ pub fn object_has_own_property(
     Ok(Guarded::unguarded(JsValue::Boolean(has_prop)))
 }
 
+/// Object.prototype.toString
+/// Returns "[object Type]" based on the internal [[Class]] of the value.
+/// Per ES spec, this checks for Symbol.toStringTag on objects first.
 pub fn object_to_string(
     _interp: &mut Interpreter,
     this: JsValue,
     _args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    match this {
+    let tag = match &this {
+        JsValue::Undefined => "Undefined",
+        JsValue::Null => "Null",
+        JsValue::Boolean(_) => "Boolean",
+        JsValue::Number(_) => "Number",
+        JsValue::String(_) => "String",
+        JsValue::Symbol(_) => "Symbol",
         JsValue::Object(obj) => {
             let obj_ref = obj.borrow();
-            if let Some(elements) = obj_ref.array_elements() {
-                // Array.prototype.toString returns comma-separated values
-                let parts: Vec<String> = elements
-                    .iter()
-                    .map(|v| v.to_js_string().to_string())
-                    .collect();
-                return Ok(Guarded::unguarded(JsValue::String(JsString::from(
-                    parts.join(","),
-                ))));
-            }
+            // TODO: Check for Symbol.toStringTag property first
             match &obj_ref.exotic {
-                // Array is handled above by is_array() check
-                ExoticObject::Array { .. } => Ok(Guarded::unguarded(JsValue::String(
-                    JsString::from("[object Array]"),
-                ))),
-                ExoticObject::Function(_) => Ok(Guarded::unguarded(JsValue::String(
-                    JsString::from("[object Function]"),
-                ))),
-                ExoticObject::Ordinary => Ok(Guarded::unguarded(JsValue::String(JsString::from(
-                    "[object Object]",
-                )))),
-                ExoticObject::Map { .. } => Ok(Guarded::unguarded(JsValue::String(
-                    JsString::from("[object Map]"),
-                ))),
-                ExoticObject::Set { .. } => Ok(Guarded::unguarded(JsValue::String(
-                    JsString::from("[object Set]"),
-                ))),
-                ExoticObject::Date { .. } => Ok(Guarded::unguarded(JsValue::String(
-                    JsString::from("[object Date]"),
-                ))),
-                ExoticObject::RegExp { .. } => Ok(Guarded::unguarded(JsValue::String(
-                    JsString::from("[object RegExp]"),
-                ))),
-                ExoticObject::Generator(_) => Ok(Guarded::unguarded(JsValue::String(
-                    JsString::from("[object Generator]"),
-                ))),
-                ExoticObject::Promise(_) => Ok(Guarded::unguarded(JsValue::String(
-                    JsString::from("[object Promise]"),
-                ))),
-                ExoticObject::Environment(_) => Ok(Guarded::unguarded(JsValue::String(
-                    JsString::from("[object Environment]"),
-                ))),
-                ExoticObject::Enum(_) => {
-                    // Enums return [object Object] for TypeScript compatibility
-                    Ok(Guarded::unguarded(JsValue::String(JsString::from(
-                        "[object Object]",
-                    ))))
-                }
-                ExoticObject::Proxy(_) => Ok(Guarded::unguarded(JsValue::String(JsString::from(
-                    "[object Object]",
-                )))),
-                ExoticObject::Boolean(_) => Ok(Guarded::unguarded(JsValue::String(
-                    JsString::from("[object Boolean]"),
-                ))),
-                ExoticObject::Number(_) => Ok(Guarded::unguarded(JsValue::String(JsString::from(
-                    "[object Number]",
-                )))),
-                ExoticObject::StringObj(_) => Ok(Guarded::unguarded(JsValue::String(
-                    JsString::from("[object String]"),
-                ))),
+                ExoticObject::Array { .. } => "Array",
+                ExoticObject::Function(_) => "Function",
+                ExoticObject::Ordinary => "Object",
+                ExoticObject::Map { .. } => "Map",
+                ExoticObject::Set { .. } => "Set",
+                ExoticObject::Date { .. } => "Date",
+                ExoticObject::RegExp { .. } => "RegExp",
+                ExoticObject::Generator(_) => "Generator",
+                ExoticObject::Promise(_) => "Promise",
+                ExoticObject::Environment(_) => "Object",
+                ExoticObject::Enum(_) => "Object",
+                ExoticObject::Proxy(_) => "Object",
+                ExoticObject::Boolean(_) => "Boolean",
+                ExoticObject::Number(_) => "Number",
+                ExoticObject::StringObj(_) => "String",
             }
         }
-        _ => Ok(Guarded::unguarded(JsValue::String(JsString::from(
-            "[object Object]",
-        )))),
-    }
+    };
+
+    Ok(Guarded::unguarded(JsValue::String(JsString::from(
+        format!("[object {}]", tag),
+    ))))
 }
 
 pub fn object_value_of(
