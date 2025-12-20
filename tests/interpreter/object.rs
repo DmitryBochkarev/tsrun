@@ -1103,3 +1103,107 @@ fn test_object_literal_mixed_properties() {
         JsValue::Number(10.0)
     );
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Delete operator tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_delete_configurable_property() {
+    // Deleting a configurable property should return true and remove it
+    assert_eq!(
+        eval(
+            r#"
+            const obj: any = { x: 42 };
+            const result = delete obj.x;
+            [result, obj.x === undefined].join(',')
+        "#
+        ),
+        JsValue::String("true,true".into())
+    );
+}
+
+#[test]
+fn test_delete_non_configurable_property() {
+    // First verify the property was created with configurable: false
+    assert_eq!(
+        eval(
+            r#"
+            const obj: any = {};
+            Object.defineProperty(obj, 'x', { value: 42, configurable: false });
+            Object.getOwnPropertyDescriptor(obj, 'x').configurable
+        "#
+        ),
+        JsValue::Boolean(false)
+    );
+
+    // Also verify the property still exists after defining
+    assert_eq!(
+        eval(
+            r#"
+            const obj: any = {};
+            Object.defineProperty(obj, 'x', { value: 42, configurable: false });
+            obj.hasOwnProperty('x')
+        "#
+        ),
+        JsValue::Boolean(true)
+    );
+
+    // Deleting a non-configurable property should throw TypeError in strict mode
+    // First let's verify the property exists and see what keys are on the object
+    assert_eq!(
+        eval(
+            r#"
+            const obj: any = {};
+            Object.defineProperty(obj, 'x', { value: 42, configurable: false });
+            Object.getOwnPropertyNames(obj).join(',')
+        "#
+        ),
+        JsValue::String("x".into())
+    );
+
+    assert_eq!(
+        eval(
+            r#"
+            const obj: any = {};
+            Object.defineProperty(obj, 'x', { value: 42, configurable: false });
+            try {
+                delete obj.x;
+                "no error";
+            } catch (e) {
+                e instanceof TypeError ? "TypeError" : "other error";
+            }
+        "#
+        ),
+        JsValue::String("TypeError".into())
+    );
+}
+
+#[test]
+fn test_delete_math_constant() {
+    // Math.E is non-configurable, deleting should throw TypeError
+    assert_eq!(
+        eval(
+            r#"
+            try {
+                delete Math.E;
+                "no error";
+            } catch (e) {
+                e instanceof TypeError ? "TypeError" : "other error";
+            }
+        "#
+        ),
+        JsValue::String("TypeError".into())
+    );
+
+    // Math.E should still exist after failed delete
+    assert_eq!(
+        eval(
+            r#"
+            try { delete Math.E; } catch(e) {}
+            Math.E === Math.E  // Should still be defined
+        "#
+        ),
+        JsValue::Boolean(true)
+    );
+}

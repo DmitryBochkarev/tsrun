@@ -1964,8 +1964,19 @@ impl Interpreter {
                 Err(e) => return StepResult::Error(e),
             }
         } else {
-            // Normal delete
-            obj.borrow_mut().properties.remove(&key);
+            // Normal delete - check if property is configurable
+            let mut obj_ref = obj.borrow_mut();
+            if let Some(prop) = obj_ref.get_own_property(&key) {
+                if !prop.configurable() {
+                    // In strict mode, throw TypeError for non-configurable properties
+                    return StepResult::Error(JsError::type_error(format!(
+                        "Cannot delete property '{}' of object",
+                        key
+                    )));
+                }
+            }
+            obj_ref.properties.remove(&key);
+            drop(obj_ref);
             state.push_value(Guarded::unguarded(JsValue::Boolean(true)));
         }
 

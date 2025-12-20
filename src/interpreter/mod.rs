@@ -4700,8 +4700,19 @@ impl Interpreter {
                     return Ok(Guarded::unguarded(JsValue::Boolean(result)));
                 }
 
-                // Normal delete
-                obj.borrow_mut().properties.remove(&key);
+                // Normal delete - check if property is configurable
+                let mut obj_ref = obj.borrow_mut();
+                if let Some(prop) = obj_ref.get_own_property(&key) {
+                    if !prop.configurable() {
+                        // In strict mode, throw TypeError for non-configurable properties
+                        return Err(JsError::type_error(format!(
+                            "Cannot delete property '{}' of object",
+                            key
+                        )));
+                    }
+                }
+                obj_ref.properties.remove(&key);
+                drop(obj_ref);
                 Ok(Guarded::unguarded(JsValue::Boolean(true)))
             }
             Expression::Identifier(_) => {
