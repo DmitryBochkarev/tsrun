@@ -10,11 +10,17 @@ TypeScript interpreter written in Rust for config/manifest generation with suppo
 
 ```bash
 cargo build                    # Build the project
-cargo test                     # Run all tests
+timeout 30 cargo test          # Run all tests (with 30s timeout)
 cargo test --test interpreter  # Run only interpreter integration tests
 cargo test lexer               # Run only lexer tests
 cargo test parser              # Run only parser tests
 cargo test -- --nocapture      # Show test output
+```
+
+**Important:** Always run tests with a 30 second timeout to catch infinite loops early:
+```bash
+timeout 30 cargo test bytecode::    # Run bytecode tests with timeout
+timeout 30 cargo test test_name     # Run specific test with timeout
 ```
 
 ### Running Specific Tests
@@ -126,6 +132,8 @@ let value = opt.ok_or_else(|| JsError::internal_error("expected value"))?;
 ```
 
 ### Guarded Destructuring Rule
+
+> **📖 For comprehensive guard documentation, see [docs/proper_use_of_guards.md](docs/proper_use_of_guards.md)**
 
 The `Guarded` struct (from `interpreter/mod.rs`) must **ALWAYS** be accessed through destructuring:
 
