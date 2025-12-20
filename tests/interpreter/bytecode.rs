@@ -1737,3 +1737,185 @@ fn test_bytecode_async_arrow_function() {
     );
     assert_eq!(result, JsValue::Number(42.0));
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Class Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_bytecode_class_basic() {
+    // Basic class with constructor and method
+    let result = eval_bytecode(
+        r#"
+        class Point {
+            x: number;
+            y: number;
+            constructor(x: number, y: number) {
+                this.x = x;
+                this.y = y;
+            }
+            sum(): number {
+                return this.x + this.y;
+            }
+        }
+        const p = new Point(3, 4);
+        p.sum()
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(7.0));
+}
+
+#[test]
+fn test_bytecode_class_no_constructor() {
+    // Class without explicit constructor
+    let result = eval_bytecode(
+        r#"
+        class Counter {
+            count: number = 0;
+            increment(): number {
+                this.count = this.count + 1;
+                return this.count;
+            }
+        }
+        const c = new Counter();
+        c.increment();
+        c.increment();
+        c.count
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(2.0));
+}
+
+#[test]
+fn test_bytecode_class_inheritance() {
+    // Class extending another class
+    let result = eval_bytecode(
+        r#"
+        class Animal {
+            name: string;
+            constructor(name: string) {
+                this.name = name;
+            }
+            speak(): string {
+                return this.name + " makes a sound";
+            }
+        }
+        class Dog extends Animal {
+            constructor(name: string) {
+                super(name);
+            }
+            speak(): string {
+                return this.name + " barks";
+            }
+        }
+        const d = new Dog("Rex");
+        d.speak()
+    "#,
+    );
+    assert_eq!(result, JsValue::String("Rex barks".into()));
+}
+
+#[test]
+fn test_bytecode_class_super_method() {
+    // Calling super method from subclass
+    let result = eval_bytecode(
+        r#"
+        class Parent {
+            getValue(): number {
+                return 10;
+            }
+        }
+        class Child extends Parent {
+            getValue(): number {
+                return super.getValue() + 5;
+            }
+        }
+        const c = new Child();
+        c.getValue()
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(15.0));
+}
+
+#[test]
+fn test_bytecode_class_static_method() {
+    // Static method on class
+    let result = eval_bytecode(
+        r#"
+        class MathUtils {
+            static add(a: number, b: number): number {
+                return a + b;
+            }
+        }
+        MathUtils.add(3, 4)
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(7.0));
+}
+
+#[test]
+fn test_bytecode_class_getter_simple() {
+    // Simple getter only
+    let result = eval_bytecode(
+        r#"
+        class Counter {
+            _value: number = 42;
+            get value(): number {
+                return this._value;
+            }
+        }
+        const c = new Counter();
+        c.value
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(42.0));
+}
+
+#[test]
+fn test_bytecode_class_setter_simple() {
+    // Simple setter only
+    let result = eval_bytecode(
+        r#"
+        class Counter {
+            _value: number = 0;
+            set value(v: number) {
+                this._value = v;
+            }
+        }
+        const c = new Counter();
+        c.value = 99;
+        c._value
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(99.0));
+}
+
+#[test]
+fn test_bytecode_class_getter_setter() {
+    // Getter and setter
+    let result = eval_bytecode(
+        r#"
+        class Rectangle {
+            _width: number = 0;
+            _height: number = 0;
+
+            get area(): number {
+                return this._width * this._height;
+            }
+
+            set width(value: number) {
+                this._width = value;
+            }
+
+            set height(value: number) {
+                this._height = value;
+            }
+        }
+        const r = new Rectangle();
+        r.width = 5;
+        r.height = 4;
+        r.area
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(20.0));
+}

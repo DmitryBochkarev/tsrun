@@ -7,7 +7,7 @@ use crate::compiler::{BytecodeChunk, Constant, Op, Register};
 use crate::error::JsError;
 use crate::gc::{Gc, Guard};
 use crate::value::{
-    BytecodeFunction, CheapClone, Guarded, JsObject, JsString, JsValue, PropertyKey,
+    BytecodeFunction, CheapClone, Guarded, JsObject, JsString, JsValue, Property, PropertyKey,
 };
 use std::rc::Rc;
 
@@ -237,6 +237,54 @@ impl BytecodeVM {
             Constant::String(s) => Some(s.cheap_clone()),
             _ => None,
         }
+    }
+
+    /// Get the super constructor from the current function's __super__ property
+    fn get_super_constructor(&self, interp: &mut Interpreter) -> Result<JsValue, JsError> {
+        // Look up __super__ in the current function's properties
+        // The function is stored in the closure environment
+        let super_key = PropertyKey::String(interp.intern("__super__"));
+
+        // Check if this is a method call by looking at the this value
+        if let JsValue::Object(this_obj) = &self.this_value {
+            // Look up constructor from prototype chain
+            if let Some(proto) = &this_obj.borrow().prototype {
+                if let Some(JsValue::Object(ctor_obj)) =
+                    proto.borrow().get_property(&PropertyKey::String(interp.intern("constructor")))
+                {
+                    if let Some(super_val) = ctor_obj.borrow().get_property(&super_key) {
+                        return Ok(super_val);
+                    }
+                }
+            }
+        }
+
+        Err(JsError::syntax_error_simple(
+            "'super' keyword is only valid inside a class method",
+        ))
+    }
+
+    /// Get the super target object for super.x property access
+    fn get_super_target(&self, interp: &mut Interpreter) -> Result<JsValue, JsError> {
+        let super_target_key = PropertyKey::String(interp.intern("__super_target__"));
+
+        // Check if this is a method call by looking at the this value
+        if let JsValue::Object(this_obj) = &self.this_value {
+            // Look up constructor from prototype chain
+            if let Some(proto) = &this_obj.borrow().prototype {
+                if let Some(JsValue::Object(ctor_obj)) =
+                    proto.borrow().get_property(&PropertyKey::String(interp.intern("constructor")))
+                {
+                    if let Some(target) = ctor_obj.borrow().get_property(&super_target_key) {
+                        return Ok(target);
+                    }
+                }
+            }
+        }
+
+        Err(JsError::syntax_error_simple(
+            "'super' keyword is only valid inside a class method",
+        ))
     }
 
     /// Execute bytecode until completion, suspension, or error
@@ -991,7 +1039,7 @@ impl BytecodeVM {
                 let obj_val = self.get_reg(obj);
                 let key_val = self.get_reg(key);
                 let val = self.get_reg(value).clone();
-                self.set_property_value(obj_val, key_val, val)?;
+                self.set_property_value(interp, obj_val, key_val, val)?;
                 Ok(OpResult::Continue)
             }
 
@@ -1002,7 +1050,7 @@ impl BytecodeVM {
                     .ok_or_else(|| JsError::internal_error("Invalid property key constant"))?;
                 let val = self.get_reg(value).clone();
                 let key_val = JsValue::String(key);
-                self.set_property_value(obj_val, &key_val, val)?;
+                self.set_property_value(interp, obj_val, &key_val, val)?;
                 Ok(OpResult::Continue)
             }
 
@@ -1629,17 +1677,263 @@ impl BytecodeVM {
             }
 
             // ═══════════════════════════════════════════════════════════════════════════
-            // Class Operations (stub implementations)
+            // Class Operations
             // ═══════════════════════════════════════════════════════════════════════════
-            Op::CreateClass { .. }
-            | Op::DefineMethod { .. }
-            | Op::DefineAccessor { .. }
-            | Op::SuperCall { .. }
-            | Op::SuperGet { .. }
-            | Op::SuperGetConst { .. }
-            | Op::SuperSet { .. }
-            | Op::SuperSetConst { .. } => {
-                Err(JsError::internal_error("Classes not yet implemented in VM"))
+            Op::CreateClass {
+                dst,
+                constructor,
+                super_class,
+            } => {
+                // Get constructor function - it should be a function object
+                let ctor_val = self.get_reg(constructor).clone();
+                let JsValue::Object(ctor_obj) = ctor_val else {
+                    return Err(JsError::type_error(
+                        "Class constructor must be a function",
+                    ));
+                };
+
+                // Create prototype object
+                let guard = interp.heap.create_guard();
+                let prototype = interp.create_object(&guard);
+
+                // Handle superclass if provided
+                let super_val = self.get_reg(super_class).clone();
+                if !matches!(super_val, JsValue::Undefined) {
+                    let JsValue::Object(super_ctor) = &super_val else {
+                        return Err(JsError::type_error(
+                            "Class extends value is not a constructor",
+                        ));
+                    };
+
+                    // Set prototype chain: prototype.__proto__ = superClass.prototype
+                    let proto_key = PropertyKey::String(interp.intern("prototype"));
+                    if let Some(JsValue::Object(super_proto)) =
+                        super_ctor.borrow().get_property(&proto_key)
+                    {
+                        prototype.borrow_mut().prototype = Some(super_proto.cheap_clone());
+                    }
+
+                    // Store __super__ on constructor for super() calls
+                    ctor_obj.borrow_mut().set_property(
+                        PropertyKey::String(interp.intern("__super__")),
+                        JsValue::Object(super_ctor.cheap_clone()),
+                    );
+
+                    // Store __super_target__ for super.x property access
+                    if let Some(sp) = super_ctor
+                        .borrow()
+                        .get_property(&PropertyKey::String(interp.intern("prototype")))
+                    {
+                        ctor_obj.borrow_mut().set_property(
+                            PropertyKey::String(interp.intern("__super_target__")),
+                            sp,
+                        );
+                    }
+                }
+
+                // Set constructor.prototype = prototype
+                ctor_obj.borrow_mut().set_property(
+                    PropertyKey::String(interp.intern("prototype")),
+                    JsValue::Object(prototype.cheap_clone()),
+                );
+
+                // Set prototype.constructor = constructor
+                prototype.borrow_mut().set_property(
+                    PropertyKey::String(interp.intern("constructor")),
+                    JsValue::Object(ctor_obj.cheap_clone()),
+                );
+
+                self.set_reg(dst, JsValue::Object(ctor_obj));
+                Ok(OpResult::Continue)
+            }
+
+            Op::DefineMethod {
+                class,
+                name,
+                method,
+                is_static,
+            } => {
+                let class_val = self.get_reg(class).clone();
+                let JsValue::Object(class_obj) = class_val else {
+                    return Err(JsError::type_error("Class is not an object"));
+                };
+
+                let method_val = self.get_reg(method).clone();
+                let method_name = self
+                    .get_string_constant(name)
+                    .ok_or_else(|| JsError::internal_error("Invalid method name constant"))?;
+
+                // Store __super__ and __super_target__ on method for super access
+                if let JsValue::Object(method_obj) = &method_val {
+                    // Copy __super__ from class constructor
+                    if let Some(super_val) = class_obj
+                        .borrow()
+                        .get_property(&PropertyKey::String(interp.intern("__super__")))
+                    {
+                        method_obj
+                            .borrow_mut()
+                            .set_property(PropertyKey::String(interp.intern("__super__")), super_val);
+                    }
+
+                    // Copy __super_target__ from class constructor
+                    if let Some(super_target) = class_obj.borrow().get_property(&PropertyKey::String(
+                        interp.intern("__super_target__"),
+                    )) {
+                        method_obj.borrow_mut().set_property(
+                            PropertyKey::String(interp.intern("__super_target__")),
+                            super_target,
+                        );
+                    }
+                }
+
+                if is_static {
+                    // Add to class constructor directly
+                    class_obj
+                        .borrow_mut()
+                        .set_property(PropertyKey::String(method_name), method_val);
+                } else {
+                    // Add to prototype
+                    let proto_key = PropertyKey::String(interp.intern("prototype"));
+                    if let Some(JsValue::Object(proto)) = class_obj.borrow().get_property(&proto_key)
+                    {
+                        proto
+                            .borrow_mut()
+                            .set_property(PropertyKey::String(method_name), method_val);
+                    }
+                }
+
+                Ok(OpResult::Continue)
+            }
+
+            Op::DefineAccessor {
+                class,
+                name,
+                getter,
+                setter,
+                is_static,
+            } => {
+                let class_val = self.get_reg(class).clone();
+                let JsValue::Object(class_obj) = class_val else {
+                    return Err(JsError::type_error("Class is not an object"));
+                };
+
+                let getter_val = self.get_reg(getter).clone();
+                let setter_val = self.get_reg(setter).clone();
+                let accessor_name = self
+                    .get_string_constant(name)
+                    .ok_or_else(|| JsError::internal_error("Invalid accessor name constant"))?;
+
+                // Extract function objects (undefined means keep existing)
+                let new_getter = if let JsValue::Object(g) = getter_val {
+                    Some(g)
+                } else {
+                    None
+                };
+                let new_setter = if let JsValue::Object(s) = setter_val {
+                    Some(s)
+                } else {
+                    None
+                };
+
+                // Get target object (class for static, prototype for instance)
+                let target = if is_static {
+                    class_obj.cheap_clone()
+                } else {
+                    let proto_key = PropertyKey::String(interp.intern("prototype"));
+                    if let Some(JsValue::Object(proto)) = class_obj.borrow().get_property(&proto_key) {
+                        proto
+                    } else {
+                        return Ok(OpResult::Continue);
+                    }
+                };
+
+                // Get existing accessor property if any
+                let prop_key = PropertyKey::String(accessor_name.cheap_clone());
+                let (existing_getter, existing_setter) = {
+                    let target_ref = target.borrow();
+                    if let Some(prop) = target_ref.properties.get(&prop_key) {
+                        (prop.getter().cloned(), prop.setter().cloned())
+                    } else {
+                        (None, None)
+                    }
+                };
+
+                // Merge with existing accessors
+                let final_getter = new_getter.or(existing_getter);
+                let final_setter = new_setter.or(existing_setter);
+
+                // Create accessor property
+                let property = Property::accessor(final_getter, final_setter);
+                target
+                    .borrow_mut()
+                    .define_property(PropertyKey::String(accessor_name), property);
+
+                Ok(OpResult::Continue)
+            }
+
+            Op::SuperCall {
+                dst,
+                args_start,
+                argc,
+            } => {
+                // Get the current function's __super__ property (parent constructor)
+                let super_ctor = self.get_super_constructor(interp)?;
+
+                let mut args = Vec::with_capacity(argc as usize);
+                for i in 0..argc {
+                    args.push(self.get_reg(args_start + i).clone());
+                }
+
+                // Call super constructor with current this
+                let this = self.this_value.clone();
+                let result = interp.call_function(super_ctor, this, &args)?;
+                self.set_reg(dst, result.value);
+                Ok(OpResult::Continue)
+            }
+
+            Op::SuperGet { dst, key } => {
+                let key_val = self.get_reg(key).clone();
+                let super_target = self.get_super_target(interp)?;
+                let value = self.get_property_value(interp, &super_target, &key_val)?;
+                self.set_reg(dst, value);
+                Ok(OpResult::Continue)
+            }
+
+            Op::SuperGetConst { dst, key } => {
+                let key_str = self
+                    .get_string_constant(key)
+                    .ok_or_else(|| JsError::internal_error("Invalid super property key"))?;
+                let super_target = self.get_super_target(interp)?;
+                let value =
+                    self.get_property_value(interp, &super_target, &JsValue::String(key_str))?;
+                self.set_reg(dst, value);
+                Ok(OpResult::Continue)
+            }
+
+            Op::SuperSet { key, value } => {
+                let key_val = self.get_reg(key).clone();
+                let set_value = self.get_reg(value).clone();
+                let super_target = self.get_super_target(interp)?;
+
+                if let JsValue::Object(obj) = super_target {
+                    let prop_key = PropertyKey::from_value(&key_val);
+                    obj.borrow_mut().set_property(prop_key, set_value);
+                }
+                Ok(OpResult::Continue)
+            }
+
+            Op::SuperSetConst { key, value } => {
+                let key_str = self
+                    .get_string_constant(key)
+                    .ok_or_else(|| JsError::internal_error("Invalid super property key"))?;
+                let set_value = self.get_reg(value).clone();
+                let super_target = self.get_super_target(interp)?;
+
+                if let JsValue::Object(obj) = super_target {
+                    obj.borrow_mut()
+                        .set_property(PropertyKey::String(key_str), set_value);
+                }
+                Ok(OpResult::Continue)
             }
 
             // ═══════════════════════════════════════════════════════════════════════════
@@ -1776,20 +2070,34 @@ impl BytecodeVM {
         }
     }
 
-    /// Get a property value from an object
+    /// Get a property value from an object, invoking getters if present
     fn get_property_value(
         &self,
-        interp: &Interpreter,
+        interp: &mut Interpreter,
         obj: &JsValue,
         key: &JsValue,
     ) -> Result<JsValue, JsError> {
         match obj {
             JsValue::Object(obj_ref) => {
                 let prop_key = PropertyKey::from_value(key);
-                if let Some(val) = obj_ref.borrow().get_property(&prop_key) {
-                    Ok(val.clone())
-                } else {
-                    Ok(JsValue::Undefined)
+                // Get property descriptor to check for accessor properties
+                let prop_desc = obj_ref.borrow().get_property_descriptor(&prop_key);
+                match prop_desc {
+                    Some((prop, _)) if prop.is_accessor() => {
+                        // Property has a getter - invoke it
+                        if let Some(getter) = prop.getter() {
+                            let result = interp.call_function(
+                                JsValue::Object(getter.clone()),
+                                obj.clone(),
+                                &[],
+                            )?;
+                            Ok(result.value)
+                        } else {
+                            Ok(JsValue::Undefined)
+                        }
+                    }
+                    Some((prop, _)) => Ok(prop.value.clone()),
+                    None => Ok(JsValue::Undefined),
                 }
             }
             JsValue::String(s) => match key {
@@ -1834,9 +2142,10 @@ impl BytecodeVM {
         }
     }
 
-    /// Set a property value on an object
+    /// Set a property value on an object, invoking setters if present
     fn set_property_value(
         &self,
+        interp: &mut Interpreter,
         obj: &JsValue,
         key: &JsValue,
         value: JsValue,
@@ -1844,6 +2153,23 @@ impl BytecodeVM {
         match obj {
             JsValue::Object(obj_ref) => {
                 let prop_key = PropertyKey::from_value(key);
+                // Check for accessor property with setter
+                let prop_desc = obj_ref.borrow().get_property_descriptor(&prop_key);
+                if let Some((prop, _)) = prop_desc {
+                    if prop.is_accessor() {
+                        // Property has a setter - invoke it
+                        if let Some(setter) = prop.setter() {
+                            interp.call_function(
+                                JsValue::Object(setter.clone()),
+                                obj.clone(),
+                                &[value],
+                            )?;
+                        }
+                        // If no setter, silently ignore (or throw in strict mode)
+                        return Ok(());
+                    }
+                }
+                // Regular data property
                 obj_ref.borrow_mut().set_property(prop_key, value);
                 Ok(())
             }
@@ -1860,7 +2186,8 @@ enum OpResult {
     Continue,
     /// Halt with a value
     Halt(Guarded),
-    /// Suspend execution (for await)
+    /// Suspend execution (for await) - reserved for future use
+    #[allow(dead_code)]
     Suspend(Guarded),
     /// Yield a value (for generators)
     Yield {

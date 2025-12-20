@@ -5,8 +5,9 @@
 use super::bytecode::Op;
 use super::Compiler;
 use crate::ast::{
-    BlockStatement, BreakStatement, ContinueStatement, DoWhileStatement, ForInOfLeft,
-    ForInStatement, ForInit, ForOfStatement, ForStatement, IfStatement, LabeledStatement,
+    BlockStatement, BreakStatement, ClassConstructor, ClassDeclaration, ClassMember, ClassMethod,
+    ClassProperty, ContinueStatement, DoWhileStatement, ForInOfLeft, ForInStatement, ForInit,
+    ForOfStatement, ForStatement, IfStatement, LabeledStatement, MethodKind, ObjectPropertyKey,
     ReturnStatement, Statement, SwitchStatement, ThrowStatement, TryStatement, VariableDeclaration,
     VariableKind, WhileStatement,
 };
@@ -935,13 +936,404 @@ impl Compiler {
     }
 
     /// Compile a class declaration
-    fn compile_class_declaration(
+    fn compile_class_declaration(&mut self, class: &ClassDeclaration) -> Result<(), JsError> {
+        self.builder.set_span(class.span);
+
+        // Allocate register for the class constructor
+        let class_reg = self.builder.alloc_register()?;
+
+        // Compile class body to register
+        self.compile_class_body(class, class_reg)?;
+
+        // If the class has a name, declare it as a variable
+        if let Some(ref id) = class.id {
+            let name_idx = self.builder.add_string(id.name.cheap_clone())?;
+            self.builder.emit(Op::DeclareVar {
+                name: name_idx,
+                init: class_reg,
+                mutable: false, // classes are const-like
+            });
+        }
+
+        self.builder.free_register(class_reg);
+        Ok(())
+    }
+
+    /// Compile class body - shared by class declarations and expressions
+    fn compile_class_body(
         &mut self,
-        _class: &crate::ast::ClassDeclaration,
+        class: &ClassDeclaration,
+        dst: super::bytecode::Register,
     ) -> Result<(), JsError> {
-        // TODO: Implement class declaration compilation
-        Err(JsError::syntax_error_simple(
-            "Class declarations not yet supported in bytecode compiler",
-        ))
+        // Get class name for constructor
+        let class_name = class.id.as_ref().map(|id| id.name.cheap_clone());
+
+        // Collect class members
+        let mut constructor: Option<&ClassConstructor> = None;
+        let mut instance_methods: Vec<&ClassMethod> = Vec::new();
+        let mut static_methods: Vec<&ClassMethod> = Vec::new();
+        let mut instance_fields: Vec<&ClassProperty> = Vec::new();
+        let mut _static_fields: Vec<&ClassProperty> = Vec::new();
+
+        for member in &class.body.members {
+            match member {
+                ClassMember::Constructor(ctor) => {
+                    constructor = Some(ctor);
+                }
+                ClassMember::Method(method) => {
+                    if method.static_ {
+                        static_methods.push(method);
+                    } else {
+                        instance_methods.push(method);
+                    }
+                }
+                ClassMember::Property(prop) => {
+                    if prop.static_ {
+                        _static_fields.push(prop);
+                    } else {
+                        instance_fields.push(prop);
+                    }
+                }
+                ClassMember::StaticBlock(_) => {
+                    // TODO: Static blocks
+                }
+            }
+        }
+
+        // Compile constructor (or create default one)
+        let ctor_chunk = if let Some(ctor) = constructor {
+            self.compile_constructor_body(ctor, &instance_fields, class_name.clone())?
+        } else {
+            self.compile_default_constructor(&instance_fields, class_name.clone())?
+        };
+
+        let ctor_chunk_idx = self.builder.add_chunk(ctor_chunk)?;
+
+        // Create constructor register and emit CreateClosure
+        let ctor_reg = self.builder.alloc_register()?;
+        self.builder.emit(Op::CreateClosure {
+            dst: ctor_reg,
+            chunk_idx: ctor_chunk_idx,
+        });
+
+        // Compile superclass if present
+        let super_reg = self.builder.alloc_register()?;
+        if let Some(super_class) = &class.super_class {
+            self.compile_expression(super_class, super_reg)?;
+        } else {
+            self.builder.emit(Op::LoadUndefined { dst: super_reg });
+        }
+
+        // Create the class
+        self.builder.emit(Op::CreateClass {
+            dst,
+            constructor: ctor_reg,
+            super_class: super_reg,
+        });
+
+        self.builder.free_register(ctor_reg);
+        self.builder.free_register(super_reg);
+
+        // Define instance methods
+        for method in &instance_methods {
+            self.compile_class_method(dst, method, false)?;
+        }
+
+        // Define static methods
+        for method in &static_methods {
+            self.compile_class_method(dst, method, true)?;
+        }
+
+        Ok(())
+    }
+
+    /// Compile a class method and emit DefineMethod/DefineAccessor
+    fn compile_class_method(
+        &mut self,
+        class_reg: super::bytecode::Register,
+        method: &ClassMethod,
+        is_static: bool,
+    ) -> Result<(), JsError> {
+        // Get method name
+        let method_name: JsString = match &method.key {
+            ObjectPropertyKey::Identifier(id) => id.name.cheap_clone(),
+            ObjectPropertyKey::String(s) => s.value.cheap_clone(),
+            ObjectPropertyKey::Number(lit) => {
+                // Convert number to string for method name
+                use crate::ast::LiteralValue;
+                match &lit.value {
+                    LiteralValue::Number(n) => JsString::from(crate::value::number_to_string(*n)),
+                    _ => return Err(JsError::syntax_error_simple("Invalid method key")),
+                }
+            }
+            ObjectPropertyKey::Computed(_) => {
+                return Err(JsError::syntax_error_simple(
+                    "Computed method names not yet supported in bytecode compiler",
+                ))
+            }
+            ObjectPropertyKey::PrivateIdentifier(id) => id.name.cheap_clone(),
+        };
+
+        let name_idx = self.builder.add_string(method_name.cheap_clone())?;
+
+        // Compile method body
+        let func = &method.value;
+        let method_chunk = self.compile_function_body(
+            &func.params,
+            &func.body.body,
+            Some(method_name),
+            func.generator,
+            func.async_,
+            false,
+        )?;
+
+        let chunk_idx = self.builder.add_chunk(method_chunk)?;
+
+        // Allocate register for method function
+        let method_reg = self.builder.alloc_register()?;
+
+        // Create the method function
+        if func.generator && func.async_ {
+            self.builder
+                .emit(Op::CreateAsyncGenerator { dst: method_reg, chunk_idx });
+        } else if func.generator {
+            self.builder.emit(Op::CreateGenerator { dst: method_reg, chunk_idx });
+        } else if func.async_ {
+            self.builder.emit(Op::CreateAsync { dst: method_reg, chunk_idx });
+        } else {
+            self.builder.emit(Op::CreateClosure { dst: method_reg, chunk_idx });
+        }
+
+        // Emit DefineMethod or DefineAccessor based on method kind
+        match method.kind {
+            MethodKind::Method => {
+                self.builder.emit(Op::DefineMethod {
+                    class: class_reg,
+                    name: name_idx,
+                    method: method_reg,
+                    is_static,
+                });
+            }
+            MethodKind::Get => {
+                // Getter only - pass undefined for setter
+                let undefined_reg = self.builder.alloc_register()?;
+                self.builder.emit(Op::LoadUndefined { dst: undefined_reg });
+
+                self.builder.emit(Op::DefineAccessor {
+                    class: class_reg,
+                    name: name_idx,
+                    getter: method_reg,
+                    setter: undefined_reg,
+                    is_static,
+                });
+
+                self.builder.free_register(undefined_reg);
+            }
+            MethodKind::Set => {
+                // Setter only - pass undefined for getter
+                let undefined_reg = self.builder.alloc_register()?;
+                self.builder.emit(Op::LoadUndefined { dst: undefined_reg });
+
+                self.builder.emit(Op::DefineAccessor {
+                    class: class_reg,
+                    name: name_idx,
+                    getter: undefined_reg,
+                    setter: method_reg,
+                    is_static,
+                });
+
+                self.builder.free_register(undefined_reg);
+            }
+        }
+
+        self.builder.free_register(method_reg);
+        Ok(())
+    }
+
+    /// Compile constructor body
+    fn compile_constructor_body(
+        &mut self,
+        ctor: &ClassConstructor,
+        instance_fields: &[&ClassProperty],
+        name: Option<JsString>,
+    ) -> Result<super::BytecodeChunk, JsError> {
+        use super::FunctionInfo;
+
+        let mut func_compiler = Compiler::new();
+
+        // Reserve registers for parameters
+        if !ctor.params.is_empty() {
+            func_compiler.builder.reserve_registers(ctor.params.len() as u8)?;
+        }
+
+        // Compile parameter declarations inline (same as compile_function_body)
+        let mut param_names = Vec::with_capacity(ctor.params.len());
+        for (idx, param) in ctor.params.iter().enumerate() {
+            let arg_reg = idx as u8;
+
+            match &param.pattern {
+                crate::ast::Pattern::Identifier(id) => {
+                    param_names.push(id.name.cheap_clone());
+                    let name_idx = func_compiler.builder.add_string(id.name.cheap_clone())?;
+                    func_compiler.builder.emit(Op::DeclareVar {
+                        name: name_idx,
+                        init: arg_reg,
+                        mutable: true,
+                    });
+                }
+                crate::ast::Pattern::Rest(rest) => {
+                    if let crate::ast::Pattern::Identifier(id) = &*rest.argument {
+                        param_names.push(id.name.cheap_clone());
+                        let name_idx = func_compiler.builder.add_string(id.name.cheap_clone())?;
+                        func_compiler.builder.emit(Op::DeclareVar {
+                            name: name_idx,
+                            init: arg_reg,
+                            mutable: true,
+                        });
+                    }
+                }
+                crate::ast::Pattern::Object(_) | crate::ast::Pattern::Array(_) => {
+                    param_names.push(JsString::from(format!("__param{}__", idx)));
+                    func_compiler.compile_pattern_binding(&param.pattern, arg_reg, true, false)?;
+                }
+                crate::ast::Pattern::Assignment(assign_pat) => {
+                    let actual_value = func_compiler.builder.alloc_register()?;
+                    let is_undefined = func_compiler.builder.alloc_register()?;
+                    func_compiler
+                        .builder
+                        .emit(Op::LoadUndefined { dst: is_undefined });
+                    func_compiler.builder.emit(Op::StrictEq {
+                        dst: is_undefined,
+                        left: arg_reg,
+                        right: is_undefined,
+                    });
+
+                    let skip_default = func_compiler.builder.emit_jump_if_false(is_undefined);
+                    func_compiler.builder.free_register(is_undefined);
+
+                    func_compiler.compile_expression(&assign_pat.right, actual_value)?;
+                    let skip_arg = func_compiler.builder.emit_jump();
+
+                    func_compiler.builder.patch_jump(skip_default);
+                    func_compiler.builder.emit(Op::Move {
+                        dst: actual_value,
+                        src: arg_reg,
+                    });
+
+                    func_compiler.builder.patch_jump(skip_arg);
+                    func_compiler.compile_pattern_binding(&assign_pat.left, actual_value, true, false)?;
+
+                    if let crate::ast::Pattern::Identifier(id) = assign_pat.left.as_ref() {
+                        param_names.push(id.name.cheap_clone());
+                    } else {
+                        param_names.push(JsString::from(format!("__param{}__", idx)));
+                    }
+
+                    func_compiler.builder.free_register(actual_value);
+                }
+            }
+        }
+
+        // Compile instance field initializers at the start of constructor
+        // These run before the user's constructor body (after super() call if extending)
+        for field in instance_fields {
+            func_compiler.compile_instance_field_initializer(field)?;
+        }
+
+        // Compile constructor body
+        for stmt in ctor.body.body.iter() {
+            func_compiler.compile_statement(stmt)?;
+        }
+
+        // Return this implicitly (constructor returns `this`)
+        let this_reg = func_compiler.builder.alloc_register()?;
+        func_compiler.builder.emit(Op::LoadThis { dst: this_reg });
+        func_compiler.builder.emit(Op::Return { value: this_reg });
+
+        let mut chunk = func_compiler.builder.finish();
+        chunk.function_info = Some(FunctionInfo {
+            name,
+            param_count: ctor.params.len(),
+            param_names,
+            rest_param: None,
+            is_generator: false,
+            is_async: false,
+            is_arrow: false,
+            uses_arguments: false,
+            uses_this: true, // constructors use this
+        });
+
+        Ok(chunk)
+    }
+
+    /// Compile default constructor (for classes without explicit constructor)
+    fn compile_default_constructor(
+        &mut self,
+        instance_fields: &[&ClassProperty],
+        name: Option<JsString>,
+    ) -> Result<super::BytecodeChunk, JsError> {
+        use super::FunctionInfo;
+
+        let mut func_compiler = Compiler::new();
+
+        // Compile instance field initializers
+        for field in instance_fields {
+            func_compiler.compile_instance_field_initializer(field)?;
+        }
+
+        // Return this
+        let this_reg = func_compiler.builder.alloc_register()?;
+        func_compiler.builder.emit(Op::LoadThis { dst: this_reg });
+        func_compiler.builder.emit(Op::Return { value: this_reg });
+
+        let mut chunk = func_compiler.builder.finish();
+        chunk.function_info = Some(FunctionInfo {
+            name,
+            param_count: 0,
+            param_names: vec![],
+            rest_param: None,
+            is_generator: false,
+            is_async: false,
+            is_arrow: false,
+            uses_arguments: false,
+            uses_this: true, // constructors use this
+        });
+
+        Ok(chunk)
+    }
+
+    /// Compile instance field initializer (this.field = value)
+    fn compile_instance_field_initializer(&mut self, field: &ClassProperty) -> Result<(), JsError> {
+        // Get field name
+        let field_name: JsString = match &field.key {
+            ObjectPropertyKey::Identifier(id) => id.name.cheap_clone(),
+            ObjectPropertyKey::String(s) => s.value.cheap_clone(),
+            _ => return Ok(()), // Skip computed/private for now
+        };
+
+        let name_idx = self.builder.add_string(field_name)?;
+
+        // Get this
+        let this_reg = self.builder.alloc_register()?;
+        self.builder.emit(Op::LoadThis { dst: this_reg });
+
+        // Compile field initializer or use undefined
+        let value_reg = self.builder.alloc_register()?;
+        if let Some(init) = &field.value {
+            self.compile_expression(init, value_reg)?;
+        } else {
+            self.builder.emit(Op::LoadUndefined { dst: value_reg });
+        }
+
+        // Set property on this
+        self.builder.emit(Op::SetPropertyConst {
+            obj: this_reg,
+            key: name_idx,
+            value: value_reg,
+        });
+
+        self.builder.free_register(value_reg);
+        self.builder.free_register(this_reg);
+        Ok(())
     }
 }

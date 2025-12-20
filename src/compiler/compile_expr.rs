@@ -903,6 +903,28 @@ impl Compiler {
         member: &crate::ast::MemberExpression,
         dst: Register,
     ) -> Result<(), JsError> {
+        // Handle super.x access
+        if matches!(member.object.as_ref(), Expression::Super(_)) {
+            match &member.property {
+                MemberProperty::Identifier(id) => {
+                    let key_idx = self.builder.add_string(id.name.cheap_clone())?;
+                    self.builder.emit(Op::SuperGetConst { dst, key: key_idx });
+                }
+                MemberProperty::Expression(expr) => {
+                    let key_reg = self.builder.alloc_register()?;
+                    self.compile_expression(expr, key_reg)?;
+                    self.builder.emit(Op::SuperGet { dst, key: key_reg });
+                    self.builder.free_register(key_reg);
+                }
+                MemberProperty::PrivateIdentifier(_) => {
+                    return Err(JsError::syntax_error_simple(
+                        "Private fields not supported on super",
+                    ));
+                }
+            }
+            return Ok(());
+        }
+
         // Compile object
         let obj_reg = self.builder.alloc_register()?;
         self.compile_expression(&member.object, obj_reg)?;
@@ -956,6 +978,55 @@ impl Compiler {
         call: &crate::ast::CallExpression,
         dst: Register,
     ) -> Result<(), JsError> {
+        // Handle super() call
+        if matches!(call.callee.as_ref(), Expression::Super(_)) {
+            // Compile arguments
+            let (args_start, argc) = self.compile_arguments(&call.arguments)?;
+
+            self.builder.emit(Op::SuperCall {
+                dst,
+                args_start,
+                argc,
+            });
+            return Ok(());
+        }
+
+        // Handle super.method() call
+        if let Expression::Member(member) = call.callee.as_ref() {
+            if matches!(member.object.as_ref(), Expression::Super(_)) {
+                // Super method call
+                if let MemberProperty::Identifier(method_name) = &member.property {
+                    let method_idx = self.builder.add_string(method_name.name.cheap_clone())?;
+
+                    // Get super.method
+                    let method_reg = self.builder.alloc_register()?;
+                    self.builder.emit(Op::SuperGetConst {
+                        dst: method_reg,
+                        key: method_idx,
+                    });
+
+                    // Compile arguments
+                    let (args_start, argc) = self.compile_arguments(&call.arguments)?;
+
+                    // Call with `this` as the receiver
+                    let this_reg = self.builder.alloc_register()?;
+                    self.builder.emit(Op::LoadThis { dst: this_reg });
+
+                    self.builder.emit(Op::Call {
+                        dst,
+                        callee: method_reg,
+                        this: this_reg,
+                        args_start,
+                        argc,
+                    });
+
+                    self.builder.free_register(this_reg);
+                    self.builder.free_register(method_reg);
+                    return Ok(());
+                }
+            }
+        }
+
         // Check for method call pattern: obj.method(args)
         if let Expression::Member(member) = call.callee.as_ref() {
             if let MemberProperty::Identifier(method_name) = &member.property {
