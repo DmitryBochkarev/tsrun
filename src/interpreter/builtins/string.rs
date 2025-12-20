@@ -69,14 +69,12 @@ pub fn string_constructor_fn(
 ) -> Result<Guarded, JsError> {
     use crate::value::ExoticObject;
 
-    // Get the string value from argument
+    // Get the string value from argument - use coerce_to_string for ToPrimitive handling
     let str_val = if args.is_empty() {
         interp.intern("")
     } else {
-        args.first()
-            .cloned()
-            .unwrap_or(JsValue::Undefined)
-            .to_js_string()
+        let arg = args.first().cloned().unwrap_or(JsValue::Undefined);
+        interp.coerce_to_string(&arg)?
     };
 
     // Check if called with `new` (this will be a fresh object with String.prototype)

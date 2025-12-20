@@ -4193,7 +4193,9 @@ impl Interpreter {
                     value: val,
                     guard: _guard,
                 } = self.evaluate_expression(expr)?;
-                result.push_str(val.to_js_string().as_ref());
+                // Use coerce_to_string for proper ToPrimitive handling
+                let str_val = self.coerce_to_string(&val)?;
+                result.push_str(str_val.as_ref());
             }
         }
         Ok(Guarded::unguarded(JsValue::String(JsString::from(result))))
@@ -4534,6 +4536,19 @@ impl Interpreter {
                 Ok(prim.to_number())
             }
             _ => Ok(value.to_number()),
+        }
+    }
+
+    /// Convert value to string, handling ToPrimitive for objects (ToString abstract operation).
+    /// This properly calls the object's toString/valueOf methods per ECMAScript spec.
+    pub fn coerce_to_string(&mut self, value: &JsValue) -> Result<JsString, JsError> {
+        match value {
+            JsValue::Object(_) => {
+                // ToPrimitive with "string" hint - tries toString first, then valueOf
+                let prim = self.coerce_to_primitive(value, "string")?;
+                Ok(prim.to_js_string())
+            }
+            _ => Ok(value.to_js_string()),
         }
     }
 

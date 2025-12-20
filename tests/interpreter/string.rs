@@ -756,3 +756,83 @@ fn test_charat_no_args() {
     // charAt() with no args should use index 0
     assert_eq!(eval(r#""hello".charAt()"#), JsValue::String("h".into()));
 }
+
+// =============================================================================
+// ToPrimitive / String Coercion Tests
+// =============================================================================
+
+#[test]
+fn test_string_calls_tostring() {
+    // String() should call the object's toString method
+    assert_eq!(
+        eval(
+            r#"
+            let obj = { toString: function() { return "custom"; } };
+            String(obj)
+        "#
+        ),
+        JsValue::String(JsString::from("custom"))
+    );
+}
+
+#[test]
+fn test_string_array_tostring() {
+    // String(array) should call Array.prototype.toString
+    assert_eq!(
+        eval(
+            r#"
+            let oldToString = Array.prototype.toString;
+            Array.prototype.toString = function() { return "__ARRAY__"; };
+            let result = String(new Array());
+            Array.prototype.toString = oldToString;
+            result
+        "#
+        ),
+        JsValue::String(JsString::from("__ARRAY__"))
+    );
+}
+
+#[test]
+fn test_string_falls_back_to_valueof() {
+    // If toString returns non-primitive, fall back to valueOf
+    assert_eq!(
+        eval(
+            r#"
+            let obj = {
+                toString: function() { return {}; },
+                valueOf: function() { return "from_valueof"; }
+            };
+            String(obj)
+        "#
+        ),
+        JsValue::String(JsString::from("from_valueof"))
+    );
+}
+
+#[test]
+fn test_template_literal_calls_tostring() {
+    // Template literals should call toString
+    assert_eq!(
+        eval(
+            r#"
+            let obj = { toString: function() { return "interpolated"; } };
+            `${obj}`
+        "#
+        ),
+        JsValue::String(JsString::from("interpolated"))
+    );
+}
+
+#[test]
+fn test_string_concat_calls_tostring() {
+    // String concatenation should call toString
+    assert_eq!(
+        eval(
+            r#"
+            let obj = { toString: function() { return "hello"; } };
+            "" + obj
+        "#
+        ),
+        JsValue::String(JsString::from("hello"))
+    );
+}
