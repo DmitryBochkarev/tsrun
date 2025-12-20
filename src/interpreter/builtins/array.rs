@@ -3,7 +3,7 @@
 use crate::error::JsError;
 use crate::gc::Gc;
 use crate::interpreter::Interpreter;
-use crate::value::{ExoticObject, Guarded, JsObject, JsObjectRef, JsString, JsValue, PropertyKey};
+use crate::value::{CheapClone, ExoticObject, Guarded, JsObject, JsObjectRef, JsString, JsValue, PropertyKey};
 
 /// Convert a number to a length value per ECMAScript ToLength.
 /// Clamps to [0, 2^53 - 1] (MAX_SAFE_INTEGER) and truncates.
@@ -138,6 +138,16 @@ pub fn init_array_prototype(interp: &mut Interpreter) {
     interp.register_method(&proto, "keys", array_keys, 0);
     interp.register_method(&proto, "values", array_values, 0);
     interp.register_method(&proto, "entries", array_entries, 0);
+
+    // Symbol.iterator = Array.prototype.values
+    let well_known = super::symbol::get_well_known_symbols();
+    let iterator_symbol = crate::value::JsSymbol::new(
+        well_known.iterator,
+        Some("Symbol.iterator".to_string()),
+    );
+    let iterator_key = crate::value::PropertyKey::Symbol(Box::new(iterator_symbol));
+    let values_fn = interp.create_native_function("[Symbol.iterator]", array_values, 0);
+    proto.borrow_mut().set_property(iterator_key, JsValue::Object(values_fn));
 }
 
 /// Create Array constructor with static methods (isArray, of, from)
@@ -1865,21 +1875,113 @@ pub fn array_values(
         ));
     };
 
-    let length = arr
-        .borrow()
-        .array_length()
-        .ok_or_else(|| JsError::type_error("Not an array"))?;
-
-    let values: Vec<JsValue> = (0..length)
-        .map(|i| {
-            arr.borrow()
-                .get_property(&PropertyKey::Index(i))
-                .unwrap_or(JsValue::Undefined)
-        })
-        .collect();
+    // Create an iterator object that has the array and current index
     let guard = interp.heap.create_guard();
-    let arr = interp.create_array_from(&guard, values);
-    Ok(Guarded::with_guard(JsValue::Object(arr), guard))
+    guard.guard(arr.cheap_clone());
+    let iter_obj = interp.create_object_raw(&guard);
+
+    // Store the array and current index on the iterator
+    iter_obj
+        .borrow_mut()
+        .set_property(PropertyKey::from("__array__"), JsValue::Object(arr));
+    iter_obj
+        .borrow_mut()
+        .set_property(PropertyKey::from("__index__"), JsValue::Number(0.0));
+
+    // Add next() method
+    let next_fn = interp.create_native_function("next", array_iterator_next, 0);
+    guard.guard(next_fn.cheap_clone());
+    iter_obj
+        .borrow_mut()
+        .set_property(PropertyKey::from("next"), JsValue::Object(next_fn));
+
+    // Make it its own iterator (for use in for-of)
+    let well_known = super::symbol::get_well_known_symbols();
+    let iterator_symbol = crate::value::JsSymbol::new(
+        well_known.iterator,
+        Some("Symbol.iterator".to_string()),
+    );
+    let iterator_key = PropertyKey::Symbol(Box::new(iterator_symbol));
+    let self_fn = interp.create_native_function("[Symbol.iterator]", return_this, 0);
+    guard.guard(self_fn.cheap_clone());
+    iter_obj
+        .borrow_mut()
+        .set_property(iterator_key, JsValue::Object(self_fn));
+
+    Ok(Guarded::with_guard(JsValue::Object(iter_obj), guard))
+}
+
+/// Helper function that returns `this` - used for iterator[Symbol.iterator]()
+fn return_this(
+    _interp: &mut Interpreter,
+    this: JsValue,
+    _args: &[JsValue],
+) -> Result<Guarded, JsError> {
+    Ok(Guarded::unguarded(this))
+}
+
+/// next() method for array iterators
+fn array_iterator_next(
+    interp: &mut Interpreter,
+    this: JsValue,
+    _args: &[JsValue],
+) -> Result<Guarded, JsError> {
+    let JsValue::Object(iter_obj) = this else {
+        return Err(JsError::type_error("next called on non-object"));
+    };
+
+    // Get the array and current index
+    let arr = iter_obj
+        .borrow()
+        .get_property(&PropertyKey::from("__array__"));
+    let index = iter_obj
+        .borrow()
+        .get_property(&PropertyKey::from("__index__"));
+
+    let Some(JsValue::Object(arr)) = arr else {
+        return Err(JsError::type_error("Invalid array iterator"));
+    };
+
+    let index = match index {
+        Some(JsValue::Number(n)) => n as u32,
+        _ => 0,
+    };
+
+    let length = arr.borrow().array_length().unwrap_or(0);
+
+    if index >= length {
+        // Done
+        let guard = interp.heap.create_guard();
+        let result = interp.create_object_raw(&guard);
+        result
+            .borrow_mut()
+            .set_property(PropertyKey::from("value"), JsValue::Undefined);
+        result
+            .borrow_mut()
+            .set_property(PropertyKey::from("done"), JsValue::Boolean(true));
+        Ok(Guarded::with_guard(JsValue::Object(result), guard))
+    } else {
+        // Get value and increment index
+        let value = arr
+            .borrow()
+            .get_property(&PropertyKey::Index(index))
+            .unwrap_or(JsValue::Undefined);
+
+        iter_obj.borrow_mut().set_property(
+            PropertyKey::from("__index__"),
+            JsValue::Number((index + 1) as f64),
+        );
+
+        let guard = interp.heap.create_guard();
+        let result = interp.create_object_raw(&guard);
+        result
+            .borrow_mut()
+            .set_property(PropertyKey::from("value"), value);
+        result
+            .borrow_mut()
+            .set_property(PropertyKey::from("done"), JsValue::Boolean(false));
+        Ok(Guarded::with_guard(JsValue::Object(result), guard))
+    }
 }
 
 pub fn array_entries(

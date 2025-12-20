@@ -925,14 +925,19 @@ fn test_array_keys() {
 // Array.prototype.values tests
 #[test]
 fn test_array_values() {
-    // values() returns an array of values
+    // values() returns an iterator - use next() to get values
     assert_eq!(
-        eval("let arr: string[] = ['a', 'b', 'c']; let vals: string[] = arr.values(); vals[0]"),
+        eval("let arr: string[] = ['a', 'b', 'c']; let iter = arr.values(); iter.next().value"),
         JsValue::String(JsString::from("a"))
     );
     assert_eq!(
-        eval("([1, 2, 3] as number[]).values()[1]"),
+        eval("let iter = ([1, 2, 3] as number[]).values(); iter.next(); iter.next().value"),
         JsValue::Number(2.0)
+    );
+    // Iterator should be exhaustible
+    assert_eq!(
+        eval("let iter = [42].values(); iter.next(); iter.next().done"),
+        JsValue::Boolean(true)
     );
 }
 
