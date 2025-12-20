@@ -26,6 +26,13 @@ impl Compiler {
             Expression::Literal(lit) => self.compile_literal(&lit.value, dst),
 
             Expression::Identifier(id) => {
+                // Special handling for magic identifiers
+                if id.name.as_str() == "arguments" {
+                    // Use LoadArguments opcode for accessing the arguments object
+                    self.builder.emit(Op::LoadArguments { dst });
+                    return Ok(());
+                }
+
                 let name_idx = self.builder.add_string(id.name.cheap_clone())?;
                 self.builder.emit(Op::GetVar {
                     dst,

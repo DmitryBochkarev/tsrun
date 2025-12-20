@@ -2229,6 +2229,8 @@ impl Interpreter {
                 registers: saved_registers,
                 try_stack: saved_try_stack,
                 guard: Some(state_guard),
+                arguments: args.clone(),
+                new_target: JsValue::Undefined,
             };
 
             // Create guard for the VM registers

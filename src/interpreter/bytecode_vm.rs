@@ -69,6 +69,10 @@ pub struct SavedVmState {
     pub try_stack: Vec<TryHandler>,
     /// Guard to keep all objects in registers alive during suspension
     pub guard: Option<Guard<JsObject>>,
+    /// Original arguments for `arguments` object
+    pub arguments: Vec<JsValue>,
+    /// new.target value
+    pub new_target: JsValue,
 }
 
 /// A call frame in the VM
@@ -119,6 +123,10 @@ pub struct BytecodeVM {
     exception_value: Option<JsValue>,
     /// Saved environment for scope restoration
     saved_env: Option<Gc<JsObject>>,
+    /// Original arguments array (for `arguments` object)
+    pub arguments: Vec<JsValue>,
+    /// `new.target` value (constructor if called with new, undefined otherwise)
+    pub new_target: JsValue,
 }
 
 impl BytecodeVM {
@@ -143,6 +151,8 @@ impl BytecodeVM {
             this_value,
             exception_value: None,
             saved_env: None,
+            arguments: Vec::new(),
+            new_target: JsValue::Undefined,
         }
     }
 
@@ -185,6 +195,56 @@ impl BytecodeVM {
             this_value,
             exception_value: None,
             saved_env: None,
+            arguments: args.to_vec(),
+            new_target: JsValue::Undefined,
+        }
+    }
+
+    /// Create a new VM with a guard, arguments, and new.target value.
+    pub fn with_guard_args_and_new_target(
+        chunk: Rc<BytecodeChunk>,
+        this_value: JsValue,
+        guard: Guard<JsObject>,
+        args: &[JsValue],
+        new_target: JsValue,
+    ) -> Self {
+        let register_count = chunk.register_count as usize;
+        let mut registers = vec![JsValue::Undefined; register_count.max(1)];
+
+        // Guard this_value if it's an object
+        if let JsValue::Object(obj) = &this_value {
+            guard.guard(obj.cheap_clone());
+        }
+
+        // Guard new_target if it's an object
+        if let JsValue::Object(obj) = &new_target {
+            guard.guard(obj.cheap_clone());
+        }
+
+        // Pre-populate registers with arguments
+        for (i, arg) in args.iter().enumerate() {
+            if i < registers.len() {
+                if let Some(slot) = registers.get_mut(i) {
+                    if let JsValue::Object(obj) = arg {
+                        guard.guard(obj.cheap_clone());
+                    }
+                    *slot = arg.clone();
+                }
+            }
+        }
+
+        Self {
+            ip: 0,
+            chunk,
+            registers,
+            register_guard: guard,
+            call_stack: Vec::new(),
+            try_stack: Vec::new(),
+            this_value,
+            exception_value: None,
+            saved_env: None,
+            arguments: args.to_vec(),
+            new_target,
         }
     }
 
@@ -450,6 +510,8 @@ impl BytecodeVM {
             registers: self.registers.clone(),
             try_stack: self.try_stack.clone(),
             guard: Some(guard),
+            arguments: self.arguments.clone(),
+            new_target: self.new_target.clone(),
         }
     }
 
@@ -481,6 +543,8 @@ impl BytecodeVM {
         self.registers = state.registers;
         self.try_stack = state.try_stack;
         self.register_guard = guard;
+        self.arguments = state.arguments;
+        self.new_target = state.new_target;
     }
 
     /// Restore VM state from generator yield and set the sent value
@@ -521,6 +585,8 @@ impl BytecodeVM {
         self.registers = state.registers;
         self.try_stack = state.try_stack;
         self.register_guard = guard;
+        self.arguments = state.arguments;
+        self.new_target = state.new_target;
         // Set the value passed to next() in the resume register
         self.set_reg(resume_register, sent_value);
     }
@@ -561,6 +627,8 @@ impl BytecodeVM {
             this_value,
             exception_value: None,
             saved_env: None,
+            arguments: state.arguments,
+            new_target: state.new_target,
         }
     }
 
@@ -2148,13 +2216,19 @@ impl BytecodeVM {
                 Ok(OpResult::Continue)
             }
 
-            Op::LoadArguments { dst: _ } => Err(JsError::internal_error(
-                "LoadArguments not yet implemented in VM",
-            )),
+            Op::LoadArguments { dst } => {
+                // Create an arguments object (array-like) from the stored arguments
+                let guard = interp.heap.create_guard();
+                let args_array = interp.create_array_from(&guard, self.arguments.clone());
+                self.set_reg(dst, JsValue::Object(args_array));
+                Ok(OpResult::Continue)
+            }
 
-            Op::LoadNewTarget { dst: _ } => Err(JsError::internal_error(
-                "LoadNewTarget not yet implemented in VM",
-            )),
+            Op::LoadNewTarget { dst } => {
+                // Return the new.target value
+                self.set_reg(dst, self.new_target.clone());
+                Ok(OpResult::Continue)
+            }
         }
     }
 

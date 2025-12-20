@@ -2146,3 +2146,57 @@ fn test_bytecode_tagged_template_method_call() {
     );
     assert_eq!(result, JsValue::String("tagged: test".into()));
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Arguments Object Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_bytecode_arguments_basic() {
+    // Access arguments object in a regular function
+    let result = eval_bytecode(
+        r#"
+        function foo() {
+            return arguments.length;
+        }
+        foo(1, 2, 3)
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(3.0));
+}
+
+#[test]
+fn test_bytecode_arguments_access() {
+    // Access individual argument via arguments object
+    let result = eval_bytecode(
+        r#"
+        function foo() {
+            return arguments[1];
+        }
+        foo("a", "b", "c")
+    "#,
+    );
+    assert_eq!(result, JsValue::String("b".into()));
+}
+
+#[test]
+fn test_bytecode_arguments_sum() {
+    // Use arguments to sum all passed values
+    let result = eval_bytecode(
+        r#"
+        function sum() {
+            let total = 0;
+            for (let i = 0; i < arguments.length; i++) {
+                total += arguments[i];
+            }
+            return total;
+        }
+        sum(1, 2, 3, 4, 5)
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(15.0));
+}
+
+// NOTE: new.target tests are not included because the parser doesn't support
+// the new.target meta-property syntax yet. The VM does support LoadNewTarget
+// opcode, but the compiler can't emit it until parser support is added.
