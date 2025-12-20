@@ -480,7 +480,7 @@ impl<'a> Parser<'a> {
             };
 
             // Check for duplicate parameter names in strict mode
-            self.check_duplicate_params(&pattern, &mut seen_names)?;
+            Self::check_duplicate_params(&pattern, &mut seen_names)?;
 
             let optional = self.match_token(&TokenKind::Question);
 
@@ -524,7 +524,6 @@ impl<'a> Parser<'a> {
     /// Check for duplicate parameter names in strict mode.
     /// Collects all binding names from a pattern and checks against seen names.
     fn check_duplicate_params(
-        &self,
         pattern: &Pattern,
         seen: &mut std::collections::HashSet<JsString>,
     ) -> Result<(), JsError> {
@@ -542,24 +541,24 @@ impl<'a> Parser<'a> {
                 for prop in &obj.properties {
                     match prop {
                         ObjectPatternProperty::KeyValue { value, .. } => {
-                            self.check_duplicate_params(value, seen)?;
+                            Self::check_duplicate_params(value, seen)?;
                         }
                         ObjectPatternProperty::Rest(rest) => {
-                            self.check_duplicate_params(&rest.argument, seen)?;
+                            Self::check_duplicate_params(&rest.argument, seen)?;
                         }
                     }
                 }
             }
             Pattern::Array(arr) => {
                 for elem in arr.elements.iter().flatten() {
-                    self.check_duplicate_params(elem, seen)?;
+                    Self::check_duplicate_params(elem, seen)?;
                 }
             }
             Pattern::Rest(rest) => {
-                self.check_duplicate_params(&rest.argument, seen)?;
+                Self::check_duplicate_params(&rest.argument, seen)?;
             }
             Pattern::Assignment(assign) => {
-                self.check_duplicate_params(&assign.left, seen)?;
+                Self::check_duplicate_params(&assign.left, seen)?;
             }
         }
         Ok(())
@@ -2593,7 +2592,7 @@ impl<'a> Parser<'a> {
         // Check for duplicate parameter names in strict mode
         let mut seen_names: std::collections::HashSet<JsString> = std::collections::HashSet::new();
         for param in &params {
-            self.check_duplicate_params(&param.pattern, &mut seen_names)?;
+            Self::check_duplicate_params(&param.pattern, &mut seen_names)?;
         }
 
         let return_type = self.parse_optional_return_type()?;
