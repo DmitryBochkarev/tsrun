@@ -2446,11 +2446,11 @@ impl Interpreter {
     // Evaluation Entry Point
     // ═══════════════════════════════════════════════════════════════════════════
 
-    /// Evaluate source code and return the result
+    /// Evaluate simple TypeScript/JavaScript code (no imports, no async orders).
     ///
-    /// Uses stack-based evaluation for suspendable execution.
+    /// This uses the bytecode VM for execution.
     pub fn eval_simple(&mut self, source: &str) -> Result<JsValue, JsError> {
-        self.eval_with_stack(source)
+        self.eval_bytecode(source)
     }
 
     /// Run bytecode using the bytecode VM
@@ -7656,9 +7656,11 @@ mod tests {
         assert!(result.is_err(), "continue outside loop should error");
         let err = result.unwrap_err();
         let err_str = format!("{:?}", err);
+        // Error should mention 'continue' and indicate it's invalid outside a loop
         assert!(
-            err_str.contains("Illegal"),
-            "Error should mention 'Illegal': {}",
+            err_str.contains("continue")
+                && (err_str.contains("loop") || err_str.contains("Illegal")),
+            "Error should mention 'continue' and 'loop' or 'Illegal': {}",
             err_str
         );
     }
@@ -7670,9 +7672,13 @@ mod tests {
         assert!(result.is_err(), "break outside loop should error");
         let err = result.unwrap_err();
         let err_str = format!("{:?}", err);
+        // Error should mention 'break' and indicate it's invalid outside a loop/switch
         assert!(
-            err_str.contains("Illegal"),
-            "Error should mention 'Illegal': {}",
+            err_str.contains("break")
+                && (err_str.contains("loop")
+                    || err_str.contains("switch")
+                    || err_str.contains("Illegal")),
+            "Error should mention 'break' and 'loop/switch' or 'Illegal': {}",
             err_str
         );
     }
