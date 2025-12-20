@@ -464,10 +464,7 @@ pub enum Op {
     GetAsyncIterator { dst: Register, obj: Register },
 
     /// Iterator next: r[dst] = r[iterator].next()
-    IteratorNext {
-        dst: Register,
-        iterator: Register,
-    },
+    IteratorNext { dst: Register, iterator: Register },
 
     /// Check if iterator result is done: jump if r[result].done
     IteratorDone {
@@ -513,28 +510,16 @@ pub enum Op {
     },
 
     /// Super property get: r[dst] = super[r[key]]
-    SuperGet {
-        dst: Register,
-        key: Register,
-    },
+    SuperGet { dst: Register, key: Register },
 
     /// Super property get with constant key: r[dst] = super.name
-    SuperGetConst {
-        dst: Register,
-        key: ConstantIndex,
-    },
+    SuperGetConst { dst: Register, key: ConstantIndex },
 
     /// Super property set: super[r[key]] = r[value]
-    SuperSet {
-        key: Register,
-        value: Register,
-    },
+    SuperSet { key: Register, value: Register },
 
     /// Super property set with constant key: super.name = r[value]
-    SuperSetConst {
-        key: ConstantIndex,
-        value: Register,
-    },
+    SuperSetConst { key: ConstantIndex, value: Register },
 
     // ═══════════════════════════════════════════════════════════════════════════════
     // Spread/Rest
@@ -545,10 +530,7 @@ pub enum Op {
     SpreadArray { dst: Register, src: Register },
 
     /// Create rest array from remaining arguments
-    CreateRestArray {
-        dst: Register,
-        start_index: u8,
-    },
+    CreateRestArray { dst: Register, start_index: u8 },
 
     // ═══════════════════════════════════════════════════════════════════════════════
     // Template Literals

@@ -5,13 +5,13 @@
 use super::bytecode::Op;
 use super::Compiler;
 use crate::ast::{
-    BlockStatement, BreakStatement, ContinueStatement, DoWhileStatement, ForInit, ForInOfLeft,
-    ForInStatement, ForOfStatement, ForStatement, IfStatement, LabeledStatement, ReturnStatement,
-    Statement, SwitchStatement, ThrowStatement, TryStatement, VariableDeclaration, VariableKind,
-    WhileStatement,
+    BlockStatement, BreakStatement, ContinueStatement, DoWhileStatement, ForInOfLeft,
+    ForInStatement, ForInit, ForOfStatement, ForStatement, IfStatement, LabeledStatement,
+    ReturnStatement, Statement, SwitchStatement, ThrowStatement, TryStatement, VariableDeclaration,
+    VariableKind, WhileStatement,
 };
 use crate::error::JsError;
-use crate::value::CheapClone;
+use crate::value::{CheapClone, JsString};
 
 impl Compiler {
     /// Compile a statement
@@ -543,12 +543,13 @@ impl Compiler {
         };
 
         // Second pass: emit case bodies
-        let mut case_idx = 0;
+        let mut case_jumps_iter = case_jumps.into_iter();
         for case in switch_stmt.cases.iter() {
             if case.test.is_some() {
                 // Patch case jump to here
-                self.builder.patch_jump(case_jumps[case_idx]);
-                case_idx += 1;
+                if let Some(jump) = case_jumps_iter.next() {
+                    self.builder.patch_jump(jump);
+                }
             } else {
                 // Patch default jump to here
                 if let Some(jump) = default_jump.take() {
@@ -641,7 +642,7 @@ impl Compiler {
         // Pop try handler after successful completion
         self.builder.emit(Op::PopTry);
 
-        // Jump to finally or end
+        // Jump to finally (if exists) or end
         let jump_after_try = self.builder.emit_jump();
 
         // Catch handler
@@ -669,7 +670,7 @@ impl Compiler {
             self.builder.emit(Op::PopScope);
         }
 
-        // Jump to finally or end
+        // Jump to finally (if exists) or end
         let jump_after_catch = self.builder.emit_jump();
 
         // Finally handler
@@ -684,17 +685,36 @@ impl Compiler {
         }
 
         // End of try-catch-finally
-        let _end_offset = self.builder.current_offset();
+        let end_offset = self.builder.current_offset();
 
-        // Patch all jumps
-        self.builder.patch_jump(jump_after_try);
-        self.builder.patch_jump(jump_after_catch);
+        // Patch jumps: if there's a finally block, jump TO it, otherwise jump past everything
+        if try_stmt.finalizer.is_some() {
+            // Jump to finally block (which will naturally fall through to end)
+            self.builder
+                .patch_jump_to(jump_after_try, finally_start as super::JumpTarget);
+            self.builder
+                .patch_jump_to(jump_after_catch, finally_start as super::JumpTarget);
+        } else {
+            // No finally, jump to end
+            self.builder
+                .patch_jump_to(jump_after_try, end_offset as super::JumpTarget);
+            self.builder
+                .patch_jump_to(jump_after_catch, end_offset as super::JumpTarget);
+        }
 
         // Patch PushTry targets
         self.builder.patch_try_targets(
             push_try_idx,
-            if try_stmt.handler.is_some() { catch_start as u32 } else { 0 },
-            if try_stmt.finalizer.is_some() { finally_start as u32 } else { 0 },
+            if try_stmt.handler.is_some() {
+                catch_start as u32
+            } else {
+                0
+            },
+            if try_stmt.finalizer.is_some() {
+                finally_start as u32
+            } else {
+                0
+            },
         );
 
         self.try_depth -= 1;
@@ -721,12 +741,143 @@ impl Compiler {
     /// Compile a function declaration
     fn compile_function_declaration(
         &mut self,
-        _func: &crate::ast::FunctionDeclaration,
+        func: &crate::ast::FunctionDeclaration,
     ) -> Result<(), JsError> {
-        // TODO: Implement function declaration compilation
-        Err(JsError::syntax_error_simple(
-            "Function declarations not yet supported in bytecode compiler",
-        ))
+        self.builder.set_span(func.span);
+
+        // Get function name
+        let name = func.id.as_ref().map(|id| id.name.cheap_clone());
+
+        // Compile the function body to a nested chunk
+        let chunk = self.compile_function_body(
+            &func.params,
+            &func.body.body,
+            name.clone(),
+            func.generator,
+            func.async_,
+            false, // not an arrow function
+        )?;
+
+        // Add the chunk to constants
+        let chunk_idx = self.builder.add_chunk(chunk)?;
+
+        // Allocate register for the function object
+        let dst = self.builder.alloc_register()?;
+
+        // Emit CreateClosure instruction
+        if func.generator && func.async_ {
+            self.builder
+                .emit(Op::CreateAsyncGenerator { dst, chunk_idx });
+        } else if func.generator {
+            self.builder.emit(Op::CreateGenerator { dst, chunk_idx });
+        } else if func.async_ {
+            self.builder.emit(Op::CreateAsync { dst, chunk_idx });
+        } else {
+            self.builder.emit(Op::CreateClosure { dst, chunk_idx });
+        }
+
+        // If the function has a name, declare it as a variable
+        if let Some(ref fn_name) = name {
+            let name_idx = self.builder.add_string(fn_name.cheap_clone())?;
+            self.builder.emit(Op::DeclareVarHoisted {
+                name: name_idx,
+                init: dst,
+            });
+        }
+
+        self.builder.free_register(dst);
+
+        Ok(())
+    }
+
+    /// Compile function body to a nested BytecodeChunk
+    fn compile_function_body(
+        &mut self,
+        params: &[crate::ast::FunctionParam],
+        body: &[Statement],
+        name: Option<JsString>,
+        is_generator: bool,
+        is_async: bool,
+        is_arrow: bool,
+    ) -> Result<super::BytecodeChunk, JsError> {
+        use super::FunctionInfo;
+
+        // Create a new compiler for the function body
+        let mut func_compiler = Compiler::new();
+
+        // Compile parameter declarations
+        // Parameters will be passed via registers and need to be bound to the environment
+        let mut param_names = Vec::with_capacity(params.len());
+        let mut rest_param = None;
+
+        for (idx, param) in params.iter().enumerate() {
+            match &param.pattern {
+                crate::ast::Pattern::Identifier(id) => {
+                    param_names.push(id.name.cheap_clone());
+
+                    // Load argument from register and declare variable
+                    let arg_reg = idx as u8;
+                    let name_idx = func_compiler.builder.add_string(id.name.cheap_clone())?;
+                    func_compiler.builder.emit(Op::DeclareVar {
+                        name: name_idx,
+                        init: arg_reg,
+                        mutable: true,
+                    });
+                }
+                crate::ast::Pattern::Rest(rest) => {
+                    rest_param = Some(idx);
+                    if let crate::ast::Pattern::Identifier(id) = &*rest.argument {
+                        param_names.push(id.name.cheap_clone());
+
+                        // For rest params, we'll need special handling (not fully implemented)
+                        let arg_reg = idx as u8;
+                        let name_idx = func_compiler.builder.add_string(id.name.cheap_clone())?;
+                        func_compiler.builder.emit(Op::DeclareVar {
+                            name: name_idx,
+                            init: arg_reg,
+                            mutable: true,
+                        });
+                    }
+                }
+                // TODO: Handle destructuring patterns
+                _ => {}
+            }
+        }
+
+        // Compile the body statements
+        for stmt in body {
+            func_compiler.compile_statement(stmt)?;
+        }
+
+        // Emit implicit return undefined at end
+        let undefined_reg = func_compiler.builder.alloc_register()?;
+        func_compiler
+            .builder
+            .emit(Op::LoadUndefined { dst: undefined_reg });
+        func_compiler.builder.emit(Op::Return {
+            value: undefined_reg,
+        });
+
+        // Build the chunk with function info
+        let mut chunk = func_compiler.builder.finish();
+        chunk.function_info = Some(FunctionInfo {
+            name,
+            param_count: params.len(),
+            is_generator,
+            is_async,
+            is_arrow,
+            uses_arguments: false, // TODO: analyze function body
+            uses_this: !is_arrow,
+            param_names,
+            rest_param,
+        });
+
+        // Make sure we have enough registers for parameters
+        if chunk.register_count < params.len() as u8 {
+            chunk.register_count = params.len() as u8;
+        }
+
+        Ok(chunk)
     }
 
     /// Compile a class declaration
@@ -740,4 +891,3 @@ impl Compiler {
         ))
     }
 }
-

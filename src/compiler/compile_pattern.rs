@@ -251,13 +251,9 @@ impl Compiler {
                 Ok(())
             }
 
-            Pattern::Object(obj_pat) => {
-                self.compile_object_pattern_assignment(obj_pat, value_reg)
-            }
+            Pattern::Object(obj_pat) => self.compile_object_pattern_assignment(obj_pat, value_reg),
 
-            Pattern::Array(arr_pat) => {
-                self.compile_array_pattern_assignment(arr_pat, value_reg)
-            }
+            Pattern::Array(arr_pat) => self.compile_array_pattern_assignment(arr_pat, value_reg),
 
             Pattern::Assignment(assign_pat) => {
                 // Pattern with default value
@@ -295,9 +291,7 @@ impl Compiler {
                 Ok(())
             }
 
-            Pattern::Rest(rest) => {
-                self.compile_pattern_assignment(&rest.argument, value_reg)
-            }
+            Pattern::Rest(rest) => self.compile_pattern_assignment(&rest.argument, value_reg),
         }
     }
 

@@ -178,7 +178,10 @@ fn test_compile_variable_declaration() {
 
     // Should have DeclareVar
     assert!(
-        contains_op(&chunk, |op| matches!(op, Op::DeclareVar { mutable: true, .. })),
+        contains_op(&chunk, |op| matches!(
+            op,
+            Op::DeclareVar { mutable: true, .. }
+        )),
         "Expected DeclareVar with mutable=true, got {:?}",
         chunk.code
     );
@@ -190,7 +193,10 @@ fn test_compile_const_declaration() {
 
     // Should have DeclareVar with mutable=false
     assert!(
-        contains_op(&chunk, |op| matches!(op, Op::DeclareVar { mutable: false, .. })),
+        contains_op(&chunk, |op| matches!(
+            op,
+            Op::DeclareVar { mutable: false, .. }
+        )),
         "Expected DeclareVar with mutable=false, got {:?}",
         chunk.code
     );
@@ -504,10 +510,7 @@ fn test_source_map() {
     let chunk = compile("1 + 2");
 
     // Should have source map entries
-    assert!(
-        !chunk.source_map.is_empty(),
-        "Expected source map entries"
-    );
+    assert!(!chunk.source_map.is_empty(), "Expected source map entries");
 }
 
 #[test]
@@ -520,4 +523,34 @@ fn test_register_count() {
         "Expected positive register count, got {}",
         chunk.register_count
     );
+}
+
+#[test]
+fn test_compile_nullish_coalescing() {
+    let chunk = compile("null ?? 'default'");
+
+    // Print bytecode for debugging
+    println!("Bytecode for: null ?? 'default'");
+    println!("Register count: {}", chunk.register_count);
+    for (i, op) in chunk.code.iter().enumerate() {
+        println!("  {}: {:?}", i, op);
+    }
+
+    // Should have JumpIfNotNullish for nullish coalescing
+    assert!(
+        contains_op(&chunk, |op| matches!(op, Op::JumpIfNotNullish { .. })),
+        "Expected JumpIfNotNullish for ??, got {:?}",
+        chunk.code
+    );
+
+    // Verify the jump target is correct - it should jump past the 'default' load
+    let has_valid_jump = chunk.code.iter().any(|op| {
+        if let Op::JumpIfNotNullish { target, .. } = op {
+            // The target should be a valid instruction index
+            (*target as usize) < chunk.code.len()
+        } else {
+            false
+        }
+    });
+    assert!(has_valid_jump, "JumpIfNotNullish has invalid target");
 }

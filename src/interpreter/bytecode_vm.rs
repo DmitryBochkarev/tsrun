@@ -112,7 +112,11 @@ impl BytecodeVM {
     }
 
     /// Create a new VM with a guard for keeping objects alive
-    pub fn with_guard(chunk: Rc<BytecodeChunk>, this_value: JsValue, guard: Guard<JsObject>) -> Self {
+    pub fn with_guard(
+        chunk: Rc<BytecodeChunk>,
+        this_value: JsValue,
+        guard: Guard<JsObject>,
+    ) -> Self {
         let register_count = chunk.register_count as usize;
         Self {
             ip: 0,
@@ -291,7 +295,8 @@ impl BytecodeVM {
                     Some(Constant::Number(n)) => JsValue::Number(*n),
                     Some(Constant::RegExp { pattern, flags }) => {
                         let guard = interp.heap.create_guard();
-                        let obj = interp.create_regexp_literal(&guard, pattern.as_str(), flags.as_str());
+                        let obj =
+                            interp.create_regexp_literal(&guard, pattern.as_str(), flags.as_str());
                         JsValue::Object(obj)
                     }
                     Some(Constant::Chunk(_)) => {
@@ -667,7 +672,11 @@ impl BytecodeVM {
                 Ok(OpResult::Continue)
             }
 
-            Op::DeclareVar { name, init, mutable } => {
+            Op::DeclareVar {
+                name,
+                init,
+                mutable,
+            } => {
                 let name = self
                     .get_string_constant(name)
                     .ok_or_else(|| JsError::internal_error("Invalid variable name constant"))?;
@@ -1029,7 +1038,10 @@ impl BytecodeVM {
                 Err(JsError::internal_error("Yield not yet implemented in VM"))
             }
 
-            Op::YieldStar { dst: _, iterable: _ } => Err(JsError::internal_error(
+            Op::YieldStar {
+                dst: _,
+                iterable: _,
+            } => Err(JsError::internal_error(
                 "YieldStar not yet implemented in VM",
             )),
 
@@ -1059,7 +1071,10 @@ impl BytecodeVM {
                 "Async iterators not yet implemented in VM",
             )),
 
-            Op::IteratorNext { dst: _, iterator: _ } => Err(JsError::internal_error(
+            Op::IteratorNext {
+                dst: _,
+                iterator: _,
+            } => Err(JsError::internal_error(
                 "IteratorNext not yet implemented in VM",
             )),
 
@@ -1095,7 +1110,10 @@ impl BytecodeVM {
                 "SpreadArray not yet implemented in VM",
             )),
 
-            Op::CreateRestArray { dst: _, start_index: _ } => Err(JsError::internal_error(
+            Op::CreateRestArray {
+                dst: _,
+                start_index: _,
+            } => Err(JsError::internal_error(
                 "CreateRestArray not yet implemented in VM",
             )),
 

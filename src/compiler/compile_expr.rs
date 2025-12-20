@@ -5,9 +5,8 @@
 use super::bytecode::{ConstantIndex, Op, Register};
 use super::Compiler;
 use crate::ast::{
-    ArrayElement, Argument, AssignmentOp, AssignmentTarget, BinaryOp,
-    Expression, LiteralValue, LogicalOp, MemberProperty, ObjectProperty, ObjectPropertyKey,
-    PropertyKind, UnaryOp, UpdateOp,
+    Argument, ArrayElement, AssignmentOp, AssignmentTarget, BinaryOp, Expression, LiteralValue,
+    LogicalOp, MemberProperty, ObjectProperty, ObjectPropertyKey, PropertyKind, UnaryOp, UpdateOp,
 };
 use crate::error::JsError;
 use crate::value::CheapClone;
@@ -28,7 +27,10 @@ impl Compiler {
 
             Expression::Identifier(id) => {
                 let name_idx = self.builder.add_string(id.name.cheap_clone())?;
-                self.builder.emit(Op::GetVar { dst, name: name_idx });
+                self.builder.emit(Op::GetVar {
+                    dst,
+                    name: name_idx,
+                });
                 Ok(())
             }
 
@@ -104,7 +106,11 @@ impl Compiler {
     }
 
     /// Compile a literal value
-    pub(crate) fn compile_literal(&mut self, value: &LiteralValue, dst: Register) -> Result<(), JsError> {
+    pub(crate) fn compile_literal(
+        &mut self,
+        value: &LiteralValue,
+        dst: Register,
+    ) -> Result<(), JsError> {
         match value {
             LiteralValue::Null => {
                 self.builder.emit(Op::LoadNull { dst });
@@ -128,10 +134,12 @@ impl Compiler {
             LiteralValue::RegExp { pattern, flags } => {
                 let pattern_str: crate::value::JsString = pattern.as_str().into();
                 let flags_str: crate::value::JsString = flags.as_str().into();
-                let idx = self.builder.add_constant(super::bytecode::Constant::RegExp {
-                    pattern: pattern_str,
-                    flags: flags_str,
-                })?;
+                let idx = self
+                    .builder
+                    .add_constant(super::bytecode::Constant::RegExp {
+                        pattern: pattern_str,
+                        flags: flags_str,
+                    })?;
                 self.builder.emit(Op::LoadConst { dst, idx });
             }
         }
@@ -312,7 +320,10 @@ impl Compiler {
                     UnaryOp::BitNot => Op::BitNot { dst, src },
                     UnaryOp::Typeof => Op::Typeof { dst, src },
                     UnaryOp::Void => Op::Void { dst, src },
-                    UnaryOp::Delete => unreachable!(), // Handled above
+                    UnaryOp::Delete => {
+                        // Handled above, but need to return something for match completeness
+                        return Err(JsError::internal_error("Delete should be handled separately"));
+                    }
                 };
                 self.builder.emit(op);
 
@@ -759,10 +770,7 @@ impl Compiler {
                     });
 
                     // Return original value
-                    self.builder.emit(Op::Move {
-                        dst,
-                        src: original,
-                    });
+                    self.builder.emit(Op::Move { dst, src: original });
 
                     self.builder.free_register(one);
                     self.builder.free_register(original);
@@ -830,10 +838,7 @@ impl Compiler {
                     }
 
                     self.emit_set_property(obj_reg, &key_info, dst)?;
-                    self.builder.emit(Op::Move {
-                        dst,
-                        src: original,
-                    });
+                    self.builder.emit(Op::Move { dst, src: original });
 
                     self.builder.free_register(original);
                 } else {
@@ -1118,10 +1123,12 @@ impl Compiler {
 
         if total_parts == 1 && template.expressions.is_empty() {
             // Single quasi, no expressions
-            let quasi = template.quasis.first().ok_or_else(|| {
-                JsError::internal_error("Template literal with no quasis")
-            })?;
-            self.builder.emit_load_string(dst, quasi.value.cheap_clone())?;
+            let quasi = template
+                .quasis
+                .first()
+                .ok_or_else(|| JsError::internal_error("Template literal with no quasis"))?;
+            self.builder
+                .emit_load_string(dst, quasi.value.cheap_clone())?;
             return Ok(());
         }
 
@@ -1132,10 +1139,8 @@ impl Compiler {
         for (i, quasi) in template.quasis.iter().enumerate() {
             // Add quasi
             if !quasi.value.is_empty() {
-                self.builder.emit_load_string(
-                    start + reg_idx,
-                    quasi.value.cheap_clone(),
-                )?;
+                self.builder
+                    .emit_load_string(start + reg_idx, quasi.value.cheap_clone())?;
                 reg_idx += 1;
             }
 

@@ -2016,7 +2016,10 @@ impl Interpreter {
     ///
     /// This is the bytecode execution entry point. It compiles the program
     /// to bytecode and then executes it using the bytecode VM.
-    pub fn run_bytecode(&mut self, chunk: std::rc::Rc<crate::compiler::BytecodeChunk>) -> Result<Guarded, JsError> {
+    pub fn run_bytecode(
+        &mut self,
+        chunk: std::rc::Rc<crate::compiler::BytecodeChunk>,
+    ) -> Result<Guarded, JsError> {
         use bytecode_vm::{BytecodeVM, VmResult};
 
         let mut vm = BytecodeVM::new(chunk, JsValue::Object(self.global.clone()));

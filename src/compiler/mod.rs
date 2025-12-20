@@ -3,14 +3,14 @@
 //! This module compiles the AST to bytecode for execution by the bytecode VM.
 //! The bytecode uses a register-based design for better performance.
 
-mod bytecode;
 mod builder;
+mod bytecode;
 mod compile_expr;
 mod compile_pattern;
 mod compile_stmt;
 
-pub use bytecode::{BytecodeChunk, Constant, FunctionInfo, JumpTarget, Op, Register};
 pub use builder::{BytecodeBuilder, JumpPlaceholder};
+pub use bytecode::{BytecodeChunk, Constant, FunctionInfo, JumpTarget, Op, Register};
 
 use crate::ast::Program;
 use crate::error::JsError;
@@ -93,10 +93,14 @@ impl Compiler {
         });
     }
 
-    /// Set the continue target for the current loop
+    /// Set the continue target for the current loop and patch any pending continue jumps
     fn set_continue_target(&mut self, target: usize) {
         if let Some(ctx) = self.loop_stack.last_mut() {
             ctx.continue_target = Some(target);
+            // Patch any pending continue jumps that were emitted before the target was known
+            for jump in ctx.continue_jumps.drain(..) {
+                self.builder.patch_jump_to(jump, target as JumpTarget);
+            }
         }
     }
 

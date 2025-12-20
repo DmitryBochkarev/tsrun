@@ -4,8 +4,7 @@
 //! register allocation and jump patching support.
 
 use super::bytecode::{
-    BytecodeChunk, Constant, ConstantIndex, FunctionInfo, JumpTarget, Op, Register,
-    SourceMapEntry,
+    BytecodeChunk, Constant, ConstantIndex, FunctionInfo, JumpTarget, Op, Register, SourceMapEntry,
 };
 use crate::error::JsError;
 use crate::lexer::Span;
@@ -80,8 +79,8 @@ impl RegisterAllocator {
 
     /// Reserve a specific number of consecutive registers (for function args)
     pub fn reserve_range(&mut self, count: u8) -> Result<Register, JsError> {
-        #[allow(unused_comparisons)]
-        if self.next.checked_add(count).map_or(true, |n| n > 255) {
+        // Check for overflow - if checked_add returns None, we've exceeded u8::MAX
+        if self.next.checked_add(count).is_none() {
             return Err(JsError::internal_error(
                 "Too many registers needed (max 255)",
             ));
@@ -198,7 +197,7 @@ impl BytecodeBuilder {
             let should_add = self
                 .source_map
                 .last()
-                .map_or(true, |e| e.span.start != span.start);
+                .is_none_or(|e| e.span.start != span.start);
 
             if should_add {
                 self.source_map.push(SourceMapEntry {
@@ -280,12 +279,19 @@ impl BytecodeBuilder {
     }
 
     /// Patch PushTry instruction with catch and finally targets
-    pub fn patch_try_targets(&mut self, idx: usize, catch_target: JumpTarget, finally_target: JumpTarget) {
-        if let Some(op) = self.code.get_mut(idx) {
-            if let Op::PushTry { catch_target: ct, finally_target: ft } = op {
-                *ct = catch_target;
-                *ft = finally_target;
-            }
+    pub fn patch_try_targets(
+        &mut self,
+        idx: usize,
+        catch_target: JumpTarget,
+        finally_target: JumpTarget,
+    ) {
+        if let Some(Op::PushTry {
+            catch_target: ct,
+            finally_target: ft,
+        }) = self.code.get_mut(idx)
+        {
+            *ct = catch_target;
+            *ft = finally_target;
         }
     }
 
@@ -320,9 +326,7 @@ impl BytecodeBuilder {
     /// Add a constant to the pool
     pub fn add_constant(&mut self, constant: Constant) -> Result<ConstantIndex, JsError> {
         if self.constants.len() >= u16::MAX as usize {
-            return Err(JsError::internal_error(
-                "Too many constants (max 65535)",
-            ));
+            return Err(JsError::internal_error("Too many constants (max 65535)"));
         }
 
         let idx = self.constants.len() as ConstantIndex;
