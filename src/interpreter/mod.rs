@@ -8,6 +8,9 @@ pub mod builtins;
 // Stack-based evaluation for suspendable execution
 pub mod stack;
 
+// Bytecode virtual machine
+pub mod bytecode_vm;
+
 use crate::ast::{
     Argument, ArrayElement, ArrayPattern, AssignmentExpression, AssignmentOp, AssignmentTarget,
     BinaryExpression, BinaryOp, BlockStatement, CallExpression, ClassConstructor, ClassDeclaration,
@@ -2007,6 +2010,35 @@ impl Interpreter {
     /// Uses stack-based evaluation for suspendable execution.
     pub fn eval_simple(&mut self, source: &str) -> Result<JsValue, JsError> {
         self.eval_with_stack(source)
+    }
+
+    /// Run bytecode using the bytecode VM
+    ///
+    /// This is the bytecode execution entry point. It compiles the program
+    /// to bytecode and then executes it using the bytecode VM.
+    pub fn run_bytecode(&mut self, chunk: std::rc::Rc<crate::compiler::BytecodeChunk>) -> Result<Guarded, JsError> {
+        use bytecode_vm::{BytecodeVM, VmResult};
+
+        let mut vm = BytecodeVM::new(chunk, JsValue::Object(self.global.clone()));
+
+        match vm.run(self) {
+            VmResult::Complete(guarded) => Ok(guarded),
+            VmResult::Error(err) => Err(err),
+            VmResult::Suspend(_) => Err(JsError::internal_error(
+                "Bytecode execution cannot suspend at top level",
+            )),
+        }
+    }
+
+    /// Compile and run source code using bytecode VM
+    pub fn eval_bytecode(&mut self, source: &str) -> Result<JsValue, JsError> {
+        use crate::compiler::Compiler;
+
+        let mut parser = crate::parser::Parser::new(source, &mut self.string_dict);
+        let program = parser.parse_program()?;
+        let chunk = Compiler::compile_program(&program)?;
+        let result = self.run_bytecode(chunk)?;
+        Ok(result.value)
     }
 
     // ═══════════════════════════════════════════════════════════════════════════

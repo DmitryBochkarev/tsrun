@@ -442,22 +442,13 @@ impl Compiler {
                 self.builder.emit_jump_if_true(dst)
             }
             LogicalOp::NullishCoalescing => {
-                // If left is not nullish, skip right
-                self.builder.emit_jump_if_nullish(dst);
-                // For nullish coalescing, we need the opposite - jump if NOT nullish
-                // Actually, we need: if left is nullish, evaluate right
-                // So we need to invert the logic
-                // Compile right only if left IS nullish
-                let not_nullish_jump = self.builder.emit(Op::JumpIfNotNullish {
-                    cond: dst,
-                    target: 0,
-                });
-                // Compile right
+                // If left is NOT nullish, skip right and keep left result
+                // If left IS nullish, fall through and evaluate right
+                let skip_right = self.builder.emit_jump_if_not_nullish(dst);
+                // Compile right operand
                 self.compile_expression(&logical.right, dst)?;
-                // Patch the jump
-                self.builder.patch_jump(super::JumpPlaceholder {
-                    instruction_index: not_nullish_jump,
-                });
+                // Patch the skip jump to point here
+                self.builder.patch_jump(skip_right);
                 return Ok(());
             }
         };

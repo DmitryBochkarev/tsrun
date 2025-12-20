@@ -244,6 +244,14 @@ impl BytecodeBuilder {
         }
     }
 
+    /// Emit a conditional jump (if NOT nullish) with a placeholder target
+    pub fn emit_jump_if_not_nullish(&mut self, cond: Register) -> JumpPlaceholder {
+        let index = self.emit(Op::JumpIfNotNullish { cond, target: 0 });
+        JumpPlaceholder {
+            instruction_index: index,
+        }
+    }
+
     /// Emit a jump to a known target
     pub fn emit_jump_to(&mut self, target: usize) {
         self.emit(Op::Jump {
