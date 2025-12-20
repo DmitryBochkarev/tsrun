@@ -1064,3 +1064,65 @@ fn test_apply_with_args_this_preserved() {
         JsValue::Number(123.0)
     );
 }
+
+// =============================================================================
+// Call Expression Argument Evaluation Order Tests
+// =============================================================================
+
+#[test]
+fn test_call_args_evaluated_before_callable_check() {
+    // Arguments should be evaluated before checking if the callee is callable
+    // This matches ECMAScript spec behavior
+    assert_eq!(
+        eval(
+            r#"
+            var fooCalled = false;
+            function foo() { fooCalled = true; }
+            var o = {};
+            try {
+                o.bar(foo());
+            } catch (e) {}
+            fooCalled
+        "#
+        ),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_call_args_side_effects_on_undefined() {
+    // Side effects in arguments should occur even when calling undefined
+    assert_eq!(
+        eval(
+            r#"
+            var count = 0;
+            function increment() { count++; return count; }
+            try {
+                undefined(increment(), increment());
+            } catch (e) {}
+            count
+        "#
+        ),
+        JsValue::Number(2.0)
+    );
+}
+
+#[test]
+fn test_call_args_not_evaluated_when_callee_throws() {
+    // When evaluating the callee throws (e.g., undefined.prop),
+    // arguments should NOT be evaluated
+    assert_eq!(
+        eval(
+            r#"
+            var fooCalled = false;
+            function foo() { fooCalled = true; }
+            var o = {};
+            try {
+                o.bar.gar(foo());  // o.bar is undefined, .gar throws
+            } catch (e) {}
+            fooCalled
+        "#
+        ),
+        JsValue::Boolean(false)
+    );
+}

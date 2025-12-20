@@ -5229,6 +5229,27 @@ impl Interpreter {
                     value: obj,
                     guard: obj_guard,
                 } = self.evaluate_expression(&member.object)?;
+
+                // Handle optional chaining - if object is null/undefined, return undefined
+                if member.optional && matches!(obj, JsValue::Null | JsValue::Undefined) {
+                    return Err(JsError::type_error("undefined is not a function"));
+                }
+
+                // Cannot access properties on null/undefined - throw immediately
+                // (this happens before argument evaluation per ECMAScript spec)
+                if matches!(&obj, JsValue::Null | JsValue::Undefined) {
+                    let key = self.get_member_key(&member.property)?;
+                    let type_name = if matches!(&obj, JsValue::Null) {
+                        "null"
+                    } else {
+                        "undefined"
+                    };
+                    return Err(JsError::type_error(format!(
+                        "Cannot read properties of {} (reading '{}')",
+                        type_name, key
+                    )));
+                }
+
                 let key = self.get_member_key(&member.property)?;
 
                 // Get the function, invoking getters if the property is an accessor
@@ -5294,10 +5315,10 @@ impl Interpreter {
                 // Keep extra guard alive (for values from getter calls)
                 let _extra_guard = extra_guard;
 
-                match func {
-                    Some(f) => (f, obj, obj_guard),
-                    None => return Err(JsError::type_error(format!("{} is not a function", key))),
-                }
+                // Per ECMAScript spec, we don't throw here if the property is undefined/missing.
+                // Arguments must be evaluated first, then the callable check happens in call_function.
+                let callee = func.unwrap_or(JsValue::Undefined);
+                (callee, obj, obj_guard)
             }
             _ => {
                 let Guarded {
