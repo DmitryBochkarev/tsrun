@@ -165,15 +165,429 @@ fn test_object_hasown() {
     );
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Object.create tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
 #[test]
-fn test_object_create() {
+fn test_object_create_null_prototype() {
+    // Object.create(null) creates object without prototype chain
     assert_eq!(
         eval("Object.create(null).hasOwnProperty"),
         JsValue::Undefined
     );
+    // Should not have toString either
+    assert_eq!(eval("Object.create(null).toString"), JsValue::Undefined);
+}
+
+#[test]
+fn test_object_create_with_prototype() {
+    // Properties are inherited from prototype
     assert_eq!(
         eval("let proto: { x: number } = {x: 1}; let o = Object.create(proto); o.x"),
         JsValue::Number(1.0)
+    );
+    // Multiple properties in prototype
+    assert_eq!(
+        eval(
+            r#"
+            const proto = { a: 1, b: 2 };
+            const obj = Object.create(proto);
+            obj.a + obj.b
+        "#
+        ),
+        JsValue::Number(3.0)
+    );
+}
+
+#[test]
+fn test_object_create_with_properties_basic() {
+    // Second argument defines own properties
+    assert_eq!(
+        eval(
+            r#"
+            const obj = Object.create(null, {
+                x: { value: 42 }
+            });
+            obj.x
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+#[test]
+fn test_object_create_with_properties_multiple() {
+    // Multiple properties
+    assert_eq!(
+        eval(
+            r#"
+            const obj = Object.create(null, {
+                x: { value: 10 },
+                y: { value: 20 },
+                z: { value: 30 }
+            });
+            obj.x + obj.y + obj.z
+        "#
+        ),
+        JsValue::Number(60.0)
+    );
+}
+
+#[test]
+fn test_object_create_with_properties_writable() {
+    // Test writable: true
+    assert_eq!(
+        eval(
+            r#"
+            const obj: any = Object.create(null, {
+                x: { value: 1, writable: true }
+            });
+            obj.x = 42;
+            obj.x
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+    // Test writable: false (default)
+    assert_eq!(
+        eval(
+            r#"
+            const obj: any = Object.create(null, {
+                x: { value: 1, writable: false }
+            });
+            obj.x = 42;
+            obj.x
+        "#
+        ),
+        JsValue::Number(1.0)
+    );
+}
+
+#[test]
+fn test_object_create_with_properties_enumerable() {
+    // Test enumerable: true
+    assert_eq!(
+        eval(
+            r#"
+            const obj = Object.create(null, {
+                a: { value: 1, enumerable: true },
+                b: { value: 2, enumerable: false }
+            });
+            Object.keys(obj).length
+        "#
+        ),
+        JsValue::Number(1.0)
+    );
+    // Verify which key is enumerable
+    assert_eq!(
+        eval(
+            r#"
+            const obj = Object.create(null, {
+                a: { value: 1, enumerable: true },
+                b: { value: 2, enumerable: false }
+            });
+            Object.keys(obj)[0]
+        "#
+        ),
+        JsValue::String("a".into())
+    );
+}
+
+#[test]
+fn test_object_create_with_properties_configurable() {
+    // Test configurable: true - property can be deleted
+    assert_eq!(
+        eval(
+            r#"
+            const obj: any = Object.create(null, {
+                x: { value: 42, configurable: true }
+            });
+            delete obj.x;
+            obj.x
+        "#
+        ),
+        JsValue::Undefined
+    );
+    // Test configurable: false - delete should throw in strict mode
+    assert_eq!(
+        eval(
+            r#"
+            const obj: any = Object.create(null, {
+                x: { value: 42, configurable: false }
+            });
+            try {
+                delete obj.x;
+                "no error";
+            } catch (e) {
+                e instanceof TypeError ? "TypeError" : "other";
+            }
+        "#
+        ),
+        JsValue::String("TypeError".into())
+    );
+}
+
+#[test]
+fn test_object_create_with_properties_all_attributes() {
+    // All attributes together
+    assert_eq!(
+        eval(
+            r#"
+            const obj: any = Object.create(null, {
+                x: { value: 10, writable: true, enumerable: true, configurable: true }
+            });
+            obj.x = 20;
+            [obj.x, Object.keys(obj).length].join(',')
+        "#
+        ),
+        JsValue::String("20,1".into())
+    );
+}
+
+#[test]
+fn test_object_create_with_prototype_and_properties() {
+    // Both prototype and properties
+    assert_eq!(
+        eval(
+            r#"
+            const proto = { inherited: 100 };
+            const obj: any = Object.create(proto, {
+                own: { value: 42 }
+            });
+            obj.inherited + obj.own
+        "#
+        ),
+        JsValue::Number(142.0)
+    );
+}
+
+#[test]
+fn test_object_create_own_vs_inherited() {
+    // hasOwnProperty distinguishes own from inherited
+    assert_eq!(
+        eval(
+            r#"
+            const proto = { inherited: 1 };
+            const obj: any = Object.create(proto, {
+                own: { value: 2 }
+            });
+            [obj.hasOwnProperty('own'), obj.hasOwnProperty('inherited')].join(',')
+        "#
+        ),
+        JsValue::String("true,false".into())
+    );
+}
+
+#[test]
+fn test_object_create_property_descriptor_accessor() {
+    // Accessor property (getter)
+    assert_eq!(
+        eval(
+            r#"
+            let counter = 0;
+            const obj: any = Object.create(null, {
+                x: {
+                    get: function() { return ++counter; }
+                }
+            });
+            [obj.x, obj.x, obj.x].join(',')
+        "#
+        ),
+        JsValue::String("1,2,3".into())
+    );
+}
+
+#[test]
+fn test_object_create_property_descriptor_setter() {
+    // Accessor property (setter)
+    assert_eq!(
+        eval(
+            r#"
+            let stored = 0;
+            const obj: any = Object.create(null, {
+                x: {
+                    get: function() { return stored; },
+                    set: function(v: number) { stored = v * 2; }
+                }
+            });
+            obj.x = 21;
+            obj.x
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+#[test]
+fn test_object_create_object_prototype() {
+    // Object.prototype is used when first arg is Object.prototype
+    assert_eq!(
+        eval(
+            r#"
+            const obj = Object.create(Object.prototype, {
+                x: { value: 42 }
+            });
+            typeof obj.hasOwnProperty
+        "#
+        ),
+        JsValue::String("function".into())
+    );
+}
+
+#[test]
+fn test_object_create_undefined_properties_ignored() {
+    // If second argument is undefined, it's like not passing it
+    assert_eq!(
+        eval(
+            r#"
+            const obj = Object.create({ x: 1 }, undefined);
+            obj.x
+        "#
+        ),
+        JsValue::Number(1.0)
+    );
+}
+
+#[test]
+fn test_object_create_returns_new_object() {
+    // Should return a new object, not modify the prototype
+    assert_eq!(
+        eval(
+            r#"
+            const proto = { x: 1 };
+            const obj = Object.create(proto, {
+                y: { value: 2 }
+            });
+            [proto.hasOwnProperty('y'), obj.hasOwnProperty('y')].join(',')
+        "#
+        ),
+        JsValue::String("false,true".into())
+    );
+}
+
+#[test]
+fn test_object_create_throws_on_invalid_prototype() {
+    // Non-object, non-null prototype should throw TypeError
+    assert_eq!(
+        eval(
+            r#"
+            try {
+                Object.create(42 as any);
+                "no error";
+            } catch (e) {
+                e instanceof TypeError ? "TypeError" : "other";
+            }
+        "#
+        ),
+        JsValue::String("TypeError".into())
+    );
+    assert_eq!(
+        eval(
+            r#"
+            try {
+                Object.create("string" as any);
+                "no error";
+            } catch (e) {
+                e instanceof TypeError ? "TypeError" : "other";
+            }
+        "#
+        ),
+        JsValue::String("TypeError".into())
+    );
+}
+
+#[test]
+fn test_object_create_with_symbol_properties() {
+    // Symbol keys in property descriptors
+    assert_eq!(
+        eval(
+            r#"
+            const sym = Symbol('test');
+            const descriptors: any = {};
+            descriptors[sym] = { value: 42 };
+            const obj: any = Object.create(null, descriptors);
+            obj[sym]
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+#[test]
+fn test_object_create_getownpropertydescriptor() {
+    // Created properties should have correct descriptors
+    assert_eq!(
+        eval(
+            r#"
+            const obj = Object.create(null, {
+                x: { value: 42, writable: true, enumerable: true, configurable: true }
+            });
+            const desc = Object.getOwnPropertyDescriptor(obj, 'x');
+            [desc.value, desc.writable, desc.enumerable, desc.configurable].join(',')
+        "#
+        ),
+        JsValue::String("42,true,true,true".into())
+    );
+}
+
+#[test]
+fn test_object_create_default_attributes() {
+    // Default attributes are false
+    assert_eq!(
+        eval(
+            r#"
+            const obj = Object.create(null, {
+                x: { value: 42 }
+            });
+            const desc = Object.getOwnPropertyDescriptor(obj, 'x');
+            [desc.writable, desc.enumerable, desc.configurable].join(',')
+        "#
+        ),
+        JsValue::String("false,false,false".into())
+    );
+}
+
+#[test]
+fn test_object_create_with_constructor_prototype() {
+    // Object.create with constructor's prototype (like Test262 15.2.3.5-4-1)
+    assert_eq!(
+        eval(
+            r#"
+            function base() {}
+            var b = new base();
+            var d = Object.create(b, {
+              "x": {
+                value: true,
+                writable: false
+              },
+              "y": {
+                value: "str",
+                writable: false
+              }
+            });
+            [String(d.x), d.y].join(',')
+        "#
+        ),
+        JsValue::String("true,str".into())
+    );
+}
+
+#[test]
+fn test_object_create_with_object_prototype() {
+    // Object.create with {} as prototype - tests property access with inherited methods
+    assert_eq!(
+        eval(
+            r#"
+            var newObj = Object.create({}, {
+              prop: {
+                value: "ownDataProperty"
+              }
+            });
+            [newObj.hasOwnProperty('prop'), newObj.prop].join(',')
+        "#
+        ),
+        JsValue::String("true,ownDataProperty".into())
     );
 }
 

@@ -410,6 +410,7 @@ pub fn object_create(
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
     let proto = args.first().cloned().unwrap_or(JsValue::Undefined);
+    let properties = args.get(1).cloned();
 
     let result_guard = interp.heap.create_guard();
     let result = interp.create_object(&result_guard);
@@ -430,6 +431,89 @@ pub fn object_create(
             return Err(JsError::type_error(
                 "Object prototype may only be an Object or null",
             ))
+        }
+    }
+
+    // If properties argument is provided and not undefined, define properties
+    if let Some(props) = properties {
+        if !matches!(props, JsValue::Undefined) {
+            let JsValue::Object(props_ref) = props else {
+                return Err(JsError::type_error(
+                    "Property descriptors must be an object",
+                ));
+            };
+
+            // Pre-intern descriptor property keys
+            let value_key = PropertyKey::String(interp.intern("value"));
+            let writable_key = PropertyKey::String(interp.intern("writable"));
+            let enumerable_key = PropertyKey::String(interp.intern("enumerable"));
+            let configurable_key = PropertyKey::String(interp.intern("configurable"));
+            let get_key = PropertyKey::String(interp.intern("get"));
+            let set_key = PropertyKey::String(interp.intern("set"));
+
+            // Iterate over all properties in the descriptor object
+            let prop_keys: Vec<PropertyKey> = {
+                let props_borrowed = props_ref.borrow();
+                props_borrowed.properties.keys().cloned().collect()
+            };
+
+            for key in prop_keys {
+                let descriptor = {
+                    let props_borrowed = props_ref.borrow();
+                    props_borrowed
+                        .get_property(&key)
+                        .unwrap_or(JsValue::Undefined)
+                };
+
+                let JsValue::Object(desc_ref) = descriptor else {
+                    continue; // Skip non-object descriptors
+                };
+
+                // Get descriptor properties
+                let desc_borrowed = desc_ref.borrow();
+                let value = desc_borrowed
+                    .get_property(&value_key)
+                    .unwrap_or(JsValue::Undefined);
+                let writable = desc_borrowed
+                    .get_property(&writable_key)
+                    .map(|v| v.to_boolean())
+                    .unwrap_or(false);
+                let enumerable = desc_borrowed
+                    .get_property(&enumerable_key)
+                    .map(|v| v.to_boolean())
+                    .unwrap_or(false);
+                let configurable = desc_borrowed
+                    .get_property(&configurable_key)
+                    .map(|v| v.to_boolean())
+                    .unwrap_or(false);
+
+                // Check for getter/setter
+                let getter = desc_borrowed.get_property(&get_key);
+                let setter = desc_borrowed.get_property(&set_key);
+                drop(desc_borrowed);
+
+                let is_accessor = getter.is_some() || setter.is_some();
+
+                if is_accessor {
+                    // Accessor descriptor
+                    let getter_ref = match getter {
+                        Some(JsValue::Object(g)) => Some(g),
+                        _ => None,
+                    };
+                    let setter_ref = match setter {
+                        Some(JsValue::Object(s)) => Some(s),
+                        _ => None,
+                    };
+                    let mut prop = Property::accessor(getter_ref, setter_ref);
+                    prop.set_enumerable(enumerable);
+                    prop.set_configurable(configurable);
+                    result.borrow_mut().define_property(key, prop);
+                } else {
+                    // Data descriptor
+                    let prop = Property::with_attributes(value, writable, enumerable, configurable);
+                    result.borrow_mut().define_property(key, prop);
+                }
+            }
         }
     }
 
