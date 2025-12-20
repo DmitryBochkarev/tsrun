@@ -2505,3 +2505,84 @@ fn test_bytecode_rest_param_arrow() {
     );
     assert_eq!(result, JsValue::Number(60.0));
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Delete Operator Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_bytecode_delete_property() {
+    // Delete a property from an object
+    let result = eval_bytecode(
+        r#"
+        const obj = { a: 1, b: 2, c: 3 };
+        delete obj.b;
+        obj.b
+    "#,
+    );
+    assert_eq!(result, JsValue::Undefined);
+}
+
+#[test]
+fn test_bytecode_delete_returns_true() {
+    // Delete returns true when property is deleted
+    let result = eval_bytecode(
+        r#"
+        const obj = { a: 1 };
+        delete obj.a
+    "#,
+    );
+    assert_eq!(result, JsValue::Boolean(true));
+}
+
+#[test]
+fn test_bytecode_delete_nonexistent() {
+    // Delete returns true for non-existent property
+    let result = eval_bytecode(
+        r#"
+        const obj = { a: 1 };
+        delete obj.xyz
+    "#,
+    );
+    assert_eq!(result, JsValue::Boolean(true));
+}
+
+#[test]
+fn test_bytecode_delete_computed() {
+    // Delete with computed property access
+    let result = eval_bytecode(
+        r#"
+        const obj = { foo: 1, bar: 2 };
+        const key = "foo";
+        delete obj[key];
+        obj.foo
+    "#,
+    );
+    assert_eq!(result, JsValue::Undefined);
+}
+
+#[test]
+fn test_bytecode_delete_array_element() {
+    // Delete array element creates hole
+    let result = eval_bytecode(
+        r#"
+        const arr: (number | undefined)[] = [1, 2, 3];
+        delete arr[1];
+        arr[1]
+    "#,
+    );
+    assert_eq!(result, JsValue::Undefined);
+}
+
+#[test]
+fn test_bytecode_delete_preserves_length() {
+    // Delete doesn't change array length
+    let result = eval_bytecode(
+        r#"
+        const arr: number[] = [1, 2, 3];
+        delete arr[1];
+        arr.length
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(3.0));
+}

@@ -1134,12 +1134,29 @@ impl BytecodeVM {
             }
 
             Op::DeleteProperty { dst, obj, key } => {
-                let obj_val = self.get_reg(obj);
-                let key_val = self.get_reg(key);
+                let obj_val = self.get_reg(obj).clone();
+                let key_val = self.get_reg(key).clone();
 
                 if let JsValue::Object(obj_ref) = obj_val {
-                    let prop_key = PropertyKey::from_value(key_val);
-                    obj_ref.borrow_mut().properties.remove(&prop_key);
+                    let prop_key = PropertyKey::from_value(&key_val);
+
+                    // For arrays, handle index deletion specially
+                    {
+                        let mut obj_borrowed = obj_ref.borrow_mut();
+                        if let PropertyKey::Index(idx) = &prop_key {
+                            if let Some(elements) = obj_borrowed.array_elements_mut() {
+                                let idx = *idx as usize;
+                                if idx < elements.len() {
+                                    // Set to undefined (creating a hole)
+                                    if let Some(elem) = elements.get_mut(idx) {
+                                        *elem = JsValue::Undefined;
+                                    }
+                                }
+                            }
+                        }
+
+                        obj_borrowed.properties.remove(&prop_key);
+                    }
                     self.set_reg(dst, JsValue::Boolean(true));
                 } else {
                     self.set_reg(dst, JsValue::Boolean(false));
