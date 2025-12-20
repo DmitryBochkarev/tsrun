@@ -1107,6 +1107,67 @@ fn test_call_args_side_effects_on_undefined() {
     );
 }
 
+// ============================================================
+// Built-in function length/name property tests (Test262 conformance)
+// ============================================================
+
+#[test]
+fn test_builtin_function_has_length() {
+    // Built-in functions should have a length property
+    assert_eq!(
+        eval(r#"JSON.parse.hasOwnProperty("length")"#),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_builtin_function_length_value() {
+    // JSON.parse has 2 parameters (text, reviver)
+    assert_eq!(eval(r#"JSON.parse.length"#), JsValue::Number(2.0));
+}
+
+#[test]
+fn test_builtin_function_has_name() {
+    // Built-in functions should have a name property
+    assert_eq!(
+        eval(r#"JSON.parse.hasOwnProperty("name")"#),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_builtin_function_name_value() {
+    assert_eq!(eval(r#"JSON.parse.name"#), JsValue::from("parse"));
+}
+
+#[test]
+fn test_array_push_has_length() {
+    assert_eq!(
+        eval(r#"[].push.hasOwnProperty("length")"#),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_array_push_length_value() {
+    // Array.prototype.push has 1 parameter (but can accept multiple)
+    assert_eq!(eval(r#"[].push.length"#), JsValue::Number(1.0));
+}
+
+#[test]
+fn test_function_prototype_call_has_length() {
+    assert_eq!(
+        eval(r#"Function.prototype.call.hasOwnProperty("length")"#),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_function_prototype_call_length() {
+    // Function.prototype.call has 1 parameter (thisArg)
+    assert_eq!(eval(r#"Function.prototype.call.length"#), JsValue::Number(1.0));
+}
+
 #[test]
 fn test_call_args_not_evaluated_when_callee_throws() {
     // When evaluating the callee throws (e.g., undefined.prop),

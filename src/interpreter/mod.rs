@@ -1562,15 +1562,21 @@ impl Interpreter {
         arity: usize,
     ) -> Gc<JsObject> {
         let name_str = self.intern(name);
+        let length_key = PropertyKey::String(self.intern("length"));
+        let name_key = PropertyKey::String(self.intern("name"));
         let func_obj = self.root_guard.alloc();
         {
             let mut f_ref = func_obj.borrow_mut();
             f_ref.prototype = Some(self.function_prototype.clone());
             f_ref.exotic = ExoticObject::Function(JsFunction::Native(NativeFunction {
-                name: name_str,
+                name: name_str.cheap_clone(),
                 func,
                 arity,
             }));
+            // Set length property (number of formal parameters)
+            f_ref.set_property(length_key, JsValue::Number(arity as f64));
+            // Set name property
+            f_ref.set_property(name_key, JsValue::String(name_str));
         }
         func_obj
     }
@@ -1582,11 +1588,53 @@ impl Interpreter {
         guard: &Guard<JsObject>,
         func: JsFunction,
     ) -> Gc<JsObject> {
+        let length_key = PropertyKey::String(self.intern("length"));
+        let name_key = PropertyKey::String(self.intern("name"));
+
+        // Extract name and arity from the function
+        let (func_name, arity) = match &func {
+            JsFunction::Interpreted(f) => {
+                let name = f.name.clone().unwrap_or_else(|| self.intern(""));
+                let arity = f.params.len();
+                (name, arity)
+            }
+            JsFunction::Native(f) => (f.name.cheap_clone(), f.arity),
+            JsFunction::Bound(b) => {
+                // Bound functions: compute name and length from target
+                let (target_name, target_length) =
+                    if let ExoticObject::Function(target_func) = &b.target.borrow().exotic {
+                        match target_func {
+                            JsFunction::Interpreted(f) => {
+                                let name = f.name.as_ref().map(|n| n.as_str()).unwrap_or("");
+                                let len = f
+                                    .params
+                                    .iter()
+                                    .filter(|p| !matches!(p.pattern, Pattern::Rest(_)))
+                                    .count();
+                                (name.to_string(), len)
+                            }
+                            JsFunction::Native(f) => (f.name.to_string(), f.arity),
+                            _ => (String::new(), 0),
+                        }
+                    } else {
+                        (String::new(), 0)
+                    };
+                let name = self.intern(&format!("bound {}", target_name));
+                let arity = target_length.saturating_sub(b.bound_args.len());
+                (name, arity)
+            }
+            _ => (self.intern(""), 0),
+        };
+
         let func_obj = guard.alloc();
         {
             let mut f_ref = func_obj.borrow_mut();
             f_ref.prototype = Some(self.function_prototype.clone());
             f_ref.exotic = ExoticObject::Function(func);
+            // Set length property (number of formal parameters)
+            f_ref.set_property(length_key, JsValue::Number(arity as f64));
+            // Set name property
+            f_ref.set_property(name_key, JsValue::String(func_name));
         }
         func_obj
     }

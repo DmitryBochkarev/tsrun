@@ -11,8 +11,8 @@ pub fn init_json(interp: &mut Interpreter) {
     let json = interp.root_guard.alloc();
     json.borrow_mut().prototype = Some(interp.object_prototype.clone());
 
-    interp.register_method(&json, "stringify", json_stringify, 1);
-    interp.register_method(&json, "parse", json_parse, 1);
+    interp.register_method(&json, "stringify", json_stringify, 3);
+    interp.register_method(&json, "parse", json_parse, 2);
 
     let json_key = PropertyKey::String(interp.intern("JSON"));
     interp
@@ -27,8 +27,8 @@ pub fn create_json_object(interp: &mut Interpreter) -> Gc<JsObject> {
     let json = interp.root_guard.alloc();
     json.borrow_mut().prototype = Some(interp.object_prototype.clone());
 
-    interp.register_method(&json, "stringify", json_stringify, 1);
-    interp.register_method(&json, "parse", json_parse, 1);
+    interp.register_method(&json, "stringify", json_stringify, 3);
+    interp.register_method(&json, "parse", json_parse, 2);
 
     json
 }
