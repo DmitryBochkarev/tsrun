@@ -1745,10 +1745,8 @@ impl BytecodeVM {
                 // Create a keys array iterator
                 let iter = interp.create_object(&self.register_guard);
                 let keys_arr = interp.create_array_from(&self.register_guard, keys);
-                iter.borrow_mut().set_property(
-                    PropertyKey::from("__keys__"),
-                    JsValue::Object(keys_arr),
-                );
+                iter.borrow_mut()
+                    .set_property(PropertyKey::from("__keys__"), JsValue::Object(keys_arr));
                 iter.borrow_mut()
                     .set_property(PropertyKey::from("__index__"), JsValue::Number(0.0));
                 self.set_reg(dst, JsValue::Object(iter));

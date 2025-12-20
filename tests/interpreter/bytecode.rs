@@ -2440,10 +2440,7 @@ fn test_bytecode_rest_param_with_leading() {
         greet("Hello", "Alice", "Bob", "Charlie")
     "#,
     );
-    assert_eq!(
-        result,
-        JsValue::String("Hello Alice, Bob, Charlie".into())
-    );
+    assert_eq!(result, JsValue::String("Hello Alice, Bob, Charlie".into()));
 }
 
 #[test]

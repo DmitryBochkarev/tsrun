@@ -2140,8 +2140,10 @@ impl Interpreter {
             gen_state.borrow_mut().started = true;
 
             // Handle rest parameters for generators too
-            let processed_args: Vec<JsValue> = if let Some(rest_idx) =
-                chunk.function_info.as_ref().and_then(|info| info.rest_param)
+            let processed_args: Vec<JsValue> = if let Some(rest_idx) = chunk
+                .function_info
+                .as_ref()
+                .and_then(|info| info.rest_param)
             {
                 let mut result_args = Vec::with_capacity(rest_idx + 1);
                 for i in 0..rest_idx {
@@ -2156,8 +2158,12 @@ impl Interpreter {
             };
 
             // Create VM with arguments
-            let mut vm =
-                BytecodeVM::with_guard_and_args(chunk, JsValue::Undefined, vm_guard, &processed_args);
+            let mut vm = BytecodeVM::with_guard_and_args(
+                chunk,
+                JsValue::Undefined,
+                vm_guard,
+                &processed_args,
+            );
 
             match vm.run(self) {
                 VmResult::Complete(guarded) => {
@@ -6745,26 +6751,24 @@ impl Interpreter {
         // Handle rest parameters: if the function has a rest parameter, we need to
         // collect all extra arguments into an array at that parameter index
         let vm_guard = self.heap.create_guard();
-        let processed_args: Vec<JsValue> = if let Some(rest_idx) =
-            func_info.and_then(|info| info.rest_param)
-        {
-            let mut result_args = Vec::with_capacity(rest_idx + 1);
+        let processed_args: Vec<JsValue> =
+            if let Some(rest_idx) = func_info.and_then(|info| info.rest_param) {
+                let mut result_args = Vec::with_capacity(rest_idx + 1);
 
-            // Copy regular parameters
-            for i in 0..rest_idx {
-                result_args.push(args.get(i).cloned().unwrap_or(JsValue::Undefined));
-            }
+                // Copy regular parameters
+                for i in 0..rest_idx {
+                    result_args.push(args.get(i).cloned().unwrap_or(JsValue::Undefined));
+                }
 
-            // Collect remaining args into an array for the rest parameter
-            let rest_elements: Vec<JsValue> =
-                args.get(rest_idx..).unwrap_or_default().to_vec();
-            let rest_array = self.create_array_from(&vm_guard, rest_elements);
-            result_args.push(JsValue::Object(rest_array));
+                // Collect remaining args into an array for the rest parameter
+                let rest_elements: Vec<JsValue> = args.get(rest_idx..).unwrap_or_default().to_vec();
+                let rest_array = self.create_array_from(&vm_guard, rest_elements);
+                result_args.push(JsValue::Object(rest_array));
 
-            result_args
-        } else {
-            args.to_vec()
-        };
+                result_args
+            } else {
+                args.to_vec()
+            };
 
         // Create VM and run with args pre-populated in registers
         let mut vm = BytecodeVM::with_guard_and_args(

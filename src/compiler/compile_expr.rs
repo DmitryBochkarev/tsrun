@@ -172,9 +172,10 @@ impl Compiler {
         }
 
         // Check if any elements are spreads
-        let has_spread = arr.elements.iter().any(|elem| {
-            matches!(elem, Some(ArrayElement::Spread(_)))
-        });
+        let has_spread = arr
+            .elements
+            .iter()
+            .any(|elem| matches!(elem, Some(ArrayElement::Spread(_))));
 
         if !has_spread {
             // Fast path: no spreads, use simple CreateArray
@@ -234,10 +235,7 @@ impl Compiler {
                         // Compile the spread argument
                         self.compile_expression(&spread.argument, temp_reg)?;
                         // Spread it onto the array
-                        self.builder.emit(Op::SpreadArray {
-                            dst,
-                            src: temp_reg,
-                        });
+                        self.builder.emit(Op::SpreadArray { dst, src: temp_reg });
                     }
                     None => {
                         // Hole in array - add undefined
