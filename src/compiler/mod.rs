@@ -94,13 +94,43 @@ impl Compiler {
     }
 
     /// Set the continue target for the current loop and patch any pending continue jumps
+    /// Also propagates the continue target to parent labeled contexts that don't have one yet
     fn set_continue_target(&mut self, target: usize) {
-        if let Some(ctx) = self.loop_stack.last_mut() {
+        // Collect indices of contexts that need to have continue target set
+        // This includes the current loop and any parent labeled contexts without a continue target
+        let len = self.loop_stack.len();
+        if len == 0 {
+            return;
+        }
+
+        // Collect pending continue jumps from all contexts that will share this target
+        let mut all_pending_jumps: Vec<JumpPlaceholder> = Vec::new();
+
+        // Start from the current (innermost) context and work backwards
+        // Set continue target for the current loop
+        if let Some(ctx) = self.loop_stack.get_mut(len - 1) {
             ctx.continue_target = Some(target);
-            // Patch any pending continue jumps that were emitted before the target was known
-            for jump in ctx.continue_jumps.drain(..) {
-                self.builder.patch_jump_to(jump, target as JumpTarget);
+            all_pending_jumps.append(&mut ctx.continue_jumps);
+        }
+
+        // Propagate to parent labeled contexts that don't have a continue target yet
+        // A labeled context directly wrapping a loop shares the loop's continue target
+        for i in (0..len - 1).rev() {
+            if let Some(ctx) = self.loop_stack.get_mut(i) {
+                // Only propagate if this is a labeled context and it doesn't have a continue target
+                if ctx.label.is_some() && ctx.continue_target.is_none() {
+                    ctx.continue_target = Some(target);
+                    all_pending_jumps.append(&mut ctx.continue_jumps);
+                } else {
+                    // Stop propagating if we hit a context that's not a label wrapper
+                    break;
+                }
             }
+        }
+
+        // Patch all pending continue jumps
+        for jump in all_pending_jumps {
+            self.builder.patch_jump_to(jump, target as JumpTarget);
         }
     }
 

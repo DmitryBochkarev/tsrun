@@ -2586,3 +2586,129 @@ fn test_bytecode_delete_preserves_length() {
     );
     assert_eq!(result, JsValue::Number(3.0));
 }
+
+// ============================================================================
+// Labeled Statements
+// ============================================================================
+
+#[test]
+fn test_bytecode_labeled_break() {
+    // Labeled break exits the labeled loop
+    let result = eval_bytecode(
+        r#"
+        let sum: number = 0;
+        outer: for (let i = 0; i < 3; i++) {
+            for (let j = 0; j < 3; j++) {
+                if (i === 1 && j === 1) break outer;
+                sum += 1;
+            }
+        }
+        sum
+    "#,
+    );
+    // i=0: j=0,1,2 (3 iterations)
+    // i=1: j=0 (1 iteration), then break at j=1
+    assert_eq!(result, JsValue::Number(4.0));
+}
+
+#[test]
+fn test_bytecode_labeled_continue() {
+    // Labeled continue jumps to the next iteration of the labeled loop
+    let result = eval_bytecode(
+        r#"
+        let sum: number = 0;
+        outer: for (let i = 0; i < 3; i++) {
+            for (let j = 0; j < 3; j++) {
+                if (j === 1) continue outer;
+                sum += 1;
+            }
+        }
+        sum
+    "#,
+    );
+    // Each outer iteration only processes j=0 before continue outer
+    // i=0: j=0 (1), continue outer
+    // i=1: j=0 (1), continue outer
+    // i=2: j=0 (1), continue outer
+    assert_eq!(result, JsValue::Number(3.0));
+}
+
+#[test]
+fn test_bytecode_labeled_while() {
+    // Labeled break with while loops
+    let result = eval_bytecode(
+        r#"
+        let i: number = 0;
+        let j: number = 0;
+        outer: while (i < 5) {
+            while (j < 5) {
+                if (j === 2) break outer;
+                j++;
+            }
+            i++;
+        }
+        i * 10 + j
+    "#,
+    );
+    // Should break out at i=0, j=2: 0 * 10 + 2 = 2
+    assert_eq!(result, JsValue::Number(2.0));
+}
+
+#[test]
+fn test_bytecode_nested_labels() {
+    // Multiple nested labels
+    let result = eval_bytecode(
+        r#"
+        let sum: number = 0;
+        outer: for (let i = 0; i < 2; i++) {
+            middle: for (let j = 0; j < 2; j++) {
+                for (let k = 0; k < 2; k++) {
+                    if (k === 1) break middle;
+                    sum += 1;
+                }
+            }
+        }
+        sum
+    "#,
+    );
+    // i=0: j=0: k=0 (1), k=1 breaks middle, j=1 skipped
+    // i=1: j=0: k=0 (1), k=1 breaks middle, j=1 skipped
+    assert_eq!(result, JsValue::Number(2.0));
+}
+
+#[test]
+fn test_bytecode_labeled_block() {
+    // Labeled block (non-loop) with break
+    let result = eval_bytecode(
+        r#"
+        let x: number = 0;
+        block: {
+            x = 1;
+            if (true) break block;
+            x = 2;
+        }
+        x
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(1.0));
+}
+
+#[test]
+fn test_bytecode_unlabeled_break_with_label() {
+    // Unlabeled break only exits innermost loop
+    let result = eval_bytecode(
+        r#"
+        let sum: number = 0;
+        outer: for (let i = 0; i < 2; i++) {
+            for (let j = 0; j < 3; j++) {
+                if (j === 1) break;  // breaks inner loop only
+                sum += 1;
+            }
+        }
+        sum
+    "#,
+    );
+    // i=0: j=0 (1), j=1 breaks inner
+    // i=1: j=0 (1), j=1 breaks inner
+    assert_eq!(result, JsValue::Number(2.0));
+}
