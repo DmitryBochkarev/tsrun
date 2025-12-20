@@ -132,6 +132,65 @@ fn test_number_tostring_radix() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// Number Wrapper toString Tests (Test262 conformance)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_number_prototype_tostring_on_prototype() {
+    // Number.prototype.toString() should return "0"
+    assert_eq!(
+        eval("Number.prototype.toString()"),
+        JsValue::String(JsString::from("0"))
+    );
+}
+
+#[test]
+fn test_number_wrapper_tostring() {
+    // new Number().toString() should work
+    assert_eq!(
+        eval("new Number().toString()"),
+        JsValue::String(JsString::from("0"))
+    );
+    assert_eq!(
+        eval("new Number(0).toString()"),
+        JsValue::String(JsString::from("0"))
+    );
+    assert_eq!(
+        eval("new Number(-1).toString()"),
+        JsValue::String(JsString::from("-1"))
+    );
+    assert_eq!(
+        eval("new Number(1).toString()"),
+        JsValue::String(JsString::from("1"))
+    );
+    assert_eq!(
+        eval("new Number(NaN).toString()"),
+        JsValue::String(JsString::from("NaN"))
+    );
+    assert_eq!(
+        eval("new Number(Infinity).toString()"),
+        JsValue::String(JsString::from("Infinity"))
+    );
+    assert_eq!(
+        eval("new Number(-Infinity).toString()"),
+        JsValue::String(JsString::from("-Infinity"))
+    );
+}
+
+#[test]
+fn test_number_wrapper_tostring_radix() {
+    // new Number(x).toString(radix) should work
+    assert_eq!(
+        eval("new Number(255).toString(16)"),
+        JsValue::String(JsString::from("ff"))
+    );
+    assert_eq!(
+        eval("new Number(8).toString(2)"),
+        JsValue::String(JsString::from("1000"))
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // Number Wrapper Object ToPrimitive Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 

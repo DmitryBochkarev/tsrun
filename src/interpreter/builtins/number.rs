@@ -71,6 +71,7 @@ pub fn number_value_of(
 
 /// Helper to extract number value from `this`
 /// Works for both primitive numbers and Number wrapper objects
+/// Also handles Number.prototype (which has [[NumberData]] = 0)
 fn get_number_value(this: &JsValue) -> Result<f64, JsError> {
     match this {
         JsValue::Number(n) => Ok(*n),
@@ -78,6 +79,22 @@ fn get_number_value(this: &JsValue) -> Result<f64, JsError> {
             let borrowed = obj.borrow();
             match borrowed.exotic {
                 ExoticObject::Number(n) => Ok(n),
+                ExoticObject::Ordinary => {
+                    // Check if this is Number.prototype (which has [[NumberData]] = 0)
+                    // Number.prototype doesn't have ExoticObject::Number but should
+                    // return 0 when toString/valueOf is called on it
+                    // We recognize it by checking if it has number methods but no exotic value
+                    if borrowed
+                        .get_property(&PropertyKey::from("toFixed"))
+                        .is_some()
+                    {
+                        Ok(0.0)
+                    } else {
+                        Err(JsError::type_error(
+                            "Number.prototype method called on incompatible receiver",
+                        ))
+                    }
+                }
                 _ => Err(JsError::type_error(
                     "Number.prototype method called on incompatible receiver",
                 )),
@@ -263,6 +280,22 @@ pub fn number_to_fixed(
     Ok(Guarded::unguarded(JsValue::String(JsString::from(result))))
 }
 
+/// Format a number as a string in JavaScript format
+/// (handles Infinity, -Infinity, NaN properly)
+fn format_number_js(n: f64) -> String {
+    if n.is_nan() {
+        "NaN".to_string()
+    } else if n.is_infinite() {
+        if n.is_sign_positive() {
+            "Infinity".to_string()
+        } else {
+            "-Infinity".to_string()
+        }
+    } else {
+        format!("{}", n)
+    }
+}
+
 // Number.prototype.toString
 pub fn number_to_string(
     _interp: &mut Interpreter,
@@ -280,14 +313,14 @@ pub fn number_to_string(
 
     if radix == 10 {
         return Ok(Guarded::unguarded(JsValue::String(JsString::from(
-            format!("{}", n),
+            format_number_js(n),
         ))));
     }
 
     // For other radixes, we need integer conversion
     if !n.is_finite() || n.fract() != 0.0 {
         return Ok(Guarded::unguarded(JsValue::String(JsString::from(
-            format!("{}", n),
+            format_number_js(n),
         ))));
     }
 
@@ -335,7 +368,7 @@ pub fn number_to_precision(
 
     if args.is_empty() || matches!(args.first(), Some(JsValue::Undefined)) {
         return Ok(Guarded::unguarded(JsValue::String(JsString::from(
-            format!("{}", n),
+            format_number_js(n),
         ))));
     }
 
@@ -349,7 +382,7 @@ pub fn number_to_precision(
 
     if !n.is_finite() {
         return Ok(Guarded::unguarded(JsValue::String(JsString::from(
-            format!("{}", n),
+            format_number_js(n),
         ))));
     }
 
@@ -400,7 +433,7 @@ pub fn number_to_exponential(
 
     if !n.is_finite() {
         return Ok(Guarded::unguarded(JsValue::String(JsString::from(
-            format!("{}", n),
+            format_number_js(n),
         ))));
     }
 
