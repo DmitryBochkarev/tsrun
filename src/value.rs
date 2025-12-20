@@ -842,6 +842,16 @@ impl Traceable for JsObject {
                         // Trace the closure environment
                         visitor(interp.closure.copy_ref());
                     }
+                    JsFunction::Bytecode(bc) => {
+                        // Trace the closure environment
+                        visitor(bc.closure.copy_ref());
+                        // Trace captured this (for arrow functions)
+                        if let Some(this) = &bc.captured_this {
+                            if let JsValue::Object(obj) = this.as_ref() {
+                                visitor(obj.copy_ref());
+                            }
+                        }
+                    }
                     JsFunction::ModuleExportGetter { module_env, .. } => {
                         // Trace the module environment for live bindings
                         visitor(module_env.copy_ref());
@@ -2339,6 +2349,8 @@ pub enum GeneratorStatus {
 pub enum JsFunction {
     /// User-defined function
     Interpreted(InterpretedFunction),
+    /// Bytecode function (compiled from source)
+    Bytecode(BytecodeFunction),
     /// Native Rust function
     Native(NativeFunction),
     /// Bound function (created by Function.prototype.bind)
@@ -2405,6 +2417,12 @@ impl JsFunction {
     pub fn name(&self) -> Option<&str> {
         match self {
             JsFunction::Interpreted(f) => f.name.as_ref().map(|s| s.as_str()),
+            JsFunction::Bytecode(f) => f
+                .chunk
+                .function_info
+                .as_ref()
+                .and_then(|info| info.name.as_ref())
+                .map(|s| s.as_str()),
             JsFunction::Native(f) => Some(f.name.as_ref()),
             JsFunction::Bound(_) => Some("bound"),
             JsFunction::PromiseResolve(_) => Some("resolve"),
@@ -2435,6 +2453,17 @@ pub struct InterpretedFunction {
     pub generator: bool,
     /// Whether this is an async function
     pub async_: bool,
+}
+
+/// Bytecode-compiled function
+#[derive(Debug, Clone)]
+pub struct BytecodeFunction {
+    /// The compiled bytecode chunk
+    pub chunk: Rc<crate::compiler::BytecodeChunk>,
+    /// The captured closure environment (GC-managed)
+    pub closure: JsObjectRef,
+    /// Captured `this` value for arrow functions (None for regular functions)
+    pub captured_this: Option<Box<JsValue>>,
 }
 
 /// Function body (block or expression for arrow functions)

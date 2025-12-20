@@ -6,7 +6,9 @@
 use crate::compiler::{BytecodeChunk, Constant, Op, Register};
 use crate::error::JsError;
 use crate::gc::{Gc, Guard};
-use crate::value::{CheapClone, Guarded, JsObject, JsString, JsValue, PropertyKey};
+use crate::value::{
+    BytecodeFunction, CheapClone, Guarded, JsObject, JsString, JsValue, PropertyKey,
+};
 use std::rc::Rc;
 
 use super::Interpreter;
@@ -122,6 +124,40 @@ impl BytecodeVM {
             ip: 0,
             chunk,
             registers: vec![JsValue::Undefined; register_count.max(1)],
+            register_guard: Some(guard),
+            call_stack: Vec::new(),
+            try_stack: Vec::new(),
+            this_value,
+            exception_value: None,
+            saved_env: None,
+        }
+    }
+
+    /// Create a new VM with a guard and pre-populated function arguments.
+    /// Arguments are placed in registers 0, 1, 2, ... before execution starts.
+    /// The bytecode's DeclareVar ops will read from these registers.
+    pub fn with_guard_and_args(
+        chunk: Rc<BytecodeChunk>,
+        this_value: JsValue,
+        guard: Guard<JsObject>,
+        args: &[JsValue],
+    ) -> Self {
+        let register_count = chunk.register_count as usize;
+        let mut registers = vec![JsValue::Undefined; register_count.max(1)];
+
+        // Pre-populate registers with arguments
+        for (i, arg) in args.iter().enumerate() {
+            if i < registers.len() {
+                if let Some(slot) = registers.get_mut(i) {
+                    *slot = arg.clone();
+                }
+            }
+        }
+
+        Self {
+            ip: 0,
+            chunk,
+            registers,
             register_guard: Some(guard),
             call_stack: Vec::new(),
             try_stack: Vec::new(),
@@ -968,15 +1004,55 @@ impl BytecodeVM {
                 }
             }
 
-            Op::CreateClosure { dst, chunk_idx: _ }
-            | Op::CreateArrow { dst, chunk_idx: _ }
-            | Op::CreateGenerator { dst, chunk_idx: _ }
+            Op::CreateClosure { dst, chunk_idx } => {
+                // Get the function bytecode chunk from constants
+                let chunk = match self.get_constant(chunk_idx) {
+                    Some(Constant::Chunk(c)) => c.clone(),
+                    _ => return Err(JsError::internal_error("Invalid closure chunk index")),
+                };
+
+                // Create a BytecodeFunction with the current environment as closure
+                let bc_func = BytecodeFunction {
+                    chunk,
+                    closure: interp.env.cheap_clone(),
+                    captured_this: None, // Regular functions don't capture this
+                };
+
+                // Create function object
+                let guard = interp.heap.create_guard();
+                let func_obj = interp.create_bytecode_function(&guard, bc_func);
+                self.set_reg(dst, JsValue::Object(func_obj));
+                Ok(OpResult::Continue)
+            }
+
+            Op::CreateArrow { dst, chunk_idx } => {
+                // Get the function bytecode chunk from constants
+                let chunk = match self.get_constant(chunk_idx) {
+                    Some(Constant::Chunk(c)) => c.clone(),
+                    _ => return Err(JsError::internal_error("Invalid arrow chunk index")),
+                };
+
+                // Arrow functions capture lexical this
+                let bc_func = BytecodeFunction {
+                    chunk,
+                    closure: interp.env.cheap_clone(),
+                    captured_this: Some(Box::new(self.this_value.clone())),
+                };
+
+                // Create function object
+                let guard = interp.heap.create_guard();
+                let func_obj = interp.create_bytecode_function(&guard, bc_func);
+                self.set_reg(dst, JsValue::Object(func_obj));
+                Ok(OpResult::Continue)
+            }
+
+            Op::CreateGenerator { dst, chunk_idx: _ }
             | Op::CreateAsync { dst, chunk_idx: _ }
             | Op::CreateAsyncGenerator { dst, chunk_idx: _ } => {
-                // Stub: function creation requires more complex handling
+                // Stub: generator/async creation requires more complex handling
                 self.set_reg(dst, JsValue::Undefined);
                 Err(JsError::internal_error(
-                    "Function creation in bytecode VM not yet implemented",
+                    "Generator/async function creation in bytecode VM not yet implemented",
                 ))
             }
 

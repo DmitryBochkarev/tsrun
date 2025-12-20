@@ -27,8 +27,8 @@ use crate::lexer::Span;
 use crate::parser::Parser;
 use crate::string_dict::StringDict;
 use crate::value::{
-    create_environment_unrooted, number_to_string, Binding, CheapClone, EnumData, EnvRef,
-    EnvironmentData, ExoticObject, FunctionBody, GeneratorState, GeneratorStatus, Guarded,
+    create_environment_unrooted, number_to_string, Binding, BytecodeFunction, CheapClone, EnumData,
+    EnvRef, EnvironmentData, ExoticObject, FunctionBody, GeneratorState, GeneratorStatus, Guarded,
     ImportBinding, InterpretedFunction, JsFunction, JsObject, JsString, JsSymbol, JsValue,
     ModuleExport, NativeFn, NativeFunction, PromiseStatus, Property, PropertyKey, VarKey,
 };
@@ -1511,6 +1511,22 @@ impl Interpreter {
                 func,
                 arity,
             }));
+        }
+        func_obj
+    }
+
+    /// Create a bytecode function object.
+    /// Caller provides the guard to control object lifetime.
+    pub fn create_bytecode_function(
+        &mut self,
+        guard: &Guard<JsObject>,
+        bc_func: BytecodeFunction,
+    ) -> Gc<JsObject> {
+        let func_obj = guard.alloc();
+        {
+            let mut f_ref = func_obj.borrow_mut();
+            f_ref.prototype = Some(self.function_prototype.clone());
+            f_ref.exotic = ExoticObject::Function(JsFunction::Bytecode(bc_func));
         }
         func_obj
     }
@@ -6119,6 +6135,11 @@ impl Interpreter {
                 (native.func)(self, this_value, args)
             }
 
+            JsFunction::Bytecode(bc_func) => {
+                // Call bytecode-compiled function using the bytecode VM
+                self.call_bytecode_function(bc_func, this_value, args)
+            }
+
             JsFunction::Bound(bound) => {
                 // Call bound function: use bound this and prepend bound args
                 let mut full_args = bound.bound_args.clone();
@@ -6245,6 +6266,87 @@ impl Interpreter {
                     data.revoked = true;
                 }
                 Ok(Guarded::unguarded(JsValue::Undefined))
+            }
+        }
+    }
+
+    /// Call a bytecode-compiled function
+    fn call_bytecode_function(
+        &mut self,
+        bc_func: BytecodeFunction,
+        this_value: JsValue,
+        args: &[JsValue],
+    ) -> Result<Guarded, JsError> {
+        use crate::interpreter::bytecode_vm::{BytecodeVM, VmResult};
+
+        // Get function info from the chunk
+        let func_info = bc_func.chunk.function_info.as_ref();
+
+        // Push call stack frame for stack traces
+        let func_name = func_info
+            .and_then(|info| info.name.as_ref())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "<anonymous>".to_string());
+
+        self.call_stack.push(StackFrame {
+            function_name: func_name,
+            location: None,
+        });
+
+        // Create new environment for the function, with closure as parent
+        let (func_env, func_guard) =
+            create_environment_unrooted(&self.heap, Some(bc_func.closure.cheap_clone()));
+
+        // Bind `this` in the function environment
+        // For arrow functions, use captured_this; otherwise use provided this_value
+        let effective_this = if let Some(captured) = bc_func.captured_this {
+            *captured
+        } else {
+            this_value.clone()
+        };
+
+        {
+            let this_name = self.intern("this");
+            if let Some(data) = func_env.borrow_mut().as_environment_mut() {
+                data.bindings.insert(
+                    VarKey(this_name),
+                    Binding {
+                        value: effective_this.clone(),
+                        mutable: false,
+                        initialized: true,
+                        import_binding: None,
+                    },
+                );
+            }
+        }
+
+        // Set up environment for execution
+        let saved_env = self.env.cheap_clone();
+        self.env = func_env;
+        self.push_env_guard(func_guard);
+
+        // Create VM and run with args pre-populated in registers
+        let vm_guard = self.heap.create_guard();
+        let mut vm = BytecodeVM::with_guard_and_args(
+            bc_func.chunk.clone(),
+            effective_this,
+            vm_guard,
+            args,
+        );
+
+        let result = vm.run(self);
+
+        // Restore environment
+        self.pop_env_guard();
+        self.env = saved_env;
+        self.call_stack.pop();
+
+        // Convert VM result to Guarded
+        match result {
+            VmResult::Complete(guarded) => Ok(guarded),
+            VmResult::Error(e) => Err(e),
+            VmResult::Suspend(_) => {
+                Err(JsError::internal_error("Bytecode function suspended unexpectedly"))
             }
         }
     }

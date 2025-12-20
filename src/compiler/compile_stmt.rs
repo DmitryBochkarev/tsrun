@@ -791,7 +791,7 @@ impl Compiler {
     }
 
     /// Compile function body to a nested BytecodeChunk
-    fn compile_function_body(
+    pub fn compile_function_body(
         &mut self,
         params: &[crate::ast::FunctionParam],
         body: &[Statement],

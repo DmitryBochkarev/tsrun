@@ -1176,25 +1176,139 @@ impl Compiler {
     /// Compile function expression
     fn compile_function_expression(
         &mut self,
-        _func: &crate::ast::FunctionExpression,
-        _dst: Register,
+        func: &crate::ast::FunctionExpression,
+        dst: Register,
     ) -> Result<(), JsError> {
-        // TODO: Implement function compilation
-        Err(JsError::syntax_error_simple(
-            "Function expressions not yet fully supported in bytecode compiler",
-        ))
+        // Extract function metadata
+        let name = func.id.as_ref().map(|id| id.name.cheap_clone());
+
+        // Use the existing compile_function_body from compile_stmt
+        let chunk = self.compile_function_body(
+            &func.params,
+            &func.body.body,
+            name,
+            func.generator,
+            func.async_,
+            false, // is_arrow = false
+        )?;
+
+        // Add the chunk to constants
+        let chunk_idx = self
+            .builder
+            .add_constant(super::bytecode::Constant::Chunk(std::rc::Rc::new(chunk)))?;
+
+        // Emit the appropriate closure creation opcode
+        if func.generator {
+            self.builder.emit(Op::CreateGenerator { dst, chunk_idx });
+        } else if func.async_ {
+            self.builder.emit(Op::CreateAsync { dst, chunk_idx });
+        } else {
+            self.builder.emit(Op::CreateClosure { dst, chunk_idx });
+        }
+
+        Ok(())
     }
 
     /// Compile arrow function
     fn compile_arrow_function(
         &mut self,
-        _arrow: &crate::ast::ArrowFunctionExpression,
-        _dst: Register,
+        arrow: &crate::ast::ArrowFunctionExpression,
+        dst: Register,
     ) -> Result<(), JsError> {
-        // TODO: Implement arrow function compilation
-        Err(JsError::syntax_error_simple(
-            "Arrow functions not yet fully supported in bytecode compiler",
-        ))
+        // Compile the arrow function body
+        let chunk = match arrow.body.as_ref() {
+            crate::ast::ArrowFunctionBody::Block(block) => self.compile_function_body(
+                &arrow.params,
+                &block.body,
+                None, // arrows are anonymous
+                false,
+                arrow.async_,
+                true, // is_arrow = true
+            )?,
+            crate::ast::ArrowFunctionBody::Expression(expr) => {
+                self.compile_arrow_expression_body(&arrow.params, expr, arrow.async_)?
+            }
+        };
+
+        // Add chunk to constants
+        let chunk_idx = self
+            .builder
+            .add_constant(super::bytecode::Constant::Chunk(std::rc::Rc::new(chunk)))?;
+
+        // Arrow functions use CreateArrow (captures lexical this)
+        self.builder.emit(Op::CreateArrow { dst, chunk_idx });
+
+        Ok(())
+    }
+
+    /// Compile an expression-bodied arrow function into a BytecodeChunk
+    fn compile_arrow_expression_body(
+        &mut self,
+        params: &[crate::ast::FunctionParam],
+        expr: &crate::ast::Expression,
+        is_async: bool,
+    ) -> Result<super::BytecodeChunk, JsError> {
+        use super::FunctionInfo;
+
+        // Create a new compiler for the function body
+        let mut func_compiler = super::Compiler::new();
+
+        // Compile parameter declarations
+        let mut param_names = Vec::with_capacity(params.len());
+        let mut rest_param = None;
+
+        for (idx, param) in params.iter().enumerate() {
+            match &param.pattern {
+                crate::ast::Pattern::Identifier(id) => {
+                    param_names.push(id.name.cheap_clone());
+
+                    // Load argument from register and declare variable
+                    let arg_reg = idx as u8;
+                    let name_idx = func_compiler.builder.add_string(id.name.cheap_clone())?;
+                    func_compiler.builder.emit(Op::DeclareVar {
+                        name: name_idx,
+                        init: arg_reg,
+                        mutable: true,
+                    });
+                }
+                crate::ast::Pattern::Rest(rest) => {
+                    rest_param = Some(idx);
+                    if let crate::ast::Pattern::Identifier(id) = &*rest.argument {
+                        param_names.push(id.name.cheap_clone());
+
+                        let arg_reg = idx as u8;
+                        let name_idx = func_compiler.builder.add_string(id.name.cheap_clone())?;
+                        func_compiler.builder.emit(Op::DeclareVar {
+                            name: name_idx,
+                            init: arg_reg,
+                            mutable: true,
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // Compile the expression and return it
+        let result_reg = func_compiler.builder.alloc_register()?;
+        func_compiler.compile_expression(expr, result_reg)?;
+        func_compiler.builder.emit(Op::Return { value: result_reg });
+
+        // Build the chunk with function info
+        let mut chunk = func_compiler.builder.finish();
+        chunk.function_info = Some(FunctionInfo {
+            name: None,
+            param_count: params.len(),
+            is_generator: false,
+            is_async,
+            is_arrow: true,
+            uses_arguments: false,
+            uses_this: false,
+            param_names,
+            rest_param,
+        });
+
+        Ok(chunk)
     }
 
     /// Compile class expression

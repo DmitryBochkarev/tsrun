@@ -762,3 +762,250 @@ fn test_bytecode_typeof_values() {
     );
     assert_eq!(eval_bytecode("typeof []"), JsValue::String("object".into()));
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Function Expressions
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_bytecode_function_expression() {
+    // Simple function that returns a value
+    assert_eq!(
+        eval_bytecode(
+            "
+            let add = function(a: number, b: number): number { return a + b; };
+            add(3, 4)
+        "
+        ),
+        JsValue::Number(7.0)
+    );
+}
+
+#[test]
+fn test_bytecode_function_no_return() {
+    // Function with no explicit return returns undefined
+    assert_eq!(
+        eval_bytecode(
+            "
+            let noReturn = function(): void {};
+            noReturn()
+        "
+        ),
+        JsValue::Undefined
+    );
+}
+
+#[test]
+fn test_bytecode_function_multiple_params() {
+    assert_eq!(
+        eval_bytecode(
+            "
+            let sum = function(a: number, b: number, c: number): number { return a + b + c; };
+            sum(1, 2, 3)
+        "
+        ),
+        JsValue::Number(6.0)
+    );
+}
+
+#[test]
+fn test_bytecode_function_no_params() {
+    assert_eq!(
+        eval_bytecode(
+            "
+            let getFortyTwo = function(): number { return 42; };
+            getFortyTwo()
+        "
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+#[test]
+fn test_bytecode_function_local_vars() {
+    assert_eq!(
+        eval_bytecode(
+            "
+            let compute = function(x: number): number {
+                let y: number = x * 2;
+                let z: number = y + 1;
+                return z;
+            };
+            compute(5)
+        "
+        ),
+        JsValue::Number(11.0)
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Arrow Functions
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_bytecode_arrow_function_expression() {
+    // Arrow with expression body
+    assert_eq!(
+        eval_bytecode(
+            "
+            let double = (x: number): number => x * 2;
+            double(5)
+        "
+        ),
+        JsValue::Number(10.0)
+    );
+}
+
+#[test]
+fn test_bytecode_arrow_function_block() {
+    // Arrow with block body
+    assert_eq!(
+        eval_bytecode(
+            "
+            let triple = (x: number): number => { return x * 3; };
+            triple(4)
+        "
+        ),
+        JsValue::Number(12.0)
+    );
+}
+
+#[test]
+fn test_bytecode_arrow_no_params() {
+    assert_eq!(
+        eval_bytecode(
+            "
+            let getNumber = (): number => 100;
+            getNumber()
+        "
+        ),
+        JsValue::Number(100.0)
+    );
+}
+
+#[test]
+fn test_bytecode_arrow_multiple_params() {
+    assert_eq!(
+        eval_bytecode(
+            "
+            let add = (a: number, b: number, c: number): number => a + b + c;
+            add(10, 20, 30)
+        "
+        ),
+        JsValue::Number(60.0)
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Closures
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_bytecode_closure_capture() {
+    // Capture variable from outer scope
+    assert_eq!(
+        eval_bytecode(
+            "
+            let x: number = 10;
+            let addX = (y: number): number => x + y;
+            addX(5)
+        "
+        ),
+        JsValue::Number(15.0)
+    );
+}
+
+#[test]
+fn test_bytecode_closure_factory() {
+    // Function that returns a function (closure factory)
+    assert_eq!(
+        eval_bytecode(
+            "
+            let makeAdder = function(x: number): (y: number) => number {
+                return (y: number): number => x + y;
+            };
+            let add5 = makeAdder(5);
+            add5(3)
+        "
+        ),
+        JsValue::Number(8.0)
+    );
+}
+
+#[test]
+fn test_bytecode_closure_counter() {
+    assert_eq!(
+        eval_bytecode(
+            "
+            let makeCounter = function(): () => number {
+                let count: number = 0;
+                return (): number => {
+                    count = count + 1;
+                    return count;
+                };
+            };
+            let counter = makeCounter();
+            counter();
+            counter();
+            counter()
+        "
+        ),
+        JsValue::Number(3.0)
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Constructor (new) with Functions
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_bytecode_new_function() {
+    // Constructor function
+    assert_eq!(
+        eval_bytecode(
+            "
+            function Point(x: number, y: number): void {
+                this.x = x;
+                this.y = y;
+            }
+            let p = new Point(3, 4);
+            p.x + p.y
+        "
+        ),
+        JsValue::Number(7.0)
+    );
+}
+
+#[test]
+fn test_bytecode_new_with_method() {
+    assert_eq!(
+        eval_bytecode(
+            "
+            function Rectangle(w: number, h: number): void {
+                this.width = w;
+                this.height = h;
+                this.area = function(): number { return this.width * this.height; };
+            }
+            let rect = new Rectangle(5, 3);
+            rect.area()
+        "
+        ),
+        JsValue::Number(15.0)
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Function typeof
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_bytecode_typeof_function() {
+    assert_eq!(
+        eval_bytecode("typeof function(): void {}"),
+        JsValue::String("function".into())
+    );
+    assert_eq!(
+        eval_bytecode("typeof ((): void => {})"),
+        JsValue::String("function".into())
+    );
+}
