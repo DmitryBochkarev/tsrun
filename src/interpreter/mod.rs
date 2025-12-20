@@ -4542,6 +4542,7 @@ impl Interpreter {
     /// ToPrimitive: Convert an object to a primitive value.
     /// For wrapper objects (Number, String, Boolean), this calls valueOf/toString.
     /// `hint` specifies preference: "number" tries valueOf first, "string" tries toString first.
+    /// Throws TypeError if neither method returns a primitive value (ES2015+ spec).
     fn coerce_to_primitive(&mut self, value: &JsValue, hint: &str) -> Result<JsValue, JsError> {
         let obj = match value {
             JsValue::Object(obj) => obj,
@@ -4580,12 +4581,10 @@ impl Interpreter {
             }
         }
 
-        // Fallback: return NaN for number hint, "[object Object]" for string hint
-        if hint == "string" {
-            Ok(JsValue::String(JsString::from("[object Object]")))
-        } else {
-            Ok(JsValue::Number(f64::NAN))
-        }
+        // Per ECMAScript spec: if neither method returns a primitive, throw TypeError
+        Err(JsError::type_error(
+            "Cannot convert object to primitive value",
+        ))
     }
 
     /// Convert value to number, handling ToPrimitive for objects (ToNumber abstract operation).
