@@ -1246,3 +1246,494 @@ fn test_bytecode_destructure_nested_object_param() {
         JsValue::Number(42.0)
     );
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Generator Functions
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_bytecode_generator_basic() {
+    // Generator function should return an iterator
+    assert_eq!(
+        eval_bytecode(
+            r#"
+            function* gen(): Generator<number> {
+                yield 1;
+                yield 2;
+                yield 3;
+            }
+            const g = gen();
+            g.next().value
+        "#
+        ),
+        JsValue::Number(1.0)
+    );
+}
+
+#[test]
+fn test_bytecode_generator_multiple_next() {
+    assert_eq!(
+        eval_bytecode(
+            r#"
+            function* gen(): Generator<number> {
+                yield 1;
+                yield 2;
+            }
+            const g = gen();
+            g.next();
+            g.next().value
+        "#
+        ),
+        JsValue::Number(2.0)
+    );
+}
+
+#[test]
+fn test_bytecode_generator_done() {
+    assert_eq!(
+        eval_bytecode(
+            r#"
+            function* gen(): Generator<number> {
+                yield 1;
+            }
+            const g = gen();
+            g.next();
+            g.next().done
+        "#
+        ),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_bytecode_generator_not_done() {
+    assert_eq!(
+        eval_bytecode(
+            r#"
+            function* gen(): Generator<number> {
+                yield 1;
+            }
+            const g = gen();
+            g.next().done
+        "#
+        ),
+        JsValue::Boolean(false)
+    );
+}
+
+#[test]
+fn test_bytecode_generator_return_value() {
+    // Return value should appear when done
+    assert_eq!(
+        eval_bytecode(
+            r#"
+            function* gen(): Generator<number, string> {
+                yield 1;
+                return "done";
+            }
+            const g = gen();
+            g.next();
+            g.next().value
+        "#
+        ),
+        JsValue::from("done")
+    );
+}
+
+#[test]
+fn test_bytecode_generator_no_yield() {
+    // Generator without yield should be done immediately
+    assert_eq!(
+        eval_bytecode(
+            r#"
+            function* gen(): Generator<void, number> {
+                return 42;
+            }
+            const g = gen();
+            const result = g.next();
+            result.value + (result.done ? 0 : 100)
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+#[test]
+fn test_bytecode_generator_expression() {
+    // Generator expression (const gen = function*() {})
+    assert_eq!(
+        eval_bytecode(
+            r#"
+            const gen = function*(): Generator<number> {
+                yield 10;
+                yield 20;
+            };
+            const g = gen();
+            g.next().value + g.next().value
+        "#
+        ),
+        JsValue::Number(30.0)
+    );
+}
+
+#[test]
+fn test_bytecode_generator_with_params() {
+    assert_eq!(
+        eval_bytecode(
+            r#"
+            function* range(start: number, end: number): Generator<number> {
+                for (let i = start; i < end; i++) {
+                    yield i;
+                }
+            }
+            const g = range(1, 4);
+            let sum = 0;
+            sum += g.next().value;
+            sum += g.next().value;
+            sum += g.next().value;
+            sum
+        "#
+        ),
+        JsValue::Number(6.0) // 1 + 2 + 3
+    );
+}
+
+#[test]
+fn test_bytecode_generator_manual_iteration() {
+    // Manually iterate through generator
+    assert_eq!(
+        eval_bytecode(
+            r#"
+            function* nums(): Generator<number> {
+                yield 1;
+                yield 2;
+                yield 3;
+            }
+            const g = nums();
+            let sum = 0;
+            let result = g.next();
+            while (!result.done) {
+                sum += result.value;
+                result = g.next();
+            }
+            sum
+        "#
+        ),
+        JsValue::Number(6.0)
+    );
+}
+
+#[test]
+fn test_bytecode_generator_collect_values() {
+    // Collect generator values manually
+    assert_eq!(
+        eval_bytecode(
+            r#"
+            function* gen(): Generator<number> {
+                yield 1;
+                yield 2;
+                yield 3;
+            }
+            const g = gen();
+            const arr: number[] = [];
+            let result = g.next();
+            while (!result.done) {
+                arr.push(result.value);
+                result = g.next();
+            }
+            arr.length
+        "#
+        ),
+        JsValue::Number(3.0)
+    );
+}
+
+// Simple generator parameter test
+#[test]
+fn test_bytecode_generator_simple_param() {
+    // A simpler test with just one parameter
+    assert_eq!(
+        eval_bytecode(
+            r#"
+            function* simple(n: number): Generator<number> {
+                yield n;
+            }
+            const g = simple(42);
+            g.next().value
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+// Test generator with local variable
+#[test]
+fn test_bytecode_generator_local_var() {
+    assert_eq!(
+        eval_bytecode(
+            r#"
+            function* test(n: number): Generator<number> {
+                let i = 0;
+                yield i;
+                yield n;
+            }
+            const g = test(42);
+            g.next().value + g.next().value
+        "#
+        ),
+        JsValue::Number(42.0) // 0 + 42
+    );
+}
+
+// Test generator with for loop
+#[test]
+fn test_bytecode_generator_for_loop() {
+    assert_eq!(
+        eval_bytecode(
+            r#"
+            function* test(): Generator<number> {
+                for (let i = 0; i < 3; i++) {
+                    yield i;
+                }
+            }
+            const g = test();
+            g.next().value + g.next().value + g.next().value
+        "#
+        ),
+        JsValue::Number(3.0) // 0 + 1 + 2
+    );
+}
+
+// Passing values into generators via next()
+#[test]
+fn test_bytecode_generator_next_with_value() {
+    assert_eq!(
+        eval_bytecode(
+            r#"
+            function* gen(): Generator<number, void, number> {
+                const x: number = yield 1;
+                yield x * 2;
+            }
+            const g = gen();
+            g.next();
+            g.next(10).value
+        "#
+        ),
+        JsValue::Number(20.0)
+    );
+}
+
+#[test]
+fn test_bytecode_generator_preserves_scope() {
+    // Generator should preserve closure scope
+    assert_eq!(
+        eval_bytecode(
+            r#"
+            function makeGen(multiplier: number): () => Generator<number> {
+                return function*(): Generator<number> {
+                    yield 1 * multiplier;
+                    yield 2 * multiplier;
+                };
+            }
+            const gen = makeGen(10);
+            const g = gen();
+            g.next().value + g.next().value
+        "#
+        ),
+        JsValue::Number(30.0) // 10 + 20
+    );
+}
+
+// for...of iteration with generators
+// TODO: Fix infinite loop when iterating generators with for...of
+#[test]
+#[ignore]
+fn test_bytecode_generator_for_of() {
+    // for...of should iterate over generator values
+    assert_eq!(
+        eval_bytecode(
+            r#"
+            function* gen(): Generator<number> {
+                yield 1;
+                yield 2;
+                yield 3;
+            }
+            let sum = 0;
+            for (const value of gen()) {
+                sum += value;
+            }
+            sum
+        "#
+        ),
+        JsValue::Number(6.0)
+    );
+}
+
+// yield* (delegation) tests
+#[test]
+fn test_bytecode_yield_star_array() {
+    // yield* should delegate to arrays
+    assert_eq!(
+        eval_bytecode(
+            r#"
+            function* gen(): Generator<number> {
+                yield* [1, 2, 3];
+            }
+            const g = gen();
+            g.next().value + g.next().value + g.next().value
+        "#
+        ),
+        JsValue::Number(6.0)
+    );
+}
+
+#[test]
+fn test_bytecode_yield_star_to_generator() {
+    // yield* should delegate to another generator - using manual iteration
+    assert_eq!(
+        eval_bytecode(
+            r#"
+            function* inner(): Generator<number> {
+                yield 1;
+                yield 2;
+            }
+            function* outer(): Generator<number> {
+                yield 0;
+                yield* inner();
+                yield 3;
+            }
+            const g = outer();
+            const r0 = g.next().value;
+            const r1 = g.next().value;
+            const r2 = g.next().value;
+            const r3 = g.next().value;
+            "" + r0 + r1 + r2 + r3
+        "#
+        ),
+        JsValue::String("0123".into())
+    );
+}
+
+// for-of with generators
+#[test]
+fn test_bytecode_for_of_generator() {
+    // for-of should iterate over generator values
+    assert_eq!(
+        eval_bytecode(
+            r#"
+            function* gen(): Generator<number> {
+                yield 1;
+                yield 2;
+                yield 3;
+            }
+            let sum: number = 0;
+            for (const n of gen()) {
+                sum = sum + n;
+            }
+            sum
+        "#
+        ),
+        JsValue::Number(6.0)
+    );
+}
+
+#[test]
+fn test_bytecode_for_of_array() {
+    // for-of should iterate over arrays
+    assert_eq!(
+        eval_bytecode(
+            r#"
+            let sum: number = 0;
+            for (const n of [1, 2, 3]) {
+                sum = sum + n;
+            }
+            sum
+        "#
+        ),
+        JsValue::Number(6.0)
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Async/Await
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_bytecode_async_function_returns_promise() {
+    // Async function should return a Promise
+    let result = eval_bytecode(
+        r#"
+        async function foo(): Promise<number> {
+            return 42;
+        }
+        const p = foo();
+        p instanceof Promise
+    "#,
+    );
+    assert_eq!(result, JsValue::Boolean(true));
+}
+
+#[test]
+fn test_bytecode_async_function_resolved_value() {
+    // Async function returning a value should create fulfilled promise
+    let result = eval_bytecode(
+        r#"
+        async function foo(): Promise<number> {
+            return 42;
+        }
+        const p = foo();
+        // Promise.then() with callback to extract value
+        let result: number = 0;
+        p.then((v: number) => { result = v; });
+        result
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(42.0));
+}
+
+#[test]
+fn test_bytecode_await_resolved_promise() {
+    // await on a resolved Promise should return its value
+    let result = eval_bytecode(
+        r#"
+        async function foo(): Promise<number> {
+            const p = Promise.resolve(42);
+            return await p;
+        }
+        let result: number = 0;
+        foo().then((v: number) => { result = v; });
+        result
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(42.0));
+}
+
+#[test]
+fn test_bytecode_await_non_promise() {
+    // await on a non-promise should wrap it in resolved promise
+    let result = eval_bytecode(
+        r#"
+        async function foo(): Promise<number> {
+            return await 42;
+        }
+        let result: number = 0;
+        foo().then((v: number) => { result = v; });
+        result
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(42.0));
+}
+
+#[test]
+fn test_bytecode_async_arrow_function() {
+    // Async arrow function
+    let result = eval_bytecode(
+        r#"
+        const foo = async (): Promise<number> => 42;
+        let result: number = 0;
+        foo().then((v: number) => { result = v; });
+        result
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(42.0));
+}

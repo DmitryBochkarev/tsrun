@@ -19,8 +19,32 @@ pub enum VmResult {
     Complete(Guarded),
     /// Need to suspend for await/yield
     Suspend(VmSuspension),
+    /// Generator yielded a value
+    Yield(GeneratorYield),
+    /// Generator yielded via yield*
+    YieldStar(GeneratorYieldStar),
     /// Error occurred
     Error(JsError),
+}
+
+/// Generator yield result
+pub struct GeneratorYield {
+    /// The yielded value
+    pub value: JsValue,
+    /// Register to store the value passed to next() when resumed
+    pub resume_register: Register,
+    /// Saved VM state for resumption
+    pub state: SavedVmState,
+}
+
+/// Generator yield* result
+pub struct GeneratorYieldStar {
+    /// The iterable to delegate to
+    pub iterable: JsValue,
+    /// Register to store the final value when delegation completes
+    pub resume_register: Register,
+    /// Saved VM state for resumption
+    pub state: SavedVmState,
 }
 
 /// Suspension state for async/generator
@@ -39,10 +63,12 @@ pub struct SavedVmState {
     pub ip: usize,
     /// Current bytecode chunk
     pub chunk: Rc<BytecodeChunk>,
-    /// Register values (as JsValues - guards recreated on resume)
+    /// Register values
     pub registers: Vec<JsValue>,
     /// Exception handlers
     pub try_stack: Vec<TryHandler>,
+    /// Guard to keep all objects in registers alive during suspension
+    pub guard: Option<Guard<JsObject>>,
 }
 
 /// A call frame in the VM
@@ -76,18 +102,17 @@ pub struct TryHandler {
 /// The bytecode virtual machine
 pub struct BytecodeVM {
     /// Current instruction pointer
-    ip: usize,
+    pub ip: usize,
     /// Current bytecode chunk being executed
-    chunk: Rc<BytecodeChunk>,
+    pub chunk: Rc<BytecodeChunk>,
     /// Register file
-    registers: Vec<JsValue>,
+    pub registers: Vec<JsValue>,
     /// Guard keeping all register values alive
-    #[allow(dead_code)]
-    register_guard: Option<Guard<JsObject>>,
+    register_guard: Guard<JsObject>,
     /// Call stack (return addresses)
-    call_stack: Vec<CallFrame>,
+    pub call_stack: Vec<CallFrame>,
     /// Exception handler stack
-    try_stack: Vec<TryHandler>,
+    pub try_stack: Vec<TryHandler>,
     /// Current `this` value
     this_value: JsValue,
     /// Current exception value (for catch blocks)
@@ -97,22 +122,6 @@ pub struct BytecodeVM {
 }
 
 impl BytecodeVM {
-    /// Create a new VM for executing the given bytecode chunk
-    pub fn new(chunk: Rc<BytecodeChunk>, this_value: JsValue) -> Self {
-        let register_count = chunk.register_count as usize;
-        Self {
-            ip: 0,
-            chunk,
-            registers: vec![JsValue::Undefined; register_count.max(1)],
-            register_guard: None,
-            call_stack: Vec::new(),
-            try_stack: Vec::new(),
-            this_value,
-            exception_value: None,
-            saved_env: None,
-        }
-    }
-
     /// Create a new VM with a guard for keeping objects alive
     pub fn with_guard(
         chunk: Rc<BytecodeChunk>,
@@ -120,11 +129,15 @@ impl BytecodeVM {
         guard: Guard<JsObject>,
     ) -> Self {
         let register_count = chunk.register_count as usize;
+        // Guard this_value if it's an object
+        if let JsValue::Object(obj) = &this_value {
+            guard.guard(obj.cheap_clone());
+        }
         Self {
             ip: 0,
             chunk,
             registers: vec![JsValue::Undefined; register_count.max(1)],
-            register_guard: Some(guard),
+            register_guard: guard,
             call_stack: Vec::new(),
             try_stack: Vec::new(),
             this_value,
@@ -145,10 +158,18 @@ impl BytecodeVM {
         let register_count = chunk.register_count as usize;
         let mut registers = vec![JsValue::Undefined; register_count.max(1)];
 
+        // Guard this_value if it's an object
+        if let JsValue::Object(obj) = &this_value {
+            guard.guard(obj.cheap_clone());
+        }
+
         // Pre-populate registers with arguments
         for (i, arg) in args.iter().enumerate() {
             if i < registers.len() {
                 if let Some(slot) = registers.get_mut(i) {
+                    if let JsValue::Object(obj) = arg {
+                        guard.guard(obj.cheap_clone());
+                    }
                     *slot = arg.clone();
                 }
             }
@@ -158,7 +179,7 @@ impl BytecodeVM {
             ip: 0,
             chunk,
             registers,
-            register_guard: Some(guard),
+            register_guard: guard,
             call_stack: Vec::new(),
             try_stack: Vec::new(),
             this_value,
@@ -176,18 +197,28 @@ impl BytecodeVM {
     }
 
     /// Set register value
-    #[inline]
-    fn set_reg(&mut self, r: Register, value: JsValue) {
+    pub fn set_reg(&mut self, r: Register, value: JsValue) {
         let idx = r as usize;
+        debug_assert!(
+            idx < self.registers.len(),
+            "Register index {} out of bounds (max {})",
+            idx,
+            self.registers.len()
+        );
         if idx < self.registers.len() {
             if let Some(slot) = self.registers.get_mut(idx) {
+                if let JsValue::Object(obj) = &value {
+                    self.register_guard.guard(obj.clone());
+                }
+                if let JsValue::Object(obj) = &slot {
+                    self.register_guard.unguard(obj);
+                }
                 *slot = value;
             }
         }
     }
 
     /// Fetch the next instruction and advance IP
-    #[inline]
     fn fetch(&mut self) -> Option<Op> {
         let op = self.chunk.get(self.ip)?.clone();
         self.ip += 1;
@@ -224,6 +255,9 @@ impl BytecodeVM {
                     .cloned()
                     .unwrap_or(JsValue::Undefined);
                 let guard = interp.heap.create_guard();
+                if let JsValue::Object(obj) = &result {
+                    guard.guard(obj.cheap_clone());
+                }
                 return VmResult::Complete(Guarded {
                     value: result,
                     guard: Some(guard),
@@ -233,23 +267,51 @@ impl BytecodeVM {
             match self.execute_op(interp, op) {
                 Ok(OpResult::Continue) => continue,
                 Ok(OpResult::Halt(value)) => {
-                    let guard = interp.heap.create_guard();
-                    return VmResult::Complete(Guarded {
-                        value,
-                        guard: Some(guard),
+                    return VmResult::Complete(value);
+                }
+                Ok(OpResult::Suspend(guarded)) => {
+                    // Extract the object from the guarded value
+                    if let JsValue::Object(obj) = guarded.value {
+                        return VmResult::Suspend(VmSuspension {
+                            waiting_on: obj,
+                            state: self.save_state(interp),
+                        });
+                    } else {
+                        return VmResult::Error(JsError::internal_error(
+                            "Suspend expects an object",
+                        ));
+                    }
+                }
+                Ok(OpResult::Yield {
+                    value,
+                    resume_register,
+                }) => {
+                    return VmResult::Yield(GeneratorYield {
+                        value: value.value,
+                        resume_register,
+                        state: self.save_state(interp),
                     });
                 }
-                Ok(OpResult::Suspend(obj)) => {
-                    return VmResult::Suspend(VmSuspension {
-                        waiting_on: obj,
-                        state: self.save_state(),
+                Ok(OpResult::YieldStar {
+                    iterable,
+                    resume_register,
+                }) => {
+                    return VmResult::YieldStar(GeneratorYieldStar {
+                        iterable: iterable.value,
+                        resume_register,
+                        state: self.save_state(interp),
                     });
                 }
                 Err(e) => {
                     // Try to find an exception handler
                     if let Some(handler_ip) = self.find_exception_handler() {
                         self.ip = handler_ip;
-                        self.exception_value = Some(self.error_to_value(interp, &e));
+                        let exc_val = self.error_to_value(interp, &e);
+                        // Guard exception value if it's an object
+                        if let JsValue::Object(obj) = &exc_val {
+                            self.register_guard.guard(obj.cheap_clone());
+                        }
+                        self.exception_value = Some(exc_val);
                         continue;
                     }
                     return VmResult::Error(e);
@@ -298,25 +360,154 @@ impl BytecodeVM {
     }
 
     /// Save VM state for suspension
-    fn save_state(&self) -> SavedVmState {
+    /// Creates a guard to keep all objects in registers alive during suspension
+    fn save_state(&self, interp: &Interpreter) -> SavedVmState {
+        let guard = interp.heap.create_guard();
+
+        // Guard all objects in registers
+        for val in &self.registers {
+            if let JsValue::Object(obj) = val {
+                guard.guard(obj.cheap_clone());
+            }
+        }
+
+        // Guard saved environments in call frames
+        for frame in &self.call_stack {
+            if let Some(ref env) = frame.saved_env {
+                guard.guard(env.cheap_clone());
+            }
+        }
+
+        // Guard this_value if it's an object
+        if let JsValue::Object(obj) = &self.this_value {
+            guard.guard(obj.cheap_clone());
+        }
+
+        // Guard exception_value if it's an object
+        if let Some(JsValue::Object(obj)) = &self.exception_value {
+            guard.guard(obj.cheap_clone());
+        }
+
+        // Guard saved_env if present
+        if let Some(ref env) = self.saved_env {
+            guard.guard(env.cheap_clone());
+        }
+
         SavedVmState {
             frames: self.call_stack.clone(),
             ip: self.ip,
             chunk: self.chunk.clone(),
             registers: self.registers.clone(),
             try_stack: self.try_stack.clone(),
+            guard: Some(guard),
         }
     }
 
     /// Restore VM state from suspension
     #[allow(dead_code)]
     pub fn restore_state(&mut self, state: SavedVmState, guard: Guard<JsObject>) {
+        // Guard this_value if it's an object
+        if let JsValue::Object(obj) = &self.this_value {
+            guard.guard(obj.cheap_clone());
+        }
+
+        // Guard all objects in the restored registers
+        for val in &state.registers {
+            if let JsValue::Object(obj) = val {
+                guard.guard(obj.cheap_clone());
+            }
+        }
+
+        // Guard saved environments in call frames
+        for frame in &state.frames {
+            if let Some(ref env) = frame.saved_env {
+                guard.guard(env.cheap_clone());
+            }
+        }
+
         self.call_stack = state.frames;
         self.ip = state.ip;
         self.chunk = state.chunk;
         self.registers = state.registers;
         self.try_stack = state.try_stack;
-        self.register_guard = Some(guard);
+        self.register_guard = guard;
+    }
+
+    /// Restore VM state from generator yield and set the sent value
+    pub fn restore_from_yield(
+        &mut self,
+        state: SavedVmState,
+        resume_register: Register,
+        sent_value: JsValue,
+        guard: Guard<JsObject>,
+    ) {
+        // Guard this_value if it's an object
+        if let JsValue::Object(obj) = &self.this_value {
+            guard.guard(obj.cheap_clone());
+        }
+
+        // Guard all objects in the restored registers
+        for val in &state.registers {
+            if let JsValue::Object(obj) = val {
+                guard.guard(obj.cheap_clone());
+            }
+        }
+
+        // Guard saved environments in call frames
+        for frame in &state.frames {
+            if let Some(ref env) = frame.saved_env {
+                guard.guard(env.cheap_clone());
+            }
+        }
+
+        // Guard sent value if it's an object
+        if let JsValue::Object(obj) = &sent_value {
+            guard.guard(obj.cheap_clone());
+        }
+
+        self.call_stack = state.frames;
+        self.ip = state.ip;
+        self.chunk = state.chunk;
+        self.registers = state.registers;
+        self.try_stack = state.try_stack;
+        self.register_guard = guard;
+        // Set the value passed to next() in the resume register
+        self.set_reg(resume_register, sent_value);
+    }
+
+    /// Create a new VM from saved state (for generator resumption)
+    /// The guard must protect all objects in the saved registers
+    pub fn from_saved_state(state: SavedVmState, this_value: JsValue, guard: Guard<JsObject>) -> Self {
+        // Guard this_value if it's an object
+        if let JsValue::Object(obj) = &this_value {
+            guard.guard(obj.cheap_clone());
+        }
+
+        // Guard all objects in the restored registers
+        for val in &state.registers {
+            if let JsValue::Object(obj) = val {
+                guard.guard(obj.cheap_clone());
+            }
+        }
+
+        // Guard saved environments in call frames
+        for frame in &state.frames {
+            if let Some(ref env) = frame.saved_env {
+                guard.guard(env.cheap_clone());
+            }
+        }
+
+        Self {
+            ip: state.ip,
+            chunk: state.chunk,
+            registers: state.registers,
+            register_guard: guard,
+            call_stack: state.frames,
+            try_stack: state.try_stack,
+            this_value,
+            exception_value: None,
+            saved_env: None,
+        }
     }
 
     /// Execute a single opcode
@@ -640,7 +831,7 @@ impl BytecodeVM {
                         }
                     }
                 };
-                self.set_reg(dst, JsValue::String(JsString::from(type_str)));
+                self.set_reg(dst, JsValue::String(interp.intern(type_str)));
                 Ok(OpResult::Continue)
             }
 
@@ -752,7 +943,7 @@ impl BytecodeVM {
                 let global = interp.global.clone();
                 global
                     .borrow_mut()
-                    .set_property(PropertyKey::from(name.as_str()), value);
+                    .set_property(PropertyKey::String(name), value);
                 Ok(OpResult::Continue)
             }
 
@@ -985,7 +1176,7 @@ impl BytecodeVM {
                     self.set_reg(frame.return_register, return_val);
                     Ok(OpResult::Continue)
                 } else {
-                    Ok(OpResult::Halt(return_val))
+                    Ok(OpResult::Halt(guarded_js_value(return_val, interp)))
                 }
             }
 
@@ -1000,7 +1191,7 @@ impl BytecodeVM {
                     self.set_reg(frame.return_register, JsValue::Undefined);
                     Ok(OpResult::Continue)
                 } else {
-                    Ok(OpResult::Halt(JsValue::Undefined))
+                    Ok(OpResult::Halt(Guarded{ value: JsValue::Undefined, guard: None}))
                 }
             }
 
@@ -1032,6 +1223,12 @@ impl BytecodeVM {
                     _ => return Err(JsError::internal_error("Invalid arrow chunk index")),
                 };
 
+                // Check if this is an async arrow function
+                let is_async = chunk
+                    .function_info
+                    .as_ref()
+                    .is_some_and(|info| info.is_async);
+
                 // Arrow functions capture lexical this
                 let bc_func = BytecodeFunction {
                     chunk,
@@ -1039,20 +1236,65 @@ impl BytecodeVM {
                     captured_this: Some(Box::new(self.this_value.clone())),
                 };
 
-                // Create function object
+                // Create function object - use async variant for async arrow functions
                 let guard = interp.heap.create_guard();
-                let func_obj = interp.create_bytecode_function(&guard, bc_func);
+                let func_obj = if is_async {
+                    interp.create_bytecode_async_function(&guard, bc_func)
+                } else {
+                    interp.create_bytecode_function(&guard, bc_func)
+                };
                 self.set_reg(dst, JsValue::Object(func_obj));
                 Ok(OpResult::Continue)
             }
 
-            Op::CreateGenerator { dst, chunk_idx: _ }
-            | Op::CreateAsync { dst, chunk_idx: _ }
-            | Op::CreateAsyncGenerator { dst, chunk_idx: _ } => {
-                // Stub: generator/async creation requires more complex handling
+            Op::CreateGenerator { dst, chunk_idx } => {
+                // Get the generator function bytecode chunk from constants
+                let chunk = match self.get_constant(chunk_idx) {
+                    Some(Constant::Chunk(c)) => c.clone(),
+                    _ => return Err(JsError::internal_error("Invalid generator chunk index")),
+                };
+
+                // Create a BytecodeGenerator function with the current environment as closure
+                let bc_func = BytecodeFunction {
+                    chunk,
+                    closure: interp.env.cheap_clone(),
+                    captured_this: None,
+                };
+
+                // Create function object with the BytecodeGenerator variant
+                let guard = interp.heap.create_guard();
+                let func_obj =
+                    interp.create_bytecode_generator_function(&guard, bc_func);
+                self.set_reg(dst, JsValue::Object(func_obj));
+                Ok(OpResult::Continue)
+            }
+
+            Op::CreateAsync { dst, chunk_idx } => {
+                // Get the async function bytecode chunk from constants
+                let chunk = match self.get_constant(chunk_idx) {
+                    Some(Constant::Chunk(c)) => c.clone(),
+                    _ => return Err(JsError::internal_error("Invalid async function chunk index")),
+                };
+
+                // Create a BytecodeAsync function with the current environment as closure
+                let bc_func = BytecodeFunction {
+                    chunk,
+                    closure: interp.env.cheap_clone(),
+                    captured_this: None,
+                };
+
+                // Create function object with the BytecodeAsync variant
+                let guard = interp.heap.create_guard();
+                let func_obj = interp.create_bytecode_async_function(&guard, bc_func);
+                self.set_reg(dst, JsValue::Object(func_obj));
+                Ok(OpResult::Continue)
+            }
+
+            Op::CreateAsyncGenerator { dst, chunk_idx: _ } => {
+                // Stub: async generator requires more complex handling
                 self.set_reg(dst, JsValue::Undefined);
                 Err(JsError::internal_error(
-                    "Generator/async function creation in bytecode VM not yet implemented",
+                    "Async generator creation in bytecode VM not yet implemented",
                 ))
             }
 
@@ -1097,35 +1339,78 @@ impl BytecodeVM {
             }
 
             // ═══════════════════════════════════════════════════════════════════════════
-            // Async/Generator (stub implementations)
+            // Async/Generator
             // ═══════════════════════════════════════════════════════════════════════════
-            Op::Await { dst: _, promise } => {
-                let promise_val = self.get_reg(promise);
-                if let JsValue::Object(obj) = promise_val {
-                    Ok(OpResult::Suspend(obj.clone()))
-                } else {
-                    Err(JsError::internal_error(
-                        "Await on non-promise not yet implemented in VM",
-                    ))
+            Op::Await { dst, promise } => {
+                use crate::value::{ExoticObject, PromiseStatus};
+
+                let promise_val = self.get_reg(promise).clone();
+
+                // Check if it's a promise
+                if let JsValue::Object(obj) = &promise_val {
+                    let obj_ref = obj.borrow();
+                    if let ExoticObject::Promise(state) = &obj_ref.exotic {
+                        let state_ref = state.borrow();
+                        match state_ref.status {
+                            PromiseStatus::Fulfilled => {
+                                // Extract the resolved value
+                                let result = state_ref.result.clone().unwrap_or(JsValue::Undefined);
+                                drop(state_ref);
+                                drop(obj_ref);
+                                self.set_reg(dst, result);
+                                return Ok(OpResult::Continue);
+                            }
+                            PromiseStatus::Rejected => {
+                                // Throw the rejection reason
+                                let reason = state_ref.result.clone().unwrap_or(JsValue::Undefined);
+                                drop(state_ref);
+                                drop(obj_ref);
+                                return Err(JsError::thrown(reason));
+                            }
+                            PromiseStatus::Pending => {
+                                // For pending promises, we would need to suspend
+                                // For now, return undefined
+                                drop(state_ref);
+                                drop(obj_ref);
+                                self.set_reg(dst, JsValue::Undefined);
+                                return Ok(OpResult::Continue);
+                            }
+                        }
+                    }
                 }
+
+                // Not a promise - treat as resolved value (await 42 === 42)
+                self.set_reg(dst, promise_val);
+                Ok(OpResult::Continue)
             }
 
-            Op::Yield { dst: _, value: _ } => {
-                Err(JsError::internal_error("Yield not yet implemented in VM"))
+            Op::Yield { dst, value } => {
+                let yield_val = self.get_reg(value).clone();
+                // Return a Yield result - the generator will be suspended
+                // The dst register will receive the value passed to next() when resumed
+                Ok(OpResult::Yield {
+                    value: guarded_js_value(yield_val, interp),
+                    resume_register: dst,
+                })
             }
 
-            Op::YieldStar {
-                dst: _,
-                iterable: _,
-            } => Err(JsError::internal_error(
-                "YieldStar not yet implemented in VM",
-            )),
+            Op::YieldStar { dst, iterable } => {
+                // yield* delegates to another iterator
+                let iterable_val = self.get_reg(iterable).clone();
+                Ok(OpResult::YieldStar {
+                    iterable: guarded_js_value(iterable_val, interp),
+                    resume_register: dst,
+                })
+            }
 
             // ═══════════════════════════════════════════════════════════════════════════
             // Scope Management
             // ═══════════════════════════════════════════════════════════════════════════
             Op::PushScope => {
-                self.saved_env = Some(interp.push_scope());
+                let env = interp.push_scope();
+                // Guard the saved environment
+                self.register_guard.guard(env.cheap_clone());
+                self.saved_env = Some(env);
                 Ok(OpResult::Continue)
             }
 
@@ -1149,8 +1434,8 @@ impl BytecodeVM {
                         // Check if it's an array - use direct element iteration
                         if obj_ref.borrow().array_elements().is_some() {
                             // Create an iterator object with the array and index
-                            let guard = interp.heap.create_guard();
-                            let iter = interp.create_object(&guard);
+                            // Use register_guard to keep it alive across loop iterations
+                            let iter = interp.create_object(&self.register_guard);
                             iter.borrow_mut().set_property(
                                 PropertyKey::from("__array__"),
                                 JsValue::Object(obj_ref.clone()),
@@ -1175,6 +1460,10 @@ impl BytecodeVM {
                             // Call the iterator method
                             let result =
                                 interp.call_function(JsValue::Object(method_obj), obj_val, &[])?;
+                            // Guard the result iterator object
+                            if let JsValue::Object(iter_obj) = &result.value {
+                                self.register_guard.guard(iter_obj.cheap_clone());
+                            }
                             self.set_reg(dst, result.value);
                         } else {
                             return Err(JsError::type_error("Object is not iterable"));
@@ -1182,8 +1471,8 @@ impl BytecodeVM {
                     }
                     JsValue::String(s) => {
                         // Create a string iterator
-                        let guard = interp.heap.create_guard();
-                        let iter = interp.create_object(&guard);
+                        // Use register_guard to keep it alive across loop iterations
+                        let iter = interp.create_object(&self.register_guard);
                         iter.borrow_mut().set_property(
                             PropertyKey::from("__string__"),
                             JsValue::String(s.cheap_clone()),
@@ -1401,7 +1690,7 @@ impl BytecodeVM {
 
                 // Look for the iterator in a previous register (typically dst - 3 based on pattern)
                 // This is a heuristic - the pattern compiler allocates registers in a specific order
-                let iter_reg = if dst >= 3 { dst - 3 } else { 0 };
+                let iter_reg = dst.saturating_sub(3);
                 let iter_val = self.get_reg(iter_reg).clone();
 
                 let mut elements = Vec::new();
@@ -1459,7 +1748,7 @@ impl BytecodeVM {
                     .first()
                     .cloned()
                     .unwrap_or(JsValue::Undefined);
-                Ok(OpResult::Halt(result))
+                Ok(OpResult::Halt(guarded_js_value(result, interp)))
             }
 
             Op::Debugger => Ok(OpResult::Continue),
@@ -1570,7 +1859,31 @@ enum OpResult {
     /// Continue to next instruction
     Continue,
     /// Halt with a value
-    Halt(JsValue),
-    /// Suspend execution (for await/yield)
-    Suspend(Gc<JsObject>),
+    Halt(Guarded),
+    /// Suspend execution (for await)
+    Suspend(Guarded),
+    /// Yield a value (for generators)
+    Yield {
+        value: Guarded,
+        resume_register: Register,
+    },
+    /// Yield* delegate to another iterator
+    YieldStar {
+        iterable: Guarded,
+        resume_register: Register,
+    },
+}
+
+fn guarded_js_value(val: JsValue, interp: &Interpreter) -> Guarded {
+    match &val {
+        JsValue::Object(obj) => {
+            let guard = interp.heap.create_guard();
+            guard.guard(obj.cheap_clone());
+            Guarded {
+                value: val,
+                guard: Some(guard),
+            }
+        }
+        _ => Guarded { value: val, guard: None },
+    }
 }

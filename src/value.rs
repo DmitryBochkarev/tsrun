@@ -502,6 +502,7 @@ impl fmt::Debug for JsValue {
                     ExoticObject::Date { timestamp } => write!(f, "Date({})", timestamp),
                     ExoticObject::RegExp { pattern, flags } => write!(f, "/{}/{}", pattern, flags),
                     ExoticObject::Generator(_) => write!(f, "[object Generator]"),
+                    ExoticObject::BytecodeGenerator(_) => write!(f, "[object Generator]"),
                     ExoticObject::Promise(state) => {
                         let status = match state.borrow().status {
                             PromiseStatus::Pending => "pending",
@@ -842,7 +843,9 @@ impl Traceable for JsObject {
                         // Trace the closure environment
                         visitor(interp.closure.copy_ref());
                     }
-                    JsFunction::Bytecode(bc) => {
+                    JsFunction::Bytecode(bc)
+                    | JsFunction::BytecodeGenerator(bc)
+                    | JsFunction::BytecodeAsync(bc) => {
                         // Trace the closure environment
                         visitor(bc.closure.copy_ref());
                         // Trace captured this (for arrow functions)
@@ -908,6 +911,27 @@ impl Traceable for JsObject {
                 // Trace arguments that might be objects
                 for arg in &state.args {
                     if let JsValue::Object(obj) = arg {
+                        visitor(obj.copy_ref());
+                    }
+                }
+                // Trace sent value if it's an object
+                if let JsValue::Object(obj) = &state.sent_value {
+                    visitor(obj.copy_ref());
+                }
+            }
+            ExoticObject::BytecodeGenerator(state) => {
+                let state = state.borrow();
+                // Trace closure environment
+                visitor(state.closure.copy_ref());
+                // Trace arguments
+                for arg in &state.args {
+                    if let JsValue::Object(obj) = arg {
+                        visitor(obj.copy_ref());
+                    }
+                }
+                // Trace saved register values
+                for reg in &state.saved_registers {
+                    if let JsValue::Object(obj) = reg {
                         visitor(obj.copy_ref());
                     }
                 }
@@ -2102,8 +2126,10 @@ pub enum ExoticObject {
     /// RegExp exotic object - stores pattern and flags
     // FIXME: use JsStrings
     RegExp { pattern: String, flags: String },
-    /// Generator exotic object - stores generator state
+    /// Generator exotic object - stores generator state (AST-based)
     Generator(Rc<RefCell<GeneratorState>>),
+    /// Bytecode generator exotic object - stores bytecode generator state
+    BytecodeGenerator(Rc<RefCell<BytecodeGeneratorState>>),
     /// Promise exotic object - stores promise state
     Promise(Rc<RefCell<PromiseState>>),
     /// Environment exotic object - stores variable bindings
@@ -2344,6 +2370,53 @@ pub enum GeneratorStatus {
     Completed,
 }
 
+/// Generator state for bytecode-based generators
+///
+/// This stores the bytecode chunk and VM state needed to resume execution.
+pub struct BytecodeGeneratorState {
+    /// The bytecode chunk for the generator function
+    pub chunk: Rc<crate::compiler::BytecodeChunk>,
+    /// The captured closure environment
+    pub closure: JsObjectRef,
+    /// Arguments passed to the generator function
+    pub args: Vec<JsValue>,
+    /// Current execution status
+    pub status: GeneratorStatus,
+    /// Value passed in via next(value)
+    pub sent_value: JsValue,
+    /// Unique ID for this generator
+    pub id: u64,
+    /// Whether this generator has started execution
+    pub started: bool,
+    /// Saved instruction pointer (for resumption)
+    pub saved_ip: usize,
+    /// Saved register values (for resumption)
+    pub saved_registers: Vec<JsValue>,
+    /// Saved call stack (for resumption)
+    pub saved_call_stack: Vec<crate::interpreter::bytecode_vm::CallFrame>,
+    /// Saved try stack (for resumption)
+    pub saved_try_stack: Vec<crate::interpreter::bytecode_vm::TryHandler>,
+    /// Register to store the result of yield
+    pub yield_result_register: Option<u8>,
+    /// The function environment (created on first call, reused on subsequent calls)
+    pub func_env: Option<JsObjectRef>,
+    /// The current environment at yield time (may be nested within func_env)
+    pub current_env: Option<JsObjectRef>,
+    /// Delegated iterator for yield* (iterator object and its next method)
+    pub delegated_iterator: Option<(JsObjectRef, JsValue)>,
+}
+
+impl std::fmt::Debug for BytecodeGeneratorState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BytecodeGeneratorState")
+            .field("status", &self.status)
+            .field("id", &self.id)
+            .field("started", &self.started)
+            .field("saved_ip", &self.saved_ip)
+            .finish()
+    }
+}
+
 /// Function representation
 #[derive(Debug, Clone)]
 pub enum JsFunction {
@@ -2351,6 +2424,10 @@ pub enum JsFunction {
     Interpreted(InterpretedFunction),
     /// Bytecode function (compiled from source)
     Bytecode(BytecodeFunction),
+    /// Bytecode generator function (creates a generator when called)
+    BytecodeGenerator(BytecodeFunction),
+    /// Bytecode async function (returns Promise when called)
+    BytecodeAsync(BytecodeFunction),
     /// Native Rust function
     Native(NativeFunction),
     /// Bound function (created by Function.prototype.bind)
@@ -2417,7 +2494,9 @@ impl JsFunction {
     pub fn name(&self) -> Option<&str> {
         match self {
             JsFunction::Interpreted(f) => f.name.as_ref().map(|s| s.as_str()),
-            JsFunction::Bytecode(f) => f
+            JsFunction::Bytecode(f)
+            | JsFunction::BytecodeGenerator(f)
+            | JsFunction::BytecodeAsync(f) => f
                 .chunk
                 .function_info
                 .as_ref()

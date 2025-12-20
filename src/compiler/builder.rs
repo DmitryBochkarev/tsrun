@@ -265,15 +265,117 @@ impl BytecodeBuilder {
     }
 
     /// Patch a jump placeholder to jump to a specific target
+    ///
+    /// NOTE: All Op variants with a JumpTarget field must be listed here.
+    /// We explicitly list non-jump variants to get compile errors when new jump ops are added.
     pub fn patch_jump_to(&mut self, placeholder: JumpPlaceholder, target: JumpTarget) {
         if let Some(op) = self.code.get_mut(placeholder.instruction_index) {
             match op {
+                // Jump instructions - patch the target
                 Op::Jump { target: t } => *t = target,
                 Op::JumpIfTrue { target: t, .. } => *t = target,
                 Op::JumpIfFalse { target: t, .. } => *t = target,
                 Op::JumpIfNullish { target: t, .. } => *t = target,
                 Op::JumpIfNotNullish { target: t, .. } => *t = target,
-                _ => {}
+                Op::IteratorDone { target: t, .. } => *t = target,
+
+                // PushTry has targets but is patched via patch_try_targets()
+                Op::PushTry { .. } => {}
+
+                // All other opcodes - explicitly listed to catch new jump ops at compile time
+                Op::LoadConst { .. }
+                | Op::LoadUndefined { .. }
+                | Op::LoadNull { .. }
+                | Op::LoadBool { .. }
+                | Op::LoadInt { .. }
+                | Op::Move { .. }
+                | Op::Add { .. }
+                | Op::Sub { .. }
+                | Op::Mul { .. }
+                | Op::Div { .. }
+                | Op::Mod { .. }
+                | Op::Exp { .. }
+                | Op::Eq { .. }
+                | Op::NotEq { .. }
+                | Op::StrictEq { .. }
+                | Op::StrictNotEq { .. }
+                | Op::Lt { .. }
+                | Op::LtEq { .. }
+                | Op::Gt { .. }
+                | Op::GtEq { .. }
+                | Op::BitAnd { .. }
+                | Op::BitOr { .. }
+                | Op::BitXor { .. }
+                | Op::LShift { .. }
+                | Op::RShift { .. }
+                | Op::URShift { .. }
+                | Op::In { .. }
+                | Op::Instanceof { .. }
+                | Op::Neg { .. }
+                | Op::Plus { .. }
+                | Op::Not { .. }
+                | Op::BitNot { .. }
+                | Op::Typeof { .. }
+                | Op::Void { .. }
+                | Op::GetVar { .. }
+                | Op::SetVar { .. }
+                | Op::DeclareVar { .. }
+                | Op::DeclareVarHoisted { .. }
+                | Op::GetGlobal { .. }
+                | Op::SetGlobal { .. }
+                | Op::CreateObject { .. }
+                | Op::CreateArray { .. }
+                | Op::GetProperty { .. }
+                | Op::GetPropertyConst { .. }
+                | Op::SetProperty { .. }
+                | Op::SetPropertyConst { .. }
+                | Op::DeleteProperty { .. }
+                | Op::DeletePropertyConst { .. }
+                | Op::DefineProperty { .. }
+                | Op::Call { .. }
+                | Op::CallSpread { .. }
+                | Op::CallMethod { .. }
+                | Op::Construct { .. }
+                | Op::Return { .. }
+                | Op::ReturnUndefined
+                | Op::CreateClosure { .. }
+                | Op::CreateArrow { .. }
+                | Op::CreateGenerator { .. }
+                | Op::CreateAsync { .. }
+                | Op::CreateAsyncGenerator { .. }
+                | Op::Throw { .. }
+                | Op::PopTry
+                | Op::GetException { .. }
+                | Op::Rethrow
+                | Op::Await { .. }
+                | Op::Yield { .. }
+                | Op::YieldStar { .. }
+                | Op::PushScope
+                | Op::PopScope
+                | Op::GetIterator { .. }
+                | Op::GetAsyncIterator { .. }
+                | Op::IteratorNext { .. }
+                | Op::IteratorValue { .. }
+                | Op::CreateClass { .. }
+                | Op::DefineMethod { .. }
+                | Op::DefineAccessor { .. }
+                | Op::SuperCall { .. }
+                | Op::SuperGet { .. }
+                | Op::SuperGetConst { .. }
+                | Op::SuperSet { .. }
+                | Op::SuperSetConst { .. }
+                | Op::SpreadArray { .. }
+                | Op::CreateRestArray { .. }
+                | Op::TemplateConcat { .. }
+                | Op::TaggedTemplate { .. }
+                | Op::Nop
+                | Op::Halt
+                | Op::Debugger
+                | Op::Pop
+                | Op::Dup { .. }
+                | Op::LoadThis { .. }
+                | Op::LoadArguments { .. }
+                | Op::LoadNewTarget { .. } => {}
             }
         }
     }
@@ -352,7 +454,7 @@ impl BytecodeBuilder {
         if n.fract() == 0.0 && n >= i32::MIN as f64 && n <= i32::MAX as f64 {
             let i = n as i32;
             // Use LoadInt for small integers
-            if i >= -128 && i <= 127 {
+            if (-128..=127).contains(&i) {
                 self.emit(Op::LoadInt { dst, value: i });
                 return Ok(());
             }

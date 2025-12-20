@@ -695,7 +695,7 @@ pub fn object_to_string(
                 ExoticObject::Set { .. } => "Set",
                 ExoticObject::Date { .. } => "Date",
                 ExoticObject::RegExp { .. } => "RegExp",
-                ExoticObject::Generator(_) => "Generator",
+                ExoticObject::Generator(_) | ExoticObject::BytecodeGenerator(_) => "Generator",
                 ExoticObject::Promise(_) => "Promise",
                 ExoticObject::Environment(_) => "Object",
                 ExoticObject::Enum(_) => "Object",

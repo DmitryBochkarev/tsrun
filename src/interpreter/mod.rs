@@ -1531,6 +1531,38 @@ impl Interpreter {
         func_obj
     }
 
+    /// Create a bytecode generator function object.
+    /// Caller provides the guard to control object lifetime.
+    pub fn create_bytecode_generator_function(
+        &mut self,
+        guard: &Guard<JsObject>,
+        bc_func: BytecodeFunction,
+    ) -> Gc<JsObject> {
+        let func_obj = guard.alloc();
+        {
+            let mut f_ref = func_obj.borrow_mut();
+            f_ref.prototype = Some(self.function_prototype.clone());
+            f_ref.exotic = ExoticObject::Function(JsFunction::BytecodeGenerator(bc_func));
+        }
+        func_obj
+    }
+
+    /// Create a bytecode async function object.
+    /// Caller provides the guard to control object lifetime.
+    pub fn create_bytecode_async_function(
+        &mut self,
+        guard: &Guard<JsObject>,
+        bc_func: BytecodeFunction,
+    ) -> Gc<JsObject> {
+        let func_obj = guard.alloc();
+        {
+            let mut f_ref = func_obj.borrow_mut();
+            f_ref.prototype = Some(self.function_prototype.clone());
+            f_ref.exotic = ExoticObject::Function(JsFunction::BytecodeAsync(bc_func));
+        }
+        func_obj
+    }
+
     // ═══════════════════════════════════════════════════════════════════════════
     // Builtin Helper Methods
     // ═══════════════════════════════════════════════════════════════════════════
@@ -2017,6 +2049,343 @@ impl Interpreter {
         result
     }
 
+    /// Resume a bytecode generator from a suspended state
+    pub fn resume_bytecode_generator(
+        &mut self,
+        gen_state: &std::rc::Rc<std::cell::RefCell<crate::value::BytecodeGeneratorState>>,
+    ) -> Result<Guarded, JsError> {
+        use bytecode_vm::{BytecodeVM, VmResult};
+
+        // Check if generator is already completed
+        {
+            let state = gen_state.borrow();
+            if state.status == GeneratorStatus::Completed {
+                return Ok(builtins::create_generator_result(
+                    self,
+                    JsValue::Undefined,
+                    true,
+                ));
+            }
+        }
+
+        // Get generator info
+        let (started, sent_value, saved_ip, saved_registers, saved_call_stack, saved_try_stack, chunk, yield_result_register, closure, args, func_env, current_env) = {
+            let state = gen_state.borrow();
+            (
+                state.started,
+                state.sent_value.clone(),
+                state.saved_ip,
+                state.saved_registers.clone(),
+                state.saved_call_stack.clone(),
+                state.saved_try_stack.clone(),
+                state.chunk.clone(),
+                state.yield_result_register,
+                state.closure.clone(),
+                state.args.clone(),
+                state.func_env.clone(),
+                state.current_env.clone(),
+            )
+        };
+
+        // Save current environment
+        let saved_env = self.env.cheap_clone();
+
+        // For first call, create a new function environment from the closure
+        // For subsequent calls, use the saved current environment (which may include block scopes)
+        let (gen_env, env_guard) = if !started {
+            // Create a new environment with closure as parent
+            let (new_env, guard) = create_environment_unrooted(&self.heap, Some(closure.cheap_clone()));
+            // Save it for future calls
+            gen_state.borrow_mut().func_env = Some(new_env.cheap_clone());
+            (new_env, Some(guard))
+        } else if let Some(env) = current_env {
+            // Use the saved current environment (includes any block scopes from yield point)
+            (env, None)
+        } else if let Some(env) = func_env {
+            // Fallback to function environment
+            (env, None)
+        } else {
+            // Fallback: create new environment (shouldn't happen)
+            let (new_env, guard) = create_environment_unrooted(&self.heap, Some(closure.cheap_clone()));
+            gen_state.borrow_mut().func_env = Some(new_env.cheap_clone());
+            (new_env, Some(guard))
+        };
+
+        // Set the generator's environment as the current environment
+        self.env = gen_env;
+        if let Some(guard) = env_guard {
+            self.push_env_guard(guard);
+        }
+
+        let vm_guard = self.heap.create_guard();
+
+        // Run the generator
+        let result = if !started {
+            // First call - create a new VM and run from the beginning
+            gen_state.borrow_mut().started = true;
+
+            // Create VM with arguments
+            let mut vm = BytecodeVM::with_guard_and_args(chunk, JsValue::Undefined, vm_guard, &args);
+
+            match vm.run(self) {
+                VmResult::Complete(guarded) => {
+                    // Generator completed normally
+                    gen_state.borrow_mut().status = GeneratorStatus::Completed;
+                    self.env = saved_env;
+                    Ok(builtins::create_generator_result(self, guarded.value, true))
+                }
+                VmResult::Yield(yield_result) => {
+                    // Save the VM state and current environment for resumption
+                    {
+                        let mut state = gen_state.borrow_mut();
+                        state.saved_ip = yield_result.state.ip;
+                        state.saved_registers = yield_result.state.registers;
+                        state.saved_call_stack = yield_result.state.frames;
+                        state.saved_try_stack = yield_result.state.try_stack;
+                        state.yield_result_register = Some(yield_result.resume_register);
+                        // Save current environment (may include block scopes)
+                        state.current_env = Some(self.env.cheap_clone());
+                    }
+                    self.env = saved_env;
+                    Ok(builtins::create_generator_result(
+                        self,
+                        yield_result.value,
+                        false,
+                    ))
+                }
+                VmResult::YieldStar(yield_star_result) => {
+                    // For yield*, we need to iterate over the iterable
+                    // Save state and start delegating
+                    {
+                        let mut state = gen_state.borrow_mut();
+                        state.saved_ip = yield_star_result.state.ip;
+                        state.saved_registers = yield_star_result.state.registers;
+                        state.saved_call_stack = yield_star_result.state.frames;
+                        state.saved_try_stack = yield_star_result.state.try_stack;
+                        state.yield_result_register = Some(yield_star_result.resume_register);
+                        // Save current environment (may include block scopes)
+                        state.current_env = Some(self.env.cheap_clone());
+                    }
+                    // Delegate to the iterable - get its iterator and next value
+                    self.start_yield_star_delegation(
+                        gen_state,
+                        yield_star_result.iterable,
+                        saved_env,
+                    )
+                }
+                VmResult::Suspend(_) => {
+                    // Should not happen for generators
+                    gen_state.borrow_mut().status = GeneratorStatus::Completed;
+                    self.env = saved_env;
+                    Err(JsError::internal_error(
+                        "Unexpected suspension in generator",
+                    ))
+                }
+                VmResult::Error(e) => {
+                    gen_state.borrow_mut().status = GeneratorStatus::Completed;
+                    self.env = saved_env;
+                    Err(e)
+                }
+            }
+        } else {
+            // Resume from saved state
+            // Create guard for the saved state
+            let state_guard = self.heap.create_guard();
+
+            // Guard all objects in saved registers
+            for val in &saved_registers {
+                if let JsValue::Object(obj) = val {
+                    state_guard.guard(obj.cheap_clone());
+                }
+            }
+
+            // Guard saved environments in call frames
+            for frame in &saved_call_stack {
+                if let Some(ref env) = frame.saved_env {
+                    state_guard.guard(env.cheap_clone());
+                }
+            }
+
+            let saved_state = bytecode_vm::SavedVmState {
+                frames: saved_call_stack,
+                ip: saved_ip,
+                chunk,
+                registers: saved_registers,
+                try_stack: saved_try_stack,
+                guard: Some(state_guard),
+            };
+
+            // Create guard for the VM registers
+            let vm_guard = self.heap.create_guard();
+            let mut vm = BytecodeVM::from_saved_state(saved_state, JsValue::Undefined, vm_guard);
+
+            // Set the sent value in the yield result register
+            if let Some(resume_reg) = yield_result_register {
+                vm.set_reg(resume_reg, sent_value);
+            }
+
+            match vm.run(self) {
+                VmResult::Complete(guarded) => {
+                    gen_state.borrow_mut().status = GeneratorStatus::Completed;
+                    self.env = saved_env;
+                    Ok(builtins::create_generator_result(self, guarded.value, true))
+                }
+                VmResult::Yield(yield_result) => {
+                    // Save the VM state and current environment for next resumption
+                    {
+                        let mut state = gen_state.borrow_mut();
+                        state.saved_ip = yield_result.state.ip;
+                        state.saved_registers = yield_result.state.registers;
+                        state.saved_call_stack = yield_result.state.frames;
+                        state.saved_try_stack = yield_result.state.try_stack;
+                        state.yield_result_register = Some(yield_result.resume_register);
+                        // Save current environment (may include block scopes)
+                        state.current_env = Some(self.env.cheap_clone());
+                    }
+                    self.env = saved_env;
+                    Ok(builtins::create_generator_result(
+                        self,
+                        yield_result.value,
+                        false,
+                    ))
+                }
+                VmResult::YieldStar(yield_star_result) => {
+                    // Save state for yield* delegation
+                    {
+                        let mut state = gen_state.borrow_mut();
+                        state.saved_ip = yield_star_result.state.ip;
+                        state.saved_registers = yield_star_result.state.registers;
+                        state.saved_call_stack = yield_star_result.state.frames;
+                        state.saved_try_stack = yield_star_result.state.try_stack;
+                        state.yield_result_register = Some(yield_star_result.resume_register);
+                        // Save current environment (may include block scopes)
+                        state.current_env = Some(self.env.cheap_clone());
+                    }
+                    self.start_yield_star_delegation(
+                        gen_state,
+                        yield_star_result.iterable,
+                        saved_env,
+                    )
+                }
+                VmResult::Suspend(_) => {
+                    gen_state.borrow_mut().status = GeneratorStatus::Completed;
+                    self.env = saved_env;
+                    Err(JsError::internal_error(
+                        "Unexpected suspension in generator",
+                    ))
+                }
+                VmResult::Error(e) => {
+                    gen_state.borrow_mut().status = GeneratorStatus::Completed;
+                    self.env = saved_env;
+                    Err(e)
+                }
+            }
+        };
+
+        result
+    }
+
+    /// Start yield* delegation - get the first value from the iterable
+    fn start_yield_star_delegation(
+        &mut self,
+        gen_state: &std::rc::Rc<std::cell::RefCell<crate::value::BytecodeGeneratorState>>,
+        iterable: JsValue,
+        saved_env: Gc<JsObject>,
+    ) -> Result<Guarded, JsError> {
+        // For yield*, we need to:
+        // 1. Get the iterator from the iterable
+        // 2. Store it in the generator state for delegation
+        // 3. Call next() to get the first value
+        // 4. On subsequent next() calls, delegate to the stored iterator
+
+        // Try to get Symbol.iterator method
+        let JsValue::Object(obj) = &iterable else {
+            self.env = saved_env;
+            return Err(JsError::type_error("yield* value is not iterable"));
+        };
+
+        // Get Symbol.iterator
+        let well_known = builtins::symbol::get_well_known_symbols();
+        let iterator_symbol =
+            JsSymbol::new(well_known.iterator, Some("Symbol.iterator".to_string()));
+        let iterator_key = PropertyKey::Symbol(Box::new(iterator_symbol));
+
+        let iterator_method = obj
+            .borrow()
+            .get_property(&iterator_key);
+
+        let (iter_obj, next_method) = match iterator_method {
+            Some(method) => {
+                // Call the iterator method to get an iterator object
+                let iter_result = self.call_function(method, iterable.clone(), &[])?;
+
+                // Get next method from iterator
+                let JsValue::Object(iter_obj) = iter_result.value else {
+                    self.env = saved_env;
+                    return Err(JsError::type_error("Iterator is not an object"));
+                };
+
+                let next_method = iter_obj
+                    .borrow()
+                    .get_property(&PropertyKey::from("next"))
+                    .ok_or_else(|| {
+                        JsError::type_error("Iterator has no next method")
+                    })?;
+
+                (iter_obj, next_method)
+            }
+            None => {
+                // Check if it's already an iterator (has .next())
+                if let Some(next_method) = obj.borrow().get_property(&PropertyKey::from("next")) {
+                    (obj.cheap_clone(), next_method)
+                } else {
+                    self.env = saved_env;
+                    return Err(JsError::type_error("yield* value is not iterable"));
+                }
+            }
+        };
+
+        // Call next() to get the first value
+        let result = self.call_function(next_method.clone(), JsValue::Object(iter_obj.cheap_clone()), &[])?;
+
+        // Extract value and done
+        let (value, done) = self.extract_iterator_result(&result.value);
+
+        if done {
+            // Iterator is immediately done, resume generator with return value
+            gen_state.borrow_mut().sent_value = value;
+            gen_state.borrow_mut().status = GeneratorStatus::Suspended;
+            self.env = saved_env;
+            // Resume the generator to continue after yield*
+            self.resume_bytecode_generator(gen_state)
+        } else {
+            // Store the delegated iterator for future next() calls
+            gen_state.borrow_mut().delegated_iterator = Some((iter_obj, next_method));
+            gen_state.borrow_mut().status = GeneratorStatus::Suspended;
+            self.env = saved_env;
+            Ok(builtins::create_generator_result(self, value, false))
+        }
+    }
+
+    /// Extract value and done from an iterator result object
+    fn extract_iterator_result(&self, result: &JsValue) -> (JsValue, bool) {
+        let JsValue::Object(obj) = result else {
+            return (JsValue::Undefined, true);
+        };
+
+        let value = obj
+            .borrow()
+            .get_property(&PropertyKey::from("value"))
+            .unwrap_or(JsValue::Undefined);
+
+        let done = match obj.borrow().get_property(&PropertyKey::from("done")) {
+            Some(JsValue::Boolean(b)) => b,
+            _ => false,
+        };
+
+        (value, done)
+    }
+
     // ═══════════════════════════════════════════════════════════════════════════
     // Evaluation Entry Point
     // ═══════════════════════════════════════════════════════════════════════════
@@ -2038,13 +2407,17 @@ impl Interpreter {
     ) -> Result<Guarded, JsError> {
         use bytecode_vm::{BytecodeVM, VmResult};
 
-        let mut vm = BytecodeVM::new(chunk, JsValue::Object(self.global.clone()));
+        let vm_guard = self.heap.create_guard();
+        let mut vm = BytecodeVM::with_guard(chunk, JsValue::Object(self.global.clone()), vm_guard);
 
         match vm.run(self) {
             VmResult::Complete(guarded) => Ok(guarded),
             VmResult::Error(err) => Err(err),
             VmResult::Suspend(_) => Err(JsError::internal_error(
                 "Bytecode execution cannot suspend at top level",
+            )),
+            VmResult::Yield(_) | VmResult::YieldStar(_) => Err(JsError::internal_error(
+                "Bytecode execution cannot yield at top level",
             )),
         }
     }
@@ -6140,6 +6513,16 @@ impl Interpreter {
                 self.call_bytecode_function(bc_func, this_value, args)
             }
 
+            JsFunction::BytecodeGenerator(bc_func) => {
+                // Create a new bytecode generator object
+                self.create_and_call_bytecode_generator(bc_func, args)
+            }
+
+            JsFunction::BytecodeAsync(bc_func) => {
+                // Call async function - runs body and wraps result in Promise
+                self.call_bytecode_async_function(bc_func, this_value, args)
+            }
+
             JsFunction::Bound(bound) => {
                 // Call bound function: use bound this and prepend bound args
                 let mut full_args = bound.bound_args.clone();
@@ -6348,7 +6731,82 @@ impl Interpreter {
             VmResult::Suspend(_) => {
                 Err(JsError::internal_error("Bytecode function suspended unexpectedly"))
             }
+            VmResult::Yield(_) | VmResult::YieldStar(_) => {
+                Err(JsError::internal_error("Bytecode function yielded unexpectedly"))
+            }
         }
+    }
+
+    /// Call a bytecode async function - wraps result in Promise
+    fn call_bytecode_async_function(
+        &mut self,
+        bc_func: BytecodeFunction,
+        this_value: JsValue,
+        args: &[JsValue],
+    ) -> Result<Guarded, JsError> {
+        // Execute the function body synchronously
+        let body_result = self.call_bytecode_function(bc_func, this_value, args);
+
+        // Wrap result in Promise (fulfilled or rejected)
+        match body_result {
+            Ok(guarded) => {
+                // Promise assimilation: if result is already a Promise, return it directly
+                if let JsValue::Object(ref obj) = &guarded.value {
+                    if matches!(obj.borrow().exotic, ExoticObject::Promise(_)) {
+                        return Ok(guarded);
+                    }
+                }
+                // Create fulfilled promise with the result
+                let result = guarded.value;
+                let guard = self.heap.create_guard();
+                let promise = builtins::promise::create_fulfilled_promise(self, &guard, result);
+                Ok(Guarded::with_guard(JsValue::Object(promise), guard))
+            }
+            Err(e) => {
+                // Create rejected promise with the error
+                let guard = self.heap.create_guard();
+                let promise =
+                    builtins::promise::create_rejected_promise(self, &guard, e.to_value());
+                Ok(Guarded::with_guard(JsValue::Object(promise), guard))
+            }
+        }
+    }
+
+    /// Create a bytecode generator object when a generator function is called
+    fn create_and_call_bytecode_generator(
+        &mut self,
+        bc_func: BytecodeFunction,
+        args: &[JsValue],
+    ) -> Result<Guarded, JsError> {
+        use crate::value::{BytecodeGeneratorState, GeneratorStatus};
+
+        // Generate a unique ID for this generator
+        let gen_id = self.next_generator_id;
+        self.next_generator_id = self.next_generator_id.wrapping_add(1);
+
+        // Create the generator state with arguments
+        let state = BytecodeGeneratorState {
+            chunk: bc_func.chunk,
+            closure: bc_func.closure,
+            args: args.to_vec(),
+            status: GeneratorStatus::Suspended,
+            sent_value: JsValue::Undefined,
+            id: gen_id,
+            started: false,
+            saved_ip: 0,
+            saved_registers: Vec::new(),
+            saved_call_stack: Vec::new(),
+            saved_try_stack: Vec::new(),
+            yield_result_register: None,
+            func_env: None,    // Will be created on first call to next()
+            current_env: None, // Will be saved at each yield point
+            delegated_iterator: None, // For yield* delegation
+        };
+
+        // Create the generator object
+        let gen_obj = builtins::generator::create_bytecode_generator_object(self, state);
+
+        Ok(Guarded::unguarded(JsValue::Object(gen_obj)))
     }
 
     /// Collect all values from an iterable using the Symbol.iterator protocol.

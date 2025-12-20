@@ -195,7 +195,8 @@ fn js_value_to_json_with_visited(
                         ExoticObject::RegExp { .. } => {
                             serde_json::Value::Object(serde_json::Map::new())
                         }
-                        ExoticObject::Generator(_) => serde_json::Value::Null,
+                        ExoticObject::Generator(_)
+                        | ExoticObject::BytecodeGenerator(_) => serde_json::Value::Null,
                         ExoticObject::Promise(_) => serde_json::Value::Null,
                         ExoticObject::Environment(_) => serde_json::Value::Null, // Internal type
                         ExoticObject::Enum(data) => {

@@ -712,7 +712,7 @@ fn clone_object(
         )),
 
         // Generators cannot be cloned
-        ExoticObject::Generator(_) => Err(JsError::type_error(
+        ExoticObject::Generator(_) | ExoticObject::BytecodeGenerator(_) => Err(JsError::type_error(
             "Generator cannot be cloned with structuredClone",
         )),
 
