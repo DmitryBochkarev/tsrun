@@ -3,7 +3,9 @@
 use crate::error::JsError;
 use crate::gc::Gc;
 use crate::interpreter::Interpreter;
-use crate::value::{CheapClone, ExoticObject, Guarded, JsObject, JsObjectRef, JsString, JsValue, PropertyKey};
+use crate::value::{
+    CheapClone, ExoticObject, Guarded, JsObject, JsObjectRef, JsString, JsValue, PropertyKey,
+};
 
 /// Convert a number to a length value per ECMAScript ToLength.
 /// Clamps to [0, 2^53 - 1] (MAX_SAFE_INTEGER) and truncates.
@@ -141,13 +143,13 @@ pub fn init_array_prototype(interp: &mut Interpreter) {
 
     // Symbol.iterator = Array.prototype.values
     let well_known = super::symbol::get_well_known_symbols();
-    let iterator_symbol = crate::value::JsSymbol::new(
-        well_known.iterator,
-        Some("Symbol.iterator".to_string()),
-    );
+    let iterator_symbol =
+        crate::value::JsSymbol::new(well_known.iterator, Some("Symbol.iterator".to_string()));
     let iterator_key = crate::value::PropertyKey::Symbol(Box::new(iterator_symbol));
     let values_fn = interp.create_native_function("[Symbol.iterator]", array_values, 0);
-    proto.borrow_mut().set_property(iterator_key, JsValue::Object(values_fn));
+    proto
+        .borrow_mut()
+        .set_property(iterator_key, JsValue::Object(values_fn));
 }
 
 /// Create Array constructor with static methods (isArray, of, from)
@@ -1897,10 +1899,8 @@ pub fn array_values(
 
     // Make it its own iterator (for use in for-of)
     let well_known = super::symbol::get_well_known_symbols();
-    let iterator_symbol = crate::value::JsSymbol::new(
-        well_known.iterator,
-        Some("Symbol.iterator".to_string()),
-    );
+    let iterator_symbol =
+        crate::value::JsSymbol::new(well_known.iterator, Some("Symbol.iterator".to_string()));
     let iterator_key = PropertyKey::Symbol(Box::new(iterator_symbol));
     let self_fn = interp.create_native_function("[Symbol.iterator]", return_this, 0);
     guard.guard(self_fn.cheap_clone());

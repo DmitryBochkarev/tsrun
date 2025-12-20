@@ -2069,7 +2069,20 @@ impl Interpreter {
         }
 
         // Get generator info
-        let (started, sent_value, saved_ip, saved_registers, saved_call_stack, saved_try_stack, chunk, yield_result_register, closure, args, func_env, current_env) = {
+        let (
+            started,
+            sent_value,
+            saved_ip,
+            saved_registers,
+            saved_call_stack,
+            saved_try_stack,
+            chunk,
+            yield_result_register,
+            closure,
+            args,
+            func_env,
+            current_env,
+        ) = {
             let state = gen_state.borrow();
             (
                 state.started,
@@ -2094,7 +2107,8 @@ impl Interpreter {
         // For subsequent calls, use the saved current environment (which may include block scopes)
         let (gen_env, env_guard) = if !started {
             // Create a new environment with closure as parent
-            let (new_env, guard) = create_environment_unrooted(&self.heap, Some(closure.cheap_clone()));
+            let (new_env, guard) =
+                create_environment_unrooted(&self.heap, Some(closure.cheap_clone()));
             // Save it for future calls
             gen_state.borrow_mut().func_env = Some(new_env.cheap_clone());
             (new_env, Some(guard))
@@ -2106,7 +2120,8 @@ impl Interpreter {
             (env, None)
         } else {
             // Fallback: create new environment (shouldn't happen)
-            let (new_env, guard) = create_environment_unrooted(&self.heap, Some(closure.cheap_clone()));
+            let (new_env, guard) =
+                create_environment_unrooted(&self.heap, Some(closure.cheap_clone()));
             gen_state.borrow_mut().func_env = Some(new_env.cheap_clone());
             (new_env, Some(guard))
         };
@@ -2125,7 +2140,8 @@ impl Interpreter {
             gen_state.borrow_mut().started = true;
 
             // Create VM with arguments
-            let mut vm = BytecodeVM::with_guard_and_args(chunk, JsValue::Undefined, vm_guard, &args);
+            let mut vm =
+                BytecodeVM::with_guard_and_args(chunk, JsValue::Undefined, vm_guard, &args);
 
             match vm.run(self) {
                 VmResult::Complete(guarded) => {
@@ -2310,9 +2326,7 @@ impl Interpreter {
             JsSymbol::new(well_known.iterator, Some("Symbol.iterator".to_string()));
         let iterator_key = PropertyKey::Symbol(Box::new(iterator_symbol));
 
-        let iterator_method = obj
-            .borrow()
-            .get_property(&iterator_key);
+        let iterator_method = obj.borrow().get_property(&iterator_key);
 
         let (iter_obj, next_method) = match iterator_method {
             Some(method) => {
@@ -2328,9 +2342,7 @@ impl Interpreter {
                 let next_method = iter_obj
                     .borrow()
                     .get_property(&PropertyKey::from("next"))
-                    .ok_or_else(|| {
-                        JsError::type_error("Iterator has no next method")
-                    })?;
+                    .ok_or_else(|| JsError::type_error("Iterator has no next method"))?;
 
                 (iter_obj, next_method)
             }
@@ -2346,7 +2358,11 @@ impl Interpreter {
         };
 
         // Call next() to get the first value
-        let result = self.call_function(next_method.clone(), JsValue::Object(iter_obj.cheap_clone()), &[])?;
+        let result = self.call_function(
+            next_method.clone(),
+            JsValue::Object(iter_obj.cheap_clone()),
+            &[],
+        )?;
 
         // Extract value and done
         let (value, done) = self.extract_iterator_result(&result.value);
@@ -6710,12 +6726,8 @@ impl Interpreter {
 
         // Create VM and run with args pre-populated in registers
         let vm_guard = self.heap.create_guard();
-        let mut vm = BytecodeVM::with_guard_and_args(
-            bc_func.chunk.clone(),
-            effective_this,
-            vm_guard,
-            args,
-        );
+        let mut vm =
+            BytecodeVM::with_guard_and_args(bc_func.chunk.clone(), effective_this, vm_guard, args);
 
         let result = vm.run(self);
 
@@ -6728,12 +6740,12 @@ impl Interpreter {
         match result {
             VmResult::Complete(guarded) => Ok(guarded),
             VmResult::Error(e) => Err(e),
-            VmResult::Suspend(_) => {
-                Err(JsError::internal_error("Bytecode function suspended unexpectedly"))
-            }
-            VmResult::Yield(_) | VmResult::YieldStar(_) => {
-                Err(JsError::internal_error("Bytecode function yielded unexpectedly"))
-            }
+            VmResult::Suspend(_) => Err(JsError::internal_error(
+                "Bytecode function suspended unexpectedly",
+            )),
+            VmResult::Yield(_) | VmResult::YieldStar(_) => Err(JsError::internal_error(
+                "Bytecode function yielded unexpectedly",
+            )),
         }
     }
 
@@ -6798,8 +6810,8 @@ impl Interpreter {
             saved_call_stack: Vec::new(),
             saved_try_stack: Vec::new(),
             yield_result_register: None,
-            func_env: None,    // Will be created on first call to next()
-            current_env: None, // Will be saved at each yield point
+            func_env: None,           // Will be created on first call to next()
+            current_env: None,        // Will be saved at each yield point
             delegated_iterator: None, // For yield* delegation
         };
 

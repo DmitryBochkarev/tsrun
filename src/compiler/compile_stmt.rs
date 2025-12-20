@@ -809,7 +809,9 @@ impl Compiler {
         // Reserve registers for parameters - they are passed in registers 0, 1, 2...
         // We must reserve these before any other register allocation
         if !params.is_empty() {
-            func_compiler.builder.reserve_registers(params.len() as u8)?;
+            func_compiler
+                .builder
+                .reserve_registers(params.len() as u8)?;
         }
 
         // Compile parameter declarations
@@ -885,7 +887,12 @@ impl Compiler {
                     func_compiler.builder.patch_jump(skip_arg);
 
                     // Bind the inner pattern
-                    func_compiler.compile_pattern_binding(&assign_pat.left, actual_value, true, false)?;
+                    func_compiler.compile_pattern_binding(
+                        &assign_pat.left,
+                        actual_value,
+                        true,
+                        false,
+                    )?;
 
                     // Extract name for param_names
                     if let crate::ast::Pattern::Identifier(id) = assign_pat.left.as_ref() {
@@ -1094,14 +1101,25 @@ impl Compiler {
 
         // Create the method function
         if func.generator && func.async_ {
-            self.builder
-                .emit(Op::CreateAsyncGenerator { dst: method_reg, chunk_idx });
+            self.builder.emit(Op::CreateAsyncGenerator {
+                dst: method_reg,
+                chunk_idx,
+            });
         } else if func.generator {
-            self.builder.emit(Op::CreateGenerator { dst: method_reg, chunk_idx });
+            self.builder.emit(Op::CreateGenerator {
+                dst: method_reg,
+                chunk_idx,
+            });
         } else if func.async_ {
-            self.builder.emit(Op::CreateAsync { dst: method_reg, chunk_idx });
+            self.builder.emit(Op::CreateAsync {
+                dst: method_reg,
+                chunk_idx,
+            });
         } else {
-            self.builder.emit(Op::CreateClosure { dst: method_reg, chunk_idx });
+            self.builder.emit(Op::CreateClosure {
+                dst: method_reg,
+                chunk_idx,
+            });
         }
 
         // Emit DefineMethod or DefineAccessor based on method kind
@@ -1163,7 +1181,9 @@ impl Compiler {
 
         // Reserve registers for parameters
         if !ctor.params.is_empty() {
-            func_compiler.builder.reserve_registers(ctor.params.len() as u8)?;
+            func_compiler
+                .builder
+                .reserve_registers(ctor.params.len() as u8)?;
         }
 
         // Compile parameter declarations inline (same as compile_function_body)
@@ -1221,7 +1241,12 @@ impl Compiler {
                     });
 
                     func_compiler.builder.patch_jump(skip_arg);
-                    func_compiler.compile_pattern_binding(&assign_pat.left, actual_value, true, false)?;
+                    func_compiler.compile_pattern_binding(
+                        &assign_pat.left,
+                        actual_value,
+                        true,
+                        false,
+                    )?;
 
                     if let crate::ast::Pattern::Identifier(id) = assign_pat.left.as_ref() {
                         param_names.push(id.name.cheap_clone());

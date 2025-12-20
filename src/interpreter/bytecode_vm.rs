@@ -249,8 +249,9 @@ impl BytecodeVM {
         if let JsValue::Object(this_obj) = &self.this_value {
             // Look up constructor from prototype chain
             if let Some(proto) = &this_obj.borrow().prototype {
-                if let Some(JsValue::Object(ctor_obj)) =
-                    proto.borrow().get_property(&PropertyKey::String(interp.intern("constructor")))
+                if let Some(JsValue::Object(ctor_obj)) = proto
+                    .borrow()
+                    .get_property(&PropertyKey::String(interp.intern("constructor")))
                 {
                     if let Some(super_val) = ctor_obj.borrow().get_property(&super_key) {
                         return Ok(super_val);
@@ -272,8 +273,9 @@ impl BytecodeVM {
         if let JsValue::Object(this_obj) = &self.this_value {
             // Look up constructor from prototype chain
             if let Some(proto) = &this_obj.borrow().prototype {
-                if let Some(JsValue::Object(ctor_obj)) =
-                    proto.borrow().get_property(&PropertyKey::String(interp.intern("constructor")))
+                if let Some(JsValue::Object(ctor_obj)) = proto
+                    .borrow()
+                    .get_property(&PropertyKey::String(interp.intern("constructor")))
                 {
                     if let Some(target) = ctor_obj.borrow().get_property(&super_target_key) {
                         return Ok(target);
@@ -525,7 +527,11 @@ impl BytecodeVM {
 
     /// Create a new VM from saved state (for generator resumption)
     /// The guard must protect all objects in the saved registers
-    pub fn from_saved_state(state: SavedVmState, this_value: JsValue, guard: Guard<JsObject>) -> Self {
+    pub fn from_saved_state(
+        state: SavedVmState,
+        this_value: JsValue,
+        guard: Guard<JsObject>,
+    ) -> Self {
         // Guard this_value if it's an object
         if let JsValue::Object(obj) = &this_value {
             guard.guard(obj.cheap_clone());
@@ -1239,7 +1245,10 @@ impl BytecodeVM {
                     self.set_reg(frame.return_register, JsValue::Undefined);
                     Ok(OpResult::Continue)
                 } else {
-                    Ok(OpResult::Halt(Guarded{ value: JsValue::Undefined, guard: None}))
+                    Ok(OpResult::Halt(Guarded {
+                        value: JsValue::Undefined,
+                        guard: None,
+                    }))
                 }
             }
 
@@ -1311,8 +1320,7 @@ impl BytecodeVM {
 
                 // Create function object with the BytecodeGenerator variant
                 let guard = interp.heap.create_guard();
-                let func_obj =
-                    interp.create_bytecode_generator_function(&guard, bc_func);
+                let func_obj = interp.create_bytecode_generator_function(&guard, bc_func);
                 self.set_reg(dst, JsValue::Object(func_obj));
                 Ok(OpResult::Continue)
             }
@@ -1321,7 +1329,11 @@ impl BytecodeVM {
                 // Get the async function bytecode chunk from constants
                 let chunk = match self.get_constant(chunk_idx) {
                     Some(Constant::Chunk(c)) => c.clone(),
-                    _ => return Err(JsError::internal_error("Invalid async function chunk index")),
+                    _ => {
+                        return Err(JsError::internal_error(
+                            "Invalid async function chunk index",
+                        ))
+                    }
                 };
 
                 // Create a BytecodeAsync function with the current environment as closure
@@ -1495,7 +1507,8 @@ impl BytecodeVM {
                         }
 
                         // For non-array objects, try Symbol.iterator
-                        let well_known = crate::interpreter::builtins::symbol::get_well_known_symbols();
+                        let well_known =
+                            crate::interpreter::builtins::symbol::get_well_known_symbols();
                         let iterator_symbol = crate::value::JsSymbol::new(
                             well_known.iterator,
                             Some("Symbol.iterator".to_string()),
@@ -1548,9 +1561,13 @@ impl BytecodeVM {
                 };
 
                 // Check if this is our internal array iterator
-                let array_prop = iter_obj.borrow().get_property(&PropertyKey::from("__array__"));
+                let array_prop = iter_obj
+                    .borrow()
+                    .get_property(&PropertyKey::from("__array__"));
                 if let Some(JsValue::Object(arr_ref)) = array_prop {
-                    let index = match iter_obj.borrow().get_property(&PropertyKey::from("__index__"))
+                    let index = match iter_obj
+                        .borrow()
+                        .get_property(&PropertyKey::from("__index__"))
                     {
                         Some(JsValue::Number(n)) => n as usize,
                         _ => 0,
@@ -1588,10 +1605,13 @@ impl BytecodeVM {
                 }
 
                 // Check if this is our internal string iterator
-                let string_prop =
-                    iter_obj.borrow().get_property(&PropertyKey::from("__string__"));
+                let string_prop = iter_obj
+                    .borrow()
+                    .get_property(&PropertyKey::from("__string__"));
                 if let Some(JsValue::String(s)) = string_prop {
-                    let index = match iter_obj.borrow().get_property(&PropertyKey::from("__index__"))
+                    let index = match iter_obj
+                        .borrow()
+                        .get_property(&PropertyKey::from("__index__"))
                     {
                         Some(JsValue::Number(n)) => n as usize,
                         _ => 0,
@@ -1599,7 +1619,10 @@ impl BytecodeVM {
 
                     let chars: Vec<char> = s.as_str().chars().collect();
                     let (value, done) = if index < chars.len() {
-                        let val = chars.get(index).map(|c| JsValue::String(JsString::from(c.to_string()))).unwrap_or(JsValue::Undefined);
+                        let val = chars
+                            .get(index)
+                            .map(|c| JsValue::String(JsString::from(c.to_string())))
+                            .unwrap_or(JsValue::Undefined);
                         (val, false)
                     } else {
                         (JsValue::Undefined, true)
@@ -1687,9 +1710,7 @@ impl BytecodeVM {
                 // Get constructor function - it should be a function object
                 let ctor_val = self.get_reg(constructor).clone();
                 let JsValue::Object(ctor_obj) = ctor_val else {
-                    return Err(JsError::type_error(
-                        "Class constructor must be a function",
-                    ));
+                    return Err(JsError::type_error("Class constructor must be a function"));
                 };
 
                 // Create prototype object
@@ -1770,15 +1791,17 @@ impl BytecodeVM {
                         .borrow()
                         .get_property(&PropertyKey::String(interp.intern("__super__")))
                     {
-                        method_obj
-                            .borrow_mut()
-                            .set_property(PropertyKey::String(interp.intern("__super__")), super_val);
+                        method_obj.borrow_mut().set_property(
+                            PropertyKey::String(interp.intern("__super__")),
+                            super_val,
+                        );
                     }
 
                     // Copy __super_target__ from class constructor
-                    if let Some(super_target) = class_obj.borrow().get_property(&PropertyKey::String(
-                        interp.intern("__super_target__"),
-                    )) {
+                    if let Some(super_target) = class_obj
+                        .borrow()
+                        .get_property(&PropertyKey::String(interp.intern("__super_target__")))
+                    {
                         method_obj.borrow_mut().set_property(
                             PropertyKey::String(interp.intern("__super_target__")),
                             super_target,
@@ -1794,7 +1817,8 @@ impl BytecodeVM {
                 } else {
                     // Add to prototype
                     let proto_key = PropertyKey::String(interp.intern("prototype"));
-                    if let Some(JsValue::Object(proto)) = class_obj.borrow().get_property(&proto_key)
+                    if let Some(JsValue::Object(proto)) =
+                        class_obj.borrow().get_property(&proto_key)
                     {
                         proto
                             .borrow_mut()
@@ -1840,7 +1864,9 @@ impl BytecodeVM {
                     class_obj.cheap_clone()
                 } else {
                     let proto_key = PropertyKey::String(interp.intern("prototype"));
-                    if let Some(JsValue::Object(proto)) = class_obj.borrow().get_property(&proto_key) {
+                    if let Some(JsValue::Object(proto)) =
+                        class_obj.borrow().get_property(&proto_key)
+                    {
                         proto
                     } else {
                         return Ok(OpResult::Continue);
@@ -1957,12 +1983,11 @@ impl BytecodeVM {
                             }
                         }
                     }
-                    JsValue::String(s) => {
-                        s.as_str()
-                            .chars()
-                            .map(|c| JsValue::String(JsString::from(c.to_string())))
-                            .collect()
-                    }
+                    JsValue::String(s) => s
+                        .as_str()
+                        .chars()
+                        .map(|c| JsValue::String(JsString::from(c.to_string())))
+                        .collect(),
                     _ => Vec::new(),
                 };
 
@@ -1991,9 +2016,14 @@ impl BytecodeVM {
 
                 if let JsValue::Object(iter_obj) = iter_val {
                     // Check for internal array iterator
-                    let array_prop = iter_obj.borrow().get_property(&PropertyKey::from("__array__"));
+                    let array_prop = iter_obj
+                        .borrow()
+                        .get_property(&PropertyKey::from("__array__"));
                     if let Some(JsValue::Object(arr_ref)) = array_prop {
-                        let index = match iter_obj.borrow().get_property(&PropertyKey::from("__index__")) {
+                        let index = match iter_obj
+                            .borrow()
+                            .get_property(&PropertyKey::from("__index__"))
+                        {
                             Some(JsValue::Number(n)) => n as usize,
                             _ => start_index as usize,
                         };
@@ -2211,6 +2241,9 @@ fn guarded_js_value(val: JsValue, interp: &Interpreter) -> Guarded {
                 guard: Some(guard),
             }
         }
-        _ => Guarded { value: val, guard: None },
+        _ => Guarded {
+            value: val,
+            guard: None,
+        },
     }
 }

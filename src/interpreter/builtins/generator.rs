@@ -7,8 +7,8 @@ use crate::error::JsError;
 use crate::gc::Gc;
 use crate::interpreter::Interpreter;
 use crate::value::{
-    BytecodeGeneratorState, CheapClone, ExoticObject, GeneratorState, GeneratorStatus, Guarded, JsObject,
-    JsString, JsSymbol, JsValue, PropertyKey,
+    BytecodeGeneratorState, CheapClone, ExoticObject, GeneratorState, GeneratorStatus, Guarded,
+    JsObject, JsString, JsSymbol, JsValue, PropertyKey,
 };
 
 use super::symbol::get_well_known_symbols;
@@ -31,15 +31,11 @@ pub fn init_generator_prototype(interp: &mut Interpreter) {
 
     // Add Symbol.iterator - returns the generator itself
     // This makes generators work with for-of loops
-    let iterator_symbol = JsSymbol::new(
-        well_known.iterator,
-        Some("Symbol.iterator".to_string()),
-    );
+    let iterator_symbol = JsSymbol::new(well_known.iterator, Some("Symbol.iterator".to_string()));
     let iterator_key = PropertyKey::Symbol(Box::new(iterator_symbol));
 
     // Create the [Symbol.iterator]() method that returns `this`
-    let iterator_fn =
-        interp.create_native_function("[Symbol.iterator]", generator_iterator, 0);
+    let iterator_fn = interp.create_native_function("[Symbol.iterator]", generator_iterator, 0);
     proto
         .borrow_mut()
         .set_property(iterator_key, JsValue::Object(iterator_fn));

@@ -712,9 +712,9 @@ fn clone_object(
         )),
 
         // Generators cannot be cloned
-        ExoticObject::Generator(_) | ExoticObject::BytecodeGenerator(_) => Err(JsError::type_error(
-            "Generator cannot be cloned with structuredClone",
-        )),
+        ExoticObject::Generator(_) | ExoticObject::BytecodeGenerator(_) => Err(
+            JsError::type_error("Generator cannot be cloned with structuredClone"),
+        ),
 
         // Promises cannot be cloned
         ExoticObject::Promise(_) => Err(JsError::type_error(
