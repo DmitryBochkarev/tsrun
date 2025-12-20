@@ -648,3 +648,74 @@ fn test_eval_scope_minimal() {
         JsValue::Number(42.0)
     );
 }
+
+// ============================================================================
+// eval() completion value tests (test262 cptn-* tests)
+// ============================================================================
+
+#[test]
+fn test_eval_if_empty_block_completion() {
+    // eval('1; if (true) { }') should return undefined (from empty block)
+    assert_eq!(eval("eval('1; if (true) { }')"), JsValue::Undefined);
+}
+
+#[test]
+fn test_eval_if_expression_completion() {
+    // eval('2; if (true) { 3; }') should return 3 (from expression in block)
+    assert_eq!(eval("eval('2; if (true) { 3; }')"), JsValue::Number(3.0));
+}
+
+#[test]
+fn test_eval_switch_completion() {
+    // switch completion values
+    assert_eq!(
+        eval("eval('1; switch (\"a\") { case \"a\": 2; }')"),
+        JsValue::Number(2.0)
+    );
+}
+
+#[test]
+fn test_eval_for_completion() {
+    // for loop completion value is from last iteration's body
+    assert_eq!(
+        eval("eval('1; for (let i = 0; i < 3; i++) { i; }')"),
+        JsValue::Number(2.0)
+    );
+}
+
+#[test]
+fn test_eval_while_completion() {
+    // while loop completion value
+    assert_eq!(
+        eval("eval('let i = 0; while (i < 3) { i++; }')"),
+        JsValue::Number(2.0)
+    );
+}
+
+#[test]
+fn test_eval_if_else_completion() {
+    // if-else completion values
+    assert_eq!(
+        eval("eval('if (false) { 1 } else { 2 }')"),
+        JsValue::Number(2.0)
+    );
+    assert_eq!(
+        eval("eval('if (true) { 1 } else { 2 }')"),
+        JsValue::Number(1.0)
+    );
+}
+
+#[test]
+fn test_eval_try_completion() {
+    // try block completion
+    assert_eq!(
+        eval("eval('try { 42 } catch(e) { }')"),
+        JsValue::Number(42.0)
+    );
+}
+
+#[test]
+fn test_eval_block_completion() {
+    // block completion value is from last statement
+    assert_eq!(eval("eval('{ 1; 2; 3; }')"), JsValue::Number(3.0));
+}

@@ -219,6 +219,8 @@ pub enum Frame {
         test: Rc<Expression>,
         body: Rc<Statement>,
         label: LoopLabel,
+        /// Last body completion value (for eval completion semantics)
+        last_value: JsValue,
     },
 
     /// While check: test evaluated, execute body or exit
@@ -226,6 +228,8 @@ pub enum Frame {
         test: Rc<Expression>,
         body: Rc<Statement>,
         label: LoopLabel,
+        /// Last body completion value (for eval completion semantics)
+        last_value: JsValue,
     },
 
     /// While after body: body executed, check completion before evaluating test
@@ -233,6 +237,8 @@ pub enum Frame {
         test: Rc<Expression>,
         body: Rc<Statement>,
         label: LoopLabel,
+        /// Last body completion value (for eval completion semantics)
+        last_value: JsValue,
     },
 
     /// Do-while loop: execute body first, then check condition
@@ -268,6 +274,8 @@ pub enum Frame {
         saved_env: Gc<JsObject>,
         /// Whether this is the first iteration (need to create per-iteration env)
         first_iteration: bool,
+        /// Last body completion value (for eval completion semantics)
+        last_value: JsValue,
     },
 
     /// For loop test check: condition evaluated, decide to continue or exit
@@ -278,6 +286,8 @@ pub enum Frame {
         label: LoopLabel,
         loop_vars: Rc<Vec<(JsString, bool)>>,
         saved_env: Gc<JsObject>,
+        /// Last body completion value (for eval completion semantics)
+        last_value: JsValue,
     },
 
     /// For loop after body: handle control flow, create per-iteration env, run update
@@ -288,6 +298,8 @@ pub enum Frame {
         label: LoopLabel,
         loop_vars: Rc<Vec<(JsString, bool)>>,
         saved_env: Gc<JsObject>,
+        /// Last body completion value (for eval completion semantics)
+        last_value: JsValue,
     },
 
     /// For loop cleanup: restore environment after loop exits
@@ -403,6 +415,8 @@ pub enum Frame {
         cases: Rc<[SwitchCase]>,
         case_index: usize,
         stmt_index: usize,
+        /// Last statement completion value (for eval completion semantics)
+        last_value: JsValue,
     },
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -827,24 +841,36 @@ impl Interpreter {
                 alternate,
             } => self.step_if_branch(state, consequent, alternate),
 
-            Frame::WhileLoop { test, body, label } => {
+            Frame::WhileLoop {
+                test,
+                body,
+                label,
+                last_value,
+            } => {
                 // Start while loop - evaluate test first
                 state.push_frame(Frame::WhileCheck {
                     test: test.clone(),
                     body,
                     label,
+                    last_value,
                 });
                 state.push_frame(Frame::Expr(test));
                 StepResult::Continue
             }
 
-            Frame::WhileCheck { test, body, label } => {
-                self.step_while_check(state, test, body, label)
-            }
+            Frame::WhileCheck {
+                test,
+                body,
+                label,
+                last_value,
+            } => self.step_while_check(state, test, body, label, last_value),
 
-            Frame::WhileAfterBody { test, body, label } => {
-                self.step_while_after_body(state, test, body, label)
-            }
+            Frame::WhileAfterBody {
+                test,
+                body,
+                label,
+                last_value,
+            } => self.step_while_after_body(state, test, body, label, last_value),
 
             Frame::DoWhileLoop { test, body, label } => {
                 // Execute body first, then check condition
@@ -873,6 +899,7 @@ impl Interpreter {
                 loop_vars,
                 saved_env,
                 first_iteration,
+                last_value,
             } => self.step_for_loop(
                 state,
                 test,
@@ -882,6 +909,7 @@ impl Interpreter {
                 loop_vars,
                 saved_env,
                 first_iteration,
+                last_value,
             ),
 
             Frame::ForTestCheck {
@@ -891,7 +919,10 @@ impl Interpreter {
                 label,
                 loop_vars,
                 saved_env,
-            } => self.step_for_test_check(state, test, update, body, label, loop_vars, saved_env),
+                last_value,
+            } => self.step_for_test_check(
+                state, test, update, body, label, loop_vars, saved_env, last_value,
+            ),
 
             Frame::ForAfterBody {
                 test,
@@ -900,15 +931,21 @@ impl Interpreter {
                 label,
                 loop_vars,
                 saved_env,
-            } => self.step_for_after_body(state, test, update, body, label, loop_vars, saved_env),
+                last_value,
+            } => self.step_for_after_body(
+                state, test, update, body, label, loop_vars, saved_env, last_value,
+            ),
 
             Frame::ForCleanup { saved_env } => {
                 self.pop_scope(saved_env);
-                // Only push undefined if not returning/throwing - preserve the return value
-                if !matches!(
-                    state.completion,
-                    StackCompletion::Return | StackCompletion::Throw
-                ) {
+                // Loop body already pushed its completion value, don't overwrite it
+                // Only push undefined if there's no value on the stack and not returning/throwing
+                if state.values.is_empty()
+                    && !matches!(
+                        state.completion,
+                        StackCompletion::Return | StackCompletion::Throw
+                    )
+                {
                     state.push_value(Guarded::unguarded(JsValue::Undefined));
                 }
                 StepResult::Continue
@@ -1053,7 +1090,15 @@ impl Interpreter {
                 cases,
                 case_index,
                 stmt_index,
-            } => self.step_switch_body(state, discriminant, cases, case_index, stmt_index),
+                last_value,
+            } => self.step_switch_body(
+                state,
+                discriminant,
+                cases,
+                case_index,
+                stmt_index,
+                last_value,
+            ),
 
             // ═══════════════════════════════════════════════════════════════
             // Try/Catch/Finally Statement
@@ -1229,7 +1274,7 @@ impl Interpreter {
         statements: Rc<[Statement]>,
         index: usize,
     ) -> StepResult {
-        // Check completion from previous statement FIRST (before checking if done)
+        // Check completion from previous statement FIRST (before popping values)
         match &state.completion {
             StackCompletion::Return => {
                 // Return from program - done, use the value on stack
@@ -1255,6 +1300,13 @@ impl Interpreter {
                 state.push_value(Guarded::unguarded(JsValue::Undefined));
             }
             return StepResult::Continue;
+        }
+
+        // Pop previous statement's value to keep only the final result on stack
+        // (index > 0 means we're after at least one statement execution,
+        //  and we only pop if we're continuing normal execution)
+        if index > 0 && matches!(state.completion, StackCompletion::Normal) {
+            let _ = state.pop_value();
         }
 
         // Push continuation for next statement
@@ -1288,7 +1340,7 @@ impl Interpreter {
             return StepResult::Continue;
         }
 
-        // Check for control flow
+        // Check for control flow FIRST (before popping values)
         match &state.completion {
             StackCompletion::Return
             | StackCompletion::Break(_)
@@ -1297,6 +1349,13 @@ impl Interpreter {
                 return StepResult::Continue;
             }
             StackCompletion::Normal => {}
+        }
+
+        // Pop previous statement's value to keep only the final result on stack
+        // (index > 0 means we're after at least one statement execution,
+        //  and we only pop if we're continuing normal execution - checked above)
+        if index > 0 {
+            let _ = state.pop_value();
         }
 
         // Push continuation for next statement
@@ -1395,6 +1454,7 @@ impl Interpreter {
                     test: while_stmt.test.cheap_clone(),
                     body: while_stmt.body.cheap_clone(),
                     label: None,
+                    last_value: JsValue::Undefined,
                 });
                 StepResult::Continue
             }
@@ -2097,6 +2157,7 @@ impl Interpreter {
         test: Rc<Expression>,
         body: Rc<Statement>,
         label: LoopLabel,
+        last_value: JsValue,
     ) -> StepResult {
         // Get condition value (test was already evaluated)
         let condition = state
@@ -2110,12 +2171,13 @@ impl Interpreter {
                 test,
                 body: body.clone(),
                 label,
+                last_value,
             });
             // Execute body
             state.push_frame(Frame::Stmt(body));
         } else {
-            // Exit loop
-            state.push_value(Guarded::unguarded(JsValue::Undefined));
+            // Exit loop - return last body value as completion
+            state.push_value(Guarded::unguarded(last_value));
         }
         StepResult::Continue
     }
@@ -2127,15 +2189,33 @@ impl Interpreter {
         test: Rc<Expression>,
         body: Rc<Statement>,
         label: LoopLabel,
+        _last_value: JsValue,
     ) -> StepResult {
-        // Check for break/continue/return/throw from body execution
+        // Check for Return/Throw FIRST before popping values
+        // Return/throw need to preserve their value on the stack
+        match &state.completion {
+            StackCompletion::Return | StackCompletion::Throw => {
+                // Don't pop the return value - it needs to be preserved
+                return StepResult::Continue;
+            }
+            _ => {}
+        }
+
+        // Get body result - this becomes the new last_value
+        let body_value = state
+            .pop_value()
+            .map(|v| v.value)
+            .unwrap_or(JsValue::Undefined);
+        let new_last_value = body_value;
+
+        // Check for break/continue from body execution
         match &state.completion {
             StackCompletion::Break(brk_label) => {
                 // Check if break targets this loop
                 if brk_label.is_none() || brk_label.as_ref() == label_ref(&label) {
                     state.completion = StackCompletion::Normal;
-                    let _ = state.pop_value(); // Discard body result
-                    state.push_value(Guarded::unguarded(JsValue::Undefined));
+                    // Return the body value as completion
+                    state.push_value(Guarded::unguarded(new_last_value));
                     return StepResult::Continue;
                 }
                 // Break targets outer loop - propagate
@@ -2145,12 +2225,12 @@ impl Interpreter {
                 // Check if continue targets this loop
                 if cont_label.is_none() || cont_label.as_ref() == label_ref(&label) {
                     state.completion = StackCompletion::Normal;
-                    let _ = state.pop_value(); // Discard body result
-                                               // Continue to next iteration - evaluate test again
+                    // Continue to next iteration - evaluate test again with updated last_value
                     state.push_frame(Frame::WhileCheck {
                         test: test.clone(),
                         body,
                         label,
+                        last_value: new_last_value,
                     });
                     state.push_frame(Frame::Expr(test));
                     return StepResult::Continue;
@@ -2159,20 +2239,18 @@ impl Interpreter {
                 return StepResult::Continue;
             }
             StackCompletion::Return | StackCompletion::Throw => {
-                // Return/throw - propagate up (don't push undefined, preserve return value)
+                // Already handled above before popping
                 return StepResult::Continue;
             }
             StackCompletion::Normal => {}
         }
 
-        // Discard body result
-        let _ = state.pop_value();
-
-        // Normal completion - evaluate test for next iteration
+        // Normal completion - evaluate test for next iteration with updated last_value
         state.push_frame(Frame::WhileCheck {
             test: test.cheap_clone(),
             body,
             label,
+            last_value: new_last_value,
         });
         state.push_frame(Frame::Expr(test));
 
@@ -2319,6 +2397,7 @@ impl Interpreter {
             loop_vars: loop_vars.cheap_clone(),
             saved_env: saved_env.cheap_clone(),
             first_iteration: true, // First iteration needs to create per-iteration env
+            last_value: JsValue::Undefined, // Completion value starts as undefined
         });
 
         // Handle init
@@ -2356,6 +2435,7 @@ impl Interpreter {
         loop_vars: Rc<Vec<(JsString, bool)>>,
         saved_env: Gc<JsObject>,
         first_iteration: bool,
+        last_value: JsValue,
     ) -> StepResult {
         // Create per-iteration environment if needed
         // On first iteration: create from loop scope (copy loop vars from self.env)
@@ -2394,6 +2474,7 @@ impl Interpreter {
             label,
             loop_vars,
             saved_env,
+            last_value,
         });
 
         // Evaluate test if present
@@ -2417,6 +2498,7 @@ impl Interpreter {
         label: LoopLabel,
         loop_vars: Rc<Vec<(JsString, bool)>>,
         saved_env: Gc<JsObject>,
+        last_value: JsValue,
     ) -> StepResult {
         let condition = state
             .pop_value()
@@ -2429,7 +2511,8 @@ impl Interpreter {
                 self.pop_env_guard();
             }
             // Cleanup frame already on stack will restore loop scope
-            state.push_value(Guarded::unguarded(JsValue::Undefined));
+            // Return the last body value as completion value
+            state.push_value(Guarded::unguarded(last_value));
             return StepResult::Continue;
         }
 
@@ -2441,6 +2524,7 @@ impl Interpreter {
             label,
             loop_vars,
             saved_env,
+            last_value,
         });
         state.push_frame(Frame::Stmt(body));
 
@@ -2457,7 +2541,33 @@ impl Interpreter {
         label: LoopLabel,
         loop_vars: Rc<Vec<(JsString, bool)>>,
         saved_env: Gc<JsObject>,
+        _last_value: JsValue,
     ) -> StepResult {
+        // Check for control flow from body FIRST before popping values
+        // Return/throw need to preserve their value on the stack
+        match &state.completion {
+            StackCompletion::Return | StackCompletion::Throw => {
+                // Return/throw - pop iteration guard and propagate up (cleanup will happen)
+                // Don't pop the return value - it needs to be preserved
+                if !loop_vars.is_empty() {
+                    self.pop_env_guard();
+                }
+                return StepResult::Continue;
+            }
+            _ => {}
+        }
+
+        // Get body result - this becomes the new last_value if not empty
+        let body_value = state
+            .pop_value()
+            .map(|v| v.value)
+            .unwrap_or(JsValue::Undefined);
+
+        // Update last_value: if body produced a value, use it; otherwise keep previous
+        // Per ES spec: "If stmtResult.[[value]] is not empty, set V to stmtResult.[[value]]"
+        // In our implementation, undefined from a block means "empty" completion
+        let new_last_value = body_value;
+
         // Check for control flow from body
         match &state.completion {
             StackCompletion::Break(brk_label) => {
@@ -2467,8 +2577,8 @@ impl Interpreter {
                     if !loop_vars.is_empty() {
                         self.pop_env_guard();
                     }
-                    // Exit loop - cleanup will happen
-                    state.push_value(Guarded::unguarded(JsValue::Undefined));
+                    // Exit loop - return the last body value as completion
+                    state.push_value(Guarded::unguarded(new_last_value));
                     return StepResult::Continue;
                 }
                 // Break targets outer loop - pop iteration guard and propagate
@@ -2490,17 +2600,11 @@ impl Interpreter {
                 }
             }
             StackCompletion::Return | StackCompletion::Throw => {
-                // Return/throw - pop iteration guard and propagate up (cleanup will happen)
-                if !loop_vars.is_empty() {
-                    self.pop_env_guard();
-                }
+                // Already handled above
                 return StepResult::Continue;
             }
             StackCompletion::Normal => {}
         }
-
-        // Pop body result
-        let _ = state.pop_value();
 
         // Create new per-iteration environment BEFORE update (ES spec)
         if !loop_vars.is_empty() {
@@ -2546,7 +2650,7 @@ impl Interpreter {
             self.env = new_iter_env;
         }
 
-        // Push next iteration
+        // Push next iteration with updated last_value
         state.push_frame(Frame::ForLoop {
             test,
             update: update.cheap_clone(),
@@ -2555,6 +2659,7 @@ impl Interpreter {
             loop_vars,
             saved_env,
             first_iteration: false, // Not first iteration - env already created
+            last_value: new_last_value,
         });
 
         // Execute update if present
@@ -3613,6 +3718,7 @@ impl Interpreter {
                     test: while_stmt.test.cheap_clone(),
                     body: while_stmt.body.cheap_clone(),
                     label: Some(Box::new(label)),
+                    last_value: JsValue::Undefined,
                 });
                 StepResult::Continue
             }
@@ -3690,6 +3796,7 @@ impl Interpreter {
                 cases,
                 case_index: index,
                 stmt_index: 0,
+                last_value: JsValue::Undefined,
             });
             return StepResult::Continue;
         }
@@ -3712,6 +3819,7 @@ impl Interpreter {
                     cases,
                     case_index: idx,
                     stmt_index: 0,
+                    last_value: JsValue::Undefined,
                 });
             } else {
                 // No default, switch is done
@@ -3751,6 +3859,7 @@ impl Interpreter {
                             cases,
                             case_index: index,
                             stmt_index: 0,
+                            last_value: JsValue::Undefined,
                         });
                     } else {
                         // No match, try next case
@@ -3777,11 +3886,23 @@ impl Interpreter {
         cases: Rc<[SwitchCase]>,
         case_index: usize,
         stmt_index: usize,
+        last_value: JsValue,
     ) -> StepResult {
+        // Get statement result if this is after a statement execution (not the first call)
+        let new_last_value = if stmt_index > 0 {
+            state
+                .pop_value()
+                .map(|v| v.value)
+                .unwrap_or(last_value.clone())
+        } else {
+            last_value
+        };
+
         // Check for break from previous statement
         if let StackCompletion::Break(None) = state.completion {
             state.completion = StackCompletion::Normal;
-            state.push_value(Guarded::unguarded(JsValue::Undefined));
+            // Return the last value as completion
+            state.push_value(Guarded::unguarded(new_last_value));
             return StepResult::Continue;
         }
 
@@ -3798,14 +3919,14 @@ impl Interpreter {
 
         // Done with all cases
         if case_index >= cases.len() {
-            state.push_value(Guarded::unguarded(JsValue::Undefined));
+            state.push_value(Guarded::unguarded(new_last_value));
             return StepResult::Continue;
         }
 
         let case = match cases.get(case_index) {
             Some(c) => c,
             None => {
-                state.push_value(Guarded::unguarded(JsValue::Undefined));
+                state.push_value(Guarded::unguarded(new_last_value));
                 return StepResult::Continue;
             }
         };
@@ -3817,6 +3938,7 @@ impl Interpreter {
                 cases,
                 case_index: case_index + 1,
                 stmt_index: 0,
+                last_value: new_last_value,
             });
             return StepResult::Continue;
         }
@@ -3831,6 +3953,7 @@ impl Interpreter {
                     cases,
                     case_index: case_index + 1,
                     stmt_index: 0,
+                    last_value: new_last_value,
                 });
                 return StepResult::Continue;
             }
@@ -3842,6 +3965,7 @@ impl Interpreter {
             cases,
             case_index,
             stmt_index: stmt_index + 1,
+            last_value: new_last_value,
         });
 
         // Execute current statement
