@@ -167,10 +167,10 @@ pub fn object_keys(
     _this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
-    let JsValue::Object(obj_ref) = obj else {
-        return Err(JsError::type_error("Object.keys requires an object"));
-    };
+    let arg = args.first().cloned().unwrap_or(JsValue::Undefined);
+
+    // ES2015+: Convert to object (primitives get boxed, null/undefined throw)
+    let obj_ref = interp.to_object(arg)?;
 
     // Use proxy trap if it's a proxy - ownKeys trap returns all keys
     if is_proxy(&obj_ref) {

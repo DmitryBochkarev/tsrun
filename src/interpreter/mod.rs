@@ -4613,6 +4613,58 @@ impl Interpreter {
         }
     }
 
+    /// ToObject abstract operation (ES2015+).
+    /// Converts primitives to their wrapper objects. Throws TypeError for null/undefined.
+    pub fn to_object(&mut self, value: JsValue) -> Result<Gc<JsObject>, JsError> {
+        match value {
+            JsValue::Object(obj) => Ok(obj),
+            JsValue::Undefined | JsValue::Null => Err(JsError::type_error(
+                "Cannot convert undefined or null to object",
+            )),
+            JsValue::Boolean(b) => {
+                // Create Boolean wrapper object
+                let guard = self.heap.create_guard();
+                let gc_obj = guard.alloc();
+                {
+                    let mut obj_ref = gc_obj.borrow_mut();
+                    obj_ref.prototype = Some(self.boolean_prototype.cheap_clone());
+                    obj_ref.exotic = ExoticObject::Boolean(b);
+                }
+                Ok(gc_obj)
+            }
+            JsValue::Number(n) => {
+                // Create Number wrapper object
+                let guard = self.heap.create_guard();
+                let gc_obj = guard.alloc();
+                {
+                    let mut obj_ref = gc_obj.borrow_mut();
+                    obj_ref.prototype = Some(self.number_prototype.cheap_clone());
+                    obj_ref.exotic = ExoticObject::Number(n);
+                }
+                Ok(gc_obj)
+            }
+            JsValue::String(s) => {
+                // Create String wrapper object
+                let guard = self.heap.create_guard();
+                let gc_obj = guard.alloc();
+                {
+                    let mut obj_ref = gc_obj.borrow_mut();
+                    obj_ref.prototype = Some(self.string_prototype.cheap_clone());
+                    obj_ref.exotic = ExoticObject::StringObj(s);
+                }
+                Ok(gc_obj)
+            }
+            JsValue::Symbol(_) => {
+                // Create Symbol wrapper object - use ordinary object with symbol prototype
+                // (Symbol exotic objects aren't commonly used)
+                let guard = self.heap.create_guard();
+                let gc_obj = guard.alloc();
+                gc_obj.borrow_mut().prototype = Some(self.symbol_prototype.cheap_clone());
+                Ok(gc_obj)
+            }
+        }
+    }
+
     fn evaluate_unary(&mut self, un: &UnaryExpression) -> Result<Guarded, JsError> {
         // Handle delete specially - it needs to work on member expressions
         if un.operator == UnaryOp::Delete {

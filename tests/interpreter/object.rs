@@ -1278,3 +1278,55 @@ fn test_delete_primitives_returns_true() {
         JsValue::String("true,true,true".into())
     );
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Object.keys with primitives (ES2015+)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_object_keys_with_primitives() {
+    // ES2015+: Object.keys should auto-box primitives, not throw
+    // Number has no enumerable own properties
+    assert_eq!(eval("Object.keys(42).length"), JsValue::Number(0.0));
+
+    // Boolean has no enumerable own properties
+    assert_eq!(eval("Object.keys(true).length"), JsValue::Number(0.0));
+
+    // Symbol works too (no enumerable own properties)
+    assert_eq!(
+        eval("Object.keys(Symbol('test')).length"),
+        JsValue::Number(0.0)
+    );
+}
+
+#[test]
+fn test_object_keys_null_undefined_throws() {
+    // null/undefined should throw TypeError
+    assert_eq!(
+        eval(
+            r#"
+            try {
+                Object.keys(null);
+                "no error";
+            } catch (e) {
+                e instanceof TypeError ? "TypeError" : "other error";
+            }
+        "#
+        ),
+        JsValue::String("TypeError".into())
+    );
+
+    assert_eq!(
+        eval(
+            r#"
+            try {
+                Object.keys(undefined);
+                "no error";
+            } catch (e) {
+                e instanceof TypeError ? "TypeError" : "other error";
+            }
+        "#
+        ),
+        JsValue::String("TypeError".into())
+    );
+}
