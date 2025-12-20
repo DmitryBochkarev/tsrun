@@ -414,7 +414,10 @@ pub fn create_error_object(
             ),
         ),
         // These should not reach here, but handle them anyway
-        JsError::Thrown | JsError::ThrownValue { .. } | JsError::GeneratorYield { .. } => {
+        JsError::Thrown
+        | JsError::ThrownValue { .. }
+        | JsError::GeneratorYield { .. }
+        | JsError::OptionalChainShortCircuit => {
             return (JsValue::Undefined, None);
         }
     };

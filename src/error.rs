@@ -92,6 +92,12 @@ pub enum JsError {
     #[error("GeneratorYield")]
     GeneratorYield { value: crate::value::JsValue },
 
+    /// Internal marker for optional chain short-circuit (not a real error)
+    /// When a?.b evaluates with a being null/undefined, we need to short-circuit
+    /// the entire optional chain (a?.b.c.d should all return undefined)
+    #[error("OptionalChainShortCircuit")]
+    OptionalChainShortCircuit,
+
     /// Execution exceeded the time limit
     #[error("TimeoutError: execution exceeded {elapsed_ms}ms timeout (limit: {timeout_ms}ms)")]
     Timeout { timeout_ms: u64, elapsed_ms: u64 },
@@ -209,6 +215,8 @@ impl JsError {
                 "TimeoutError: execution exceeded {}ms timeout (limit: {}ms)",
                 elapsed_ms, timeout_ms
             ))),
+            // OptionalChainShortCircuit should never escape to user code - it's an internal marker
+            JsError::OptionalChainShortCircuit => crate::value::JsValue::Undefined,
         }
     }
 }

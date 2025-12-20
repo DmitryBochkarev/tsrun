@@ -1874,6 +1874,10 @@ impl<'a> Parser<'a> {
         };
 
         // Call expressions and member access chain
+        // Track if we've seen any optional chaining (?.) in this expression
+        let mut in_optional_chain = false;
+        let optional_chain_start = start;
+
         loop {
             if self.check(&TokenKind::LParen) {
                 let (arguments, type_arguments) = self.parse_call_arguments()?;
@@ -1952,7 +1956,9 @@ impl<'a> Parser<'a> {
                     span,
                 });
             } else if self.match_token(&TokenKind::QuestionDot) {
-                // Optional chaining
+                // Optional chaining - mark that we're in an optional chain
+                in_optional_chain = true;
+
                 if self.check(&TokenKind::LParen) {
                     let (arguments, type_arguments) = self.parse_call_arguments()?;
                     let span = self.span_from(start);
@@ -1999,6 +2005,16 @@ impl<'a> Parser<'a> {
             } else {
                 break;
             }
+        }
+
+        // If we saw any optional chaining, wrap the expression in OptionalChainExpression
+        // This allows the interpreter to short-circuit the entire chain if the base is nullish
+        if in_optional_chain {
+            let span = self.span_from(optional_chain_start);
+            expr = Expression::OptionalChain(OptionalChainExpression {
+                base: Rc::new(expr),
+                span,
+            });
         }
 
         // TypeScript type assertion (as)

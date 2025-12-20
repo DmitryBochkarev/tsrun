@@ -4038,6 +4038,19 @@ impl Interpreter {
                 "Spread element is only valid in array or object literals",
             )),
 
+            // Optional chain expression - wraps an expression containing ?.
+            // If the chain short-circuits (base is null/undefined at ?.), return undefined
+            Expression::OptionalChain(opt_chain) => {
+                match self.evaluate_expression(&opt_chain.base) {
+                    Ok(result) => Ok(result),
+                    Err(JsError::OptionalChainShortCircuit) => {
+                        // The chain short-circuited - return undefined
+                        Ok(Guarded::unguarded(JsValue::Undefined))
+                    }
+                    Err(e) => Err(e),
+                }
+            }
+
             // Yield expression - should be handled by stack-based execution (step_expr)
             // This path is only reached for non-generator contexts (which is an error)
             Expression::Yield(yield_expr) => {
@@ -5279,9 +5292,9 @@ impl Interpreter {
                     guard: obj_guard,
                 } = self.evaluate_expression(&member.object)?;
 
-                // Handle optional chaining - if object is null/undefined, return undefined
+                // Handle optional chaining - if object is null/undefined, short-circuit
                 if member.optional && matches!(obj, JsValue::Null | JsValue::Undefined) {
-                    return Err(JsError::type_error("undefined is not a function"));
+                    return Err(JsError::OptionalChainShortCircuit);
                 }
 
                 // Cannot access properties on null/undefined - throw immediately
@@ -5374,6 +5387,12 @@ impl Interpreter {
                     value: callee,
                     guard,
                 } = self.evaluate_expression(&call.callee)?;
+
+                // Handle optional call - if callee is null/undefined, short-circuit
+                if call.optional && matches!(callee, JsValue::Null | JsValue::Undefined) {
+                    return Err(JsError::OptionalChainShortCircuit);
+                }
+
                 (callee, JsValue::Undefined, guard)
             }
         };
@@ -5824,9 +5843,10 @@ impl Interpreter {
             guard: obj_guard,
         } = self.evaluate_expression(&member.object)?;
 
-        // Handle optional chaining - if object is null/undefined, return undefined
+        // Handle optional chaining - if object is null/undefined, short-circuit
+        // This returns an error that OptionalChainExpression will catch and convert to undefined
         if member.optional && matches!(obj, JsValue::Null | JsValue::Undefined) {
-            return Ok(Guarded::unguarded(JsValue::Undefined));
+            return Err(JsError::OptionalChainShortCircuit);
         }
 
         let key = self.get_member_key(&member.property)?;

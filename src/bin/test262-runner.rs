@@ -498,6 +498,7 @@ fn check_error_type(err: &JsError, expected: &str) -> bool {
         JsError::ThrownValue { .. } => expected == "Error",
         JsError::GeneratorYield { .. } => false,
         JsError::Timeout { .. } => false,
+        JsError::OptionalChainShortCircuit => false,
     }
 }
 
@@ -524,6 +525,9 @@ fn format_error(err: &JsError) -> String {
                 "Timeout: exceeded {}ms limit (ran {}ms)",
                 timeout_ms, elapsed_ms
             )
+        }
+        JsError::OptionalChainShortCircuit => {
+            "OptionalChainShortCircuit (internal error - should not reach here)".to_string()
         }
     }
 }

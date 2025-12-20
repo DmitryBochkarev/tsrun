@@ -2114,6 +2114,72 @@ fn test_optional_chaining_in_condition() {
     );
 }
 
+#[test]
+fn test_optional_chaining_short_circuit() {
+    // When base is nullish, the entire chain should short-circuit
+    // and side effects should NOT be evaluated
+    assert_eq!(
+        eval(
+            r#"
+            const a: undefined = undefined;
+            let x: number = 1;
+            a?.[++x];  // Should short-circuit, ++x should NOT run
+            x
+        "#
+        ),
+        JsValue::Number(1.0)
+    );
+}
+
+#[test]
+fn test_optional_chaining_long_short_circuit() {
+    // Long chain after ?. should all short-circuit
+    assert_eq!(
+        eval(
+            r#"
+            const a: undefined = undefined;
+            let x: number = 1;
+            a?.b.c(++x).d;  // Should short-circuit at a?., rest is not evaluated
+            x
+        "#
+        ),
+        JsValue::Number(1.0)
+    );
+}
+
+#[test]
+fn test_optional_chaining_null_short_circuit() {
+    // null should also short-circuit
+    assert_eq!(
+        eval(
+            r#"
+            const a: null = null;
+            let x: number = 1;
+            a?.[++x];
+            a?.b.c(++x).d;
+            x
+        "#
+        ),
+        JsValue::Number(1.0)
+    );
+}
+
+#[test]
+fn test_optional_call_short_circuit() {
+    // Optional call should short-circuit
+    assert_eq!(
+        eval(
+            r#"
+            const fn: undefined = undefined;
+            let x: number = 1;
+            fn?.(++x);  // Should short-circuit
+            x
+        "#
+        ),
+        JsValue::Number(1.0)
+    );
+}
+
 // -----------------------------------------------------------------------------
 // Complex Real-World Patterns
 // -----------------------------------------------------------------------------
