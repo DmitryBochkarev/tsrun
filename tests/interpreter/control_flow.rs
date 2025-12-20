@@ -2181,6 +2181,235 @@ fn test_optional_call_short_circuit() {
 }
 
 // -----------------------------------------------------------------------------
+// Optional Chaining `this` Preservation Tests
+// -----------------------------------------------------------------------------
+
+#[test]
+fn test_optional_call_preserves_this_basic() {
+    // a?.b() should preserve `a` as `this` when calling b
+    assert_eq!(
+        eval(
+            r#"
+            const a = {
+                b() { return this._b; },
+                _b: { c: 42 }
+            };
+            a?.b().c
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+#[test]
+fn test_optional_call_preserves_this_parenthesized() {
+    // (a?.b)() should also preserve `a` as `this`
+    assert_eq!(
+        eval(
+            r#"
+            const a = {
+                b() { return this._b; },
+                _b: { c: 42 }
+            };
+            (a?.b)().c
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+#[test]
+fn test_optional_call_on_method() {
+    // a.b?.() - optional call on method should preserve `a` as `this`
+    assert_eq!(
+        eval(
+            r#"
+            const a = {
+                b() { return this._b; },
+                _b: { c: 42 }
+            };
+            a.b?.().c
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+#[test]
+fn test_optional_call_on_method_parenthesized() {
+    // (a.b)?.() - optional call on parenthesized method
+    assert_eq!(
+        eval(
+            r#"
+            const a = {
+                b() { return this._b; },
+                _b: { c: 42 }
+            };
+            (a.b)?.().c
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+#[test]
+fn test_optional_chain_double_optional() {
+    // a?.b?.() - both optional member and optional call
+    assert_eq!(
+        eval(
+            r#"
+            const a = {
+                b() { return this._b; },
+                _b: { c: 42 }
+            };
+            a?.b?.().c
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+#[test]
+fn test_optional_chain_double_optional_parenthesized() {
+    // (a?.b)?.() - parenthesized version
+    assert_eq!(
+        eval(
+            r#"
+            const a = {
+                b() { return this._b; },
+                _b: { c: 42 }
+            };
+            (a?.b)?.().c
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+#[test]
+fn test_optional_call_this_with_nested_object() {
+    // More complex case with nested method calls
+    assert_eq!(
+        eval(
+            r#"
+            const obj = {
+                name: "test",
+                getName() { return this.name; },
+                nested: {
+                    value: 100,
+                    getValue() { return this.value; }
+                }
+            };
+            obj?.getName() + "-" + obj?.nested?.getValue()
+        "#
+        ),
+        JsValue::String("test-100".into())
+    );
+}
+
+#[test]
+fn test_optional_call_this_null_base() {
+    // When base is null, should short-circuit
+    assert_eq!(
+        eval(
+            r#"
+            const a: any = null;
+            a?.b()
+        "#
+        ),
+        JsValue::Undefined
+    );
+}
+
+#[test]
+fn test_optional_call_this_undefined_method() {
+    // When method is undefined, optional call should short-circuit
+    assert_eq!(
+        eval(
+            r#"
+            const a: any = { x: 1 };
+            a.notAMethod?.()
+        "#
+        ),
+        JsValue::Undefined
+    );
+}
+
+#[test]
+fn test_optional_call_this_with_arguments() {
+    // Optional call with arguments should still preserve this
+    assert_eq!(
+        eval(
+            r#"
+            const calc = {
+                base: 10,
+                add(x: number) { return this.base + x; },
+                multiply(x: number) { return this.base * x; }
+            };
+            calc?.add(5) + calc?.multiply(3)
+        "#
+        ),
+        JsValue::Number(45.0) // (10+5) + (10*3) = 15 + 30 = 45
+    );
+}
+
+#[test]
+fn test_optional_call_chained_methods() {
+    // Chained method calls with optional
+    assert_eq!(
+        eval(
+            r#"
+            const builder = {
+                value: "",
+                append(s: string) {
+                    this.value = this.value + s;
+                    return this;
+                },
+                get() { return this.value; }
+            };
+            builder?.append("a")?.append("b")?.append("c")?.get()
+        "#
+        ),
+        JsValue::String("abc".into())
+    );
+}
+
+#[test]
+fn test_optional_call_with_computed_property() {
+    // Optional call with computed property access
+    // `this` in getValue should be `obj.methods`, so we need `value` on methods
+    assert_eq!(
+        eval(
+            r#"
+            const obj = {
+                methods: {
+                    value: 42,
+                    getValue() { return this.value; }
+                }
+            };
+            const key = "getValue";
+            obj.methods?.[key]?.()
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+#[test]
+fn test_optional_call_array_method() {
+    // Optional call on array methods should work
+    assert_eq!(
+        eval(
+            r#"
+            const arr: number[] = [1, 2, 3];
+            arr?.map((x: number) => x * 2)?.join(",")
+        "#
+        ),
+        JsValue::String("2,4,6".into())
+    );
+}
+
+// -----------------------------------------------------------------------------
 // Complex Real-World Patterns
 // -----------------------------------------------------------------------------
 

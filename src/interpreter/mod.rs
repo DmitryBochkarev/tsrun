@@ -5221,6 +5221,130 @@ impl Interpreter {
         Ok(result)
     }
 
+    /// Unwrap parenthesized expressions to get the underlying expression.
+    /// This is needed to preserve `this` context for calls like `(a.b)()`.
+    fn unwrap_parenthesized(expr: &Expression) -> &Expression {
+        match expr {
+            Expression::Parenthesized(inner, _) => Self::unwrap_parenthesized(inner),
+            _ => expr,
+        }
+    }
+
+    /// Extract the innermost member expression from an optional chain or parenthesized expression.
+    /// Returns Some(member) if the expression ultimately resolves to a member access.
+    fn extract_member_expression(expr: &Expression) -> Option<&MemberExpression> {
+        match expr {
+            Expression::Member(member) => Some(member),
+            Expression::Parenthesized(inner, _) => Self::extract_member_expression(inner),
+            Expression::OptionalChain(opt) => Self::extract_member_expression(&opt.base),
+            _ => None,
+        }
+    }
+
+    /// Evaluate an expression and return both the value and the `this` context.
+    /// For member expressions, `this` is the object being accessed.
+    /// Returns (callee_value, this_value, callee_guard, this_guard)
+    fn evaluate_callee_with_this(
+        &mut self,
+        expr: &Expression,
+    ) -> Result<
+        (
+            JsValue,
+            JsValue,
+            Option<Guard<JsObject>>,
+            Option<Guard<JsObject>>,
+        ),
+        JsError,
+    > {
+        // Check if this is ultimately a member expression (possibly wrapped in parens or optional chain)
+        if let Some(member) = Self::extract_member_expression(expr) {
+            // This is a member access - evaluate object first to get `this`
+            let Guarded {
+                value: obj,
+                guard: obj_guard,
+            } = self.evaluate_expression(&member.object)?;
+
+            // Handle optional chaining - if object is null/undefined in optional context, short-circuit
+            if member.optional && matches!(obj, JsValue::Null | JsValue::Undefined) {
+                return Err(JsError::OptionalChainShortCircuit);
+            }
+
+            // Cannot access properties on null/undefined
+            if matches!(&obj, JsValue::Null | JsValue::Undefined) {
+                let key = self.get_member_key(&member.property)?;
+                let type_name = if matches!(&obj, JsValue::Null) {
+                    "null"
+                } else {
+                    "undefined"
+                };
+                return Err(JsError::type_error(format!(
+                    "Cannot read properties of {} (reading '{}')",
+                    type_name, key
+                )));
+            }
+
+            let key = self.get_member_key(&member.property)?;
+
+            // Get the function value from the object
+            let (func, extra_guard) = match &obj {
+                JsValue::Object(o) => {
+                    let is_proxy = matches!(o.borrow().exotic, ExoticObject::Proxy(_));
+                    if is_proxy {
+                        let Guarded { value, guard } =
+                            builtins::proxy::proxy_get(self, o.clone(), key.clone(), obj.clone())?;
+                        (
+                            Some(value).filter(|v| !matches!(v, JsValue::Undefined)),
+                            guard,
+                        )
+                    } else {
+                        let prop_desc = o.borrow().get_property_descriptor(&key);
+                        match prop_desc {
+                            Some((prop, _)) if prop.is_accessor() => {
+                                if let Some(getter) = prop.getter() {
+                                    let Guarded {
+                                        value: getter_val,
+                                        guard: getter_guard,
+                                    } = self.call_function(
+                                        JsValue::Object(getter.clone()),
+                                        obj.clone(),
+                                        &[],
+                                    )?;
+                                    (Some(getter_val), getter_guard)
+                                } else {
+                                    (None, None)
+                                }
+                            }
+                            _ => (o.borrow().get_property(&key), None),
+                        }
+                    }
+                }
+                JsValue::Number(_) => (self.number_prototype.borrow().get_property(&key), None),
+                JsValue::String(_) => {
+                    if let PropertyKey::String(ref k) = key {
+                        if k.as_str() == "length" {
+                            (None, None)
+                        } else {
+                            (self.string_prototype.borrow().get_property(&key), None)
+                        }
+                    } else {
+                        (None, None)
+                    }
+                }
+                JsValue::Symbol(_) => (self.symbol_prototype.borrow().get_property(&key), None),
+                JsValue::Boolean(_) => (self.boolean_prototype.borrow().get_property(&key), None),
+                _ => (None, None),
+            };
+
+            let _extra_guard = extra_guard;
+            let callee = func.unwrap_or(JsValue::Undefined);
+            return Ok((callee, obj, None, obj_guard));
+        }
+
+        // Not a member expression - evaluate normally, no `this` context
+        let Guarded { value, guard } = self.evaluate_expression(expr)?;
+        Ok((value, JsValue::Undefined, guard, None))
+    }
+
     fn evaluate_call(&mut self, call: &CallExpression) -> Result<Guarded, JsError> {
         // Check for direct eval call: eval(...)
         // Direct eval has access to the current scope, unlike indirect eval
@@ -5249,7 +5373,11 @@ impl Interpreter {
             }
         }
 
-        let (callee, this_value, obj_guard) = match &*call.callee {
+        // Unwrap parenthesized expressions to find underlying expression for `this` binding
+        // This handles cases like `(a.b)()` where `a` should be `this`
+        let unwrapped_callee = Self::unwrap_parenthesized(&call.callee);
+
+        let (callee, this_value, obj_guard) = match unwrapped_callee {
             // super(args) - call parent constructor
             Expression::Super(_) => {
                 let super_name = self.intern("__super__");
@@ -5379,7 +5507,29 @@ impl Interpreter {
                 // Per ECMAScript spec, we don't throw here if the property is undefined/missing.
                 // Arguments must be evaluated first, then the callable check happens in call_function.
                 let callee = func.unwrap_or(JsValue::Undefined);
+
+                // Handle optional call on member expression - if callee (the method) is null/undefined, short-circuit
+                // This handles cases like: a.notAMethod?.() or (a.b)?.()
+                if call.optional && matches!(callee, JsValue::Null | JsValue::Undefined) {
+                    return Err(JsError::OptionalChainShortCircuit);
+                }
+
                 (callee, obj, obj_guard)
+            }
+            // Handle OptionalChain expressions - need to extract `this` from the underlying member
+            Expression::OptionalChain(_) => {
+                // Use helper to evaluate and extract `this` context
+                let (callee, this_val, callee_guard, this_guard) =
+                    self.evaluate_callee_with_this(unwrapped_callee)?;
+
+                // Handle optional call - if callee is null/undefined, short-circuit
+                if call.optional && matches!(callee, JsValue::Null | JsValue::Undefined) {
+                    return Err(JsError::OptionalChainShortCircuit);
+                }
+
+                // Combine guards - prefer this_guard as it's more important
+                let guard = this_guard.or(callee_guard);
+                (callee, this_val, guard)
             }
             _ => {
                 let Guarded {
