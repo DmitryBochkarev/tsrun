@@ -336,6 +336,7 @@ impl BytecodeBuilder {
                 | Op::CallSpread { .. }
                 | Op::CallMethod { .. }
                 | Op::Construct { .. }
+                | Op::ConstructSpread { .. }
                 | Op::Return { .. }
                 | Op::ReturnUndefined
                 | Op::CreateClosure { .. }

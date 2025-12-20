@@ -171,35 +171,93 @@ impl Compiler {
             return Ok(());
         }
 
-        // Reserve registers for elements
-        let start = self.builder.reserve_registers(count as u8)?;
+        // Check if any elements are spreads
+        let has_spread = arr.elements.iter().any(|elem| {
+            matches!(elem, Some(ArrayElement::Spread(_)))
+        });
 
-        // Compile each element
-        for (i, elem) in arr.elements.iter().enumerate() {
-            let reg = start + i as u8;
-            match elem {
-                Some(ArrayElement::Expression(expr)) => {
-                    self.compile_expression(expr, reg)?;
-                }
-                Some(ArrayElement::Spread(spread)) => {
-                    // For spread, we need special handling
-                    // For now, compile the expression and mark for spreading
-                    self.compile_expression(&spread.argument, reg)?;
-                    // TODO: Handle spread at runtime
-                }
-                None => {
-                    // Hole in array - load undefined
-                    self.builder.emit(Op::LoadUndefined { dst: reg });
+        if !has_spread {
+            // Fast path: no spreads, use simple CreateArray
+            let start = self.builder.reserve_registers(count as u8)?;
+
+            for (i, elem) in arr.elements.iter().enumerate() {
+                let reg = start + i as u8;
+                match elem {
+                    Some(ArrayElement::Expression(expr)) => {
+                        self.compile_expression(expr, reg)?;
+                    }
+                    Some(ArrayElement::Spread(_)) => {
+                        // This shouldn't happen since we checked has_spread
+                    }
+                    None => {
+                        // Hole in array - load undefined
+                        self.builder.emit(Op::LoadUndefined { dst: reg });
+                    }
                 }
             }
-        }
 
-        // Create the array
-        self.builder.emit(Op::CreateArray {
-            dst,
-            start,
-            count: count as u16,
-        });
+            self.builder.emit(Op::CreateArray {
+                dst,
+                start,
+                count: count as u16,
+            });
+        } else {
+            // Slow path: array has spreads, build incrementally
+            // Start with an empty array
+            self.builder.emit(Op::CreateArray {
+                dst,
+                start: 0,
+                count: 0,
+            });
+
+            // Process each element
+            let temp_reg = self.builder.alloc_register()?;
+            for elem in &arr.elements {
+                match elem {
+                    Some(ArrayElement::Expression(expr)) => {
+                        // Compile the expression
+                        self.compile_expression(expr, temp_reg)?;
+                        // Wrap in single-element array and spread onto dst
+                        let single_arr = self.builder.alloc_register()?;
+                        self.builder.emit(Op::CreateArray {
+                            dst: single_arr,
+                            start: temp_reg,
+                            count: 1,
+                        });
+                        self.builder.emit(Op::SpreadArray {
+                            dst,
+                            src: single_arr,
+                        });
+                        self.builder.free_register(single_arr);
+                    }
+                    Some(ArrayElement::Spread(spread)) => {
+                        // Compile the spread argument
+                        self.compile_expression(&spread.argument, temp_reg)?;
+                        // Spread it onto the array
+                        self.builder.emit(Op::SpreadArray {
+                            dst,
+                            src: temp_reg,
+                        });
+                    }
+                    None => {
+                        // Hole in array - add undefined
+                        self.builder.emit(Op::LoadUndefined { dst: temp_reg });
+                        let single_arr = self.builder.alloc_register()?;
+                        self.builder.emit(Op::CreateArray {
+                            dst: single_arr,
+                            start: temp_reg,
+                            count: 1,
+                        });
+                        self.builder.emit(Op::SpreadArray {
+                            dst,
+                            src: single_arr,
+                        });
+                        self.builder.free_register(single_arr);
+                    }
+                }
+            }
+            self.builder.free_register(temp_reg);
+        }
 
         Ok(())
     }
@@ -1172,16 +1230,10 @@ impl Compiler {
             }
 
             // Compile arguments
-            let (args_start, argc) = self.compile_arguments(&call.arguments)?;
+            let (args_start, argc, has_spread) = self.compile_arguments(&call.arguments)?;
 
             // Call the method
-            self.builder.emit(Op::Call {
-                dst,
-                callee: method_reg,
-                this: obj_reg,
-                args_start,
-                argc,
-            });
+            self.emit_call(dst, method_reg, obj_reg, args_start, argc, has_spread);
 
             self.builder.free_register(method_reg);
             self.builder.free_register(obj_reg);
@@ -1214,20 +1266,14 @@ impl Compiler {
             }
 
             // Compile arguments
-            let (args_start, argc) = self.compile_arguments(&call.arguments)?;
+            let (args_start, argc, has_spread) = self.compile_arguments(&call.arguments)?;
 
             // this is undefined for regular calls
             let this_reg = self.builder.alloc_register()?;
             self.builder.emit(Op::LoadUndefined { dst: this_reg });
 
             // Call
-            self.builder.emit(Op::Call {
-                dst,
-                callee: callee_reg,
-                this: this_reg,
-                args_start,
-                argc,
-            });
+            self.emit_call(dst, callee_reg, this_reg, args_start, argc, has_spread);
 
             self.builder.free_register(this_reg);
             self.builder.free_register(callee_reg);
@@ -1244,8 +1290,8 @@ impl Compiler {
     ) -> Result<(), JsError> {
         // Handle super() call
         if matches!(call.callee.as_ref(), Expression::Super(_)) {
-            // Compile arguments
-            let (args_start, argc) = self.compile_arguments(&call.arguments)?;
+            // Compile arguments (spread not supported for super calls yet)
+            let (args_start, argc, _has_spread) = self.compile_arguments(&call.arguments)?;
 
             self.builder.emit(Op::SuperCall {
                 dst,
@@ -1270,19 +1316,13 @@ impl Compiler {
                     });
 
                     // Compile arguments
-                    let (args_start, argc) = self.compile_arguments(&call.arguments)?;
+                    let (args_start, argc, has_spread) = self.compile_arguments(&call.arguments)?;
 
                     // Call with `this` as the receiver
                     let this_reg = self.builder.alloc_register()?;
                     self.builder.emit(Op::LoadThis { dst: this_reg });
 
-                    self.builder.emit(Op::Call {
-                        dst,
-                        callee: method_reg,
-                        this: this_reg,
-                        args_start,
-                        argc,
-                    });
+                    self.emit_call(dst, method_reg, this_reg, args_start, argc, has_spread);
 
                     self.builder.free_register(this_reg);
                     self.builder.free_register(method_reg);
@@ -1292,26 +1332,46 @@ impl Compiler {
         }
 
         // Check for method call pattern: obj.method(args)
+        // Note: if spread is present, we can't use the optimized CallMethod
         if let Expression::Member(member) = call.callee.as_ref() {
             if let MemberProperty::Identifier(method_name) = &member.property {
-                // Method call - we can use CallMethod for optimization
-                let obj_reg = self.builder.alloc_register()?;
-                self.compile_expression(&member.object, obj_reg)?;
+                // Compile arguments first to check for spread
+                let (args_start, argc, has_spread) = self.compile_arguments(&call.arguments)?;
 
-                let method_idx = self.builder.add_string(method_name.name.cheap_clone())?;
+                if has_spread {
+                    // With spread, we need to use the regular call path
+                    let obj_reg = self.builder.alloc_register()?;
+                    self.compile_expression(&member.object, obj_reg)?;
 
-                // Compile arguments
-                let (args_start, argc) = self.compile_arguments(&call.arguments)?;
+                    let method_key = self.builder.add_string(method_name.name.cheap_clone())?;
+                    let method_reg = self.builder.alloc_register()?;
+                    self.builder.emit(Op::GetPropertyConst {
+                        dst: method_reg,
+                        obj: obj_reg,
+                        key: method_key,
+                    });
 
-                self.builder.emit(Op::CallMethod {
-                    dst,
-                    obj: obj_reg,
-                    method: method_idx,
-                    args_start,
-                    argc,
-                });
+                    self.emit_call(dst, method_reg, obj_reg, args_start, argc, has_spread);
 
-                self.builder.free_register(obj_reg);
+                    self.builder.free_register(method_reg);
+                    self.builder.free_register(obj_reg);
+                } else {
+                    // No spread - use optimized CallMethod
+                    let obj_reg = self.builder.alloc_register()?;
+                    self.compile_expression(&member.object, obj_reg)?;
+
+                    let method_idx = self.builder.add_string(method_name.name.cheap_clone())?;
+
+                    self.builder.emit(Op::CallMethod {
+                        dst,
+                        obj: obj_reg,
+                        method: method_idx,
+                        args_start,
+                        argc,
+                    });
+
+                    self.builder.free_register(obj_reg);
+                }
                 return Ok(());
             }
         }
@@ -1325,15 +1385,9 @@ impl Compiler {
         self.builder.emit(Op::LoadUndefined { dst: this_reg });
 
         // Compile arguments
-        let (args_start, argc) = self.compile_arguments(&call.arguments)?;
+        let (args_start, argc, has_spread) = self.compile_arguments(&call.arguments)?;
 
-        self.builder.emit(Op::Call {
-            dst,
-            callee: callee_reg,
-            this: this_reg,
-            args_start,
-            argc,
-        });
+        self.emit_call(dst, callee_reg, this_reg, args_start, argc, has_spread);
 
         self.builder.free_register(this_reg);
         self.builder.free_register(callee_reg);
@@ -1341,33 +1395,113 @@ impl Compiler {
         Ok(())
     }
 
+    /// Check if any argument is a spread
+    fn has_spread_arguments(&self, args: &[Argument]) -> bool {
+        args.iter().any(|arg| matches!(arg, Argument::Spread(_)))
+    }
+
     /// Compile arguments for a call
-    fn compile_arguments(&mut self, args: &[Argument]) -> Result<(Register, u8), JsError> {
+    /// Returns (args_start, argc, has_spread)
+    /// If has_spread is true, args_start points to a single register containing the args array
+    fn compile_arguments(&mut self, args: &[Argument]) -> Result<(Register, u8, bool), JsError> {
         let argc = args.len();
         if argc > 255 {
             return Err(JsError::syntax_error_simple("Too many arguments"));
         }
 
         if argc == 0 {
-            return Ok((0, 0));
+            return Ok((0, 0, false));
         }
 
-        let args_start = self.builder.reserve_registers(argc as u8)?;
+        // Check if we need spread handling
+        if self.has_spread_arguments(args) {
+            // Create an args array and build it incrementally
+            let args_arr = self.builder.alloc_register()?;
+            self.builder.emit(Op::CreateArray {
+                dst: args_arr,
+                start: 0,
+                count: 0,
+            });
 
-        for (i, arg) in args.iter().enumerate() {
-            let reg = args_start + i as u8;
-            match arg {
-                Argument::Expression(expr) => {
-                    self.compile_expression(expr, reg)?;
-                }
-                Argument::Spread(spread) => {
-                    // TODO: Handle spread arguments properly
-                    self.compile_expression(&spread.argument, reg)?;
+            let temp_reg = self.builder.alloc_register()?;
+            for arg in args {
+                match arg {
+                    Argument::Expression(expr) => {
+                        // Compile the expression
+                        self.compile_expression(expr, temp_reg)?;
+                        // Wrap in single-element array and spread onto args_arr
+                        let single_arr = self.builder.alloc_register()?;
+                        self.builder.emit(Op::CreateArray {
+                            dst: single_arr,
+                            start: temp_reg,
+                            count: 1,
+                        });
+                        self.builder.emit(Op::SpreadArray {
+                            dst: args_arr,
+                            src: single_arr,
+                        });
+                        self.builder.free_register(single_arr);
+                    }
+                    Argument::Spread(spread) => {
+                        // Compile the spread argument and spread it onto args_arr
+                        self.compile_expression(&spread.argument, temp_reg)?;
+                        self.builder.emit(Op::SpreadArray {
+                            dst: args_arr,
+                            src: temp_reg,
+                        });
+                    }
                 }
             }
-        }
+            self.builder.free_register(temp_reg);
 
-        Ok((args_start, argc as u8))
+            Ok((args_arr, 1, true))
+        } else {
+            // Fast path: no spreads
+            let args_start = self.builder.reserve_registers(argc as u8)?;
+
+            for (i, arg) in args.iter().enumerate() {
+                let reg = args_start + i as u8;
+                match arg {
+                    Argument::Expression(expr) => {
+                        self.compile_expression(expr, reg)?;
+                    }
+                    Argument::Spread(_) => {
+                        // Should not happen since we checked has_spread_arguments
+                    }
+                }
+            }
+
+            Ok((args_start, argc as u8, false))
+        }
+    }
+
+    /// Emit a Call or CallSpread opcode depending on whether spread was used
+    fn emit_call(
+        &mut self,
+        dst: Register,
+        callee: Register,
+        this: Register,
+        args_start: Register,
+        argc: u8,
+        has_spread: bool,
+    ) {
+        if has_spread {
+            self.builder.emit(Op::CallSpread {
+                dst,
+                callee,
+                this,
+                args_start,
+                argc,
+            });
+        } else {
+            self.builder.emit(Op::Call {
+                dst,
+                callee,
+                this,
+                args_start,
+                argc,
+            });
+        }
     }
 
     /// Compile a new expression
@@ -1379,14 +1513,23 @@ impl Compiler {
         let callee_reg = self.builder.alloc_register()?;
         self.compile_expression(&new.callee, callee_reg)?;
 
-        let (args_start, argc) = self.compile_arguments(&new.arguments)?;
+        let (args_start, argc, has_spread) = self.compile_arguments(&new.arguments)?;
 
-        self.builder.emit(Op::Construct {
-            dst,
-            callee: callee_reg,
-            args_start,
-            argc,
-        });
+        if has_spread {
+            self.builder.emit(Op::ConstructSpread {
+                dst,
+                callee: callee_reg,
+                args_start,
+                argc,
+            });
+        } else {
+            self.builder.emit(Op::Construct {
+                dst,
+                callee: callee_reg,
+                args_start,
+                argc,
+            });
+        }
 
         self.builder.free_register(callee_reg);
         Ok(())

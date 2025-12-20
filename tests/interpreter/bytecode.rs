@@ -2303,3 +2303,106 @@ fn test_bytecode_for_in_with_continue() {
     );
     assert_eq!(result, JsValue::Number(4.0)); // 1 + 3 = 4
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Spread Operator Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_bytecode_spread_in_array() {
+    // Spread elements into array literal
+    let result = eval_bytecode(
+        r#"
+        const arr: number[] = [1, 2, 3];
+        const spread: number[] = [0, ...arr, 4];
+        spread.length
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(5.0));
+}
+
+#[test]
+fn test_bytecode_spread_in_array_values() {
+    // Verify spread copies values correctly
+    let result = eval_bytecode(
+        r#"
+        const arr: number[] = [1, 2, 3];
+        const spread: number[] = [0, ...arr, 4];
+        spread[0] + spread[1] + spread[2] + spread[3] + spread[4]
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(10.0)); // 0 + 1 + 2 + 3 + 4 = 10
+}
+
+#[test]
+fn test_bytecode_spread_multiple_arrays() {
+    // Spread multiple arrays
+    let result = eval_bytecode(
+        r#"
+        const a: number[] = [1, 2];
+        const b: number[] = [3, 4];
+        const combined: number[] = [...a, ...b];
+        combined.length
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(4.0));
+}
+
+#[test]
+fn test_bytecode_spread_in_function_call() {
+    // Spread array as function arguments
+    let result = eval_bytecode(
+        r#"
+        function sum(a: number, b: number, c: number): number {
+            return a + b + c;
+        }
+        const args: number[] = [1, 2, 3];
+        sum(...args)
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(6.0));
+}
+
+#[test]
+fn test_bytecode_spread_in_function_call_mixed() {
+    // Spread with regular arguments
+    let result = eval_bytecode(
+        r#"
+        function sum(a: number, b: number, c: number, d: number): number {
+            return a + b + c + d;
+        }
+        const args: number[] = [2, 3];
+        sum(1, ...args, 4)
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(10.0));
+}
+
+#[test]
+fn test_bytecode_spread_empty_array() {
+    // Spread empty array
+    let result = eval_bytecode(
+        r#"
+        const empty: number[] = [];
+        const arr: number[] = [1, ...empty, 2];
+        arr.length
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(2.0));
+}
+
+#[test]
+fn test_bytecode_spread_in_new() {
+    // Spread in constructor call
+    let result = eval_bytecode(
+        r#"
+        function Pair(a: number, b: number) {
+            this.sum = a + b;
+        }
+        const args: number[] = [3, 7];
+        const p = new Pair(...args);
+        p.sum
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(10.0));
+}

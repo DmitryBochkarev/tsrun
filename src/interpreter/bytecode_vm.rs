@@ -1208,15 +1208,23 @@ impl BytecodeVM {
                 callee,
                 this,
                 args_start,
-                argc,
+                argc: _,
             } => {
+                // CallSpread: args_start points to an array of arguments
+                // We extract the array elements and call the function with them
                 let callee_val = self.get_reg(callee).clone();
                 let this_val = self.get_reg(this).clone();
+                let args_val = self.get_reg(args_start).clone();
 
-                let mut args = Vec::with_capacity(argc as usize);
-                for i in 0..argc {
-                    args.push(self.get_reg(args_start + i).clone());
-                }
+                let args: Vec<JsValue> = if let JsValue::Object(arr_ref) = &args_val {
+                    if let Some(elems) = arr_ref.borrow().array_elements() {
+                        elems.to_vec()
+                    } else {
+                        Vec::new()
+                    }
+                } else {
+                    Vec::new()
+                };
 
                 let result = interp.call_function(callee_val, this_val, &args)?;
                 self.set_reg(dst, result.value);
@@ -1262,6 +1270,55 @@ impl BytecodeVM {
                 }
 
                 // Inline constructor call logic (similar to evaluate_new)
+                let JsValue::Object(ctor) = &callee_val else {
+                    return Err(JsError::type_error("Constructor is not a callable object"));
+                };
+
+                // Create a new object
+                let new_guard = interp.heap.create_guard();
+                let new_obj = interp.create_object(&new_guard);
+
+                // Get the constructor's prototype
+                let proto_key = PropertyKey::String(interp.intern("prototype"));
+                if let Some(JsValue::Object(proto)) = ctor.borrow().get_property(&proto_key) {
+                    new_obj.borrow_mut().prototype = Some(proto.cheap_clone());
+                }
+
+                // Call the constructor with `this` set to the new object
+                let this = JsValue::Object(new_obj.cheap_clone());
+                let result = interp.call_function(callee_val.clone(), this.clone(), &args)?;
+
+                // If constructor returns an object, use that; otherwise use the created object
+                let final_val = match result.value {
+                    JsValue::Object(obj) => JsValue::Object(obj),
+                    _ => JsValue::Object(new_obj),
+                };
+
+                self.set_reg(dst, final_val);
+                Ok(OpResult::Continue)
+            }
+
+            Op::ConstructSpread {
+                dst,
+                callee,
+                args_start,
+                argc: _,
+            } => {
+                // ConstructSpread: args_start points to an array of arguments
+                let callee_val = self.get_reg(callee).clone();
+                let args_val = self.get_reg(args_start).clone();
+
+                let args: Vec<JsValue> = if let JsValue::Object(arr_ref) = &args_val {
+                    if let Some(elems) = arr_ref.borrow().array_elements() {
+                        elems.to_vec()
+                    } else {
+                        Vec::new()
+                    }
+                } else {
+                    Vec::new()
+                };
+
+                // Inline constructor call logic (same as Construct)
                 let JsValue::Object(ctor) = &callee_val else {
                     return Err(JsError::type_error("Constructor is not a callable object"));
                 };
@@ -2142,11 +2199,12 @@ impl BytecodeVM {
             // Spread/Rest
             // ═══════════════════════════════════════════════════════════════════════════
             Op::SpreadArray { dst, src } => {
-                // Spread an array into individual elements
-                // This collects all values from an iterable into an array
+                // Spread elements from src iterable onto the dst array
+                // dst should already be an array - we append elements to it
                 let src_val = self.get_reg(src).clone();
+                let dst_val = self.get_reg(dst).clone();
 
-                let elements = match &src_val {
+                let elements_to_add: Vec<JsValue> = match &src_val {
                     JsValue::Object(obj_ref) => {
                         if let Some(elems) = obj_ref.borrow().array_elements() {
                             elems.to_vec()
@@ -2167,9 +2225,12 @@ impl BytecodeVM {
                     _ => Vec::new(),
                 };
 
-                let guard = interp.heap.create_guard();
-                let arr = interp.create_array_from(&guard, elements);
-                self.set_reg(dst, JsValue::Object(arr));
+                // Append elements to the destination array
+                if let JsValue::Object(dst_arr) = dst_val {
+                    if let Some(existing) = dst_arr.borrow_mut().array_elements_mut() {
+                        existing.extend(elements_to_add);
+                    }
+                }
                 Ok(OpResult::Continue)
             }
 

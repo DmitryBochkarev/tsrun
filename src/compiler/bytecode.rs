@@ -375,6 +375,14 @@ pub enum Op {
         argc: u8,
     },
 
+    /// Construct with spread arguments (args_start points to an args array)
+    ConstructSpread {
+        dst: Register,
+        callee: Register,
+        args_start: Register,
+        argc: u8,
+    },
+
     /// Return from function with value
     Return { value: Register },
 
