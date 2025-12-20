@@ -4671,8 +4671,18 @@ impl Interpreter {
                     guard: _guard,
                 } = self.evaluate_expression(&member.object)?;
 
+                // Per ECMAScript spec, delete on null/undefined should throw TypeError
+                // because they cannot be coerced to objects
+                if matches!(obj_val, JsValue::Null | JsValue::Undefined) {
+                    return Err(JsError::type_error(
+                        "Cannot delete property of null or undefined",
+                    ));
+                }
+
                 let JsValue::Object(obj) = obj_val else {
-                    // Deleting from non-object returns true
+                    // Deleting from primitives (boolean, number, string) returns true
+                    // (they are coerced to temporary wrapper objects, deletion succeeds
+                    // because properties aren't actually stored)
                     return Ok(Guarded::unguarded(JsValue::Boolean(true)));
                 };
 

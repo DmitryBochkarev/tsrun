@@ -1207,3 +1207,74 @@ fn test_delete_math_constant() {
         JsValue::Boolean(true)
     );
 }
+
+#[test]
+fn test_delete_null_undefined_throws() {
+    // Deleting property of null should throw TypeError
+    assert_eq!(
+        eval(
+            r#"
+            try {
+                const n: any = null;
+                delete n.prop;
+                "no error";
+            } catch (e) {
+                e instanceof TypeError ? "TypeError" : "other error";
+            }
+        "#
+        ),
+        JsValue::String("TypeError".into())
+    );
+
+    // Deleting property of undefined should throw TypeError
+    assert_eq!(
+        eval(
+            r#"
+            try {
+                const u: any = undefined;
+                delete u.prop;
+                "no error";
+            } catch (e) {
+                e instanceof TypeError ? "TypeError" : "other error";
+            }
+        "#
+        ),
+        JsValue::String("TypeError".into())
+    );
+
+    // Also test computed property access
+    assert_eq!(
+        eval(
+            r#"
+            try {
+                const n: any = null;
+                delete n["prop"];
+                "no error";
+            } catch (e) {
+                e instanceof TypeError ? "TypeError" : "other error";
+            }
+        "#
+        ),
+        JsValue::String("TypeError".into())
+    );
+}
+
+#[test]
+fn test_delete_primitives_returns_true() {
+    // Deleting from primitives should return true (not throw)
+    assert_eq!(
+        eval(
+            r#"
+            const results: boolean[] = [];
+            const n: any = 42;
+            results.push(delete n.foo);
+            const s: any = "hello";
+            results.push(delete s.foo);
+            const b: any = true;
+            results.push(delete b.foo);
+            results.join(',')
+        "#
+        ),
+        JsValue::String("true,true,true".into())
+    );
+}
