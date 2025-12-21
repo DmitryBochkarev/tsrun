@@ -353,10 +353,15 @@ fn test_compile_function_call() {
 fn test_compile_method_call() {
     let chunk = compile("obj.method()");
 
-    // Should have CallMethod (optimized path)
+    // Method calls now use GetPropertyConst + Call pattern for correct evaluation order
     assert!(
-        contains_op(&chunk, |op| matches!(op, Op::CallMethod { .. })),
-        "Expected CallMethod, got {:?}",
+        contains_op(&chunk, |op| matches!(op, Op::GetPropertyConst { .. })),
+        "Expected GetPropertyConst, got {:?}",
+        chunk.code
+    );
+    assert!(
+        contains_op(&chunk, |op| matches!(op, Op::Call { .. })),
+        "Expected Call, got {:?}",
         chunk.code
     );
 }

@@ -1530,47 +1530,32 @@ impl Compiler {
         }
 
         // Check for method call pattern: obj.method(args) or obj[expr](args)
-        // Note: if spread is present, we can't use the optimized CallMethod
+        // IMPORTANT: Callee must be evaluated BEFORE arguments per JS spec.
+        // If accessing the method throws, arguments should not be evaluated.
         if let Expression::Member(member) = call.callee.as_ref() {
             match &member.property {
                 MemberProperty::Identifier(method_name) => {
-                    // Compile arguments first to check for spread
+                    // Compile object first (may throw if intermediate access is undefined)
+                    let obj_reg = self.builder.alloc_register()?;
+                    self.compile_expression(&member.object, obj_reg)?;
+
+                    // Get method from object (may throw if obj is undefined/null)
+                    let method_key = self.builder.add_string(method_name.name.cheap_clone())?;
+                    let method_reg = self.builder.alloc_register()?;
+                    self.builder.emit(Op::GetPropertyConst {
+                        dst: method_reg,
+                        obj: obj_reg,
+                        key: method_key,
+                    });
+
+                    // Now compile arguments (only after callee is evaluated)
                     let (args_start, argc, has_spread) = self.compile_arguments(&call.arguments)?;
 
-                    if has_spread {
-                        // With spread, we need to use the regular call path
-                        let obj_reg = self.builder.alloc_register()?;
-                        self.compile_expression(&member.object, obj_reg)?;
+                    // Call with obj as this
+                    self.emit_call(dst, method_reg, obj_reg, args_start, argc, has_spread);
 
-                        let method_key = self.builder.add_string(method_name.name.cheap_clone())?;
-                        let method_reg = self.builder.alloc_register()?;
-                        self.builder.emit(Op::GetPropertyConst {
-                            dst: method_reg,
-                            obj: obj_reg,
-                            key: method_key,
-                        });
-
-                        self.emit_call(dst, method_reg, obj_reg, args_start, argc, has_spread);
-
-                        self.builder.free_register(method_reg);
-                        self.builder.free_register(obj_reg);
-                    } else {
-                        // No spread - use optimized CallMethod
-                        let obj_reg = self.builder.alloc_register()?;
-                        self.compile_expression(&member.object, obj_reg)?;
-
-                        let method_idx = self.builder.add_string(method_name.name.cheap_clone())?;
-
-                        self.builder.emit(Op::CallMethod {
-                            dst,
-                            obj: obj_reg,
-                            method: method_idx,
-                            args_start,
-                            argc,
-                        });
-
-                        self.builder.free_register(obj_reg);
-                    }
+                    self.builder.free_register(method_reg);
+                    self.builder.free_register(obj_reg);
                     return Ok(());
                 }
                 MemberProperty::Expression(key_expr) => {
@@ -1589,7 +1574,7 @@ impl Compiler {
                         key: key_reg,
                     });
 
-                    // Compile arguments
+                    // Compile arguments (after callee is evaluated)
                     let (args_start, argc, has_spread) = self.compile_arguments(&call.arguments)?;
 
                     // Call with obj as this

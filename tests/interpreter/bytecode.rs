@@ -3187,3 +3187,25 @@ fn test_bytecode_optional_chain_parenthesized() {
     );
     assert_eq!(result, JsValue::Number(42.0));
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Argument Evaluation Order
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_bytecode_args_not_evaluated_when_callee_throws() {
+    // When evaluating the callee throws (e.g., undefined.prop),
+    // arguments should NOT be evaluated
+    let result = eval_bytecode(
+        r#"
+        var fooCalled = false;
+        function foo() { fooCalled = true; }
+        var o = {};
+        try {
+            o.bar.gar(foo());  // o.bar is undefined, .gar throws
+        } catch (e) {}
+        fooCalled
+    "#,
+    );
+    assert_eq!(result, JsValue::Boolean(false));
+}
