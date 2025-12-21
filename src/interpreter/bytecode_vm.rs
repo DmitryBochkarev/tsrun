@@ -441,18 +441,10 @@ impl BytecodeVM {
         match error {
             JsError::ThrownValue { value } => value.clone(),
             _ => {
-                // Create an error object
-                let guard = interp.heap.create_guard();
-                let obj = interp.create_object(&guard);
-                obj.borrow_mut().set_property(
-                    PropertyKey::from("message"),
-                    JsValue::String(JsString::from(error.to_string())),
-                );
-                obj.borrow_mut().set_property(
-                    PropertyKey::from("name"),
-                    JsValue::String(JsString::from("Error")),
-                );
-                JsValue::Object(obj)
+                // Create an error object using the proper error type
+                use crate::interpreter::builtins::error::create_error_object;
+                let (value, _guard) = create_error_object(interp, error);
+                value
             }
         }
     }
