@@ -398,7 +398,10 @@ impl BytecodeBuilder {
                 | Op::LoadThis { .. }
                 | Op::LoadArguments { .. }
                 | Op::LoadNewTarget { .. }
-                | Op::RunClassInitializers { .. } => {}
+                | Op::RunClassInitializers { .. }
+                | Op::ExportBinding { .. }
+                | Op::ExportNamespace { .. }
+                | Op::ReExport { .. } => {}
             }
         }
     }

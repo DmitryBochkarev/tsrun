@@ -3701,6 +3701,91 @@ impl BytecodeVM {
 
                 Ok(OpResult::Continue)
             }
+
+            // ═══════════════════════════════════════════════════════════════════════════
+            // Module Operations
+            // ═══════════════════════════════════════════════════════════════════════════
+            Op::ExportBinding {
+                export_name,
+                binding_name,
+                value,
+            } => {
+                let export_name_str = self
+                    .get_string_constant(export_name)
+                    .ok_or_else(|| JsError::internal_error("Invalid export name constant"))?;
+                let binding_name_str = self
+                    .get_string_constant(binding_name)
+                    .ok_or_else(|| JsError::internal_error("Invalid binding name constant"))?;
+                let val = self.get_reg(value).clone();
+
+                // Store in interpreter's exports map
+                interp.exports.insert(
+                    export_name_str,
+                    crate::value::ModuleExport::Direct {
+                        name: binding_name_str,
+                        value: val,
+                    },
+                );
+
+                Ok(OpResult::Continue)
+            }
+
+            Op::ExportNamespace {
+                export_name,
+                module_specifier,
+            } => {
+                let export_name_str = self
+                    .get_string_constant(export_name)
+                    .ok_or_else(|| JsError::internal_error("Invalid export name constant"))?;
+                let specifier_str = self
+                    .get_string_constant(module_specifier)
+                    .ok_or_else(|| JsError::internal_error("Invalid module specifier constant"))?;
+
+                // Resolve the module and get its namespace object
+                let module_obj = interp.resolve_module(specifier_str.as_ref())?;
+
+                // Store the module namespace as a direct export
+                // (not a live binding - namespace objects are already live)
+                interp.exports.insert(
+                    export_name_str.cheap_clone(),
+                    crate::value::ModuleExport::Direct {
+                        name: export_name_str,
+                        value: JsValue::Object(module_obj),
+                    },
+                );
+
+                Ok(OpResult::Continue)
+            }
+
+            Op::ReExport {
+                export_name,
+                source_module,
+                source_key,
+            } => {
+                let export_name_str = self
+                    .get_string_constant(export_name)
+                    .ok_or_else(|| JsError::internal_error("Invalid export name constant"))?;
+                let source_specifier = self
+                    .get_string_constant(source_module)
+                    .ok_or_else(|| JsError::internal_error("Invalid source module constant"))?;
+                let source_key_str = self
+                    .get_string_constant(source_key)
+                    .ok_or_else(|| JsError::internal_error("Invalid source key constant"))?;
+
+                // Resolve the source module
+                let source_module_obj = interp.resolve_module(source_specifier.as_ref())?;
+
+                // Store as a re-export with delegation to the source module
+                interp.exports.insert(
+                    export_name_str,
+                    crate::value::ModuleExport::ReExport {
+                        source_module: source_module_obj,
+                        source_key: PropertyKey::String(source_key_str),
+                    },
+                );
+
+                Ok(OpResult::Continue)
+            }
         }
     }
 

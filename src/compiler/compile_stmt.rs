@@ -6,10 +6,11 @@ use super::bytecode::{ConstantIndex, Op, Register};
 use super::Compiler;
 use crate::ast::{
     BlockStatement, BreakStatement, ClassConstructor, ClassDeclaration, ClassMember, ClassMethod,
-    ClassProperty, ContinueStatement, DoWhileStatement, ForInOfLeft, ForInStatement, ForInit,
-    ForOfStatement, ForStatement, IfStatement, LabeledStatement, MethodKind, ObjectPatternProperty,
-    ObjectPropertyKey, Pattern, ReturnStatement, Statement, SwitchStatement, ThrowStatement,
-    TryStatement, VariableDeclaration, VariableKind, WhileStatement,
+    ClassProperty, ContinueStatement, DoWhileStatement, ExportDeclaration, ForInOfLeft,
+    ForInStatement, ForInit, ForOfStatement, ForStatement, IfStatement, LabeledStatement,
+    MethodKind, ObjectPatternProperty, ObjectPropertyKey, Pattern, ReturnStatement, Statement,
+    SwitchStatement, ThrowStatement, TryStatement, VariableDeclaration, VariableKind,
+    WhileStatement,
 };
 use crate::error::JsError;
 use crate::value::{CheapClone, JsString};
@@ -87,21 +88,13 @@ impl Compiler {
 
             // Module declarations
             Statement::Import(_) => {
-                // TODO: Implement module compilation
-                Err(JsError::syntax_error_simple(
-                    "Module imports not yet supported in bytecode compiler",
-                ))
-            }
-
-            // Export declaration - compile the inner declaration if any
-            // (exports are only meaningful in module context, but we support
-            // them within namespaces)
-            Statement::Export(export) => {
-                if let Some(ref decl) = export.declaration {
-                    self.compile_statement_impl(decl)?;
-                }
+                // Import bindings are set up before bytecode execution by setup_import_bindings()
+                // so imports compile to no-ops
                 Ok(())
             }
+
+            // Export declaration - compile the inner declaration and emit export bindings
+            Statement::Export(export) => self.compile_export_declaration(export),
         }
     }
 
@@ -2738,6 +2731,266 @@ impl Compiler {
                 )))
             }
         };
+        Ok(())
+    }
+
+    /// Compile an export declaration
+    fn compile_export_declaration(&mut self, export: &ExportDeclaration) -> Result<(), JsError> {
+        self.builder.set_span(export.span);
+
+        // Skip type-only exports
+        if export.type_only {
+            return Ok(());
+        }
+
+        // Handle re-exports: export { foo } from "./bar" or export * as ns from "./bar"
+        if let Some(source) = &export.source {
+            let source_idx = self.builder.add_string(source.value.cheap_clone())?;
+
+            // Handle namespace re-export: export * as ns from "./bar"
+            if let Some(ns) = &export.namespace_export {
+                let export_name_idx = self.builder.add_string(ns.name.cheap_clone())?;
+                self.builder.emit(Op::ExportNamespace {
+                    export_name: export_name_idx,
+                    module_specifier: source_idx,
+                });
+                return Ok(());
+            }
+
+            // Handle named re-exports: export { foo, bar as baz } from "./bar"
+            for spec in &export.specifiers {
+                let export_name_idx = self.builder.add_string(spec.exported.name.cheap_clone())?;
+                let source_key_idx = self.builder.add_string(spec.local.name.cheap_clone())?;
+                self.builder.emit(Op::ReExport {
+                    export_name: export_name_idx,
+                    source_module: source_idx,
+                    source_key: source_key_idx,
+                });
+            }
+            return Ok(());
+        }
+
+        // Handle default export: export default expr
+        if export.default {
+            if let Some(ref decl) = export.declaration {
+                // export default function/class/expression
+                // First compile the declaration to get the value
+                let value_reg = self.builder.alloc_register()?;
+
+                match decl.as_ref() {
+                    Statement::FunctionDeclaration(func) => {
+                        // Compile function and store in value_reg
+                        self.compile_function_expression_for_export(func, value_reg)?;
+                    }
+                    Statement::ClassDeclaration(class) => {
+                        // Compile class and store in value_reg
+                        self.compile_class_expression_for_export(class, value_reg)?;
+                    }
+                    Statement::Expression(expr_stmt) => {
+                        // Compile expression
+                        self.compile_expression(&expr_stmt.expression, value_reg)?;
+                    }
+                    _ => {
+                        // Shouldn't happen - other statements can't be default exported
+                        return Err(JsError::syntax_error_simple(
+                            "Unexpected declaration in default export",
+                        ));
+                    }
+                }
+
+                // Emit export binding for "default"
+                let default_str = self.builder.add_string(JsString::from("default"))?;
+                self.builder.emit(Op::ExportBinding {
+                    export_name: default_str,
+                    binding_name: default_str,
+                    value: value_reg,
+                });
+
+                self.builder.free_register(value_reg);
+                return Ok(());
+            }
+        }
+
+        // Handle named export declaration: export const/let/var/function/class
+        if let Some(ref decl) = export.declaration {
+            // First compile the declaration
+            self.compile_statement_impl(decl)?;
+
+            // Then emit export bindings for all names defined
+            match decl.as_ref() {
+                Statement::FunctionDeclaration(func) => {
+                    if let Some(id) = &func.id {
+                        // Get the function value and export it
+                        let value_reg = self.builder.alloc_register()?;
+                        let name_idx = self.builder.add_string(id.name.cheap_clone())?;
+                        self.builder.emit(Op::GetVar {
+                            dst: value_reg,
+                            name: name_idx,
+                        });
+                        self.builder.emit(Op::ExportBinding {
+                            export_name: name_idx,
+                            binding_name: name_idx,
+                            value: value_reg,
+                        });
+                        self.builder.free_register(value_reg);
+                    }
+                }
+                Statement::ClassDeclaration(class) => {
+                    if let Some(id) = &class.id {
+                        // Get the class value and export it
+                        let value_reg = self.builder.alloc_register()?;
+                        let name_idx = self.builder.add_string(id.name.cheap_clone())?;
+                        self.builder.emit(Op::GetVar {
+                            dst: value_reg,
+                            name: name_idx,
+                        });
+                        self.builder.emit(Op::ExportBinding {
+                            export_name: name_idx,
+                            binding_name: name_idx,
+                            value: value_reg,
+                        });
+                        self.builder.free_register(value_reg);
+                    }
+                }
+                Statement::VariableDeclaration(var_decl) => {
+                    // Export each variable in the declaration
+                    for declarator in var_decl.declarations.iter() {
+                        self.emit_export_for_pattern(&declarator.id)?;
+                    }
+                }
+                Statement::EnumDeclaration(enum_decl) => {
+                    // Export the enum
+                    let value_reg = self.builder.alloc_register()?;
+                    let name_idx = self.builder.add_string(enum_decl.id.name.cheap_clone())?;
+                    self.builder.emit(Op::GetVar {
+                        dst: value_reg,
+                        name: name_idx,
+                    });
+                    self.builder.emit(Op::ExportBinding {
+                        export_name: name_idx,
+                        binding_name: name_idx,
+                        value: value_reg,
+                    });
+                    self.builder.free_register(value_reg);
+                }
+                _ => {}
+            }
+            return Ok(());
+        }
+
+        // Handle named export specifiers: export { foo, bar as baz }
+        for spec in &export.specifiers {
+            let value_reg = self.builder.alloc_register()?;
+            let local_name_idx = self.builder.add_string(spec.local.name.cheap_clone())?;
+            let export_name_idx = self.builder.add_string(spec.exported.name.cheap_clone())?;
+
+            // Get the local variable value
+            self.builder.emit(Op::GetVar {
+                dst: value_reg,
+                name: local_name_idx,
+            });
+
+            // Export it
+            self.builder.emit(Op::ExportBinding {
+                export_name: export_name_idx,
+                binding_name: local_name_idx,
+                value: value_reg,
+            });
+
+            self.builder.free_register(value_reg);
+        }
+
+        Ok(())
+    }
+
+    /// Emit export bindings for a pattern (handles destructuring)
+    fn emit_export_for_pattern(&mut self, pattern: &Pattern) -> Result<(), JsError> {
+        match pattern {
+            Pattern::Identifier(id) => {
+                let value_reg = self.builder.alloc_register()?;
+                let name_idx = self.builder.add_string(id.name.cheap_clone())?;
+                self.builder.emit(Op::GetVar {
+                    dst: value_reg,
+                    name: name_idx,
+                });
+                self.builder.emit(Op::ExportBinding {
+                    export_name: name_idx,
+                    binding_name: name_idx,
+                    value: value_reg,
+                });
+                self.builder.free_register(value_reg);
+            }
+            Pattern::Object(obj_pattern) => {
+                for prop in &obj_pattern.properties {
+                    match prop {
+                        ObjectPatternProperty::KeyValue { value, .. } => {
+                            self.emit_export_for_pattern(value)?;
+                        }
+                        ObjectPatternProperty::Rest(rest_elem) => {
+                            self.emit_export_for_pattern(&rest_elem.argument)?;
+                        }
+                    }
+                }
+            }
+            Pattern::Array(arr_pattern) => {
+                for p in arr_pattern.elements.iter().flatten() {
+                    self.emit_export_for_pattern(p)?;
+                }
+            }
+            Pattern::Rest(rest_elem) => {
+                self.emit_export_for_pattern(&rest_elem.argument)?;
+            }
+            Pattern::Assignment(assign_pattern) => {
+                self.emit_export_for_pattern(&assign_pattern.left)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Compile a function for export default (returns value in register)
+    fn compile_function_expression_for_export(
+        &mut self,
+        func: &crate::ast::FunctionDeclaration,
+        dst: Register,
+    ) -> Result<(), JsError> {
+        use crate::ast::FunctionExpression;
+
+        // Convert FunctionDeclaration to a FunctionExpression-like structure for compilation
+        let func_expr = FunctionExpression {
+            id: func.id.clone(),
+            params: func.params.clone(),
+            body: func.body.clone(),
+            generator: func.generator,
+            async_: func.async_,
+            span: func.span,
+            return_type: None,
+            type_parameters: None,
+        };
+
+        self.compile_function_expression(&func_expr, dst)?;
+        Ok(())
+    }
+
+    /// Compile a class for export default (returns value in register)
+    fn compile_class_expression_for_export(
+        &mut self,
+        class: &ClassDeclaration,
+        dst: Register,
+    ) -> Result<(), JsError> {
+        use crate::ast::ClassExpression;
+
+        // Convert ClassDeclaration to ClassExpression for compilation
+        let class_expr = ClassExpression {
+            id: class.id.clone(),
+            super_class: class.super_class.clone(),
+            body: class.body.clone(),
+            implements: class.implements.clone(),
+            type_parameters: None,
+            decorators: class.decorators.clone(),
+            span: class.span,
+        };
+
+        self.compile_class_expression(&class_expr, dst)?;
         Ok(())
     }
 }

@@ -12,11 +12,11 @@ use crate::ast::{
     Argument, ArrayElement, ArrayPattern, AssignmentExpression, AssignmentOp, AssignmentTarget,
     BinaryExpression, BinaryOp, BlockStatement, CallExpression, ClassConstructor, ClassDeclaration,
     ClassExpression, ClassMember, ClassMethod, ClassProperty, ConditionalExpression, Decorator,
-    Expression, ForInOfLeft, ForInit, FunctionParam, LiteralValue, LogicalExpression, LogicalOp,
-    MemberExpression, MemberProperty, MethodKind, NewExpression, ObjectExpression,
-    ObjectPatternProperty, ObjectProperty, ObjectPropertyKey, Pattern, Program, PropertyKind,
-    SequenceExpression, Statement, TaggedTemplateExpression, TemplateLiteral, UnaryExpression,
-    UnaryOp, UpdateExpression, UpdateOp, VariableDeclaration, VariableKind,
+    Expression, ForInOfLeft, ForInit, FunctionParam, ImportSpecifier, LiteralValue,
+    LogicalExpression, LogicalOp, MemberExpression, MemberProperty, MethodKind, NewExpression,
+    ObjectExpression, ObjectPatternProperty, ObjectProperty, ObjectPropertyKey, Pattern, Program,
+    PropertyKind, SequenceExpression, Statement, TaggedTemplateExpression, TemplateLiteral,
+    UnaryExpression, UnaryOp, UpdateExpression, UpdateOp, VariableDeclaration, VariableKind,
 };
 use crate::error::JsError;
 use crate::gc::{Gc, Guard, Heap};
@@ -614,7 +614,10 @@ impl Interpreter {
             return Ok(crate::RuntimeResult::NeedImports(missing));
         }
 
-        // All imports satisfied - compile to bytecode and execute
+        // All imports satisfied - set up import bindings first
+        self.setup_import_bindings(&program)?;
+
+        // Now compile to bytecode and execute
         self.start_execution();
 
         // Compile the program to bytecode
@@ -728,6 +731,61 @@ impl Interpreter {
         Ok(())
     }
 
+    /// Set up import bindings for a program before bytecode execution.
+    /// This resolves all imports and creates bindings in the current environment
+    /// so that the bytecode can reference imported values.
+    fn setup_import_bindings(&mut self, program: &Program) -> Result<(), JsError> {
+        for stmt in program.body.iter() {
+            if let Statement::Import(import) = stmt {
+                // Skip type-only imports
+                if import.type_only {
+                    continue;
+                }
+
+                let specifier = import.source.value.to_string();
+
+                // Resolve the module
+                let module_obj = self.resolve_module(&specifier)?;
+
+                // Set up bindings for each import specifier
+                for spec in &import.specifiers {
+                    match spec {
+                        ImportSpecifier::Named {
+                            local, imported, ..
+                        } => {
+                            // import { foo as bar } from "mod" -> bar binds to mod.foo
+                            let property_key = PropertyKey::String(imported.name.cheap_clone());
+                            self.env_define_import(
+                                local.name.cheap_clone(),
+                                module_obj.cheap_clone(),
+                                property_key,
+                            );
+                        }
+                        ImportSpecifier::Default { local, .. } => {
+                            // import foo from "mod" -> foo binds to mod.default
+                            let property_key = PropertyKey::String(self.intern("default"));
+                            self.env_define_import(
+                                local.name.cheap_clone(),
+                                module_obj.cheap_clone(),
+                                property_key,
+                            );
+                        }
+                        ImportSpecifier::Namespace { local, .. } => {
+                            // import * as foo from "mod" -> foo binds to the entire module object
+                            // For namespace imports, we define a regular binding to the module object
+                            self.env_define(
+                                local.name.cheap_clone(),
+                                JsValue::Object(module_obj.cheap_clone()),
+                                false, // immutable
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Execute a pending module that has all its imports satisfied.
     fn execute_pending_module(&mut self, module_path: &crate::ModulePath) -> Result<(), JsError> {
         let program = self
@@ -749,6 +807,9 @@ impl Interpreter {
         // Root the module environment - it must persist for live bindings
         self.root_guard.guard(module_env.clone());
         self.env = module_env.cheap_clone();
+
+        // Set up import bindings before bytecode execution
+        self.setup_import_bindings(&program)?;
 
         // Execute module using bytecode compilation
         let result = self.execute_program_bytecode(&program);
@@ -976,7 +1037,10 @@ impl Interpreter {
                 return Ok(crate::RuntimeResult::NeedImports(missing));
             }
 
-            // All imports satisfied - compile to bytecode and execute
+            // All imports satisfied - set up import bindings first
+            self.setup_import_bindings(&program)?;
+
+            // Now compile to bytecode and execute
             self.start_execution();
 
             // Compile the program to bytecode
@@ -2586,8 +2650,7 @@ impl Interpreter {
     ///
     /// The specifier is resolved relative to the current module path before
     /// looking up in the loaded modules cache.
-    #[allow(dead_code)] // Used for future ES module implementation
-    fn resolve_module(&mut self, specifier: &str) -> Result<Gc<JsObject>, JsError> {
+    pub fn resolve_module(&mut self, specifier: &str) -> Result<Gc<JsObject>, JsError> {
         // Check internal modules first (use original specifier for internal modules)
         if let Some(module) = self.resolve_internal_module(specifier)? {
             return Ok(module);
@@ -2703,6 +2766,9 @@ impl Interpreter {
         // Root the module environment - it must persist for live bindings
         self.root_guard.guard(module_env.clone());
         self.env = module_env.cheap_clone();
+
+        // Set up import bindings before bytecode execution
+        self.setup_import_bindings(&program)?;
 
         // Execute the module body using bytecode
         let result = self.execute_program_bytecode(&program);

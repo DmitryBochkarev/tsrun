@@ -745,6 +745,32 @@ pub enum Op {
 
     /// Load `new.target`: r[dst] = new.target
     LoadNewTarget { dst: Register },
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // Module Operations
+    // ═══════════════════════════════════════════════════════════════════════════════
+    /// Export a binding: exports[export_name] = { name: binding_name, value: r[value] }
+    /// Used for `export const foo = ...` and `export { foo }`
+    ExportBinding {
+        export_name: ConstantIndex,
+        binding_name: ConstantIndex,
+        value: Register,
+    },
+
+    /// Export a namespace re-export: exports[name] = module_namespace
+    /// Used for `export * as ns from "module"`
+    ExportNamespace {
+        export_name: ConstantIndex,
+        module_specifier: ConstantIndex,
+    },
+
+    /// Re-export from another module: exports[export_name] = { from: source_module, key: source_key }
+    /// Used for `export { foo } from "./bar"`
+    ReExport {
+        export_name: ConstantIndex,
+        source_module: ConstantIndex,
+        source_key: ConstantIndex,
+    },
 }
 
 /// A compiled chunk of bytecode

@@ -2371,7 +2371,7 @@ impl Compiler {
     }
 
     /// Compile function expression
-    fn compile_function_expression(
+    pub(crate) fn compile_function_expression(
         &mut self,
         func: &crate::ast::FunctionExpression,
         dst: Register,
@@ -2570,7 +2570,7 @@ impl Compiler {
     }
 
     /// Compile class expression
-    fn compile_class_expression(
+    pub(crate) fn compile_class_expression(
         &mut self,
         class: &crate::ast::ClassExpression,
         dst: Register,

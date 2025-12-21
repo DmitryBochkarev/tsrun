@@ -3,8 +3,8 @@
 This document analyzes test failures in the bytecode VM and categorizes them by feature area with implementation guidance.
 
 **Total Tests:** 1792
-**Passing:** 1717
-**Failing:** 68
+**Passing:** 1770
+**Failing:** 15
 **Ignored:** 7
 
 ---
@@ -51,6 +51,7 @@ The following issues have been fixed:
 - ✅ **Parenthesized method calls** - `(a.b)?.()` and `(a?.b)()` now preserve `this` binding correctly
 - ✅ **Decorator addInitializer** - `context.addInitializer(callback)` now works for class decorators
 - ✅ **Auto-accessor decorator context.kind** - Auto-accessor decorators now receive `context.kind = "accessor"` instead of `"field"`
+- ✅ **Module System (Import/Export)** - ES Modules now work in bytecode VM with import/export declarations compiled to bytecode
 
 ---
 
@@ -70,57 +71,32 @@ The following issues have been fixed:
 
 ## 1. Module System (Import/Export)
 
-**Error Message:** `Module imports not yet supported in bytecode compiler`
+**Status: ✅ Fixed**
 
-**Affected Tests (~40 tests):**
-- `modules::test_module_with_internal_imports`
-- `modules::test_external_module_*`
-- `modules::test_live_binding_*`
-- `modules::test_export_*`
-- `modules::test_import_namespace`
-- `modules::test_order_fulfillment*`
-- `orders::test_*` (most tests)
+All module tests now pass (46/46):
+- ✅ Named imports: `import { foo } from "module"`
+- ✅ Default imports: `import foo from "module"`
+- ✅ Namespace imports: `import * as ns from "module"`
+- ✅ Named exports: `export const foo = 1`
+- ✅ Default exports: `export default expr`
+- ✅ Named re-exports: `export { foo } from "./bar"`
+- ✅ Namespace re-exports: `export * as ns from "./bar"`
+- ✅ Internal modules (native and source)
+- ✅ Live bindings (imports see updated values)
+- ✅ Order system integration
 
-**Current State:**
-The bytecode compiler throws a `SyntaxError` when encountering import/export declarations.
+**Implementation Details:**
 
-**Implementation Strategy:**
+1. **Import binding setup** - `setup_import_bindings()` is called before bytecode compilation to resolve all imports and create environment bindings using `env_define_import()`
 
-### Step 1: Compile Import Declarations
-```rust
-// In bytecode compiler, handle ImportDeclaration
-Statement::ImportDeclaration(import) => {
-    // Emit LoadModule instruction with resolved specifier
-    // Emit GetModuleExport for each import specifier
-    // Emit DefineVariable for each binding
-}
-```
+2. **Import statements** - Compile to no-ops since bindings are already set up before bytecode execution
 
-### Step 2: Add VM Instructions
-```rust
-enum Opcode {
-    // ... existing
-    LoadModule(ModuleId),       // Load module into register
-    GetModuleBinding(BindingId), // Get live binding from module
-    ExportBinding(BindingId),   // Export a binding
-}
-```
+3. **Export opcodes** - Three new bytecode instructions:
+   - `ExportBinding { export_name, binding_name, value }` - Direct exports
+   - `ExportNamespace { export_name, module_specifier }` - Namespace re-exports
+   - `ReExport { export_name, source_module, source_key }` - Named re-exports
 
-### Step 3: Module Records
-The VM needs to maintain module records with:
-- Namespace object
-- Live binding references
-- Export entries
-- Module status (loading, linked, evaluated)
-
-### Step 4: Handle Module Suspension
-When module loading is needed, the VM should:
-1. Return `RuntimeResult::NeedImports`
-2. Store current execution state
-3. Resume after host provides module
-
-**Complexity:** High - requires significant VM changes
-**Estimated Effort:** 2-3 days
+4. **VM handlers** - Store exports in `interp.exports` map which is processed after bytecode execution to create the module namespace object with live binding getters
 
 ---
 
@@ -223,9 +199,9 @@ The bytecode VM delegates to proxy_* functions for all property operations. Key 
 - Method decorators pass context with `kind: "method"|"getter"|"setter"`, `name`, `static`, `private`
 - `addInitializer` callbacks are collected in an array during decorator application and executed after all class decorators are applied via `RunClassInitializers` opcode
 
-**Still Missing (~16 tests):**
-- ❌ Parameter decorators
-- ❌ Auto-accessor decorator tracking (setter not invoked on assignment)
+**Still Missing (~15 tests):**
+- ❌ Parameter decorators (~4 tests) - decorators on function/constructor parameters
+- ❌ Auto-accessor decorator full support (~11 tests) - auto-accessor decorators should receive `{ get, set }` object as first argument instead of `undefined`, and return `{ get, set }` to replace the accessor methods
 
 ---
 
