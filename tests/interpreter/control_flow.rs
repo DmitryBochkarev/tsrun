@@ -2661,3 +2661,122 @@ fn test_for_of_with_template_literal() {
     );
     assert_eq!(result, JsValue::String("a! b! c! ".into()));
 }
+
+#[test]
+fn test_nested_block_scopes() {
+    // Test that nested block scopes properly save/restore environments
+    let result = eval(
+        r#"
+        let outer = 1;
+        {
+            let a = 10;
+            {
+                let b = 20;
+                outer = a + b;
+            }
+            // b should not be visible here
+            outer = outer + a;
+        }
+        // a and b should not be visible here
+        outer
+    "#,
+    );
+    // outer = (10 + 20) + 10 = 40
+    assert_eq!(result, JsValue::Number(40.0));
+}
+
+#[test]
+fn test_deeply_nested_block_scopes() {
+    // Test 5 levels of nested blocks
+    let result = eval(
+        r#"
+        let result = 0;
+        {
+            let a = 1;
+            {
+                let b = 2;
+                {
+                    let c = 3;
+                    {
+                        let d = 4;
+                        {
+                            let e = 5;
+                            result = a + b + c + d + e;
+                        }
+                        result = result + d;
+                    }
+                    result = result + c;
+                }
+                result = result + b;
+            }
+            result = result + a;
+        }
+        result
+    "#,
+    );
+    // result = (1+2+3+4+5) + 4 + 3 + 2 + 1 = 15 + 10 = 25
+    assert_eq!(result, JsValue::Number(25.0));
+}
+
+#[test]
+fn test_nested_blocks_outer_var_visible_after() {
+    // Verify that outer scope vars are still visible after nested blocks exit
+    // This tests that env is correctly restored
+    let result = eval(
+        r#"
+        let outer = 1;
+        {
+            let a = 10;
+            {
+                let b = 20;
+            }
+            // After inner block exits, we should still be in scope where 'a' is visible
+            outer = a;
+        }
+        // After outer block exits, only 'outer' should be visible
+        outer
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(10.0));
+}
+
+#[test]
+fn test_block_var_not_visible_after() {
+    // Block-scoped var should throw ReferenceError after block
+    use typescript_eval::Runtime;
+    let mut runtime = Runtime::new();
+    let result = runtime.eval(
+        r#"
+        {
+            let x = 10;
+        }
+        x  // Should throw ReferenceError
+    "#,
+    );
+    assert!(
+        result.is_err(),
+        "Expected ReferenceError for 'x' after block"
+    );
+}
+
+#[test]
+fn test_nested_block_outer_var_not_visible_after_both() {
+    // After nested blocks, outer block var should NOT be visible
+    use typescript_eval::Runtime;
+    let mut runtime = Runtime::new();
+    let result = runtime.eval(
+        r#"
+        {
+            let a = 10;
+            {
+                let b = 20;
+            }
+        }
+        a  // Should throw ReferenceError - 'a' was in outer block
+    "#,
+    );
+    assert!(
+        result.is_err(),
+        "Expected ReferenceError for 'a' after both blocks exit"
+    );
+}

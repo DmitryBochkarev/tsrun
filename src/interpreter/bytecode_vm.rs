@@ -137,8 +137,8 @@ pub struct BytecodeVM {
     this_value: JsValue,
     /// Current exception value (for catch blocks)
     exception_value: Option<JsValue>,
-    /// Saved environment for scope restoration
-    saved_env: Option<Gc<JsObject>>,
+    /// Stack of saved environments for nested scope restoration
+    saved_env_stack: Vec<Gc<JsObject>>,
     /// Original arguments array (for `arguments` object)
     pub arguments: Vec<JsValue>,
     /// `new.target` value (constructor if called with new, undefined otherwise)
@@ -168,7 +168,7 @@ impl BytecodeVM {
             try_stack: Vec::new(),
             this_value,
             exception_value: None,
-            saved_env: None,
+            saved_env_stack: Vec::new(),
             arguments: Vec::new(),
             new_target: JsValue::Undefined,
             pending_completion: None,
@@ -213,7 +213,7 @@ impl BytecodeVM {
             try_stack: Vec::new(),
             this_value,
             exception_value: None,
-            saved_env: None,
+            saved_env_stack: Vec::new(),
             arguments: args.to_vec(),
             new_target: JsValue::Undefined,
             pending_completion: None,
@@ -262,7 +262,7 @@ impl BytecodeVM {
             try_stack: Vec::new(),
             this_value,
             exception_value: None,
-            saved_env: None,
+            saved_env_stack: Vec::new(),
             arguments: args.to_vec(),
             new_target,
             pending_completion: None,
@@ -540,8 +540,8 @@ impl BytecodeVM {
             guard.guard(obj.cheap_clone());
         }
 
-        // Guard saved_env if present
-        if let Some(ref env) = self.saved_env {
+        // Guard saved_env_stack entries
+        for env in &self.saved_env_stack {
             guard.guard(env.cheap_clone());
         }
 
@@ -668,7 +668,7 @@ impl BytecodeVM {
             try_stack: state.try_stack,
             this_value,
             exception_value: None,
-            saved_env: None,
+            saved_env_stack: Vec::new(),
             arguments: state.arguments,
             new_target: state.new_target,
             pending_completion: None,
@@ -1906,14 +1906,13 @@ impl BytecodeVM {
             // ═══════════════════════════════════════════════════════════════════════════
             Op::PushScope => {
                 let env = interp.push_scope();
-                // Guard the saved environment
-                self.register_guard.guard(env.cheap_clone());
-                self.saved_env = Some(env);
+                // Push the saved environment onto the stack
+                self.saved_env_stack.push(env);
                 Ok(OpResult::Continue)
             }
 
             Op::PopScope => {
-                if let Some(env) = self.saved_env.take() {
+                if let Some(env) = self.saved_env_stack.pop() {
                     interp.pop_scope(env);
                 }
                 Ok(OpResult::Continue)

@@ -2,9 +2,9 @@
 
 This document analyzes test failures in the bytecode VM and categorizes them by feature area with implementation guidance.
 
-**Total Tests:** 1785
-**Passing:** 1654
-**Failing:** 124
+**Total Tests:** 1790
+**Passing:** 1664
+**Failing:** 119
 **Ignored:** 7
 
 ---
@@ -39,6 +39,7 @@ The following issues have been fixed:
 - ✅ **Eval completion values** - `eval()` now returns proper completion values for loops, switch, and empty blocks
 - ✅ **Eval strict mode this** - Direct eval inside functions now preserves the correct `this` binding
 - ✅ **Async iteration (for-await-of)** - `for await...of` loops now work with arrays, promises, and async generators
+- ✅ **GC memory leak in loops** - Fixed nested block scope restoration and environment collection in loops
 
 ---
 
@@ -334,9 +335,15 @@ Fixed by adding rest parameter processing to interpreted function JIT compilatio
 
 Fixed by updating the `Instanceof` opcode to check for `[Symbol.hasInstance]` method before falling back to OrdinaryHasInstance. Also fixed regular functions not having a `.prototype` property.
 
-### GC/Memory Leak
-**Tests:** `gc::test_nested_for_loop_environments_collected`
-**Error:** Loop environments not being collected properly
+### ~~GC/Memory Leak~~ ✅ Fixed
+**Tests:** `gc::test_nested_for_loop_environments_collected`, `gc::test_loop_environments_collected`, `gc::test_for_loop_object_bindings_collected`
+~~**Error:** Loop environments not being collected properly~~
+
+Fixed by changing `saved_env: Option<Gc<JsObject>>` to `saved_env_stack: Vec<Gc<JsObject>>` in BytecodeVM. The single Option couldn't handle nested block scopes - when an inner block's PushScope ran, it would overwrite the outer block's saved environment. This caused:
+1. The outer scope's environment to not be restored on PopScope
+2. All environments pushed during loops to be guarded but never unguarded
+
+The fix uses a stack so nested scopes are properly tracked and restored. This also fixed a latent bug where variables from outer blocks were incorrectly visible after the blocks exited.
 
 ### ~~Reflect.construct with newTarget~~ ✅ Fixed
 **Tests:** `proxy::test_reflect_construct_with_new_target`
