@@ -22,10 +22,20 @@ impl Compiler {
             Pattern::Identifier(id) => {
                 let name_idx = self.builder.add_string(id.name.cheap_clone())?;
                 if is_var {
-                    self.builder.emit(Op::DeclareVarHoisted {
-                        name: name_idx,
-                        init: value_reg,
-                    });
+                    // For var declarations, check if already hoisted
+                    if self.is_hoisted(&id.name) {
+                        // Already hoisted - just assign
+                        self.builder.emit(Op::SetVar {
+                            name: name_idx,
+                            src: value_reg,
+                        });
+                    } else {
+                        // Not hoisted yet (e.g., inside eval or dynamic scope)
+                        self.builder.emit(Op::DeclareVarHoisted {
+                            name: name_idx,
+                            init: value_reg,
+                        });
+                    }
                 } else {
                     self.builder.emit(Op::DeclareVar {
                         name: name_idx,

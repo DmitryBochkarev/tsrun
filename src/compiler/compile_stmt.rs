@@ -906,6 +906,9 @@ impl Compiler {
             }
         }
 
+        // Hoist var declarations in the function body
+        func_compiler.emit_hoisted_declarations(body)?;
+
         // Compile the body statements
         for stmt in body {
             func_compiler.compile_statement_impl(stmt)?;
@@ -1264,6 +1267,9 @@ impl Compiler {
         for field in instance_fields {
             func_compiler.compile_instance_field_initializer(field)?;
         }
+
+        // Hoist var declarations in constructor body
+        func_compiler.emit_hoisted_declarations(&ctor.body.body)?;
 
         // Compile constructor body
         for stmt in ctor.body.body.iter() {

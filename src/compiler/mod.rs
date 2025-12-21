@@ -8,6 +8,7 @@ mod bytecode;
 mod compile_expr;
 mod compile_pattern;
 mod compile_stmt;
+mod hoist;
 
 pub use builder::{BytecodeBuilder, JumpPlaceholder};
 pub use bytecode::{BytecodeChunk, Constant, FunctionInfo, JumpTarget, Op, Register};
@@ -17,6 +18,7 @@ use crate::error::JsError;
 use crate::value::JsString;
 use builder::RegisterAllocator;
 use rustc_hash::FxHashMap;
+use rustc_hash::FxHashSet;
 use std::rc::Rc;
 
 /// Compiler state for converting AST to bytecode
@@ -32,6 +34,10 @@ pub struct Compiler {
 
     /// Try block depth (for determining if we're in a try block)
     try_depth: usize,
+
+    /// Set of variables that have been hoisted in the current scope
+    /// Used to determine if we should emit DeclareVarHoisted or SetVar
+    hoisted_vars: FxHashSet<JsString>,
 }
 
 /// Context for a loop (for break/continue handling)
@@ -54,12 +60,18 @@ impl Compiler {
             loop_stack: Vec::new(),
             labels: FxHashMap::default(),
             try_depth: 0,
+            hoisted_vars: FxHashSet::default(),
         }
     }
 
     /// Compile a program to bytecode
     pub fn compile_program(program: &Program) -> Result<Rc<BytecodeChunk>, JsError> {
         let mut compiler = Compiler::new();
+
+        // First, hoist all var declarations and function declarations to the top
+        compiler.emit_hoisted_declarations(&program.body)?;
+
+        // Then compile the statements
         compiler.compile_statements(&program.body)?;
         compiler.builder.emit_halt();
         Ok(Rc::new(compiler.builder.finish()))
