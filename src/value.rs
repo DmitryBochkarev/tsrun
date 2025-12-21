@@ -971,6 +971,10 @@ impl Traceable for JsObject {
                         visitor(obj.copy_ref());
                     }
                 }
+                // Trace this_value if it's an object
+                if let JsValue::Object(obj) = &state.this_value {
+                    visitor(obj.copy_ref());
+                }
                 // Trace saved register values
                 for reg in &state.saved_registers {
                     if let JsValue::Object(obj) = reg {
@@ -2547,6 +2551,8 @@ pub struct BytecodeGeneratorState {
     pub closure: JsObjectRef,
     /// Arguments passed to the generator function
     pub args: Vec<JsValue>,
+    /// The `this` value passed when the generator function was called
+    pub this_value: JsValue,
     /// Current execution status
     pub status: GeneratorStatus,
     /// Value passed in via next(value)

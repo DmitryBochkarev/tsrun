@@ -1917,6 +1917,7 @@ impl Interpreter {
             args,
             func_env,
             current_env,
+            this_value,
         ) = {
             let state = gen_state.borrow();
             (
@@ -1932,6 +1933,7 @@ impl Interpreter {
                 state.args.clone(),
                 state.func_env.clone(),
                 state.current_env.clone(),
+                state.this_value.clone(),
             )
         };
 
@@ -1992,10 +1994,10 @@ impl Interpreter {
                 args.clone()
             };
 
-            // Create VM with arguments
+            // Create VM with arguments and the original this value
             let mut vm = BytecodeVM::with_guard_and_args(
                 chunk,
-                JsValue::Undefined,
+                this_value.clone(),
                 vm_guard,
                 &processed_args,
             );
@@ -2092,7 +2094,7 @@ impl Interpreter {
 
             // Create guard for the VM registers
             let vm_guard = self.heap.create_guard();
-            let mut vm = BytecodeVM::from_saved_state(saved_state, JsValue::Undefined, vm_guard);
+            let mut vm = BytecodeVM::from_saved_state(saved_state, this_value.clone(), vm_guard);
 
             // Check if we need to throw an exception (generator.throw())
             let throw_value = gen_state.borrow_mut().throw_value.take();
@@ -6314,9 +6316,10 @@ impl Interpreter {
 
                     self.call_stack.pop();
                     if interp.async_ {
-                        return self.create_and_call_bytecode_async_generator(bc_func, args);
+                        return self
+                            .create_and_call_bytecode_async_generator(bc_func, this_value, args);
                     } else {
-                        return self.create_and_call_bytecode_generator(bc_func, args);
+                        return self.create_and_call_bytecode_generator(bc_func, this_value, args);
                     }
                 }
 
@@ -6591,7 +6594,7 @@ impl Interpreter {
 
             JsFunction::BytecodeGenerator(bc_func) => {
                 // Create a new bytecode generator object
-                self.create_and_call_bytecode_generator(bc_func, args)
+                self.create_and_call_bytecode_generator(bc_func, this_value, args)
             }
 
             JsFunction::BytecodeAsync(bc_func) => {
@@ -6601,7 +6604,7 @@ impl Interpreter {
 
             JsFunction::BytecodeAsyncGenerator(bc_func) => {
                 // Create a new bytecode async generator object
-                self.create_and_call_bytecode_async_generator(bc_func, args)
+                self.create_and_call_bytecode_async_generator(bc_func, this_value, args)
             }
 
             JsFunction::Bound(bound) => {
@@ -6891,6 +6894,7 @@ impl Interpreter {
     fn create_and_call_bytecode_generator(
         &mut self,
         bc_func: BytecodeFunction,
+        this_value: JsValue,
         args: &[JsValue],
     ) -> Result<Guarded, JsError> {
         use crate::value::{BytecodeGeneratorState, GeneratorStatus};
@@ -6904,6 +6908,7 @@ impl Interpreter {
             chunk: bc_func.chunk,
             closure: bc_func.closure,
             args: args.to_vec(),
+            this_value,
             status: GeneratorStatus::Suspended,
             sent_value: JsValue::Undefined,
             id: gen_id,
@@ -6930,6 +6935,7 @@ impl Interpreter {
     fn create_and_call_bytecode_async_generator(
         &mut self,
         bc_func: BytecodeFunction,
+        this_value: JsValue,
         args: &[JsValue],
     ) -> Result<Guarded, JsError> {
         use crate::value::{BytecodeGeneratorState, GeneratorStatus};
@@ -6943,6 +6949,7 @@ impl Interpreter {
             chunk: bc_func.chunk,
             closure: bc_func.closure,
             args: args.to_vec(),
+            this_value,
             status: GeneratorStatus::Suspended,
             sent_value: JsValue::Undefined,
             id: gen_id,

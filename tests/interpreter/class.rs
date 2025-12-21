@@ -978,10 +978,7 @@ fn test_super_in_async_method() {
 }
 
 // Test super in generator method
-// NOTE: This test is currently skipped because class generator methods (*gen() syntax)
-// are not yet supported by the parser. When that's fixed, uncomment this test.
 #[test]
-#[ignore = "Parser does not yet support generator methods in classes"]
 fn test_super_in_generator_method() {
     assert_eq!(
         eval(

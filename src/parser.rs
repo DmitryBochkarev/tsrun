@@ -649,6 +649,9 @@ impl<'a> Parser<'a> {
         // Check for async method
         let is_async = self.match_token(&TokenKind::Async);
 
+        // Check for generator method (either *method() or async *method())
+        let is_generator = self.match_token(&TokenKind::Star);
+
         // Check for constructor
         if !static_ && self.check_keyword("constructor") {
             self.advance();
@@ -690,7 +693,7 @@ impl<'a> Parser<'a> {
                 return_type,
                 type_parameters: type_params,
                 body,
-                generator: false,
+                generator: is_generator,
                 async_: is_async,
                 span: self.span_from(start),
             };
