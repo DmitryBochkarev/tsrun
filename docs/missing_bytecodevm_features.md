@@ -3,8 +3,8 @@
 This document analyzes test failures in the bytecode VM and categorizes them by feature area with implementation guidance.
 
 **Total Tests:** 1787
-**Passing:** 1599
-**Failing:** 181
+**Passing:** 1603
+**Failing:** 177
 **Ignored:** 7
 
 ---
@@ -26,6 +26,9 @@ The following issues have been fixed:
 - ✅ **BigInt literals** - BigInt literals now compile to Number values (simplified implementation)
 - ✅ **new eval() TypeError** - `new eval()` now throws TypeError as required by ECMAScript spec
 - ✅ **Proxy get/set/has/delete traps** - Proxy traps now work in bytecode VM (delegates to proxy_* functions)
+- ✅ **Proxy construct trap** - `new Proxy(target, { construct })` now invokes construct trap
+- ✅ **Proxy for-of iteration** - for-of loops on proxies now go through get trap for Symbol.iterator and array access
+- ✅ **Proxy for-in enumeration** - for-in loops on proxies now use ownKeys trap
 
 ---
 
@@ -201,29 +204,26 @@ Private methods are similar but stored as non-configurable, non-writable propert
 
 ## 4. Proxy Handler Traps
 
-**Status: Mostly Fixed**
+**Status: ✅ Fixed**
 
-Most proxy traps now work (69/73 tests passing). The following are fixed:
-- ✅ Get trap - now invoked via `proxy_get`
-- ✅ Set trap - now invoked via `proxy_set`
-- ✅ Has trap - now invoked via `proxy_has` (for `in` operator)
-- ✅ Delete trap - now invoked via `proxy_delete_property` (for `delete`)
+All proxy traps now work (73/73 tests passing):
+- ✅ Get trap - invoked via `proxy_get`
+- ✅ Set trap - invoked via `proxy_set`
+- ✅ Has trap - invoked via `proxy_has` (for `in` operator)
+- ✅ Delete trap - invoked via `proxy_delete_property` (for `delete`)
+- ✅ Construct trap - invoked via `proxy_construct` (for `new` operator)
 - ✅ Revocable proxies
 - ✅ Nested proxies
-- ✅ Most Reflect methods
-
-**Remaining Issues (~4 tests):**
-- `proxy::test_proxy_construct_trap*` - `new` not checking proxy construct trap
-- `proxy::test_proxy_array_for_of` - Iterator on proxy not working
-- `proxy::test_proxy_for_in` - for-in on proxy not working
+- ✅ All Reflect methods
+- ✅ for-of iteration on proxies (uses get trap for Symbol.iterator and array access)
+- ✅ for-in enumeration on proxies (uses ownKeys trap)
 
 **Implementation Notes:**
-The bytecode VM now delegates to proxy_* functions for property operations. Remaining work:
-- `Op::Construct` → `proxy_construct`
-- `Op::GetIterator` → proxy iteration
-
-**Complexity:** Low-Medium
-**Estimated Effort:** 0.5 day
+The bytecode VM delegates to proxy_* functions for all property operations. Key changes:
+- `Op::Construct` and `Op::ConstructSpread` check for proxy and call `proxy_construct`
+- `Op::GetIterator` uses `proxy_get` for Symbol.iterator when iterating over proxy
+- `Op::GetKeysIterator` uses `proxy_own_keys` for for-in loops on proxies
+- Array iterator's `next()` method uses `proxy_get` for accessing array elements through proxy
 
 ---
 

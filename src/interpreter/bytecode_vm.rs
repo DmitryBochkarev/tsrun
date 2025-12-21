@@ -1505,6 +1505,18 @@ impl BytecodeVM {
                     return Err(JsError::type_error("Constructor is not a callable object"));
                 };
 
+                // Check if this is a proxy - delegate to proxy_construct if so
+                if matches!(ctor.borrow().exotic, ExoticObject::Proxy(_)) {
+                    let result = crate::interpreter::builtins::proxy::proxy_construct(
+                        interp,
+                        ctor.cheap_clone(),
+                        args,
+                        callee_val.clone(), // new.target is the proxy itself
+                    )?;
+                    self.set_reg(dst, result.value);
+                    return Ok(OpResult::Continue);
+                }
+
                 // Check if this is `new eval()` - eval is not a constructor
                 if let ExoticObject::Function(JsFunction::Native(native)) = &ctor.borrow().exotic {
                     if native.name.as_str() == "eval" {
@@ -1560,6 +1572,18 @@ impl BytecodeVM {
                 let JsValue::Object(ctor) = &callee_val else {
                     return Err(JsError::type_error("Constructor is not a callable object"));
                 };
+
+                // Check if this is a proxy - delegate to proxy_construct if so
+                if matches!(ctor.borrow().exotic, ExoticObject::Proxy(_)) {
+                    let result = crate::interpreter::builtins::proxy::proxy_construct(
+                        interp,
+                        ctor.cheap_clone(),
+                        args,
+                        callee_val.clone(), // new.target is the proxy itself
+                    )?;
+                    self.set_reg(dst, result.value);
+                    return Ok(OpResult::Continue);
+                }
 
                 // Check if this is `new eval()` - eval is not a constructor
                 if let ExoticObject::Function(JsFunction::Native(native)) = &ctor.borrow().exotic {
@@ -1881,6 +1905,45 @@ impl BytecodeVM {
                 // The iterator is stored as an object with internal index state
                 match &obj_val {
                     JsValue::Object(obj_ref) => {
+                        // Check if it's a proxy first - need to get Symbol.iterator through proxy trap
+                        let is_proxy = matches!(obj_ref.borrow().exotic, ExoticObject::Proxy(_));
+
+                        if is_proxy {
+                            // For proxies, use proxy_get to get Symbol.iterator method
+                            let well_known =
+                                crate::interpreter::builtins::symbol::get_well_known_symbols();
+                            let iterator_symbol = crate::value::JsSymbol::new(
+                                well_known.iterator,
+                                Some("Symbol.iterator".to_string()),
+                            );
+                            let iterator_key = PropertyKey::Symbol(Box::new(iterator_symbol));
+
+                            let iterator_method_result =
+                                crate::interpreter::builtins::proxy::proxy_get(
+                                    interp,
+                                    obj_ref.cheap_clone(),
+                                    iterator_key,
+                                    obj_val.clone(),
+                                )?;
+
+                            if let JsValue::Object(method_obj) = iterator_method_result.value {
+                                // Call the iterator method with the proxy as `this`
+                                let result = interp.call_function(
+                                    JsValue::Object(method_obj),
+                                    obj_val.clone(),
+                                    &[],
+                                )?;
+                                // Guard the result iterator object
+                                if let JsValue::Object(iter_obj) = &result.value {
+                                    self.register_guard.guard(iter_obj.cheap_clone());
+                                }
+                                self.set_reg(dst, result.value);
+                            } else {
+                                return Err(JsError::type_error("Object is not iterable"));
+                            }
+                            return Ok(OpResult::Continue);
+                        }
+
                         // Check if it's an array - use direct element iteration
                         if obj_ref.borrow().array_elements().is_some() {
                             // Create an iterator object with the array and index
@@ -1945,32 +2008,56 @@ impl BytecodeVM {
                 // Create a keys iterator that iterates over enumerable property keys
                 let keys: Vec<JsValue> = match &obj_val {
                     JsValue::Object(obj_ref) => {
-                        let obj_borrowed = obj_ref.borrow();
-                        let mut result = Vec::new();
+                        // Check if this is a proxy - use proxy_own_keys if so
+                        let is_proxy = matches!(obj_ref.borrow().exotic, ExoticObject::Proxy(_));
 
-                        // For arrays, first add all array indices
-                        if let Some(elements) = obj_borrowed.array_elements() {
-                            for i in 0..elements.len() {
-                                result.push(JsValue::String(JsString::from(i.to_string())));
-                            }
-                        }
+                        if is_proxy {
+                            // Get keys through proxy trap
+                            let keys_result = crate::interpreter::builtins::proxy::proxy_own_keys(
+                                interp,
+                                obj_ref.cheap_clone(),
+                            )?;
 
-                        // Then add own enumerable property keys (excluding indices already added)
-                        for k in obj_borrowed.properties.keys() {
-                            match k {
-                                PropertyKey::String(s) => {
-                                    result.push(JsValue::String(s.cheap_clone()));
+                            // proxy_own_keys returns an array of keys
+                            if let JsValue::Object(keys_arr) = keys_result.value {
+                                if let Some(elements) = keys_arr.borrow().array_elements() {
+                                    elements.to_vec()
+                                } else {
+                                    Vec::new()
                                 }
-                                PropertyKey::Index(i) => {
-                                    // Only add if not an array (arrays already handled above)
-                                    if obj_borrowed.array_elements().is_none() {
-                                        result.push(JsValue::String(JsString::from(i.to_string())));
+                            } else {
+                                Vec::new()
+                            }
+                        } else {
+                            let obj_borrowed = obj_ref.borrow();
+                            let mut result = Vec::new();
+
+                            // For arrays, first add all array indices
+                            if let Some(elements) = obj_borrowed.array_elements() {
+                                for i in 0..elements.len() {
+                                    result.push(JsValue::String(JsString::from(i.to_string())));
+                                }
+                            }
+
+                            // Then add own enumerable property keys (excluding indices already added)
+                            for k in obj_borrowed.properties.keys() {
+                                match k {
+                                    PropertyKey::String(s) => {
+                                        result.push(JsValue::String(s.cheap_clone()));
                                     }
+                                    PropertyKey::Index(i) => {
+                                        // Only add if not an array (arrays already handled above)
+                                        if obj_borrowed.array_elements().is_none() {
+                                            result.push(JsValue::String(JsString::from(
+                                                i.to_string(),
+                                            )));
+                                        }
+                                    }
+                                    _ => {} // Skip symbols for for-in
                                 }
-                                _ => {} // Skip symbols for for-in
                             }
+                            result
                         }
-                        result
                     }
                     JsValue::String(s) => {
                         // For strings, iterate over character indices
@@ -2012,43 +2099,48 @@ impl BytecodeVM {
                     .borrow()
                     .get_property(&PropertyKey::from("__array__"));
                 if let Some(JsValue::Object(arr_ref)) = array_prop {
-                    let index = match iter_obj
-                        .borrow()
-                        .get_property(&PropertyKey::from("__index__"))
-                    {
-                        Some(JsValue::Number(n)) => n as usize,
-                        _ => 0,
-                    };
+                    // If the array is a proxy, fall through to custom iterator path
+                    // which will call the next() method (which handles proxies properly)
+                    let is_proxy = matches!(arr_ref.borrow().exotic, ExoticObject::Proxy(_));
+                    if !is_proxy {
+                        let index = match iter_obj
+                            .borrow()
+                            .get_property(&PropertyKey::from("__index__"))
+                        {
+                            Some(JsValue::Number(n)) => n as usize,
+                            _ => 0,
+                        };
 
-                    let elements = arr_ref.borrow().array_elements().map(|e| e.to_vec());
-                    let (value, done) = if let Some(elems) = elements {
-                        if index < elems.len() {
-                            let val = elems.get(index).cloned().unwrap_or(JsValue::Undefined);
-                            (val, false)
+                        let elements = arr_ref.borrow().array_elements().map(|e| e.to_vec());
+                        let (value, done) = if let Some(elems) = elements {
+                            if index < elems.len() {
+                                let val = elems.get(index).cloned().unwrap_or(JsValue::Undefined);
+                                (val, false)
+                            } else {
+                                (JsValue::Undefined, true)
+                            }
                         } else {
                             (JsValue::Undefined, true)
-                        }
-                    } else {
-                        (JsValue::Undefined, true)
-                    };
+                        };
 
-                    // Update index
-                    iter_obj.borrow_mut().set_property(
-                        PropertyKey::from("__index__"),
-                        JsValue::Number((index + 1) as f64),
-                    );
+                        // Update index
+                        iter_obj.borrow_mut().set_property(
+                            PropertyKey::from("__index__"),
+                            JsValue::Number((index + 1) as f64),
+                        );
 
-                    // Create result object { value, done }
-                    let guard = interp.heap.create_guard();
-                    let result = interp.create_object(&guard);
-                    result
-                        .borrow_mut()
-                        .set_property(PropertyKey::from("value"), value);
-                    result
-                        .borrow_mut()
-                        .set_property(PropertyKey::from("done"), JsValue::Boolean(done));
-                    self.set_reg(dst, JsValue::Object(result));
-                    return Ok(OpResult::Continue);
+                        // Create result object { value, done }
+                        let guard = interp.heap.create_guard();
+                        let result = interp.create_object(&guard);
+                        result
+                            .borrow_mut()
+                            .set_property(PropertyKey::from("value"), value);
+                        result
+                            .borrow_mut()
+                            .set_property(PropertyKey::from("done"), JsValue::Boolean(done));
+                        self.set_reg(dst, JsValue::Object(result));
+                        return Ok(OpResult::Continue);
+                    }
                 }
 
                 // Check if this is our internal string iterator

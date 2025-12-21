@@ -1947,7 +1947,25 @@ fn array_iterator_next(
         _ => 0,
     };
 
-    let length = arr.borrow().array_length().unwrap_or(0);
+    // Check if this is a proxy - if so, get length through proxy
+    let is_proxy = matches!(arr.borrow().exotic, crate::value::ExoticObject::Proxy(_));
+
+    let length = if is_proxy {
+        // Get length through proxy trap
+        let length_key = PropertyKey::String(interp.intern("length"));
+        let length_result = super::proxy::proxy_get(
+            interp,
+            arr.cheap_clone(),
+            length_key,
+            JsValue::Object(arr.cheap_clone()),
+        )?;
+        match length_result.value {
+            JsValue::Number(n) => n as u32,
+            _ => 0,
+        }
+    } else {
+        arr.borrow().array_length().unwrap_or(0)
+    };
 
     if index >= length {
         // Done
@@ -1961,11 +1979,20 @@ fn array_iterator_next(
             .set_property(PropertyKey::from("done"), JsValue::Boolean(true));
         Ok(Guarded::with_guard(JsValue::Object(result), guard))
     } else {
-        // Get value and increment index
-        let value = arr
-            .borrow()
-            .get_property(&PropertyKey::Index(index))
-            .unwrap_or(JsValue::Undefined);
+        // Get value through proxy if needed
+        let value = if is_proxy {
+            let result = super::proxy::proxy_get(
+                interp,
+                arr.cheap_clone(),
+                PropertyKey::Index(index),
+                JsValue::Object(arr.cheap_clone()),
+            )?;
+            result.value
+        } else {
+            arr.borrow()
+                .get_property(&PropertyKey::Index(index))
+                .unwrap_or(JsValue::Undefined)
+        };
 
         iter_obj.borrow_mut().set_property(
             PropertyKey::from("__index__"),

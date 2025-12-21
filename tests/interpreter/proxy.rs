@@ -1309,14 +1309,19 @@ fn test_proxy_for_in() {
 
 #[test]
 fn test_proxy_array_for_of() {
+    // Test that for-of on a proxy correctly goes through get traps
+    // Note: We only double array element values, not the length property
     assert_eq!(
         eval(
             r#"
             let arr = [10, 20, 30];
             let handler = {
-                get(target: any, prop: string) {
+                get(target: any, prop: any) {
                     let value = target[prop];
-                    if (typeof value === 'number') return value * 2;
+                    // Only double numeric array indices, not length
+                    if (typeof prop === 'string' && /^\d+$/.test(prop) && typeof value === 'number') {
+                        return value * 2;
+                    }
                     return value;
                 }
             };
