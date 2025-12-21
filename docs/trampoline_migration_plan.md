@@ -54,9 +54,11 @@ This document outlines the plan to migrate all recursive call sites to use a tra
 
 ### Current Issues
 
-1. **Decorator calls still recursive** - Complex multi-step logic in decorator opcodes.
+1. **Native function callbacks still recursive** - Array.map, Array.forEach, etc. (HIGH IMPACT)
 
-2. **Native function callbacks still recursive** - Array.map, Array.forEach, etc.
+2. **Decorator calls still recursive** - Complex multi-step logic in decorator opcodes. (LOW IMPACT)
+
+3. **Proxy trap calls still recursive** - All proxy traps call user handlers. (MEDIUM IMPACT)
 
 ## Migration Plan
 
@@ -102,21 +104,21 @@ The implementation:
 
 **Status**: Implemented. All 1796 tests pass.
 
-### Phase 3: Migrate Decorator Call Sites
-
-**Problem**: Decorators call user functions multiple times within `Op::ApplyClassDecorator`, `Op::ApplyMethodDecorator`, etc.
-
-**Current code pattern**:
-```rust
-// In ApplyMethodDecorator:
-let result = interp.call_function(decorator_val, JsValue::Undefined, vec![method_val, ctx])?;
-```
-
-**Solution**: Add `OpResult::DecoratorCall` variant that returns to the trampoline loop, then resumes decorator logic with the result. Each decorator opcode becomes a state machine that can be suspended/resumed.
-
-### Phase 4: Migrate Native Function Callbacks
+### Phase 3: Migrate Native Function Callbacks (HIGH PRIORITY)
 
 **Problem**: Many native functions call user callbacks, e.g., `Array.prototype.map`, `Array.prototype.forEach`, `Promise.then`.
+
+**Impact Analysis**: These are the highest-impact recursive calls because:
+- They execute in loops (e.g., `arr.map(fn)` calls `fn` for every element)
+- Callback can itself call array methods, creating deep recursion
+- Sort comparators are called O(n log n) times
+
+**Call sites identified** (in `src/interpreter/builtins/`):
+- `array.rs`: map, filter, forEach, reduce, reduceRight, every, some, find, findIndex, findLast, findLastIndex, sort, flatMap, toSorted
+- `set.rs`: forEach
+- `map.rs`: forEach
+- `promise.rs`: then/catch callbacks
+- `string.rs`: replace with function replacer
 
 **Current code pattern** (in builtins/array.rs):
 ```rust
@@ -131,6 +133,38 @@ for (i, elem) in elements.iter().enumerate() {
 2. Return `OpResult::NativeCallback` with the callback to invoke
 3. Trampoline invokes callback via normal call mechanism
 4. Resume native function with callback result
+
+**Complexity**: High - requires state machine for each affected builtin.
+
+### Phase 4: Migrate Proxy Calls (MEDIUM PRIORITY)
+
+**Problem**: Proxy traps call user-provided handler functions recursively.
+
+**Impact Analysis**: Medium impact because:
+- Proxies are less common than array operations
+- Each property access/set on a proxy triggers a trap
+- Nested proxies multiply the recursion
+
+**Call sites identified** (in `src/interpreter/builtins/proxy.rs`):
+- `get` trap
+- `set` trap
+- `has` trap
+- `deleteProperty` trap
+- `apply` trap (function call on proxy)
+- `construct` trap
+- `ownKeys`, `getOwnPropertyDescriptor`, `defineProperty`, etc.
+
+**Current code** (in builtins/proxy.rs):
+```rust
+pub fn proxy_apply(...) -> Result<Guarded, JsError> {
+    // ...
+    interp.call_function(apply_trap, handler_val, vec![target_val, this_val, args_array])?
+}
+```
+
+**Solution**: Similar to Phase 3 - proxy trap calls return `OpResult::ProxyTrap` with continuation state. The trampoline invokes the trap handler, then resumes proxy logic with the result.
+
+**Complexity**: Medium - fewer state variations than array methods.
 
 ### Phase 5: Migrate Generator/Async Functions ✅ COMPLETED
 
@@ -184,28 +218,43 @@ JsFunction::BytecodeAsync(bc_func) => {
 
 **Files changed**: `src/interpreter/bytecode_vm.rs`
 
-### Phase 6: Migrate Proxy Calls
+### Phase 6: Migrate Decorator Call Sites (LOW PRIORITY)
 
-**Problem**: Proxy traps call user-provided handler functions recursively.
+**Problem**: Decorators call user functions multiple times within `Op::ApplyClassDecorator`, `Op::ApplyMethodDecorator`, etc.
 
-**Current code** (in builtins/proxy.rs):
+**Impact Analysis**: Low impact because:
+- Decorators run once at class definition time (not in loops)
+- Decorator functions typically don't cause deep recursion themselves
+- The recursion depth from decorators is bounded by the number of decorators on a class
+
+**Call sites identified** (in `src/interpreter/bytecode_vm.rs`):
+- `Op::ApplyClassDecorator`: Single call per decorator
+- `Op::ApplyMethodDecorator`: Single call per decorator
+- `Op::ApplyFieldDecorator`: Single call per decorator
+- `Op::ApplyParameterDecorator`: Single call per decorator
+- `Op::ApplyFieldInitializer`: Single call per field
+- `Op::RunClassInitializers`: Loop over initializer callbacks
+
+**Current code pattern**:
 ```rust
-pub fn proxy_apply(...) -> Result<Guarded, JsError> {
-    // ...
-    interp.call_function(apply_trap, handler_val, vec![target_val, this_val, args_array])?
-}
+// In ApplyMethodDecorator:
+let result = interp.call_function(decorator_val, JsValue::Undefined, vec![method_val, ctx])?;
 ```
 
-**Solution**: Similar to Phase 4 - proxy trap calls return `OpResult::ProxyTrap` with continuation state. The trampoline invokes the trap handler, then resumes proxy logic with the result.
+**Solution**: Add `OpResult::DecoratorCall` variant that returns to the trampoline loop, then resumes decorator logic with the result. Each decorator opcode becomes a state machine that can be suspended/resumed.
 
-## Implementation Order
+**Complexity**: Medium - each decorator opcode has simple control flow but needs state preservation.
+
+**Note**: This phase can be deferred indefinitely since decorators don't cause the stack overflow issues that motivate the trampoline pattern.
+
+## Implementation Order (Revised)
 
 1. **Phase 1** ✅ COMPLETED: Fix depth counting bug
 2. **Phase 2** ✅ COMPLETED: Migrate Construct opcodes
 3. **Phase 5** ✅ COMPLETED: All generators and async functions now use trampoline
-4. **Phase 3**: Migrate decorator call sites
-5. **Phase 4**: Migrate native function callbacks
-6. **Phase 6**: Migrate proxy calls
+4. **Phase 3** (HIGH PRIORITY): Migrate native function callbacks - most impactful for stack safety
+5. **Phase 4** (MEDIUM PRIORITY): Migrate proxy calls - moderate impact
+6. **Phase 6** (LOW PRIORITY): Migrate decorator call sites - can be deferred
 
 ## Testing Strategy
 
