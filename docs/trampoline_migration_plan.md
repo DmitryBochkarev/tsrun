@@ -112,11 +112,7 @@ The implementation:
 let result = interp.call_function(decorator_val, JsValue::Undefined, vec![method_val, ctx])?;
 ```
 
-**Solution**: These are more complex because they have multi-step logic. Options:
-1. Keep recursive for now (decorators rarely cause deep recursion)
-2. Add multi-call continuation state in trampoline frame
-
-**Recommendation**: Keep recursive for Phase 3, revisit if needed.
+**Solution**: Add `OpResult::DecoratorCall` variant that returns to the trampoline loop, then resumes decorator logic with the result. Each decorator opcode becomes a state machine that can be suspended/resumed.
 
 ### Phase 4: Migrate Native Function Callbacks
 
@@ -130,16 +126,11 @@ for (i, elem) in elements.iter().enumerate() {
 }
 ```
 
-**Solution**: These are tricky because:
-1. They're in a loop with state between calls
-2. They need the result of each call before continuing
-
-**Options**:
-1. **Keep recursive** - Native callbacks are usually shallow
-2. **Iterator-based trampoline** - Add `OpResult::NativeCallback` that saves loop state
-3. **Compile to bytecode** - Make native functions return bytecode that the VM executes
-
-**Recommendation**: Keep recursive for now. The main recursion problem is JS→JS calls, not JS→Native→JS.
+**Solution**: Add `OpResult::NativeCallback` variant that saves the native function's loop state and returns to the trampoline. The native function becomes a state machine:
+1. Save loop index, accumulated results, and continuation info
+2. Return `OpResult::NativeCallback` with the callback to invoke
+3. Trampoline invokes callback via normal call mechanism
+4. Resume native function with callback result
 
 ### Phase 5: Migrate Generator/Async Functions ✅ COMPLETED
 
@@ -205,14 +196,16 @@ pub fn proxy_apply(...) -> Result<Guarded, JsError> {
 }
 ```
 
-**Solution**: Proxy calls are already rare and shallow. Keep recursive.
+**Solution**: Similar to Phase 4 - proxy trap calls return `OpResult::ProxyTrap` with continuation state. The trampoline invokes the trap handler, then resumes proxy logic with the result.
 
 ## Implementation Order
 
 1. **Phase 1** ✅ COMPLETED: Fix depth counting bug
 2. **Phase 2** ✅ COMPLETED: Migrate Construct opcodes
 3. **Phase 5** ✅ COMPLETED: All generators and async functions now use trampoline
-4. **Phase 3, 4, 6** (Low priority): Keep recursive unless problems arise
+4. **Phase 3**: Migrate decorator call sites
+5. **Phase 4**: Migrate native function callbacks
+6. **Phase 6**: Migrate proxy calls
 
 ## Testing Strategy
 
