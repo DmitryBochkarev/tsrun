@@ -996,7 +996,7 @@ impl Compiler {
         let mut instance_methods: Vec<&ClassMethod> = Vec::new();
         let mut static_methods: Vec<&ClassMethod> = Vec::new();
         let mut instance_fields: Vec<&ClassProperty> = Vec::new();
-        let mut _static_fields: Vec<&ClassProperty> = Vec::new();
+        let mut static_fields: Vec<&ClassProperty> = Vec::new();
 
         for member in &class.body.members {
             match member {
@@ -1012,7 +1012,7 @@ impl Compiler {
                 }
                 ClassMember::Property(prop) => {
                     if prop.static_ {
-                        _static_fields.push(prop);
+                        static_fields.push(prop);
                     } else {
                         instance_fields.push(prop);
                     }
@@ -1065,6 +1065,11 @@ impl Compiler {
         // Define static methods
         for method in &static_methods {
             self.compile_class_method(dst, method, true)?;
+        }
+
+        // Initialize static fields (on the class constructor itself)
+        for field in &static_fields {
+            self.compile_static_field_initializer(dst, field)?;
         }
 
         Ok(())
@@ -1378,6 +1383,40 @@ impl Compiler {
 
         self.builder.free_register(value_reg);
         self.builder.free_register(this_reg);
+        Ok(())
+    }
+
+    /// Compile a static field initializer (sets property on class constructor)
+    fn compile_static_field_initializer(
+        &mut self,
+        class_reg: super::bytecode::Register,
+        field: &ClassProperty,
+    ) -> Result<(), JsError> {
+        // Get field name
+        let field_name: JsString = match &field.key {
+            ObjectPropertyKey::Identifier(id) => id.name.cheap_clone(),
+            ObjectPropertyKey::String(s) => s.value.cheap_clone(),
+            _ => return Ok(()), // Skip computed/private for now
+        };
+
+        let name_idx = self.builder.add_string(field_name)?;
+
+        // Compile field initializer or use undefined
+        let value_reg = self.builder.alloc_register()?;
+        if let Some(init) = &field.value {
+            self.compile_expression(init, value_reg)?;
+        } else {
+            self.builder.emit(Op::LoadUndefined { dst: value_reg });
+        }
+
+        // Set property on class constructor
+        self.builder.emit(Op::SetPropertyConst {
+            obj: class_reg,
+            key: name_idx,
+            value: value_reg,
+        });
+
+        self.builder.free_register(value_reg);
         Ok(())
     }
 
