@@ -2777,10 +2777,13 @@ impl BytecodeVM {
                 let prop_key = PropertyKey::from_value(key);
 
                 // Check if object is frozen/sealed or property is non-writable
-                // First, check for accessor or non-writable property
+                // First, check for accessor or non-writable property (including prototype chain)
                 let setter_to_call = {
                     let obj_borrowed = obj_ref.borrow();
-                    if let Some(prop) = obj_borrowed.properties.get(&prop_key) {
+                    // Use get_property_descriptor to search prototype chain for setters
+                    if let Some((prop, _from_proto)) =
+                        obj_borrowed.get_property_descriptor(&prop_key)
+                    {
                         if prop.is_accessor() {
                             // Clone setter for later invocation
                             Some(prop.setter().cloned())
