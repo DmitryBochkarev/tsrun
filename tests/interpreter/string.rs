@@ -1077,3 +1077,24 @@ fn test_string_concat_calls_tostring() {
         JsValue::String(JsString::from("hello"))
     );
 }
+
+#[test]
+fn test_charat_valueof_coercion() {
+    // charAt should call valueOf/toString on the index argument
+    assert_eq!(
+        eval(
+            r#"
+            "lego".charAt({ valueOf: function() { return 1; } })
+        "#
+        ),
+        JsValue::String(JsString::from("e"))
+    );
+    assert_eq!(
+        eval(
+            r#"
+            "lego".charAt({ toString: function() { return "1"; } })
+        "#
+        ),
+        JsValue::String(JsString::from("e"))
+    );
+}

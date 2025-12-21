@@ -178,13 +178,17 @@ fn get_string_value(this: &JsValue) -> Result<JsString, JsError> {
 }
 
 pub fn string_char_at(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
     let s = this.to_js_string();
-    // ToInteger: convert to number, then truncate towards zero
-    let index_num = args.first().map(|v| v.to_number()).unwrap_or(0.0);
+    // ToInteger: convert to number (with ToPrimitive for objects), then truncate towards zero
+    let index_num = if let Some(v) = args.first() {
+        interp.coerce_to_number(v)?
+    } else {
+        0.0
+    };
 
     // Handle NaN -> 0, otherwise truncate
     let index = if index_num.is_nan() {
@@ -280,13 +284,17 @@ pub fn string_last_index_of(
 }
 
 pub fn string_at(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
     let s = this.to_js_string();
     let len = s.len() as isize;
-    let index = args.first().map(|v| v.to_number() as isize).unwrap_or(0);
+    let index = if let Some(v) = args.first() {
+        interp.coerce_to_number(v)? as isize
+    } else {
+        0
+    };
 
     // Handle negative indices
     let actual_index = if index < 0 { len + index } else { index };
@@ -912,12 +920,16 @@ pub fn string_concat(
 }
 
 pub fn string_char_code_at(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
     let s = this.to_js_string();
-    let index = args.first().map(|v| v.to_number() as usize).unwrap_or(0);
+    let index = if let Some(v) = args.first() {
+        interp.coerce_to_number(v)? as usize
+    } else {
+        0
+    };
 
     if let Some(ch) = s.as_str().chars().nth(index) {
         Ok(Guarded::unguarded(JsValue::Number(ch as u32 as f64)))
