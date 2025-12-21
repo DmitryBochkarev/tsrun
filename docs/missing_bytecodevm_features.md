@@ -3,8 +3,8 @@
 This document analyzes test failures in the bytecode VM and categorizes them by feature area with implementation guidance.
 
 **Total Tests:** 1792
-**Passing:** 1708
-**Failing:** 77
+**Passing:** 1709
+**Failing:** 76
 **Ignored:** 7
 
 ---
@@ -44,6 +44,7 @@ The following issues have been fixed:
 - ✅ **Method decorators** - Method decorators now receive full context object with `kind`, `name`, `static`, `private`
 - ✅ **Field decorators** - Field decorators now work with initializer transformation via `__field_initializers__` storage
 - ✅ **Constructor new.target** - Constructors now properly receive `new.target` for field initializer lookup
+- ✅ **Decorator evaluation order** - Decorator factories are evaluated top-to-bottom, decorators applied bottom-to-top
 
 ---
 
@@ -204,7 +205,7 @@ The bytecode VM delegates to proxy_* functions for all property operations. Key 
 - ✅ Field decorators - `@decorator field: type` works with initializer transformation
 - ✅ Static field/method decorators - decorators work on static members
 - ✅ Decorator factories - `@factory(args)` works
-- ✅ Multiple decorators - decorators are applied bottom-to-top
+- ✅ Multiple decorators - evaluated top-to-bottom, applied bottom-to-top
 - ✅ Decorator context object - `kind`, `name`, `static`, `private` properties
 
 **Implementation Details:**
@@ -214,7 +215,7 @@ The bytecode VM delegates to proxy_* functions for all property operations. Key 
 - Constructor uses `new.target` to retrieve stored initializers during field initialization
 - Method decorators pass context with `kind: "method"|"getter"|"setter"`, `name`, `static`, `private`
 
-**Still Missing (~21 tests):**
+**Still Missing (~20 tests):**
 - ❌ `addInitializer` support
 - ❌ Parameter decorators
 - ❌ Private field decorators (#field)

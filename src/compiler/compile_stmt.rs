@@ -1218,9 +1218,10 @@ impl Compiler {
         let has_explicit_name = class.id.is_some();
 
         // Compile class decorators first - they are evaluated before the class is created
-        // We store them in reverse order so we can apply them bottom-to-top later
+        // Evaluation order: top-to-bottom (forward iteration)
+        // Application order: bottom-to-top (reverse iteration when applying)
         let mut decorator_regs: Vec<super::bytecode::Register> = Vec::new();
-        for decorator in class.decorators.iter().rev() {
+        for decorator in &class.decorators {
             let dec_reg = self.builder.alloc_register()?;
             self.compile_expression(&decorator.expression, dec_reg)?;
             decorator_regs.push(dec_reg);
@@ -1417,8 +1418,8 @@ impl Compiler {
         // Pop class context
         self.class_context_stack.pop();
 
-        // Apply class decorators (in reverse order, bottom-to-top)
-        // Decorators are already in reverse order in decorator_regs
+        // Apply class decorators in reverse order (bottom-to-top)
+        // Decorators were evaluated top-to-bottom, now apply them bottom-to-top
         if !decorator_regs.is_empty() {
             // Get class name constant index (or MAX for no name)
             let class_name_idx = if let Some(ref name) = class_name {
@@ -1427,7 +1428,7 @@ impl Compiler {
                 super::bytecode::ConstantIndex::MAX
             };
 
-            for dec_reg in decorator_regs {
+            for dec_reg in decorator_regs.into_iter().rev() {
                 self.builder.emit(Op::ApplyClassDecorator {
                     class: dst,
                     decorator: dec_reg,
@@ -1522,7 +1523,9 @@ impl Compiler {
             });
         }
 
-        // Apply method decorators (in reverse order - bottom to top)
+        // Apply method decorators
+        // Evaluation order: top-to-bottom (forward iteration)
+        // Application order: bottom-to-top (reverse iteration when applying)
         if !method.decorators.is_empty() {
             // Determine kind byte: 0 = method, 1 = getter, 2 = setter
             let kind: u8 = match method.kind {
@@ -1531,11 +1534,16 @@ impl Compiler {
                 MethodKind::Set => 2,
             };
 
-            // Compile and apply decorators in reverse order
-            for decorator in method.decorators.iter().rev() {
+            // First, evaluate all decorator expressions (top-to-bottom)
+            let mut dec_regs: Vec<super::bytecode::Register> = Vec::new();
+            for decorator in &method.decorators {
                 let dec_reg = self.builder.alloc_register()?;
                 self.compile_expression(&decorator.expression, dec_reg)?;
+                dec_regs.push(dec_reg);
+            }
 
+            // Then apply decorators (bottom-to-top)
+            for dec_reg in dec_regs.into_iter().rev() {
                 self.builder.emit(Op::ApplyMethodDecorator {
                     method: method_reg,
                     decorator: dec_reg,
@@ -1617,19 +1625,27 @@ impl Compiler {
 
         let name_idx = self.builder.add_string(field_name)?;
 
-        // Process decorators in reverse order (bottom to top)
+        // Process decorators
+        // Evaluation order: top-to-bottom (forward iteration)
+        // Application order: bottom-to-top (reverse iteration when applying)
         // Each decorator is called with (undefined, context) and may return an initializer
         // We chain the initializers: if decorator A returns init_A and B returns init_B,
         // the final initializer is value => init_B(init_A(value))
         // For simplicity, we store only the last non-undefined initializer for now
 
+        // First, evaluate all decorator expressions (top-to-bottom)
+        let mut dec_regs: Vec<super::bytecode::Register> = Vec::new();
+        for decorator in &field.decorators {
+            let dec_reg = self.builder.alloc_register()?;
+            self.compile_expression(&decorator.expression, dec_reg)?;
+            dec_regs.push(dec_reg);
+        }
+
         let init_reg = self.builder.alloc_register()?;
         self.builder.emit(Op::LoadUndefined { dst: init_reg });
 
-        for decorator in field.decorators.iter().rev() {
-            let dec_reg = self.builder.alloc_register()?;
-            self.compile_expression(&decorator.expression, dec_reg)?;
-
+        // Then apply decorators (bottom-to-top)
+        for dec_reg in dec_regs.into_iter().rev() {
             // Call decorator and get potential initializer
             self.builder.emit(Op::ApplyFieldDecorator {
                 dst: init_reg,
