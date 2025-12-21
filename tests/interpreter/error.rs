@@ -978,3 +978,103 @@ fn test_runtime_referenceerror_constructor() {
         JsValue::Boolean(true)
     );
 }
+
+#[test]
+fn test_native_typeerror_constructor() {
+    // TypeError thrown from native functions should have correct constructor
+    assert_eq!(
+        eval(
+            r#"
+            let result: boolean = false;
+            try {
+                Object.keys(null);
+            } catch (e) {
+                result = e.constructor === TypeError;
+            }
+            result
+        "#
+        ),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_try_catch_with_native_error() {
+    // Native errors should be caught by try-catch
+    assert_eq!(
+        eval(
+            r#"
+            let result: string = "no error";
+            try {
+                Object.keys(null);
+            } catch (e) {
+                result = "caught";
+            }
+            result
+        "#
+        ),
+        JsValue::from("caught")
+    );
+}
+
+#[test]
+fn test_try_catch_native_error_through_arrow_function() {
+    // Native errors thrown from arrow function should be caught
+    assert_eq!(
+        eval(
+            r#"
+            let result: string = "no error";
+            const func = () => { Object.keys(null); };
+            try {
+                func();
+            } catch (e) {
+                result = "caught";
+            }
+            result
+        "#
+        ),
+        JsValue::from("caught")
+    );
+}
+
+#[test]
+fn test_try_catch_native_error_through_regular_function() {
+    // Native errors thrown from regular function should be caught
+    assert_eq!(
+        eval(
+            r#"
+            let result: string = "no error";
+            function func() { Object.keys(null); }
+            try {
+                func();
+            } catch (e) {
+                result = "caught";
+            }
+            result
+        "#
+        ),
+        JsValue::from("caught")
+    );
+}
+
+#[test]
+fn test_try_catch_native_error_through_callback() {
+    // Native errors thrown from callback passed to another function should be caught
+    assert_eq!(
+        eval(
+            r#"
+            function test(func: () => void): string {
+                try {
+                    func();
+                    return "no error";
+                } catch (e) {
+                    return "caught";
+                }
+            }
+
+            test(() => { Object.keys(null); })
+        "#
+        ),
+        JsValue::from("caught")
+    );
+}

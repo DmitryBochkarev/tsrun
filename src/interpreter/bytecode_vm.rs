@@ -600,14 +600,11 @@ impl BytecodeVM {
                     ) {
                         Ok(()) => continue,
                         Err(e) => {
-                            // Try to find an exception handler
-                            if let Some(handler_ip) = self.find_exception_handler() {
-                                self.ip = handler_ip;
-                                let exc_val = self.error_to_value(interp, &e);
-                                if let JsValue::Object(obj) = &exc_val {
-                                    self.register_guard.guard(obj.cheap_clone());
-                                }
-                                self.exception_value = Some(exc_val);
+                            // Try to find an exception handler, unwinding trampoline if needed
+                            if self
+                                .handle_error_with_trampoline_unwind(interp, &e)
+                                .is_some()
+                            {
                                 continue;
                             }
                             return VmResult::Error(e);
@@ -634,14 +631,11 @@ impl BytecodeVM {
                     ) {
                         Ok(()) => continue,
                         Err(e) => {
-                            // Try to find an exception handler
-                            if let Some(handler_ip) = self.find_exception_handler() {
-                                self.ip = handler_ip;
-                                let exc_val = self.error_to_value(interp, &e);
-                                if let JsValue::Object(obj) = &exc_val {
-                                    self.register_guard.guard(obj.cheap_clone());
-                                }
-                                self.exception_value = Some(exc_val);
+                            // Try to find an exception handler, unwinding trampoline if needed
+                            if self
+                                .handle_error_with_trampoline_unwind(interp, &e)
+                                .is_some()
+                            {
                                 continue;
                             }
                             return VmResult::Error(e);
@@ -649,82 +643,14 @@ impl BytecodeVM {
                     }
                 }
                 Err(e) => {
-                    // Try to find an exception handler in current frame
-                    if let Some(handler_ip) = self.find_exception_handler() {
-                        self.ip = handler_ip;
-                        let exc_val = self.error_to_value(interp, &e);
-                        if let JsValue::Object(obj) = &exc_val {
-                            self.register_guard.guard(obj.cheap_clone());
-                        }
-                        self.exception_value = Some(exc_val);
+                    // Try to find an exception handler, unwinding trampoline if needed
+                    if self
+                        .handle_error_with_trampoline_unwind(interp, &e)
+                        .is_some()
+                    {
                         continue;
                     }
-                    // If we're in a trampoline call, propagate error up the trampoline stack
-                    let mut found_handler = false;
-                    while let Some(frame) = self.trampoline_stack.pop() {
-                        let is_async_frame = frame.is_async;
-                        let return_register = frame.return_register;
-
-                        // Release current registers back to pool before restoring
-                        let current_registers = std::mem::take(&mut self.registers);
-                        self.release_registers(current_registers);
-
-                        // Release current arguments back to pool before restoring
-                        let current_arguments = std::mem::take(&mut self.arguments);
-                        self.release_arguments(current_arguments);
-
-                        // Restore state from frame
-                        self.ip = frame.ip;
-                        self.chunk = frame.chunk;
-                        self.registers = frame.registers;
-                        self.register_guard = frame.register_guard;
-                        self.this_value = frame.this_value;
-                        self.call_stack = frame.vm_call_stack;
-                        self.try_stack = frame.try_stack;
-                        self.exception_value = frame.exception_value;
-                        self.saved_env_stack = frame.saved_env_stack;
-                        self.arguments = frame.arguments;
-                        self.new_target = frame.new_target;
-                        self.pending_completion = frame.pending_completion;
-
-                        // Restore interpreter environment
-                        interp.pop_env_guard();
-                        interp.env = frame.saved_interp_env;
-                        interp.call_stack.pop();
-
-                        // For async frames: convert error to rejected Promise instead of propagating
-                        if is_async_frame {
-                            let error_val = self.error_to_value(interp, &e);
-                            let promise = super::builtins::promise::create_rejected_promise(
-                                interp,
-                                &self.register_guard,
-                                error_val,
-                            );
-                            self.register_guard.guard(promise.cheap_clone());
-                            self.set_reg(return_register, JsValue::Object(promise));
-                            found_handler = true;
-                            break;
-                        }
-
-                        // Check for exception handler in this frame
-                        if let Some(handler_ip) = self.find_exception_handler() {
-                            self.ip = handler_ip;
-                            let exc_val = self.error_to_value(interp, &e);
-                            if let JsValue::Object(obj) = &exc_val {
-                                self.register_guard.guard(obj.cheap_clone());
-                            }
-                            self.exception_value = Some(exc_val);
-                            found_handler = true;
-                            break;
-                        }
-                    }
-                    // If we exhausted the trampoline stack without finding a handler, return error
-                    if !found_handler
-                        && self.trampoline_stack.is_empty()
-                        && self.find_exception_handler().is_none()
-                    {
-                        return VmResult::Error(e);
-                    }
+                    return VmResult::Error(e);
                 }
             }
         }
@@ -1493,6 +1419,86 @@ impl BytecodeVM {
                 return Some(handler.finally_ip);
             }
         }
+        None
+    }
+
+    /// Handle an error, including unwinding the trampoline stack to find handlers.
+    /// Returns Some(()) if a handler was found and execution should continue,
+    /// or None with the error set to be returned from run().
+    fn handle_error_with_trampoline_unwind(
+        &mut self,
+        interp: &mut Interpreter,
+        e: &JsError,
+    ) -> Option<()> {
+        // First check for handler in current frame
+        if let Some(handler_ip) = self.find_exception_handler() {
+            self.ip = handler_ip;
+            let exc_val = self.error_to_value(interp, e);
+            if let JsValue::Object(obj) = &exc_val {
+                self.register_guard.guard(obj.cheap_clone());
+            }
+            self.exception_value = Some(exc_val);
+            return Some(());
+        }
+
+        // Unwind trampoline stack to find a handler in parent frames
+        while let Some(frame) = self.trampoline_stack.pop() {
+            let is_async_frame = frame.is_async;
+            let return_register = frame.return_register;
+
+            // Release current registers back to pool before restoring
+            let current_registers = std::mem::take(&mut self.registers);
+            self.release_registers(current_registers);
+
+            // Release current arguments back to pool before restoring
+            let current_arguments = std::mem::take(&mut self.arguments);
+            self.release_arguments(current_arguments);
+
+            // Restore state from frame
+            self.ip = frame.ip;
+            self.chunk = frame.chunk;
+            self.registers = frame.registers;
+            self.register_guard = frame.register_guard;
+            self.this_value = frame.this_value;
+            self.call_stack = frame.vm_call_stack;
+            self.try_stack = frame.try_stack;
+            self.exception_value = frame.exception_value;
+            self.saved_env_stack = frame.saved_env_stack;
+            self.arguments = frame.arguments;
+            self.new_target = frame.new_target;
+            self.pending_completion = frame.pending_completion;
+
+            // Restore interpreter environment
+            interp.pop_env_guard();
+            interp.env = frame.saved_interp_env;
+            interp.call_stack.pop();
+
+            // For async frames: convert error to rejected Promise instead of propagating
+            if is_async_frame {
+                let error_val = self.error_to_value(interp, e);
+                let promise = super::builtins::promise::create_rejected_promise(
+                    interp,
+                    &self.register_guard,
+                    error_val,
+                );
+                self.register_guard.guard(promise.cheap_clone());
+                self.set_reg(return_register, JsValue::Object(promise));
+                return Some(());
+            }
+
+            // Check for exception handler in this frame
+            if let Some(handler_ip) = self.find_exception_handler() {
+                self.ip = handler_ip;
+                let exc_val = self.error_to_value(interp, e);
+                if let JsValue::Object(obj) = &exc_val {
+                    self.register_guard.guard(obj.cheap_clone());
+                }
+                self.exception_value = Some(exc_val);
+                return Some(());
+            }
+        }
+
+        // No handler found
         None
     }
 
