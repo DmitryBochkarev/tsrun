@@ -2,3 +2,5 @@ target
 perf.data
 perf.data.old
 massif.out
+dhat.out.*
+massif.out.*

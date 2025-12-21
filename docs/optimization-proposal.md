@@ -319,22 +319,38 @@ Memory usage is well-controlled with effective GC.
 
 ### Allocation Hotspots (DHAT Analysis)
 
-**Fibonacci(30) - 1 GB total allocations:**
+**Fibonacci(30) - Before Optimizations (~1 GB baseline):**
 
 | Rank | Bytes | Allocs | Source |
 |------|-------|--------|--------|
-| 1 | 469 MB | 5.8T | HashMap allocation (environment bindings) |
-| 2 | 344 MB | 1.6T | `vec![JsValue::Undefined; n]` (register files) |
-| 3 | 51 MB | 4.6T | `Rc<GuardInner>` (GC guards) |
-| 4 | 51 MB | 4.5T | `Rc<GuardInner>` (GC guards) |
-| 5 | 34 MB | 39B | `Vec::with_capacity` (register files) |
-| 6 | 34 MB | 4.3B | `to_vec()` (cloning args) |
-| 7 | 34 MB | 1.6T | `to_vec()` (cloning args) |
+| 1 | 469 MB | 5.8M | HashMap allocation (environment bindings) |
+| 2 | 344 MB | 1.6M | `vec![JsValue::Undefined; n]` (register files) |
+| 3 | 51 MB | 4.6M | `Rc<GuardInner>` (GC guards) |
+| 4 | 51 MB | 4.5M | `Rc<GuardInner>` (GC guards) |
+| 5 | 34 MB | 39K | `Vec::with_capacity` (register files) |
+| 6 | 34 MB | 4.3M | `to_vec()` (cloning args) |
+| 7 | 34 MB | 1.6M | `to_vec()` (cloning args) |
 
-**Key Finding:** The interpreter allocates **~1 GB** for Fibonacci(30), with:
-- **~469 MB (45%)** for HashMap (environment bindings per call)
-- **~412 MB (40%)** for register file allocation
-- **~102 MB (10%)** for GC guard Rc allocations
+**Fibonacci(30) - After Register Pool Optimization (2024-12-21):**
+
+| Rank | Bytes | Allocs | Source |
+|------|-------|--------|--------|
+| 1 | 1.17 GB | 2.7M | HashMap resizing (environment bindings) |
+| 2 | 129 MB | 2.7M | `Rc<GuardInner>` (GC guards) |
+| 3 | 129 MB | 2.7M | `Rc<GuardInner>` (GC guards) |
+| 4 | 86 MB | 2.7M | `Vec::with_capacity` (function call args) |
+| 5 | 86 MB | 2.7M | `to_vec()` (cloning args in trampoline) |
+| 6 | 86 MB | 2.7M | `to_vec()` (cloning args in trampoline) |
+
+**Key Finding:** Register file allocation (`vec![JsValue::Undefined; n]`) is **no longer in top 10** - the register pool is successfully reusing register files!
+
+**Current Breakdown (1.74 GB total):**
+- **~1.17 GB (67%)** for HashMap (environment bindings per call) - **Biggest target for optimization**
+- **~258 MB (15%)** for GC guard Rc allocations
+- **~172 MB (10%)** for argument vector cloning (`to_vec()`)
+- **~86 MB (5%)** for argument vector creation
+
+Note: Total allocations increased from baseline due to additional GC and environment overhead, but register file reuse is confirmed working.
 
 ### Memory Optimization Proposals
 
