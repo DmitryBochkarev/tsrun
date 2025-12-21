@@ -17,6 +17,7 @@ This document outlines the plan to migrate all recursive call sites to use a tra
    - `pending_completion`, `return_register`
    - `saved_interp_env`, `register_guard`
    - `construct_new_obj` - For construct calls, the new object to fall back to
+   - `is_async` - For async function calls, wrap result in Promise when returning
 
 2. **OpResult::Call variant** - Signals a function call request:
    ```rust
@@ -53,12 +54,9 @@ This document outlines the plan to migrate all recursive call sites to use a tra
 
 ### Current Issues
 
-1. **Async functions still recursive** - `JsFunction::BytecodeAsync` falls back to recursive calls.
-   (Generators and async generators now handled directly without recursion.)
+1. **Decorator calls still recursive** - Complex multi-step logic in decorator opcodes.
 
-2. **Decorator calls still recursive** - Complex multi-step logic in decorator opcodes.
-
-3. **Native function callbacks still recursive** - Array.map, Array.forEach, etc.
+2. **Native function callbacks still recursive** - Array.map, Array.forEach, etc.
 
 ## Migration Plan
 
@@ -143,7 +141,7 @@ for (i, elem) in elements.iter().enumerate() {
 
 **Recommendation**: Keep recursive for now. The main recursion problem is JS→JS calls, not JS→Native→JS.
 
-### Phase 5: Migrate Generator/Async Functions ✅ PARTIALLY COMPLETED
+### Phase 5: Migrate Generator/Async Functions ✅ COMPLETED
 
 **Problem**: Generator and async functions need special setup (create generator object, wrap in Promise) before running bytecode.
 
@@ -156,9 +154,12 @@ for (i, elem) in elements.iter().enumerate() {
 2. **Async Generators (`BytecodeAsyncGenerator`)** ✅: Same as generators - create object directly.
    The body runs when `.next()` is called, returning Promises.
 
-3. **Async Functions (`BytecodeAsync`)**: Still use recursive call.
-   These run their body immediately and wrap result in Promise. A full trampoline
-   implementation would require adding promise resolution to the trampoline loop.
+3. **Async Functions (`BytecodeAsync`)** ✅: Now use trampoline with `is_async` flag.
+   The `TrampolineFrame.is_async` field tracks that this frame is for an async function.
+   When the frame is popped:
+   - On success: result is wrapped in a fulfilled Promise
+   - On error: error is converted to a rejected Promise (no propagation)
+   - Promise assimilation: if result is already a Promise, it's returned directly
 
 **Implementation**:
 ```rust
@@ -179,15 +180,16 @@ JsFunction::BytecodeAsyncGenerator(bc_func) => {
 }
 
 JsFunction::BytecodeAsync(bc_func) => {
-    // Still recursive - runs body and wraps in Promise
-    let result = interp.call_function_with_new_target(...)?;
-    self.set_reg(return_register, result.value);
+    // Use trampoline with is_async flag - result wrapped in Promise on return
+    self.push_trampoline_frame_and_call_bytecode(
+        interp, func_obj, bc_func, this_value, &args, return_register, new_target,
+        true, // is_async - wrap result in Promise
+    )?;
     Ok(())
 }
 ```
 
-**Status**: Generators and async generators now handled directly in trampoline without recursion.
-Async functions still use recursive call (acceptable since they're not as prone to deep call stacks).
+**Status**: All generator and async function types now handled via trampoline without recursion.
 
 **Files changed**: `src/interpreter/bytecode_vm.rs`
 
@@ -209,8 +211,7 @@ pub fn proxy_apply(...) -> Result<Guarded, JsError> {
 
 1. **Phase 1** ✅ COMPLETED: Fix depth counting bug
 2. **Phase 2** ✅ COMPLETED: Migrate Construct opcodes
-3. **Phase 5** ✅ PARTIALLY COMPLETED: Generators and async generators now handled directly;
-   async functions still recursive (acceptable tradeoff)
+3. **Phase 5** ✅ COMPLETED: All generators and async functions now use trampoline
 4. **Phase 3, 4, 6** (Low priority): Keep recursive unless problems arise
 
 ## Testing Strategy

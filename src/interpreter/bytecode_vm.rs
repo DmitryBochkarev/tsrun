@@ -152,6 +152,8 @@ pub struct TrampolineFrame {
     pub register_guard: Guard<JsObject>,
     /// For construct calls: the new object to fall back to if constructor doesn't return an object
     pub construct_new_obj: Option<Gc<JsObject>>,
+    /// For async function calls: wrap result in a Promise when returning
+    pub is_async: bool,
 }
 
 /// The bytecode virtual machine
@@ -595,6 +597,9 @@ impl BytecodeVM {
                     // If we're in a trampoline call, propagate error up the trampoline stack
                     let mut found_handler = false;
                     while let Some(frame) = self.trampoline_stack.pop() {
+                        let is_async_frame = frame.is_async;
+                        let return_register = frame.return_register;
+
                         // Restore state from frame
                         self.ip = frame.ip;
                         self.chunk = frame.chunk;
@@ -613,6 +618,20 @@ impl BytecodeVM {
                         interp.pop_env_guard();
                         interp.env = frame.saved_interp_env;
                         interp.call_stack.pop();
+
+                        // For async frames: convert error to rejected Promise instead of propagating
+                        if is_async_frame {
+                            let error_val = self.error_to_value(interp, &e);
+                            let promise = super::builtins::promise::create_rejected_promise(
+                                interp,
+                                &self.register_guard,
+                                error_val,
+                            );
+                            self.register_guard.guard(promise.cheap_clone());
+                            self.set_reg(return_register, JsValue::Object(promise));
+                            found_handler = true;
+                            break;
+                        }
 
                         // Check for exception handler in this frame
                         if let Some(handler_ip) = self.find_exception_handler() {
@@ -698,6 +717,7 @@ impl BytecodeVM {
                     &args,
                     return_register,
                     new_target,
+                    false, // not async
                 )?;
                 Ok(())
             }
@@ -800,13 +820,18 @@ impl BytecodeVM {
             }
             JsFunction::BytecodeAsync(bc_func) => {
                 // Async functions run their body and wrap result in Promise.
-                // For now, use trampoline to run the body like a regular bytecode function,
-                // but wrap the result in a Promise.
-                // TODO: This could be improved to handle async/await more natively in the trampoline.
-                // For now, fall back to interpreter's call_function which handles async properly.
-                let result =
-                    interp.call_function_with_new_target(callee, this_value, &args, new_target)?;
-                self.set_reg(return_register, result.value);
+                // Use trampoline to run the body - the is_async flag causes the result
+                // to be wrapped in a Promise when the frame is popped.
+                self.push_trampoline_frame_and_call_bytecode(
+                    interp,
+                    func_obj.cheap_clone(),
+                    bc_func,
+                    this_value,
+                    &args,
+                    return_register,
+                    new_target,
+                    true, // is_async - wrap result in Promise
+                )?;
                 Ok(())
             }
             // For all other function types, fall back to the interpreter's call_function
@@ -903,6 +928,7 @@ impl BytecodeVM {
     }
 
     /// Push current state onto trampoline stack and set up for bytecode function call
+    /// If is_async is true, the result will be wrapped in a Promise when the frame is popped
     fn push_trampoline_frame_and_call_bytecode(
         &mut self,
         interp: &mut Interpreter,
@@ -912,6 +938,7 @@ impl BytecodeVM {
         args: &[JsValue],
         return_register: Register,
         new_target: JsValue,
+        is_async: bool,
     ) -> Result<(), JsError> {
         use crate::interpreter::{create_environment_unrooted, Binding, VarKey};
 
@@ -1056,6 +1083,7 @@ impl BytecodeVM {
             saved_interp_env,
             register_guard: old_guard,
             construct_new_obj: None,
+            is_async,
         };
         self.trampoline_stack.push(frame);
 
@@ -1225,6 +1253,7 @@ impl BytecodeVM {
             saved_interp_env,
             register_guard: old_guard,
             construct_new_obj: Some(construct_new_obj),
+            is_async: false, // Construct calls are never async
         };
         self.trampoline_stack.push(frame);
 
@@ -1262,13 +1291,42 @@ impl BytecodeVM {
         interp.call_stack.pop();
 
         // For construct calls: if constructor didn't return an object, use the new object
-        let final_value = if let Some(new_obj) = frame.construct_new_obj {
+        let intermediate_value = if let Some(new_obj) = frame.construct_new_obj {
             match return_value {
                 JsValue::Object(obj) => JsValue::Object(obj),
                 _ => JsValue::Object(new_obj),
             }
         } else {
             return_value
+        };
+
+        // For async calls: wrap result in a Promise
+        let final_value = if frame.is_async {
+            use crate::value::ExoticObject;
+            // Promise assimilation: if result is already a Promise, return it directly
+            if let JsValue::Object(ref obj) = &intermediate_value {
+                if matches!(obj.borrow().exotic, ExoticObject::Promise(_)) {
+                    intermediate_value
+                } else {
+                    // Wrap non-Promise value in a fulfilled Promise
+                    let promise = super::builtins::promise::create_fulfilled_promise(
+                        interp,
+                        &self.register_guard,
+                        intermediate_value,
+                    );
+                    JsValue::Object(promise)
+                }
+            } else {
+                // Wrap primitive value in a fulfilled Promise
+                let promise = super::builtins::promise::create_fulfilled_promise(
+                    interp,
+                    &self.register_guard,
+                    intermediate_value,
+                );
+                JsValue::Object(promise)
+            }
+        } else {
+            intermediate_value
         };
 
         // Store return value in the designated register
