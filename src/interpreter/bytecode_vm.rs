@@ -112,6 +112,10 @@ pub enum PendingCompletion {
     Return(JsValue),
     /// Rethrow this exception after finally completes
     Throw(JsValue),
+    /// Break to target after finally completes
+    Break { target: usize, try_depth: u8 },
+    /// Continue to target after finally completes
+    Continue { target: usize, try_depth: u8 },
 }
 
 /// The bytecode virtual machine
@@ -472,6 +476,16 @@ impl BytecodeVM {
             }
 
             if handler.catch_ip > 0 {
+                // If there's also a finally, push a handler for it
+                // so break/continue in catch will still run finally
+                if handler.finally_ip > 0 {
+                    self.try_stack.push(TryHandler {
+                        catch_ip: 0, // Clear catch so it won't re-catch
+                        finally_ip: handler.finally_ip,
+                        registers_snapshot: handler.registers_snapshot,
+                        frame_depth: handler.frame_depth,
+                    });
+                }
                 return Some(handler.catch_ip);
             }
             if handler.finally_ip > 0 {
@@ -1033,6 +1047,14 @@ impl BytecodeVM {
                 Ok(OpResult::Continue)
             }
 
+            Op::Break { target, try_depth } => {
+                self.execute_break(target as usize, try_depth)
+            }
+
+            Op::Continue { target, try_depth } => {
+                self.execute_continue(target as usize, try_depth)
+            }
+
             // ═══════════════════════════════════════════════════════════════════════════
             // Variable Access
             // ═══════════════════════════════════════════════════════════════════════════
@@ -1561,7 +1583,7 @@ impl BytecodeVM {
             }
 
             Op::FinallyEnd => {
-                // Complete any pending return/throw after finally block finishes
+                // Complete any pending return/throw/break/continue after finally block finishes
                 if let Some(pending) = self.pending_completion.take() {
                     match pending {
                         PendingCompletion::Return(val) => {
@@ -1571,6 +1593,14 @@ impl BytecodeVM {
                         PendingCompletion::Throw(val) => {
                             // Re-throw the exception after finally
                             return Err(JsError::ThrownValue { value: val });
+                        }
+                        PendingCompletion::Break { target, try_depth } => {
+                            // Continue with the break (recursively handles nested finally blocks)
+                            return self.execute_break(target, try_depth);
+                        }
+                        PendingCompletion::Continue { target, try_depth } => {
+                            // Continue with the continue (recursively handles nested finally blocks)
+                            return self.execute_continue(target, try_depth);
                         }
                     }
                 }
@@ -2710,6 +2740,86 @@ impl BytecodeVM {
         } else {
             Ok(OpResult::Halt(guarded_js_value(return_val, interp)))
         }
+    }
+
+    /// Execute a break, running any pending finally blocks first
+    fn execute_break(&mut self, target: usize, try_depth: u8) -> Result<OpResult, JsError> {
+        // Check if there's a try handler with a finally block between us and the target
+        let target_try_depth = try_depth as usize;
+
+        // Find the first try handler ABOVE target depth that has a finally block
+        if let Some(handler_idx) = self
+            .try_stack
+            .iter()
+            .enumerate()
+            .skip(target_try_depth)
+            .find(|(_, h)| h.finally_ip != 0)
+            .map(|(i, _)| i)
+        {
+            // There's a finally block that needs to run
+            let handler = self
+                .try_stack
+                .get(handler_idx)
+                .cloned()
+                .ok_or_else(|| JsError::internal_error("Missing try handler"))?;
+
+            // Save the pending break
+            self.pending_completion = Some(PendingCompletion::Break { target, try_depth });
+
+            // Pop the try handler (we're exiting this try block)
+            self.try_stack.truncate(handler_idx);
+
+            // Jump to the finally block
+            self.ip = handler.finally_ip;
+
+            return Ok(OpResult::Continue);
+        }
+
+        // No finally block, do normal break (just jump)
+        // Also pop try handlers down to the target level
+        self.try_stack.truncate(target_try_depth);
+        self.ip = target;
+        Ok(OpResult::Continue)
+    }
+
+    /// Execute a continue, running any pending finally blocks first
+    fn execute_continue(&mut self, target: usize, try_depth: u8) -> Result<OpResult, JsError> {
+        // Check if there's a try handler with a finally block between us and the target
+        let target_try_depth = try_depth as usize;
+
+        // Find the first try handler ABOVE target depth that has a finally block
+        if let Some(handler_idx) = self
+            .try_stack
+            .iter()
+            .enumerate()
+            .skip(target_try_depth)
+            .find(|(_, h)| h.finally_ip != 0)
+            .map(|(i, _)| i)
+        {
+            // There's a finally block that needs to run
+            let handler = self
+                .try_stack
+                .get(handler_idx)
+                .cloned()
+                .ok_or_else(|| JsError::internal_error("Missing try handler"))?;
+
+            // Save the pending continue
+            self.pending_completion = Some(PendingCompletion::Continue { target, try_depth });
+
+            // Pop the try handler (we're exiting this try block)
+            self.try_stack.truncate(handler_idx);
+
+            // Jump to the finally block
+            self.ip = handler.finally_ip;
+
+            return Ok(OpResult::Continue);
+        }
+
+        // No finally block, do normal continue (just jump)
+        // Also pop try handlers down to the target level
+        self.try_stack.truncate(target_try_depth);
+        self.ip = target;
+        Ok(OpResult::Continue)
     }
 }
 

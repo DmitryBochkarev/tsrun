@@ -50,6 +50,8 @@ struct LoopContext {
     continue_target: Option<usize>,
     /// Jump placeholders for continue before target is known
     continue_jumps: Vec<JumpPlaceholder>,
+    /// Try depth when this loop started (for finally handling)
+    try_depth: usize,
 }
 
 impl Compiler {
@@ -126,6 +128,7 @@ impl Compiler {
             break_jumps: Vec::new(),
             continue_target: None,
             continue_jumps: Vec::new(),
+            try_depth: self.try_depth,
         });
     }
 
@@ -185,8 +188,6 @@ impl Compiler {
 
     /// Add a break jump for the specified label (or innermost loop if None)
     fn add_break_jump(&mut self, label: Option<&JsString>) -> Result<JumpPlaceholder, JsError> {
-        let jump = self.builder.emit_jump();
-
         let loop_idx = if let Some(l) = label {
             self.labels
                 .get(l)
@@ -196,6 +197,22 @@ impl Compiler {
             self.loop_stack.len().checked_sub(1).ok_or_else(|| {
                 JsError::syntax_error_simple("Illegal break statement")
             })?
+        };
+
+        // Get the target loop's try_depth
+        let target_try_depth = self
+            .loop_stack
+            .get(loop_idx)
+            .map(|ctx| ctx.try_depth)
+            .unwrap_or(0) as u8;
+
+        // Emit Break opcode with placeholder target
+        let idx = self.builder.emit(Op::Break {
+            target: 0,
+            try_depth: target_try_depth,
+        });
+        let jump = JumpPlaceholder {
+            instruction_index: idx,
         };
 
         if let Some(ctx) = self.loop_stack.get_mut(loop_idx) {
@@ -218,13 +235,29 @@ impl Compiler {
             })?
         };
 
+        // Get the target loop's try_depth
+        let target_try_depth = self
+            .loop_stack
+            .get(loop_idx)
+            .map(|ctx| ctx.try_depth)
+            .unwrap_or(0) as u8;
+
         if let Some(ctx) = self.loop_stack.get_mut(loop_idx) {
             if let Some(target) = ctx.continue_target {
-                // Target is known, emit direct jump
-                self.builder.emit_jump_to(target);
+                // Target is known, emit Continue with known target
+                self.builder.emit(Op::Continue {
+                    target: target as u32,
+                    try_depth: target_try_depth,
+                });
             } else {
                 // Target not yet known, save placeholder
-                let jump = self.builder.emit_jump();
+                let idx = self.builder.emit(Op::Continue {
+                    target: 0,
+                    try_depth: target_try_depth,
+                });
+                let jump = JumpPlaceholder {
+                    instruction_index: idx,
+                };
                 ctx.continue_jumps.push(jump);
             }
         }

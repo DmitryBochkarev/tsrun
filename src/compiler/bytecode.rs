@@ -248,6 +248,14 @@ pub enum Op {
     /// Jump if r[cond] is NOT null or undefined (for ?.)
     JumpIfNotNullish { cond: Register, target: JumpTarget },
 
+    /// Break to target (runs finally blocks first)
+    /// try_depth is the try stack depth at the target loop
+    Break { target: JumpTarget, try_depth: u8 },
+
+    /// Continue to target (runs finally blocks first)
+    /// try_depth is the try stack depth at the target loop
+    Continue { target: JumpTarget, try_depth: u8 },
+
     // ═══════════════════════════════════════════════════════════════════════════════
     // Variable Access
     // ═══════════════════════════════════════════════════════════════════════════════

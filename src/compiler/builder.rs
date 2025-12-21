@@ -278,6 +278,8 @@ impl BytecodeBuilder {
                 Op::JumpIfNullish { target: t, .. } => *t = target,
                 Op::JumpIfNotNullish { target: t, .. } => *t = target,
                 Op::IteratorDone { target: t, .. } => *t = target,
+                Op::Break { target: t, .. } => *t = target,
+                Op::Continue { target: t, .. } => *t = target,
 
                 // PushTry has targets but is patched via patch_try_targets()
                 Op::PushTry { .. } => {}
