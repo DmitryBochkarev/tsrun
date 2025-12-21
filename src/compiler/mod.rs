@@ -212,14 +212,17 @@ impl Compiler {
     /// Add a break jump for the specified label (or innermost loop if None)
     fn add_break_jump(&mut self, label: Option<&JsString>) -> Result<JumpPlaceholder, JsError> {
         let loop_idx = if let Some(l) = label {
-            self.labels
-                .get(l)
-                .copied()
-                .ok_or_else(|| JsError::syntax_error_simple(format!("Illegal break statement: undefined label '{}'", l)))?
-        } else {
-            self.loop_stack.len().checked_sub(1).ok_or_else(|| {
-                JsError::syntax_error_simple("Illegal break statement")
+            self.labels.get(l).copied().ok_or_else(|| {
+                JsError::syntax_error_simple(format!(
+                    "Illegal break statement: undefined label '{}'",
+                    l
+                ))
             })?
+        } else {
+            self.loop_stack
+                .len()
+                .checked_sub(1)
+                .ok_or_else(|| JsError::syntax_error_simple("Illegal break statement"))?
         };
 
         // Get the target loop's try_depth
@@ -248,14 +251,17 @@ impl Compiler {
     /// Add a continue jump for the specified label (or innermost loop if None)
     fn add_continue_jump(&mut self, label: Option<&JsString>) -> Result<(), JsError> {
         let loop_idx = if let Some(l) = label {
-            self.labels
-                .get(l)
-                .copied()
-                .ok_or_else(|| JsError::syntax_error_simple(format!("Illegal continue statement: undefined label '{}'", l)))?
-        } else {
-            self.loop_stack.len().checked_sub(1).ok_or_else(|| {
-                JsError::syntax_error_simple("Illegal continue statement")
+            self.labels.get(l).copied().ok_or_else(|| {
+                JsError::syntax_error_simple(format!(
+                    "Illegal continue statement: undefined label '{}'",
+                    l
+                ))
             })?
+        } else {
+            self.loop_stack
+                .len()
+                .checked_sub(1)
+                .ok_or_else(|| JsError::syntax_error_simple("Illegal continue statement"))?
         };
 
         // Get the target loop's try_depth

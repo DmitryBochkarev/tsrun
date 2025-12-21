@@ -1114,15 +1114,13 @@ impl JsObject {
                                         JsFunction::Bytecode(bc)
                                         | JsFunction::BytecodeGenerator(bc)
                                         | JsFunction::BytecodeAsync(bc)
-                                        | JsFunction::BytecodeAsyncGenerator(bc) => bc
-                                            .chunk
-                                            .function_info
-                                            .as_ref()
-                                            .and_then(|info| {
+                                        | JsFunction::BytecodeAsyncGenerator(bc) => {
+                                            bc.chunk.function_info.as_ref().and_then(|info| {
                                                 info.name
                                                     .as_ref()
                                                     .map(|n| JsString::from(format!("bound {}", n)))
-                                            }),
+                                            })
+                                        }
                                         _ => Some(JsString::from("bound ")),
                                     }
                                 } else {
@@ -1300,15 +1298,13 @@ impl JsObject {
                                         JsFunction::Bytecode(bc)
                                         | JsFunction::BytecodeGenerator(bc)
                                         | JsFunction::BytecodeAsync(bc)
-                                        | JsFunction::BytecodeAsyncGenerator(bc) => bc
-                                            .chunk
-                                            .function_info
-                                            .as_ref()
-                                            .and_then(|info| {
+                                        | JsFunction::BytecodeAsyncGenerator(bc) => {
+                                            bc.chunk.function_info.as_ref().and_then(|info| {
                                                 info.name
                                                     .as_ref()
                                                     .map(|n| JsString::from(format!("bound {}", n)))
-                                            }),
+                                            })
+                                        }
                                         _ => Some(JsString::from("bound ")),
                                     }
                                 } else {

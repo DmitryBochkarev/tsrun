@@ -367,18 +367,16 @@ impl Compiler {
 
         for prop in &obj_pat.properties {
             match prop {
-                ObjectPatternProperty::KeyValue { key, .. } => {
-                    match key {
-                        ObjectPropertyKey::Identifier(id) => {
-                            extracted_keys.push(id.name.cheap_clone());
-                        }
-                        ObjectPropertyKey::String(s) => {
-                            extracted_keys.push(s.value.cheap_clone());
-                        }
-                        ObjectPropertyKey::Computed(_) | ObjectPropertyKey::Number(_) => {}
-                        ObjectPropertyKey::PrivateIdentifier(_) => {}
+                ObjectPatternProperty::KeyValue { key, .. } => match key {
+                    ObjectPropertyKey::Identifier(id) => {
+                        extracted_keys.push(id.name.cheap_clone());
                     }
-                }
+                    ObjectPropertyKey::String(s) => {
+                        extracted_keys.push(s.value.cheap_clone());
+                    }
+                    ObjectPropertyKey::Computed(_) | ObjectPropertyKey::Number(_) => {}
+                    ObjectPropertyKey::PrivateIdentifier(_) => {}
+                },
                 ObjectPatternProperty::Rest(_) => {
                     has_rest = true;
                 }

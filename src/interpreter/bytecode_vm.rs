@@ -1062,13 +1062,9 @@ impl BytecodeVM {
                 Ok(OpResult::Continue)
             }
 
-            Op::Break { target, try_depth } => {
-                self.execute_break(target as usize, try_depth)
-            }
+            Op::Break { target, try_depth } => self.execute_break(target as usize, try_depth),
 
-            Op::Continue { target, try_depth } => {
-                self.execute_continue(target as usize, try_depth)
-            }
+            Op::Continue { target, try_depth } => self.execute_continue(target as usize, try_depth),
 
             // ═══════════════════════════════════════════════════════════════════════════
             // Variable Access
@@ -1497,9 +1493,7 @@ impl BytecodeVM {
                 self.execute_return(return_val, interp)
             }
 
-            Op::ReturnUndefined => {
-                self.execute_return(JsValue::Undefined, interp)
-            }
+            Op::ReturnUndefined => self.execute_return(JsValue::Undefined, interp),
 
             Op::CreateClosure { dst, chunk_idx } => {
                 // Get the function bytecode chunk from constants
@@ -2203,8 +2197,7 @@ impl BytecodeVM {
                 }
 
                 // Use from_value to handle numeric string keys correctly (e.g., "2" -> Index(2))
-                let prop_key =
-                    PropertyKey::from_value(&JsValue::String(method_name.cheap_clone()));
+                let prop_key = PropertyKey::from_value(&JsValue::String(method_name.cheap_clone()));
 
                 if is_static {
                     // Add to class constructor directly
@@ -2523,8 +2516,7 @@ impl BytecodeVM {
                     // For objects, call toString method; for primitives, use to_js_string
                     let str_val = if let JsValue::Object(obj) = &val {
                         // Check if object has a custom toString method
-                        let to_string_key =
-                            PropertyKey::String(interp.intern("toString"));
+                        let to_string_key = PropertyKey::String(interp.intern("toString"));
                         if let Some(to_string_val) = obj.borrow().get_property(&to_string_key) {
                             if let JsValue::Object(func_obj) = &to_string_val {
                                 if func_obj.borrow().is_callable() {
@@ -2534,9 +2526,7 @@ impl BytecodeVM {
                                         val.clone(),
                                         &[],
                                     ) {
-                                        Ok(Guarded { value, guard: _ }) => {
-                                            value.to_js_string()
-                                        }
+                                        Ok(Guarded { value, guard: _ }) => value.to_js_string(),
                                         Err(_) => val.to_js_string(),
                                     }
                                 } else {
@@ -2823,11 +2813,7 @@ impl BytecodeVM {
                 // Call setter if we have one
                 if let Some(maybe_setter) = setter_to_call {
                     if let Some(setter) = maybe_setter {
-                        interp.call_function(
-                            JsValue::Object(setter),
-                            obj.clone(),
-                            &[value],
-                        )?;
+                        interp.call_function(JsValue::Object(setter), obj.clone(), &[value])?;
                     }
                     // Accessor property handled, return
                     return Ok(());

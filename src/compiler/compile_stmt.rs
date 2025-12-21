@@ -1953,7 +1953,12 @@ impl Compiler {
             // For unary expressions, recursively handle operand
             Expression::Unary(unary) => {
                 let arg_reg = self.builder.alloc_register()?;
-                self.compile_enum_init_expression(&unary.argument, arg_reg, enum_obj, prior_members)?;
+                self.compile_enum_init_expression(
+                    &unary.argument,
+                    arg_reg,
+                    enum_obj,
+                    prior_members,
+                )?;
 
                 // Emit the unary operation
                 match unary.operator {

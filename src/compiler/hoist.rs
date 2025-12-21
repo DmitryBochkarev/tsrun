@@ -6,9 +6,7 @@
 
 use super::bytecode::Op;
 use super::Compiler;
-use crate::ast::{
-    ForInOfLeft, ForInit, Pattern, Statement, VariableDeclaration, VariableKind,
-};
+use crate::ast::{ForInOfLeft, ForInit, Pattern, Statement, VariableDeclaration, VariableKind};
 use crate::error::JsError;
 use crate::value::{CheapClone, JsString};
 
