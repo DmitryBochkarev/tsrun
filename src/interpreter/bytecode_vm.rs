@@ -848,6 +848,7 @@ impl BytecodeVM {
     /// Set up a trampoline construct call - save current state and switch to the constructor
     /// This is similar to setup_trampoline_call but stores the new_obj in the frame
     /// so that if the constructor doesn't return an object, we can use the new_obj
+    #[allow(clippy::too_many_arguments)]
     fn setup_trampoline_construct(
         &mut self,
         interp: &mut Interpreter,
@@ -929,6 +930,7 @@ impl BytecodeVM {
 
     /// Push current state onto trampoline stack and set up for bytecode function call
     /// If is_async is true, the result will be wrapped in a Promise when the frame is popped
+    #[allow(clippy::too_many_arguments)]
     fn push_trampoline_frame_and_call_bytecode(
         &mut self,
         interp: &mut Interpreter,
@@ -1097,6 +1099,7 @@ impl BytecodeVM {
     /// Push current state onto trampoline stack for a construct call
     /// This is like push_trampoline_frame_and_call_bytecode but stores the new_obj
     /// in the frame so it can be used if the constructor doesn't return an object
+    #[allow(clippy::too_many_arguments)]
     fn push_trampoline_frame_and_call_bytecode_construct(
         &mut self,
         interp: &mut Interpreter,
