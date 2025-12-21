@@ -661,3 +661,4 @@ fn test_generator_throw_with_catch() {
         JsValue::Number(100.0)
     );
 }
+

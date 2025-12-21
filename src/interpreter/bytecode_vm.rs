@@ -684,6 +684,27 @@ impl BytecodeVM {
         self.set_reg(register, value);
     }
 
+    /// Inject an exception into the VM for generator.throw()
+    /// This sets up the VM to handle the exception as if it was thrown at the current position.
+    /// Returns true if an exception handler was found, false if the exception should propagate.
+    pub fn inject_exception(&mut self, exception: JsValue) -> bool {
+        // Guard exception value if it's an object
+        if let JsValue::Object(obj) = &exception {
+            self.register_guard.guard(obj.cheap_clone());
+        }
+
+        // Try to find an exception handler
+        if let Some(handler_ip) = self.find_exception_handler() {
+            self.ip = handler_ip;
+            self.exception_value = Some(exception);
+            true
+        } else {
+            // No handler found - store exception for propagation
+            self.exception_value = Some(exception);
+            false
+        }
+    }
+
     /// Execute a single opcode
     fn execute_op(&mut self, interp: &mut Interpreter, op: Op) -> Result<OpResult, JsError> {
         match op {

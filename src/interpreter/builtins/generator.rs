@@ -135,6 +135,10 @@ pub fn generator_next(
             };
 
             if let Some((iter_obj, next_method)) = delegated {
+                // Guard the iterator object during the call to prevent GC collection
+                let iter_guard = interp.heap.create_guard();
+                iter_guard.guard(iter_obj.cheap_clone());
+
                 // Forward next() to the delegated iterator
                 let sent_value = args.first().cloned().unwrap_or(JsValue::Undefined);
                 let result = interp.call_function(
@@ -142,6 +146,8 @@ pub fn generator_next(
                     JsValue::Object(iter_obj.cheap_clone()),
                     &[sent_value],
                 )?;
+                // Keep guard alive until after call_function returns
+                let _ = iter_guard;
 
                 // Check if delegated iterator is done
                 let (value, done) = interp.extract_iterator_result(&result.value);
@@ -223,7 +229,7 @@ pub fn generator_return(
 
 /// Generator.prototype.throw(exception)
 pub fn generator_throw(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
@@ -239,14 +245,35 @@ pub fn generator_throw(
     let obj_ref = obj.borrow();
     match &obj_ref.exotic {
         ExoticObject::BytecodeGenerator(state) => {
-            // Check if generator is completed
-            if state.borrow().status == GeneratorStatus::Completed {
-                return Err(JsError::ThrownValue { value: exception });
+            let gen_state = state.clone();
+            let is_async = gen_state.borrow().is_async;
+            drop(obj_ref); // Release borrow before resuming
+
+            // Check if generator is completed or not started
+            {
+                let state_ref = gen_state.borrow();
+                if state_ref.status == GeneratorStatus::Completed {
+                    return Err(JsError::ThrownValue { value: exception });
+                }
+                if !state_ref.started {
+                    // Generator hasn't started, just throw
+                    drop(state_ref);
+                    gen_state.borrow_mut().status = GeneratorStatus::Completed;
+                    return Err(JsError::ThrownValue { value: exception });
+                }
             }
 
-            // For bytecode generators, throw the exception directly for now
-            // Full throw semantics require resuming with an exception
-            Err(JsError::ThrownValue { value: exception })
+            // Set the throw value and resume the generator
+            // The generator will throw this exception at the current yield point
+            gen_state.borrow_mut().throw_value = Some(exception);
+
+            // Resume the generator - it will throw the exception inside
+            let result = interp.resume_bytecode_generator(&gen_state)?;
+            if is_async {
+                wrap_in_fulfilled_promise(interp, result)
+            } else {
+                Ok(result)
+            }
         }
         _ => Err(JsError::type_error(
             "Generator.prototype.throw called on non-generator",

@@ -2001,9 +2001,23 @@ impl Interpreter {
             let vm_guard = self.heap.create_guard();
             let mut vm = BytecodeVM::from_saved_state(saved_state, JsValue::Undefined, vm_guard);
 
-            // Set the sent value in the yield result register
-            if let Some(resume_reg) = yield_result_register {
-                vm.set_reg(resume_reg, sent_value);
+            // Check if we need to throw an exception (generator.throw())
+            let throw_value = gen_state.borrow_mut().throw_value.take();
+            if let Some(exception) = throw_value {
+                // Inject the exception - if there's a handler, it will jump to catch
+                // If no handler, the exception will propagate
+                if !vm.inject_exception(exception.clone()) {
+                    // No exception handler found, propagate the error
+                    gen_state.borrow_mut().status = GeneratorStatus::Completed;
+                    self.env = saved_env;
+                    return Err(JsError::ThrownValue { value: exception });
+                }
+                // Handler found - continue to run the VM which will execute the catch block
+            } else {
+                // Normal resume - set the sent value in the yield result register
+                if let Some(resume_reg) = yield_result_register {
+                    vm.set_reg(resume_reg, sent_value);
+                }
             }
 
             match vm.run(self) {
@@ -2094,6 +2108,9 @@ impl Interpreter {
 
         let iterator_method = obj.borrow().get_property(&iterator_key);
 
+        // Create a guard to keep the iterator and its contents alive throughout delegation
+        let iter_guard = self.heap.create_guard();
+
         let (iter_obj, next_method) = match iterator_method {
             Some(method) => {
                 // Call the iterator method to get an iterator object
@@ -2105,6 +2122,9 @@ impl Interpreter {
                     return Err(JsError::type_error("Iterator is not an object"));
                 };
 
+                // Guard the iterator object to keep it and its properties alive
+                iter_guard.guard(iter_obj.cheap_clone());
+
                 let next_method = iter_obj
                     .borrow()
                     .get_property(&PropertyKey::from("next"))
@@ -2115,6 +2135,7 @@ impl Interpreter {
             None => {
                 // Check if it's already an iterator (has .next())
                 if let Some(next_method) = obj.borrow().get_property(&PropertyKey::from("next")) {
+                    iter_guard.guard(obj.cheap_clone());
                     (obj.cheap_clone(), next_method)
                 } else {
                     self.env = saved_env;
@@ -2129,6 +2150,8 @@ impl Interpreter {
             JsValue::Object(iter_obj.cheap_clone()),
             &[],
         )?;
+        // Keep guard alive until the iterator is stored in generator state
+        let _ = &iter_guard;
 
         // Extract value and done
         let (value, done) = self.extract_iterator_result(&result.value);
@@ -6686,6 +6709,7 @@ impl Interpreter {
             current_env: None,        // Will be saved at each yield point
             delegated_iterator: None, // For yield* delegation
             is_async: false,          // Regular generator, not async
+            throw_value: None,        // For generator.throw()
         };
 
         // Create the generator object
@@ -6724,6 +6748,7 @@ impl Interpreter {
             current_env: None,        // Will be saved at each yield point
             delegated_iterator: None, // For yield* delegation
             is_async: true,           // Async generator - next() returns Promise
+            throw_value: None,        // For generator.throw()
         };
 
         // Create the generator object (uses same object type, behavior differs based on is_async)

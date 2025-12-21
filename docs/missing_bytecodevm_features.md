@@ -2,9 +2,9 @@
 
 This document analyzes test failures in the bytecode VM and categorizes them by feature area with implementation guidance.
 
-**Total Tests:** 1783
-**Passing:** 1550
-**Failing:** 226
+**Total Tests:** 1787
+**Passing:** 1558
+**Failing:** 222
 **Ignored:** 7
 
 ---
@@ -18,6 +18,8 @@ The following issues have been fixed:
 - ✅ **Optional chaining with parentheses** - Fixed `this` binding in parenthesized optional chain calls
 - ✅ **Static initialization blocks** - Implemented static block compilation and execution
 - ✅ **Argument evaluation order** - Fixed callee evaluation to occur before arguments
+- ✅ **Generator yield\* with arrays** - Fixed GC issue with delegated iterator tracing
+- ✅ **Generator.throw() with catch blocks** - Implemented proper exception injection at yield points
 
 ---
 
@@ -388,40 +390,23 @@ May need BigInt-specific opcodes or type checking in existing ops.
 
 ## 7. Generator Edge Cases
 
-**Affected Tests (~5 tests):**
-- `generator::test_generator_throw_with_catch` - Error not caught inside generator
-- `generator::test_yield_star_array` - Invalid array iterator
-- `generator::test_generator_yield_star_with_array`
+**Status: ✅ Fixed**
 
-**Error Patterns:**
+All generator edge cases have been fixed:
 
-### Generator.throw()
-Error: `RuntimeError: test` (not caught)
+- ✅ `generator::test_generator_throw_with_catch` - Fixed by implementing `inject_exception()` in VM to resume generator with exception at yield point
+- ✅ `generator::test_yield_star_array` - Fixed by adding GC tracing for `delegated_iterator` and keeping iterator guard alive
+- ✅ `generator::test_generator_yield_star_with_array` - Same fix as above
 
-The generator's internal try/catch isn't catching errors injected via `.throw()`:
-```javascript
-function* gen() {
-    try { yield 1; }
-    catch (e) { yield "caught: " + e; }
-}
-const g = gen();
-g.next();
-g.throw("test"); // Should yield "caught: test", but throws instead
-```
+**Implementation Details:**
 
-**Fix:** When processing `.throw()`, resume generator in catch block if one exists.
+### Generator.throw() Fix
+Added `throw_value` field to `BytecodeGeneratorState` and `inject_exception()` method to `BytecodeVM`. When `generator.throw(exception)` is called, it sets the throw_value and resumes the generator. The VM then finds an exception handler (if any) and jumps to the catch block.
 
-### yield* with Array
-Error: `Invalid array iterator`
-
-```javascript
-function* gen() { yield* [1, 2, 3]; }
-```
-
-**Fix:** Ensure `yield*` correctly gets `Symbol.iterator` from array and iterates.
-
-**Complexity:** Medium
-**Estimated Effort:** 1 day
+### yield* with Array Fix
+Two issues were fixed:
+1. Added GC tracing for `delegated_iterator`, `func_env`, and `current_env` in `BytecodeGeneratorState`
+2. Added `iter_guard` in `start_yield_star_delegation` to keep iterator alive during the first `next()` call
 
 ---
 
@@ -502,7 +487,7 @@ eval("for(let i=0;i<3;i++) i") // Should return 2
 ### Medium Priority
 4. **Proxy Traps** - Important for metaprogramming
 5. **Decorators** - TypeScript feature, complex
-6. **Generator Edge Cases** - Uncommon patterns
+6. ~~**Generator Edge Cases**~~ - ✅ Fixed
 
 ### Lower Priority
 7. **BigInt** - Less common usage

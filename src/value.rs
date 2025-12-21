@@ -952,6 +952,25 @@ impl Traceable for JsObject {
                 if let JsValue::Object(obj) = &state.sent_value {
                     visitor(obj.copy_ref());
                 }
+                // Trace function environment
+                if let Some(env) = &state.func_env {
+                    visitor(env.copy_ref());
+                }
+                // Trace current environment at yield point
+                if let Some(env) = &state.current_env {
+                    visitor(env.copy_ref());
+                }
+                // Trace delegated iterator for yield*
+                if let Some((iter_obj, next_method)) = &state.delegated_iterator {
+                    visitor(iter_obj.copy_ref());
+                    if let JsValue::Object(obj) = next_method {
+                        visitor(obj.copy_ref());
+                    }
+                }
+                // Trace throw value for generator.throw()
+                if let Some(JsValue::Object(obj)) = &state.throw_value {
+                    visitor(obj.copy_ref());
+                }
             }
             ExoticObject::Environment(env_data) => {
                 // Trace all bindings in the environment
@@ -2491,6 +2510,8 @@ pub struct BytecodeGeneratorState {
     pub delegated_iterator: Option<(JsObjectRef, JsValue)>,
     /// Whether this is an async generator (next() returns Promise)
     pub is_async: bool,
+    /// Exception to throw when resuming (for generator.throw())
+    pub throw_value: Option<JsValue>,
 }
 
 impl std::fmt::Debug for BytecodeGeneratorState {
