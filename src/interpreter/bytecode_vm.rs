@@ -948,7 +948,18 @@ impl BytecodeVM {
                 };
 
                 let prop_key = PropertyKey::from_value(key);
-                let has_prop = obj_ref.borrow().has_own_property(&prop_key);
+
+                // Check if this is a proxy - delegate to proxy_has if so
+                let has_prop = if matches!(obj_ref.borrow().exotic, ExoticObject::Proxy(_)) {
+                    crate::interpreter::builtins::proxy::proxy_has(
+                        interp,
+                        obj_ref.cheap_clone(),
+                        &prop_key,
+                    )?
+                } else {
+                    obj_ref.borrow().has_own_property(&prop_key)
+                };
+
                 self.set_reg(dst, JsValue::Boolean(has_prop));
                 Ok(OpResult::Continue)
             }
@@ -1275,37 +1286,48 @@ impl BytecodeVM {
                     JsValue::Object(obj_ref) => {
                         let prop_key = PropertyKey::from_value(&key_val);
 
-                        // Check if property is configurable before deleting
-                        {
-                            let obj_borrowed = obj_ref.borrow();
-                            if let Some(prop) = obj_borrowed.properties.get(&prop_key) {
-                                if !prop.configurable() {
-                                    return Err(JsError::type_error(format!(
-                                        "Cannot delete property '{}' of object",
-                                        prop_key
-                                    )));
-                                }
-                            }
-                        }
-
-                        // For arrays, handle index deletion specially
-                        {
-                            let mut obj_borrowed = obj_ref.borrow_mut();
-                            if let PropertyKey::Index(idx) = &prop_key {
-                                if let Some(elements) = obj_borrowed.array_elements_mut() {
-                                    let idx = *idx as usize;
-                                    if idx < elements.len() {
-                                        // Set to undefined (creating a hole)
-                                        if let Some(elem) = elements.get_mut(idx) {
-                                            *elem = JsValue::Undefined;
-                                        }
+                        // Check if this is a proxy - delegate to proxy_delete_property if so
+                        if matches!(obj_ref.borrow().exotic, ExoticObject::Proxy(_)) {
+                            let result =
+                                crate::interpreter::builtins::proxy::proxy_delete_property(
+                                    interp,
+                                    obj_ref.cheap_clone(),
+                                    &prop_key,
+                                )?;
+                            self.set_reg(dst, JsValue::Boolean(result));
+                        } else {
+                            // Check if property is configurable before deleting
+                            {
+                                let obj_borrowed = obj_ref.borrow();
+                                if let Some(prop) = obj_borrowed.properties.get(&prop_key) {
+                                    if !prop.configurable() {
+                                        return Err(JsError::type_error(format!(
+                                            "Cannot delete property '{}' of object",
+                                            prop_key
+                                        )));
                                     }
                                 }
                             }
 
-                            obj_borrowed.properties.remove(&prop_key);
+                            // For arrays, handle index deletion specially
+                            {
+                                let mut obj_borrowed = obj_ref.borrow_mut();
+                                if let PropertyKey::Index(idx) = &prop_key {
+                                    if let Some(elements) = obj_borrowed.array_elements_mut() {
+                                        let idx = *idx as usize;
+                                        if idx < elements.len() {
+                                            // Set to undefined (creating a hole)
+                                            if let Some(elem) = elements.get_mut(idx) {
+                                                *elem = JsValue::Undefined;
+                                            }
+                                        }
+                                    }
+                                }
+
+                                obj_borrowed.properties.remove(&prop_key);
+                            }
+                            self.set_reg(dst, JsValue::Boolean(true));
                         }
-                        self.set_reg(dst, JsValue::Boolean(true));
                     }
                     // Primitives: delete returns true
                     JsValue::Number(_)
@@ -1334,21 +1356,32 @@ impl BytecodeVM {
                     JsValue::Object(obj_ref) => {
                         let prop_key = PropertyKey::from(key.as_str());
 
-                        // Check if property is configurable before deleting
-                        {
-                            let obj_borrowed = obj_ref.borrow();
-                            if let Some(prop) = obj_borrowed.properties.get(&prop_key) {
-                                if !prop.configurable() {
-                                    return Err(JsError::type_error(format!(
-                                        "Cannot delete property '{}' of object",
-                                        prop_key
-                                    )));
+                        // Check if this is a proxy - delegate to proxy_delete_property if so
+                        if matches!(obj_ref.borrow().exotic, ExoticObject::Proxy(_)) {
+                            let result =
+                                crate::interpreter::builtins::proxy::proxy_delete_property(
+                                    interp,
+                                    obj_ref.cheap_clone(),
+                                    &prop_key,
+                                )?;
+                            self.set_reg(dst, JsValue::Boolean(result));
+                        } else {
+                            // Check if property is configurable before deleting
+                            {
+                                let obj_borrowed = obj_ref.borrow();
+                                if let Some(prop) = obj_borrowed.properties.get(&prop_key) {
+                                    if !prop.configurable() {
+                                        return Err(JsError::type_error(format!(
+                                            "Cannot delete property '{}' of object",
+                                            prop_key
+                                        )));
+                                    }
                                 }
                             }
-                        }
 
-                        obj_ref.borrow_mut().properties.remove(&prop_key);
-                        self.set_reg(dst, JsValue::Boolean(true));
+                            obj_ref.borrow_mut().properties.remove(&prop_key);
+                            self.set_reg(dst, JsValue::Boolean(true));
+                        }
                     }
                     // Primitives: delete returns true
                     JsValue::Number(_)

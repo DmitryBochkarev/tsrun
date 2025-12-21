@@ -3,8 +3,8 @@
 This document analyzes test failures in the bytecode VM and categorizes them by feature area with implementation guidance.
 
 **Total Tests:** 1787
-**Passing:** 1597
-**Failing:** 183
+**Passing:** 1599
+**Failing:** 181
 **Ignored:** 7
 
 ---
@@ -25,7 +25,7 @@ The following issues have been fixed:
 - ✅ **Function constructor rest params** - Fixed rest parameter handling for functions created via `new Function('...args', 'body')`
 - ✅ **BigInt literals** - BigInt literals now compile to Number values (simplified implementation)
 - ✅ **new eval() TypeError** - `new eval()` now throws TypeError as required by ECMAScript spec
-- ✅ **Proxy get/set traps** - Proxy get and set traps now work in bytecode VM (delegates to proxy_get/proxy_set)
+- ✅ **Proxy get/set/has/delete traps** - Proxy traps now work in bytecode VM (delegates to proxy_* functions)
 
 ---
 
@@ -201,31 +201,29 @@ Private methods are similar but stored as non-configurable, non-writable propert
 
 ## 4. Proxy Handler Traps
 
-**Status: Partially Fixed**
+**Status: Mostly Fixed**
 
-Most proxy traps now work (67/73 tests passing). The following are fixed:
+Most proxy traps now work (69/73 tests passing). The following are fixed:
 - ✅ Get trap - now invoked via `proxy_get`
 - ✅ Set trap - now invoked via `proxy_set`
+- ✅ Has trap - now invoked via `proxy_has` (for `in` operator)
+- ✅ Delete trap - now invoked via `proxy_delete_property` (for `delete`)
 - ✅ Revocable proxies
 - ✅ Nested proxies
 - ✅ Most Reflect methods
 
-**Remaining Issues (~6 tests):**
-- `proxy::test_proxy_has_trap` - `in` operator not checking proxy has trap
-- `proxy::test_proxy_delete_property_trap` - `delete` not checking proxy deleteProperty trap
+**Remaining Issues (~4 tests):**
 - `proxy::test_proxy_construct_trap*` - `new` not checking proxy construct trap
 - `proxy::test_proxy_array_for_of` - Iterator on proxy not working
 - `proxy::test_proxy_for_in` - for-in on proxy not working
 
 **Implementation Notes:**
-The bytecode VM now delegates to `proxy_get` and `proxy_set` from `get_property_value` and `set_property_value`. Similar delegation is needed for:
-- `Op::In` → `proxy_has`
-- `Op::DeleteProperty` → `proxy_delete_property`
+The bytecode VM now delegates to proxy_* functions for property operations. Remaining work:
 - `Op::Construct` → `proxy_construct`
 - `Op::GetIterator` → proxy iteration
 
-**Complexity:** Low-Medium (similar pattern to get/set)
-**Estimated Effort:** 1 day
+**Complexity:** Low-Medium
+**Estimated Effort:** 0.5 day
 
 ---
 
