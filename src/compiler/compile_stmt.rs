@@ -2,14 +2,14 @@
 //!
 //! Compiles AST statements to bytecode instructions.
 
-use super::bytecode::Op;
+use super::bytecode::{Op, Register};
 use super::Compiler;
 use crate::ast::{
     BlockStatement, BreakStatement, ClassConstructor, ClassDeclaration, ClassMember, ClassMethod,
     ClassProperty, ContinueStatement, DoWhileStatement, ForInOfLeft, ForInStatement, ForInit,
-    ForOfStatement, ForStatement, IfStatement, LabeledStatement, MethodKind, ObjectPropertyKey,
-    ReturnStatement, Statement, SwitchStatement, ThrowStatement, TryStatement, VariableDeclaration,
-    VariableKind, WhileStatement,
+    ForOfStatement, ForStatement, IfStatement, LabeledStatement, MethodKind, ObjectPatternProperty,
+    ObjectPropertyKey, Pattern, ReturnStatement, Statement, SwitchStatement, ThrowStatement,
+    TryStatement, VariableDeclaration, VariableKind, WhileStatement,
 };
 use crate::error::JsError;
 use crate::value::{CheapClone, JsString};
@@ -252,6 +252,65 @@ impl Compiler {
     fn compile_for(&mut self, for_stmt: &ForStatement) -> Result<(), JsError> {
         self.builder.set_span(for_stmt.span);
 
+        // Check if this is a for loop with let/const declaration (needs per-iteration binding)
+        let per_iteration_vars = self.get_per_iteration_vars(&for_stmt.init);
+
+        if per_iteration_vars.is_empty() {
+            // No let/const vars: use simple compilation
+            self.compile_for_simple(for_stmt)
+        } else {
+            // Has let/const vars: use per-iteration binding semantics
+            self.compile_for_per_iteration(for_stmt, &per_iteration_vars)
+        }
+    }
+
+    /// Get variable names that need per-iteration binding (let/const in for init)
+    fn get_per_iteration_vars(&self, init: &Option<ForInit>) -> Vec<JsString> {
+        if let Some(ForInit::Variable(decl)) = init {
+            if decl.kind == VariableKind::Let || decl.kind == VariableKind::Const {
+                // Extract variable names from declarations
+                let mut names = Vec::new();
+                for declarator in decl.declarations.iter() {
+                    self.collect_pattern_names(&declarator.id, &mut names);
+                }
+                return names;
+            }
+        }
+        Vec::new()
+    }
+
+    /// Collect variable names from a pattern
+    fn collect_pattern_names(&self, pattern: &Pattern, names: &mut Vec<JsString>) {
+        match pattern {
+            Pattern::Identifier(id) => names.push(id.name.cheap_clone()),
+            Pattern::Object(obj) => {
+                for prop in &obj.properties {
+                    match prop {
+                        ObjectPatternProperty::KeyValue { value, .. } => {
+                            self.collect_pattern_names(value, names);
+                        }
+                        ObjectPatternProperty::Rest(rest) => {
+                            self.collect_pattern_names(&rest.argument, names);
+                        }
+                    }
+                }
+            }
+            Pattern::Array(arr) => {
+                for elem in arr.elements.iter().flatten() {
+                    self.collect_pattern_names(elem, names);
+                }
+            }
+            Pattern::Rest(rest) => {
+                self.collect_pattern_names(&rest.argument, names);
+            }
+            Pattern::Assignment(assign) => {
+                self.collect_pattern_names(&assign.left, names);
+            }
+        }
+    }
+
+    /// Compile for loop without per-iteration bindings (var or expression init)
+    fn compile_for_simple(&mut self, for_stmt: &ForStatement) -> Result<(), JsError> {
         // Push scope for loop variable
         self.builder.emit(Op::PushScope);
 
@@ -313,6 +372,123 @@ impl Compiler {
 
         // Pop scope
         self.builder.emit(Op::PopScope);
+
+        Ok(())
+    }
+
+    /// Compile for loop with per-iteration bindings for let/const vars
+    /// Each iteration gets a fresh binding, with values copied between iterations.
+    ///
+    /// Key insight: closures must capture the PRE-update value. To achieve this,
+    /// we don't modify the per-iteration bindings during update. Instead, we
+    /// compile the update to compute the new value into a register, then use
+    /// that register to initialize the NEXT iteration's bindings.
+    fn compile_for_per_iteration(
+        &mut self,
+        for_stmt: &ForStatement,
+        var_names: &[JsString],
+    ) -> Result<(), JsError> {
+        // Allocate registers to hold values between iterations
+        let mut var_regs: Vec<(JsString, Register)> = Vec::new();
+        for name in var_names {
+            let reg = self.builder.alloc_register()?;
+            var_regs.push((name.cheap_clone(), reg));
+        }
+
+        // Push outer scope for the init
+        self.builder.emit(Op::PushScope);
+
+        // Compile init (first iteration's values)
+        if let Some(ForInit::Variable(decl)) = &for_stmt.init {
+            self.compile_variable_declaration(decl)?;
+        }
+
+        // Copy initial values to registers
+        for (name, reg) in &var_regs {
+            let name_idx = self.builder.add_string(name.cheap_clone())?;
+            self.builder.emit(Op::GetVar {
+                dst: *reg,
+                name: name_idx,
+            });
+        }
+
+        // Pop the init scope (we'll create per-iteration scopes in the loop)
+        self.builder.emit(Op::PopScope);
+
+        // Loop start - push per-iteration scope and copy values from registers
+        let loop_start = self.builder.current_offset();
+
+        // Push per-iteration scope
+        self.builder.emit(Op::PushScope);
+
+        // Declare and initialize vars from registers (these are the values closures will capture)
+        for (name, reg) in &var_regs {
+            let name_idx = self.builder.add_string(name.cheap_clone())?;
+            self.builder.emit(Op::DeclareVar {
+                name: name_idx,
+                init: *reg,
+                mutable: true, // let vars are mutable
+            });
+        }
+
+        // Push loop context
+        self.push_loop(None);
+
+        // Compile test (if any)
+        let jump_to_end = if let Some(test) = &for_stmt.test {
+            let test_reg = self.builder.alloc_register()?;
+            self.compile_expression(test, test_reg)?;
+            let jump = self.builder.emit_jump_if_false(test_reg);
+            self.builder.free_register(test_reg);
+            Some(jump)
+        } else {
+            None
+        };
+
+        // Compile body (closures capture the per-iteration scope's bindings)
+        self.compile_statement_impl(&for_stmt.body)?;
+
+        // Continue target
+        let continue_target = self.builder.current_offset();
+        self.set_continue_target(continue_target);
+
+        // Compile update with special handling for loop variables:
+        // Instead of modifying the scope's bindings (which closures captured),
+        // we evaluate the update and store results to registers for the next iteration.
+        if let Some(update) = &for_stmt.update {
+            // Enable loop variable redirection: any assignment to loop vars
+            // will be redirected to their corresponding registers
+            self.set_loop_var_redirects(var_regs.clone());
+
+            let tmp = self.builder.alloc_register()?;
+            self.compile_expression(update, tmp)?;
+            self.builder.free_register(tmp);
+
+            // Disable redirection
+            self.clear_loop_var_redirects();
+        }
+
+        // Pop per-iteration scope
+        self.builder.emit(Op::PopScope);
+
+        // Jump back to loop start
+        self.builder.emit_jump_to(loop_start);
+
+        // Patch end jump (jump here when test fails)
+        if let Some(jump) = jump_to_end {
+            self.builder.patch_jump(jump);
+        }
+
+        // If jumping out due to test failure, need to pop scope
+        self.builder.emit(Op::PopScope);
+
+        // Pop loop context
+        self.pop_loop();
+
+        // Free registers
+        for (_, reg) in var_regs {
+            self.builder.free_register(reg);
+        }
 
         Ok(())
     }

@@ -2972,3 +2972,22 @@ fn test_bytecode_super_in_static_setter() {
     );
     assert_eq!(result, JsValue::Number(15.0));
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Closure Scoping in Loops
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_bytecode_for_let_closure_capture() {
+    // Each iteration of for (let i...) should create fresh binding
+    let result = eval_bytecode(
+        r#"
+        let funcs: any[] = [];
+        for (let i: number = 0; i < 3; i = i + 1) {
+            funcs.push(function(): number { return i; });
+        }
+        funcs[0]() + "," + funcs[1]() + "," + funcs[2]()
+    "#,
+    );
+    assert_eq!(result, JsValue::String("0,1,2".into()));
+}

@@ -677,20 +677,33 @@ impl Compiler {
     ) -> Result<(), JsError> {
         let name_idx = self.builder.add_string(id.name.cheap_clone())?;
 
+        // Check if this variable is redirected to a register (for for-loop updates)
+        let redirect_reg = self.get_loop_var_redirect(&id.name);
+
         if *op == AssignmentOp::Assign {
             // Simple assignment
             self.compile_expression(right, dst)?;
-            self.builder.emit(Op::SetVar {
-                name: name_idx,
-                src: dst,
-            });
+
+            if let Some(reg) = redirect_reg {
+                // Redirect: write to register instead of environment
+                self.builder.emit(Op::Move { dst: reg, src: dst });
+            } else {
+                self.builder.emit(Op::SetVar {
+                    name: name_idx,
+                    src: dst,
+                });
+            }
         } else {
             // Compound assignment
-            // Load current value
-            self.builder.emit(Op::GetVar {
-                dst,
-                name: name_idx,
-            });
+            // Load current value (from environment or redirect register)
+            if let Some(reg) = redirect_reg {
+                self.builder.emit(Op::Move { dst, src: reg });
+            } else {
+                self.builder.emit(Op::GetVar {
+                    dst,
+                    name: name_idx,
+                });
+            }
 
             // Handle short-circuit operators specially
             match op {
@@ -726,10 +739,15 @@ impl Compiler {
                 }
             }
 
-            self.builder.emit(Op::SetVar {
-                name: name_idx,
-                src: dst,
-            });
+            if let Some(reg) = redirect_reg {
+                // Redirect: write to register instead of environment
+                self.builder.emit(Op::Move { dst: reg, src: dst });
+            } else {
+                self.builder.emit(Op::SetVar {
+                    name: name_idx,
+                    src: dst,
+                });
+            }
         }
 
         Ok(())
@@ -865,11 +883,18 @@ impl Compiler {
             Expression::Identifier(id) => {
                 let name_idx = self.builder.add_string(id.name.cheap_clone())?;
 
-                // Load current value
-                self.builder.emit(Op::GetVar {
-                    dst,
-                    name: name_idx,
-                });
+                // Check if this variable is redirected to a register (for for-loop updates)
+                let redirect_reg = self.get_loop_var_redirect(&id.name);
+
+                // Load current value (from environment or redirect register)
+                if let Some(reg) = redirect_reg {
+                    self.builder.emit(Op::Move { dst, src: reg });
+                } else {
+                    self.builder.emit(Op::GetVar {
+                        dst,
+                        name: name_idx,
+                    });
+                }
 
                 if !update.prefix {
                     // Postfix: save original value
@@ -897,11 +922,15 @@ impl Compiler {
                         });
                     }
 
-                    // Store updated value
-                    self.builder.emit(Op::SetVar {
-                        name: name_idx,
-                        src: dst,
-                    });
+                    // Store updated value (to register or environment)
+                    if let Some(reg) = redirect_reg {
+                        self.builder.emit(Op::Move { dst: reg, src: dst });
+                    } else {
+                        self.builder.emit(Op::SetVar {
+                            name: name_idx,
+                            src: dst,
+                        });
+                    }
 
                     // Return original value
                     self.builder.emit(Op::Move { dst, src: original });
@@ -927,11 +956,15 @@ impl Compiler {
                         });
                     }
 
-                    // Store and return updated value
-                    self.builder.emit(Op::SetVar {
-                        name: name_idx,
-                        src: dst,
-                    });
+                    // Store and return updated value (to register or environment)
+                    if let Some(reg) = redirect_reg {
+                        self.builder.emit(Op::Move { dst: reg, src: dst });
+                    } else {
+                        self.builder.emit(Op::SetVar {
+                            name: name_idx,
+                            src: dst,
+                        });
+                    }
 
                     self.builder.free_register(one);
                 }

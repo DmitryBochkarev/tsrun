@@ -38,6 +38,11 @@ pub struct Compiler {
     /// Set of variables that have been hoisted in the current scope
     /// Used to determine if we should emit DeclareVarHoisted or SetVar
     hoisted_vars: FxHashSet<JsString>,
+
+    /// Loop variable redirects: when compiling for-loop updates, assignments to
+    /// these variables should write to the register instead of the environment.
+    /// This ensures closures capture pre-update values.
+    loop_var_redirects: FxHashMap<JsString, Register>,
 }
 
 /// Context for a loop (for break/continue handling)
@@ -63,6 +68,7 @@ impl Compiler {
             labels: FxHashMap::default(),
             try_depth: 0,
             hoisted_vars: FxHashSet::default(),
+            loop_var_redirects: FxHashMap::default(),
         }
     }
 
@@ -184,6 +190,23 @@ impl Compiler {
             self.builder.patch_jump(*jump);
         }
         Some(ctx)
+    }
+
+    /// Set loop variable redirects for for-loop update expressions.
+    /// When these are set, assignments to the specified variables will write
+    /// to registers instead of the environment, preserving closure semantics.
+    fn set_loop_var_redirects(&mut self, redirects: Vec<(JsString, Register)>) {
+        self.loop_var_redirects = redirects.into_iter().collect();
+    }
+
+    /// Clear loop variable redirects
+    fn clear_loop_var_redirects(&mut self) {
+        self.loop_var_redirects.clear();
+    }
+
+    /// Check if a variable has a loop redirect, returning the register if so
+    fn get_loop_var_redirect(&self, name: &JsString) -> Option<Register> {
+        self.loop_var_redirects.get(name).copied()
     }
 
     /// Add a break jump for the specified label (or innermost loop if None)
