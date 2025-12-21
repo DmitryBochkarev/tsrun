@@ -3,8 +3,8 @@
 This document analyzes test failures in the bytecode VM and categorizes them by feature area with implementation guidance.
 
 **Total Tests:** 1783
-**Passing:** 1610
-**Failing:** 166
+**Passing:** 1608
+**Failing:** 168
 **Ignored:** 7
 
 ---
@@ -32,6 +32,8 @@ The following issues have been fixed:
 - ✅ **Direct eval scope access** - `eval(...)` calls now have access to the calling lexical scope via `Op::DirectEval` bytecode
 - ✅ **For loop without update expression** - `for (let i = 0; i < n;)` loops now properly preserve body modifications to loop variables
 - ✅ **Function name inference** - `const myFunc = function() {}` now correctly sets `myFunc.name` to "myFunc"
+- ✅ **Super computed property access** - `super[name]()` now works correctly
+- ✅ **Super property assignment** - `super.x = value` and `super[key] = value` now work correctly
 
 ---
 

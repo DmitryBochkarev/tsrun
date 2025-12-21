@@ -795,6 +795,11 @@ impl Compiler {
         right: &Expression,
         dst: Register,
     ) -> Result<(), JsError> {
+        // Handle super.x = value or super[key] = value
+        if matches!(member.object.as_ref(), Expression::Super(_)) {
+            return self.compile_super_assignment(member, op, right, dst);
+        }
+
         // Compile object
         let obj_reg = self.builder.alloc_register()?;
         self.compile_expression(&member.object, obj_reg)?;
@@ -851,6 +856,86 @@ impl Compiler {
             self.builder.free_register(key_reg);
         }
         self.builder.free_register(obj_reg);
+
+        Ok(())
+    }
+
+    /// Compile assignment to super.x or super[key]
+    fn compile_super_assignment(
+        &mut self,
+        member: &crate::ast::MemberExpression,
+        op: &AssignmentOp,
+        right: &Expression,
+        dst: Register,
+    ) -> Result<(), JsError> {
+        // Note: super.x = value actually sets the property on `this`, not on the prototype
+        // This matches the ECMAScript specification for super property assignment
+        match &member.property {
+            MemberProperty::Identifier(id) => {
+                let key_idx = self.builder.add_string(id.name.cheap_clone())?;
+
+                if *op == AssignmentOp::Assign {
+                    // Simple assignment: super.x = value
+                    self.compile_expression(right, dst)?;
+                    self.builder.emit(Op::SuperSetConst {
+                        key: key_idx,
+                        value: dst,
+                    });
+                } else {
+                    // Compound assignment: super.x += value
+                    // First get the current value
+                    self.builder.emit(Op::SuperGetConst { dst, key: key_idx });
+
+                    let right_reg = self.builder.alloc_register()?;
+                    self.compile_expression(right, right_reg)?;
+
+                    let binary_op = self.compound_to_binary_op(*op)?;
+                    self.emit_binary_op(binary_op, dst, dst, right_reg);
+
+                    self.builder.emit(Op::SuperSetConst {
+                        key: key_idx,
+                        value: dst,
+                    });
+                    self.builder.free_register(right_reg);
+                }
+            }
+            MemberProperty::Expression(key_expr) => {
+                let key_reg = self.builder.alloc_register()?;
+                self.compile_expression(key_expr, key_reg)?;
+
+                if *op == AssignmentOp::Assign {
+                    // Simple assignment: super[key] = value
+                    self.compile_expression(right, dst)?;
+                    self.builder.emit(Op::SuperSet {
+                        key: key_reg,
+                        value: dst,
+                    });
+                } else {
+                    // Compound assignment: super[key] += value
+                    // First get the current value
+                    self.builder.emit(Op::SuperGet { dst, key: key_reg });
+
+                    let right_reg = self.builder.alloc_register()?;
+                    self.compile_expression(right, right_reg)?;
+
+                    let binary_op = self.compound_to_binary_op(*op)?;
+                    self.emit_binary_op(binary_op, dst, dst, right_reg);
+
+                    self.builder.emit(Op::SuperSet {
+                        key: key_reg,
+                        value: dst,
+                    });
+                    self.builder.free_register(right_reg);
+                }
+
+                self.builder.free_register(key_reg);
+            }
+            MemberProperty::PrivateIdentifier(_) => {
+                return Err(JsError::syntax_error_simple(
+                    "Private fields not supported on super",
+                ));
+            }
+        }
 
         Ok(())
     }
@@ -1533,32 +1618,67 @@ impl Compiler {
             return Ok(());
         }
 
-        // Handle super.method() call
+        // Handle super.method() or super[expr]() call
         if let Expression::Member(member) = call.callee.as_ref() {
             if matches!(member.object.as_ref(), Expression::Super(_)) {
                 // Super method call
-                if let MemberProperty::Identifier(method_name) = &member.property {
-                    let method_idx = self.builder.add_string(method_name.name.cheap_clone())?;
+                match &member.property {
+                    MemberProperty::Identifier(method_name) => {
+                        let method_idx = self.builder.add_string(method_name.name.cheap_clone())?;
 
-                    // Get super.method
-                    let method_reg = self.builder.alloc_register()?;
-                    self.builder.emit(Op::SuperGetConst {
-                        dst: method_reg,
-                        key: method_idx,
-                    });
+                        // Get super.method
+                        let method_reg = self.builder.alloc_register()?;
+                        self.builder.emit(Op::SuperGetConst {
+                            dst: method_reg,
+                            key: method_idx,
+                        });
 
-                    // Compile arguments
-                    let (args_start, argc, has_spread) = self.compile_arguments(&call.arguments)?;
+                        // Compile arguments
+                        let (args_start, argc, has_spread) =
+                            self.compile_arguments(&call.arguments)?;
 
-                    // Call with `this` as the receiver
-                    let this_reg = self.builder.alloc_register()?;
-                    self.builder.emit(Op::LoadThis { dst: this_reg });
+                        // Call with `this` as the receiver
+                        let this_reg = self.builder.alloc_register()?;
+                        self.builder.emit(Op::LoadThis { dst: this_reg });
 
-                    self.emit_call(dst, method_reg, this_reg, args_start, argc, has_spread);
+                        self.emit_call(dst, method_reg, this_reg, args_start, argc, has_spread);
 
-                    self.builder.free_register(this_reg);
-                    self.builder.free_register(method_reg);
-                    return Ok(());
+                        self.builder.free_register(this_reg);
+                        self.builder.free_register(method_reg);
+                        return Ok(());
+                    }
+                    MemberProperty::Expression(key_expr) => {
+                        // Computed super property access: super[name]()
+                        let key_reg = self.builder.alloc_register()?;
+                        self.compile_expression(key_expr, key_reg)?;
+
+                        // Get super[key]
+                        let method_reg = self.builder.alloc_register()?;
+                        self.builder.emit(Op::SuperGet {
+                            dst: method_reg,
+                            key: key_reg,
+                        });
+
+                        // Compile arguments
+                        let (args_start, argc, has_spread) =
+                            self.compile_arguments(&call.arguments)?;
+
+                        // Call with `this` as the receiver
+                        let this_reg = self.builder.alloc_register()?;
+                        self.builder.emit(Op::LoadThis { dst: this_reg });
+
+                        self.emit_call(dst, method_reg, this_reg, args_start, argc, has_spread);
+
+                        self.builder.free_register(this_reg);
+                        self.builder.free_register(method_reg);
+                        self.builder.free_register(key_reg);
+                        return Ok(());
+                    }
+                    MemberProperty::PrivateIdentifier(_) => {
+                        return Err(JsError::syntax_error_simple(
+                            "Private fields not supported on super",
+                        ));
+                    }
                 }
             }
         }
