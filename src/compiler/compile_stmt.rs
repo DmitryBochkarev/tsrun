@@ -1765,6 +1765,7 @@ impl Compiler {
                 name: name_idx,
                 is_static,
                 is_private,
+                is_accessor: field.accessor,
             });
 
             self.builder.free_register(dec_reg);

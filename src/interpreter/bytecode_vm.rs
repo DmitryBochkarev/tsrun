@@ -3049,6 +3049,7 @@ impl BytecodeVM {
                 name,
                 is_static,
                 is_private,
+                is_accessor,
             } => {
                 let decorator_val = self.get_reg(decorator).clone();
                 let field_name = self.get_string_constant(name);
@@ -3057,10 +3058,11 @@ impl BytecodeVM {
                 let guard = interp.heap.create_guard();
                 let ctx = interp.create_object(&guard);
 
-                // Set context.kind = "field"
+                // Set context.kind = "field" or "accessor" for auto-accessors
+                let kind_str = if is_accessor { "accessor" } else { "field" };
                 ctx.borrow_mut().set_property(
                     PropertyKey::String(interp.intern("kind")),
-                    JsValue::String(interp.intern("field")),
+                    JsValue::String(interp.intern(kind_str)),
                 );
 
                 // Set context.name

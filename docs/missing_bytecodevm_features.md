@@ -3,8 +3,8 @@
 This document analyzes test failures in the bytecode VM and categorizes them by feature area with implementation guidance.
 
 **Total Tests:** 1792
-**Passing:** 1716
-**Failing:** 69
+**Passing:** 1717
+**Failing:** 68
 **Ignored:** 7
 
 ---
@@ -50,6 +50,7 @@ The following issues have been fixed:
 - ✅ **Computed class method names** - `get [key]() {}` and `set [key]() {}` now work correctly
 - ✅ **Parenthesized method calls** - `(a.b)?.()` and `(a?.b)()` now preserve `this` binding correctly
 - ✅ **Decorator addInitializer** - `context.addInitializer(callback)` now works for class decorators
+- ✅ **Auto-accessor decorator context.kind** - Auto-accessor decorators now receive `context.kind = "accessor"` instead of `"field"`
 
 ---
 

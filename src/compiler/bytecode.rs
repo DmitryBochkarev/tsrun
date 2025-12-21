@@ -597,12 +597,14 @@ pub enum Op {
 
     /// Apply field decorator: r[dst] = decorator(undefined, context)
     /// Field decorators receive undefined as first arg, return an initializer transformer
+    /// For auto-accessors, is_accessor=true and context.kind will be "accessor" instead of "field"
     ApplyFieldDecorator {
         dst: Register,
         decorator: Register,
         name: ConstantIndex,
         is_static: bool,
         is_private: bool,
+        is_accessor: bool,
     },
 
     /// Store field initializer on class: class.__field_initializers__[name] = r[initializer]
