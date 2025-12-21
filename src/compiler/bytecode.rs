@@ -254,6 +254,9 @@ pub enum Op {
     /// Load variable: r[dst] = env[name]
     GetVar { dst: Register, name: ConstantIndex },
 
+    /// Try to load variable, returns undefined if not found: r[dst] = env[name] ?? undefined
+    TryGetVar { dst: Register, name: ConstantIndex },
+
     /// Store variable: env[name] = r[src]
     SetVar { name: ConstantIndex, src: Register },
 

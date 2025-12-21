@@ -1030,6 +1030,16 @@ impl BytecodeVM {
                 Ok(OpResult::Continue)
             }
 
+            Op::TryGetVar { dst, name } => {
+                let name = self
+                    .get_string_constant(name)
+                    .ok_or_else(|| JsError::internal_error("Invalid variable name constant"))?;
+                // Try to get the variable, return undefined if not found
+                let value = interp.env_get(&name).unwrap_or(JsValue::Undefined);
+                self.set_reg(dst, value);
+                Ok(OpResult::Continue)
+            }
+
             Op::SetVar { name, src } => {
                 let name = self
                     .get_string_constant(name)

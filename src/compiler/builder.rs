@@ -318,6 +318,7 @@ impl BytecodeBuilder {
                 | Op::Typeof { .. }
                 | Op::Void { .. }
                 | Op::GetVar { .. }
+                | Op::TryGetVar { .. }
                 | Op::SetVar { .. }
                 | Op::DeclareVar { .. }
                 | Op::DeclareVarHoisted { .. }

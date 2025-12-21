@@ -1484,17 +1484,43 @@ impl Compiler {
     ) -> Result<(), JsError> {
         self.builder.set_span(decl.span);
 
-        // Create the namespace object
-        let ns_obj = self.builder.alloc_register()?;
-        self.builder.emit(Op::CreateObject { dst: ns_obj });
-
-        // Declare the namespace variable first (so nested references work)
         let name_idx = self.builder.add_string(decl.id.name.cheap_clone())?;
+        let ns_obj = self.builder.alloc_register()?;
+
+        // Check if namespace already exists (for merging)
+        // Try to get existing namespace, use it if found, otherwise create new
+        let existing_reg = self.builder.alloc_register()?;
+
+        // Try to get the existing namespace variable (returns undefined if not found)
+        self.builder.emit(Op::TryGetVar {
+            dst: existing_reg,
+            name: name_idx,
+        });
+
+        // Check if existing is undefined - use JumpIfNullish since undefined is nullish
+        // If undefined/null, jump to create new object, else use existing
+        let jump_to_create = self.builder.emit_jump_if_nullish(existing_reg);
+
+        // Use existing namespace
+        self.builder.emit(Op::Move {
+            dst: ns_obj,
+            src: existing_reg,
+        });
+        let jump_to_end = self.builder.emit_jump();
+
+        // Create new namespace object
+        self.builder.patch_jump(jump_to_create);
+        self.builder.emit(Op::CreateObject { dst: ns_obj });
         self.builder.emit(Op::DeclareVar {
             name: name_idx,
             init: ns_obj,
             mutable: true,
         });
+
+        self.builder.patch_jump(jump_to_end);
+
+        // Free temporary registers
+        self.builder.free_register(existing_reg);
 
         // Push a new scope for the namespace body
         self.builder.emit(Op::PushScope);
