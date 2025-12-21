@@ -761,6 +761,15 @@ pub enum Op {
     },
 
     // ═══════════════════════════════════════════════════════════════════════════════
+    // Function Name Inference
+    // ═══════════════════════════════════════════════════════════════════════════════
+    /// Set function name if the value is an anonymous function
+    /// This implements the SetFunctionName abstract operation from the spec.
+    /// If r[func] is a function without a name, sets its name to the constant.
+    /// If it already has a name or is not a function, this is a no-op.
+    SetFunctionName { func: Register, name: ConstantIndex },
+
+    // ═══════════════════════════════════════════════════════════════════════════════
     // Miscellaneous
     // ═══════════════════════════════════════════════════════════════════════════════
     /// No operation (used for alignment/patching)

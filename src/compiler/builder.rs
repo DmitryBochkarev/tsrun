@@ -405,7 +405,8 @@ impl BytecodeBuilder {
                 | Op::RunClassInitializers { .. }
                 | Op::ExportBinding { .. }
                 | Op::ExportNamespace { .. }
-                | Op::ReExport { .. } => {}
+                | Op::ReExport { .. }
+                | Op::SetFunctionName { .. } => {}
             }
         }
     }

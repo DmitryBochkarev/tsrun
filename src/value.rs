@@ -1173,6 +1173,10 @@ impl JsObject {
             if let PropertyKey::String(s) = key {
                 match s.as_str() {
                     "name" => {
+                        // First check if there's an own property (for SetFunctionName override)
+                        if let Some(prop) = self.properties.get(key) {
+                            return Some(prop.value.clone());
+                        }
                         let name = match func {
                             JsFunction::Interpreted(f) => f.name.clone(),
                             JsFunction::Native(f) => Some(f.name.clone()),

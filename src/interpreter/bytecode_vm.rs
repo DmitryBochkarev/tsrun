@@ -4723,6 +4723,65 @@ impl BytecodeVM {
             }
 
             // ═══════════════════════════════════════════════════════════════════════════
+            // Function Name Inference
+            // ═══════════════════════════════════════════════════════════════════════════
+            Op::SetFunctionName { func, name } => {
+                let func_val = self.get_reg(func);
+                let name_str = self
+                    .get_string_constant(name)
+                    .ok_or_else(|| JsError::internal_error("Invalid function name constant"))?;
+
+                // Only set name if value is a function object without a name
+                if let JsValue::Object(obj) = func_val {
+                    let mut obj_ref = obj.borrow_mut();
+
+                    // Check if this is a function and if it doesn't have a name already
+                    let should_set_name =
+                        if let crate::value::ExoticObject::Function(func) = &obj_ref.exotic {
+                            // Check if function already has a non-empty name
+                            let has_name = match func {
+                                JsFunction::Interpreted(f) => {
+                                    f.name.as_ref().is_some_and(|n| !n.as_str().is_empty())
+                                }
+                                JsFunction::Native(f) => !f.name.as_str().is_empty(),
+                                JsFunction::Bytecode(bc)
+                                | JsFunction::BytecodeGenerator(bc)
+                                | JsFunction::BytecodeAsync(bc)
+                                | JsFunction::BytecodeAsyncGenerator(bc) => bc
+                                    .chunk
+                                    .function_info
+                                    .as_ref()
+                                    .and_then(|info| info.name.as_ref())
+                                    .is_some_and(|n| !n.as_str().is_empty()),
+                                JsFunction::Bound(_) => true, // Bound functions already have names
+                                _ => false, // Other function types, check if we should set name
+                            };
+                            // Also check if there's already an own name property set
+                            let name_key = PropertyKey::String(interp.intern("name"));
+                            let has_own_name = obj_ref.get_own_property(&name_key).is_some();
+                            !has_name && !has_own_name
+                        } else {
+                            false // Not a function
+                        };
+
+                    if should_set_name {
+                        let name_key = PropertyKey::String(interp.intern("name"));
+                        obj_ref.define_property(
+                            name_key,
+                            Property::with_attributes(
+                                JsValue::String(name_str),
+                                false, // not writable
+                                false, // not enumerable
+                                true,  // configurable
+                            ),
+                        );
+                    }
+                }
+
+                Ok(OpResult::Continue)
+            }
+
+            // ═══════════════════════════════════════════════════════════════════════════
             // Miscellaneous
             // ═══════════════════════════════════════════════════════════════════════════
             Op::Nop => Ok(OpResult::Continue),

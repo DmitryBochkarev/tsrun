@@ -72,8 +72,18 @@ impl Compiler {
                 let skip_default = self.builder.emit_jump_if_false(is_undefined);
                 self.builder.free_register(is_undefined);
 
-                // Use default value
-                self.compile_expression(&assign_pat.right, actual_value)?;
+                // Use default value - with name inference if left is an identifier
+                if let Pattern::Identifier(id) = &*assign_pat.left {
+                    // Pass the identifier name for function name inference
+                    self.compile_expression_with_inferred_name(
+                        &assign_pat.right,
+                        actual_value,
+                        Some(id.name.cheap_clone()),
+                    )?;
+                } else {
+                    self.compile_expression(&assign_pat.right, actual_value)?;
+                }
+
                 let skip_value = self.builder.emit_jump();
 
                 // Use provided value
@@ -329,8 +339,17 @@ impl Compiler {
                 let skip_default = self.builder.emit_jump_if_false(is_undefined);
                 self.builder.free_register(is_undefined);
 
-                // Use default
-                self.compile_expression(&assign_pat.right, actual_value)?;
+                // Use default value - with name inference if left is an identifier
+                if let Pattern::Identifier(id) = &*assign_pat.left {
+                    // Pass the identifier name for function name inference
+                    self.compile_expression_with_inferred_name(
+                        &assign_pat.right,
+                        actual_value,
+                        Some(id.name.cheap_clone()),
+                    )?;
+                } else {
+                    self.compile_expression(&assign_pat.right, actual_value)?;
+                }
                 let skip_value = self.builder.emit_jump();
 
                 // Use provided value

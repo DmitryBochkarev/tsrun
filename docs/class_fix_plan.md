@@ -114,26 +114,11 @@ class C {
 
 **Problem:** Functions assigned through destructuring don't get proper names.
 
-**Test Failures:** ~80 tests with error `Expected SameValue(«""», «"arrow"»)`
+**Status:** ✅ FIXED
 
-**Example:**
-```javascript
-class C {
-  *method([arrow = () => {}]) {
-    // arrow.name should be 'arrow', but is ''
-  }
-}
-```
+**Fix:** Modified `compile_pattern_binding` and `compile_pattern_assignment` in `compile_pattern.rs` to use `compile_expression_with_inferred_name` when the left side of a destructuring default is an identifier. This passes the binding name to the function compilation, which sets the function's `name` property at compile time.
 
-**Root Cause:** When compiling default parameter values that are anonymous functions, we don't assign the binding name to the function's `name` property.
-
-**Files to modify:**
-- `src/compiler/compile_pattern.rs` - Add name assignment during pattern compilation
-- `src/interpreter/bytecode_vm.rs` - Potentially add `SetFunctionName` opcode
-
-**Spec Reference:** ES2023 14.1.20 Runtime Semantics: NamedEvaluation
-
-**Estimated Effort:** Medium - requires tracking function creation context
+Also added a `SetFunctionName` opcode for potential runtime name inference use cases, along with changes to `get_property` in `value.rs` to check for an overriding `name` property before computing the default.
 
 ---
 
@@ -267,7 +252,7 @@ Recommended order based on impact and effort:
 
 1. **Method enumerability** (P1, Small) - Quick win, fixes 140 tests
 2. **ToPrimitive coercion** (P3, Small) - Quick fix for edge cases
-3. **Function name inference** (P2, Medium) - Common in real code
+3. **Function name inference** (P2, Medium) - ✅ DONE
 4. **Class fields fixes** (P2, Medium) - Very common in modern TS
 5. **Private fields/methods** (P1, Large) - ✅ Already implemented!
 6. **Computed accessors** (P3, Medium) - ✅ DONE

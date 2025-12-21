@@ -1487,3 +1487,50 @@ fn test_symbol_hasinstance_primitive() {
         JsValue::Boolean(false)
     );
 }
+
+// Tests for function name inference in destructuring patterns
+#[test]
+fn test_function_name_in_destructuring_default_array() {
+    // Arrow function in array destructuring default should get the binding name
+    assert_eq!(
+        eval(
+            r#"
+            let [arrow = () => {}] = [];
+            arrow.name
+        "#
+        ),
+        JsValue::String(JsString::from("arrow"))
+    );
+}
+
+#[test]
+fn test_function_name_in_destructuring_default_object() {
+    // Arrow function in object destructuring default should get the binding name
+    assert_eq!(
+        eval(
+            r#"
+            function test({fn = () => {}}) {
+                return fn.name;
+            }
+            test({})
+        "#
+        ),
+        JsValue::String(JsString::from("fn"))
+    );
+}
+
+#[test]
+fn test_function_name_in_destructuring_default_function_expr() {
+    // Function expression in destructuring default should get the binding name
+    assert_eq!(
+        eval(
+            r#"
+            function test([func = function() {}]) {
+                return func.name;
+            }
+            test([])
+        "#
+        ),
+        JsValue::String(JsString::from("func"))
+    );
+}
