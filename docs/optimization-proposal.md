@@ -437,15 +437,22 @@ fn call_function(args: Vec<JsValue>) {
 
 ### Memory Commands
 
+**Important:** Use the `profiling` profile for memory analysis. It provides debug symbols for readable stack traces while maintaining optimized code that reflects real-world performance.
+
 ```bash
+# Build profiling profile first
+cargo build --profile profiling
+
 # Heap profiling with massif
-valgrind --tool=massif ./target/debug/typescript-eval-runner examples/profiling/fibonacci.ts
+valgrind --tool=massif ./target/profiling/typescript-eval-runner examples/profiling/fibonacci.ts
 ms_print massif.out.*
 
-# Allocation site profiling with DHAT
-valgrind --tool=dhat ./target/debug/typescript-eval-runner examples/profiling/compute-intensive.ts
-# Then open dh_view.html and load dhat.out.*
+# Allocation site profiling with DHAT (recommended)
+valgrind --tool=dhat ./target/profiling/typescript-eval-runner examples/profiling/fibonacci.ts
+# Then open file:///usr/libexec/valgrind/dh_view.html and load dhat.out.*
 
 # Quick memory stats
 /usr/bin/time -v ./target/release/typescript-eval-runner examples/profiling/fibonacci.ts
 ```
+
+**Note:** Do NOT use `target/debug/` for profiling - it runs ~10-100x slower and may timeout. The `profiling` profile is optimized but includes debug info for symbols.
