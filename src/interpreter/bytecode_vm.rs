@@ -104,6 +104,9 @@ pub struct TryHandler {
     pub registers_snapshot: usize,
     /// Call frame depth at time of push
     pub frame_depth: usize,
+    /// Iterator register for for-of iterator close (None for regular try)
+    /// When set, this is a PushIterTry handler that should close the iterator on exception
+    pub iterator_reg: Option<Register>,
 }
 
 /// Pending completion to be executed after finally block
@@ -1411,6 +1414,7 @@ impl BytecodeVM {
                         finally_ip: handler.finally_ip,
                         registers_snapshot: handler.registers_snapshot,
                         frame_depth: handler.frame_depth,
+                        iterator_reg: handler.iterator_reg,
                     });
                 }
                 return Some(handler.catch_ip);
@@ -2792,11 +2796,32 @@ impl BytecodeVM {
                     finally_ip: finally_target as usize,
                     registers_snapshot: self.registers.len(),
                     frame_depth: self.call_stack.len(),
+                    iterator_reg: None,
                 });
                 Ok(OpResult::Continue)
             }
 
             Op::PopTry => {
+                self.try_stack.pop();
+                Ok(OpResult::Continue)
+            }
+
+            Op::PushIterTry {
+                iterator,
+                catch_target,
+            } => {
+                self.try_stack.push(TryHandler {
+                    catch_ip: catch_target as usize,
+                    finally_ip: 0, // No finally for iterator try
+                    registers_snapshot: self.registers.len(),
+                    frame_depth: self.call_stack.len(),
+                    iterator_reg: Some(iterator),
+                });
+                Ok(OpResult::Continue)
+            }
+
+            Op::PopIterTry => {
+                // Pop the iterator try handler (normal completion, no exception)
                 self.try_stack.pop();
                 Ok(OpResult::Continue)
             }
@@ -3460,6 +3485,30 @@ impl BytecodeVM {
                 };
 
                 self.set_reg(dst, value);
+                Ok(OpResult::Continue)
+            }
+
+            Op::IteratorClose { iterator } => {
+                let iter_val = self.get_reg(iterator).clone();
+
+                // Check if iterator has a return() method
+                if let JsValue::Object(iter_obj) = iter_val {
+                    // For internal array/string/keys iterators, there's no return method
+                    // Only check for custom iterators that have a 'return' property
+                    let return_key = PropertyKey::from("return");
+                    let return_method = iter_obj.borrow().get_property(&return_key);
+
+                    if let Some(JsValue::Object(return_fn)) = return_method {
+                        // Call the return method - ignore the result but propagate errors
+                        // According to spec, we should call it with the iterator as this
+                        let _ = interp.call_function(
+                            JsValue::Object(return_fn),
+                            JsValue::Object(iter_obj),
+                            &[],
+                        )?;
+                    }
+                }
+
                 Ok(OpResult::Continue)
             }
 

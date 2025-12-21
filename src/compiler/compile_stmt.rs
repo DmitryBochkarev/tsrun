@@ -617,8 +617,8 @@ impl Compiler {
         // Loop start
         let loop_start = self.builder.current_offset();
 
-        // Push loop context
-        self.push_loop(None);
+        // Push loop context with iterator register (for iterator close protocol)
+        self.push_loop_with_iterator(None, Some(iter_reg));
         self.set_continue_target(loop_start);
 
         // Get next value
@@ -663,13 +663,37 @@ impl Compiler {
         // Bind to left side
         self.compile_for_in_of_left(&for_of.left, value_reg)?;
 
+        // Push iterator try handler to catch exceptions and close iterator
+        // The catch target will be patched after we emit the body
+        let push_iter_try_idx = self.builder.emit(Op::PushIterTry {
+            iterator: iter_reg,
+            catch_target: 0, // Will be patched
+        });
+
         // Compile body
         self.compile_statement_impl(&for_of.body)?;
+
+        // Pop iterator try handler (normal completion, no exception)
+        self.builder.emit(Op::PopIterTry);
 
         // Jump back to start
         self.builder.emit_jump_to(loop_start);
 
-        // Patch end jump
+        // Exception handler: close iterator and rethrow
+        // This is where PushIterTry will jump on exception
+        let catch_target = self.builder.current_offset();
+
+        // Close the iterator
+        self.builder.emit(Op::IteratorClose { iterator: iter_reg });
+
+        // Rethrow the exception
+        self.builder.emit(Op::Rethrow);
+
+        // Patch the PushIterTry catch target
+        self.builder
+            .patch_iter_try_target(push_iter_try_idx, catch_target as u32);
+
+        // Patch end jump (this is where IteratorDone jumps when done)
         self.builder.patch_jump(jump_placeholder);
 
         // Pop loop context
@@ -795,6 +819,14 @@ impl Compiler {
     /// Compile a return statement
     fn compile_return(&mut self, return_stmt: &ReturnStatement) -> Result<(), JsError> {
         self.builder.set_span(return_stmt.span);
+
+        // Emit IteratorClose for all enclosing for-of loops before returning
+        // (iterate from innermost to outermost)
+        for i in (0..self.loop_stack.len()).rev() {
+            if let Some(iter_reg) = self.loop_stack.get(i).and_then(|ctx| ctx.iterator_reg) {
+                self.builder.emit(Op::IteratorClose { iterator: iter_reg });
+            }
+        }
 
         if let Some(argument) = &return_stmt.argument {
             let reg = self.builder.alloc_register()?;

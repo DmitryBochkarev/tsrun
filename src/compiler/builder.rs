@@ -283,6 +283,8 @@ impl BytecodeBuilder {
 
                 // PushTry has targets but is patched via patch_try_targets()
                 Op::PushTry { .. } => {}
+                // PushIterTry is patched via patch_iter_try_target()
+                Op::PushIterTry { .. } => {}
 
                 // All other opcodes - explicitly listed to catch new jump ops at compile time
                 Op::LoadConst { .. }
@@ -406,7 +408,9 @@ impl BytecodeBuilder {
                 | Op::ExportBinding { .. }
                 | Op::ExportNamespace { .. }
                 | Op::ReExport { .. }
-                | Op::SetFunctionName { .. } => {}
+                | Op::SetFunctionName { .. }
+                | Op::PopIterTry
+                | Op::IteratorClose { .. } => {}
             }
         }
     }
@@ -425,6 +429,13 @@ impl BytecodeBuilder {
         {
             *ct = catch_target;
             *ft = finally_target;
+        }
+    }
+
+    /// Patch PushIterTry instruction with catch target
+    pub fn patch_iter_try_target(&mut self, idx: usize, target: JumpTarget) {
+        if let Some(Op::PushIterTry { catch_target, .. }) = self.code.get_mut(idx) {
+            *catch_target = target;
         }
     }
 

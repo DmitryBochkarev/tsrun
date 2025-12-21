@@ -87,6 +87,9 @@ struct LoopContext {
     continue_jumps: Vec<JumpPlaceholder>,
     /// Try depth when this loop started (for finally handling)
     try_depth: usize,
+    /// Iterator register for for-of loops (for iterator close protocol)
+    /// When set, break/return/throw should call iterator.return()
+    iterator_reg: Option<Register>,
 }
 
 impl Compiler {
@@ -207,6 +210,11 @@ impl Compiler {
 
     /// Push a loop context
     fn push_loop(&mut self, label: Option<JsString>) {
+        self.push_loop_with_iterator(label, None);
+    }
+
+    /// Push a loop context with an iterator register (for for-of loops)
+    fn push_loop_with_iterator(&mut self, label: Option<JsString>, iterator_reg: Option<Register>) {
         let index = self.loop_stack.len();
         if let Some(ref l) = label {
             self.labels.insert(l.cheap_clone(), index);
@@ -217,6 +225,7 @@ impl Compiler {
             continue_target: None,
             continue_jumps: Vec::new(),
             try_depth: self.try_depth,
+            iterator_reg,
         });
     }
 
@@ -311,8 +320,16 @@ impl Compiler {
         let target_try_depth = self
             .loop_stack
             .get(loop_idx)
-            .map(|ctx| ctx.try_depth)
-            .unwrap_or(0) as u8;
+            .map(|ctx| ctx.try_depth as u8)
+            .unwrap_or(0);
+
+        // Emit IteratorClose before break if this is a for-of loop
+        // Also need to close iterators for any enclosing for-of loops we're breaking out of
+        for i in (loop_idx..self.loop_stack.len()).rev() {
+            if let Some(iter_reg) = self.loop_stack.get(i).and_then(|ctx| ctx.iterator_reg) {
+                self.builder.emit(Op::IteratorClose { iterator: iter_reg });
+            }
+        }
 
         // Emit Break opcode with placeholder target
         let idx = self.builder.emit(Op::Break {

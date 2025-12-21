@@ -227,3 +227,128 @@ fn test_for_of_with_custom_iterator() {
         JsValue::Number(60.0) // 10 + 20 + 30 = 60
     );
 }
+
+#[test]
+fn test_iterator_close_on_break() {
+    // Iterator close protocol: return() should be called on early exit
+    assert_eq!(
+        eval(
+            r#"
+            let returnCalled: number = 0;
+            const iter = {
+                [Symbol.iterator]() {
+                    return {
+                        next() { return { value: 1, done: false }; },
+                        return() {
+                            returnCalled = 1;
+                            return { done: true };
+                        }
+                    };
+                }
+            };
+            for (const x of iter) {
+                break;
+            }
+            returnCalled
+        "#
+        ),
+        JsValue::Number(1.0)
+    );
+}
+
+#[test]
+fn test_iterator_close_on_return() {
+    // Iterator close protocol: return() called when function returns early
+    assert_eq!(
+        eval(
+            r#"
+            let returnCalled: number = 0;
+            const iter = {
+                [Symbol.iterator]() {
+                    return {
+                        next() { return { value: 1, done: false }; },
+                        return() {
+                            returnCalled = 1;
+                            return { done: true };
+                        }
+                    };
+                }
+            };
+            function test(): number {
+                for (const x of iter) {
+                    return 42;
+                }
+                return 0;
+            }
+            test();
+            returnCalled
+        "#
+        ),
+        JsValue::Number(1.0)
+    );
+}
+
+#[test]
+fn test_iterator_close_on_throw() {
+    // Iterator close protocol: return() called when exception is thrown
+    assert_eq!(
+        eval(
+            r#"
+            let returnCalled: number = 0;
+            const iter = {
+                [Symbol.iterator]() {
+                    return {
+                        next() { return { value: 1, done: false }; },
+                        return() {
+                            returnCalled = 1;
+                            return { done: true };
+                        }
+                    };
+                }
+            };
+            try {
+                for (const x of iter) {
+                    throw new Error("test");
+                }
+            } catch (e) {
+                // caught
+            }
+            returnCalled
+        "#
+        ),
+        JsValue::Number(1.0)
+    );
+}
+
+#[test]
+fn test_iterator_close_not_called_on_normal_completion() {
+    // return() should NOT be called when loop completes normally
+    assert_eq!(
+        eval(
+            r#"
+            let returnCalled: number = 0;
+            const iter = {
+                [Symbol.iterator]() {
+                    let count = 0;
+                    return {
+                        next() {
+                            count += 1;
+                            return { value: count, done: count > 3 };
+                        },
+                        return() {
+                            returnCalled = 1;
+                            return { done: true };
+                        }
+                    };
+                }
+            };
+            let sum = 0;
+            for (const x of iter) {
+                sum += x;
+            }
+            returnCalled  // Should be 0 - return() not called for normal completion
+        "#
+        ),
+        JsValue::Number(0.0)
+    );
+}

@@ -457,6 +457,16 @@ pub enum Op {
     /// Get caught exception value: r[dst] = caught_exception
     GetException { dst: Register },
 
+    /// Push iterator try handler - like PushTry but calls iterator.return() on exception
+    /// Used by for-of loops to implement iterator close protocol on throws
+    PushIterTry {
+        iterator: Register,
+        catch_target: JumpTarget,
+    },
+
+    /// Pop iterator try handler (normal exit, no iterator close needed)
+    PopIterTry,
+
     /// Rethrow current exception (in catch block)
     Rethrow,
 
@@ -504,6 +514,10 @@ pub enum Op {
 
     /// Get iterator result value: r[dst] = r[result].value
     IteratorValue { dst: Register, result: Register },
+
+    /// Close iterator: call r[iterator].return() if it exists
+    /// Used for early loop exit (break, return, throw) in for-of loops
+    IteratorClose { iterator: Register },
 
     // ═══════════════════════════════════════════════════════════════════════════════
     // Class Operations

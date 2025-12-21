@@ -48,41 +48,18 @@ Error: obj['length'] descriptor should not be enumerable; obj['length'] descript
 
 ---
 
-### 2. Iterator Close Protocol
+### 2. Iterator Close Protocol ✅ IMPLEMENTED
 
-**Impact:** Resource cleanup in custom iterators (file handles, database connections, streams). Affects generators, async iterators, and any code using early loop exit.
-
-**Current Behavior:**
-```javascript
-const iter = {
-  [Symbol.iterator]() {
-    return {
-      next() { return { value: 1, done: false }; },
-      return() { cleanup(); return { done: true }; }  // Never called!
-    };
-  }
-};
-for (const x of iter) {
-  break;  // Should call iter.return()
-}
-```
-
-**Expected Behavior:** When a for-of loop exits early (break, throw, return), call the iterator's `return()` method if it exists.
-
-**Test Patterns:**
-```
-Error: Expected SameValue(«0», «1») to be true  // return() call count should be 1
-```
+**Status:** Implemented on 2025-12-21
 
 **Implementation:**
-1. Add `IteratorClose` opcode
-2. In for-of compilation, emit `IteratorClose` in:
-   - Break path (before jump)
-   - Exception handler
-   - Early return path
-3. Also needed for: destructuring, spread, yield*
+- Added `IteratorClose` opcode to call iterator's `return()` method
+- Added `PushIterTry`/`PopIterTry` opcodes for exception handling in for-of loops
+- Compiler emits `IteratorClose` before break/return statements inside for-of loops
+- For-of body is wrapped in implicit try-catch that closes iterator on exceptions
+- Tests added: `test_iterator_close_on_break`, `test_iterator_close_on_return`, `test_iterator_close_on_throw`
 
-**Estimated Complexity:** Medium - requires changes to loop compilation and exception handling
+**Note:** Destructuring, spread, and yield* iterator close still needs implementation.
 
 ---
 
@@ -395,7 +372,7 @@ Promise[Symbol.species];  // undefined (should be Promise)
 3. **Generator methods in objects** - Parser addition
 
 ### Phase 2: Core Fixes (P1)
-4. **Iterator close protocol** - Important for resource management
+4. ~~**Iterator close protocol** - Important for resource management~~ ✅ DONE
 5. **Default parameter TDZ** - Semantic correctness
 6. **Object.defineProperty arrays** - Common usage
 
