@@ -1222,3 +1222,60 @@ fn test_super_matches_prototype() {
         JsValue::Boolean(true)
     );
 }
+
+// Test computed getters/setters in class
+#[test]
+fn test_class_computed_getter() {
+    assert_eq!(
+        eval(
+            r#"
+            let key: string = "foo";
+            class C {
+                get [key](): number { return 42; }
+            }
+            let c: C = new C();
+            c.foo
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+#[test]
+fn test_class_computed_setter() {
+    assert_eq!(
+        eval(
+            r#"
+            let key: string = "bar";
+            class C {
+                value: number = 0;
+                set [key](v: number) { this.value = v; }
+            }
+            let c: C = new C();
+            c.bar = 100;
+            c.value
+        "#
+        ),
+        JsValue::Number(100.0)
+    );
+}
+
+#[test]
+fn test_class_computed_getter_setter_combined() {
+    assert_eq!(
+        eval(
+            r#"
+            let key: string = "prop";
+            class C {
+                _value: number = 0;
+                get [key](): number { return this._value; }
+                set [key](v: number) { this._value = v * 2; }
+            }
+            let c: C = new C();
+            c.prop = 21;
+            c.prop
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}

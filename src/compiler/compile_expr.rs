@@ -399,14 +399,71 @@ impl Compiler {
         obj: Register,
         prop: &crate::ast::Property,
     ) -> Result<(), JsError> {
-        // Get the property name
+        // Check if this is a computed key - handle differently
+        if let ObjectPropertyKey::Computed(key_expr) = &prop.key {
+            // Compile the computed key expression
+            let key_reg = self.builder.alloc_register()?;
+            self.compile_expression(key_expr, key_reg)?;
+
+            // Compile the accessor function
+            let accessor_reg = self.builder.alloc_register()?;
+            self.compile_expression(&prop.value, accessor_reg)?;
+
+            // Create undefined for the other accessor slot
+            let undefined_reg = self.builder.alloc_register()?;
+            self.builder.emit(Op::LoadUndefined { dst: undefined_reg });
+
+            // Use DefineAccessorComputed with is_static=true to define on the object directly
+            match prop.kind {
+                PropertyKind::Get => {
+                    self.builder.emit(Op::DefineAccessorComputed {
+                        class: obj, // The object to define on
+                        key: key_reg,
+                        getter: accessor_reg,
+                        setter: undefined_reg,
+                        is_static: true, // Define on the object itself
+                    });
+                }
+                PropertyKind::Set => {
+                    self.builder.emit(Op::DefineAccessorComputed {
+                        class: obj, // The object to define on
+                        key: key_reg,
+                        getter: undefined_reg,
+                        setter: accessor_reg,
+                        is_static: true, // Define on the object itself
+                    });
+                }
+                PropertyKind::Init => {
+                    // Should not reach here
+                }
+            }
+
+            self.builder.free_register(undefined_reg);
+            self.builder.free_register(accessor_reg);
+            self.builder.free_register(key_reg);
+            return Ok(());
+        }
+
+        // Get the property name for non-computed keys
         let name_idx = match &prop.key {
             ObjectPropertyKey::Identifier(id) => self.builder.add_string(id.name.cheap_clone())?,
             ObjectPropertyKey::String(s) => self.builder.add_string(s.value.cheap_clone())?,
-            _ => {
+            ObjectPropertyKey::Number(lit) => {
+                // Number keys need to be converted to string
+                let num_str = match &lit.value {
+                    LiteralValue::Number(n) => crate::value::JsString::from(n.to_string()),
+                    _ => crate::value::JsString::from("0"),
+                };
+                self.builder.add_string(num_str)?
+            }
+            ObjectPropertyKey::PrivateIdentifier(_) => {
                 return Err(JsError::syntax_error_simple(
-                    "Computed getters/setters not yet supported in bytecode compiler",
+                    "Private accessors not supported in object literals",
                 ));
+            }
+            ObjectPropertyKey::Computed(_) => {
+                // Already handled above
+                return Err(JsError::internal_error("unreachable"));
             }
         };
 

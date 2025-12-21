@@ -2291,3 +2291,57 @@ fn test_class_getter_only_throws_typeerror() {
         JsValue::String("TypeError".into())
     );
 }
+
+// Test computed getters/setters in object literals
+#[test]
+fn test_object_literal_computed_getter() {
+    assert_eq!(
+        eval(
+            r#"
+            let key: string = "foo";
+            let obj = {
+                get [key](): number { return 42; }
+            };
+            obj.foo
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+#[test]
+fn test_object_literal_computed_setter() {
+    assert_eq!(
+        eval(
+            r#"
+            let key: string = "bar";
+            let obj = {
+                _val: 0,
+                set [key](v: number) { this._val = v; }
+            };
+            obj.bar = 100;
+            obj._val
+        "#
+        ),
+        JsValue::Number(100.0)
+    );
+}
+
+#[test]
+fn test_object_literal_computed_getter_setter_combined() {
+    assert_eq!(
+        eval(
+            r#"
+            let key: string = "prop";
+            let obj = {
+                _value: 0,
+                get [key](): number { return this._value; },
+                set [key](v: number) { this._value = v * 2; }
+            };
+            obj.prop = 21;
+            obj.prop
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}
