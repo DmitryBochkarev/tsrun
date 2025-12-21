@@ -110,10 +110,18 @@ impl Compiler {
         for declarator in decl.declarations.iter() {
             self.builder.set_span(declarator.span);
 
+            // Get the inferred name from simple identifier patterns
+            let inferred_name = match &declarator.id {
+                Pattern::Identifier(id) => Some(id.name.cheap_clone()),
+                _ => None,
+            };
+
             // Compile initializer (or undefined)
             let init_reg = self.builder.alloc_register()?;
             if let Some(init) = &declarator.init {
-                self.compile_expression(init, init_reg)?;
+                // Check if this is an anonymous function being assigned to an identifier
+                // If so, pass the inferred name for function.name property
+                self.compile_expression_with_inferred_name(init, init_reg, inferred_name)?;
             } else {
                 self.builder.emit(Op::LoadUndefined { dst: init_reg });
             }

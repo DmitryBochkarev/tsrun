@@ -31,6 +31,7 @@ The following issues have been fixed:
 - ✅ **Proxy for-in enumeration** - for-in loops on proxies now use ownKeys trap
 - ✅ **Direct eval scope access** - `eval(...)` calls now have access to the calling lexical scope via `Op::DirectEval` bytecode
 - ✅ **For loop without update expression** - `for (let i = 0; i < n;)` loops now properly preserve body modifications to loop variables
+- ✅ **Function name inference** - `const myFunc = function() {}` now correctly sets `myFunc.name` to "myFunc"
 
 ---
 

@@ -112,6 +112,38 @@ impl Compiler {
         }
     }
 
+    /// Compile an expression with an optional inferred name for anonymous functions/arrows.
+    /// This is used for name inference: `const myFunc = function() {}` should give the function name "myFunc".
+    pub fn compile_expression_with_inferred_name(
+        &mut self,
+        expr: &Expression,
+        dst: Register,
+        inferred_name: Option<JsString>,
+    ) -> Result<(), JsError> {
+        self.builder.set_span(expr.span());
+
+        match expr {
+            // Anonymous function expression - use inferred name if function has no name
+            Expression::Function(func) if func.id.is_none() => {
+                self.compile_function_expression_with_name(func, dst, inferred_name)
+            }
+            // Anonymous arrow function - use inferred name
+            Expression::ArrowFunction(arrow) => {
+                self.compile_arrow_function_with_name(arrow, dst, inferred_name)
+            }
+            // Anonymous class expression - use inferred name if class has no name
+            Expression::Class(class) if class.id.is_none() => {
+                self.compile_class_expression_with_name(class, dst, inferred_name)
+            }
+            // For parenthesized expressions, pass through the inferred name
+            Expression::Parenthesized(inner, _) => {
+                self.compile_expression_with_inferred_name(inner, dst, inferred_name)
+            }
+            // For all other expressions, compile normally
+            _ => self.compile_expression(expr, dst),
+        }
+    }
+
     /// Compile a literal value
     pub(crate) fn compile_literal(
         &mut self,
@@ -1993,12 +2025,24 @@ impl Compiler {
     ) -> Result<(), JsError> {
         // Extract function metadata
         let name = func.id.as_ref().map(|id| id.name.cheap_clone());
+        self.compile_function_expression_with_name(func, dst, name)
+    }
+
+    /// Compile function expression with an optional inferred name
+    fn compile_function_expression_with_name(
+        &mut self,
+        func: &crate::ast::FunctionExpression,
+        dst: Register,
+        name: Option<JsString>,
+    ) -> Result<(), JsError> {
+        // Use provided name, or extract from function id
+        let func_name = name.or_else(|| func.id.as_ref().map(|id| id.name.cheap_clone()));
 
         // Use the existing compile_function_body from compile_stmt
         let chunk = self.compile_function_body(
             &func.params,
             &func.body.body,
-            name,
+            func_name,
             func.generator,
             func.async_,
             false, // is_arrow = false
@@ -2030,19 +2074,28 @@ impl Compiler {
         arrow: &crate::ast::ArrowFunctionExpression,
         dst: Register,
     ) -> Result<(), JsError> {
+        self.compile_arrow_function_with_name(arrow, dst, None)
+    }
+
+    /// Compile arrow function with an optional inferred name
+    fn compile_arrow_function_with_name(
+        &mut self,
+        arrow: &crate::ast::ArrowFunctionExpression,
+        dst: Register,
+        name: Option<JsString>,
+    ) -> Result<(), JsError> {
         // Compile the arrow function body
         let chunk = match arrow.body.as_ref() {
             crate::ast::ArrowFunctionBody::Block(block) => self.compile_function_body(
                 &arrow.params,
                 &block.body,
-                None, // arrows are anonymous
+                name.clone(),
                 false,
                 arrow.async_,
                 true, // is_arrow = true
             )?,
-            crate::ast::ArrowFunctionBody::Expression(expr) => {
-                self.compile_arrow_expression_body(&arrow.params, expr, arrow.async_)?
-            }
+            crate::ast::ArrowFunctionBody::Expression(expr) => self
+                .compile_arrow_expression_body_with_name(&arrow.params, expr, arrow.async_, name)?,
         };
 
         // Add chunk to constants
@@ -2145,15 +2198,51 @@ impl Compiler {
         Ok(chunk)
     }
 
+    /// Compile an expression-bodied arrow function with an optional inferred name
+    fn compile_arrow_expression_body_with_name(
+        &mut self,
+        params: &[crate::ast::FunctionParam],
+        expr: &crate::ast::Expression,
+        is_async: bool,
+        name: Option<JsString>,
+    ) -> Result<super::BytecodeChunk, JsError> {
+        let mut chunk = self.compile_arrow_expression_body(params, expr, is_async)?;
+        // Set the name if provided
+        if let Some(func_name) = name {
+            if let Some(ref mut info) = chunk.function_info {
+                info.name = Some(func_name);
+            }
+        }
+        Ok(chunk)
+    }
+
     /// Compile class expression
     fn compile_class_expression(
         &mut self,
         class: &crate::ast::ClassExpression,
         dst: Register,
     ) -> Result<(), JsError> {
+        self.compile_class_expression_with_name(class, dst, None)
+    }
+
+    /// Compile class expression with an optional inferred name
+    fn compile_class_expression_with_name(
+        &mut self,
+        class: &crate::ast::ClassExpression,
+        dst: Register,
+        name: Option<JsString>,
+    ) -> Result<(), JsError> {
+        // Use inferred name if class has no explicit id
+        let class_id = class.id.clone().or_else(|| {
+            name.map(|n| crate::ast::Identifier {
+                name: n,
+                span: class.span,
+            })
+        });
+
         // Convert ClassExpression to ClassDeclaration to reuse compile_class_body
         let class_decl = crate::ast::ClassDeclaration {
-            id: class.id.clone(),
+            id: class_id,
             type_parameters: class.type_parameters.clone(),
             super_class: class.super_class.clone(),
             implements: class.implements.clone(),
