@@ -2389,8 +2389,39 @@ impl BytecodeVM {
             Op::TemplateConcat { dst, start, count } => {
                 let mut result = String::new();
                 for i in 0..count {
-                    let val = self.get_reg(start + i);
-                    result.push_str(val.to_js_string().as_str());
+                    let val = self.get_reg(start + i).clone();
+                    // For objects, call toString method; for primitives, use to_js_string
+                    let str_val = if let JsValue::Object(obj) = &val {
+                        // Check if object has a custom toString method
+                        let to_string_key =
+                            PropertyKey::String(interp.intern("toString"));
+                        if let Some(to_string_val) = obj.borrow().get_property(&to_string_key) {
+                            if let JsValue::Object(func_obj) = &to_string_val {
+                                if func_obj.borrow().is_callable() {
+                                    // Call toString()
+                                    match interp.call_function(
+                                        JsValue::Object(func_obj.clone()),
+                                        val.clone(),
+                                        &[],
+                                    ) {
+                                        Ok(Guarded { value, guard: _ }) => {
+                                            value.to_js_string()
+                                        }
+                                        Err(_) => val.to_js_string(),
+                                    }
+                                } else {
+                                    val.to_js_string()
+                                }
+                            } else {
+                                val.to_js_string()
+                            }
+                        } else {
+                            val.to_js_string()
+                        }
+                    } else {
+                        val.to_js_string()
+                    };
+                    result.push_str(str_val.as_str());
                 }
                 self.set_reg(dst, JsValue::String(JsString::from(result)));
                 Ok(OpResult::Continue)
