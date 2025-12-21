@@ -755,36 +755,36 @@ impl BytecodeVM {
             }
 
             Op::Sub { dst, left, right } => {
-                let left_val = self.get_reg(left).to_number();
-                let right_val = self.get_reg(right).to_number();
+                let left_val = interp.coerce_to_number(self.get_reg(left))?;
+                let right_val = interp.coerce_to_number(self.get_reg(right))?;
                 self.set_reg(dst, JsValue::Number(left_val - right_val));
                 Ok(OpResult::Continue)
             }
 
             Op::Mul { dst, left, right } => {
-                let left_val = self.get_reg(left).to_number();
-                let right_val = self.get_reg(right).to_number();
+                let left_val = interp.coerce_to_number(self.get_reg(left))?;
+                let right_val = interp.coerce_to_number(self.get_reg(right))?;
                 self.set_reg(dst, JsValue::Number(left_val * right_val));
                 Ok(OpResult::Continue)
             }
 
             Op::Div { dst, left, right } => {
-                let left_val = self.get_reg(left).to_number();
-                let right_val = self.get_reg(right).to_number();
+                let left_val = interp.coerce_to_number(self.get_reg(left))?;
+                let right_val = interp.coerce_to_number(self.get_reg(right))?;
                 self.set_reg(dst, JsValue::Number(left_val / right_val));
                 Ok(OpResult::Continue)
             }
 
             Op::Mod { dst, left, right } => {
-                let left_val = self.get_reg(left).to_number();
-                let right_val = self.get_reg(right).to_number();
+                let left_val = interp.coerce_to_number(self.get_reg(left))?;
+                let right_val = interp.coerce_to_number(self.get_reg(right))?;
                 self.set_reg(dst, JsValue::Number(left_val % right_val));
                 Ok(OpResult::Continue)
             }
 
             Op::Exp { dst, left, right } => {
-                let left_val = self.get_reg(left).to_number();
-                let right_val = self.get_reg(right).to_number();
+                let left_val = interp.coerce_to_number(self.get_reg(left))?;
+                let right_val = interp.coerce_to_number(self.get_reg(right))?;
                 self.set_reg(dst, JsValue::Number(left_val.powf(right_val)));
                 Ok(OpResult::Continue)
             }
@@ -961,13 +961,13 @@ impl BytecodeVM {
             // Unary Operations
             // ═══════════════════════════════════════════════════════════════════════════
             Op::Neg { dst, src } => {
-                let val = self.get_reg(src).to_number();
+                let val = interp.coerce_to_number(self.get_reg(src))?;
                 self.set_reg(dst, JsValue::Number(-val));
                 Ok(OpResult::Continue)
             }
 
             Op::Plus { dst, src } => {
-                let val = self.get_reg(src).to_number();
+                let val = interp.coerce_to_number(self.get_reg(src))?;
                 self.set_reg(dst, JsValue::Number(val));
                 Ok(OpResult::Continue)
             }
