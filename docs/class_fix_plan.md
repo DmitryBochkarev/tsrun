@@ -265,33 +265,16 @@ Recommended order based on impact and effort:
 
 These can be fixed quickly for immediate test262 improvement:
 
-### Fix 1: Method Enumerability (140 tests)
+### Fix 1: Method Enumerability ✅ FIXED
 
-```rust
-// In src/interpreter/bytecode_vm.rs, Op::DefineMethod handler
-// Replace:
-proto.borrow_mut().set_property(prop_key, method_val);
+Class methods are now non-enumerable as required by spec. Also fixed:
+- `constructor` property on prototype is non-enumerable
+- `prototype` property on class is non-writable, non-enumerable, non-configurable
+- `GetKeysIterator` in for-in loops now properly checks `enumerable()` on properties
 
-// With:
-proto.borrow_mut().define_property(
-    prop_key,
-    Property::with_attributes(method_val, true, false, true)
-);
-```
+### Fix 2: Static Method Enumerability ✅ FIXED
 
-### Fix 2: Static Method Enumerability
-
-Same fix applies to static methods:
-```rust
-// Replace:
-class_obj.borrow_mut().set_property(prop_key, method_val);
-
-// With:
-class_obj.borrow_mut().define_property(
-    prop_key,
-    Property::with_attributes(method_val, true, false, true)
-);
-```
+Same fix applied to static methods - they are now non-enumerable.
 
 ---
 

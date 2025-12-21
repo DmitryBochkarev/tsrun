@@ -3068,7 +3068,11 @@ impl BytecodeVM {
                             }
 
                             // Then add own enumerable property keys (excluding indices already added)
-                            for k in obj_borrowed.properties.keys() {
+                            for (k, prop) in obj_borrowed.properties.iter() {
+                                // Only include enumerable properties
+                                if !prop.enumerable() {
+                                    continue;
+                                }
                                 match k {
                                     PropertyKey::String(s) => {
                                         result.push(JsValue::String(s.cheap_clone()));
@@ -3512,16 +3516,26 @@ impl BytecodeVM {
                     }
                 }
 
-                // Set constructor.prototype = prototype
-                ctor_obj.borrow_mut().set_property(
+                // Set constructor.prototype = prototype (non-writable, non-enumerable, non-configurable per spec)
+                ctor_obj.borrow_mut().define_property(
                     PropertyKey::String(interp.intern("prototype")),
-                    JsValue::Object(prototype.cheap_clone()),
+                    Property::with_attributes(
+                        JsValue::Object(prototype.cheap_clone()),
+                        false,
+                        false,
+                        false,
+                    ),
                 );
 
-                // Set prototype.constructor = constructor
-                prototype.borrow_mut().set_property(
+                // Set prototype.constructor = constructor (non-enumerable, writable, configurable per spec)
+                prototype.borrow_mut().define_property(
                     PropertyKey::String(interp.intern("constructor")),
-                    JsValue::Object(ctor_obj.cheap_clone()),
+                    Property::with_attributes(
+                        JsValue::Object(ctor_obj.cheap_clone()),
+                        true,
+                        false,
+                        true,
+                    ),
                 );
 
                 self.set_reg(dst, JsValue::Object(ctor_obj));
@@ -3577,14 +3591,22 @@ impl BytecodeVM {
 
                 if is_static {
                     // Add to class constructor directly
-                    class_obj.borrow_mut().set_property(prop_key, method_val);
+                    // Methods are non-enumerable, writable, configurable (per spec)
+                    class_obj.borrow_mut().define_property(
+                        prop_key,
+                        Property::with_attributes(method_val, true, false, true),
+                    );
                 } else {
                     // Add to prototype
+                    // Methods are non-enumerable, writable, configurable (per spec)
                     let proto_key = PropertyKey::String(interp.intern("prototype"));
                     if let Some(JsValue::Object(proto)) =
                         class_obj.borrow().get_property(&proto_key)
                     {
-                        proto.borrow_mut().set_property(prop_key, method_val);
+                        proto.borrow_mut().define_property(
+                            prop_key,
+                            Property::with_attributes(method_val, true, false, true),
+                        );
                     }
                 }
 
@@ -3709,14 +3731,22 @@ impl BytecodeVM {
 
                 if is_static {
                     // Add to class constructor directly
-                    class_obj.borrow_mut().set_property(prop_key, method_val);
+                    // Methods are non-enumerable, writable, configurable (per spec)
+                    class_obj.borrow_mut().define_property(
+                        prop_key,
+                        Property::with_attributes(method_val, true, false, true),
+                    );
                 } else {
                     // Add to prototype
+                    // Methods are non-enumerable, writable, configurable (per spec)
                     let proto_key = PropertyKey::String(interp.intern("prototype"));
                     if let Some(JsValue::Object(proto)) =
                         class_obj.borrow().get_property(&proto_key)
                     {
-                        proto.borrow_mut().set_property(prop_key, method_val);
+                        proto.borrow_mut().define_property(
+                            prop_key,
+                            Property::with_attributes(method_val, true, false, true),
+                        );
                     }
                 }
 

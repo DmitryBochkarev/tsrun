@@ -1279,3 +1279,53 @@ fn test_class_computed_getter_setter_combined() {
         JsValue::Number(42.0)
     );
 }
+
+// Test that class methods are not enumerable
+#[test]
+fn test_class_method_not_enumerable() {
+    // Instance methods should not be enumerable
+    assert_eq!(
+        eval(
+            r#"
+            class C {
+                foo(): void {}
+                bar(): void {}
+            }
+            let result: string[] = [];
+            for (let key in C.prototype) {
+                result.push(key);
+            }
+            result.length
+        "#
+        ),
+        JsValue::Number(0.0) // No enumerable properties
+    );
+}
+
+#[test]
+fn test_class_static_method_not_enumerable() {
+    // Static methods should not be enumerable
+    // Note: 'length' and 'name' are function properties that are currently enumerable
+    // (which is a separate issue), so we filter those out too
+    assert_eq!(
+        eval(
+            r#"
+            class C {
+                static foo(): void {}
+                static bar(): void {}
+            }
+            let result: string[] = [];
+            for (let key in C) {
+                result.push(key);
+            }
+            // Filter out internal properties and built-in function properties
+            let userDefined = result.filter(k =>
+                !k.startsWith("__") && k !== "length" && k !== "name" && k !== "prototype"
+            );
+            // foo and bar should not appear since they're non-enumerable
+            userDefined.includes("foo") || userDefined.includes("bar") ? 1 : 0
+        "#
+        ),
+        JsValue::Number(0.0) // foo and bar should not be enumerable
+    );
+}
