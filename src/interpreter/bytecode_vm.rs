@@ -7,7 +7,8 @@ use crate::compiler::{BytecodeChunk, Constant, Op, Register};
 use crate::error::JsError;
 use crate::gc::{Gc, Guard};
 use crate::value::{
-    BytecodeFunction, CheapClone, Guarded, JsObject, JsString, JsValue, Property, PropertyKey,
+    BytecodeFunction, CheapClone, ExoticObject, Guarded, JsFunction, JsObject, JsString, JsValue,
+    Property, PropertyKey,
 };
 use std::rc::Rc;
 
@@ -1471,6 +1472,13 @@ impl BytecodeVM {
                     return Err(JsError::type_error("Constructor is not a callable object"));
                 };
 
+                // Check if this is `new eval()` - eval is not a constructor
+                if let ExoticObject::Function(JsFunction::Native(native)) = &ctor.borrow().exotic {
+                    if native.name.as_str() == "eval" {
+                        return Err(JsError::type_error("eval is not a constructor"));
+                    }
+                }
+
                 // Create a new object
                 let new_guard = interp.heap.create_guard();
                 let new_obj = interp.create_object(&new_guard);
@@ -1519,6 +1527,13 @@ impl BytecodeVM {
                 let JsValue::Object(ctor) = &callee_val else {
                     return Err(JsError::type_error("Constructor is not a callable object"));
                 };
+
+                // Check if this is `new eval()` - eval is not a constructor
+                if let ExoticObject::Function(JsFunction::Native(native)) = &ctor.borrow().exotic {
+                    if native.name.as_str() == "eval" {
+                        return Err(JsError::type_error("eval is not a constructor"));
+                    }
+                }
 
                 // Create a new object
                 let new_guard = interp.heap.create_guard();

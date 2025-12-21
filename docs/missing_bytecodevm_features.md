@@ -3,8 +3,8 @@
 This document analyzes test failures in the bytecode VM and categorizes them by feature area with implementation guidance.
 
 **Total Tests:** 1787
-**Passing:** 1562
-**Failing:** 218
+**Passing:** 1564
+**Failing:** 216
 **Ignored:** 7
 
 ---
@@ -24,6 +24,7 @@ The following issues have been fixed:
 - ✅ **Function.prototype property** - Regular functions now get a `.prototype` property set up correctly for use with `new`
 - ✅ **Function constructor rest params** - Fixed rest parameter handling for functions created via `new Function('...args', 'body')`
 - ✅ **BigInt literals** - BigInt literals now compile to Number values (simplified implementation)
+- ✅ **new eval() TypeError** - `new eval()` now throws TypeError as required by ECMAScript spec
 
 ---
 
