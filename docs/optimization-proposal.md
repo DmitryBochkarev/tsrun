@@ -209,14 +209,16 @@ C. **Caller-save registers:** Only save registers that are live across the call.
 
 ## Implementation Priority Matrix
 
-| Optimization | Impact | Effort | Priority |
-|-------------|--------|--------|----------|
-| Register pool | 5-7% | Medium | **P1** |
-| Keyword perfect hash | 5-8% | Low | **P1** |
-| set_reg lazy guarding | 3-5% | Medium | **P2** |
-| Environment lookup | 4-6% | High | **P2** |
-| Token allocation | 3-5% | Medium | **P3** |
-| Trampoline optimization | 2-3% | High | **P3** |
+| Optimization | Impact | Effort | Priority | Status |
+|-------------|--------|--------|----------|--------|
+| Register pool | 5-7% | Medium | **P1** | ✅ Done |
+| Keyword length dispatch | 5-8% | Low | **P1** | ✅ Done (+58-77% lexer) |
+| `#[inline]` on hot paths | 1-2% | Low | Quick Win | ✅ Done |
+| FxHashMap for envs | N/A | N/A | Quick Win | ✅ Already done |
+| set_reg lazy guarding | 3-5% | Medium | **P2** | Pending |
+| Environment lookup | 4-6% | High | **P2** | Pending |
+| Token allocation | 3-5% | Medium | **P3** | Pending |
+| Trampoline optimization | 2-3% | High | **P3** | Pending |
 
 ---
 
@@ -267,15 +269,27 @@ perf report --stdio --sort=symbol --no-children | head -50
 
 ## Metrics to Track
 
-| Metric | Current | Target |
-|--------|---------|--------|
-| Lexer throughput | ~65-73 MB/s | 100+ MB/s |
-| Parser throughput | ~20 MB/s | 35+ MB/s |
-| compute-intensive.ts | 242 ms | 180 ms |
-| stress-test.ts | 128 ms | 100 ms |
-| Fibonacci(30) | 2298 ms | 1500 ms |
+| Metric | Baseline | After Optimizations | Improvement |
+|--------|----------|---------------------|-------------|
+| Lexer throughput | ~65-73 MB/s | **115.31 MB/s** | **+58-77%** ✅ |
+| Parser throughput | ~20 MB/s | **24.40 MB/s** | **+22%** ✅ |
+| compute-intensive.ts | 242 ms | 242.2 ms | ~0% |
+| stress-test.ts | 128 ms | 129.3 ms | ~0% |
+| Fibonacci(30) | 2298 ms | 2269 ms | **+1.3%** |
 
-Run benchmarks before/after each optimization to measure actual impact.
+### Benchmark Results (2024-12-21)
+
+**Lexer:** 115.31 MB/s (was ~65-73 MB/s) - **Target exceeded!** ✅
+- Length-prefixed keyword dispatch reduced memcmp overhead significantly
+
+**Parser:** 24.40 MB/s (was ~20 MB/s) - improved but below 35 MB/s target
+- Parser benefits from faster lexer
+- Further parser-specific optimizations needed
+
+**VM Execution:** Marginal improvement
+- The register pool optimization primarily reduces allocation count, not runtime
+- The Fibonacci(30) benchmark shows ~1.3% improvement
+- Memory allocation profiling (DHAT) would show bigger impact
 
 ## Baseline Commands
 
@@ -355,13 +369,13 @@ impl EnvironmentPool {
 
 ---
 
-#### M2: Register File Reuse (High Impact)
+#### M2: Register File Reuse ✅ DONE
 
 **Problem:** Each call allocates `vec![JsValue::Undefined; register_count]` (~412 MB for fib(30)).
 
-Already proposed in CPU optimization section. This is confirmed as a major memory issue.
+**Solution:** Implemented register pool in BytecodeVM (see Priority 1 above).
 
-**Expected impact:** 30-40% reduction in allocations.
+**Expected impact:** 30-40% reduction in register allocations.
 
 ---
 
