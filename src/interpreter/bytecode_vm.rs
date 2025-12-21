@@ -2775,22 +2775,46 @@ impl BytecodeVM {
                 }
 
                 let prop_key = PropertyKey::from_value(key);
-                // Check for accessor property with setter
-                let prop_desc = obj_ref.borrow().get_property_descriptor(&prop_key);
-                if let Some((prop, _)) = prop_desc {
-                    if prop.is_accessor() {
-                        // Property has a setter - invoke it
-                        if let Some(setter) = prop.setter() {
-                            interp.call_function(
-                                JsValue::Object(setter.clone()),
-                                obj.clone(),
-                                &[value],
-                            )?;
+
+                // Check if object is frozen/sealed or property is non-writable
+                // First, check for accessor or non-writable property
+                let setter_to_call = {
+                    let obj_borrowed = obj_ref.borrow();
+                    if let Some(prop) = obj_borrowed.properties.get(&prop_key) {
+                        if prop.is_accessor() {
+                            // Clone setter for later invocation
+                            Some(prop.setter().cloned())
+                        } else if !prop.writable() {
+                            return Err(JsError::type_error(format!(
+                                "Cannot assign to read only property '{}'",
+                                prop_key
+                            )));
+                        } else {
+                            None
                         }
-                        // If no setter, silently ignore (or throw in strict mode)
-                        return Ok(());
+                    } else if !obj_borrowed.extensible {
+                        return Err(JsError::type_error(format!(
+                            "Cannot add property '{}' to non-extensible object",
+                            prop_key
+                        )));
+                    } else {
+                        None
                     }
+                };
+
+                // Call setter if we have one
+                if let Some(maybe_setter) = setter_to_call {
+                    if let Some(setter) = maybe_setter {
+                        interp.call_function(
+                            JsValue::Object(setter),
+                            obj.clone(),
+                            &[value],
+                        )?;
+                    }
+                    // Accessor property handled, return
+                    return Ok(());
                 }
+
                 // Regular data property
                 obj_ref.borrow_mut().set_property(prop_key, value);
                 Ok(())
