@@ -1213,17 +1213,21 @@ fn test_object_is_symbols() {
 // Object.preventExtensions/isExtensible tests
 #[test]
 fn test_object_prevent_extensions() {
-    // After preventExtensions, new properties cannot be added
+    // After preventExtensions, new properties cannot be added (strict mode throws TypeError)
     assert_eq!(
         eval(
             r#"
             const obj: any = { a: 1 };
             Object.preventExtensions(obj);
-            obj.b = 2;
-            obj.b
+            try {
+                obj.b = 2;
+                "no error"
+            } catch (e) {
+                e instanceof TypeError ? "TypeError" : "other error"
+            }
         "#
         ),
-        JsValue::Undefined
+        JsValue::String("TypeError".into())
     );
 }
 
