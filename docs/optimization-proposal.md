@@ -355,38 +355,49 @@ Note: Total allocations increased from baseline due to additional GC and environ
 
 ### Memory Optimization Proposals
 
-#### M1: Environment Binding Pre-sizing ✅ PARTIALLY DONE
+#### M1: Environment Binding Pre-sizing ✅ DONE
 
 **Problem:** Every function call creates a new `FxHashMap` for bindings that resizes as variables are added (~469 MB for fib(30)).
 
-**Solution implemented:** Pre-size HashMap based on function metadata:
+**Solution implemented:** Pre-size HashMap based on accurate binding counts:
 - Added `binding_count` field to `FunctionInfo` struct
 - Added `EnvironmentData::with_outer_and_capacity()` constructor
 - Added `create_environment_unrooted_with_capacity()` function
-- VM calculates capacity from `binding_count` or estimates from `param_count + 4`
+- Added `count_function_bindings()` function in `hoist.rs` to count bindings during compilation
+- Compiler now calculates accurate binding counts for all function types:
+  - Regular functions
+  - Arrow functions (expression-bodied and block-bodied)
+  - Class constructors (explicit and default)
+  - Async functions and generators
 
 ```rust
-// Calculate environment capacity based on function info
+// Count bindings during compilation
+pub fn count_function_bindings(
+    params: &[FunctionParam],
+    body: &[Statement],
+    is_arrow: bool,
+) -> usize {
+    // Counts:
+    // - Parameters (including destructured bindings)
+    // - Hoisted var declarations (unique names)
+    // - Hoisted function declarations
+    // - `this` binding (for non-arrow functions)
+    // - Slack for arguments object, etc.
+}
+
+// VM uses accurate binding_count for pre-sizing
 let env_capacity = func_info
     .map(|info| {
         if info.binding_count > 0 {
             info.binding_count
         } else {
-            info.param_count + 4  // Estimate: params + this + arguments + locals
+            info.param_count + 4  // Fallback estimate
         }
     })
     .unwrap_or(8);
-
-let (func_env, func_guard) = create_environment_unrooted_with_capacity(
-    &interp.heap,
-    Some(bc_func.closure.cheap_clone()),
-    env_capacity,
-);
 ```
 
-**Expected impact:** Reduces HashMap resizing allocations. Full environment pooling deferred due to complexity.
-
-**Future work:** Count actual bindings during compilation and set `binding_count` accurately.
+**Expected impact:** Eliminates HashMap resizing allocations during function execution.
 
 ---
 

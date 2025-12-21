@@ -2534,6 +2534,10 @@ impl Compiler {
         func_compiler.compile_expression(expr, result_reg)?;
         func_compiler.builder.emit(Op::Return { value: result_reg });
 
+        // Count bindings for environment pre-sizing
+        // Expression-bodied arrows have no statement body, just params
+        let binding_count = super::hoist::count_function_bindings(params, &[], true);
+
         // Build the chunk with function info
         let mut chunk = func_compiler.builder.finish();
         chunk.function_info = Some(FunctionInfo {
@@ -2546,7 +2550,7 @@ impl Compiler {
             uses_this: false,
             param_names,
             rest_param,
-            binding_count: 0, // TODO: count during compilation
+            binding_count,
         });
 
         Ok(chunk)

@@ -1144,6 +1144,9 @@ impl Compiler {
             value: undefined_reg,
         });
 
+        // Count bindings for environment pre-sizing
+        let binding_count = super::hoist::count_function_bindings(params, body, is_arrow);
+
         // Build the chunk with function info
         let mut chunk = func_compiler.builder.finish();
         chunk.function_info = Some(FunctionInfo {
@@ -1156,7 +1159,7 @@ impl Compiler {
             uses_this: !is_arrow,
             param_names,
             rest_param,
-            binding_count: 0, // TODO: count during compilation
+            binding_count,
         });
 
         // Make sure we have enough registers for parameters
@@ -2069,6 +2072,10 @@ impl Compiler {
         func_compiler.builder.emit(Op::LoadThis { dst: this_reg });
         func_compiler.builder.emit(Op::Return { value: this_reg });
 
+        // Count bindings for environment pre-sizing
+        let binding_count =
+            super::hoist::count_function_bindings(&ctor.params, &ctor.body.body, false);
+
         let mut chunk = func_compiler.builder.finish();
         chunk.function_info = Some(FunctionInfo {
             name,
@@ -2080,7 +2087,7 @@ impl Compiler {
             is_arrow: false,
             uses_arguments: false,
             uses_this: true, // constructors use this
-            binding_count: 0,
+            binding_count,
         });
 
         Ok(chunk)
@@ -2132,8 +2139,8 @@ impl Compiler {
             is_async: false,
             is_arrow: false,
             uses_arguments: false,
-            uses_this: true, // constructors use this
-            binding_count: 0,
+            uses_this: true,  // constructors use this
+            binding_count: 3, // this + slack
         });
 
         Ok(chunk)
