@@ -2597,7 +2597,25 @@ impl BytecodeVM {
             }
             JsValue::Null => Err(JsError::type_error("Cannot read properties of null")),
             JsValue::Undefined => Err(JsError::type_error("Cannot read properties of undefined")),
-            JsValue::Symbol(_) => Ok(JsValue::Undefined),
+            JsValue::Symbol(sym) => {
+                // Symbols have a description property
+                if let JsValue::String(k) = key {
+                    if k.as_str() == "description" {
+                        return Ok(sym
+                            .description
+                            .as_ref()
+                            .map(|d| JsValue::String(JsString::from(d.as_str())))
+                            .unwrap_or(JsValue::Undefined));
+                    }
+                }
+                // Other symbol prototype methods
+                let prop_key = PropertyKey::from_value(key);
+                if let Some(val) = interp.symbol_prototype.borrow().get_property(&prop_key) {
+                    Ok(val.clone())
+                } else {
+                    Ok(JsValue::Undefined)
+                }
+            }
         }
     }
 
