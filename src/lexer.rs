@@ -860,6 +860,44 @@ impl<'a> Lexer<'a> {
         u32::from_str_radix(&hex_str, 16).ok()
     }
 
+    /// Scan a unicode escape sequence in an identifier.
+    /// Expects to be called after the backslash has been consumed.
+    /// Returns the decoded character if valid, None otherwise.
+    fn scan_unicode_escape_in_identifier(&mut self) -> Option<char> {
+        // Must start with 'u'
+        if self.peek() != Some('u') {
+            return None;
+        }
+        self.advance(); // consume 'u'
+
+        // Check for \u{...} form
+        if self.peek() == Some('{') {
+            self.advance(); // consume '{'
+            let mut hex_str = String::new();
+            while let Some(ch) = self.peek() {
+                if ch == '}' {
+                    self.advance();
+                    break;
+                }
+                if ch.is_ascii_hexdigit() {
+                    hex_str.push(ch);
+                    self.advance();
+                } else {
+                    return None;
+                }
+            }
+            if hex_str.is_empty() {
+                return None;
+            }
+            let code = u32::from_str_radix(&hex_str, 16).ok()?;
+            return char::from_u32(code);
+        }
+
+        // \uNNNN form - exactly 4 hex digits
+        let code = self.scan_hex_escape(4)?;
+        char::from_u32(code)
+    }
+
     fn scan_template_literal(&mut self) -> TokenKind {
         let mut value = String::new();
 
@@ -1235,15 +1273,50 @@ impl<'a> Lexer<'a> {
 
     fn scan_identifier(&mut self, first: char) -> TokenKind {
         let mut name = String::new();
-        name.push(first);
+        let mut had_escape = false;
 
+        // Handle first character - might be a unicode escape
+        if first == '\\' {
+            if let Some(decoded) = self.scan_unicode_escape_in_identifier() {
+                if is_id_start_char(decoded) {
+                    name.push(decoded);
+                    had_escape = true;
+                } else {
+                    return TokenKind::Invalid('\\');
+                }
+            } else {
+                return TokenKind::Invalid('\\');
+            }
+        } else {
+            name.push(first);
+        }
+
+        // Continue scanning identifier characters
         while let Some(ch) = self.peek() {
-            if is_id_continue(ch) {
+            if ch == '\\' {
+                self.advance(); // consume the backslash
+                if let Some(decoded) = self.scan_unicode_escape_in_identifier() {
+                    if is_id_continue_char(decoded) {
+                        name.push(decoded);
+                        had_escape = true;
+                    } else {
+                        return TokenKind::Invalid('\\');
+                    }
+                } else {
+                    return TokenKind::Invalid('\\');
+                }
+            } else if is_id_continue_char(ch) {
                 name.push(ch);
                 self.advance();
             } else {
                 break;
             }
+        }
+
+        // If the identifier contained escapes, it cannot be a keyword
+        // (ECMAScript spec: escaped identifiers that spell keywords are still identifiers)
+        if had_escape {
+            return TokenKind::Identifier(self.string_dict.get_or_insert(&name));
         }
 
         // Length-prefixed keyword dispatch for faster matching
@@ -1343,13 +1416,18 @@ impl<'a> Lexer<'a> {
     }
 }
 
-/// Check if a character can start an identifier
+/// Check if a character can start an identifier (including unicode escape sequence)
 fn is_id_start(ch: char) -> bool {
+    ch == '_' || ch == '$' || ch == '\\' || unicode_xid::UnicodeXID::is_xid_start(ch)
+}
+
+/// Check if a decoded character is valid as identifier start (without escape check)
+fn is_id_start_char(ch: char) -> bool {
     ch == '_' || ch == '$' || unicode_xid::UnicodeXID::is_xid_start(ch)
 }
 
-/// Check if a character can continue an identifier
-fn is_id_continue(ch: char) -> bool {
+/// Check if a decoded character is valid as identifier continue (without escape check)
+fn is_id_continue_char(ch: char) -> bool {
     ch == '_' || ch == '$' || unicode_xid::UnicodeXID::is_xid_continue(ch)
 }
 
@@ -1802,5 +1880,49 @@ mod tests {
             token.kind,
             TokenKind::RegExp("[/]".to_string(), "".to_string())
         );
+    }
+
+    #[test]
+    fn test_unicode_escape_identifier() {
+        // \u0078 is 'x'
+        assert_eq!(
+            lex(r"\u0078"),
+            vec![TokenKind::Identifier(JsString::from("x"))]
+        );
+    }
+
+    #[test]
+    fn test_unicode_escape_identifier_mixed() {
+        // f\u006fo is "foo"
+        assert_eq!(
+            lex(r"f\u006fo"),
+            vec![TokenKind::Identifier(JsString::from("foo"))]
+        );
+    }
+
+    #[test]
+    fn test_unicode_escape_keyword_becomes_identifier() {
+        // \u0063ase decodes to "case" but since it uses escapes, it's an identifier, not a keyword
+        assert_eq!(
+            lex(r"\u0063ase"),
+            vec![TokenKind::Identifier(JsString::from("case"))]
+        );
+    }
+
+    #[test]
+    fn test_unicode_escape_braced_form() {
+        // \u{78} is 'x' (braced form)
+        assert_eq!(
+            lex(r"\u{78}"),
+            vec![TokenKind::Identifier(JsString::from("x"))]
+        );
+    }
+
+    #[test]
+    fn test_unicode_escape_braced_longer() {
+        // \u{1F600} is emoji, but not valid in identifier
+        // So this should fail
+        let tokens = lex(r"\u{1F600}");
+        assert!(matches!(tokens.first(), Some(TokenKind::Invalid(_))));
     }
 }

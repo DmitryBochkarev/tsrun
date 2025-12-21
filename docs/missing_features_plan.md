@@ -95,28 +95,17 @@ Tests added: `test_default_param_tdz_self_reference`, `test_default_param_tdz_fo
 
 ---
 
-### 7. Escaped Keywords in Property Names
+### 7. Unicode Escapes in Identifiers ✅ IMPLEMENTED
 
-**Impact:** Obscure but valid syntax. Some minifiers/bundlers may produce this.
-
-**Current Behavior:**
-```javascript
-const obj = { \u0063ase: 1 };  // SyntaxError (should parse as { case: 1 })
-```
-
-**Expected Behavior:** Unicode escapes in identifiers should be resolved before keyword check.
-
-**Test Patterns:**
-```
-SyntaxError: Unexpected Invalid('\\'), expected property name
-```
+**Status:** Implemented on 2025-12-21
 
 **Implementation:**
-1. In lexer, when parsing identifiers, decode unicode escapes first
-2. Then check if result is a reserved word
-3. For property names, keywords are allowed
-
-**Estimated Complexity:** Medium - lexer refactor for escape handling
+- Modified `scan_identifier()` in lexer.rs to handle `\uNNNN` and `\u{N...}` unicode escape sequences
+- Added `scan_unicode_escape_in_identifier()` helper method to decode escape sequences
+- Identifiers containing unicode escapes that spell out a reserved word remain identifiers (not keywords)
+- Added `is_id_start_char()` and `is_id_continue_char()` helpers for decoded character validation
+- Tests added: `test_unicode_escape_identifier`, `test_unicode_escape_identifier_mixed`, `test_unicode_escape_keyword_becomes_identifier`, `test_unicode_escape_braced_form`, `test_unicode_escape_braced_longer`
+- Interpreter tests: `test_unicode_escape_in_property_name`, `test_unicode_escape_identifier_basic`, `test_unicode_escape_identifier_mixed`, `test_unicode_escape_in_member_access`
 
 ---
 
@@ -307,7 +296,7 @@ Promise[Symbol.species];  // undefined (should be Promise)
 6. ~~**Object.defineProperty arrays** - Common usage~~ ✅ DONE
 
 ### Phase 3: Parser Improvements (P1-P2)
-7. **Escaped keywords in properties** - Lexer refactor
+7. ~~**Unicode escapes in identifiers** - Lexer refactor~~ ✅ DONE
 8. **Strict mode parse errors** - Parser awareness
 9. **Template literal escapes** - Lexer validation
 

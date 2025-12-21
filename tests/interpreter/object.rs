@@ -2491,3 +2491,38 @@ fn test_define_property_array_multiple_indices() {
         JsValue::from("1,,3")
     );
 }
+
+// =============================================================================
+// Unicode Escape in Identifiers Tests
+// =============================================================================
+
+#[test]
+fn test_unicode_escape_in_property_name() {
+    // \u0063ase should be parsed as "case" (property name)
+    // In property names, keywords are allowed
+    assert_eq!(
+        eval(r#"const obj = { \u0063ase: 1 }; obj.case"#),
+        JsValue::Number(1.0)
+    );
+}
+
+#[test]
+fn test_unicode_escape_identifier_basic() {
+    // \u0078 is 'x' - should work as variable name
+    assert_eq!(eval(r#"let \u0078 = 42; x"#), JsValue::Number(42.0));
+}
+
+#[test]
+fn test_unicode_escape_identifier_mixed() {
+    // Mixed: regular chars and unicode escapes
+    assert_eq!(eval(r#"let f\u006fo = 123; foo"#), JsValue::Number(123.0));
+}
+
+#[test]
+fn test_unicode_escape_in_member_access() {
+    // Property access with unicode escape
+    assert_eq!(
+        eval(r#"const obj = { bar: 42 }; obj.b\u0061r"#),
+        JsValue::Number(42.0)
+    );
+}
