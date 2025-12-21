@@ -565,6 +565,9 @@ pub enum Op {
         excluded_keys: ConstantIndex,
     },
 
+    /// Spread object properties: copy all enumerable own properties from r[src] to r[dst]
+    SpreadObject { dst: Register, src: Register },
+
     // ═══════════════════════════════════════════════════════════════════════════════
     // Template Literals
     // ═══════════════════════════════════════════════════════════════════════════════

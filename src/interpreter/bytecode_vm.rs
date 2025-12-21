@@ -1197,45 +1197,98 @@ impl BytecodeVM {
                 let obj_val = self.get_reg(obj).clone();
                 let key_val = self.get_reg(key).clone();
 
-                if let JsValue::Object(obj_ref) = obj_val {
-                    let prop_key = PropertyKey::from_value(&key_val);
+                match &obj_val {
+                    JsValue::Null => {
+                        return Err(JsError::type_error("Cannot delete property of null"));
+                    }
+                    JsValue::Undefined => {
+                        return Err(JsError::type_error("Cannot delete property of undefined"));
+                    }
+                    JsValue::Object(obj_ref) => {
+                        let prop_key = PropertyKey::from_value(&key_val);
 
-                    // For arrays, handle index deletion specially
-                    {
-                        let mut obj_borrowed = obj_ref.borrow_mut();
-                        if let PropertyKey::Index(idx) = &prop_key {
-                            if let Some(elements) = obj_borrowed.array_elements_mut() {
-                                let idx = *idx as usize;
-                                if idx < elements.len() {
-                                    // Set to undefined (creating a hole)
-                                    if let Some(elem) = elements.get_mut(idx) {
-                                        *elem = JsValue::Undefined;
-                                    }
+                        // Check if property is configurable before deleting
+                        {
+                            let obj_borrowed = obj_ref.borrow();
+                            if let Some(prop) = obj_borrowed.properties.get(&prop_key) {
+                                if !prop.configurable() {
+                                    return Err(JsError::type_error(format!(
+                                        "Cannot delete property '{}' of object",
+                                        prop_key
+                                    )));
                                 }
                             }
                         }
 
-                        obj_borrowed.properties.remove(&prop_key);
+                        // For arrays, handle index deletion specially
+                        {
+                            let mut obj_borrowed = obj_ref.borrow_mut();
+                            if let PropertyKey::Index(idx) = &prop_key {
+                                if let Some(elements) = obj_borrowed.array_elements_mut() {
+                                    let idx = *idx as usize;
+                                    if idx < elements.len() {
+                                        // Set to undefined (creating a hole)
+                                        if let Some(elem) = elements.get_mut(idx) {
+                                            *elem = JsValue::Undefined;
+                                        }
+                                    }
+                                }
+                            }
+
+                            obj_borrowed.properties.remove(&prop_key);
+                        }
+                        self.set_reg(dst, JsValue::Boolean(true));
                     }
-                    self.set_reg(dst, JsValue::Boolean(true));
-                } else {
-                    self.set_reg(dst, JsValue::Boolean(false));
+                    // Primitives: delete returns true
+                    JsValue::Number(_)
+                    | JsValue::String(_)
+                    | JsValue::Boolean(_)
+                    | JsValue::Symbol(_) => {
+                        self.set_reg(dst, JsValue::Boolean(true));
+                    }
                 }
                 Ok(OpResult::Continue)
             }
 
             Op::DeletePropertyConst { dst, obj, key } => {
-                let obj_val = self.get_reg(obj);
+                let obj_val = self.get_reg(obj).clone();
                 let key = self
                     .get_string_constant(key)
                     .ok_or_else(|| JsError::internal_error("Invalid property key constant"))?;
 
-                if let JsValue::Object(obj_ref) = obj_val {
-                    let prop_key = PropertyKey::from(key.as_str());
-                    obj_ref.borrow_mut().properties.remove(&prop_key);
-                    self.set_reg(dst, JsValue::Boolean(true));
-                } else {
-                    self.set_reg(dst, JsValue::Boolean(false));
+                match &obj_val {
+                    JsValue::Null => {
+                        return Err(JsError::type_error("Cannot delete property of null"));
+                    }
+                    JsValue::Undefined => {
+                        return Err(JsError::type_error("Cannot delete property of undefined"));
+                    }
+                    JsValue::Object(obj_ref) => {
+                        let prop_key = PropertyKey::from(key.as_str());
+
+                        // Check if property is configurable before deleting
+                        {
+                            let obj_borrowed = obj_ref.borrow();
+                            if let Some(prop) = obj_borrowed.properties.get(&prop_key) {
+                                if !prop.configurable() {
+                                    return Err(JsError::type_error(format!(
+                                        "Cannot delete property '{}' of object",
+                                        prop_key
+                                    )));
+                                }
+                            }
+                        }
+
+                        obj_ref.borrow_mut().properties.remove(&prop_key);
+                        self.set_reg(dst, JsValue::Boolean(true));
+                    }
+                    // Primitives: delete returns true
+                    JsValue::Number(_)
+                    | JsValue::String(_)
+                    | JsValue::Boolean(_)
+                    | JsValue::Symbol(_) => {
+                        self.set_reg(dst, JsValue::Boolean(true));
+                    }
                 }
                 Ok(OpResult::Continue)
             }
@@ -2419,6 +2472,32 @@ impl BytecodeVM {
                 Ok(OpResult::Continue)
             }
 
+            Op::SpreadObject { dst, src } => {
+                // Copy all enumerable own properties from src to dst
+                let dst_val = self.get_reg(dst).clone();
+                let src_val = self.get_reg(src).clone();
+
+                if let (JsValue::Object(dst_obj), JsValue::Object(src_obj)) = (&dst_val, &src_val) {
+                    // Collect properties first to avoid borrow issues
+                    let props_to_copy: Vec<_> = {
+                        let src_borrowed = src_obj.borrow();
+                        src_borrowed
+                            .properties
+                            .iter()
+                            .filter(|(_, prop)| prop.enumerable())
+                            .map(|(key, prop)| (key.clone(), prop.value.clone()))
+                            .collect()
+                    };
+
+                    // Copy properties to destination
+                    let mut dst_borrowed = dst_obj.borrow_mut();
+                    for (key, value) in props_to_copy {
+                        dst_borrowed.set_property(key, value);
+                    }
+                }
+                Ok(OpResult::Continue)
+            }
+
             // ═══════════════════════════════════════════════════════════════════════════
             // Template Literals
             // ═══════════════════════════════════════════════════════════════════════════
@@ -2574,6 +2653,18 @@ impl BytecodeVM {
     ) -> Result<JsValue, JsError> {
         match obj {
             JsValue::Object(obj_ref) => {
+                // Handle __proto__ special property - return prototype
+                if let JsValue::String(k) = key {
+                    if k.as_str() == "__proto__" {
+                        return Ok(obj_ref
+                            .borrow()
+                            .prototype
+                            .as_ref()
+                            .map(|p| JsValue::Object(p.clone()))
+                            .unwrap_or(JsValue::Null));
+                    }
+                }
+
                 let prop_key = PropertyKey::from_value(key);
                 // Get property descriptor to check for accessor properties
                 let prop_desc = obj_ref.borrow().get_property_descriptor(&prop_key);
@@ -2665,6 +2756,24 @@ impl BytecodeVM {
     ) -> Result<(), JsError> {
         match obj {
             JsValue::Object(obj_ref) => {
+                // Handle __proto__ special property - set prototype
+                if let JsValue::String(k) = key {
+                    if k.as_str() == "__proto__" {
+                        match &value {
+                            JsValue::Object(proto) => {
+                                obj_ref.borrow_mut().prototype = Some(proto.clone());
+                            }
+                            JsValue::Null => {
+                                obj_ref.borrow_mut().prototype = None;
+                            }
+                            _ => {
+                                // Non-object, non-null values are ignored for __proto__ set
+                            }
+                        }
+                        return Ok(());
+                    }
+                }
+
                 let prop_key = PropertyKey::from_value(key);
                 // Check for accessor property with setter
                 let prop_desc = obj_ref.borrow().get_property_descriptor(&prop_key);

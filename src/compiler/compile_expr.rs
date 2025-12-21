@@ -279,7 +279,8 @@ impl Compiler {
                     // Compile spread source
                     let src = self.builder.alloc_register()?;
                     self.compile_expression(&spread.argument, src)?;
-                    // TODO: Emit spread operation to copy properties
+                    // Emit spread operation to copy properties
+                    self.builder.emit(Op::SpreadObject { dst, src });
                     self.builder.free_register(src);
                 }
             }

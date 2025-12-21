@@ -373,6 +373,7 @@ impl BytecodeBuilder {
                 | Op::SpreadArray { .. }
                 | Op::CreateRestArray { .. }
                 | Op::CreateObjectRest { .. }
+                | Op::SpreadObject { .. }
                 | Op::TemplateConcat { .. }
                 | Op::TaggedTemplate { .. }
                 | Op::Nop
