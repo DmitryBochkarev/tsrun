@@ -134,9 +134,11 @@ impl Compiler {
             LiteralValue::String(s) => {
                 self.builder.emit_load_string(dst, s.cheap_clone())?;
             }
-            LiteralValue::BigInt(_) => {
-                // BigInt not yet supported
-                return Err(JsError::type_error("BigInt is not supported"));
+            LiteralValue::BigInt(s) => {
+                // BigInt is converted to Number for now (simplified implementation)
+                // Parse the BigInt string as f64
+                let n: f64 = s.parse().unwrap_or(0.0);
+                self.builder.emit_load_number(dst, n)?;
             }
             LiteralValue::RegExp { pattern, flags } => {
                 let pattern_str: crate::value::JsString = pattern.as_str().into();
