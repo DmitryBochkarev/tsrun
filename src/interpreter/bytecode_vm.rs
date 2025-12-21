@@ -150,6 +150,8 @@ pub struct TrampolineFrame {
     pub saved_interp_env: Gc<JsObject>,
     /// Guard that was protecting this frame's objects
     pub register_guard: Guard<JsObject>,
+    /// For construct calls: the new object to fall back to if constructor doesn't return an object
+    pub construct_new_obj: Option<Gc<JsObject>>,
 }
 
 /// The bytecode virtual machine
@@ -545,6 +547,40 @@ impl BytecodeVM {
                         }
                     }
                 }
+                Ok(OpResult::Construct {
+                    callee,
+                    this_value,
+                    args,
+                    return_register,
+                    new_target,
+                    new_obj,
+                }) => {
+                    // Trampoline for construct: save current state and switch to constructor
+                    match self.setup_trampoline_construct(
+                        interp,
+                        callee,
+                        this_value,
+                        args,
+                        return_register,
+                        new_target,
+                        new_obj,
+                    ) {
+                        Ok(()) => continue,
+                        Err(e) => {
+                            // Try to find an exception handler
+                            if let Some(handler_ip) = self.find_exception_handler() {
+                                self.ip = handler_ip;
+                                let exc_val = self.error_to_value(interp, &e);
+                                if let JsValue::Object(obj) = &exc_val {
+                                    self.register_guard.guard(obj.cheap_clone());
+                                }
+                                self.exception_value = Some(exc_val);
+                                continue;
+                            }
+                            return VmResult::Error(e);
+                        }
+                    }
+                }
                 Err(e) => {
                     // Try to find an exception handler in current frame
                     if let Some(handler_ip) = self.find_exception_handler() {
@@ -715,6 +751,88 @@ impl BytecodeVM {
         }
     }
 
+    /// Set up a trampoline construct call - save current state and switch to the constructor
+    /// This is similar to setup_trampoline_call but stores the new_obj in the frame
+    /// so that if the constructor doesn't return an object, we can use the new_obj
+    fn setup_trampoline_construct(
+        &mut self,
+        interp: &mut Interpreter,
+        callee: JsValue,
+        this_value: JsValue,
+        args: Vec<JsValue>,
+        return_register: Register,
+        new_target: JsValue,
+        new_obj: Gc<JsObject>,
+    ) -> Result<(), JsError> {
+        use crate::value::{ExoticObject, JsFunction};
+
+        // Check call stack depth limit
+        let total_depth = self.trampoline_stack.len();
+        if interp.max_call_depth > 0 && total_depth >= interp.max_call_depth {
+            return Err(JsError::range_error(format!(
+                "Maximum call stack size exceeded (depth {})",
+                total_depth
+            )));
+        }
+
+        let JsValue::Object(func_obj) = &callee else {
+            return Err(JsError::type_error("Not a constructor"));
+        };
+
+        let func = {
+            let obj_ref = func_obj.borrow();
+            match &obj_ref.exotic {
+                ExoticObject::Function(f) => f.clone(),
+                _ => return Err(JsError::type_error("Not a constructor")),
+            }
+        };
+
+        match func {
+            JsFunction::Bytecode(bc_func) => {
+                // This is what we want to trampoline!
+                self.push_trampoline_frame_and_call_bytecode_construct(
+                    interp,
+                    func_obj.cheap_clone(),
+                    bc_func,
+                    this_value,
+                    &args,
+                    return_register,
+                    new_target,
+                    new_obj,
+                )?;
+                Ok(())
+            }
+            JsFunction::Bound(bound) => {
+                // Unwrap bound function and trampoline to target
+                let target = JsValue::Object(bound.target.cheap_clone());
+                let mut full_args = bound.bound_args.clone();
+                full_args.extend(args);
+                self.setup_trampoline_construct(
+                    interp,
+                    target,
+                    this_value,
+                    full_args,
+                    return_register,
+                    new_target,
+                    new_obj,
+                )
+            }
+            // For all other function types, fall back to the interpreter's call_function
+            // and handle the object/non-object return value
+            _ => {
+                let result =
+                    interp.call_function_with_new_target(callee, this_value, &args, new_target)?;
+                // If constructor returned an object, use that; otherwise use the new_obj
+                let final_val = match result.value {
+                    JsValue::Object(obj) => JsValue::Object(obj),
+                    _ => JsValue::Object(new_obj),
+                };
+                self.set_reg(return_register, final_val);
+                Ok(())
+            }
+        }
+    }
+
     /// Push current state onto trampoline stack and set up for bytecode function call
     fn push_trampoline_frame_and_call_bytecode(
         &mut self,
@@ -868,6 +986,176 @@ impl BytecodeVM {
             return_register,
             saved_interp_env,
             register_guard: old_guard,
+            construct_new_obj: None,
+        };
+        self.trampoline_stack.push(frame);
+
+        // Set up VM for the called function
+        self.ip = 0;
+        self.chunk = bc_func.chunk;
+
+        Ok(())
+    }
+
+    /// Push current state onto trampoline stack for a construct call
+    /// This is like push_trampoline_frame_and_call_bytecode but stores the new_obj
+    /// in the frame so it can be used if the constructor doesn't return an object
+    fn push_trampoline_frame_and_call_bytecode_construct(
+        &mut self,
+        interp: &mut Interpreter,
+        func_obj: Gc<JsObject>,
+        bc_func: BytecodeFunction,
+        this_value: JsValue,
+        args: &[JsValue],
+        return_register: Register,
+        new_target: JsValue,
+        construct_new_obj: Gc<JsObject>,
+    ) -> Result<(), JsError> {
+        use crate::interpreter::{create_environment_unrooted, Binding, VarKey};
+
+        // Get function info from the chunk
+        let func_info = bc_func.chunk.function_info.as_ref();
+
+        // Push call stack frame for stack traces
+        let func_name = func_info
+            .and_then(|info| info.name.as_ref())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "<anonymous>".to_string());
+
+        interp.call_stack.push(crate::interpreter::StackFrame {
+            function_name: func_name,
+            location: None,
+        });
+
+        // Create new environment for the function, with closure as parent
+        let (func_env, func_guard) =
+            create_environment_unrooted(&interp.heap, Some(bc_func.closure.cheap_clone()));
+
+        // Bind `this` in the function environment
+        let effective_this = if let Some(captured) = bc_func.captured_this {
+            *captured
+        } else {
+            this_value.clone()
+        };
+
+        {
+            let this_name = interp.intern("this");
+            if let Some(data) = func_env.borrow_mut().as_environment_mut() {
+                data.bindings.insert(
+                    VarKey(this_name),
+                    Binding {
+                        value: effective_this.clone(),
+                        mutable: false,
+                        initialized: true,
+                        import_binding: None,
+                    },
+                );
+            }
+        }
+
+        // Bind `__super__` if this function has it (for class methods with super)
+        {
+            let super_name = interp.intern("__super__");
+            let super_key = PropertyKey::String(super_name.cheap_clone());
+            if let Some(super_val) = func_obj.borrow().get_property(&super_key) {
+                if let Some(data) = func_env.borrow_mut().as_environment_mut() {
+                    data.bindings.insert(
+                        VarKey(super_name),
+                        Binding {
+                            value: super_val,
+                            mutable: false,
+                            initialized: true,
+                            import_binding: None,
+                        },
+                    );
+                }
+            }
+        }
+
+        // Bind `__super_target__` for super.x property access
+        {
+            let super_target_name = interp.intern("__super_target__");
+            let super_target_key = PropertyKey::String(super_target_name.cheap_clone());
+            if let Some(super_target_val) = func_obj.borrow().get_property(&super_target_key) {
+                if let Some(data) = func_env.borrow_mut().as_environment_mut() {
+                    data.bindings.insert(
+                        VarKey(super_target_name),
+                        Binding {
+                            value: super_target_val,
+                            mutable: false,
+                            initialized: true,
+                            import_binding: None,
+                        },
+                    );
+                }
+            }
+        }
+
+        // Save current interpreter environment
+        let saved_interp_env = interp.env.cheap_clone();
+        interp.env = func_env;
+        interp.push_env_guard(func_guard);
+
+        // Handle rest parameters
+        let new_guard = interp.heap.create_guard();
+        let processed_args: Vec<JsValue> =
+            if let Some(rest_idx) = func_info.and_then(|info| info.rest_param) {
+                let mut result_args = Vec::with_capacity(rest_idx + 1);
+                for i in 0..rest_idx {
+                    result_args.push(args.get(i).cloned().unwrap_or(JsValue::Undefined));
+                }
+                let rest_elements: Vec<JsValue> = args.get(rest_idx..).unwrap_or_default().to_vec();
+                let rest_array = interp.create_array_from(&new_guard, rest_elements);
+                result_args.push(JsValue::Object(rest_array));
+                result_args
+            } else {
+                args.to_vec()
+            };
+
+        // Guard all values for the new frame
+        if let JsValue::Object(obj) = &effective_this {
+            new_guard.guard(obj.cheap_clone());
+        }
+        if let JsValue::Object(obj) = &new_target {
+            new_guard.guard(obj.cheap_clone());
+        }
+        for arg in &processed_args {
+            if let JsValue::Object(obj) = arg {
+                new_guard.guard(obj.cheap_clone());
+            }
+        }
+        // Also guard the construct_new_obj
+        new_guard.guard(construct_new_obj.cheap_clone());
+
+        // Create the new register file for the called function
+        let register_count = bc_func.chunk.register_count as usize;
+        let mut new_registers = vec![JsValue::Undefined; register_count.max(1)];
+        for (i, arg) in processed_args.iter().enumerate() {
+            if i < new_registers.len() {
+                if let Some(slot) = new_registers.get_mut(i) {
+                    *slot = arg.clone();
+                }
+            }
+        }
+
+        // Save current VM state to trampoline stack
+        let old_guard = std::mem::replace(&mut self.register_guard, new_guard);
+        let frame = TrampolineFrame {
+            ip: self.ip,
+            chunk: self.chunk.cheap_clone(),
+            registers: std::mem::replace(&mut self.registers, new_registers),
+            this_value: std::mem::replace(&mut self.this_value, effective_this),
+            vm_call_stack: std::mem::take(&mut self.call_stack),
+            try_stack: std::mem::take(&mut self.try_stack),
+            exception_value: self.exception_value.take(),
+            saved_env_stack: std::mem::take(&mut self.saved_env_stack),
+            arguments: std::mem::replace(&mut self.arguments, args.to_vec()),
+            new_target: std::mem::replace(&mut self.new_target, new_target),
+            pending_completion: self.pending_completion.take(),
+            return_register,
+            saved_interp_env,
+            register_guard: old_guard,
+            construct_new_obj: Some(construct_new_obj),
         };
         self.trampoline_stack.push(frame);
 
@@ -904,12 +1192,22 @@ impl BytecodeVM {
         interp.env = frame.saved_interp_env;
         interp.call_stack.pop();
 
+        // For construct calls: if constructor didn't return an object, use the new object
+        let final_value = if let Some(new_obj) = frame.construct_new_obj {
+            match return_value {
+                JsValue::Object(obj) => JsValue::Object(obj),
+                _ => JsValue::Object(new_obj),
+            }
+        } else {
+            return_value
+        };
+
         // Store return value in the designated register
         // Guard it with the restored frame's guard
-        if let JsValue::Object(obj) = &return_value {
+        if let JsValue::Object(obj) = &final_value {
             self.register_guard.guard(obj.cheap_clone());
         }
-        self.set_reg(frame.return_register, return_value);
+        self.set_reg(frame.return_register, final_value);
     }
 
     /// Convert an error to a JS value
@@ -1975,15 +2273,6 @@ impl BytecodeVM {
                 args_start,
                 argc,
             } => {
-                // Check call stack depth before making the call
-                let max_depth = interp.max_call_depth();
-                if max_depth > 0 && interp.call_stack.len() >= max_depth {
-                    return Err(JsError::range_error(format!(
-                        "Maximum call stack size exceeded (depth {})",
-                        interp.call_stack.len()
-                    )));
-                }
-
                 let callee_val = self.get_reg(callee).clone();
 
                 let mut args = Vec::with_capacity(argc as usize);
@@ -2015,9 +2304,9 @@ impl BytecodeVM {
                     }
                 }
 
-                // Create a new object
-                let new_guard = interp.heap.create_guard();
-                let new_obj = interp.create_object(&new_guard);
+                // Create a new object - guard it so it survives until the trampoline handles it
+                self.register_guard.guard(ctor.cheap_clone());
+                let new_obj = interp.create_object(&self.register_guard);
 
                 // Get the constructor's prototype
                 let proto_key = PropertyKey::String(interp.intern("prototype"));
@@ -2025,24 +2314,16 @@ impl BytecodeVM {
                     new_obj.borrow_mut().prototype = Some(proto.cheap_clone());
                 }
 
-                // Call the constructor with `this` set to the new object
-                // Pass the constructor as new.target so it's available inside the constructor
+                // Use trampoline for constructor call
                 let this = JsValue::Object(new_obj.cheap_clone());
-                let result = interp.call_function_with_new_target(
-                    callee_val.clone(),
-                    this.clone(),
-                    &args,
-                    callee_val.clone(), // new.target is the constructor itself
-                )?;
-
-                // If constructor returns an object, use that; otherwise use the created object
-                let final_val = match result.value {
-                    JsValue::Object(obj) => JsValue::Object(obj),
-                    _ => JsValue::Object(new_obj),
-                };
-
-                self.set_reg(dst, final_val);
-                Ok(OpResult::Continue)
+                Ok(OpResult::Construct {
+                    callee: callee_val.clone(),
+                    this_value: this,
+                    args,
+                    return_register: dst,
+                    new_target: callee_val, // new.target is the constructor itself
+                    new_obj,
+                })
             }
 
             Op::ConstructSpread {
@@ -2051,15 +2332,6 @@ impl BytecodeVM {
                 args_start,
                 argc: _,
             } => {
-                // Check call stack depth before making the call
-                let max_depth = interp.max_call_depth();
-                if max_depth > 0 && interp.call_stack.len() >= max_depth {
-                    return Err(JsError::range_error(format!(
-                        "Maximum call stack size exceeded (depth {})",
-                        interp.call_stack.len()
-                    )));
-                }
-
                 // ConstructSpread: args_start points to an array of arguments
                 let callee_val = self.get_reg(callee).clone();
                 let args_val = self.get_reg(args_start).clone();
@@ -2098,9 +2370,9 @@ impl BytecodeVM {
                     }
                 }
 
-                // Create a new object
-                let new_guard = interp.heap.create_guard();
-                let new_obj = interp.create_object(&new_guard);
+                // Create a new object - guard it so it survives until the trampoline handles it
+                self.register_guard.guard(ctor.cheap_clone());
+                let new_obj = interp.create_object(&self.register_guard);
 
                 // Get the constructor's prototype
                 let proto_key = PropertyKey::String(interp.intern("prototype"));
@@ -2108,24 +2380,16 @@ impl BytecodeVM {
                     new_obj.borrow_mut().prototype = Some(proto.cheap_clone());
                 }
 
-                // Call the constructor with `this` set to the new object
-                // Pass the constructor as new.target so it's available inside the constructor
+                // Use trampoline for constructor call
                 let this = JsValue::Object(new_obj.cheap_clone());
-                let result = interp.call_function_with_new_target(
-                    callee_val.clone(),
-                    this.clone(),
-                    &args,
-                    callee_val.clone(), // new.target is the constructor itself
-                )?;
-
-                // If constructor returns an object, use that; otherwise use the created object
-                let final_val = match result.value {
-                    JsValue::Object(obj) => JsValue::Object(obj),
-                    _ => JsValue::Object(new_obj),
-                };
-
-                self.set_reg(dst, final_val);
-                Ok(OpResult::Continue)
+                Ok(OpResult::Construct {
+                    callee: callee_val.clone(),
+                    this_value: this,
+                    args,
+                    return_register: dst,
+                    new_target: callee_val, // new.target is the constructor itself
+                    new_obj,
+                })
             }
 
             Op::Return { value } => {
@@ -4918,6 +5182,16 @@ enum OpResult {
         args: Vec<JsValue>,
         return_register: Register,
         new_target: JsValue,
+    },
+    /// Construct a new object (for trampoline)
+    Construct {
+        callee: JsValue,
+        this_value: JsValue,
+        args: Vec<JsValue>,
+        return_register: Register,
+        new_target: JsValue,
+        /// The new object to use if constructor doesn't return an object
+        new_obj: Gc<JsObject>,
     },
 }
 

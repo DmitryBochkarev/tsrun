@@ -16,6 +16,7 @@ This document outlines the plan to migrate all recursive call sites to use a tra
    - `saved_env_stack`, `arguments`, `new_target`
    - `pending_completion`, `return_register`
    - `saved_interp_env`, `register_guard`
+   - `construct_new_obj` - For construct calls, the new object to fall back to
 
 2. **OpResult::Call variant** - Signals a function call request:
    ```rust
@@ -28,26 +29,39 @@ This document outlines the plan to migrate all recursive call sites to use a tra
    }
    ```
 
-3. **Trampoline handling in run()** - The main loop handles `OpResult::Call`:
-   - Calls `setup_trampoline_call()` to dispatch
+3. **OpResult::Construct variant** - Signals a construct call request:
+   ```rust
+   OpResult::Construct {
+       callee: JsValue,
+       this_value: JsValue,
+       args: Vec<JsValue>,
+       return_register: Register,
+       new_target: JsValue,
+       new_obj: Gc<JsObject>,  // Already created new object
+   }
+   ```
+
+4. **Trampoline handling in run()** - The main loop handles `OpResult::Call` and `OpResult::Construct`:
+   - Calls `setup_trampoline_call()` or `setup_trampoline_construct()` to dispatch
    - For `JsFunction::Bytecode`, pushes frame and switches context
    - For other function types, falls back to recursive `interp.call_function()`
+   - For construct, if constructor doesn't return object, uses the `new_obj` from frame
 
-4. **Super resolution fix** - `__super_target__` is now bound in environment and looked up from there first.
+5. **Super resolution fix** - `__super_target__` is now bound in environment and looked up from there first.
+
+6. **Depth counting fix** - Uses only `trampoline_stack.len()` for depth check, not double-counting.
 
 ### Current Issues
 
-1. **Double-counting depth** - Both `interp.call_stack` and `trampoline_stack` are counted, but we push to both.
+1. **Generators/async still recursive** - `JsFunction::BytecodeGenerator`, `BytecodeAsync`, `BytecodeAsyncGenerator` fall back to recursive calls.
 
-2. **Not all opcodes use trampoline** - Only `Op::Call`, `Op::CallSpread`, `Op::CallMethod`, `Op::SuperCall` return `OpResult::Call`. Others still use recursive calls.
+2. **Decorator calls still recursive** - Complex multi-step logic in decorator opcodes.
 
-3. **Generators/async still recursive** - `JsFunction::BytecodeGenerator`, `BytecodeAsync`, `BytecodeAsyncGenerator` fall back to recursive calls.
-
-4. **Construct opcodes still recursive** - `Op::Construct` and `Op::ConstructSpread` directly call `interp.call_function_with_new_target()`.
+3. **Native function callbacks still recursive** - Array.map, Array.forEach, etc.
 
 ## Migration Plan
 
-### Phase 1: Fix Depth Counting (Immediate)
+### Phase 1: Fix Depth Counting ✅ COMPLETED
 
 **Problem**: Depth is double-counted because we push to both `interp.call_stack` (for stack traces) and `trampoline_stack`.
 
@@ -61,32 +75,33 @@ if interp.max_call_depth > 0 && total_depth >= interp.max_call_depth {
 }
 ```
 
-**Files to change**: `src/interpreter/bytecode_vm.rs`
+**Status**: Implemented in commit 6b79e92.
 
-### Phase 2: Migrate Construct Opcodes
+### Phase 2: Migrate Construct Opcodes ✅ COMPLETED
 
 **Problem**: `Op::Construct` and `Op::ConstructSpread` create a `this` object, then recursively call the constructor.
 
-**Solution**: Add `OpResult::Construct` variant that returns the setup info, then handle in run() loop:
+**Solution**: Added `OpResult::Construct` variant and `TrampolineFrame.construct_new_obj` field:
 
 ```rust
-enum OpResult {
-    // ... existing variants ...
-    Construct {
-        callee: JsValue,
-        this_obj: Gc<JsObject>,  // Already created new object
-        args: Vec<JsValue>,
-        return_register: Register,
-    },
+OpResult::Construct {
+    callee: JsValue,
+    this_value: JsValue,
+    args: Vec<JsValue>,
+    return_register: Register,
+    new_target: JsValue,
+    new_obj: Gc<JsObject>,  // Already created new object
 }
 ```
 
-The run() loop would:
-1. Push trampoline frame with special "construct" flag
-2. Call constructor with `this` = new object, `new.target` = constructor
-3. On return, check if result is object (use it) or not (use `this_obj`)
+The implementation:
+1. `Op::Construct` and `Op::ConstructSpread` return `OpResult::Construct`
+2. `run()` loop handles `OpResult::Construct` by calling `setup_trampoline_construct()`
+3. `setup_trampoline_construct()` dispatches to bytecode or falls back to recursive call
+4. `push_trampoline_frame_and_call_bytecode_construct()` stores `new_obj` in frame
+5. `restore_from_trampoline_frame()` checks if constructor returned object; if not, uses `new_obj`
 
-**Files to change**: `src/interpreter/bytecode_vm.rs`
+**Status**: Implemented. All 1796 tests pass.
 
 ### Phase 3: Migrate Decorator Call Sites
 
@@ -181,8 +196,8 @@ pub fn proxy_apply(...) -> Result<Guarded, JsError> {
 
 ## Implementation Order
 
-1. **Phase 1** (Immediate): Fix depth counting bug
-2. **Phase 2** (High priority): Migrate Construct opcodes
+1. **Phase 1** ✅ COMPLETED: Fix depth counting bug
+2. **Phase 2** ✅ COMPLETED: Migrate Construct opcodes
 3. **Phase 5** (Medium priority): Migrate async functions (if async-in-async causes issues)
 4. **Phase 3, 4, 6** (Low priority): Keep recursive unless problems arise
 
