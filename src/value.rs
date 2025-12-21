@@ -376,9 +376,21 @@ impl JsValue {
             JsValue::Number(n) => *n,
             JsValue::String(s) => string_to_number(s.as_str()),
             JsValue::Symbol(_) => f64::NAN, // Cannot convert Symbol to number
-            JsValue::Object(_) => {
-                // Would need ToPrimitive then ToNumber
-                f64::NAN
+            JsValue::Object(obj) => {
+                // Handle wrapper objects with primitives
+                let borrowed = obj.borrow();
+                match &borrowed.exotic {
+                    ExoticObject::Number(n) => *n,
+                    ExoticObject::Boolean(b) => {
+                        if *b {
+                            1.0
+                        } else {
+                            0.0
+                        }
+                    }
+                    ExoticObject::StringObj(s) => string_to_number(s.as_str()),
+                    _ => f64::NAN, // Other objects would need ToPrimitive
+                }
             }
         }
     }
