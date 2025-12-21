@@ -294,19 +294,14 @@ impl Compiler {
         obj: Register,
         prop: &crate::ast::Property,
     ) -> Result<(), JsError> {
-        // Compile the value
-        let value_reg = self.builder.alloc_register()?;
-
-        match prop.kind {
-            PropertyKind::Init => {
-                self.compile_expression(&prop.value, value_reg)?;
-            }
-            PropertyKind::Get | PropertyKind::Set => {
-                // Getters/setters need special handling
-                self.compile_expression(&prop.value, value_reg)?;
-                // TODO: Use DefineAccessor
-            }
+        // Handle getters and setters specially
+        if matches!(prop.kind, PropertyKind::Get | PropertyKind::Set) {
+            return self.compile_accessor_property(obj, prop);
         }
+
+        // Compile the value for regular properties
+        let value_reg = self.builder.alloc_register()?;
+        self.compile_expression(&prop.value, value_reg)?;
 
         // Set the property based on key type
         match &prop.key {
@@ -356,6 +351,61 @@ impl Compiler {
         }
 
         self.builder.free_register(value_reg);
+        Ok(())
+    }
+
+    /// Compile a getter or setter property
+    fn compile_accessor_property(
+        &mut self,
+        obj: Register,
+        prop: &crate::ast::Property,
+    ) -> Result<(), JsError> {
+        // Get the property name
+        let name_idx = match &prop.key {
+            ObjectPropertyKey::Identifier(id) => self.builder.add_string(id.name.cheap_clone())?,
+            ObjectPropertyKey::String(s) => self.builder.add_string(s.value.cheap_clone())?,
+            _ => {
+                return Err(JsError::syntax_error_simple(
+                    "Computed getters/setters not yet supported in bytecode compiler",
+                ));
+            }
+        };
+
+        // Compile the accessor function
+        let accessor_reg = self.builder.alloc_register()?;
+        self.compile_expression(&prop.value, accessor_reg)?;
+
+        // Create undefined for the other accessor slot
+        let undefined_reg = self.builder.alloc_register()?;
+        self.builder.emit(Op::LoadUndefined { dst: undefined_reg });
+
+        // Use DefineAccessor with is_static=true to define on the object directly
+        match prop.kind {
+            PropertyKind::Get => {
+                self.builder.emit(Op::DefineAccessor {
+                    class: obj, // The object to define on
+                    name: name_idx,
+                    getter: accessor_reg,
+                    setter: undefined_reg,
+                    is_static: true, // Define on the object itself
+                });
+            }
+            PropertyKind::Set => {
+                self.builder.emit(Op::DefineAccessor {
+                    class: obj, // The object to define on
+                    name: name_idx,
+                    getter: undefined_reg,
+                    setter: accessor_reg,
+                    is_static: true, // Define on the object itself
+                });
+            }
+            PropertyKind::Init => {
+                // Should not reach here
+            }
+        }
+
+        self.builder.free_register(undefined_reg);
+        self.builder.free_register(accessor_reg);
         Ok(())
     }
 
