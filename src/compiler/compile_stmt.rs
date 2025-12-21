@@ -466,6 +466,16 @@ impl Compiler {
 
             // Disable redirection
             self.clear_loop_var_redirects();
+        } else {
+            // No update expression, but body may have modified loop variables.
+            // Copy current scope values back to registers for next iteration.
+            for (name, reg) in &var_regs {
+                let name_idx = self.builder.add_string(name.cheap_clone())?;
+                self.builder.emit(Op::GetVar {
+                    dst: *reg,
+                    name: name_idx,
+                });
+            }
         }
 
         // Pop per-iteration scope

@@ -3,8 +3,8 @@
 This document analyzes test failures in the bytecode VM and categorizes them by feature area with implementation guidance.
 
 **Total Tests:** 1783
-**Passing:** 1609
-**Failing:** 167
+**Passing:** 1610
+**Failing:** 166
 **Ignored:** 7
 
 ---
@@ -30,6 +30,7 @@ The following issues have been fixed:
 - ✅ **Proxy for-of iteration** - for-of loops on proxies now go through get trap for Symbol.iterator and array access
 - ✅ **Proxy for-in enumeration** - for-in loops on proxies now use ownKeys trap
 - ✅ **Direct eval scope access** - `eval(...)` calls now have access to the calling lexical scope via `Op::DirectEval` bytecode
+- ✅ **For loop without update expression** - `for (let i = 0; i < n;)` loops now properly preserve body modifications to loop variables
 
 ---
 
