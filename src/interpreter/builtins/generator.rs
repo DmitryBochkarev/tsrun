@@ -7,8 +7,8 @@ use crate::error::JsError;
 use crate::gc::Gc;
 use crate::interpreter::Interpreter;
 use crate::value::{
-    BytecodeGeneratorState, CheapClone, ExoticObject, GeneratorState, GeneratorStatus, Guarded,
-    JsObject, JsString, JsSymbol, JsValue, PropertyKey,
+    BytecodeGeneratorState, CheapClone, ExoticObject, GeneratorStatus, Guarded, JsObject, JsString,
+    JsSymbol, JsValue, PropertyKey,
 };
 
 use super::symbol::get_well_known_symbols;
@@ -107,30 +107,9 @@ pub fn generator_next(
         ));
     };
 
-    // Get the generator state (either AST-based or bytecode-based)
+    // Get the bytecode generator state
     let obj_ref = obj.borrow();
     match &obj_ref.exotic {
-        ExoticObject::Generator(state) => {
-            let gen_state = state.clone();
-            drop(obj_ref); // Release borrow before calling resume_generator
-
-            // Check if generator is already completed
-            {
-                let state = gen_state.borrow();
-                if state.status == GeneratorStatus::Completed {
-                    return Ok(create_generator_result(interp, JsValue::Undefined, true));
-                }
-            }
-
-            // Set the sent value
-            {
-                let mut state = gen_state.borrow_mut();
-                state.sent_value = args.first().cloned().unwrap_or(JsValue::Undefined);
-            }
-
-            // Resume the generator
-            interp.resume_generator(&gen_state)
-        }
         ExoticObject::BytecodeGenerator(state) => {
             let gen_state = state.clone();
             let is_async = gen_state.borrow().is_async;
@@ -222,21 +201,9 @@ pub fn generator_return(
 
     let value = args.first().cloned().unwrap_or(JsValue::Undefined);
 
-    // Get the generator state (either AST-based or bytecode-based)
+    // Get the bytecode generator state
     let obj_ref = obj.borrow();
     match &obj_ref.exotic {
-        ExoticObject::Generator(state) => {
-            let gen_id = state.borrow().id;
-            // Clean up saved execution state
-            drop(obj_ref);
-            interp.saved_generator_states.remove(&gen_id);
-            let obj_ref = obj.borrow();
-            if let ExoticObject::Generator(state) = &obj_ref.exotic {
-                state.borrow_mut().status = GeneratorStatus::Completed;
-            }
-            drop(obj_ref);
-            Ok(create_generator_result(interp, value, true))
-        }
         ExoticObject::BytecodeGenerator(state) => {
             let is_async = state.borrow().is_async;
             state.borrow_mut().status = GeneratorStatus::Completed;
@@ -256,7 +223,7 @@ pub fn generator_return(
 
 /// Generator.prototype.throw(exception)
 pub fn generator_throw(
-    interp: &mut Interpreter,
+    _interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
@@ -268,30 +235,9 @@ pub fn generator_throw(
 
     let exception = args.first().cloned().unwrap_or(JsValue::Undefined);
 
-    // Get the generator state (either AST-based or bytecode-based)
+    // Get the bytecode generator state
     let obj_ref = obj.borrow();
     match &obj_ref.exotic {
-        ExoticObject::Generator(state) => {
-            let gen_state = state.clone();
-            drop(obj_ref);
-
-            // Check if generator is completed
-            {
-                let state = gen_state.borrow();
-                if state.status == GeneratorStatus::Completed {
-                    return Err(JsError::ThrownValue { value: exception });
-                }
-            }
-
-            // Set exception as sent value and mark for throwing
-            {
-                let mut state = gen_state.borrow_mut();
-                state.sent_value = exception;
-            }
-
-            // Resume with throw semantics
-            interp.resume_generator_with_throw(&gen_state)
-        }
         ExoticObject::BytecodeGenerator(state) => {
             // Check if generator is completed
             if state.borrow().status == GeneratorStatus::Completed {
@@ -306,18 +252,6 @@ pub fn generator_throw(
             "Generator.prototype.throw called on non-generator",
         )),
     }
-}
-
-/// Create a new generator object from a generator function
-pub fn create_generator_object(interp: &mut Interpreter, state: GeneratorState) -> Gc<JsObject> {
-    // Use root_guard for longer-lived generator objects
-    let obj = interp.root_guard.alloc();
-    {
-        let mut o = obj.borrow_mut();
-        o.exotic = ExoticObject::Generator(Rc::new(RefCell::new(state)));
-        o.prototype = Some(interp.generator_prototype.clone());
-    }
-    obj
 }
 
 /// Create a new bytecode generator object

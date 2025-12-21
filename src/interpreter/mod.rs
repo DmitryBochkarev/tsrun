@@ -5,9 +5,6 @@
 // Builtin function implementations
 pub mod builtins;
 
-// Stack-based evaluation for suspendable execution
-pub mod stack;
-
 // Bytecode virtual machine
 pub mod bytecode_vm;
 
@@ -28,12 +25,11 @@ use crate::parser::Parser;
 use crate::string_dict::StringDict;
 use crate::value::{
     create_environment_unrooted, number_to_string, Binding, BytecodeFunction, CheapClone, EnumData,
-    EnvRef, EnvironmentData, ExoticObject, FunctionBody, GeneratorState, GeneratorStatus, Guarded,
-    ImportBinding, InterpretedFunction, JsFunction, JsObject, JsString, JsSymbol, JsValue,
-    ModuleExport, NativeFn, NativeFunction, PromiseStatus, Property, PropertyKey, VarKey,
+    EnvRef, EnvironmentData, ExoticObject, FunctionBody, GeneratorStatus, Guarded, ImportBinding,
+    InterpretedFunction, JsFunction, JsObject, JsString, JsSymbol, JsValue, ModuleExport, NativeFn,
+    NativeFunction, PromiseStatus, Property, PropertyKey, VarKey,
 };
 use rustc_hash::FxHashMap;
-use std::cell::RefCell;
 use std::rc::Rc;
 
 /// Type alias for accessor map: property key -> (getter, setter)
@@ -58,21 +54,6 @@ pub struct StackFrame {
     pub function_name: String,
     /// Source location if available
     pub location: Option<(u32, u32)>, // (line, column)
-}
-
-/// Saved execution state for a suspended generator.
-/// This captures everything needed to resume execution at a yield point.
-pub struct SavedGeneratorExecution {
-    /// The saved environment (function scope)
-    pub env: Gc<JsObject>,
-    /// Guard to keep the environment and all frame references alive during suspension
-    pub guard: Guard<JsObject>,
-    /// Saved frame stack
-    pub frames: Vec<stack::Frame>,
-    /// Saved value stack (as JsValues - guards are recreated on resume)
-    pub values: Vec<JsValue>,
-    /// Saved completion type
-    pub completion: stack::StackCompletion,
 }
 
 /// GC statistics for debugging and monitoring
@@ -191,10 +172,6 @@ pub struct Interpreter {
 
     /// Counter for generating unique generator IDs
     next_generator_id: u64,
-
-    /// Saved execution states for suspended generators (generator_id -> saved state)
-    /// The execution state is moved here when a generator yields, and moved out when resumed.
-    pub saved_generator_states: FxHashMap<u64, SavedGeneratorExecution>,
 
     // ═══════════════════════════════════════════════════════════════════════════
     // Timeout and Limits
@@ -353,7 +330,6 @@ impl Interpreter {
             exports: FxHashMap::default(),
             call_stack: Vec::new(),
             next_generator_id: 1,
-            saved_generator_states: FxHashMap::default(),
             timeout_ms: 3000, // Default 3 second timeout
             execution_start: None,
             step_counter: 0,
@@ -635,11 +611,7 @@ impl Interpreter {
 
         // Run the bytecode VM
         let vm_guard = self.heap.create_guard();
-        let vm = BytecodeVM::with_guard(
-            chunk,
-            JsValue::Object(self.global.clone()),
-            vm_guard,
-        );
+        let vm = BytecodeVM::with_guard(chunk, JsValue::Object(self.global.clone()), vm_guard);
 
         self.run_vm_to_completion(vm)
     }
@@ -1001,11 +973,7 @@ impl Interpreter {
 
             // Run the bytecode VM
             let vm_guard = self.heap.create_guard();
-            let vm = BytecodeVM::with_guard(
-                chunk,
-                JsValue::Object(self.global.clone()),
-                vm_guard,
-            );
+            let vm = BytecodeVM::with_guard(chunk, JsValue::Object(self.global.clone()), vm_guard);
 
             return self.run_vm_to_completion(vm);
         }
@@ -1741,310 +1709,6 @@ impl Interpreter {
     // Generator Support
     // ═══════════════════════════════════════════════════════════════════════════
 
-    /// Resume a generator execution using stack-based evaluation
-    /// This executes the generator body until the next yield or return.
-    ///
-    /// State management:
-    /// - On first call (started=false): create new execution state and environment
-    /// - On subsequent calls: restore saved execution state from saved_generator_states
-    /// - On yield: save execution state to saved_generator_states
-    /// - On completion: remove saved state and mark generator as completed
-    pub fn resume_generator(
-        &mut self,
-        gen_state: &Rc<RefCell<crate::value::GeneratorState>>,
-    ) -> Result<Guarded, JsError> {
-        use stack::{ExecutionState, Frame, StackCompletion, StepResult};
-
-        // Check if generator is already completed
-        {
-            let state = gen_state.borrow();
-            if state.status == GeneratorStatus::Completed {
-                return Ok(builtins::create_generator_result(
-                    self,
-                    JsValue::Undefined,
-                    true,
-                ));
-            }
-        }
-
-        // Get generator info and check if we have saved state
-        let (gen_id, started, sent_value) = {
-            let state = gen_state.borrow();
-            (state.id, state.started, state.sent_value.clone())
-        };
-
-        // Save current interpreter environment
-        let saved_env = self.env.cheap_clone();
-
-        // Either restore saved state or create new one
-        // We need to keep the env_guard alive during execution
-        let mut _restored_env_guard: Option<Guard<JsObject>> = None;
-
-        let mut exec_state = if started {
-            // Restore saved execution state
-            let saved = self.saved_generator_states.remove(&gen_id).ok_or_else(|| {
-                JsError::internal_error("Generator marked as started but no saved state found")
-            })?;
-
-            // Restore interpreter environment
-            self.env = saved.env;
-            // Keep the guard alive during this call
-            _restored_env_guard = Some(saved.guard);
-
-            // Rebuild execution state from saved data
-            let mut state = ExecutionState::new();
-            state.frames = saved.frames;
-            // Convert saved JsValues back to Guarded (without guards - they'll be protected by being on stack)
-            state.values = saved.values.into_iter().map(Guarded::unguarded).collect();
-            state.completion = saved.completion;
-
-            // Push the sent value onto the value stack for the YieldResume frame to pick up
-            state.push_value(Guarded::unguarded(sent_value));
-
-            state
-        } else {
-            // First call - create new execution state
-            let gs = gen_state.borrow();
-            let body = gs.body.cheap_clone();
-            let params = gs.params.cheap_clone();
-            let args_clone = gs.args.clone();
-            let closure = gs.closure.cheap_clone();
-            drop(gs);
-
-            // Create function environment
-            let (func_env, func_guard) = create_environment_unrooted(&self.heap, Some(closure));
-            self.env = func_env.cheap_clone();
-            self.push_env_guard(func_guard);
-
-            // Bind parameters
-            for (i, param) in params.iter().enumerate() {
-                let arg_value = args_clone.get(i).cloned().unwrap_or(JsValue::Undefined);
-                if let Err(e) = self.bind_pattern(&param.pattern, arg_value, true) {
-                    self.pop_env_guard();
-                    self.env = saved_env;
-                    return Err(e);
-                }
-            }
-
-            // Mark as started
-            gen_state.borrow_mut().started = true;
-
-            // Create execution state with generator body
-            let mut state = ExecutionState::new();
-            state.push_frame(Frame::Program {
-                statements: body.body.cheap_clone(),
-                index: 0,
-            });
-            state
-        };
-
-        // Run until yield, return, or completion
-        let result = loop {
-            match self.step(&mut exec_state) {
-                StepResult::Continue => continue,
-                StepResult::Done(guarded) => {
-                    // Generator completed normally - clean up saved state
-                    self.saved_generator_states.remove(&gen_id);
-                    gen_state.borrow_mut().status = GeneratorStatus::Completed;
-                    // Restore caller's environment
-                    self.env = saved_env.cheap_clone();
-                    break Ok(builtins::create_generator_result(self, guarded.value, true));
-                }
-                StepResult::Suspend(_promise) => {
-                    // Await encountered in async generator - not fully supported yet
-                    // For now, treat as completion
-                    self.saved_generator_states.remove(&gen_id);
-                    gen_state.borrow_mut().status = GeneratorStatus::Completed;
-                    // Restore caller's environment
-                    self.env = saved_env.cheap_clone();
-                    break Ok(builtins::create_generator_result(
-                        self,
-                        JsValue::Undefined,
-                        true,
-                    ));
-                }
-                StepResult::Error(e) => {
-                    // Check if it's a yield
-                    if let JsError::GeneratorYield { value } = e {
-                        // Collect all Gc references from frames and values
-                        let mut gc_refs: Vec<Gc<JsObject>> = Vec::new();
-                        gc_refs.push(self.env.clone());
-                        for frame in &exec_state.frames {
-                            frame.collect_gc_refs(&mut gc_refs);
-                        }
-                        for guarded in &exec_state.values {
-                            if let JsValue::Object(obj) = &guarded.value {
-                                gc_refs.push(obj.clone());
-                            }
-                        }
-
-                        // Create a guard and mark all collected references
-                        let guard = self.heap.create_guard();
-                        for gc_ref in gc_refs {
-                            guard.guard(gc_ref);
-                        }
-
-                        // Save execution state for later resumption
-                        let saved = SavedGeneratorExecution {
-                            env: self.env.cheap_clone(),
-                            guard,
-                            frames: std::mem::take(&mut exec_state.frames),
-                            values: exec_state.values.drain(..).map(|g| g.value).collect(),
-                            completion: std::mem::replace(
-                                &mut exec_state.completion,
-                                StackCompletion::Normal,
-                            ),
-                        };
-                        self.saved_generator_states.insert(gen_id, saved);
-
-                        // Restore original environment
-                        self.env = saved_env;
-
-                        break Ok(builtins::create_generator_result(self, value, false));
-                    }
-                    // Real error - clean up and propagate
-                    self.saved_generator_states.remove(&gen_id);
-                    gen_state.borrow_mut().status = GeneratorStatus::Completed;
-                    self.env = saved_env;
-                    break Err(e);
-                }
-            }
-        };
-
-        result
-    }
-
-    /// Resume a generator with throw semantics (for Generator.prototype.throw)
-    pub fn resume_generator_with_throw(
-        &mut self,
-        gen_state: &Rc<RefCell<crate::value::GeneratorState>>,
-    ) -> Result<Guarded, JsError> {
-        use stack::{ExecutionState, StackCompletion, StepResult};
-
-        let (gen_id, exception, started) = {
-            let state = gen_state.borrow();
-            (state.id, state.sent_value.clone(), state.started)
-        };
-
-        // If generator hasn't started, we can't throw into it
-        if !started {
-            self.saved_generator_states.remove(&gen_id);
-            gen_state.borrow_mut().status = GeneratorStatus::Completed;
-            return Err(JsError::ThrownValue { value: exception });
-        }
-
-        // Get saved state
-        let saved = match self.saved_generator_states.remove(&gen_id) {
-            Some(s) => s,
-            None => {
-                gen_state.borrow_mut().status = GeneratorStatus::Completed;
-                return Err(JsError::ThrownValue { value: exception });
-            }
-        };
-
-        let saved_env = self.env.cheap_clone();
-
-        // Restore interpreter environment
-        self.env = saved.env;
-        let _restored_env_guard = saved.guard;
-
-        // Rebuild execution state from saved data
-        let mut exec_state = ExecutionState::new();
-        exec_state.frames = saved.frames;
-        exec_state.values = saved.values.into_iter().map(Guarded::unguarded).collect();
-        exec_state.completion = saved.completion;
-
-        // Instead of pushing sent value, we trigger an error
-        // The error will be handled by handle_error which will look for TryBlock frames
-
-        // First, try to handle the thrown exception (ONCE, not in the loop)
-        // This mimics what happens when an error occurs - handle_error looks for TryBlock
-        if let Some(step_result) =
-            self.handle_error(&mut exec_state, JsError::ThrownValue { value: exception })
-        {
-            match step_result {
-                StepResult::Error(e) => {
-                    // Error propagated out (no catch found)
-                    gen_state.borrow_mut().status = GeneratorStatus::Completed;
-                    self.env = saved_env;
-                    return Err(e);
-                }
-                StepResult::Done(guarded) => {
-                    gen_state.borrow_mut().status = GeneratorStatus::Completed;
-                    self.env = saved_env;
-                    return Ok(builtins::create_generator_result(self, guarded.value, true));
-                }
-                _ => {} // Continue below
-            }
-        }
-        // Error was handled (caught by try/catch), continue execution
-
-        // Run until yield, return, completion, or error handling
-        let result = loop {
-            match self.step(&mut exec_state) {
-                StepResult::Continue => continue,
-                StepResult::Done(guarded) => {
-                    gen_state.borrow_mut().status = GeneratorStatus::Completed;
-                    self.env = saved_env.cheap_clone();
-                    break Ok(builtins::create_generator_result(self, guarded.value, true));
-                }
-                StepResult::Suspend(_) => {
-                    gen_state.borrow_mut().status = GeneratorStatus::Completed;
-                    self.env = saved_env.cheap_clone();
-                    break Ok(builtins::create_generator_result(
-                        self,
-                        JsValue::Undefined,
-                        true,
-                    ));
-                }
-                StepResult::Error(e) => {
-                    if let JsError::GeneratorYield { value } = e {
-                        // Collect all Gc references from frames and values
-                        let mut gc_refs: Vec<Gc<JsObject>> = Vec::new();
-                        gc_refs.push(self.env.clone());
-                        for frame in &exec_state.frames {
-                            frame.collect_gc_refs(&mut gc_refs);
-                        }
-                        for guarded in &exec_state.values {
-                            if let JsValue::Object(obj) = &guarded.value {
-                                gc_refs.push(obj.clone());
-                            }
-                        }
-
-                        // Create a guard and mark all collected references
-                        let guard = self.heap.create_guard();
-                        for gc_ref in gc_refs {
-                            guard.guard(gc_ref);
-                        }
-
-                        // Save execution state for later resumption
-                        let saved_state = SavedGeneratorExecution {
-                            env: self.env.cheap_clone(),
-                            guard,
-                            frames: std::mem::take(&mut exec_state.frames),
-                            values: exec_state.values.drain(..).map(|g| g.value).collect(),
-                            completion: std::mem::replace(
-                                &mut exec_state.completion,
-                                StackCompletion::Normal,
-                            ),
-                        };
-                        self.saved_generator_states.insert(gen_id, saved_state);
-
-                        self.env = saved_env;
-                        break Ok(builtins::create_generator_result(self, value, false));
-                    }
-
-                    // Real error - clean up and propagate
-                    gen_state.borrow_mut().status = GeneratorStatus::Completed;
-                    self.env = saved_env;
-                    break Err(e);
-                }
-            }
-        };
-
-        result
-    }
-
     /// Resume a bytecode generator from a suspended state
     pub fn resume_bytecode_generator(
         &mut self,
@@ -2470,7 +2134,10 @@ impl Interpreter {
     }
 
     /// Execute a program (AST) using bytecode compilation
-    fn execute_program_bytecode(&mut self, program: &crate::ast::Program) -> Result<JsValue, JsError> {
+    fn execute_program_bytecode(
+        &mut self,
+        program: &crate::ast::Program,
+    ) -> Result<JsValue, JsError> {
         use crate::compiler::Compiler;
 
         let chunk = Compiler::compile_program(program)?;
@@ -2501,9 +2168,9 @@ impl Interpreter {
             VmResult::Suspend(_) => Err(JsError::type_error(
                 "Statement execution cannot be suspended",
             )),
-            VmResult::Yield(_) | VmResult::YieldStar(_) => Err(JsError::internal_error(
-                "Statement execution cannot yield",
-            )),
+            VmResult::Yield(_) | VmResult::YieldStar(_) => {
+                Err(JsError::internal_error("Statement execution cannot yield"))
+            }
         }
     }
 
@@ -2827,8 +2494,8 @@ impl Interpreter {
         self.root_guard.guard(module_env.clone());
         self.env = module_env.cheap_clone();
 
-        // Execute the module body using stack-based evaluation
-        let result = self.execute_program_with_stack(&program);
+        // Execute the module body using bytecode
+        let result = self.execute_program_bytecode(&program);
 
         // Restore environment
         self.env = saved_env;
@@ -6336,34 +6003,45 @@ impl Interpreter {
                     location: Some((interp.source_location.line, interp.source_location.column)),
                 });
 
-                // Handle generator functions - create generator object instead of executing
+                // Handle generator functions - compile to bytecode and create bytecode generator
                 if interp.generator {
                     let body = match &*interp.body {
                         FunctionBody::Block(block) => block.cheap_clone(),
                         FunctionBody::Expression(_) => {
+                            self.call_stack.pop();
                             return Err(JsError::type_error("Generator must have block body"));
                         }
                     };
 
-                    // Allocate a unique ID for this generator
-                    let gen_id = self.next_generator_id;
-                    self.next_generator_id += 1;
-
-                    let gen_state = GeneratorState {
-                        body,
-                        params: interp.params.cheap_clone(),
-                        args: args.to_vec(),
-                        closure: interp.closure,
-                        status: GeneratorStatus::Suspended,
-                        sent_value: JsValue::Undefined,
-                        name: interp.name.cheap_clone(),
-                        id: gen_id,
-                        started: false,
+                    // Compile generator body to bytecode
+                    use crate::compiler::Compiler;
+                    let chunk = match Compiler::compile_function_body_direct(
+                        &interp.params,
+                        &body.body,
+                        interp.name.cheap_clone(),
+                        true, // is_generator
+                        interp.async_,
+                    ) {
+                        Ok(c) => Rc::new(c),
+                        Err(e) => {
+                            self.call_stack.pop();
+                            return Err(e);
+                        }
                     };
 
-                    let gen_obj = builtins::create_generator_object(self, gen_state);
+                    // Create bytecode function and call the bytecode generator path
+                    let bc_func = BytecodeFunction {
+                        chunk,
+                        closure: interp.closure,
+                        captured_this: None,
+                    };
+
                     self.call_stack.pop();
-                    return Ok(Guarded::unguarded(JsValue::Object(gen_obj)));
+                    if interp.async_ {
+                        return self.create_and_call_bytecode_async_generator(bc_func, args);
+                    } else {
+                        return self.create_and_call_bytecode_generator(bc_func, args);
+                    }
                 }
 
                 // Create new environment with guard
@@ -6469,32 +6147,77 @@ impl Interpreter {
                 let body_result: Result<(JsValue, Option<Guard<JsObject>>), JsError> =
                     match &*interp.body {
                         FunctionBody::Block(block) => {
-                            // Execute function body using stack-based execution
-                            let mut state = stack::ExecutionState::new();
-                            state.push_frame(stack::Frame::Block {
-                                statements: Rc::clone(&block.body),
-                                index: 0,
-                            });
-                            match self.run(&mut state) {
-                                stack::StepResult::Done(g) => {
-                                    // Check if we got a return
-                                    if matches!(state.completion, stack::StackCompletion::Return) {
-                                        Ok((g.value, g.guard))
-                                    } else {
-                                        Ok((JsValue::Undefined, None))
-                                    }
-                                }
-                                stack::StepResult::Error(e) => Err(e),
-                                stack::StepResult::Suspend(_) => Err(JsError::type_error(
+                            // Compile function body to bytecode and execute with bytecode VM
+                            use crate::compiler::Compiler;
+                            use crate::interpreter::bytecode_vm::{BytecodeVM, VmResult};
+
+                            // Compile the block body to bytecode
+                            let chunk = Compiler::compile_function_body_direct(
+                                &interp.params,
+                                &block.body,
+                                interp.name.cheap_clone(),
+                                interp.generator,
+                                interp.async_,
+                            )?;
+
+                            // Create VM with args pre-populated
+                            // Parameters were already bound to environment above, but for bytecode
+                            // we need to pass them in registers. The bytecode expects args in registers.
+                            let vm_guard = self.heap.create_guard();
+                            let mut vm = BytecodeVM::with_guard_and_args(
+                                Rc::new(chunk),
+                                this_value.clone(),
+                                vm_guard,
+                                args,
+                            );
+
+                            match vm.run(self) {
+                                VmResult::Complete(g) => Ok((g.value, g.guard)),
+                                VmResult::Error(e) => Err(e),
+                                VmResult::Suspend(_) => Err(JsError::type_error(
                                     "Function execution cannot be suspended",
                                 )),
-                                stack::StepResult::Continue => Ok((JsValue::Undefined, None)),
+                                VmResult::Yield(_) | VmResult::YieldStar(_) => {
+                                    Err(JsError::type_error(
+                                        "Unexpected yield in non-generator function",
+                                    ))
+                                }
                             }
                         }
-                        FunctionBody::Expression(expr) => match self.evaluate_expression(expr) {
-                            Ok(Guarded { value, guard }) => Ok((value, guard)),
-                            Err(e) => Err(e),
-                        },
+                        FunctionBody::Expression(expr) => {
+                            // Compile expression body to bytecode
+                            use crate::compiler::Compiler;
+                            use crate::interpreter::bytecode_vm::{BytecodeVM, VmResult};
+
+                            // Wrap expression in a return statement for proper execution
+                            let return_stmt = Statement::Return(crate::ast::ReturnStatement {
+                                argument: Some(expr.cheap_clone()),
+                                span: crate::lexer::Span::default(),
+                            });
+
+                            let chunk = Compiler::compile_statement(&return_stmt)?;
+
+                            let vm_guard = self.heap.create_guard();
+                            let mut vm = BytecodeVM::with_guard_and_args(
+                                chunk,
+                                this_value.clone(),
+                                vm_guard,
+                                args,
+                            );
+
+                            match vm.run(self) {
+                                VmResult::Complete(g) => Ok((g.value, g.guard)),
+                                VmResult::Error(e) => Err(e),
+                                VmResult::Suspend(_) => Err(JsError::type_error(
+                                    "Function execution cannot be suspended",
+                                )),
+                                VmResult::Yield(_) | VmResult::YieldStar(_) => {
+                                    Err(JsError::type_error(
+                                        "Unexpected yield in non-generator function",
+                                    ))
+                                }
+                            }
+                        }
                     };
 
                 // ALWAYS restore environment, even on error

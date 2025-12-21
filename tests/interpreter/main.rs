@@ -47,7 +47,6 @@ mod promise;
 mod proxy;
 mod regexp;
 mod set;
-mod stack;
 mod strict;
 mod string;
 mod symbol;

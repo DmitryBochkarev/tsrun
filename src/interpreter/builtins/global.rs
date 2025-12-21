@@ -227,7 +227,7 @@ pub fn eval_code_in_scope(
     interp.hoist_var_declarations(&program.body);
 
     // Execute the program and get the result
-    let result = interp.execute_program_with_stack(&program);
+    let result = interp.execute_program_bytecode(&program);
 
     // Pop the eval scope
     interp.pop_scope(eval_scope);

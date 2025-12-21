@@ -73,6 +73,22 @@ impl Compiler {
         Ok(Rc::new(compiler.builder.finish()))
     }
 
+    /// Compile a function body directly (for JIT compilation of interpreted functions)
+    /// This is a static entry point that compiles a function body to bytecode,
+    /// handling parameter binding and function info metadata.
+    pub fn compile_function_body_direct(
+        params: &Rc<[crate::ast::FunctionParam]>,
+        body: &[crate::ast::Statement],
+        name: Option<JsString>,
+        is_generator: bool,
+        is_async: bool,
+    ) -> Result<BytecodeChunk, JsError> {
+        let mut compiler = Compiler::new();
+        let chunk =
+            compiler.compile_function_body(params, body, name, is_generator, is_async, false)?;
+        Ok(chunk)
+    }
+
     /// Compile a sequence of statements
     fn compile_statements(&mut self, statements: &[crate::ast::Statement]) -> Result<(), JsError> {
         for stmt in statements {
