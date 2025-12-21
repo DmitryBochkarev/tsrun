@@ -71,14 +71,14 @@ impl Compiler {
                 Ok(())
             }
 
-            // TypeScript declarations - no-ops at runtime
-            Statement::TypeAlias(_)
-            | Statement::InterfaceDeclaration(_)
-            | Statement::EnumDeclaration(_)
-            | Statement::NamespaceDeclaration(_) => {
-                // TODO: Enum declarations should create runtime objects
-                Ok(())
-            }
+            // TypeScript declarations - no-ops at runtime (except enum)
+            Statement::TypeAlias(_) | Statement::InterfaceDeclaration(_) => Ok(()),
+
+            // Enum declarations create runtime objects
+            Statement::EnumDeclaration(decl) => self.compile_enum_declaration(decl),
+
+            // Namespace declarations
+            Statement::NamespaceDeclaration(decl) => self.compile_namespace_declaration(decl),
 
             // Module declarations
             Statement::Import(_) | Statement::Export(_) => {
@@ -1365,6 +1365,223 @@ impl Compiler {
 
         self.builder.free_register(value_reg);
         self.builder.free_register(this_reg);
+        Ok(())
+    }
+
+    /// Compile an enum declaration
+    /// TypeScript enums compile to an object with forward and reverse mappings
+    fn compile_enum_declaration(
+        &mut self,
+        decl: &crate::ast::EnumDeclaration,
+    ) -> Result<(), JsError> {
+        self.builder.set_span(decl.span);
+
+        // Create the enum object
+        let enum_obj = self.builder.alloc_register()?;
+        self.builder.emit(Op::CreateObject { dst: enum_obj });
+
+        // Track the current numeric value for auto-increment
+        let mut current_value: i64 = 0;
+        let value_reg = self.builder.alloc_register()?;
+        let key_reg = self.builder.alloc_register()?;
+
+        for member in &decl.members {
+            let member_name = member.id.name.cheap_clone();
+            let name_idx = self.builder.add_string(member_name.cheap_clone())?;
+
+            if let Some(ref init) = member.initializer {
+                // Compile the initializer expression
+                self.compile_expression(init, value_reg)?;
+
+                // Try to compute the numeric value for auto-increment
+                // This is a simplified version - in reality, we'd need const evaluation
+                if let crate::ast::Expression::Literal(lit) = init {
+                    if let crate::ast::LiteralValue::Number(n) = &lit.value {
+                        current_value = *n as i64 + 1;
+                    }
+                }
+            } else {
+                // Use auto-increment value
+                self.builder.emit(Op::LoadInt {
+                    dst: value_reg,
+                    value: current_value as i32,
+                });
+                current_value += 1;
+            }
+
+            // Set forward mapping: EnumName.MemberName = value
+            self.builder.emit(Op::SetPropertyConst {
+                obj: enum_obj,
+                key: name_idx,
+                value: value_reg,
+            });
+
+            // Set reverse mapping for numeric values: EnumName[value] = MemberName
+            // Only for numeric values (not string enums)
+            // We need to check if value is numeric at runtime for mixed enums
+            let is_numeric = match &member.initializer {
+                None => true,
+                Some(init) => {
+                    // Check for numeric literal
+                    matches!(
+                        init,
+                        crate::ast::Expression::Literal(crate::ast::Literal { value: crate::ast::LiteralValue::Number(_), .. })
+                    ) ||
+                    // Check for unary minus of numeric literal (e.g., -10)
+                    matches!(
+                        init,
+                        crate::ast::Expression::Unary(unary)
+                            if unary.operator == crate::ast::UnaryOp::Minus
+                            && matches!(
+                                unary.argument.as_ref(),
+                                crate::ast::Expression::Literal(crate::ast::Literal { value: crate::ast::LiteralValue::Number(_), .. })
+                            )
+                    )
+                }
+            };
+            if is_numeric {
+                // Load the member name as a string value
+                self.builder.emit_load_string(key_reg, member_name)?;
+
+                // Set reverse mapping: EnumName[value] = "MemberName"
+                self.builder.emit(Op::SetProperty {
+                    obj: enum_obj,
+                    key: value_reg,
+                    value: key_reg,
+                });
+            }
+        }
+
+        self.builder.free_register(key_reg);
+        self.builder.free_register(value_reg);
+
+        // Declare the enum as a variable
+        let name_idx = self.builder.add_string(decl.id.name.cheap_clone())?;
+        self.builder.emit(Op::DeclareVar {
+            name: name_idx,
+            init: enum_obj,
+            mutable: true, // Enums are mutable like objects
+        });
+
+        self.builder.free_register(enum_obj);
+        Ok(())
+    }
+
+    /// Compile a namespace declaration
+    fn compile_namespace_declaration(
+        &mut self,
+        decl: &crate::ast::NamespaceDeclaration,
+    ) -> Result<(), JsError> {
+        self.builder.set_span(decl.span);
+
+        // Create the namespace object
+        let ns_obj = self.builder.alloc_register()?;
+        self.builder.emit(Op::CreateObject { dst: ns_obj });
+
+        // Declare the namespace variable first (so nested references work)
+        let name_idx = self.builder.add_string(decl.id.name.cheap_clone())?;
+        self.builder.emit(Op::DeclareVar {
+            name: name_idx,
+            init: ns_obj,
+            mutable: true,
+        });
+
+        // Push a new scope for the namespace body
+        self.builder.emit(Op::PushScope);
+
+        // Compile the namespace body statements
+        for stmt in decl.body.iter() {
+            self.compile_statement_impl(stmt)?;
+
+            // If the statement exports something, add it to the namespace object
+            // For now, we handle exported declarations by adding them to the namespace
+            if let Statement::Export(export) = stmt {
+                if let Some(ref decl) = export.declaration {
+                    self.add_export_to_namespace(ns_obj, decl)?;
+                }
+            }
+        }
+
+        // Pop the namespace scope
+        self.builder.emit(Op::PopScope);
+
+        self.builder.free_register(ns_obj);
+        Ok(())
+    }
+
+    /// Add an exported declaration to a namespace object
+    fn add_export_to_namespace(
+        &mut self,
+        ns_obj: super::Register,
+        decl: &Statement,
+    ) -> Result<(), JsError> {
+        match decl {
+            Statement::VariableDeclaration(var_decl) => {
+                for declarator in var_decl.declarations.iter() {
+                    if let crate::ast::Pattern::Identifier(id) = &declarator.id {
+                        let value_reg = self.builder.alloc_register()?;
+                        let name_idx = self.builder.add_string(id.name.cheap_clone())?;
+                        self.builder.emit(Op::GetVar {
+                            dst: value_reg,
+                            name: name_idx,
+                        });
+                        self.builder.emit(Op::SetPropertyConst {
+                            obj: ns_obj,
+                            key: name_idx,
+                            value: value_reg,
+                        });
+                        self.builder.free_register(value_reg);
+                    }
+                }
+            }
+            Statement::FunctionDeclaration(func_decl) => {
+                if let Some(ref id) = func_decl.id {
+                    let value_reg = self.builder.alloc_register()?;
+                    let name_idx = self.builder.add_string(id.name.cheap_clone())?;
+                    self.builder.emit(Op::GetVar {
+                        dst: value_reg,
+                        name: name_idx,
+                    });
+                    self.builder.emit(Op::SetPropertyConst {
+                        obj: ns_obj,
+                        key: name_idx,
+                        value: value_reg,
+                    });
+                    self.builder.free_register(value_reg);
+                }
+            }
+            Statement::ClassDeclaration(class_decl) => {
+                if let Some(ref id) = class_decl.id {
+                    let value_reg = self.builder.alloc_register()?;
+                    let name_idx = self.builder.add_string(id.name.cheap_clone())?;
+                    self.builder.emit(Op::GetVar {
+                        dst: value_reg,
+                        name: name_idx,
+                    });
+                    self.builder.emit(Op::SetPropertyConst {
+                        obj: ns_obj,
+                        key: name_idx,
+                        value: value_reg,
+                    });
+                    self.builder.free_register(value_reg);
+                }
+            }
+            Statement::EnumDeclaration(enum_decl) => {
+                let value_reg = self.builder.alloc_register()?;
+                let name_idx = self.builder.add_string(enum_decl.id.name.cheap_clone())?;
+                self.builder.emit(Op::GetVar {
+                    dst: value_reg,
+                    name: name_idx,
+                });
+                self.builder.emit(Op::SetPropertyConst {
+                    obj: ns_obj,
+                    key: name_idx,
+                    value: value_reg,
+                });
+                self.builder.free_register(value_reg);
+            }
+            _ => {}
+        }
         Ok(())
     }
 }
