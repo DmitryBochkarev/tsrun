@@ -191,10 +191,10 @@ impl Compiler {
             self.labels
                 .get(l)
                 .copied()
-                .ok_or_else(|| JsError::syntax_error_simple(format!("Undefined label '{}'", l)))?
+                .ok_or_else(|| JsError::syntax_error_simple(format!("Illegal break statement: undefined label '{}'", l)))?
         } else {
             self.loop_stack.len().checked_sub(1).ok_or_else(|| {
-                JsError::syntax_error_simple("'break' statement must be inside a loop or switch")
+                JsError::syntax_error_simple("Illegal break statement")
             })?
         };
 
@@ -211,10 +211,10 @@ impl Compiler {
             self.labels
                 .get(l)
                 .copied()
-                .ok_or_else(|| JsError::syntax_error_simple(format!("Undefined label '{}'", l)))?
+                .ok_or_else(|| JsError::syntax_error_simple(format!("Illegal continue statement: undefined label '{}'", l)))?
         } else {
             self.loop_stack.len().checked_sub(1).ok_or_else(|| {
-                JsError::syntax_error_simple("'continue' statement must be inside a loop")
+                JsError::syntax_error_simple("Illegal continue statement")
             })?
         };
 
