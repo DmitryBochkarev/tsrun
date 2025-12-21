@@ -1545,9 +1545,7 @@ fn test_bytecode_generator_preserves_scope() {
 }
 
 // for...of iteration with generators
-// TODO: Fix infinite loop when iterating generators with for...of
 #[test]
-#[ignore]
 fn test_bytecode_generator_for_of() {
     // for...of should iterate over generator values
     assert_eq!(

@@ -201,7 +201,6 @@ fn test_spread_in_function_call_with_custom_iterator() {
 }
 
 #[test]
-#[ignore] // TODO: for-of loop doesn't use Symbol.iterator protocol for non-array objects yet
 fn test_for_of_with_custom_iterator() {
     // Test for-of loop using Symbol.iterator protocol
     assert_eq!(
