@@ -2,10 +2,22 @@
 
 This document analyzes test failures in the bytecode VM and categorizes them by feature area with implementation guidance.
 
-**Total Tests:** 1764
-**Passing:** 1527
-**Failing:** 230
+**Total Tests:** 1783
+**Passing:** 1550
+**Failing:** 226
 **Ignored:** 7
+
+---
+
+## Recently Fixed (Quick Wins)
+
+The following issues have been fixed:
+
+- ✅ **Super in static methods** - Fixed super lookup to work in static context
+- ✅ **Closure scoping in loops** - Implemented per-iteration bindings for `for (let...)` loops
+- ✅ **Optional chaining with parentheses** - Fixed `this` binding in parenthesized optional chain calls
+- ✅ **Static initialization blocks** - Implemented static block compilation and execution
+- ✅ **Argument evaluation order** - Fixed callee evaluation to occur before arguments
 
 ---
 
@@ -17,13 +29,9 @@ This document analyzes test failures in the bytecode VM and categorizes them by 
 4. [Proxy Handler Traps](#4-proxy-handler-traps)
 5. [Decorators](#5-decorators)
 6. [BigInt](#6-bigint)
-7. [Static Class Features](#7-static-class-features)
-8. [Generator Edge Cases](#8-generator-edge-cases)
-9. [Eval Scope Handling](#9-eval-scope-handling)
-10. [Closure Scoping in Loops](#10-closure-scoping-in-loops)
-11. [Optional Chaining with Parentheses](#11-optional-chaining-with-parentheses)
-12. [Super in Static Methods](#12-super-in-static-methods)
-13. [Miscellaneous Issues](#13-miscellaneous-issues)
+7. [Generator Edge Cases](#7-generator-edge-cases)
+8. [Eval Scope Handling](#8-eval-scope-handling)
+9. [Miscellaneous Issues](#9-miscellaneous-issues)
 
 ---
 
@@ -378,51 +386,7 @@ May need BigInt-specific opcodes or type checking in existing ops.
 
 ---
 
-## 7. Static Class Features
-
-**Affected Tests (~8 tests):**
-- `class::test_static_initialization_block` - returns 0 instead of 42
-- `class::test_static_block_complex`
-- `class::test_super_in_static_method` - super not valid in static context
-- `class::test_super_in_static_getter`
-- `class::test_super_in_static_setter`
-- `class::test_super_computed_property`
-
-**Error Patterns:**
-1. Static blocks execute but don't modify static fields
-2. `super` keyword not recognized in static methods
-
-**Implementation Strategy:**
-
-### Static Initialization Blocks
-Currently returning 0 instead of expected value. The static block runs but field assignment may not work:
-```javascript
-class C {
-    static value = 0;
-    static { this.value = 42; }
-}
-```
-
-**Fix:** Ensure `this` in static block refers to the class constructor.
-
-### Super in Static Methods
-Error: `'super' keyword is only valid inside a class method`
-
-**Fix:** Static methods should also have access to super, referring to parent constructor:
-```rust
-// When compiling static method:
-fn compile_static_method() {
-    // Set up super reference to parent class constructor
-    // Not parent prototype
-}
-```
-
-**Complexity:** Medium
-**Estimated Effort:** 1 day
-
----
-
-## 8. Generator Edge Cases
+## 7. Generator Edge Cases
 
 **Affected Tests (~5 tests):**
 - `generator::test_generator_throw_with_catch` - Error not caught inside generator
@@ -461,7 +425,7 @@ function* gen() { yield* [1, 2, 3]; }
 
 ---
 
-## 9. Eval Scope Handling
+## 8. Eval Scope Handling
 
 **Affected Tests (~12 tests):**
 - `eval::test_eval_closure` - ReferenceError: x
@@ -508,127 +472,7 @@ eval("for(let i=0;i<3;i++) i") // Should return 2
 
 ---
 
-## 10. Closure Scoping in Loops
-
-**Affected Tests (2 tests):**
-- `control_flow::test_closure_capturing_loop_variable` - Returns "3,3,3" instead of "0,1,2"
-- `control_flow::test_for_let_block_scope`
-
-**Error Pattern:**
-```javascript
-let fns = [];
-for (let i = 0; i < 3; i++) {
-    fns.push(() => i);
-}
-fns.map(f => f()).join(",") // Expected: "0,1,2", Got: "3,3,3"
-```
-
-**Current State:**
-The `let` binding in for-loop is not creating a new binding per iteration.
-
-**Implementation Strategy:**
-
-Per ES6, each iteration of `for (let i...)` creates a fresh `i` binding:
-```rust
-fn compile_for_with_let(&mut self, init: &VarDecl, ...) {
-    // For each iteration:
-    // 1. Create new block scope
-    // 2. Copy previous i value
-    // 3. Execute body
-    // 4. Update copied binding
-}
-```
-
-**Bytecode Approach:**
-```
-ForLetStart:
-  CreateBlockScope        ; New scope for this iteration
-  CopyBinding i          ; Copy i from previous iteration's scope
-  ... body ...
-  UpdateBinding i        ; Before next iteration
-  PopScope
-  Jump ForLetStart
-```
-
-**Complexity:** Medium
-**Estimated Effort:** 0.5-1 day
-
----
-
-## 11. Optional Chaining with Parentheses
-
-**Affected Tests (3 tests):**
-- `control_flow::test_optional_chain_double_optional_parenthesized`
-- `control_flow::test_optional_call_preserves_this_parenthesized`
-- `control_flow::test_optional_call_on_method_parenthesized`
-
-**Error Pattern:**
-```javascript
-(obj?.method)?.() // TypeError: Cannot read properties of undefined
-```
-
-**Current State:**
-Parenthesized optional chains don't preserve the short-circuit correctly.
-
-**Implementation Strategy:**
-The issue is that `(obj?.method)` returns `undefined` correctly, but the outer `?.()` then tries to access properties of the parenthesized result incorrectly.
-
-Need to track that the entire parenthesized expression should short-circuit:
-```rust
-// When evaluating (a?.b)?.c:
-// If a?.b short-circuits to undefined,
-// the outer ?.c should also return undefined
-```
-
-**Complexity:** Low-Medium
-**Estimated Effort:** 0.5 day
-
----
-
-## 12. Super in Static Methods
-
-**Error Message:** `'super' keyword is only valid inside a class method`
-
-**Affected Tests:**
-- `class::test_super_in_static_method`
-- `class::test_super_in_static_getter`
-- `class::test_super_in_static_setter`
-- `class::test_super_property_assignment`
-
-**Current State:**
-Compiler rejects `super` in static methods, but it should work.
-
-**Implementation Strategy:**
-
-In static methods, `super` refers to the parent class (constructor), not prototype:
-```javascript
-class Parent { static greet() { return "hi"; } }
-class Child extends Parent {
-    static greet() { return super.greet() + "!"; } // Should work
-}
-```
-
-**Fix in Compiler:**
-```rust
-fn is_valid_super_context(&self) -> bool {
-    self.in_method || self.in_static_method || self.in_constructor
-}
-
-fn get_super_base(&self) -> SuperBase {
-    if self.in_static_method {
-        SuperBase::ParentConstructor
-    } else {
-        SuperBase::ParentPrototype
-    }
-}
-```
-
-**Complexity:** Low-Medium
-**Estimated Effort:** 0.5 day
-
----
-
-## 13. Miscellaneous Issues
+## 9. Miscellaneous Issues
 
 ### Function Constructor Rest Params
 **Tests:** `function::test_function_constructor_rest_params*`
@@ -637,10 +481,6 @@ fn get_super_base(&self) -> SuperBase {
 ### Symbol.hasInstance
 **Tests:** `function::test_instanceof_uses_symbol_hasinstance`, `test_symbol_hasinstance_direct_call`
 **Error:** Custom `[Symbol.hasInstance]` not consulted during `instanceof`
-
-### Argument Evaluation Order
-**Tests:** `function::test_call_args_not_evaluated_when_callee_throws`
-**Error:** Arguments evaluated even when callee expression throws
 
 ### GC/Memory Leak
 **Tests:** `gc::test_nested_for_loop_environments_collected`
@@ -657,28 +497,14 @@ fn get_super_base(&self) -> SuperBase {
 ### High Priority (Core Language Features)
 1. **Module System** - Essential for real-world usage
 2. **Private Class Members** - Required for modern JS/TS
-3. **Closure Scoping in Loops** - Common pattern, semantics bug
+3. **Async Iteration** - Needed for async patterns
 
 ### Medium Priority
-4. **Async Iteration** - Needed for async patterns
-5. **Proxy Traps** - Important for metaprogramming
-6. **Static Class Features** - Class-based code correctness
-7. **Super in Static Methods** - Related to static features
+4. **Proxy Traps** - Important for metaprogramming
+5. **Decorators** - TypeScript feature, complex
+6. **Generator Edge Cases** - Uncommon patterns
 
 ### Lower Priority
-8. **Decorators** - TypeScript feature, complex
-9. **BigInt** - Less common usage
-10. **Generator Edge Cases** - Uncommon patterns
-11. **Eval Scoping** - Edge case for direct eval
-
----
-
-## Quick Wins
-
-These can likely be fixed quickly:
-
-1. **Super in static methods** - Just expand the valid context check
-2. **Closure scoping in loops** - Well-understood pattern
-3. **Optional chaining with parentheses** - Small fix in short-circuit logic
-4. **Static initialization blocks** - Likely just `this` binding issue
-5. **Argument evaluation order** - Evaluate callee first before args
+7. **BigInt** - Less common usage
+8. **Eval Scoping** - Edge case for direct eval
+9. **Miscellaneous Issues** - Various small fixes
