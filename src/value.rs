@@ -1078,6 +1078,14 @@ impl JsObject {
                         let name = match func {
                             JsFunction::Interpreted(f) => f.name.clone(),
                             JsFunction::Native(f) => Some(f.name.clone()),
+                            JsFunction::Bytecode(bc)
+                            | JsFunction::BytecodeGenerator(bc)
+                            | JsFunction::BytecodeAsync(bc)
+                            | JsFunction::BytecodeAsyncGenerator(bc) => bc
+                                .chunk
+                                .function_info
+                                .as_ref()
+                                .and_then(|info| info.name.clone()),
                             JsFunction::Bound(b) => {
                                 // Bound functions have name "bound <target name>"
                                 if let ExoticObject::Function(target_func) =
@@ -1091,6 +1099,18 @@ impl JsObject {
                                         JsFunction::Native(f) => {
                                             Some(JsString::from(format!("bound {}", f.name)))
                                         }
+                                        JsFunction::Bytecode(bc)
+                                        | JsFunction::BytecodeGenerator(bc)
+                                        | JsFunction::BytecodeAsync(bc)
+                                        | JsFunction::BytecodeAsyncGenerator(bc) => bc
+                                            .chunk
+                                            .function_info
+                                            .as_ref()
+                                            .and_then(|info| {
+                                                info.name
+                                                    .as_ref()
+                                                    .map(|n| JsString::from(format!("bound {}", n)))
+                                            }),
                                         _ => Some(JsString::from("bound ")),
                                     }
                                 } else {
@@ -1114,6 +1134,15 @@ impl JsObject {
                                     .count()
                             }
                             JsFunction::Native(f) => f.arity,
+                            JsFunction::Bytecode(bc)
+                            | JsFunction::BytecodeGenerator(bc)
+                            | JsFunction::BytecodeAsync(bc)
+                            | JsFunction::BytecodeAsyncGenerator(bc) => bc
+                                .chunk
+                                .function_info
+                                .as_ref()
+                                .map(|info| info.param_count)
+                                .unwrap_or(0),
                             JsFunction::Bound(b) => {
                                 // Bound functions have length = target.length - bound_args.length (min 0)
                                 if let ExoticObject::Function(target_func) =
@@ -1126,6 +1155,15 @@ impl JsObject {
                                             .filter(|p| !matches!(p.pattern, Pattern::Rest(_)))
                                             .count(),
                                         JsFunction::Native(f) => f.arity,
+                                        JsFunction::Bytecode(bc)
+                                        | JsFunction::BytecodeGenerator(bc)
+                                        | JsFunction::BytecodeAsync(bc)
+                                        | JsFunction::BytecodeAsyncGenerator(bc) => bc
+                                            .chunk
+                                            .function_info
+                                            .as_ref()
+                                            .map(|info| info.param_count)
+                                            .unwrap_or(0),
                                         _ => 0,
                                     };
                                     target_length.saturating_sub(b.bound_args.len())
@@ -1226,6 +1264,14 @@ impl JsObject {
                         let name = match func {
                             JsFunction::Interpreted(f) => f.name.clone(),
                             JsFunction::Native(f) => Some(f.name.clone()),
+                            JsFunction::Bytecode(bc)
+                            | JsFunction::BytecodeGenerator(bc)
+                            | JsFunction::BytecodeAsync(bc)
+                            | JsFunction::BytecodeAsyncGenerator(bc) => bc
+                                .chunk
+                                .function_info
+                                .as_ref()
+                                .and_then(|info| info.name.clone()),
                             JsFunction::Bound(b) => {
                                 // Bound functions have name "bound <target name>"
                                 if let ExoticObject::Function(target_func) =
@@ -1239,6 +1285,18 @@ impl JsObject {
                                         JsFunction::Native(f) => {
                                             Some(JsString::from(format!("bound {}", f.name)))
                                         }
+                                        JsFunction::Bytecode(bc)
+                                        | JsFunction::BytecodeGenerator(bc)
+                                        | JsFunction::BytecodeAsync(bc)
+                                        | JsFunction::BytecodeAsyncGenerator(bc) => bc
+                                            .chunk
+                                            .function_info
+                                            .as_ref()
+                                            .and_then(|info| {
+                                                info.name
+                                                    .as_ref()
+                                                    .map(|n| JsString::from(format!("bound {}", n)))
+                                            }),
                                         _ => Some(JsString::from("bound ")),
                                     }
                                 } else {
@@ -1265,6 +1323,15 @@ impl JsObject {
                                     .count()
                             }
                             JsFunction::Native(f) => f.arity,
+                            JsFunction::Bytecode(bc)
+                            | JsFunction::BytecodeGenerator(bc)
+                            | JsFunction::BytecodeAsync(bc)
+                            | JsFunction::BytecodeAsyncGenerator(bc) => bc
+                                .chunk
+                                .function_info
+                                .as_ref()
+                                .map(|info| info.param_count)
+                                .unwrap_or(0),
                             JsFunction::Bound(b) => {
                                 // Bound functions have length = target.length - bound_args.length (min 0)
                                 if let ExoticObject::Function(target_func) =
@@ -1277,6 +1344,15 @@ impl JsObject {
                                             .filter(|p| !matches!(p.pattern, Pattern::Rest(_)))
                                             .count(),
                                         JsFunction::Native(f) => f.arity,
+                                        JsFunction::Bytecode(bc)
+                                        | JsFunction::BytecodeGenerator(bc)
+                                        | JsFunction::BytecodeAsync(bc)
+                                        | JsFunction::BytecodeAsyncGenerator(bc) => bc
+                                            .chunk
+                                            .function_info
+                                            .as_ref()
+                                            .map(|info| info.param_count)
+                                            .unwrap_or(0),
                                         _ => 0,
                                     };
                                     target_length.saturating_sub(b.bound_args.len())
