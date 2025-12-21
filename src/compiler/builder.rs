@@ -368,6 +368,7 @@ impl BytecodeBuilder {
                 | Op::SuperSetConst { .. }
                 | Op::SpreadArray { .. }
                 | Op::CreateRestArray { .. }
+                | Op::CreateObjectRest { .. }
                 | Op::TemplateConcat { .. }
                 | Op::TaggedTemplate { .. }
                 | Op::Nop
@@ -441,6 +442,11 @@ impl BytecodeBuilder {
     /// Add a nested bytecode chunk (for functions)
     pub fn add_chunk(&mut self, chunk: BytecodeChunk) -> Result<ConstantIndex, JsError> {
         self.add_constant(Constant::Chunk(Rc::new(chunk)))
+    }
+
+    /// Add excluded keys for object rest destructuring
+    pub fn add_excluded_keys(&mut self, keys: Vec<JsString>) -> Result<ConstantIndex, JsError> {
+        self.add_constant(Constant::ExcludedKeys(keys))
     }
 
     /// Emit LoadConst for a string

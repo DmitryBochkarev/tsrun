@@ -543,6 +543,14 @@ pub enum Op {
     /// Create rest array from remaining arguments
     CreateRestArray { dst: Register, start_index: u8 },
 
+    /// Create object rest from source object, excluding specified keys
+    /// excluded_keys is a constant index pointing to a Vec<JsString> in the constant pool
+    CreateObjectRest {
+        dst: Register,
+        src: Register,
+        excluded_keys: ConstantIndex,
+    },
+
     // ═══════════════════════════════════════════════════════════════════════════════
     // Template Literals
     // ═══════════════════════════════════════════════════════════════════════════════
@@ -639,6 +647,9 @@ pub enum Constant {
         cooked: Vec<JsString>,
         raw: Vec<JsString>,
     },
+
+    /// List of keys to exclude in object rest destructuring
+    ExcludedKeys(Vec<JsString>),
 }
 
 /// Function metadata

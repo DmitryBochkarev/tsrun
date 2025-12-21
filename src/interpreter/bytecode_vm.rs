@@ -672,6 +672,11 @@ impl BytecodeVM {
                             "Cannot load template strings as value",
                         ));
                     }
+                    Some(Constant::ExcludedKeys(_)) => {
+                        return Err(JsError::internal_error(
+                            "Cannot load excluded keys as value",
+                        ));
+                    }
                     None => return Err(JsError::internal_error("Invalid constant index")),
                 };
                 self.set_reg(dst, value);
@@ -2327,6 +2332,52 @@ impl BytecodeVM {
                 let guard = interp.heap.create_guard();
                 let arr = interp.create_array_from(&guard, elements);
                 self.set_reg(dst, JsValue::Object(arr));
+                Ok(OpResult::Continue)
+            }
+
+            Op::CreateObjectRest {
+                dst,
+                src,
+                excluded_keys,
+            } => {
+                // Create an object with all properties from src except excluded_keys
+                let src_val = self.get_reg(src).clone();
+
+                // Get excluded keys from constant pool
+                let excluded = match self.chunk.constants.get(excluded_keys as usize) {
+                    Some(Constant::ExcludedKeys(keys)) => keys.clone(),
+                    _ => vec![],
+                };
+
+                let guard = interp.heap.create_guard();
+                let result = interp.create_object(&guard);
+
+                if let JsValue::Object(src_obj) = src_val {
+                    // Copy all enumerable own properties except excluded ones
+                    let src_borrowed = src_obj.borrow();
+                    for (key, prop) in src_borrowed.properties.iter() {
+                        // Skip non-enumerable properties
+                        if !prop.enumerable() {
+                            continue;
+                        }
+
+                        // Check if this key should be excluded
+                        let should_exclude = match key {
+                            PropertyKey::String(s) => {
+                                excluded.iter().any(|k| k.as_str() == s.as_str())
+                            }
+                            PropertyKey::Symbol(_) | PropertyKey::Index(_) => false,
+                        };
+
+                        if !should_exclude {
+                            result
+                                .borrow_mut()
+                                .set_property(key.clone(), prop.value.clone());
+                        }
+                    }
+                }
+
+                self.set_reg(dst, JsValue::Object(result));
                 Ok(OpResult::Continue)
             }
 

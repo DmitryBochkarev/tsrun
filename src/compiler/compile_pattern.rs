@@ -108,6 +108,36 @@ impl Compiler {
         mutable: bool,
         is_var: bool,
     ) -> Result<(), JsError> {
+        use crate::value::JsString;
+
+        // First pass: collect keys that will be extracted (for rest handling)
+        let mut extracted_keys: Vec<JsString> = Vec::new();
+        let mut has_rest = false;
+
+        for prop in &obj_pat.properties {
+            match prop {
+                ObjectPatternProperty::KeyValue { key, .. } => {
+                    // Collect the key name for rest handling
+                    match key {
+                        ObjectPropertyKey::Identifier(id) => {
+                            extracted_keys.push(id.name.cheap_clone());
+                        }
+                        ObjectPropertyKey::String(s) => {
+                            extracted_keys.push(s.value.cheap_clone());
+                        }
+                        // Computed keys can't be statically known, skip them
+                        // (rest will still work but may include some extra props)
+                        ObjectPropertyKey::Computed(_) | ObjectPropertyKey::Number(_) => {}
+                        ObjectPropertyKey::PrivateIdentifier(_) => {}
+                    }
+                }
+                ObjectPatternProperty::Rest(_) => {
+                    has_rest = true;
+                }
+            }
+        }
+
+        // Second pass: compile bindings
         for prop in &obj_pat.properties {
             match prop {
                 ObjectPatternProperty::KeyValue {
@@ -168,11 +198,29 @@ impl Compiler {
                     self.builder.free_register(prop_value);
                 }
                 ObjectPatternProperty::Rest(rest) => {
-                    // Rest in object destructuring: { ...rest }
-                    // TODO: Create object with remaining properties
-                    // For now, just create an empty object
+                    // Rest in object destructuring: { a, ...rest }
+                    // Create object with remaining properties (excluding extracted keys)
                     let rest_obj = self.builder.alloc_register()?;
-                    self.builder.emit(Op::CreateObject { dst: rest_obj });
+
+                    if has_rest && !extracted_keys.is_empty() {
+                        // Add excluded keys to constant pool
+                        let excluded_idx =
+                            self.builder.add_excluded_keys(extracted_keys.clone())?;
+                        self.builder.emit(Op::CreateObjectRest {
+                            dst: rest_obj,
+                            src: value_reg,
+                            excluded_keys: excluded_idx,
+                        });
+                    } else {
+                        // No keys to exclude, copy all properties
+                        let excluded_idx = self.builder.add_excluded_keys(vec![])?;
+                        self.builder.emit(Op::CreateObjectRest {
+                            dst: rest_obj,
+                            src: value_reg,
+                            excluded_keys: excluded_idx,
+                        });
+                    }
+
                     self.compile_pattern_binding(&rest.argument, rest_obj, mutable, is_var)?;
                     self.builder.free_register(rest_obj);
                 }
@@ -311,6 +359,33 @@ impl Compiler {
         obj_pat: &crate::ast::ObjectPattern,
         value_reg: Register,
     ) -> Result<(), JsError> {
+        use crate::value::JsString;
+
+        // First pass: collect keys that will be extracted (for rest handling)
+        let mut extracted_keys: Vec<JsString> = Vec::new();
+        let mut has_rest = false;
+
+        for prop in &obj_pat.properties {
+            match prop {
+                ObjectPatternProperty::KeyValue { key, .. } => {
+                    match key {
+                        ObjectPropertyKey::Identifier(id) => {
+                            extracted_keys.push(id.name.cheap_clone());
+                        }
+                        ObjectPropertyKey::String(s) => {
+                            extracted_keys.push(s.value.cheap_clone());
+                        }
+                        ObjectPropertyKey::Computed(_) | ObjectPropertyKey::Number(_) => {}
+                        ObjectPropertyKey::PrivateIdentifier(_) => {}
+                    }
+                }
+                ObjectPatternProperty::Rest(_) => {
+                    has_rest = true;
+                }
+            }
+        }
+
+        // Second pass: compile assignments
         for prop in &obj_pat.properties {
             match prop {
                 ObjectPatternProperty::KeyValue {
@@ -370,7 +445,24 @@ impl Compiler {
                 }
                 ObjectPatternProperty::Rest(rest) => {
                     let rest_obj = self.builder.alloc_register()?;
-                    self.builder.emit(Op::CreateObject { dst: rest_obj });
+
+                    if has_rest {
+                        let excluded_idx =
+                            self.builder.add_excluded_keys(extracted_keys.clone())?;
+                        self.builder.emit(Op::CreateObjectRest {
+                            dst: rest_obj,
+                            src: value_reg,
+                            excluded_keys: excluded_idx,
+                        });
+                    } else {
+                        let excluded_idx = self.builder.add_excluded_keys(vec![])?;
+                        self.builder.emit(Op::CreateObjectRest {
+                            dst: rest_obj,
+                            src: value_reg,
+                            excluded_keys: excluded_idx,
+                        });
+                    }
+
                     self.compile_pattern_assignment(&rest.argument, rest_obj)?;
                     self.builder.free_register(rest_obj);
                 }
