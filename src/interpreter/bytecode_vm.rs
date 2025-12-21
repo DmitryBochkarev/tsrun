@@ -3186,6 +3186,221 @@ impl BytecodeVM {
                 Ok(OpResult::Continue)
             }
 
+            Op::DefineAutoAccessor {
+                class,
+                name,
+                init_value,
+                target_dst,
+                is_static,
+            } => {
+                let class_val = self.get_reg(class).clone();
+                let JsValue::Object(class_obj) = class_val else {
+                    return Err(JsError::type_error("Class is not an object"));
+                };
+
+                let accessor_name = self
+                    .get_string_constant(name)
+                    .unwrap_or_else(|| interp.intern(""));
+
+                let init_val = self.get_reg(init_value).clone();
+
+                // Create a unique storage key for this accessor
+                let storage_key =
+                    interp.intern(&format!("__accessor_{}__", accessor_name.as_str()));
+
+                let guard = interp.heap.create_guard();
+                // Guard the init value if it's an object
+                if let JsValue::Object(obj) = &init_val {
+                    guard.guard(obj.cheap_clone());
+                }
+
+                // Create getter function (AccessorGetter)
+                let getter = interp.create_object(&guard);
+                getter.borrow_mut().prototype = Some(interp.function_prototype.cheap_clone());
+                getter.borrow_mut().set_property(
+                    PropertyKey::String(interp.intern("__accessor_storage_key__")),
+                    JsValue::String(storage_key.cheap_clone()),
+                );
+                getter.borrow_mut().set_property(
+                    PropertyKey::String(interp.intern("__accessor_init_value__")),
+                    init_val,
+                );
+                getter.borrow_mut().set_property(
+                    PropertyKey::String(interp.intern("__accessor_kind__")),
+                    JsValue::String(interp.intern("getter")),
+                );
+                getter.borrow_mut().exotic = ExoticObject::Function(JsFunction::AccessorGetter);
+
+                // Create setter function (AccessorSetter)
+                let setter = interp.create_object(&guard);
+                setter.borrow_mut().prototype = Some(interp.function_prototype.cheap_clone());
+                setter.borrow_mut().set_property(
+                    PropertyKey::String(interp.intern("__accessor_storage_key__")),
+                    JsValue::String(storage_key),
+                );
+                setter.borrow_mut().set_property(
+                    PropertyKey::String(interp.intern("__accessor_kind__")),
+                    JsValue::String(interp.intern("setter")),
+                );
+                setter.borrow_mut().exotic = ExoticObject::Function(JsFunction::AccessorSetter);
+
+                // Get target object (class for static, prototype for instance)
+                let target = if is_static {
+                    class_obj.cheap_clone()
+                } else {
+                    let proto_key = PropertyKey::String(interp.intern("prototype"));
+                    if let Some(JsValue::Object(proto)) =
+                        class_obj.borrow().get_property(&proto_key)
+                    {
+                        proto
+                    } else {
+                        return Err(JsError::type_error("Class has no prototype"));
+                    }
+                };
+
+                // Define the accessor property on target
+                let prop_key = PropertyKey::String(accessor_name.cheap_clone());
+                let property =
+                    Property::accessor(Some(getter.cheap_clone()), Some(setter.cheap_clone()));
+                target.borrow_mut().define_property(prop_key, property);
+
+                // Create target object { get, set } for decorators
+                let target_obj = interp.create_object(&guard);
+                target_obj.borrow_mut().set_property(
+                    PropertyKey::String(interp.intern("get")),
+                    JsValue::Object(getter),
+                );
+                target_obj.borrow_mut().set_property(
+                    PropertyKey::String(interp.intern("set")),
+                    JsValue::Object(setter),
+                );
+
+                self.set_reg(target_dst, JsValue::Object(target_obj));
+                Ok(OpResult::Continue)
+            }
+
+            Op::StoreAutoAccessor {
+                class,
+                name,
+                accessor_obj,
+                is_static,
+            } => {
+                let class_val = self.get_reg(class).clone();
+                let JsValue::Object(class_obj) = class_val else {
+                    return Err(JsError::type_error("Class is not an object"));
+                };
+
+                let accessor_name = self
+                    .get_string_constant(name)
+                    .unwrap_or_else(|| interp.intern(""));
+
+                let accessor_val = self.get_reg(accessor_obj).clone();
+
+                // Get target object (class for static, prototype for instance)
+                let target = if is_static {
+                    class_obj.cheap_clone()
+                } else {
+                    let proto_key = PropertyKey::String(interp.intern("prototype"));
+                    if let Some(JsValue::Object(proto)) =
+                        class_obj.borrow().get_property(&proto_key)
+                    {
+                        proto
+                    } else {
+                        return Err(JsError::type_error("Class has no prototype"));
+                    }
+                };
+
+                // Extract getter and setter from the accessor object
+                let (final_getter, final_setter) = if let JsValue::Object(obj) = &accessor_val {
+                    let obj_ref = obj.borrow();
+                    let get_key = interp.intern("get");
+                    let set_key = interp.intern("set");
+
+                    let getter = if let Some(JsValue::Object(g)) =
+                        obj_ref.get_property(&PropertyKey::String(get_key))
+                    {
+                        Some(g.cheap_clone())
+                    } else {
+                        None
+                    };
+
+                    let setter = if let Some(JsValue::Object(s)) =
+                        obj_ref.get_property(&PropertyKey::String(set_key))
+                    {
+                        Some(s.cheap_clone())
+                    } else {
+                        None
+                    };
+
+                    (getter, setter)
+                } else {
+                    (None, None)
+                };
+
+                // Define the accessor property on target
+                let prop_key = PropertyKey::String(accessor_name);
+                let property = Property::accessor(final_getter, final_setter);
+                target.borrow_mut().define_property(prop_key, property);
+
+                Ok(OpResult::Continue)
+            }
+
+            Op::ApplyAutoAccessorDecorator {
+                target,
+                decorator,
+                name,
+                is_static,
+            } => {
+                let decorator_val = self.get_reg(decorator).clone();
+                let target_val = self.get_reg(target).clone();
+                let accessor_name = self.get_string_constant(name);
+
+                // Create decorator context object
+                let guard = interp.heap.create_guard();
+                let ctx = interp.create_object(&guard);
+
+                // Set context.kind = "accessor"
+                ctx.borrow_mut().set_property(
+                    PropertyKey::String(interp.intern("kind")),
+                    JsValue::String(interp.intern("accessor")),
+                );
+
+                // Set context.name
+                if let Some(n) = accessor_name {
+                    ctx.borrow_mut().set_property(
+                        PropertyKey::String(interp.intern("name")),
+                        JsValue::String(n),
+                    );
+                }
+
+                // Set context.static
+                ctx.borrow_mut().set_property(
+                    PropertyKey::String(interp.intern("static")),
+                    JsValue::Boolean(is_static),
+                );
+
+                // Set context.private = false (public auto-accessors)
+                ctx.borrow_mut().set_property(
+                    PropertyKey::String(interp.intern("private")),
+                    JsValue::Boolean(false),
+                );
+
+                // Call decorator(target, context)
+                let result = interp.call_function(
+                    decorator_val,
+                    JsValue::Undefined,
+                    &[target_val.clone(), JsValue::Object(ctx)],
+                )?;
+
+                // If decorator returns an object, use it as new target
+                // Otherwise keep the original target
+                if matches!(&result.value, JsValue::Object(_)) {
+                    self.set_reg(target, result.value);
+                }
+
+                Ok(OpResult::Continue)
+            }
+
             // ═══════════════════════════════════════════════════════════════════════════
             // Spread/Rest
             // ═══════════════════════════════════════════════════════════════════════════

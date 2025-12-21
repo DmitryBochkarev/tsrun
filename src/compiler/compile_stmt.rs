@@ -1229,6 +1229,8 @@ impl Compiler {
         let mut static_methods: Vec<&ClassMethod> = Vec::new();
         let mut instance_fields: Vec<&ClassProperty> = Vec::new();
         let mut static_fields: Vec<&ClassProperty> = Vec::new();
+        let mut instance_auto_accessors: Vec<&ClassProperty> = Vec::new();
+        let mut static_auto_accessors: Vec<&ClassProperty> = Vec::new();
         let mut static_blocks: Vec<&crate::ast::BlockStatement> = Vec::new();
         let mut instance_private_fields: Vec<&ClassProperty> = Vec::new();
         let mut static_private_fields: Vec<&ClassProperty> = Vec::new();
@@ -1279,6 +1281,13 @@ impl Compiler {
                             static_private_fields.push(prop);
                         } else {
                             instance_private_fields.push(prop);
+                        }
+                    } else if prop.accessor {
+                        // Auto-accessor property (accessor keyword)
+                        if prop.static_ {
+                            static_auto_accessors.push(prop);
+                        } else {
+                            instance_auto_accessors.push(prop);
                         }
                     } else {
                         // Regular public field
@@ -1382,6 +1391,16 @@ impl Compiler {
         // Initialize static fields (on the class constructor itself)
         for field in &static_fields {
             self.compile_static_field_initializer(dst, field)?;
+        }
+
+        // Define instance auto-accessors (on prototype)
+        for accessor in &instance_auto_accessors {
+            self.compile_auto_accessor(dst, accessor, false)?;
+        }
+
+        // Define static auto-accessors (on class constructor)
+        for accessor in &static_auto_accessors {
+            self.compile_auto_accessor(dst, accessor, true)?;
         }
 
         // Before running static blocks, bind the class name so code in static blocks
@@ -1773,6 +1792,82 @@ impl Compiler {
         });
 
         self.builder.free_register(init_reg);
+        Ok(())
+    }
+
+    /// Compile an auto-accessor property (accessor keyword)
+    /// Creates getter/setter and applies decorators if any
+    fn compile_auto_accessor(
+        &mut self,
+        class_reg: super::bytecode::Register,
+        accessor: &ClassProperty,
+        is_static: bool,
+    ) -> Result<(), JsError> {
+        // Get accessor name
+        let accessor_name: JsString = match &accessor.key {
+            ObjectPropertyKey::Identifier(id) => id.name.cheap_clone(),
+            ObjectPropertyKey::String(s) => s.value.cheap_clone(),
+            _ => return Ok(()), // Skip computed keys for now
+        };
+
+        let name_idx = self.builder.add_string(accessor_name)?;
+
+        // Compile initial value (or undefined)
+        let init_value_reg = self.builder.alloc_register()?;
+        if let Some(init) = &accessor.value {
+            self.compile_expression(init, init_value_reg)?;
+        } else {
+            self.builder.emit(Op::LoadUndefined {
+                dst: init_value_reg,
+            });
+        }
+
+        // Create target { get, set } object for decorators
+        let target_reg = self.builder.alloc_register()?;
+
+        // Emit DefineAutoAccessor - creates getter/setter and returns { get, set } target
+        self.builder.emit(Op::DefineAutoAccessor {
+            class: class_reg,
+            name: name_idx,
+            init_value: init_value_reg,
+            target_dst: target_reg,
+            is_static,
+        });
+
+        self.builder.free_register(init_value_reg);
+
+        // If there are decorators, apply them
+        if !accessor.decorators.is_empty() {
+            // Evaluate all decorator expressions (top-to-bottom)
+            let mut dec_regs: Vec<super::bytecode::Register> = Vec::new();
+            for decorator in &accessor.decorators {
+                let dec_reg = self.builder.alloc_register()?;
+                self.compile_expression(&decorator.expression, dec_reg)?;
+                dec_regs.push(dec_reg);
+            }
+
+            // Apply decorators (bottom-to-top)
+            // Each decorator receives target and returns potentially modified { get, set }
+            for dec_reg in dec_regs.into_iter().rev() {
+                self.builder.emit(Op::ApplyAutoAccessorDecorator {
+                    target: target_reg,
+                    decorator: dec_reg,
+                    name: name_idx,
+                    is_static,
+                });
+                self.builder.free_register(dec_reg);
+            }
+
+            // Store the final decorated accessor
+            self.builder.emit(Op::StoreAutoAccessor {
+                class: class_reg,
+                name: name_idx,
+                accessor_obj: target_reg,
+                is_static,
+            });
+        }
+
+        self.builder.free_register(target_reg);
         Ok(())
     }
 

@@ -3,8 +3,8 @@
 This document analyzes test failures in the bytecode VM and categorizes them by feature area with implementation guidance.
 
 **Total Tests:** 1792
-**Passing:** 1770
-**Failing:** 15
+**Passing:** 1780
+**Failing:** 5
 **Ignored:** 7
 
 ---
@@ -52,6 +52,7 @@ The following issues have been fixed:
 - ✅ **Decorator addInitializer** - `context.addInitializer(callback)` now works for class decorators
 - ✅ **Auto-accessor decorator context.kind** - Auto-accessor decorators now receive `context.kind = "accessor"` instead of `"field"`
 - ✅ **Module System (Import/Export)** - ES Modules now work in bytecode VM with import/export declarations compiled to bytecode
+- ✅ **Auto-accessor decorator full support** - Auto-accessor decorators now receive `{ get, set }` object as first argument and can return modified `{ get, set }` to replace accessor methods
 
 ---
 
@@ -190,6 +191,7 @@ The bytecode VM delegates to proxy_* functions for all property operations. Key 
 - ✅ Multiple decorators - evaluated top-to-bottom, applied bottom-to-top
 - ✅ Decorator context object - `kind`, `name`, `static`, `private` properties
 - ✅ `addInitializer` support - `context.addInitializer(callback)` now works for class decorators
+- ✅ Auto-accessor decorators - decorators receive `{ get, set }` target and can return modified `{ get, set }`
 
 **Implementation Details:**
 - Added `ApplyMethodDecorator` opcode to handle method/getter/setter decorators
@@ -198,10 +200,10 @@ The bytecode VM delegates to proxy_* functions for all property operations. Key 
 - Constructor uses `new.target` to retrieve stored initializers during field initialization
 - Method decorators pass context with `kind: "method"|"getter"|"setter"`, `name`, `static`, `private`
 - `addInitializer` callbacks are collected in an array during decorator application and executed after all class decorators are applied via `RunClassInitializers` opcode
+- Auto-accessors use `DefineAutoAccessor`, `ApplyAutoAccessorDecorator`, and `StoreAutoAccessor` opcodes to create getter/setter, apply decorators with `{ get, set }` target, and store the final accessor property
 
-**Still Missing (~15 tests):**
-- ❌ Parameter decorators (~4 tests) - decorators on function/constructor parameters
-- ❌ Auto-accessor decorator full support (~11 tests) - auto-accessor decorators should receive `{ get, set }` object as first argument instead of `undefined`, and return `{ get, set }` to replace the accessor methods
+**Still Missing (~5 tests):**
+- ❌ Parameter decorators (~5 tests) - decorators on function/constructor parameters
 
 ---
 

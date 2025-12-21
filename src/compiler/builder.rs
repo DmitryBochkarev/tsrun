@@ -379,6 +379,9 @@ impl BytecodeBuilder {
                 | Op::StoreFieldInitializer { .. }
                 | Op::GetFieldInitializer { .. }
                 | Op::ApplyFieldInitializer { .. }
+                | Op::DefineAutoAccessor { .. }
+                | Op::StoreAutoAccessor { .. }
+                | Op::ApplyAutoAccessorDecorator { .. }
                 | Op::SpreadArray { .. }
                 | Op::CreateRestArray { .. }
                 | Op::CreateObjectRest { .. }

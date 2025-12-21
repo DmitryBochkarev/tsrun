@@ -630,6 +630,35 @@ pub enum Op {
         initializer: Register,
     },
 
+    /// Define auto-accessor property: creates getter/setter and defines them on prototype
+    /// r[target_dst] = { get, set } object for decorator use (or undefined if no decorators)
+    /// The accessor is defined on the class prototype (or class itself if is_static)
+    DefineAutoAccessor {
+        class: Register,
+        name: ConstantIndex,
+        init_value: Register, // Initial value register
+        target_dst: Register, // Destination for { get, set } target object
+        is_static: bool,
+    },
+
+    /// Store auto-accessor (decorated getter/setter) on class
+    /// Takes the decorated { get, set } object and defines the accessor property
+    StoreAutoAccessor {
+        class: Register,
+        name: ConstantIndex,
+        accessor_obj: Register, // Object with { get, set } properties
+        is_static: bool,
+    },
+
+    /// Apply auto-accessor decorator: r[target] = decorator(r[target], context)
+    /// context contains { kind: "accessor", name, static }
+    ApplyAutoAccessorDecorator {
+        target: Register, // { get, set } object, mutated in place
+        decorator: Register,
+        name: ConstantIndex,
+        is_static: bool,
+    },
+
     // ═══════════════════════════════════════════════════════════════════════════════
     // Spread/Rest
     // ═══════════════════════════════════════════════════════════════════════════════
