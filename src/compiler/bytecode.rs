@@ -896,6 +896,10 @@ pub struct FunctionInfo {
 
     /// Rest parameter index (if any)
     pub rest_param: Option<usize>,
+
+    /// Expected number of bindings in the function's environment
+    /// Used to pre-size the HashMap to avoid resizing during execution
+    pub binding_count: usize,
 }
 
 impl BytecodeChunk {
@@ -954,6 +958,7 @@ impl FunctionInfo {
             uses_this: false,
             param_names: Vec::new(),
             rest_param: None,
+            binding_count: 0,
         }
     }
 
@@ -969,6 +974,7 @@ impl FunctionInfo {
             uses_this: false,
             param_names: Vec::new(),
             rest_param: None,
+            binding_count: 0,
         }
     }
 
@@ -984,6 +990,7 @@ impl FunctionInfo {
             uses_this: false,
             param_names: Vec::new(),
             rest_param: None,
+            binding_count: 0,
         }
     }
 
@@ -999,6 +1006,7 @@ impl FunctionInfo {
             uses_this: false,
             param_names: Vec::new(),
             rest_param: None,
+            binding_count: 0,
         }
     }
 }

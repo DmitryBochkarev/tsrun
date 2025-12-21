@@ -213,6 +213,7 @@ C. **Caller-save registers:** Only save registers that are live across the call.
 |-------------|--------|--------|----------|--------|
 | Register pool | 5-7% | Medium | **P1** | ✅ Done |
 | Keyword length dispatch | 5-8% | Low | **P1** | ✅ Done (+58-77% lexer) |
+| Env HashMap pre-sizing | 2-4% | Low | **P1** | ✅ Done |
 | `#[inline]` on hot paths | 1-2% | Low | Quick Win | ✅ Done |
 | FxHashMap for envs | N/A | N/A | Quick Win | ✅ Already done |
 | set_reg lazy guarding | 3-5% | Medium | **P2** | Postponed (complex GC interactions) |
@@ -354,34 +355,38 @@ Note: Total allocations increased from baseline due to additional GC and environ
 
 ### Memory Optimization Proposals
 
-#### M1: Environment Binding Pool (High Impact)
+#### M1: Environment Binding Pre-sizing ✅ PARTIALLY DONE
 
-**Problem:** Every function call creates a new `FxHashMap` for bindings (~469 MB for fib(30)).
+**Problem:** Every function call creates a new `FxHashMap` for bindings that resizes as variables are added (~469 MB for fib(30)).
 
-**Proposed solution:** Use a slab allocator or object pool for environment objects.
+**Solution implemented:** Pre-size HashMap based on function metadata:
+- Added `binding_count` field to `FunctionInfo` struct
+- Added `EnvironmentData::with_outer_and_capacity()` constructor
+- Added `create_environment_unrooted_with_capacity()` function
+- VM calculates capacity from `binding_count` or estimates from `param_count + 4`
 
 ```rust
-struct EnvironmentPool {
-    free_list: Vec<Gc<JsObject>>,
-}
-
-impl EnvironmentPool {
-    fn acquire(&mut self, guard: &Guard<JsObject>) -> Gc<JsObject> {
-        if let Some(env) = self.free_list.pop() {
-            // Clear and reuse
-            env.borrow_mut().clear_bindings();
-            return env;
+// Calculate environment capacity based on function info
+let env_capacity = func_info
+    .map(|info| {
+        if info.binding_count > 0 {
+            info.binding_count
+        } else {
+            info.param_count + 4  // Estimate: params + this + arguments + locals
         }
-        guard.alloc()  // Allocate new if pool empty
-    }
+    })
+    .unwrap_or(8);
 
-    fn release(&mut self, env: Gc<JsObject>) {
-        self.free_list.push(env);
-    }
-}
+let (func_env, func_guard) = create_environment_unrooted_with_capacity(
+    &interp.heap,
+    Some(bc_func.closure.cheap_clone()),
+    env_capacity,
+);
 ```
 
-**Expected impact:** 30-40% reduction in allocations for function-heavy code.
+**Expected impact:** Reduces HashMap resizing allocations. Full environment pooling deferred due to complexity.
+
+**Future work:** Count actual bindings during compilation and set `binding_count` accurately.
 
 ---
 

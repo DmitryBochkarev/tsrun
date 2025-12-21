@@ -1156,6 +1156,7 @@ impl Compiler {
             uses_this: !is_arrow,
             param_names,
             rest_param,
+            binding_count: 0, // TODO: count during compilation
         });
 
         // Make sure we have enough registers for parameters
@@ -2079,6 +2080,7 @@ impl Compiler {
             is_arrow: false,
             uses_arguments: false,
             uses_this: true, // constructors use this
+            binding_count: 0,
         });
 
         Ok(chunk)
@@ -2131,6 +2133,7 @@ impl Compiler {
             is_arrow: false,
             uses_arguments: false,
             uses_this: true, // constructors use this
+            binding_count: 0,
         });
 
         Ok(chunk)

@@ -24,10 +24,11 @@ use crate::lexer::Span;
 use crate::parser::Parser;
 use crate::string_dict::StringDict;
 use crate::value::{
-    create_environment_unrooted, number_to_string, Binding, BytecodeFunction, CheapClone, EnumData,
-    EnvRef, EnvironmentData, ExoticObject, FunctionBody, GeneratorStatus, Guarded, ImportBinding,
-    InterpretedFunction, JsFunction, JsObject, JsString, JsSymbol, JsValue, ModuleExport, NativeFn,
-    NativeFunction, PromiseStatus, Property, PropertyKey, VarKey,
+    create_environment_unrooted, create_environment_unrooted_with_capacity, number_to_string,
+    Binding, BytecodeFunction, CheapClone, EnumData, EnvRef, EnvironmentData, ExoticObject,
+    FunctionBody, GeneratorStatus, Guarded, ImportBinding, InterpretedFunction, JsFunction,
+    JsObject, JsString, JsSymbol, JsValue, ModuleExport, NativeFn, NativeFunction, PromiseStatus,
+    Property, PropertyKey, VarKey,
 };
 use rustc_hash::FxHashMap;
 use std::rc::Rc;

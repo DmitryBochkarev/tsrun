@@ -2546,6 +2546,7 @@ impl Compiler {
             uses_this: false,
             param_names,
             rest_param,
+            binding_count: 0, // TODO: count during compilation
         });
 
         Ok(chunk)

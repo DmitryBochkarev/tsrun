@@ -2263,6 +2263,15 @@ impl EnvironmentData {
             outer,
         }
     }
+
+    /// Create a new environment with the given outer environment and pre-allocated capacity
+    /// for bindings. This reduces HashMap resizing during function execution.
+    pub fn with_outer_and_capacity(outer: Option<JsObjectRef>, capacity: usize) -> Self {
+        Self {
+            bindings: FxHashMap::with_capacity_and_hasher(capacity, Default::default()),
+            outer,
+        }
+    }
 }
 
 impl Default for EnvironmentData {
@@ -2878,6 +2887,29 @@ pub fn create_environment_unrooted(
         let mut env_ref = env.borrow_mut();
         env_ref.null_prototype = true;
         env_ref.exotic = ExoticObject::Environment(EnvironmentData::with_outer(outer));
+    }
+    (env, guard)
+}
+
+/// Create a new environment object with pre-allocated capacity for bindings.
+///
+/// Like `create_environment_unrooted`, but pre-sizes the bindings HashMap to avoid
+/// resizing during function execution. Use when the number of bindings is known
+/// (e.g., from FunctionInfo::binding_count).
+///
+/// Returns (environment, guard) - caller must keep guard alive until env is owned elsewhere.
+pub fn create_environment_unrooted_with_capacity(
+    heap: &Heap<JsObject>,
+    outer: Option<EnvRef>,
+    capacity: usize,
+) -> (EnvRef, Guard<JsObject>) {
+    let guard = heap.create_guard();
+    let env = guard.alloc();
+    {
+        let mut env_ref = env.borrow_mut();
+        env_ref.null_prototype = true;
+        env_ref.exotic =
+            ExoticObject::Environment(EnvironmentData::with_outer_and_capacity(outer, capacity));
     }
     (env, guard)
 }

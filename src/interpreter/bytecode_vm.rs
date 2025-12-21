@@ -980,7 +980,7 @@ impl BytecodeVM {
         new_target: JsValue,
         is_async: bool,
     ) -> Result<(), JsError> {
-        use crate::interpreter::{create_environment_unrooted, Binding, VarKey};
+        use crate::interpreter::{create_environment_unrooted_with_capacity, Binding, VarKey};
 
         // Get function info from the chunk
         let func_info = bc_func.chunk.function_info.as_ref();
@@ -996,9 +996,25 @@ impl BytecodeVM {
             location: None,
         });
 
+        // Calculate environment capacity: params + this + potential arguments + some slack
+        // Use binding_count if available, otherwise estimate from param_count
+        let env_capacity = func_info
+            .map(|info| {
+                if info.binding_count > 0 {
+                    info.binding_count
+                } else {
+                    // Estimate: params + this + arguments + a few locals
+                    info.param_count + 4
+                }
+            })
+            .unwrap_or(8);
+
         // Create new environment for the function, with closure as parent
-        let (func_env, func_guard) =
-            create_environment_unrooted(&interp.heap, Some(bc_func.closure.cheap_clone()));
+        let (func_env, func_guard) = create_environment_unrooted_with_capacity(
+            &interp.heap,
+            Some(bc_func.closure.cheap_clone()),
+            env_capacity,
+        );
 
         // Bind `this` in the function environment
         let effective_this = if let Some(captured) = bc_func.captured_this {
@@ -1149,7 +1165,7 @@ impl BytecodeVM {
         new_target: JsValue,
         construct_new_obj: Gc<JsObject>,
     ) -> Result<(), JsError> {
-        use crate::interpreter::{create_environment_unrooted, Binding, VarKey};
+        use crate::interpreter::{create_environment_unrooted_with_capacity, Binding, VarKey};
 
         // Get function info from the chunk
         let func_info = bc_func.chunk.function_info.as_ref();
@@ -1165,9 +1181,25 @@ impl BytecodeVM {
             location: None,
         });
 
+        // Calculate environment capacity: params + this + potential arguments + some slack
+        // Use binding_count if available, otherwise estimate from param_count
+        let env_capacity = func_info
+            .map(|info| {
+                if info.binding_count > 0 {
+                    info.binding_count
+                } else {
+                    // Estimate: params + this + arguments + a few locals
+                    info.param_count + 4
+                }
+            })
+            .unwrap_or(8);
+
         // Create new environment for the function, with closure as parent
-        let (func_env, func_guard) =
-            create_environment_unrooted(&interp.heap, Some(bc_func.closure.cheap_clone()));
+        let (func_env, func_guard) = create_environment_unrooted_with_capacity(
+            &interp.heap,
+            Some(bc_func.closure.cheap_clone()),
+            env_capacity,
+        );
 
         // Bind `this` in the function environment
         let effective_this = if let Some(captured) = bc_func.captured_this {
