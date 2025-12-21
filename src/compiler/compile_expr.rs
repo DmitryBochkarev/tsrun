@@ -2350,19 +2350,12 @@ impl Compiler {
         &mut self,
         class: &crate::ast::ClassExpression,
         dst: Register,
-        name: Option<JsString>,
+        inferred_name: Option<JsString>,
     ) -> Result<(), JsError> {
-        // Use inferred name if class has no explicit id
-        let class_id = class.id.clone().or_else(|| {
-            name.map(|n| crate::ast::Identifier {
-                name: n,
-                span: class.span,
-            })
-        });
-
         // Convert ClassExpression to ClassDeclaration to reuse compile_class_body
+        // Keep the explicit id (if any) - don't merge with inferred name
         let class_decl = crate::ast::ClassDeclaration {
-            id: class_id,
+            id: class.id.clone(),
             type_parameters: class.type_parameters.clone(),
             super_class: class.super_class.clone(),
             implements: class.implements.clone(),
@@ -2372,8 +2365,16 @@ impl Compiler {
             span: class.span,
         };
 
+        // For anonymous class expressions, pass the inferred name for .name property
+        // but don't create an inner scope binding (that's handled by var/let/const)
+        let name_for_property = if class.id.is_none() {
+            inferred_name
+        } else {
+            None // Explicit name will be used from class.id
+        };
+
         // Compile the class body into the destination register
-        self.compile_class_body(&class_decl, dst)?;
+        self.compile_class_body_with_name(&class_decl, dst, name_for_property)?;
 
         Ok(())
     }

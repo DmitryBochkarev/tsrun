@@ -2,9 +2,9 @@
 
 This document analyzes test failures in the bytecode VM and categorizes them by feature area with implementation guidance.
 
-**Total Tests:** 1783
-**Passing:** 1608
-**Failing:** 168
+**Total Tests:** 1784
+**Passing:** 1614
+**Failing:** 163
 **Ignored:** 7
 
 ---
@@ -34,6 +34,7 @@ The following issues have been fixed:
 - ✅ **Function name inference** - `const myFunc = function() {}` now correctly sets `myFunc.name` to "myFunc"
 - ✅ **Super computed property access** - `super[name]()` now works correctly
 - ✅ **Super property assignment** - `super.x = value` and `super[key] = value` now work correctly
+- ✅ **Class expression with var** - `var C = class {}` now works correctly (fixed inner binding scope)
 
 ---
 

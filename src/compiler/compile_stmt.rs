@@ -1169,13 +1169,32 @@ impl Compiler {
     }
 
     /// Compile class body - shared by class declarations and expressions
+    ///
+    /// `inferred_name`: Optional inferred name for anonymous class expressions.
+    /// This is used only for the `.name` property, NOT for creating a scope binding.
     pub fn compile_class_body(
         &mut self,
         class: &ClassDeclaration,
         dst: super::bytecode::Register,
     ) -> Result<(), JsError> {
-        // Get class name for constructor
-        let class_name = class.id.as_ref().map(|id| id.name.cheap_clone());
+        self.compile_class_body_with_name(class, dst, None)
+    }
+
+    /// Compile class body with optional inferred name (for anonymous class expressions)
+    pub fn compile_class_body_with_name(
+        &mut self,
+        class: &ClassDeclaration,
+        dst: super::bytecode::Register,
+        inferred_name: Option<JsString>,
+    ) -> Result<(), JsError> {
+        // Get class name for constructor - prefer explicit id, fallback to inferred name
+        let class_name = class
+            .id
+            .as_ref()
+            .map(|id| id.name.cheap_clone())
+            .or(inferred_name);
+        // Only create inner binding if class has explicit id (not inferred name)
+        let has_explicit_name = class.id.is_some();
 
         // Collect class members
         let mut constructor: Option<&ClassConstructor> = None;
@@ -1261,13 +1280,18 @@ impl Compiler {
 
         // Before running static blocks, bind the class name so code in static blocks
         // can reference the class by name (e.g., `Config.value = 42`)
-        if let Some(ref name) = class_name {
-            let name_idx = self.builder.add_string(name.cheap_clone())?;
-            self.builder.emit(Op::DeclareVar {
-                name: name_idx,
-                init: dst,
-                mutable: false,
-            });
+        // Only create inner binding for explicit class names, not inferred names.
+        // For `var C = class {}`, the binding is handled by the var declaration.
+        // For `class C {}` or `var x = class C {}`, C needs an inner immutable binding.
+        if has_explicit_name {
+            if let Some(ref name) = class_name {
+                let name_idx = self.builder.add_string(name.cheap_clone())?;
+                self.builder.emit(Op::DeclareVar {
+                    name: name_idx,
+                    init: dst,
+                    mutable: false,
+                });
+            }
         }
 
         // Execute static blocks with `this` bound to the class constructor
