@@ -81,11 +81,21 @@ impl Compiler {
             Statement::NamespaceDeclaration(decl) => self.compile_namespace_declaration(decl),
 
             // Module declarations
-            Statement::Import(_) | Statement::Export(_) => {
+            Statement::Import(_) => {
                 // TODO: Implement module compilation
                 Err(JsError::syntax_error_simple(
-                    "Module imports/exports not yet supported in bytecode compiler",
+                    "Module imports not yet supported in bytecode compiler",
                 ))
+            }
+
+            // Export declaration - compile the inner declaration if any
+            // (exports are only meaningful in module context, but we support
+            // them within namespaces)
+            Statement::Export(export) => {
+                if let Some(ref decl) = export.declaration {
+                    self.compile_statement_impl(decl)?;
+                }
+                Ok(())
             }
         }
     }
