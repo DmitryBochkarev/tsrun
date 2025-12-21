@@ -3,8 +3,8 @@
 This document analyzes test failures in the bytecode VM and categorizes them by feature area with implementation guidance.
 
 **Total Tests:** 1787
-**Passing:** 1564
-**Failing:** 216
+**Passing:** 1597
+**Failing:** 183
 **Ignored:** 7
 
 ---
@@ -25,6 +25,7 @@ The following issues have been fixed:
 - ✅ **Function constructor rest params** - Fixed rest parameter handling for functions created via `new Function('...args', 'body')`
 - ✅ **BigInt literals** - BigInt literals now compile to Number values (simplified implementation)
 - ✅ **new eval() TypeError** - `new eval()` now throws TypeError as required by ECMAScript spec
+- ✅ **Proxy get/set traps** - Proxy get and set traps now work in bytecode VM (delegates to proxy_get/proxy_set)
 
 ---
 
@@ -200,80 +201,31 @@ Private methods are similar but stored as non-configurable, non-writable propert
 
 ## 4. Proxy Handler Traps
 
-**Affected Tests (~40 tests):**
-- `proxy::test_proxy_get_trap*`
-- `proxy::test_proxy_set_trap*`
-- `proxy::test_proxy_has_trap*`
-- `proxy::test_proxy_delete_property_trap`
-- `proxy::test_proxy_construct_trap*`
-- `proxy::test_proxy_revocable*`
-- `proxy::test_nested_proxies`
-- `proxy::test_reflect_*` (several)
-- `function::test_proxied_function_*`
+**Status: Partially Fixed**
 
-**Error Patterns:**
-- Get trap not being invoked
-- Receiver not passed correctly to traps
-- Nested proxy chains not working
-- Revocable proxies not revoking
+Most proxy traps now work (67/73 tests passing). The following are fixed:
+- ✅ Get trap - now invoked via `proxy_get`
+- ✅ Set trap - now invoked via `proxy_set`
+- ✅ Revocable proxies
+- ✅ Nested proxies
+- ✅ Most Reflect methods
 
-**Current State:**
-Basic proxy creation works, but trap invocation is incomplete.
+**Remaining Issues (~6 tests):**
+- `proxy::test_proxy_has_trap` - `in` operator not checking proxy has trap
+- `proxy::test_proxy_delete_property_trap` - `delete` not checking proxy deleteProperty trap
+- `proxy::test_proxy_construct_trap*` - `new` not checking proxy construct trap
+- `proxy::test_proxy_array_for_of` - Iterator on proxy not working
+- `proxy::test_proxy_for_in` - for-in on proxy not working
 
-**Implementation Strategy:**
+**Implementation Notes:**
+The bytecode VM now delegates to `proxy_get` and `proxy_set` from `get_property_value` and `set_property_value`. Similar delegation is needed for:
+- `Op::In` → `proxy_has`
+- `Op::DeleteProperty` → `proxy_delete_property`
+- `Op::Construct` → `proxy_construct`
+- `Op::GetIterator` → proxy iteration
 
-### Step 1: Fix Get Trap Invocation
-The VM's property access needs to check for proxy:
-```rust
-fn get_property(&mut self, obj: JsValue, key: PropertyKey) -> Result<JsValue> {
-    if let Some(proxy) = obj.as_proxy() {
-        if let Some(get_trap) = proxy.handler.get("get") {
-            // Call trap with (target, property, receiver)
-            return self.call_function(get_trap, proxy.handler, vec![
-                proxy.target.into(),
-                key.to_value(),
-                obj.into(), // receiver
-            ]);
-        }
-    }
-    // Fall through to normal property access
-}
-```
-
-### Step 2: Fix Set Trap
-Similar pattern for [[Set]]:
-```rust
-fn set_property(&mut self, obj: JsValue, key: PropertyKey, value: JsValue) -> Result<bool> {
-    if let Some(proxy) = obj.as_proxy() {
-        if let Some(set_trap) = proxy.handler.get("set") {
-            let result = self.call_function(set_trap, proxy.handler, vec![
-                proxy.target.into(),
-                key.to_value(),
-                value,
-                obj.into(), // receiver
-            ])?;
-            return Ok(result.to_boolean());
-        }
-    }
-    // Normal set
-}
-```
-
-### Step 3: Revocable Proxies
-Need to track revocation state:
-```rust
-struct ProxyData {
-    target: Option<Gc<JsObject>>, // None if revoked
-    handler: Option<Gc<JsObject>>, // None if revoked
-    revoked: bool,
-}
-```
-
-### Step 4: Invariant Checking
-Some traps have invariants that must be enforced (e.g., get trap for non-configurable property).
-
-**Complexity:** Medium-High
-**Estimated Effort:** 2 days
+**Complexity:** Low-Medium (similar pattern to get/set)
+**Estimated Effort:** 1 day
 
 ---
 

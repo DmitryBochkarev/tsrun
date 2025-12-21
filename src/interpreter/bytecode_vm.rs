@@ -2727,6 +2727,18 @@ impl BytecodeVM {
     ) -> Result<JsValue, JsError> {
         match obj {
             JsValue::Object(obj_ref) => {
+                // Check if this is a proxy - delegate to proxy_get if so
+                if matches!(obj_ref.borrow().exotic, ExoticObject::Proxy(_)) {
+                    let prop_key = PropertyKey::from_value(key);
+                    let result = crate::interpreter::builtins::proxy::proxy_get(
+                        interp,
+                        obj_ref.cheap_clone(),
+                        prop_key,
+                        obj.clone(),
+                    )?;
+                    return Ok(result.value);
+                }
+
                 // Handle __proto__ special property - return prototype
                 if let JsValue::String(k) = key {
                     if k.as_str() == "__proto__" {
@@ -2830,6 +2842,19 @@ impl BytecodeVM {
     ) -> Result<(), JsError> {
         match obj {
             JsValue::Object(obj_ref) => {
+                // Check if this is a proxy - delegate to proxy_set if so
+                if matches!(obj_ref.borrow().exotic, ExoticObject::Proxy(_)) {
+                    let prop_key = PropertyKey::from_value(key);
+                    crate::interpreter::builtins::proxy::proxy_set(
+                        interp,
+                        obj_ref.cheap_clone(),
+                        prop_key,
+                        value,
+                        obj.clone(),
+                    )?;
+                    return Ok(());
+                }
+
                 // Handle __proto__ special property - set prototype
                 if let JsValue::String(k) = key {
                     if k.as_str() == "__proto__" {
