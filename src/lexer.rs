@@ -879,9 +879,57 @@ impl<'a> Lexer<'a> {
                         Some((_, 'n')) => value.push('\n'),
                         Some((_, 'r')) => value.push('\r'),
                         Some((_, 't')) => value.push('\t'),
+                        Some((_, 'b')) => value.push('\x08'), // backspace
+                        Some((_, 'f')) => value.push('\x0C'), // form feed
+                        Some((_, 'v')) => value.push('\x0B'), // vertical tab
                         Some((_, '\\')) => value.push('\\'),
                         Some((_, '`')) => value.push('`'),
                         Some((_, '$')) => value.push('$'),
+                        Some((_, '0')) => {
+                            // \0 is null character (only if not followed by another digit)
+                            if !matches!(self.peek(), Some('0'..='9')) {
+                                value.push('\0');
+                            } else {
+                                // Octal escapes not allowed in template literals, treat as literal
+                                value.push('0');
+                            }
+                        }
+                        Some((_, 'x')) => {
+                            // Hex escape \xNN
+                            if let Some(hex) = self.scan_hex_escape(2) {
+                                if let Some(ch) = char::from_u32(hex) {
+                                    value.push(ch);
+                                }
+                            }
+                        }
+                        Some((_, 'u')) => {
+                            // Unicode escape \uNNNN or \u{N...}
+                            if self.peek() == Some('{') {
+                                self.advance();
+                                let mut hex_str = String::new();
+                                while let Some(ch) = self.peek() {
+                                    if ch == '}' {
+                                        self.advance();
+                                        break;
+                                    }
+                                    if ch.is_ascii_hexdigit() {
+                                        hex_str.push(ch);
+                                        self.advance();
+                                    } else {
+                                        break;
+                                    }
+                                }
+                                if let Ok(code) = u32::from_str_radix(&hex_str, 16) {
+                                    if let Some(ch) = char::from_u32(code) {
+                                        value.push(ch);
+                                    }
+                                }
+                            } else if let Some(hex) = self.scan_hex_escape(4) {
+                                if let Some(ch) = char::from_u32(hex) {
+                                    value.push(ch);
+                                }
+                            }
+                        }
                         Some((_, c)) => value.push(c),
                         None => break,
                     }
@@ -912,9 +960,56 @@ impl<'a> Lexer<'a> {
                     Some((_, 'n')) => value.push('\n'),
                     Some((_, 'r')) => value.push('\r'),
                     Some((_, 't')) => value.push('\t'),
+                    Some((_, 'b')) => value.push('\x08'), // backspace
+                    Some((_, 'f')) => value.push('\x0C'), // form feed
+                    Some((_, 'v')) => value.push('\x0B'), // vertical tab
                     Some((_, '\\')) => value.push('\\'),
                     Some((_, '`')) => value.push('`'),
                     Some((_, '$')) => value.push('$'),
+                    Some((_, '0')) => {
+                        // \0 is null character (only if not followed by another digit)
+                        if !matches!(self.peek(), Some('0'..='9')) {
+                            value.push('\0');
+                        } else {
+                            value.push('0');
+                        }
+                    }
+                    Some((_, 'x')) => {
+                        // Hex escape \xNN
+                        if let Some(hex) = self.scan_hex_escape(2) {
+                            if let Some(ch) = char::from_u32(hex) {
+                                value.push(ch);
+                            }
+                        }
+                    }
+                    Some((_, 'u')) => {
+                        // Unicode escape \uNNNN or \u{N...}
+                        if self.peek() == Some('{') {
+                            self.advance();
+                            let mut hex_str = String::new();
+                            while let Some(ch) = self.peek() {
+                                if ch == '}' {
+                                    self.advance();
+                                    break;
+                                }
+                                if ch.is_ascii_hexdigit() {
+                                    hex_str.push(ch);
+                                    self.advance();
+                                } else {
+                                    break;
+                                }
+                            }
+                            if let Ok(code) = u32::from_str_radix(&hex_str, 16) {
+                                if let Some(ch) = char::from_u32(code) {
+                                    value.push(ch);
+                                }
+                            }
+                        } else if let Some(hex) = self.scan_hex_escape(4) {
+                            if let Some(ch) = char::from_u32(hex) {
+                                value.push(ch);
+                            }
+                        }
+                    }
                     Some((_, c)) => value.push(c),
                     None => break,
                 },

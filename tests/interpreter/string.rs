@@ -1098,3 +1098,29 @@ fn test_charat_valueof_coercion() {
         JsValue::String(JsString::from("e"))
     );
 }
+
+#[test]
+fn test_null_character_escape_in_string() {
+    // \0 should produce the null character (U+0000)
+    assert_eq!(eval(r#""\0".charCodeAt(0)"#), JsValue::Number(0.0));
+}
+
+#[test]
+fn test_null_character_escape_in_template() {
+    // \0 in template literal should produce the null character (U+0000)
+    assert_eq!(eval(r#"`\0`.charCodeAt(0)"#), JsValue::Number(0.0));
+}
+
+#[test]
+fn test_unicode_escape_in_template() {
+    // \uXXXX in template literal should produce the Unicode character
+    assert_eq!(eval(r#"`\u0062`"#), JsValue::String(JsString::from("b")));
+    // \u{X...} brace notation
+    assert_eq!(eval(r#"`\u{62}`"#), JsValue::String(JsString::from("b")));
+}
+
+#[test]
+fn test_hex_escape_in_template() {
+    // \xNN in template literal should produce the character
+    assert_eq!(eval(r#"`\x62`"#), JsValue::String(JsString::from("b")));
+}
