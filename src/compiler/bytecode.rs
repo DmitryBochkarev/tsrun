@@ -570,10 +570,18 @@ pub enum Op {
 
     /// Apply class decorator: r[class] = decorator(r[class], context)
     /// The class_name constant is optional (ConstantIndex::MAX means no name)
+    /// The initializers register holds an array that addInitializer() pushes callbacks to
     ApplyClassDecorator {
         class: Register,
         decorator: Register,
         class_name: ConstantIndex,
+        initializers: Register,
+    },
+
+    /// Run class decorator initializers: calls each function in r[initializers] with r[class] as `this`
+    RunClassInitializers {
+        class: Register,
+        initializers: Register,
     },
 
     /// Apply method decorator: r[method] = decorator(r[method], context)

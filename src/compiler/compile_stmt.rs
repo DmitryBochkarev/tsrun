@@ -1443,14 +1443,30 @@ impl Compiler {
                 super::bytecode::ConstantIndex::MAX
             };
 
+            // Create an empty array to collect initializers from addInitializer calls
+            let initializers_reg = self.builder.alloc_register()?;
+            self.builder.emit(Op::CreateArray {
+                dst: initializers_reg,
+                start: 0, // Unused when count is 0
+                count: 0,
+            });
+
             for dec_reg in decorator_regs.into_iter().rev() {
                 self.builder.emit(Op::ApplyClassDecorator {
                     class: dst,
                     decorator: dec_reg,
                     class_name: class_name_idx,
+                    initializers: initializers_reg,
                 });
                 self.builder.free_register(dec_reg);
             }
+
+            // Run all collected initializers with `this` bound to the class
+            self.builder.emit(Op::RunClassInitializers {
+                class: dst,
+                initializers: initializers_reg,
+            });
+            self.builder.free_register(initializers_reg);
 
             // Update the class name binding with the final decorated class
             // (decorators may have replaced the class)

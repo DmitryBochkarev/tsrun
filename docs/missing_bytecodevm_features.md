@@ -3,8 +3,8 @@
 This document analyzes test failures in the bytecode VM and categorizes them by feature area with implementation guidance.
 
 **Total Tests:** 1792
-**Passing:** 1715
-**Failing:** 70
+**Passing:** 1716
+**Failing:** 69
 **Ignored:** 7
 
 ---
@@ -49,6 +49,7 @@ The following issues have been fixed:
 - ✅ **Private field decorators** - Decorators on `#field` now work correctly (initializer transformation)
 - ✅ **Computed class method names** - `get [key]() {}` and `set [key]() {}` now work correctly
 - ✅ **Parenthesized method calls** - `(a.b)?.()` and `(a?.b)()` now preserve `this` binding correctly
+- ✅ **Decorator addInitializer** - `context.addInitializer(callback)` now works for class decorators
 
 ---
 
@@ -211,6 +212,7 @@ The bytecode VM delegates to proxy_* functions for all property operations. Key 
 - ✅ Decorator factories - `@factory(args)` works
 - ✅ Multiple decorators - evaluated top-to-bottom, applied bottom-to-top
 - ✅ Decorator context object - `kind`, `name`, `static`, `private` properties
+- ✅ `addInitializer` support - `context.addInitializer(callback)` now works for class decorators
 
 **Implementation Details:**
 - Added `ApplyMethodDecorator` opcode to handle method/getter/setter decorators
@@ -218,9 +220,9 @@ The bytecode VM delegates to proxy_* functions for all property operations. Key 
 - Field decorator initializers are stored on class's `__field_initializers__` object
 - Constructor uses `new.target` to retrieve stored initializers during field initialization
 - Method decorators pass context with `kind: "method"|"getter"|"setter"`, `name`, `static`, `private`
+- `addInitializer` callbacks are collected in an array during decorator application and executed after all class decorators are applied via `RunClassInitializers` opcode
 
-**Still Missing (~17 tests):**
-- ❌ `addInitializer` support
+**Still Missing (~16 tests):**
 - ❌ Parameter decorators
 - ❌ Auto-accessor decorator tracking (setter not invoked on assignment)
 

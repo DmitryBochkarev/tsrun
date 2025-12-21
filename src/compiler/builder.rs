@@ -397,7 +397,8 @@ impl BytecodeBuilder {
                 | Op::Dup { .. }
                 | Op::LoadThis { .. }
                 | Op::LoadArguments { .. }
-                | Op::LoadNewTarget { .. } => {}
+                | Op::LoadNewTarget { .. }
+                | Op::RunClassInitializers { .. } => {}
             }
         }
     }

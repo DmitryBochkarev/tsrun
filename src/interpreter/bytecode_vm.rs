@@ -2861,9 +2861,11 @@ impl BytecodeVM {
                 class,
                 decorator,
                 class_name,
+                initializers,
             } => {
                 let class_val = self.get_reg(class).clone();
                 let decorator_val = self.get_reg(decorator).clone();
+                let initializers_arr = self.get_reg(initializers).clone();
 
                 // Get class name for context (None if class_name is MAX)
                 let name = if class_name == u16::MAX {
@@ -2895,12 +2897,33 @@ impl BytecodeVM {
                 // Note: TC39 spec doesn't define static for class decorators,
                 // but some tests expect it to be undefined
 
-                // Set context.addInitializer (stub for now - returns undefined)
-                // TODO: Implement full addInitializer support
+                // Store the initializers array on context so addInitializer can access it
+                let init_key = interp.intern("__initializers__");
+                ctx.borrow_mut()
+                    .set_property(PropertyKey::String(init_key), initializers_arr);
+
+                // Create addInitializer function that pushes to context.__initializers__
                 let add_init_fn = interp.create_native_fn(
                     &guard,
                     "addInitializer",
-                    |_interp, _this, _args| {
+                    |interp, this, args| {
+                        // Get the callback from args
+                        let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
+
+                        // Get __initializers__ array from this (the context object)
+                        if let JsValue::Object(ctx_obj) = this {
+                            let init_key = interp.intern("__initializers__");
+                            if let Some(JsValue::Object(arr)) = ctx_obj
+                                .borrow()
+                                .get_property(&PropertyKey::String(init_key))
+                            {
+                                // Push callback to the array using array_elements_mut
+                                let mut arr_ref = arr.borrow_mut();
+                                if let Some(elements) = arr_ref.array_elements_mut() {
+                                    elements.push(callback.clone());
+                                }
+                            }
+                        }
                         Ok(crate::value::Guarded::unguarded(JsValue::Undefined))
                     },
                     1,
@@ -2922,6 +2945,34 @@ impl BytecodeVM {
                     // Keep original class value in register
                 } else {
                     self.set_reg(class, result.value);
+                }
+
+                Ok(OpResult::Continue)
+            }
+
+            Op::RunClassInitializers {
+                class,
+                initializers,
+            } => {
+                let class_val = self.get_reg(class).clone();
+                let initializers_val = self.get_reg(initializers).clone();
+
+                // Get the initializers array and call each function with class as `this`
+                if let JsValue::Object(arr) = initializers_val {
+                    // Clone elements to avoid borrow issues during iteration
+                    let callbacks: Vec<JsValue> = {
+                        let arr_ref = arr.borrow();
+                        if let crate::value::ExoticObject::Array { ref elements } = arr_ref.exotic {
+                            elements.clone()
+                        } else {
+                            Vec::new()
+                        }
+                    };
+
+                    for callback in callbacks {
+                        // Call the initializer with class as `this`
+                        interp.call_function(callback, class_val.clone(), &[])?;
+                    }
                 }
 
                 Ok(OpResult::Continue)
