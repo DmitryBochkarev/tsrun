@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-TypeScript interpreter written in Rust for config/manifest generation with support for ES modules and async/await. Types are parsed but stripped at runtime (not type-checked). The interpreter uses an explicit evaluation stack for true state capture, enabling suspension at import/await points.
+TypeScript interpreter written in Rust for config/manifest generation with support for ES modules and async/await. Types are parsed but stripped at runtime (not type-checked). The interpreter uses a **register-based bytecode VM** for execution, enabling efficient execution and suspension at import/await points.
 
 ## Build and Test Commands
 
@@ -131,61 +131,54 @@ let slice = s.get(start..end).unwrap_or("");
 let value = opt.ok_or_else(|| JsError::internal_error("expected value"))?;
 ```
 
-### Guarded Destructuring Rule
+### Guard System and GC Safety
 
 > **📖 For comprehensive guard documentation, see [docs/proper_use_of_guards.md](docs/proper_use_of_guards.md)**
 
-The `Guarded` struct (from `interpreter/mod.rs`) must **ALWAYS** be accessed through destructuring:
+The `Guarded` struct (from `value.rs`) wraps a `JsValue` with a `Guard` that keeps objects alive during GC:
 
 ```rust
-// CORRECT: Always use destructuring to keep guard alive
-let Guarded { value, guard: _guard } = self.evaluate_expression(expr)?;
-// _guard keeps the object alive until end of scope
-// Now use `value` safely
-
-// WRONG: Never access .value directly (drops guard prematurely!)
-let val = self.evaluate_expression(expr)?.value;  // BUG: GC may collect the object!
-```
-
-**Why this matters:** The guard keeps newly created objects alive in the GC. If you drop the guard before you're done using the value, the garbage collector may reclaim the object (and its prototype chain), causing "is not a function" errors or other GC-related bugs.
-
-**Pattern for conditional evaluation:**
-```rust
-let (val, _guard) = if some_condition {
-    let Guarded { value, guard } = self.evaluate_expression(expr)?;
-    (value, guard)
-} else {
-    (JsValue::Undefined, None)
-};
-```
-
-**Rule: Propagate guards when returning derived values:**
-If you evaluate an expression and return a derived value (e.g., member access, property lookup), propagate the input's guard:
-```rust
-// CORRECT: Propagate guard when returning derived value
-fn evaluate_member(&mut self, member: &MemberExpression) -> Result<Guarded, JsError> {
-    let Guarded { value: obj, guard: obj_guard } = self.evaluate_expression(&member.object)?;
-    let property_value = /* get property from obj */;
-    // Return property with original object's guard - keeps object alive
-    Ok(Guarded { value: property_value, guard: obj_guard })
-}
-
-// WRONG: Dropping guard, returned property may be collected
-fn evaluate_member(&mut self, member: &MemberExpression) -> Result<JsValue, JsError> {
-    let Guarded { value: obj, guard: _guard } = self.evaluate_expression(&member.object)?;
-    let property_value = /* get property from obj */;
-    Ok(property_value)  // BUG: obj_guard dropped, obj may be GC'd!
+pub struct Guarded {
+    pub value: JsValue,
+    pub guard: Option<Guard<JsObject>>,
 }
 ```
 
-Use `Guarded::with_value(new_value)` to easily propagate a guard with a new value.
+**Bytecode VM register guard:** The VM maintains a `register_guard` that keeps all values in registers alive. When returning from the VM, values are wrapped in `Guarded`:
+
+```rust
+// VmResult::Complete returns Guarded to keep result alive
+pub enum VmResult {
+    Complete(Guarded),    // Value with guard
+    Suspend(VmSuspension),
+    Yield(GeneratorYield),
+    Error(JsError),
+}
+```
+
+**Creating guarded values:**
+```rust
+// For native functions returning objects
+fn guarded_js_value(val: JsValue, interp: &Interpreter) -> Guarded {
+    match &val {
+        JsValue::Object(obj) => {
+            let guard = interp.heap.create_guard();
+            guard.guard(obj.cheap_clone());
+            Guarded { value: val, guard: Some(guard) }
+        }
+        _ => Guarded { value: val, guard: None },
+    }
+}
+```
+
+**Why this matters:** The guard keeps objects alive in the GC. If you drop the guard before you're done using the value, the garbage collector may reclaim the object.
 
 **Rule: Never assign temporary objects to root_guard:**
 Do not allocate temporary objects from `root_guard` - they will never be garbage collected, causing memory leaks.
 
-### Object Creation API (Refactoring In Progress)
+### Object Creation API
 
-**Target API:** Caller provides guard, method allocates from it:
+**API pattern:** Caller provides guard, method allocates from it:
 ```rust
 // CORRECT: Caller controls lifetime via guard
 let guard = self.heap.create_guard();
@@ -511,31 +504,110 @@ Ok(JsValue::Object(interp.create_array(elements)))
 
 ## Architecture
 
-The interpreter follows a pipeline with support for suspension:
+The interpreter follows a pipeline: source code is lexed, parsed to AST, compiled to bytecode, then executed by the VM.
 
 ```
-Source → Lexer → Parser → AST → Interpreter → RuntimeResult
-                                                   │
-                              ┌────────────────────┼────────────────────┐
-                              ▼                    ▼                    ▼
-                         Complete            ImportAwaited        AsyncAwaited
-                          (value)            (slot, spec)        (slot, promise)
+Source → Lexer → Parser → AST → Compiler → Bytecode → BytecodeVM → RuntimeResult
+                                                                         │
+                                              ┌──────────────────────────┼──────────────────────────┐
+                                              ▼                          ▼                          ▼
+                                         Complete                   NeedImports                 Suspended
+                                          (value)                 (Vec<ImportRequest>)      (pending orders)
 ```
 
-### State Machine Execution Model
+### Register-Based Bytecode VM
 
-The interpreter uses an **explicit evaluation stack** instead of Rust's call stack. This enables:
-- **True state capture**: Save exact position, resume without re-execution
-- **Suspension at imports**: Return to host to load modules
-- **Suspension at await**: Return to host to resolve promises
+The interpreter uses a **register-based bytecode VM** instead of a stack-based interpreter. This provides:
+- **Fewer instructions**: Binary ops directly reference registers (no push/pop overhead)
+- **Better cache locality**: Register file accessed sequentially
+- **Simpler code generation**: Allocator assigns registers per expression
+- **State capture**: VM state can be saved/restored for suspension at await/yield
 
-The stack-based execution model is now fully implemented.
+**Key differences from stack-based:**
+```
+Stack-based:              Register-based:
+  Push 1                    LoadInt r0, 1
+  Push 2                    LoadInt r1, 2
+  Add                       Add r2, r0, r1
+  Pop result                // result in r2
+```
 
-**Key Types:**
+### Bytecode Compilation Pipeline
+
+1. **Parser** produces AST
+2. **Compiler** (`src/compiler/`) converts AST to bytecode:
+   - `compile_stmt.rs`: Statement compilation
+   - `compile_expr.rs`: Expression compilation
+   - `compile_pattern.rs`: Destructuring patterns
+   - `builder.rs`: Bytecode builder with register allocation
+   - `hoist.rs`: Variable hoisting (var/function declarations)
+3. **BytecodeVM** (`src/interpreter/bytecode_vm.rs`) executes bytecode
+
+### Key VM Types
+
+```rust
+/// Virtual register (0-255 per call frame)
+pub type Register = u8;
+
+/// Constant pool index
+pub type ConstantIndex = u16;
+
+/// Jump target (instruction offset)
+pub type JumpTarget = u32;
+
+/// Bytecode chunk containing instructions and metadata
+pub struct BytecodeChunk {
+    pub code: Vec<Op>,                 // Instructions
+    pub constants: Vec<Constant>,      // Constant pool
+    pub source_map: Vec<SourceMapEntry>, // For debugging
+    pub register_count: u8,            // Max registers needed
+    pub function_info: Option<FunctionInfo>,
+}
+
+/// VM execution state
+pub struct BytecodeVM {
+    pub ip: usize,                     // Instruction pointer
+    pub chunk: Rc<BytecodeChunk>,      // Current bytecode
+    pub registers: Vec<JsValue>,       // Register file (256 per frame)
+    pub call_stack: Vec<CallFrame>,    // Function call frames
+    pub try_stack: Vec<TryHandler>,    // Exception handlers
+}
+
+/// VM execution result
+pub enum VmResult {
+    Complete(Guarded),                 // Execution completed
+    Suspend(VmSuspension),             // Suspended for await
+    Yield(GeneratorYield),             // Generator yielded
+    Error(JsError),                    // Error occurred
+}
+```
+
+### Instruction Set Overview
+
+The bytecode has 100+ instructions organized by category:
+
+| Category | Examples | Count |
+|----------|----------|-------|
+| Constants & Registers | `LoadConst`, `LoadInt`, `Move` | 6 |
+| Arithmetic | `Add`, `Sub`, `Mul`, `Div`, `Mod`, `Exp` | 6 |
+| Comparison | `Eq`, `StrictEq`, `Lt`, `Gt`, etc. | 8 |
+| Bitwise | `BitAnd`, `BitOr`, `LShift`, `RShift` | 6 |
+| Unary | `Neg`, `Not`, `Typeof`, `Void` | 6 |
+| Control Flow | `Jump`, `JumpIfTrue`, `JumpIfFalse` | 6 |
+| Variables | `GetVar`, `SetVar`, `DeclareVar` | 6 |
+| Objects/Arrays | `CreateObject`, `CreateArray`, `GetProperty`, `SetProperty` | 10 |
+| Functions | `Call`, `CallMethod`, `Construct`, `Return` | 9 |
+| Exceptions | `Throw`, `PushTry`, `PopTry` | 6 |
+| Async/Generators | `Await`, `Yield`, `YieldStar` | 3 |
+| Classes | `CreateClass`, `DefineMethod`, `SuperCall` | 7 |
+| Iteration | `GetIterator`, `IteratorNext`, `IteratorDone` | 5 |
+
+### Runtime Result Types
+
 ```rust
 pub enum RuntimeResult {
     Complete(RuntimeValue),                         // Finished with guarded value
-    NeedImports(Vec<ImportRequest>),                // Need modules
+    NeedImports(Vec<ImportRequest>),                // Need modules loaded
     Suspended { pending, cancelled },               // Waiting for orders
 }
 
@@ -577,9 +649,18 @@ loop {
 - **lexer.rs**: Tokenizer with span tracking for error reporting
 - **parser.rs**: Recursive descent + Pratt parsing for expressions
 - **ast.rs**: All AST node types (statements, expressions, patterns, types)
-- **value.rs**: Runtime values (`JsValue` enum), object model, environments
-- **interpreter/mod.rs**: Statement execution and expression evaluation
-- **interpreter/builtins/**: Built-in function implementations (split by type)
+- **value.rs**: Runtime values (`JsValue` enum), object model, GC
+- **compiler/**: Bytecode compiler
+  - **mod.rs**: Compiler entry point
+  - **bytecode.rs**: Instruction set (`Op` enum) and `BytecodeChunk`
+  - **builder.rs**: `BytecodeBuilder` with register allocation
+  - **compile_expr.rs**: Expression compilation
+  - **compile_stmt.rs**: Statement compilation
+  - **compile_pattern.rs**: Destructuring compilation
+  - **hoist.rs**: Variable hoisting
+- **interpreter/mod.rs**: Runtime initialization and VM integration
+- **interpreter/bytecode_vm.rs**: Bytecode VM execution loop
+- **interpreter/builtins/**: Built-in function implementations
 - **error.rs**: Error types (`JsError`) with source locations
 - **tests/interpreter/**: Integration tests organized by feature
 
@@ -681,11 +762,12 @@ cat test262/test/language/expressions/addition/S11.6.1_A1.js
 
 ### Key Types
 
-- `JsValue`: Enum with `Undefined`, `Null`, `Boolean(bool)`, `Number(f64)`, `String(JsString)`, `Object(JsObjectRef)`
-- `JsObjectRef`: `Rc<RefCell<JsObject>>` - shared mutable reference to objects (cheap clone)
+- `JsValue`: Enum with `Undefined`, `Null`, `Boolean(bool)`, `Number(f64)`, `String(JsString)`, `Object(Gc<JsObject>)`
+- `Gc<JsObject>`: GC-managed pointer to objects (cheap clone)
 - `JsString`: `Rc<str>` - reference-counted string (cheap clone)
-- `PendingSlot`: Slot for async/import resolution (cheap clone)
-- `Completion`: Control flow enum (`Normal`, `Return`, `Break`, `Continue`)
+- `Op`: Bytecode instruction enum (100+ variants)
+- `BytecodeChunk`: Compiled function (instructions + constants + source map)
+- `Register`: Virtual register index (u8, 0-255 per call frame)
 
 ### Clone Conventions (CheapClone Trait)
 
@@ -693,14 +775,14 @@ The codebase distinguishes between cheap (O(1), reference-counted) and expensive
 
 **Cheap clones - use `.cheap_clone()`:**
 ```rust
-// JsObjectRef (Rc<RefCell<JsObject>>)
+// Gc<JsObject> (GC-managed pointer)
 arr.borrow_mut().prototype = Some(self.array_prototype.cheap_clone());
 
 // JsString (Rc<str>)
 let s = js_string.cheap_clone();
 
-// PendingSlot (contains Rc)
-self.pending_slot = Some(slot.cheap_clone());
+// Rc<BytecodeChunk> (reference-counted bytecode)
+let chunk = self.chunk.cheap_clone();
 ```
 
 **Expensive clones - add comment explaining why:**
@@ -721,12 +803,11 @@ self.env.define(id.name.clone(), value, mutable);
 **Type classification:**
 | Type | Clone Cost | Notes |
 |------|-----------|-------|
-| `JsObjectRef` | Cheap | Use `.cheap_clone()` |
+| `Gc<JsObject>` | Cheap | Use `.cheap_clone()` |
 | `JsString` | Cheap | Use `.cheap_clone()` |
-| `PendingSlot` | Cheap | Use `.cheap_clone()` |
+| `Rc<BytecodeChunk>` | Cheap | Use `.cheap_clone()` |
 | `Rc<T>` | Cheap | Use `.cheap_clone()` |
-| `JsValue` | Varies | May contain Rc types or expensive variants |
-| `Environment` | Expensive | Contains `Box<Environment>` chain |
+| `JsValue` | Varies | May contain Gc/Rc types |
 | `String`, `Vec<T>` | Expensive | Heap allocations |
 | AST types | Expensive | Deep structure clones |
 
@@ -738,7 +819,9 @@ self.env.define(id.name.clone(), value, mutable);
 
 ## Current Implementation Status
 
-**Language Features:** variables (let/const/var), functions (declarations, expressions, arrows), closures, control flow (if/for/while/switch/try-catch), classes with inheritance, object/array literals, destructuring, spread operator, template literals, most operators.
+**Test Status:** 1550+ passing tests (see `docs/missing_bytecodevm_features.md` for details)
+
+**Language Features:** variables (let/const/var), functions (declarations, expressions, arrows), closures, control flow (if/for/while/switch/try-catch), classes with inheritance and static blocks, object/array literals, destructuring, spread operator, template literals, all operators.
 
 **Built-in Objects:**
 - `Array`: isArray, from, of, push, pop, shift, unshift, slice, splice, concat, join, reverse, sort, indexOf, lastIndexOf, includes, find, findIndex, findLast, findLastIndex, filter, map, forEach, reduce, reduceRight, every, some, flat, flatMap, fill, copyWithin, at, toReversed, toSorted, toSpliced, with
@@ -749,20 +832,28 @@ self.env.define(id.name.clone(), value, mutable);
 - `JSON`: stringify, parse
 - `Map`: get, set, has, delete, clear, forEach, size
 - `Set`: add, has, delete, clear, forEach, size
+- `WeakMap`: get, set, has, delete
+- `WeakSet`: add, has, delete
 - `Date`: now, UTC, parse, getTime, getFullYear, getMonth, getDate, getDay, getHours, getMinutes, getSeconds, getMilliseconds, toISOString, toJSON, valueOf
 - `RegExp`: test, exec, source, flags, global, ignoreCase, multiline
 - `Function`: call, apply, bind
 - `Error`: Error, TypeError, ReferenceError, SyntaxError, RangeError, URIError, EvalError
 - `Symbol`: Symbol(), Symbol.for(), Symbol.keyFor(), well-known symbols (iterator, toStringTag, hasInstance)
+- `Proxy`: all traps, Proxy.revocable
+- `Reflect`: all methods
 - Global: parseInt, parseFloat, isNaN, isFinite, encodeURI, decodeURI, encodeURIComponent, decodeURIComponent, eval, console.log/error/warn/info/debug
 - Generators: function*, yield, yield*
 - Namespace declarations with export and merging
 - `Promise`: new, resolve, reject, then, catch, finally, all, race, allSettled, any
 - Async/await: async functions, async arrow functions, await expressions
 
-**Not yet implemented:**
-- ES Modules (import/export resolution - parsing only)
-- WeakMap/WeakSet
+**Not yet fully implemented in bytecode VM:**
+- ES Modules (import/export) - not yet compiled to bytecode
+- for-await-of loops
+- Private class members (#fields)
+- BigInt
+- Some decorator edge cases
 
+See `docs/missing_bytecodevm_features.md` for detailed status and implementation guidance.
 See design.md for the complete feature checklist.
 See profiling.md for performance optimization notes.
