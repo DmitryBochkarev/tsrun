@@ -1390,18 +1390,30 @@ impl Compiler {
         let enum_obj = self.builder.alloc_register()?;
         self.builder.emit(Op::CreateObject { dst: enum_obj });
 
+        // Declare the enum variable FIRST so member initializers can reference prior members
+        // via EnumName.MemberName or just MemberName (for const enums)
+        let enum_name_idx = self.builder.add_string(decl.id.name.cheap_clone())?;
+        self.builder.emit(Op::DeclareVar {
+            name: enum_name_idx,
+            init: enum_obj,
+            mutable: true, // Enums are mutable like objects
+        });
+
         // Track the current numeric value for auto-increment
         let mut current_value: i64 = 0;
         let value_reg = self.builder.alloc_register()?;
         let key_reg = self.builder.alloc_register()?;
+
+        // Track prior member names for rewriting identifier references
+        let mut prior_members: Vec<JsString> = Vec::new();
 
         for member in &decl.members {
             let member_name = member.id.name.cheap_clone();
             let name_idx = self.builder.add_string(member_name.cheap_clone())?;
 
             if let Some(ref init) = member.initializer {
-                // Compile the initializer expression
-                self.compile_expression(init, value_reg)?;
+                // Compile the initializer expression, rewriting references to prior enum members
+                self.compile_enum_init_expression(init, value_reg, enum_obj, &prior_members)?;
 
                 // Try to compute the numeric value for auto-increment
                 // This is a simplified version - in reality, we'd need const evaluation
@@ -1418,6 +1430,9 @@ impl Compiler {
                 });
                 current_value += 1;
             }
+
+            // Add this member to prior members for subsequent initializers
+            prior_members.push(member_name.cheap_clone());
 
             // Set forward mapping: EnumName.MemberName = value
             self.builder.emit(Op::SetPropertyConst {
@@ -1464,15 +1479,6 @@ impl Compiler {
 
         self.builder.free_register(key_reg);
         self.builder.free_register(value_reg);
-
-        // Declare the enum as a variable
-        let name_idx = self.builder.add_string(decl.id.name.cheap_clone())?;
-        self.builder.emit(Op::DeclareVar {
-            name: name_idx,
-            init: enum_obj,
-            mutable: true, // Enums are mutable like objects
-        });
-
         self.builder.free_register(enum_obj);
         Ok(())
     }
@@ -1633,6 +1639,123 @@ impl Compiler {
             }
             _ => {}
         }
+        Ok(())
+    }
+
+    /// Compile an enum initializer expression, rewriting references to prior enum members
+    /// as property accesses on the enum object.
+    fn compile_enum_init_expression(
+        &mut self,
+        expr: &crate::ast::Expression,
+        dst: super::Register,
+        enum_obj: super::Register,
+        prior_members: &[JsString],
+    ) -> Result<(), JsError> {
+        use crate::ast::Expression;
+
+        match expr {
+            // Check if this is an identifier that matches a prior enum member
+            Expression::Identifier(id) => {
+                if prior_members.iter().any(|m| m.as_str() == id.name.as_str()) {
+                    // This is a reference to a prior member - load from enum object
+                    let name_idx = self.builder.add_string(id.name.cheap_clone())?;
+                    self.builder.emit(Op::GetPropertyConst {
+                        dst,
+                        obj: enum_obj,
+                        key: name_idx,
+                    });
+                    Ok(())
+                } else {
+                    // Not a prior member - compile normally
+                    self.compile_expression(expr, dst)
+                }
+            }
+
+            // For binary expressions, recursively handle operands
+            Expression::Binary(bin) => {
+                let left_reg = self.builder.alloc_register()?;
+                let right_reg = self.builder.alloc_register()?;
+
+                self.compile_enum_init_expression(&bin.left, left_reg, enum_obj, prior_members)?;
+                self.compile_enum_init_expression(&bin.right, right_reg, enum_obj, prior_members)?;
+
+                // Now emit the binary operation
+                self.compile_binary_op(bin.operator, dst, left_reg, right_reg)?;
+
+                self.builder.free_register(right_reg);
+                self.builder.free_register(left_reg);
+                Ok(())
+            }
+
+            // For unary expressions, recursively handle operand
+            Expression::Unary(unary) => {
+                let arg_reg = self.builder.alloc_register()?;
+                self.compile_enum_init_expression(&unary.argument, arg_reg, enum_obj, prior_members)?;
+
+                // Emit the unary operation
+                match unary.operator {
+                    crate::ast::UnaryOp::Minus => {
+                        self.builder.emit(Op::Neg { dst, src: arg_reg });
+                    }
+                    crate::ast::UnaryOp::Plus => {
+                        self.builder.emit(Op::Plus { dst, src: arg_reg });
+                    }
+                    crate::ast::UnaryOp::Not => {
+                        self.builder.emit(Op::Not { dst, src: arg_reg });
+                    }
+                    crate::ast::UnaryOp::BitNot => {
+                        self.builder.emit(Op::BitNot { dst, src: arg_reg });
+                    }
+                    _ => {
+                        // Fall back to normal compilation for other unary ops
+                        self.builder.free_register(arg_reg);
+                        return self.compile_expression(expr, dst);
+                    }
+                }
+
+                self.builder.free_register(arg_reg);
+                Ok(())
+            }
+
+            // For parenthesized expressions, handle the inner expression
+            Expression::Parenthesized(expr, _) => {
+                self.compile_enum_init_expression(expr, dst, enum_obj, prior_members)
+            }
+
+            // For other expressions (literals, etc.), compile normally
+            _ => self.compile_expression(expr, dst),
+        }
+    }
+
+    /// Compile a binary operator
+    fn compile_binary_op(
+        &mut self,
+        operator: crate::ast::BinaryOp,
+        dst: super::Register,
+        left: super::Register,
+        right: super::Register,
+    ) -> Result<(), JsError> {
+        use crate::ast::BinaryOp;
+        match operator {
+            BinaryOp::BitOr => self.builder.emit(Op::BitOr { dst, left, right }),
+            BinaryOp::BitAnd => self.builder.emit(Op::BitAnd { dst, left, right }),
+            BinaryOp::BitXor => self.builder.emit(Op::BitXor { dst, left, right }),
+            BinaryOp::Add => self.builder.emit(Op::Add { dst, left, right }),
+            BinaryOp::Sub => self.builder.emit(Op::Sub { dst, left, right }),
+            BinaryOp::Mul => self.builder.emit(Op::Mul { dst, left, right }),
+            BinaryOp::Div => self.builder.emit(Op::Div { dst, left, right }),
+            BinaryOp::Mod => self.builder.emit(Op::Mod { dst, left, right }),
+            BinaryOp::Exp => self.builder.emit(Op::Exp { dst, left, right }),
+            BinaryOp::LShift => self.builder.emit(Op::LShift { dst, left, right }),
+            BinaryOp::RShift => self.builder.emit(Op::RShift { dst, left, right }),
+            BinaryOp::URShift => self.builder.emit(Op::URShift { dst, left, right }),
+            _ => {
+                return Err(JsError::internal_error(format!(
+                    "Unsupported binary operator in enum initializer: {:?}",
+                    operator
+                )))
+            }
+        };
         Ok(())
     }
 }
