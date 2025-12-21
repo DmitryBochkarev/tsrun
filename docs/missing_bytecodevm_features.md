@@ -3,8 +3,8 @@
 This document analyzes test failures in the bytecode VM and categorizes them by feature area with implementation guidance.
 
 **Total Tests:** 1787
-**Passing:** 1558
-**Failing:** 222
+**Passing:** 1559
+**Failing:** 221
 **Ignored:** 7
 
 ---
@@ -20,6 +20,9 @@ The following issues have been fixed:
 - ✅ **Argument evaluation order** - Fixed callee evaluation to occur before arguments
 - ✅ **Generator yield\* with arrays** - Fixed GC issue with delegated iterator tracing
 - ✅ **Generator.throw() with catch blocks** - Implemented proper exception injection at yield points
+- ✅ **Symbol.hasInstance** - Fixed `instanceof` operator to check custom `[Symbol.hasInstance]` method
+- ✅ **Function.prototype property** - Regular functions now get a `.prototype` property set up correctly for use with `new`
+- ✅ **Function constructor rest params** - Fixed rest parameter handling for functions created via `new Function('...args', 'body')`
 
 ---
 
@@ -459,21 +462,27 @@ eval("for(let i=0;i<3;i++) i") // Should return 2
 
 ## 9. Miscellaneous Issues
 
-### Function Constructor Rest Params
+### ~~Function Constructor Rest Params~~ ✅ Fixed
 **Tests:** `function::test_function_constructor_rest_params*`
-**Error:** Returns undefined, rest params not working in `new Function("...args", "...")`
+~~**Error:** Returns undefined, rest params not working in `new Function("...args", "..."`~~
 
-### Symbol.hasInstance
+Fixed by adding rest parameter processing to interpreted function JIT compilation in `call_function`.
+
+### ~~Symbol.hasInstance~~ ✅ Fixed
 **Tests:** `function::test_instanceof_uses_symbol_hasinstance`, `test_symbol_hasinstance_direct_call`
-**Error:** Custom `[Symbol.hasInstance]` not consulted during `instanceof`
+~~**Error:** Custom `[Symbol.hasInstance]` not consulted during `instanceof`~~
+
+Fixed by updating the `Instanceof` opcode to check for `[Symbol.hasInstance]` method before falling back to OrdinaryHasInstance. Also fixed regular functions not having a `.prototype` property.
 
 ### GC/Memory Leak
 **Tests:** `gc::test_nested_for_loop_environments_collected`
 **Error:** Loop environments not being collected properly
 
-### Reflect.construct with newTarget
+### ~~Reflect.construct with newTarget~~ ✅ Fixed
 **Tests:** `proxy::test_reflect_construct_with_new_target`
-**Error:** Third argument to `Reflect.construct` not handled
+~~**Error:** Third argument to `Reflect.construct` not handled~~
+
+This was already working - likely fixed by a previous change.
 
 ---
 

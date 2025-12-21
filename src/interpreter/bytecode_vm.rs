@@ -956,16 +956,51 @@ impl BytecodeVM {
                 let left_val = self.get_reg(left);
                 let right_val = self.get_reg(right);
 
-                // right must be a constructor (function with prototype)
+                // right must be an object
                 let JsValue::Object(right_obj) = right_val else {
                     return Err(JsError::type_error(
                         "Right-hand side of 'instanceof' is not an object",
                     ));
                 };
 
+                // Step 1: Check for Symbol.hasInstance method (custom instanceof behavior)
+                let well_known = crate::interpreter::builtins::symbol::get_well_known_symbols();
+                let has_instance_symbol = crate::value::JsSymbol::new(
+                    well_known.has_instance,
+                    Some("Symbol.hasInstance".to_string()),
+                );
+                let has_instance_key = PropertyKey::Symbol(Box::new(has_instance_symbol));
+
+                // Look up Symbol.hasInstance on right object (and its prototype chain)
+                let has_instance_method = right_obj.borrow().get_property(&has_instance_key);
+
+                if let Some(JsValue::Object(method_obj)) = has_instance_method {
+                    if method_obj.borrow().is_callable() {
+                        // Call the custom Symbol.hasInstance method
+                        let result = interp.call_function(
+                            JsValue::Object(method_obj),
+                            right_val.clone(),
+                            std::slice::from_ref(left_val),
+                        )?;
+                        // Convert result to boolean
+                        self.set_reg(dst, JsValue::Boolean(result.value.to_boolean()));
+                        return Ok(OpResult::Continue);
+                    }
+                }
+
+                // Step 2: Fall back to OrdinaryHasInstance
+                // right must be callable for OrdinaryHasInstance
+                if !right_obj.borrow().is_callable() {
+                    return Err(JsError::type_error(
+                        "Right-hand side of 'instanceof' is not callable",
+                    ));
+                }
+
                 // Get right.prototype
                 let proto_key = PropertyKey::String(interp.intern("prototype"));
                 let right_proto = right_obj.borrow().get_property(&proto_key);
+
+                // If prototype is not an object, throw TypeError
                 let Some(JsValue::Object(right_proto_obj)) = right_proto else {
                     return Err(JsError::type_error(
                         "Function has non-object prototype in instanceof check",

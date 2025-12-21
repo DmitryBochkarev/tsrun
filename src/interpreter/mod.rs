@@ -1506,9 +1506,11 @@ impl Interpreter {
     ) -> Gc<JsObject> {
         let length_key = PropertyKey::String(self.intern("length"));
         let name_key = PropertyKey::String(self.intern("name"));
+        let proto_key = PropertyKey::String(self.intern("prototype"));
+        let ctor_key = PropertyKey::String(self.intern("constructor"));
 
-        // Get name and param count from function_info
-        let (func_name, param_count) = bc_func
+        // Get name, param count, and is_arrow from function_info
+        let (func_name, param_count, is_arrow) = bc_func
             .chunk
             .function_info
             .as_ref()
@@ -1518,9 +1520,9 @@ impl Interpreter {
                     .as_ref()
                     .map(|n| n.cheap_clone())
                     .unwrap_or_else(|| JsString::from(""));
-                (name, info.param_count)
+                (name, info.param_count, info.is_arrow)
             })
-            .unwrap_or_else(|| (JsString::from(""), 0));
+            .unwrap_or_else(|| (JsString::from(""), 0, false));
 
         let func_obj = guard.alloc();
         {
@@ -1532,6 +1534,22 @@ impl Interpreter {
             // Set name property
             f_ref.set_property(name_key, JsValue::String(func_name));
         }
+
+        // Regular functions (not arrow functions) need a .prototype property
+        // This is the prototype object that will be used when the function is called with `new`
+        if !is_arrow {
+            let proto_obj = guard.alloc();
+            proto_obj.borrow_mut().prototype = Some(self.object_prototype.clone());
+            // Set prototype.constructor = function
+            proto_obj
+                .borrow_mut()
+                .set_property(ctor_key, JsValue::Object(func_obj.cheap_clone()));
+            // Set function.prototype = prototype object
+            func_obj
+                .borrow_mut()
+                .set_property(proto_key, JsValue::Object(proto_obj));
+        }
+
         func_obj
     }
 
@@ -6273,11 +6291,35 @@ impl Interpreter {
                             // Parameters were already bound to environment above, but for bytecode
                             // we need to pass them in registers. The bytecode expects args in registers.
                             let vm_guard = self.heap.create_guard();
+
+                            // Handle rest parameters: if the function has a rest parameter, we need to
+                            // collect all extra arguments into an array at that parameter index
+                            let processed_args: Vec<JsValue> = if let Some(rest_idx) = chunk
+                                .function_info
+                                .as_ref()
+                                .and_then(|info| info.rest_param)
+                            {
+                                let mut result_args = Vec::with_capacity(rest_idx + 1);
+                                // Copy regular parameters
+                                for i in 0..rest_idx {
+                                    result_args
+                                        .push(args.get(i).cloned().unwrap_or(JsValue::Undefined));
+                                }
+                                // Collect remaining args into an array for the rest parameter
+                                let rest_elements: Vec<JsValue> =
+                                    args.get(rest_idx..).unwrap_or_default().to_vec();
+                                let rest_array = self.create_array_from(&vm_guard, rest_elements);
+                                result_args.push(JsValue::Object(rest_array));
+                                result_args
+                            } else {
+                                args.to_vec()
+                            };
+
                             let mut vm = BytecodeVM::with_guard_and_args(
                                 Rc::new(chunk),
                                 this_value.clone(),
                                 vm_guard,
-                                args,
+                                &processed_args,
                             );
 
                             match vm.run(self) {
