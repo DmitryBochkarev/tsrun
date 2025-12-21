@@ -6163,6 +6163,17 @@ impl Interpreter {
         this_value: JsValue,
         args: &[JsValue],
     ) -> Result<Guarded, JsError> {
+        self.call_function_with_new_target(callee, this_value, args, JsValue::Undefined)
+    }
+
+    /// Call a function with an explicit new.target value (for constructor calls)
+    pub fn call_function_with_new_target(
+        &mut self,
+        callee: JsValue,
+        this_value: JsValue,
+        args: &[JsValue],
+        new_target: JsValue,
+    ) -> Result<Guarded, JsError> {
         // Check call stack depth limit
         if self.max_call_depth > 0 && self.call_stack.len() >= self.max_call_depth {
             return Err(JsError::range_error(format!(
@@ -6509,7 +6520,7 @@ impl Interpreter {
 
             JsFunction::Bytecode(bc_func) => {
                 // Call bytecode-compiled function using the bytecode VM
-                self.call_bytecode_function(bc_func, this_value, args)
+                self.call_bytecode_function_with_new_target(bc_func, this_value, args, new_target)
             }
 
             JsFunction::BytecodeGenerator(bc_func) => {
@@ -6664,6 +6675,17 @@ impl Interpreter {
         this_value: JsValue,
         args: &[JsValue],
     ) -> Result<Guarded, JsError> {
+        self.call_bytecode_function_with_new_target(bc_func, this_value, args, JsValue::Undefined)
+    }
+
+    /// Call a bytecode-compiled function with an explicit new.target value
+    fn call_bytecode_function_with_new_target(
+        &mut self,
+        bc_func: BytecodeFunction,
+        this_value: JsValue,
+        args: &[JsValue],
+        new_target: JsValue,
+    ) -> Result<Guarded, JsError> {
         use crate::interpreter::bytecode_vm::{BytecodeVM, VmResult};
 
         // Get function info from the chunk
@@ -6735,11 +6757,13 @@ impl Interpreter {
             };
 
         // Create VM and run with args pre-populated in registers
-        let mut vm = BytecodeVM::with_guard_and_args(
+        // Use new_target if provided (for constructor calls)
+        let mut vm = BytecodeVM::with_guard_args_and_new_target(
             bc_func.chunk.clone(),
             effective_this,
             vm_guard,
             &processed_args,
+            new_target,
         );
 
         let result = vm.run(self);

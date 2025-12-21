@@ -559,6 +559,50 @@ pub enum Op {
         class_name: ConstantIndex,
     },
 
+    /// Apply method decorator: r[method] = decorator(r[method], context)
+    /// context contains { kind: "method"|"getter"|"setter", name, static, private }
+    ApplyMethodDecorator {
+        method: Register,
+        decorator: Register,
+        name: ConstantIndex,
+        kind: u8, // 0 = method, 1 = getter, 2 = setter
+        is_static: bool,
+        is_private: bool,
+    },
+
+    /// Apply field decorator: r[dst] = decorator(undefined, context)
+    /// Field decorators receive undefined as first arg, return an initializer transformer
+    ApplyFieldDecorator {
+        dst: Register,
+        decorator: Register,
+        name: ConstantIndex,
+        is_static: bool,
+        is_private: bool,
+    },
+
+    /// Store field initializer on class: class.__field_initializers__[name] = r[initializer]
+    /// This is used to store the result of field decorators on the class
+    StoreFieldInitializer {
+        class: Register,
+        name: ConstantIndex,
+        initializer: Register,
+    },
+
+    /// Get field initializer from class: r[dst] = class.__field_initializers__[name]
+    /// Used during instance construction to retrieve stored initializers
+    GetFieldInitializer {
+        dst: Register,
+        class: Register,
+        name: ConstantIndex,
+    },
+
+    /// Apply field initializer: r[value] = r[initializer](r[value])
+    /// Transforms the initial value using the decorator's returned initializer
+    ApplyFieldInitializer {
+        value: Register,
+        initializer: Register,
+    },
+
     // ═══════════════════════════════════════════════════════════════════════════════
     // Spread/Rest
     // ═══════════════════════════════════════════════════════════════════════════════

@@ -2729,3 +2729,72 @@ fn test_readonly_decorator() {
         JsValue::from("secret-key,production,new-key|apiKey,environment|1")
     );
 }
+
+/// Debug test for field decorators
+#[test]
+fn test_debug_field_decorator() {
+    assert_eq!(
+        eval(
+            r#"
+            const debug: string[] = [];
+
+            function log(target: any, context: any) {
+                debug.push("decorator called, kind=" + context.kind);
+                const initFn = function(initialValue: any): any {
+                    debug.push("initializer called, value=" + initialValue);
+                    return 100;
+                };
+                debug.push("returning function: " + (typeof initFn));
+                return initFn;
+            }
+
+            class Config {
+                @log
+                timeout: number;
+            }
+
+            // Check if __field_initializers__ exists on the class
+            const inits = (Config as any).__field_initializers__;
+            debug.push("has inits: " + (inits !== undefined));
+            if (inits) {
+                debug.push("timeout init: " + (typeof inits.timeout));
+            }
+
+            const c = new Config();
+            debug.push("timeout=" + c.timeout);
+            debug.join("|")
+        "#
+        ),
+        JsValue::from("decorator called, kind=field|returning function: function|has inits: true|timeout init: function|initializer called, value=undefined|timeout=100")
+    );
+}
+
+/// Debug test to understand decorator context issues
+#[test]
+fn test_debug_decorator_context() {
+    assert_eq!(
+        eval(
+            r#"
+            const debug: string[] = [];
+
+            function captureContext(target: any, context: any) {
+                debug.push("kind=" + context.kind + ",name=" + context.name + ",static=" + context.static);
+                return target;
+            }
+
+            @captureContext
+            class Foo {
+                @captureContext
+                myMethod(): void {}
+            }
+
+            debug.join("|")
+        "#
+        ),
+        // Method is processed first, then class decorator
+        // Class decorator doesn't have static property (it's undefined)
+        JsValue::from(
+            "kind=method,name=myMethod,static=false|kind=class,name=Foo,static=undefined"
+        )
+    );
+}

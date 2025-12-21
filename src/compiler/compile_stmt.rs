@@ -1354,14 +1354,25 @@ impl Compiler {
         self.builder.free_register(ctor_reg);
         self.builder.free_register(super_reg);
 
-        // Define instance methods
+        // Define instance methods (decorators are applied in compile_class_method)
         for method in &instance_methods {
             self.compile_class_method(dst, method, false)?;
         }
 
-        // Define static methods
+        // Define static methods (decorators are applied in compile_class_method)
         for method in &static_methods {
             self.compile_class_method(dst, method, true)?;
+        }
+
+        // Process instance field decorators (store initializers on class)
+        // Field decorators are called after method decorators but before class decorator
+        for field in &instance_fields {
+            self.compile_field_decorators(dst, field, false)?;
+        }
+
+        // Process static field decorators
+        for field in &static_fields {
+            self.compile_field_decorators(dst, field, true)?;
         }
 
         // Initialize static fields (on the class constructor itself)
@@ -1448,15 +1459,17 @@ impl Compiler {
         method: &ClassMethod,
         is_static: bool,
     ) -> Result<(), JsError> {
-        // Get method name
-        let method_name: JsString = match &method.key {
-            ObjectPropertyKey::Identifier(id) => id.name.cheap_clone(),
-            ObjectPropertyKey::String(s) => s.value.cheap_clone(),
+        // Get method name and check if it's private
+        let (method_name, is_private): (JsString, bool) = match &method.key {
+            ObjectPropertyKey::Identifier(id) => (id.name.cheap_clone(), false),
+            ObjectPropertyKey::String(s) => (s.value.cheap_clone(), false),
             ObjectPropertyKey::Number(lit) => {
                 // Convert number to string for method name
                 use crate::ast::LiteralValue;
                 match &lit.value {
-                    LiteralValue::Number(n) => JsString::from(crate::value::number_to_string(*n)),
+                    LiteralValue::Number(n) => {
+                        (JsString::from(crate::value::number_to_string(*n)), false)
+                    }
                     _ => return Err(JsError::syntax_error_simple("Invalid method key")),
                 }
             }
@@ -1465,7 +1478,7 @@ impl Compiler {
                     "Computed method names not yet supported in bytecode compiler",
                 ))
             }
-            ObjectPropertyKey::PrivateIdentifier(id) => id.name.cheap_clone(),
+            ObjectPropertyKey::PrivateIdentifier(id) => (id.name.cheap_clone(), true),
         };
 
         let name_idx = self.builder.add_string(method_name.cheap_clone())?;
@@ -1507,6 +1520,33 @@ impl Compiler {
                 dst: method_reg,
                 chunk_idx,
             });
+        }
+
+        // Apply method decorators (in reverse order - bottom to top)
+        if !method.decorators.is_empty() {
+            // Determine kind byte: 0 = method, 1 = getter, 2 = setter
+            let kind: u8 = match method.kind {
+                MethodKind::Method => 0,
+                MethodKind::Get => 1,
+                MethodKind::Set => 2,
+            };
+
+            // Compile and apply decorators in reverse order
+            for decorator in method.decorators.iter().rev() {
+                let dec_reg = self.builder.alloc_register()?;
+                self.compile_expression(&decorator.expression, dec_reg)?;
+
+                self.builder.emit(Op::ApplyMethodDecorator {
+                    method: method_reg,
+                    decorator: dec_reg,
+                    name: name_idx,
+                    kind,
+                    is_static,
+                    is_private,
+                });
+
+                self.builder.free_register(dec_reg);
+            }
         }
 
         // Emit DefineMethod or DefineAccessor based on method kind
@@ -1552,6 +1592,65 @@ impl Compiler {
         }
 
         self.builder.free_register(method_reg);
+        Ok(())
+    }
+
+    /// Compile field decorators and store initializers on class
+    fn compile_field_decorators(
+        &mut self,
+        class_reg: super::bytecode::Register,
+        field: &ClassProperty,
+        is_static: bool,
+    ) -> Result<(), JsError> {
+        // Skip if no decorators
+        if field.decorators.is_empty() {
+            return Ok(());
+        }
+
+        // Get field name
+        let (field_name, is_private): (JsString, bool) = match &field.key {
+            ObjectPropertyKey::Identifier(id) => (id.name.cheap_clone(), false),
+            ObjectPropertyKey::String(s) => (s.value.cheap_clone(), false),
+            ObjectPropertyKey::PrivateIdentifier(id) => (id.name.cheap_clone(), true),
+            _ => return Ok(()), // Skip computed keys for now
+        };
+
+        let name_idx = self.builder.add_string(field_name)?;
+
+        // Process decorators in reverse order (bottom to top)
+        // Each decorator is called with (undefined, context) and may return an initializer
+        // We chain the initializers: if decorator A returns init_A and B returns init_B,
+        // the final initializer is value => init_B(init_A(value))
+        // For simplicity, we store only the last non-undefined initializer for now
+
+        let init_reg = self.builder.alloc_register()?;
+        self.builder.emit(Op::LoadUndefined { dst: init_reg });
+
+        for decorator in field.decorators.iter().rev() {
+            let dec_reg = self.builder.alloc_register()?;
+            self.compile_expression(&decorator.expression, dec_reg)?;
+
+            // Call decorator and get potential initializer
+            self.builder.emit(Op::ApplyFieldDecorator {
+                dst: init_reg,
+                decorator: dec_reg,
+                name: name_idx,
+                is_static,
+                is_private,
+            });
+
+            self.builder.free_register(dec_reg);
+        }
+
+        // Store the initializer on the class (only if not undefined)
+        // We'll handle this in the VM - StoreFieldInitializer only stores if not undefined
+        self.builder.emit(Op::StoreFieldInitializer {
+            class: class_reg,
+            name: name_idx,
+            initializer: init_reg,
+        });
+
+        self.builder.free_register(init_reg);
         Ok(())
     }
 
@@ -1772,6 +1871,30 @@ impl Compiler {
             self.builder.emit(Op::LoadUndefined { dst: value_reg });
         }
 
+        // Check if there's a field initializer from decorators
+        if !field.decorators.is_empty() {
+            // Get new.target (the constructor)
+            let class_reg = self.builder.alloc_register()?;
+            self.builder.emit(Op::LoadNewTarget { dst: class_reg });
+
+            // Get the stored initializer
+            let init_reg = self.builder.alloc_register()?;
+            self.builder.emit(Op::GetFieldInitializer {
+                dst: init_reg,
+                class: class_reg,
+                name: name_idx,
+            });
+
+            // Apply the initializer to the value (if it exists)
+            self.builder.emit(Op::ApplyFieldInitializer {
+                value: value_reg,
+                initializer: init_reg,
+            });
+
+            self.builder.free_register(init_reg);
+            self.builder.free_register(class_reg);
+        }
+
         // Set property on this
         self.builder.emit(Op::SetPropertyConst {
             obj: this_reg,
@@ -1805,6 +1928,23 @@ impl Compiler {
             self.compile_expression(init, value_reg)?;
         } else {
             self.builder.emit(Op::LoadUndefined { dst: value_reg });
+        }
+
+        // Apply field initializer from decorator if present
+        if !field.decorators.is_empty() {
+            let init_reg = self.builder.alloc_register()?;
+            self.builder.emit(Op::GetFieldInitializer {
+                dst: init_reg,
+                class: class_reg,
+                name: name_idx,
+            });
+
+            self.builder.emit(Op::ApplyFieldInitializer {
+                value: value_reg,
+                initializer: init_reg,
+            });
+
+            self.builder.free_register(init_reg);
         }
 
         // Set property on class constructor

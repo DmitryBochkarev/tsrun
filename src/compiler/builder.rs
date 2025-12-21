@@ -372,6 +372,11 @@ impl BytecodeBuilder {
                 | Op::SuperSet { .. }
                 | Op::SuperSetConst { .. }
                 | Op::ApplyClassDecorator { .. }
+                | Op::ApplyMethodDecorator { .. }
+                | Op::ApplyFieldDecorator { .. }
+                | Op::StoreFieldInitializer { .. }
+                | Op::GetFieldInitializer { .. }
+                | Op::ApplyFieldInitializer { .. }
                 | Op::SpreadArray { .. }
                 | Op::CreateRestArray { .. }
                 | Op::CreateObjectRest { .. }

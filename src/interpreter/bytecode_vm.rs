@@ -1559,8 +1559,14 @@ impl BytecodeVM {
                 }
 
                 // Call the constructor with `this` set to the new object
+                // Pass the constructor as new.target so it's available inside the constructor
                 let this = JsValue::Object(new_obj.cheap_clone());
-                let result = interp.call_function(callee_val.clone(), this.clone(), &args)?;
+                let result = interp.call_function_with_new_target(
+                    callee_val.clone(),
+                    this.clone(),
+                    &args,
+                    callee_val.clone(), // new.target is the constructor itself
+                )?;
 
                 // If constructor returns an object, use that; otherwise use the created object
                 let final_val = match result.value {
@@ -1627,8 +1633,14 @@ impl BytecodeVM {
                 }
 
                 // Call the constructor with `this` set to the new object
+                // Pass the constructor as new.target so it's available inside the constructor
                 let this = JsValue::Object(new_obj.cheap_clone());
-                let result = interp.call_function(callee_val.clone(), this.clone(), &args)?;
+                let result = interp.call_function_with_new_target(
+                    callee_val.clone(),
+                    this.clone(),
+                    &args,
+                    callee_val.clone(), // new.target is the constructor itself
+                )?;
 
                 // If constructor returns an object, use that; otherwise use the created object
                 let final_val = match result.value {
@@ -2749,6 +2761,11 @@ impl BytecodeVM {
                     );
                 }
 
+                // Set context.static = false (classes don't have static flag)
+                // This is for consistency with method/field decorators
+                // Note: TC39 spec doesn't define static for class decorators,
+                // but some tests expect it to be undefined
+
                 // Set context.addInitializer (stub for now - returns undefined)
                 // TODO: Implement full addInitializer support
                 let add_init_fn = interp.create_native_fn(
@@ -2777,6 +2794,212 @@ impl BytecodeVM {
                 } else {
                     self.set_reg(class, result.value);
                 }
+
+                Ok(OpResult::Continue)
+            }
+
+            Op::ApplyMethodDecorator {
+                method,
+                decorator,
+                name,
+                kind,
+                is_static,
+                is_private,
+            } => {
+                let method_val = self.get_reg(method).clone();
+                let decorator_val = self.get_reg(decorator).clone();
+                let method_name = self.get_string_constant(name);
+
+                // Create decorator context object
+                let guard = interp.heap.create_guard();
+                let ctx = interp.create_object(&guard);
+
+                // Set context.kind based on kind byte (0 = method, 1 = getter, 2 = setter)
+                let kind_str = match kind {
+                    0 => "method",
+                    1 => "getter",
+                    2 => "setter",
+                    _ => "method",
+                };
+                ctx.borrow_mut().set_property(
+                    PropertyKey::String(interp.intern("kind")),
+                    JsValue::String(interp.intern(kind_str)),
+                );
+
+                // Set context.name
+                if let Some(n) = method_name {
+                    ctx.borrow_mut().set_property(
+                        PropertyKey::String(interp.intern("name")),
+                        JsValue::String(n),
+                    );
+                }
+
+                // Set context.static
+                ctx.borrow_mut().set_property(
+                    PropertyKey::String(interp.intern("static")),
+                    JsValue::Boolean(is_static),
+                );
+
+                // Set context.private
+                ctx.borrow_mut().set_property(
+                    PropertyKey::String(interp.intern("private")),
+                    JsValue::Boolean(is_private),
+                );
+
+                // Call decorator(method, context)
+                let result = interp.call_function(
+                    decorator_val,
+                    JsValue::Undefined,
+                    &[method_val.clone(), JsValue::Object(ctx)],
+                )?;
+
+                // If decorator returns undefined, keep original method; otherwise use return value
+                if matches!(result.value, JsValue::Undefined) {
+                    // Keep original method value in register
+                } else {
+                    self.set_reg(method, result.value);
+                }
+
+                Ok(OpResult::Continue)
+            }
+
+            Op::ApplyFieldDecorator {
+                dst,
+                decorator,
+                name,
+                is_static,
+                is_private,
+            } => {
+                let decorator_val = self.get_reg(decorator).clone();
+                let field_name = self.get_string_constant(name);
+
+                // Create decorator context object
+                let guard = interp.heap.create_guard();
+                let ctx = interp.create_object(&guard);
+
+                // Set context.kind = "field"
+                ctx.borrow_mut().set_property(
+                    PropertyKey::String(interp.intern("kind")),
+                    JsValue::String(interp.intern("field")),
+                );
+
+                // Set context.name
+                if let Some(n) = field_name {
+                    ctx.borrow_mut().set_property(
+                        PropertyKey::String(interp.intern("name")),
+                        JsValue::String(n),
+                    );
+                }
+
+                // Set context.static
+                ctx.borrow_mut().set_property(
+                    PropertyKey::String(interp.intern("static")),
+                    JsValue::Boolean(is_static),
+                );
+
+                // Set context.private
+                ctx.borrow_mut().set_property(
+                    PropertyKey::String(interp.intern("private")),
+                    JsValue::Boolean(is_private),
+                );
+
+                // Call decorator(undefined, context)
+                // Field decorators receive undefined as first arg and return an initializer transformer
+                let result = interp.call_function(
+                    decorator_val,
+                    JsValue::Undefined,
+                    &[JsValue::Undefined, JsValue::Object(ctx)],
+                )?;
+
+                // Store the result (initializer transformer or undefined)
+                self.set_reg(dst, result.value);
+
+                Ok(OpResult::Continue)
+            }
+
+            Op::StoreFieldInitializer {
+                class,
+                name,
+                initializer,
+            } => {
+                let class_val = self.get_reg(class).clone();
+                let initializer_val = self.get_reg(initializer).clone();
+                let field_name = self
+                    .get_string_constant(name)
+                    .unwrap_or_else(|| interp.intern(""));
+
+                if let JsValue::Object(class_obj) = &class_val {
+                    // Get or create __field_initializers__ object
+                    let init_key = interp.intern("__field_initializers__");
+                    #[allow(clippy::map_clone)]
+                    let inits_obj = {
+                        let borrowed = class_obj.borrow();
+                        borrowed
+                            .get_property(&PropertyKey::String(init_key.cheap_clone()))
+                            .map(|v| v.clone())
+                    };
+
+                    let inits = match inits_obj {
+                        Some(JsValue::Object(obj)) => obj,
+                        _ => {
+                            // Create new __field_initializers__ object
+                            let guard = interp.heap.create_guard();
+                            let new_obj = interp.create_object_raw(&guard);
+                            class_obj.borrow_mut().set_property(
+                                PropertyKey::String(init_key),
+                                JsValue::Object(new_obj.cheap_clone()),
+                            );
+                            new_obj
+                        }
+                    };
+
+                    // Store the initializer for this field
+                    inits
+                        .borrow_mut()
+                        .set_property(PropertyKey::String(field_name), initializer_val);
+                }
+
+                Ok(OpResult::Continue)
+            }
+
+            Op::GetFieldInitializer { dst, class, name } => {
+                let class_val = self.get_reg(class).clone();
+                let field_name = self
+                    .get_string_constant(name)
+                    .unwrap_or_else(|| interp.intern(""));
+
+                let mut initializer = JsValue::Undefined;
+
+                if let JsValue::Object(class_obj) = &class_val {
+                    let init_key = interp.intern("__field_initializers__");
+                    let borrowed = class_obj.borrow();
+                    if let Some(JsValue::Object(inits)) =
+                        borrowed.get_property(&PropertyKey::String(init_key))
+                    {
+                        if let Some(init) = inits
+                            .borrow()
+                            .get_property(&PropertyKey::String(field_name))
+                        {
+                            initializer = init.clone();
+                        }
+                    }
+                }
+
+                self.set_reg(dst, initializer);
+                Ok(OpResult::Continue)
+            }
+
+            Op::ApplyFieldInitializer { value, initializer } => {
+                let value_val = self.get_reg(value).clone();
+                let init_val = self.get_reg(initializer).clone();
+
+                // If initializer is a function, call it with the value
+                if matches!(&init_val, JsValue::Object(_)) {
+                    let result =
+                        interp.call_function(init_val, JsValue::Undefined, &[value_val])?;
+                    self.set_reg(value, result.value);
+                }
+                // If initializer is undefined, keep original value
 
                 Ok(OpResult::Continue)
             }

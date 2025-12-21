@@ -2,9 +2,9 @@
 
 This document analyzes test failures in the bytecode VM and categorizes them by feature area with implementation guidance.
 
-**Total Tests:** 1790
-**Passing:** 1677
-**Failing:** 106
+**Total Tests:** 1792
+**Passing:** 1708
+**Failing:** 77
 **Ignored:** 7
 
 ---
@@ -41,6 +41,9 @@ The following issues have been fixed:
 - ✅ **Async iteration (for-await-of)** - `for await...of` loops now work with arrays, promises, and async generators
 - ✅ **GC memory leak in loops** - Fixed nested block scope restoration and environment collection in loops
 - ✅ **Class decorators** - Class decorators now work with `@decorator class Foo {}` syntax, including class replacement
+- ✅ **Method decorators** - Method decorators now receive full context object with `kind`, `name`, `static`, `private`
+- ✅ **Field decorators** - Field decorators now work with initializer transformation via `__field_initializers__` storage
+- ✅ **Constructor new.target** - Constructors now properly receive `new.target` for field initializer lookup
 
 ---
 
@@ -191,74 +194,32 @@ The bytecode VM delegates to proxy_* functions for all property operations. Key 
 
 ## 5. Decorators
 
-**Status: Partially Fixed**
+**Status: Mostly Fixed**
 
 **Working Features:**
 - ✅ Class decorators - `@decorator class Foo {}` works correctly
 - ✅ Class decorator replacement - decorators can return a new class
-- ✅ Method decorators (basic) - `@decorator method() {}` works
+- ✅ Method decorators - `@decorator method() {}` works with full context
+- ✅ Getter/Setter decorators - `@decorator get prop()` and `@decorator set prop()` work
+- ✅ Field decorators - `@decorator field: type` works with initializer transformation
+- ✅ Static field/method decorators - decorators work on static members
 - ✅ Decorator factories - `@factory(args)` works
 - ✅ Multiple decorators - decorators are applied bottom-to-top
+- ✅ Decorator context object - `kind`, `name`, `static`, `private` properties
 
-**Still Missing (~50 tests):**
-- ❌ Decorator context object (kind, name, static, private, access)
+**Implementation Details:**
+- Added `ApplyMethodDecorator` opcode to handle method/getter/setter decorators
+- Added `ApplyFieldDecorator`, `StoreFieldInitializer`, `GetFieldInitializer`, `ApplyFieldInitializer` opcodes for field decorators
+- Field decorator initializers are stored on class's `__field_initializers__` object
+- Constructor uses `new.target` to retrieve stored initializers during field initialization
+- Method decorators pass context with `kind: "method"|"getter"|"setter"`, `name`, `static`, `private`
+
+**Still Missing (~21 tests):**
 - ❌ `addInitializer` support
-- ❌ Field decorators
 - ❌ Parameter decorators
-- ❌ Accessor decorators (get/set)
-
-**Error Patterns:**
-- Decorator context not passed correctly
-- `addInitializer` not working
-- Field decorator transform not applied
-
-**Implementation Strategy:**
-
-### Step 1: Decorator Context Object
-Each decorator receives a context object:
-```javascript
-{
-    kind: "class" | "method" | "getter" | "setter" | "field" | "accessor",
-    name: string | symbol,
-    static: boolean,
-    private: boolean,
-    access: { get?, set? },
-    addInitializer: (fn) => void
-}
-```
-
-### Step 2: Class Decorator Context
-```rust
-fn create_class_decorator_context(name: &str) -> JsObject {
-    // kind: "class"
-    // name: class name
-    // addInitializer: function that stores initializers
-}
-```
-
-### Step 3: Method/Field Decorator Context
-Need to pass:
-- `kind`: "method", "field", "getter", "setter", "accessor"
-- `name`: property name
-- `static`: boolean
-- `private`: boolean for #private members
-- `access`: getter/setter access functions
-
-### Step 4: Initializers
-`addInitializer` callbacks run after class definition:
-```rust
-struct ClassDecorators {
-    initializers: Vec<JsValue>, // Functions to call after class creation
-}
-```
-
-### Step 5: Return Value Handling
-- Class decorators: return new class or undefined
-- Method decorators: return replacement function or undefined
-- Field decorators: return initializer function or undefined
-
-**Complexity:** High
-**Estimated Effort:** 2-3 days
+- ❌ Private field decorators (#field)
+- ❌ Private method decorators (#method)
+- ❌ Auto-accessor decorator tracking (setter not invoked on assignment)
 
 ---
 
