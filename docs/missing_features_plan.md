@@ -97,49 +97,23 @@ Error: Actual [1, 2, 3] and expected [true] should have the same contents
 **Impact:** Function default parameters that reference themselves or later parameters should throw ReferenceError. This is a semantic correctness issue.
 
 **Current Behavior:**
-```javascript
-function f(x = x) { return x; }  // Should throw ReferenceError
-f();  // Returns undefined
-```
+**Status:** Already implemented! Verified on 2025-12-21.
 
-**Expected Behavior:** Parameters are in TDZ until initialized, so `x = x` should throw.
+The bytecode VM correctly tracks TDZ for parameters. Both self-reference (`x = x`) and forward reference (`x = y`) correctly throw ReferenceError.
 
-**Test Patterns:**
-```
-Error: Expected a ReferenceError to be thrown but no exception was thrown at all
-```
-
-**Implementation:**
-1. In function parameter compilation, track which parameters are initialized
-2. When compiling default value expressions, check references against initialized set
-3. Throw ReferenceError for forward references
-
-**Estimated Complexity:** Medium - requires parameter compilation refactor
+Tests added: `test_default_param_tdz_self_reference`, `test_default_param_tdz_forward_reference`, `test_default_param_can_reference_earlier_param`
 
 ---
 
-### 5. Generator Methods in Object Literals
+### 5. Generator Methods in Object Literals ✅ IMPLEMENTED
 
-**Impact:** Common ES6 pattern for defining generator methods in objects.
-
-**Current Behavior:**
-```javascript
-const obj = { *gen() { yield 1; } };  // SyntaxError
-```
-
-**Expected Behavior:** Parse and compile correctly.
-
-**Test Patterns:**
-```
-SyntaxError: Unexpected Star, expected property name
-```
+**Status:** Implemented on 2025-12-21
 
 **Implementation:**
-1. In parser `parse_object_literal()`, check for `*` token before method name
-2. If found, parse as generator method
-3. Set `generator: true` on the parsed method
-
-**Estimated Complexity:** Low - parser addition
+- Modified `parse_property()` to check for `*` before method name
+- Added support for `async *` (async generator methods)
+- Updated `peek_is_property_name()` to recognize `*` as indicating a method follows
+- Tests added: `test_generator_method_in_object_literal`, `test_generator_method_with_params`, `test_generator_method_computed_name`, `test_async_generator_method_in_object_literal`
 
 ---
 
@@ -369,11 +343,11 @@ Promise[Symbol.species];  // undefined (should be Promise)
 ### Phase 1: Quick Wins (P0)
 1. **Function property descriptors** - High test impact, low complexity
 2. **Symbol.isConcatSpreadable** - Localized change
-3. **Generator methods in objects** - Parser addition
+3. ~~**Generator methods in objects** - Parser addition~~ ✅ DONE
 
 ### Phase 2: Core Fixes (P1)
 4. ~~**Iterator close protocol** - Important for resource management~~ ✅ DONE
-5. **Default parameter TDZ** - Semantic correctness
+5. ~~**Default parameter TDZ** - Semantic correctness~~ ✅ ALREADY IMPLEMENTED
 6. **Object.defineProperty arrays** - Common usage
 
 ### Phase 3: Parser Improvements (P1-P2)

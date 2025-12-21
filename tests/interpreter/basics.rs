@@ -1,6 +1,6 @@
 //! Basic language feature tests: arithmetic, precedence, comparison, variables, conditionals
 
-use super::eval;
+use super::{eval, throws_error};
 use typescript_eval::JsValue;
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -671,6 +671,76 @@ fn test_tdz_function_can_reference_later_let() {
                 let x: number = 42;
                 getX()
             }
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Default Parameter TDZ Tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_default_param_tdz_self_reference() {
+    // x = x should throw ReferenceError because x is in TDZ when default is evaluated
+    assert!(throws_error(
+        r#"
+        function f(x: number = x): number { return x; }
+        f()
+        "#,
+        "ReferenceError"
+    ));
+}
+
+#[test]
+fn test_default_param_tdz_forward_reference() {
+    // x = y should throw ReferenceError because y is not yet initialized
+    assert!(throws_error(
+        r#"
+        function f(x: number = y, y: number = 1): number { return x; }
+        f()
+        "#,
+        "ReferenceError"
+    ));
+}
+
+#[test]
+fn test_default_param_can_reference_earlier_param() {
+    // Later param can reference earlier param - this is allowed
+    assert_eq!(
+        eval(
+            r#"
+            function f(x: number = 1, y: number = x): number { return y; }
+            f()
+        "#
+        ),
+        JsValue::Number(1.0)
+    );
+}
+
+#[test]
+fn test_default_param_expression_with_earlier_param() {
+    // Later param can use expression with earlier param
+    assert_eq!(
+        eval(
+            r#"
+            function f(x: number = 2, y: number = x * 3): number { return y; }
+            f()
+        "#
+        ),
+        JsValue::Number(6.0)
+    );
+}
+
+#[test]
+fn test_default_param_not_evaluated_when_arg_provided() {
+    // TDZ error should not happen when argument is provided
+    assert_eq!(
+        eval(
+            r#"
+            function f(x: number = x): number { return x; }
+            f(42)
         "#
         ),
         JsValue::Number(42.0)

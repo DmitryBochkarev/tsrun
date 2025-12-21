@@ -2328,17 +2328,27 @@ impl<'a> Parser<'a> {
     fn parse_property(&mut self) -> Result<Property, JsError> {
         let start = self.current.span;
 
+        // Check for generator method (*)
+        let is_generator = self.match_token(&TokenKind::Star);
+
         // Check for async method
         let is_async = self.check(&TokenKind::Async) && self.peek_is_property_name();
         if is_async {
             self.advance(); // consume 'async'
+                            // async* is also allowed (async generator)
+                            // If we already parsed *, we have *async which is invalid - but that's handled above
+                            // Check if this is async *gen() { }
         }
 
-        // Check for getter/setter
-        let kind = if self.check_keyword("get") && self.peek_is_property_name() {
+        // Check for async generator (async *)
+        let is_async_generator = is_async && self.match_token(&TokenKind::Star);
+        let is_generator = is_generator || is_async_generator;
+
+        // Check for getter/setter (not valid with generator)
+        let kind = if !is_generator && self.check_keyword("get") && self.peek_is_property_name() {
             self.advance();
             PropertyKind::Get
-        } else if self.check_keyword("set") && self.peek_is_property_name() {
+        } else if !is_generator && self.check_keyword("set") && self.peek_is_property_name() {
             self.advance();
             PropertyKind::Set
         } else {
@@ -2355,8 +2365,8 @@ impl<'a> Parser<'a> {
             self.parse_property_name()?
         };
 
-        // Method shorthand
-        if self.check(&TokenKind::LParen) || self.check(&TokenKind::Lt) {
+        // Method shorthand (or generator method which must be a method)
+        if self.check(&TokenKind::LParen) || self.check(&TokenKind::Lt) || is_generator {
             let type_params = self.parse_optional_type_parameters()?;
             let params: Rc<[_]> = self.parse_function_params()?.into();
             let return_type = self.parse_optional_return_type()?;
@@ -2369,7 +2379,7 @@ impl<'a> Parser<'a> {
                 return_type,
                 type_parameters: type_params,
                 body,
-                generator: false,
+                generator: is_generator,
                 async_: is_async,
                 span: func_span,
             });
@@ -3857,7 +3867,8 @@ impl<'a> Parser<'a> {
             TokenKind::Identifier(_)
             | TokenKind::String(_)
             | TokenKind::Number(_)
-            | TokenKind::LBracket => true,
+            | TokenKind::LBracket
+            | TokenKind::Star => true, // Star for async *gen() {}
             // Keywords can be property names
             _ if self.is_keyword_kind(&next.kind) => true,
             // Anything else is unclear, assume it's a property name (not get/set keyword)

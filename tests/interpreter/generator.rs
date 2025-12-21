@@ -661,3 +661,81 @@ fn test_generator_throw_with_catch() {
         JsValue::Number(100.0)
     );
 }
+
+// Generator method in object literal
+#[test]
+fn test_generator_method_in_object_literal() {
+    assert_eq!(
+        eval(
+            r#"
+            const obj = {
+                *gen() {
+                    yield 1;
+                    yield 2;
+                    yield 3;
+                }
+            };
+            const arr = [...obj.gen()];
+            arr.length
+        "#
+        ),
+        JsValue::Number(3.0)
+    );
+}
+
+#[test]
+fn test_generator_method_with_params() {
+    assert_eq!(
+        eval(
+            r#"
+            const obj = {
+                *range(start: number, end: number) {
+                    for (let i = start; i < end; i++) {
+                        yield i;
+                    }
+                }
+            };
+            const arr = [...obj.range(5, 10)];
+            arr.join(',')
+        "#
+        ),
+        JsValue::from("5,6,7,8,9")
+    );
+}
+
+#[test]
+fn test_generator_method_computed_name() {
+    assert_eq!(
+        eval(
+            r#"
+            const key = 'myGen';
+            const obj = {
+                *[key]() {
+                    yield 42;
+                }
+            };
+            obj.myGen().next().value
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+#[test]
+fn test_async_generator_method_in_object_literal() {
+    // async* should also work (async generator method)
+    assert_eq!(
+        eval(
+            r#"
+            const obj = {
+                async *gen() {
+                    yield 1;
+                    yield 2;
+                }
+            };
+            typeof obj.gen
+        "#
+        ),
+        JsValue::from("function")
+    );
+}
