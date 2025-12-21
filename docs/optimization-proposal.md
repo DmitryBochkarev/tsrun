@@ -215,7 +215,7 @@ C. **Caller-save registers:** Only save registers that are live across the call.
 | Keyword length dispatch | 5-8% | Low | **P1** | ✅ Done (+58-77% lexer) |
 | `#[inline]` on hot paths | 1-2% | Low | Quick Win | ✅ Done |
 | FxHashMap for envs | N/A | N/A | Quick Win | ✅ Already done |
-| set_reg lazy guarding | 3-5% | Medium | **P2** | Pending |
+| set_reg lazy guarding | 3-5% | Medium | **P2** | Postponed (complex GC interactions) |
 | Environment lookup | 4-6% | High | **P2** | Pending |
 | Token allocation | 3-5% | Medium | **P3** | Pending |
 | Trampoline optimization | 2-3% | High | **P3** | Pending |
