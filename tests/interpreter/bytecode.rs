@@ -2974,6 +2974,81 @@ fn test_bytecode_super_in_static_setter() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Static Initialization Blocks
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_bytecode_static_block_runs() {
+    // First verify static block actually runs
+    let result = eval_bytecode(
+        r#"
+        let blockRan = false;
+        class Config {
+            static {
+                blockRan = true;
+            }
+        }
+        blockRan
+    "#,
+    );
+    assert_eq!(result, JsValue::Boolean(true));
+}
+
+#[test]
+fn test_bytecode_static_block_this_binding() {
+    // Test that 'this' in static block refers to the class
+    let result = eval_bytecode(
+        r#"
+        class Config {
+            static value: number = 0;
+            static {
+                this.value = 42;
+            }
+        }
+        Config.value
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(42.0));
+}
+
+#[test]
+fn test_bytecode_static_block_class_name_access() {
+    // Test that class name is accessible in static block
+    let result = eval_bytecode(
+        r#"
+        class Config {
+            static value: number = 0;
+            static {
+                Config.value = 42;
+            }
+        }
+        Config.value
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(42.0));
+}
+
+#[test]
+fn test_bytecode_static_initialization_block() {
+    // Static block should be able to modify static fields
+    let result = eval_bytecode(
+        r#"
+        class Config {
+            static initialized: boolean = false;
+            static value: number = 0;
+
+            static {
+                Config.initialized = true;
+                Config.value = 42;
+            }
+        }
+        Config.value
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(42.0));
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Closure Scoping in Loops
 // ═══════════════════════════════════════════════════════════════════════════
 

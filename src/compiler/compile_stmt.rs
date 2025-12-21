@@ -1142,17 +1142,9 @@ impl Compiler {
         let class_reg = self.builder.alloc_register()?;
 
         // Compile class body to register
+        // Note: compile_class_body now also declares the class variable (if named)
+        // so that static blocks can reference the class by name
         self.compile_class_body(class, class_reg)?;
-
-        // If the class has a name, declare it as a variable
-        if let Some(ref id) = class.id {
-            let name_idx = self.builder.add_string(id.name.cheap_clone())?;
-            self.builder.emit(Op::DeclareVar {
-                name: name_idx,
-                init: class_reg,
-                mutable: false, // classes are const-like
-            });
-        }
 
         self.builder.free_register(class_reg);
         Ok(())
@@ -1173,6 +1165,7 @@ impl Compiler {
         let mut static_methods: Vec<&ClassMethod> = Vec::new();
         let mut instance_fields: Vec<&ClassProperty> = Vec::new();
         let mut static_fields: Vec<&ClassProperty> = Vec::new();
+        let mut static_blocks: Vec<&crate::ast::BlockStatement> = Vec::new();
 
         for member in &class.body.members {
             match member {
@@ -1193,8 +1186,8 @@ impl Compiler {
                         instance_fields.push(prop);
                     }
                 }
-                ClassMember::StaticBlock(_) => {
-                    // TODO: Static blocks
+                ClassMember::StaticBlock(block) => {
+                    static_blocks.push(block);
                 }
             }
         }
@@ -1246,6 +1239,22 @@ impl Compiler {
         // Initialize static fields (on the class constructor itself)
         for field in &static_fields {
             self.compile_static_field_initializer(dst, field)?;
+        }
+
+        // Before running static blocks, bind the class name so code in static blocks
+        // can reference the class by name (e.g., `Config.value = 42`)
+        if let Some(ref name) = class_name {
+            let name_idx = self.builder.add_string(name.cheap_clone())?;
+            self.builder.emit(Op::DeclareVar {
+                name: name_idx,
+                init: dst,
+                mutable: false,
+            });
+        }
+
+        // Execute static blocks with `this` bound to the class constructor
+        for block in &static_blocks {
+            self.compile_static_block(dst, block)?;
         }
 
         Ok(())
@@ -1593,6 +1602,42 @@ impl Compiler {
         });
 
         self.builder.free_register(value_reg);
+        Ok(())
+    }
+
+    /// Compile a static block - compiles the block body as a function and calls it with `this` = class
+    fn compile_static_block(
+        &mut self,
+        class_reg: super::bytecode::Register,
+        block: &crate::ast::BlockStatement,
+    ) -> Result<(), JsError> {
+        // Compile the static block body as an anonymous function
+        // The function will be called immediately with `this` bound to the class constructor
+        let empty_params: [crate::ast::FunctionParam; 0] = [];
+        let block_chunk =
+            self.compile_function_body(&empty_params, &block.body, None, false, false, false)?;
+        let chunk_idx = self.builder.add_chunk(block_chunk)?;
+
+        // Create a closure for the static block
+        let block_fn_reg = self.builder.alloc_register()?;
+        self.builder.emit(Op::CreateClosure {
+            dst: block_fn_reg,
+            chunk_idx,
+        });
+
+        // Call the static block with `this` = class constructor
+        // No arguments needed, so we use a dummy register for args_start
+        let result_reg = self.builder.alloc_register()?;
+        self.builder.emit(Op::Call {
+            dst: result_reg,
+            callee: block_fn_reg,
+            this: class_reg,
+            args_start: 0, // Register is u8
+            argc: 0,
+        });
+
+        self.builder.free_register(result_reg);
+        self.builder.free_register(block_fn_reg);
         Ok(())
     }
 
