@@ -337,6 +337,7 @@ impl BytecodeBuilder {
                 | Op::DefineProperty { .. }
                 | Op::Call { .. }
                 | Op::CallSpread { .. }
+                | Op::DirectEval { .. }
                 | Op::CallMethod { .. }
                 | Op::Construct { .. }
                 | Op::ConstructSpread { .. }

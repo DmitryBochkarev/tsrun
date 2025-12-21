@@ -1596,6 +1596,27 @@ impl Compiler {
             }
         }
 
+        // Check for direct eval call: eval(...)
+        // Direct eval has access to the lexical scope, unlike indirect eval.
+        if let Expression::Identifier(id) = call.callee.as_ref() {
+            if id.name.as_str() == "eval"
+                && call.arguments.len() <= 1
+                && !self.has_spread_arguments(&call.arguments)
+            {
+                // Emit DirectEval opcode
+                let arg_reg = self.builder.alloc_register()?;
+                if let Some(Argument::Expression(arg_expr)) = call.arguments.first() {
+                    self.compile_expression(arg_expr, arg_reg)?;
+                } else {
+                    // No argument - eval() returns undefined
+                    self.builder.emit(Op::LoadUndefined { dst: arg_reg });
+                }
+                self.builder.emit(Op::DirectEval { dst, arg: arg_reg });
+                self.builder.free_register(arg_reg);
+                return Ok(());
+            }
+        }
+
         // Regular call
         let callee_reg = self.builder.alloc_register()?;
         self.compile_expression(&call.callee, callee_reg)?;

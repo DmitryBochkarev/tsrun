@@ -2,9 +2,9 @@
 
 This document analyzes test failures in the bytecode VM and categorizes them by feature area with implementation guidance.
 
-**Total Tests:** 1787
-**Passing:** 1603
-**Failing:** 177
+**Total Tests:** 1783
+**Passing:** 1609
+**Failing:** 167
 **Ignored:** 7
 
 ---
@@ -29,6 +29,7 @@ The following issues have been fixed:
 - ✅ **Proxy construct trap** - `new Proxy(target, { construct })` now invokes construct trap
 - ✅ **Proxy for-of iteration** - for-of loops on proxies now go through get trap for Symbol.iterator and array access
 - ✅ **Proxy for-in enumeration** - for-in loops on proxies now use ownKeys trap
+- ✅ **Direct eval scope access** - `eval(...)` calls now have access to the calling lexical scope via `Op::DirectEval` bytecode
 
 ---
 
@@ -336,48 +337,24 @@ Two issues were fixed:
 
 ## 8. Eval Scope Handling
 
-**Affected Tests (~12 tests):**
-- `eval::test_eval_closure` - ReferenceError: x
-- `eval::test_eval_access_function_scope`
-- `eval::test_eval_scope_*`
-- `eval::test_eval_for_completion`
-- `eval::test_eval_while_completion`
-- `eval::test_eval_switch_completion`
+**Status: ✅ Partially Fixed**
 
-**Error Patterns:**
-- Eval code can't access outer lexical scope
-- Completion values not returned correctly for loops/switch
+Direct eval scope handling has been fixed - eval can now access the calling scope:
+- ✅ `eval::test_eval_closure` - Function created via eval captures outer scope
+- ✅ `eval::test_eval_access_function_scope` - Eval can access function-local variables
+- ✅ `eval::test_eval_scope_*` - Various scope access tests
 
-**Current State:**
-Direct eval should access the caller's scope, but currently uses global scope.
+**Implementation Details:**
+Added `Op::DirectEval` bytecode opcode to handle direct eval calls (`eval(...)` where `eval` is an identifier). The bytecode compiler detects direct eval calls and emits this opcode instead of a regular `Call`. The VM handler calls `eval_code_in_scope` with `use_global_scope: false`, which preserves the current lexical environment.
 
-**Implementation Strategy:**
+**Remaining Issues (~5 tests):**
+- `eval::test_eval_for_completion` - For loop completion values
+- `eval::test_eval_while_completion` - While loop completion values
+- `eval::test_eval_switch_completion` - Switch completion values
+- `eval::test_eval_if_empty_block_completion` - Empty block completion values
+- `eval::test_eval_strict_mode_this` - `this` in strict mode eval
 
-### Direct vs Indirect Eval
-```javascript
-let x = 10;
-eval("x");       // Direct: should find x = 10
-(0, eval)("x");  // Indirect: global scope only
-```
-
-### Fix Scope Chain
-When compiling eval'd code, pass the current lexical environment:
-```rust
-fn eval_direct(&mut self, code: &str, caller_env: Environment) {
-    // Parse code
-    // Compile with caller_env as outer scope
-    // Execute
-}
-```
-
-### Completion Values
-Loops and switch should return their completion value:
-```javascript
-eval("for(let i=0;i<3;i++) i") // Should return 2
-```
-
-**Complexity:** Medium
-**Estimated Effort:** 1 day
+These remaining issues are about completion values and strict mode `this` binding, not scope access.
 
 ---
 

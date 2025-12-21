@@ -368,6 +368,11 @@ pub enum Op {
         argc: u8,
     },
 
+    /// Direct eval call: r[dst] = eval(r[arg])
+    /// This is a special form that preserves the calling scope for direct eval.
+    /// Unlike regular Call, direct eval has access to the lexical scope.
+    DirectEval { dst: Register, arg: Register },
+
     /// Call method: r[dst] = r[obj].name(args...)
     /// Optimized form that preserves `this` correctly
     CallMethod {

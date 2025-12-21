@@ -1462,6 +1462,26 @@ impl BytecodeVM {
                 Ok(OpResult::Continue)
             }
 
+            Op::DirectEval { dst, arg } => {
+                // Direct eval - executes code in the current lexical scope
+                let arg_val = self.get_reg(arg).clone();
+
+                // If argument is not a string, return it directly
+                let code = match &arg_val {
+                    JsValue::String(s) => s.to_string(),
+                    _ => {
+                        self.set_reg(dst, arg_val);
+                        return Ok(OpResult::Continue);
+                    }
+                };
+
+                // Execute the code in current scope (direct eval behavior)
+                let result =
+                    crate::interpreter::builtins::global::eval_code_in_scope(interp, &code, false)?;
+                self.set_reg(dst, result.value);
+                Ok(OpResult::Continue)
+            }
+
             Op::CallMethod {
                 dst,
                 obj,
