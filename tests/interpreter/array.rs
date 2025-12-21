@@ -567,6 +567,59 @@ fn test_array_concat_mixed() {
     );
 }
 
+#[test]
+fn test_array_concat_is_concat_spreadable_false() {
+    // When Symbol.isConcatSpreadable is false, the array should not be spread
+    assert_eq!(
+        eval(
+            r#"
+            const arr = [1, 2, 3];
+            arr[Symbol.isConcatSpreadable] = false;
+            [].concat(arr).length
+        "#
+        ),
+        JsValue::Number(1.0) // arr is treated as a single element, not spread
+    );
+}
+
+#[test]
+fn test_array_concat_is_concat_spreadable_true() {
+    // When Symbol.isConcatSpreadable is explicitly true, array-like objects are spread
+    assert_eq!(
+        eval(
+            r#"
+            const obj = { 0: 'a', 1: 'b', length: 2, [Symbol.isConcatSpreadable]: true };
+            [].concat(obj).length
+        "#
+        ),
+        JsValue::Number(2.0)
+    );
+
+    assert_eq!(
+        eval(
+            r#"
+            const obj = { 0: 'a', 1: 'b', length: 2, [Symbol.isConcatSpreadable]: true };
+            [].concat(obj)[0]
+        "#
+        ),
+        JsValue::from("a")
+    );
+}
+
+#[test]
+fn test_array_concat_non_array_without_spreadable() {
+    // Plain objects without Symbol.isConcatSpreadable are not spread
+    assert_eq!(
+        eval(
+            r#"
+            const obj = { 0: 'a', 1: 'b', length: 2 };
+            [].concat(obj).length
+        "#
+        ),
+        JsValue::Number(1.0)
+    );
+}
+
 // Array.prototype.join tests
 #[test]
 fn test_array_join_default() {

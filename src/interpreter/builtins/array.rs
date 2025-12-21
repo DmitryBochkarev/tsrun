@@ -692,31 +692,80 @@ pub fn array_concat(
     this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    let mut result = Vec::new();
+    use crate::interpreter::builtins::symbol::get_well_known_symbols;
 
-    fn add_elements(result: &mut Vec<JsValue>, value: JsValue) {
-        match &value {
+    let mut result = Vec::new();
+    let well_known = get_well_known_symbols();
+    let spreadable_key = PropertyKey::Symbol(Box::new(crate::value::JsSymbol::new(
+        well_known.is_concat_spreadable,
+        None,
+    )));
+
+    // Helper to determine if a value should be spread
+    // Returns (should_spread, length_if_spread)
+    fn should_spread_value(value: &JsValue, spreadable_key: &PropertyKey) -> (bool, Option<u32>) {
+        match value {
             JsValue::Object(obj) => {
                 let obj_ref = obj.borrow();
-                if let Some(length) = obj_ref.array_length() {
-                    for i in 0..length {
-                        let elem = obj_ref
-                            .get_property(&PropertyKey::Index(i))
-                            .unwrap_or(JsValue::Undefined);
-                        result.push(elem);
+
+                // Check Symbol.isConcatSpreadable property
+                if let Some(spreadable) = obj_ref.get_property(spreadable_key) {
+                    // If explicitly set, use its boolean value
+                    let spread = spreadable.to_boolean();
+                    if spread {
+                        // Get length for spreading
+                        let length = if let Some(len) = obj_ref.array_length() {
+                            len
+                        } else {
+                            // For non-arrays with spreadable=true, use length property
+                            let length_key = PropertyKey::String(JsString::from("length"));
+                            obj_ref
+                                .get_property(&length_key)
+                                .and_then(|v| match v {
+                                    JsValue::Number(n) => Some(n as u32),
+                                    _ => None,
+                                })
+                                .unwrap_or(0)
+                        };
+                        (true, Some(length))
+                    } else {
+                        (false, None)
                     }
                 } else {
-                    result.push(value.clone());
+                    // If not set, spread only if it's an array
+                    if let Some(length) = obj_ref.array_length() {
+                        (true, Some(length))
+                    } else {
+                        (false, None)
+                    }
                 }
             }
-            _ => result.push(value),
+            _ => (false, None),
         }
     }
 
-    add_elements(&mut result, this);
+    fn add_elements(result: &mut Vec<JsValue>, value: JsValue, spreadable_key: &PropertyKey) {
+        let (should_spread, length) = should_spread_value(&value, spreadable_key);
+
+        if should_spread {
+            if let JsValue::Object(obj) = &value {
+                let obj_ref = obj.borrow();
+                for i in 0..length.unwrap_or(0) {
+                    let elem = obj_ref
+                        .get_property(&PropertyKey::Index(i))
+                        .unwrap_or(JsValue::Undefined);
+                    result.push(elem);
+                }
+            }
+        } else {
+            result.push(value);
+        }
+    }
+
+    add_elements(&mut result, this, &spreadable_key);
 
     for arg in args {
-        add_elements(&mut result, arg.clone());
+        add_elements(&mut result, arg.clone(), &spreadable_key);
     }
 
     let guard = interp.heap.create_guard();
