@@ -3,8 +3,8 @@
 This document analyzes test failures in the bytecode VM and categorizes them by feature area with implementation guidance.
 
 **Total Tests:** 1784
-**Passing:** 1620
-**Failing:** 156
+**Passing:** 1625
+**Failing:** 151
 **Ignored:** 7
 
 ---
@@ -36,6 +36,8 @@ The following issues have been fixed:
 - ✅ **Super property assignment** - `super.x = value` and `super[key] = value` now work correctly
 - ✅ **Class expression with var** - `var C = class {}` now works correctly (fixed inner binding scope)
 - ✅ **Private class members** - Private fields (`#field`) and private methods (`#method()`) now work correctly
+- ✅ **Eval completion values** - `eval()` now returns proper completion values for loops, switch, and empty blocks
+- ✅ **Eval strict mode this** - Direct eval inside functions now preserves the correct `this` binding
 
 ---
 
@@ -312,24 +314,27 @@ Two issues were fixed:
 
 ## 8. Eval Scope Handling
 
-**Status: ✅ Partially Fixed**
+**Status: ✅ Fixed**
 
-Direct eval scope handling has been fixed - eval can now access the calling scope:
-- ✅ `eval::test_eval_closure` - Function created via eval captures outer scope
-- ✅ `eval::test_eval_access_function_scope` - Eval can access function-local variables
-- ✅ `eval::test_eval_scope_*` - Various scope access tests
+All eval scope handling tests now pass (75/75 tests):
+- ✅ Scope access - eval can access calling scope variables
+- ✅ Completion values - for/while/switch/empty blocks return correct values
+- ✅ Strict mode `this` - direct eval preserves calling function's `this` binding
 
 **Implementation Details:**
-Added `Op::DirectEval` bytecode opcode to handle direct eval calls (`eval(...)` where `eval` is an identifier). The bytecode compiler detects direct eval calls and emits this opcode instead of a regular `Call`. The VM handler calls `eval_code_in_scope` with `use_global_scope: false`, which preserves the current lexical environment.
 
-**Remaining Issues (~5 tests):**
-- `eval::test_eval_for_completion` - For loop completion values
-- `eval::test_eval_while_completion` - While loop completion values
-- `eval::test_eval_switch_completion` - Switch completion values
-- `eval::test_eval_if_empty_block_completion` - Empty block completion values
-- `eval::test_eval_strict_mode_this` - `this` in strict mode eval
+**Scope Access:**
+Added `Op::DirectEval` bytecode opcode to handle direct eval calls (`eval(...)` where `eval` is an identifier). The bytecode compiler detects direct eval calls and emits this opcode instead of a regular `Call`. The VM handler calls `eval_code_in_scope_with_this` with `use_global_scope: false`, which preserves the current lexical environment.
 
-These remaining issues are about completion values and strict mode `this` binding, not scope access.
+**Completion Values:**
+Added `track_completion` mode to the bytecode compiler. When enabled (via `Compiler::compile_program_for_eval`), register 0 is reserved for completion values:
+- Expression statements compile directly to register 0
+- Empty blocks set completion to undefined
+- Loops compile body statements to update register 0 each iteration
+- Switch case statements compile to update register 0
+
+**Strict Mode `this`:**
+The `Op::DirectEval` handler now passes the current VM's `this_value` to the eval execution via `eval_code_in_scope_with_this()`. This ensures that when a function is called without a receiver in strict mode (so `this` is `undefined`), `eval('this')` correctly returns `undefined`.
 
 ---
 
@@ -373,5 +378,5 @@ This was already working - likely fixed by a previous change.
 
 ### Lower Priority
 7. ~~**BigInt**~~ - ✅ Fixed (simplified)
-8. **Eval Scoping** - Edge case for direct eval
+8. ~~**Eval Scoping**~~ - ✅ Fixed (completion values and strict mode `this`)
 9. **Miscellaneous Issues** - Various small fixes

@@ -1475,9 +1475,13 @@ impl BytecodeVM {
                     }
                 };
 
-                // Execute the code in current scope (direct eval behavior)
-                let result =
-                    crate::interpreter::builtins::global::eval_code_in_scope(interp, &code, false)?;
+                // Execute the code in current scope with the current `this` value
+                let result = crate::interpreter::builtins::global::eval_code_in_scope_with_this(
+                    interp,
+                    &code,
+                    false,
+                    self.this_value.clone(),
+                )?;
                 self.set_reg(dst, result.value);
                 Ok(OpResult::Continue)
             }

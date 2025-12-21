@@ -2239,10 +2239,19 @@ impl Interpreter {
         &mut self,
         chunk: std::rc::Rc<crate::compiler::BytecodeChunk>,
     ) -> Result<Guarded, JsError> {
+        self.run_bytecode_with_this(chunk, JsValue::Object(self.global.clone()))
+    }
+
+    /// Run bytecode using the bytecode VM with a specific `this` value
+    fn run_bytecode_with_this(
+        &mut self,
+        chunk: std::rc::Rc<crate::compiler::BytecodeChunk>,
+        this_value: JsValue,
+    ) -> Result<Guarded, JsError> {
         use bytecode_vm::{BytecodeVM, VmResult};
 
         let vm_guard = self.heap.create_guard();
-        let mut vm = BytecodeVM::with_guard(chunk, JsValue::Object(self.global.clone()), vm_guard);
+        let mut vm = BytecodeVM::with_guard(chunk, this_value, vm_guard);
 
         match vm.run(self) {
             VmResult::Complete(guarded) => Ok(guarded),
@@ -2276,6 +2285,31 @@ impl Interpreter {
 
         let chunk = Compiler::compile_program(program)?;
         let result = self.run_bytecode(chunk)?;
+        Ok(result.value)
+    }
+
+    /// Execute a program (AST) for eval with proper completion value tracking
+    pub fn execute_program_for_eval(
+        &mut self,
+        program: &crate::ast::Program,
+    ) -> Result<JsValue, JsError> {
+        use crate::compiler::Compiler;
+
+        let chunk = Compiler::compile_program_for_eval(program)?;
+        let result = self.run_bytecode(chunk)?;
+        Ok(result.value)
+    }
+
+    /// Execute a program (AST) for eval with a specific `this` value
+    pub fn execute_program_for_eval_with_this(
+        &mut self,
+        program: &crate::ast::Program,
+        this_value: JsValue,
+    ) -> Result<JsValue, JsError> {
+        use crate::compiler::Compiler;
+
+        let chunk = Compiler::compile_program_for_eval(program)?;
+        let result = self.run_bytecode_with_this(chunk, this_value)?;
         Ok(result.value)
     }
 

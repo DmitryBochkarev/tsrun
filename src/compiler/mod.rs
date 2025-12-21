@@ -50,6 +50,10 @@ pub struct Compiler {
 
     /// Counter for generating unique class brand IDs
     next_class_brand: u32,
+
+    /// Whether to track completion values (for eval)
+    /// When true, register 0 is reserved for the completion value
+    track_completion: bool,
 }
 
 /// Context for a class being compiled (for private field handling)
@@ -97,7 +101,18 @@ impl Compiler {
             loop_var_redirects: FxHashMap::default(),
             class_context_stack: Vec::new(),
             next_class_brand: 0,
+            track_completion: false,
         }
+    }
+
+    /// Create a new compiler with completion value tracking enabled (for eval)
+    fn new_with_completion_tracking() -> Self {
+        let mut compiler = Self::new();
+        compiler.track_completion = true;
+        // Reserve register 0 for completion value and initialize to undefined
+        let _ = compiler.builder.alloc_register(); // Reserve r0
+        compiler.builder.emit(Op::LoadUndefined { dst: 0 });
+        compiler
     }
 
     /// Generate a new unique class brand ID
@@ -128,6 +143,20 @@ impl Compiler {
     /// Compile a program to bytecode
     pub fn compile_program(program: &Program) -> Result<Rc<BytecodeChunk>, JsError> {
         let mut compiler = Compiler::new();
+
+        // First, hoist all var declarations and function declarations to the top
+        compiler.emit_hoisted_declarations(&program.body)?;
+
+        // Then compile the statements
+        compiler.compile_statements(&program.body)?;
+        compiler.builder.emit_halt();
+        Ok(Rc::new(compiler.builder.finish()))
+    }
+
+    /// Compile a program for eval with completion value tracking
+    /// Register 0 will contain the completion value when Halt is reached.
+    pub fn compile_program_for_eval(program: &Program) -> Result<Rc<BytecodeChunk>, JsError> {
+        let mut compiler = Compiler::new_with_completion_tracking();
 
         // First, hoist all var declarations and function declarations to the top
         compiler.emit_hoisted_declarations(&program.body)?;

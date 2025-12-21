@@ -198,6 +198,19 @@ pub fn eval_code_in_scope(
     code: &str,
     use_global_scope: bool,
 ) -> Result<Guarded, JsError> {
+    // For indirect eval, use global `this`
+    let this_value = JsValue::Object(interp.global.cheap_clone());
+    eval_code_in_scope_with_this(interp, code, use_global_scope, this_value)
+}
+
+/// Execute eval code in the specified scope with a specific `this` value.
+/// Used by direct eval to preserve the calling context's `this`.
+pub fn eval_code_in_scope_with_this(
+    interp: &mut Interpreter,
+    code: &str,
+    use_global_scope: bool,
+    this_value: JsValue,
+) -> Result<Guarded, JsError> {
     // Empty or whitespace-only code returns undefined
     if code.trim().is_empty() {
         return Ok(Guarded::unguarded(JsValue::Undefined));
@@ -226,8 +239,8 @@ pub fn eval_code_in_scope(
     // This ensures `var` declarations are visible throughout the eval code
     interp.hoist_var_declarations(&program.body);
 
-    // Execute the program and get the result
-    let result = interp.execute_program_bytecode(&program);
+    // Execute the program with completion value tracking for proper eval semantics
+    let result = interp.execute_program_for_eval_with_this(&program, this_value);
 
     // Pop the eval scope
     interp.pop_scope(eval_scope);

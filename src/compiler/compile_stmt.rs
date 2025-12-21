@@ -20,10 +20,15 @@ impl Compiler {
         match stmt {
             Statement::Expression(expr_stmt) => {
                 self.builder.set_span(expr_stmt.span);
-                let dst = self.builder.alloc_register()?;
-                self.compile_expression(&expr_stmt.expression, dst)?;
-                // Discard the result
-                self.builder.free_register(dst);
+                if self.track_completion {
+                    // When tracking completion, compile directly to register 0
+                    self.compile_expression(&expr_stmt.expression, 0)?;
+                } else {
+                    let dst = self.builder.alloc_register()?;
+                    self.compile_expression(&expr_stmt.expression, dst)?;
+                    // Discard the result
+                    self.builder.free_register(dst);
+                }
                 Ok(())
             }
 
@@ -142,9 +147,14 @@ impl Compiler {
         // Push a new scope
         self.builder.emit(Op::PushScope);
 
-        // Compile statements
-        for stmt in block.body.iter() {
-            self.compile_statement_impl(stmt)?;
+        if block.body.is_empty() && self.track_completion {
+            // Empty block has completion value undefined
+            self.builder.emit(Op::LoadUndefined { dst: 0 });
+        } else {
+            // Compile statements
+            for stmt in block.body.iter() {
+                self.compile_statement_impl(stmt)?;
+            }
         }
 
         // Pop scope
