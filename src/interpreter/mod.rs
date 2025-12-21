@@ -1493,11 +1493,33 @@ impl Interpreter {
         guard: &Guard<JsObject>,
         bc_func: BytecodeFunction,
     ) -> Gc<JsObject> {
+        let length_key = PropertyKey::String(self.intern("length"));
+        let name_key = PropertyKey::String(self.intern("name"));
+
+        // Get name and param count from function_info
+        let (func_name, param_count) = bc_func
+            .chunk
+            .function_info
+            .as_ref()
+            .map(|info| {
+                let name = info
+                    .name
+                    .as_ref()
+                    .map(|n| n.cheap_clone())
+                    .unwrap_or_else(|| JsString::from(""));
+                (name, info.param_count)
+            })
+            .unwrap_or_else(|| (JsString::from(""), 0));
+
         let func_obj = guard.alloc();
         {
             let mut f_ref = func_obj.borrow_mut();
             f_ref.prototype = Some(self.function_prototype.clone());
             f_ref.exotic = ExoticObject::Function(JsFunction::Bytecode(bc_func));
+            // Set length property (number of formal parameters)
+            f_ref.set_property(length_key, JsValue::Number(param_count as f64));
+            // Set name property
+            f_ref.set_property(name_key, JsValue::String(func_name));
         }
         func_obj
     }
@@ -1509,11 +1531,31 @@ impl Interpreter {
         guard: &Guard<JsObject>,
         bc_func: BytecodeFunction,
     ) -> Gc<JsObject> {
+        let length_key = PropertyKey::String(self.intern("length"));
+        let name_key = PropertyKey::String(self.intern("name"));
+
+        // Get name and param count from function_info
+        let (func_name, param_count) = bc_func
+            .chunk
+            .function_info
+            .as_ref()
+            .map(|info| {
+                let name = info
+                    .name
+                    .as_ref()
+                    .map(|n| n.cheap_clone())
+                    .unwrap_or_else(|| JsString::from(""));
+                (name, info.param_count)
+            })
+            .unwrap_or_else(|| (JsString::from(""), 0));
+
         let func_obj = guard.alloc();
         {
             let mut f_ref = func_obj.borrow_mut();
             f_ref.prototype = Some(self.function_prototype.clone());
             f_ref.exotic = ExoticObject::Function(JsFunction::BytecodeGenerator(bc_func));
+            f_ref.set_property(length_key, JsValue::Number(param_count as f64));
+            f_ref.set_property(name_key, JsValue::String(func_name));
         }
         func_obj
     }
@@ -1525,11 +1567,31 @@ impl Interpreter {
         guard: &Guard<JsObject>,
         bc_func: BytecodeFunction,
     ) -> Gc<JsObject> {
+        let length_key = PropertyKey::String(self.intern("length"));
+        let name_key = PropertyKey::String(self.intern("name"));
+
+        // Get name and param count from function_info
+        let (func_name, param_count) = bc_func
+            .chunk
+            .function_info
+            .as_ref()
+            .map(|info| {
+                let name = info
+                    .name
+                    .as_ref()
+                    .map(|n| n.cheap_clone())
+                    .unwrap_or_else(|| JsString::from(""));
+                (name, info.param_count)
+            })
+            .unwrap_or_else(|| (JsString::from(""), 0));
+
         let func_obj = guard.alloc();
         {
             let mut f_ref = func_obj.borrow_mut();
             f_ref.prototype = Some(self.function_prototype.clone());
             f_ref.exotic = ExoticObject::Function(JsFunction::BytecodeAsync(bc_func));
+            f_ref.set_property(length_key, JsValue::Number(param_count as f64));
+            f_ref.set_property(name_key, JsValue::String(func_name));
         }
         func_obj
     }
@@ -1541,11 +1603,31 @@ impl Interpreter {
         guard: &Guard<JsObject>,
         bc_func: BytecodeFunction,
     ) -> Gc<JsObject> {
+        let length_key = PropertyKey::String(self.intern("length"));
+        let name_key = PropertyKey::String(self.intern("name"));
+
+        // Get name and param count from function_info
+        let (func_name, param_count) = bc_func
+            .chunk
+            .function_info
+            .as_ref()
+            .map(|info| {
+                let name = info
+                    .name
+                    .as_ref()
+                    .map(|n| n.cheap_clone())
+                    .unwrap_or_else(|| JsString::from(""));
+                (name, info.param_count)
+            })
+            .unwrap_or_else(|| (JsString::from(""), 0));
+
         let func_obj = guard.alloc();
         {
             let mut f_ref = func_obj.borrow_mut();
             f_ref.prototype = Some(self.function_prototype.clone());
             f_ref.exotic = ExoticObject::Function(JsFunction::BytecodeAsyncGenerator(bc_func));
+            f_ref.set_property(length_key, JsValue::Number(param_count as f64));
+            f_ref.set_property(name_key, JsValue::String(func_name));
         }
         func_obj
     }
