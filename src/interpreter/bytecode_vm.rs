@@ -5261,6 +5261,12 @@ impl BytecodeVM {
                 if let Some(maybe_setter) = setter_to_call {
                     if let Some(setter) = maybe_setter {
                         interp.call_function(JsValue::Object(setter), obj.clone(), &[value])?;
+                    } else {
+                        // Accessor property with no setter - throw TypeError in strict mode
+                        return Err(JsError::type_error(format!(
+                            "Cannot set property '{}' which has only a getter",
+                            prop_key
+                        )));
                     }
                     // Accessor property handled, return
                     return Ok(());

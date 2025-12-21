@@ -2200,3 +2200,94 @@ fn test_toprimitive_array_join_uses_tostring() {
         JsValue::String("X".into())
     );
 }
+
+// =============================================================================
+// Strict Mode Setter/Getter TypeError Tests
+// =============================================================================
+
+#[test]
+fn test_getter_only_assignment_throws_typeerror() {
+    // Assigning to getter-only property should throw TypeError in strict mode
+    assert_eq!(
+        eval(
+            r#"
+            const obj = {
+                get value() { return 42; }
+            };
+            let result = "no error";
+            try {
+                obj.value = 100;
+            } catch (e) {
+                result = e instanceof TypeError ? "TypeError" : "other error: " + e;
+            }
+            result
+        "#
+        ),
+        JsValue::String("TypeError".into())
+    );
+}
+
+#[test]
+fn test_getter_only_via_define_property_throws_typeerror() {
+    // Getter-only property via Object.defineProperty should also throw
+    assert_eq!(
+        eval(
+            r#"
+            const obj: any = {};
+            Object.defineProperty(obj, 'x', {
+                get: function() { return 42; }
+            });
+            let result = "no error";
+            try {
+                obj.x = 100;
+            } catch (e) {
+                result = e instanceof TypeError ? "TypeError" : "other error";
+            }
+            result
+        "#
+        ),
+        JsValue::String("TypeError".into())
+    );
+}
+
+#[test]
+fn test_getter_setter_pair_does_not_throw() {
+    // If a setter exists, assignment should NOT throw
+    assert_eq!(
+        eval(
+            r#"
+            let stored = 0;
+            const obj = {
+                get value() { return stored; },
+                set value(v: number) { stored = v; }
+            };
+            obj.value = 100;
+            stored
+        "#
+        ),
+        JsValue::Number(100.0)
+    );
+}
+
+#[test]
+fn test_class_getter_only_throws_typeerror() {
+    // Class getter without setter should also throw
+    assert_eq!(
+        eval(
+            r#"
+            class Foo {
+                get value(): number { return 42; }
+            }
+            const obj = new Foo();
+            let result = "no error";
+            try {
+                (obj as any).value = 100;
+            } catch (e) {
+                result = e instanceof TypeError ? "TypeError" : "other error";
+            }
+            result
+        "#
+        ),
+        JsValue::String("TypeError".into())
+    );
+}
