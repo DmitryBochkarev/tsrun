@@ -35,6 +35,15 @@ use std::rc::Rc;
 /// Type alias for accessor map: property key -> (getter, setter)
 type AccessorMap = FxHashMap<PropertyKey, (Option<Gc<JsObject>>, Option<Gc<JsObject>>)>;
 
+/// Result of evaluating a callee expression with its `this` binding.
+/// Returns (callee_value, this_value, callee_guard, this_guard).
+type CalleeWithThis = (
+    JsValue,
+    JsValue,
+    Option<Guard<JsObject>>,
+    Option<Guard<JsObject>>,
+);
+
 /// Completion record for control flow
 /// Control flow completion type
 #[derive(Debug)]
@@ -158,6 +167,7 @@ pub struct Interpreter {
     // Execution State
     // ═══════════════════════════════════════════════════════════════════════════
     /// Stores thrown value during exception propagation
+    #[allow(dead_code)] // Used for future module error handling
     thrown_value: Option<JsValue>,
 
     /// Guard for the thrown value (keeps it alive during exception handling)
@@ -196,6 +206,7 @@ pub struct Interpreter {
     internal_modules: FxHashMap<String, crate::InternalModule>,
 
     /// Instantiated internal module objects (cached after first import)
+    #[allow(dead_code)] // Used for future ES module implementation
     internal_module_cache: FxHashMap<String, Gc<JsObject>>,
 
     /// Loaded external modules (normalized path -> module namespace)
@@ -2485,6 +2496,7 @@ impl Interpreter {
     ///
     /// The specifier is resolved relative to the current module path before
     /// looking up in the loaded modules cache.
+    #[allow(dead_code)] // Used for future ES module implementation
     fn resolve_module(&mut self, specifier: &str) -> Result<Gc<JsObject>, JsError> {
         // Check internal modules first (use original specifier for internal modules)
         if let Some(module) = self.resolve_internal_module(specifier)? {
@@ -2506,6 +2518,7 @@ impl Interpreter {
     }
 
     /// Resolve an internal module (creates module object on first access)
+    #[allow(dead_code)] // Used for future ES module implementation
     fn resolve_internal_module(
         &mut self,
         specifier: &str,
@@ -2551,6 +2564,7 @@ impl Interpreter {
     }
 
     /// Create module object from native exports
+    #[allow(dead_code)] // Used for future ES module implementation
     fn create_native_module_object(
         &mut self,
         guard: &Guard<JsObject>,
@@ -2579,6 +2593,7 @@ impl Interpreter {
 
     /// Create module object from TypeScript source
     // FIXME: move up to other source parsing code?
+    #[allow(dead_code)] // Used for future ES module implementation
     fn create_source_module_object(
         &mut self,
         guard: &Guard<JsObject>,
@@ -2687,6 +2702,7 @@ impl Interpreter {
     }
 
     /// Create a function from an InternalFn
+    #[allow(dead_code)] // Used for future ES module implementation
     fn create_internal_function(
         &mut self,
         name: &str,
@@ -5708,19 +5724,7 @@ impl Interpreter {
 
     /// Evaluate an expression and return both the value and the `this` context.
     /// For member expressions, `this` is the object being accessed.
-    /// Returns (callee_value, this_value, callee_guard, this_guard)
-    fn evaluate_callee_with_this(
-        &mut self,
-        expr: &Expression,
-    ) -> Result<
-        (
-            JsValue,
-            JsValue,
-            Option<Guard<JsObject>>,
-            Option<Guard<JsObject>>,
-        ),
-        JsError,
-    > {
+    fn evaluate_callee_with_this(&mut self, expr: &Expression) -> Result<CalleeWithThis, JsError> {
         // Check if this is ultimately a member expression (possibly wrapped in parens or optional chain)
         if let Some(member) = Self::extract_member_expression(expr) {
             // This is a member access - evaluate object first to get `this`

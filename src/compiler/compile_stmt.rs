@@ -271,7 +271,7 @@ impl Compiler {
                 // Extract variable names from declarations
                 let mut names = Vec::new();
                 for declarator in decl.declarations.iter() {
-                    self.collect_pattern_names(&declarator.id, &mut names);
+                    Self::collect_pattern_names(&declarator.id, &mut names);
                 }
                 return names;
             }
@@ -280,31 +280,31 @@ impl Compiler {
     }
 
     /// Collect variable names from a pattern
-    fn collect_pattern_names(&self, pattern: &Pattern, names: &mut Vec<JsString>) {
+    fn collect_pattern_names(pattern: &Pattern, names: &mut Vec<JsString>) {
         match pattern {
             Pattern::Identifier(id) => names.push(id.name.cheap_clone()),
             Pattern::Object(obj) => {
                 for prop in &obj.properties {
                     match prop {
                         ObjectPatternProperty::KeyValue { value, .. } => {
-                            self.collect_pattern_names(value, names);
+                            Self::collect_pattern_names(value, names);
                         }
                         ObjectPatternProperty::Rest(rest) => {
-                            self.collect_pattern_names(&rest.argument, names);
+                            Self::collect_pattern_names(&rest.argument, names);
                         }
                     }
                 }
             }
             Pattern::Array(arr) => {
                 for elem in arr.elements.iter().flatten() {
-                    self.collect_pattern_names(elem, names);
+                    Self::collect_pattern_names(elem, names);
                 }
             }
             Pattern::Rest(rest) => {
-                self.collect_pattern_names(&rest.argument, names);
+                Self::collect_pattern_names(&rest.argument, names);
             }
             Pattern::Assignment(assign) => {
-                self.collect_pattern_names(&assign.left, names);
+                Self::collect_pattern_names(&assign.left, names);
             }
         }
     }

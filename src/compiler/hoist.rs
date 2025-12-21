@@ -195,10 +195,8 @@ fn collect_pattern_var_names(pattern: &Pattern, names: &mut Vec<JsString>) {
             }
         }
         Pattern::Array(arr_pat) => {
-            for elem in &arr_pat.elements {
-                if let Some(p) = elem {
-                    collect_pattern_var_names(p, names);
-                }
+            for p in arr_pat.elements.iter().flatten() {
+                collect_pattern_var_names(p, names);
             }
         }
         Pattern::Assignment(assign_pat) => {

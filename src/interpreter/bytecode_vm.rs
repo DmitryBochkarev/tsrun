@@ -2538,20 +2538,18 @@ impl BytecodeVM {
                     let str_val = if let JsValue::Object(obj) = &val {
                         // Check if object has a custom toString method
                         let to_string_key = PropertyKey::String(interp.intern("toString"));
-                        if let Some(to_string_val) = obj.borrow().get_property(&to_string_key) {
-                            if let JsValue::Object(func_obj) = &to_string_val {
-                                if func_obj.borrow().is_callable() {
-                                    // Call toString()
-                                    match interp.call_function(
-                                        JsValue::Object(func_obj.clone()),
-                                        val.clone(),
-                                        &[],
-                                    ) {
-                                        Ok(Guarded { value, guard: _ }) => value.to_js_string(),
-                                        Err(_) => val.to_js_string(),
-                                    }
-                                } else {
-                                    val.to_js_string()
+                        if let Some(JsValue::Object(func_obj)) =
+                            obj.borrow().get_property(&to_string_key)
+                        {
+                            if func_obj.borrow().is_callable() {
+                                // Call toString()
+                                match interp.call_function(
+                                    JsValue::Object(func_obj.clone()),
+                                    val.clone(),
+                                    &[],
+                                ) {
+                                    Ok(Guarded { value, guard: _ }) => value.to_js_string(),
+                                    Err(_) => val.to_js_string(),
                                 }
                             } else {
                                 val.to_js_string()
