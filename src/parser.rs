@@ -5712,4 +5712,50 @@ export function parseLinks(text: string): ParsedElement[] {
         // Empty specifiers
         assert!(export.specifiers.is_empty());
     }
+
+    #[test]
+    fn test_parse_optional_chain_parenthesized() {
+        use crate::ast::Expression;
+
+        // a?.b?.() - direct optional chain call
+        let prog1 = parse("a?.b?.()");
+        assert_eq!(prog1.body.len(), 1);
+        if let Statement::Expression(stmt) = &prog1.body[0] {
+            // Verify it's OptionalChain(Call(Member))
+            if let Expression::OptionalChain(opt) = stmt.expression.as_ref() {
+                if let Expression::Call(call) = opt.base.as_ref() {
+                    assert!(call.optional, "Expected optional call");
+                    assert!(
+                        matches!(call.callee.as_ref(), Expression::Member(_)),
+                        "Expected Member callee"
+                    );
+                } else {
+                    panic!("Expected Call inside OptionalChain");
+                }
+            } else {
+                panic!("Expected OptionalChain expression");
+            }
+        }
+
+        // (a?.b)?.() - parenthesized optional chain then optional call
+        let prog2 = parse("(a?.b)?.()");
+        assert_eq!(prog2.body.len(), 1);
+        if let Statement::Expression(stmt) = &prog2.body[0] {
+            // Verify it's OptionalChain(Call(Parenthesized(OptionalChain(Member))))
+            if let Expression::OptionalChain(opt) = stmt.expression.as_ref() {
+                if let Expression::Call(call) = opt.base.as_ref() {
+                    assert!(call.optional, "Expected optional call");
+                    // The callee should be a parenthesized optional chain
+                    assert!(
+                        matches!(call.callee.as_ref(), Expression::Parenthesized(_, _)),
+                        "Expected Parenthesized callee"
+                    );
+                } else {
+                    panic!("Expected Call inside OptionalChain");
+                }
+            } else {
+                panic!("Expected OptionalChain expression");
+            }
+        }
+    }
 }

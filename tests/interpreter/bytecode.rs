@@ -2991,3 +2991,124 @@ fn test_bytecode_for_let_closure_capture() {
     );
     assert_eq!(result, JsValue::String("0,1,2".into()));
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Optional Chaining with Parentheses
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_bytecode_optional_chain_basic() {
+    // First verify basic optional chaining works
+    let result = eval_bytecode(
+        r#"
+        const a = { b: 42 };
+        a?.b
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(42.0));
+}
+
+#[test]
+fn test_bytecode_optional_chain_shortcircuit() {
+    // Optional chaining on undefined should return undefined
+    let result = eval_bytecode(
+        r#"
+        let a: any = undefined;
+        a?.b
+    "#,
+    );
+    assert_eq!(result, JsValue::Undefined);
+}
+
+#[test]
+fn test_bytecode_optional_call() {
+    // Optional call: func?.()
+    let result = eval_bytecode(
+        r#"
+        const a = {
+            b() { return 42; }
+        };
+        a.b?.()
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(42.0));
+}
+
+#[test]
+fn test_bytecode_optional_chain_parenthesized_debug() {
+    // Debug: first test simpler case of parenthesized member access
+    let result = eval_bytecode(
+        r#"
+        const a = { b: 42 };
+        (a?.b)
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(42.0));
+}
+
+#[test]
+fn test_bytecode_optional_chain_parenthesized_method() {
+    // Debug: parenthesized method access without calling
+    let result = eval_bytecode(
+        r#"
+        const a = { b() { return 42; } };
+        typeof (a?.b)
+    "#,
+    );
+    assert_eq!(result, JsValue::String("function".into()));
+}
+
+#[test]
+fn test_bytecode_optional_chain_parenthesized_call() {
+    // Debug: parenthesized method access then call
+    let result = eval_bytecode(
+        r#"
+        const a = { b() { return 42; } };
+        (a?.b)()
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(42.0));
+}
+
+#[test]
+fn test_bytecode_optional_chain_parenthesized_optional_call() {
+    // (a?.b)?.() - parenthesized optional chain with optional call
+    let result = eval_bytecode(
+        r#"
+        const a = { b() { return 42; } };
+        (a?.b)?.()
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(42.0));
+}
+
+#[test]
+fn test_bytecode_optional_chain_parenthesized_optional_call_with_this() {
+    // Test that this is correctly bound when using optional call after parenthesized chain
+    // Optional chaining actually preserves this binding even through parentheses!
+    let result = eval_bytecode(
+        r#"
+        const a = {
+            b() { return this._b; },
+            _b: 42
+        };
+        (a?.b)?.()
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(42.0));
+}
+
+#[test]
+fn test_bytecode_optional_chain_parenthesized() {
+    // (a?.b)?.() - parenthesized optional chain
+    let result = eval_bytecode(
+        r#"
+        const a = {
+            b() { return this._b; },
+            _b: { c: 42 }
+        };
+        (a?.b)?.().c
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(42.0));
+}

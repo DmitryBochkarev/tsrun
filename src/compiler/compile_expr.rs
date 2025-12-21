@@ -1337,6 +1337,79 @@ impl Compiler {
 
             self.builder.free_register(method_reg);
             self.builder.free_register(obj_reg);
+        } else if let Some((obj_expr, member)) =
+            Self::extract_member_from_parenthesized_optional_chain(&call.callee)
+        {
+            // Handle parenthesized optional chain method call: (a?.b)?.()
+            // We need to compile the object, get the method, and call with the object as this
+            let obj_reg = self.builder.alloc_register()?;
+
+            // Compile the object expression with optional chain handling
+            let inner_jumps = match obj_expr {
+                Expression::Member(inner_member) => {
+                    self.compile_member_expression_optional(inner_member, obj_reg)?
+                }
+                Expression::Call(inner_call) => {
+                    self.compile_call_expression_optional(inner_call, obj_reg)?
+                }
+                Expression::OptionalChain(inner_opt) => {
+                    self.compile_optional_chain_inner(&inner_opt.base, obj_reg)?
+                }
+                _ => {
+                    self.compile_expression(obj_expr, obj_reg)?;
+                    Vec::new()
+                }
+            };
+            short_circuit_jumps.extend(inner_jumps);
+
+            // If the inner member access is optional, check for nullish
+            if member.optional {
+                let jump = self.builder.emit_jump_if_nullish(obj_reg);
+                short_circuit_jumps.push(jump);
+            }
+
+            // Get the method
+            let method_reg = self.builder.alloc_register()?;
+            match &member.property {
+                MemberProperty::Identifier(id) => {
+                    let key_idx = self.builder.add_string(id.name.cheap_clone())?;
+                    self.builder.emit(Op::GetPropertyConst {
+                        dst: method_reg,
+                        obj: obj_reg,
+                        key: key_idx,
+                    });
+                }
+                MemberProperty::Expression(expr) => {
+                    let key_reg = self.builder.alloc_register()?;
+                    self.compile_expression(expr, key_reg)?;
+                    self.builder.emit(Op::GetProperty {
+                        dst: method_reg,
+                        obj: obj_reg,
+                        key: key_reg,
+                    });
+                    self.builder.free_register(key_reg);
+                }
+                MemberProperty::PrivateIdentifier(_) => {
+                    return Err(JsError::syntax_error_simple(
+                        "Private fields not yet supported in bytecode compiler",
+                    ));
+                }
+            }
+
+            // If call is optional (?.()), check if method is callable
+            if call.optional {
+                let jump = self.builder.emit_jump_if_nullish(method_reg);
+                short_circuit_jumps.push(jump);
+            }
+
+            // Compile arguments
+            let (args_start, argc, has_spread) = self.compile_arguments(&call.arguments)?;
+
+            // Call the method with obj as this
+            self.emit_call(dst, method_reg, obj_reg, args_start, argc, has_spread);
+
+            self.builder.free_register(method_reg);
+            self.builder.free_register(obj_reg);
         } else {
             // Regular call (not method call)
             let callee_reg = self.builder.alloc_register()?;
@@ -1380,6 +1453,31 @@ impl Compiler {
         }
 
         Ok(short_circuit_jumps)
+    }
+
+    /// Extract the object expression and member info from a parenthesized optional chain.
+    /// For expressions like `(a?.b)`, this returns the object expression (`a`) and the member (`b`).
+    /// This is used to preserve `this` binding when calling methods via parenthesized optional chains.
+    fn extract_member_from_parenthesized_optional_chain(
+        expr: &std::rc::Rc<Expression>,
+    ) -> Option<(&Expression, &crate::ast::MemberExpression)> {
+        // Unwrap Parenthesized expression
+        let inner = match expr.as_ref() {
+            Expression::Parenthesized(inner_expr, _) => inner_expr,
+            _ => return None,
+        };
+
+        // Check if it's an OptionalChain
+        let opt_chain = match inner.as_ref() {
+            Expression::OptionalChain(opt) => opt,
+            _ => return None,
+        };
+
+        // Check if the base is a Member expression
+        match opt_chain.base.as_ref() {
+            Expression::Member(member) => Some((member.object.as_ref(), member)),
+            _ => None,
+        }
     }
 
     /// Compile a call expression
