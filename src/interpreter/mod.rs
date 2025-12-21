@@ -2123,22 +2123,45 @@ impl Interpreter {
         // 3. Call next() to get the first value
         // 4. On subsequent next() calls, delegate to the stored iterator
 
+        let is_async = gen_state.borrow().is_async;
+
         // Try to get Symbol.iterator method
         let JsValue::Object(obj) = &iterable else {
             self.env = saved_env;
             return Err(JsError::type_error("yield* value is not iterable"));
         };
 
-        // Get Symbol.iterator
+        // Get Symbol.iterator (for async generators, also try Symbol.asyncIterator)
         let well_known = builtins::symbol::get_well_known_symbols();
-        let iterator_symbol =
-            JsSymbol::new(well_known.iterator, Some("Symbol.iterator".to_string()));
-        let iterator_key = PropertyKey::Symbol(Box::new(iterator_symbol));
-
-        let iterator_method = obj.borrow().get_property(&iterator_key);
 
         // Create a guard to keep the iterator and its contents alive throughout delegation
         let iter_guard = self.heap.create_guard();
+
+        // Try to get the iterator method - for async generators, prefer Symbol.asyncIterator
+        let iterator_method = if is_async {
+            // Try Symbol.asyncIterator first
+            let async_iterator_symbol = JsSymbol::new(
+                well_known.async_iterator,
+                Some("Symbol.asyncIterator".to_string()),
+            );
+            let async_iterator_key = PropertyKey::Symbol(Box::new(async_iterator_symbol));
+            let async_method = obj.borrow().get_property(&async_iterator_key);
+
+            if async_method.is_some() {
+                async_method
+            } else {
+                // Fall back to Symbol.iterator
+                let iterator_symbol =
+                    JsSymbol::new(well_known.iterator, Some("Symbol.iterator".to_string()));
+                let iterator_key = PropertyKey::Symbol(Box::new(iterator_symbol));
+                obj.borrow().get_property(&iterator_key)
+            }
+        } else {
+            let iterator_symbol =
+                JsSymbol::new(well_known.iterator, Some("Symbol.iterator".to_string()));
+            let iterator_key = PropertyKey::Symbol(Box::new(iterator_symbol));
+            obj.borrow().get_property(&iterator_key)
+        };
 
         let (iter_obj, next_method) = match iterator_method {
             Some(method) => {
@@ -2182,8 +2205,23 @@ impl Interpreter {
         // Keep guard alive until the iterator is stored in generator state
         let _ = &iter_guard;
 
+        // For async generators, the result might be a Promise - resolve it synchronously
+        let actual_result = if is_async {
+            if let JsValue::Object(result_obj) = &result.value {
+                if matches!(result_obj.borrow().exotic, ExoticObject::Promise(_)) {
+                    builtins::promise::resolve_promise_sync(self, result_obj)?
+                } else {
+                    result.value.clone()
+                }
+            } else {
+                result.value.clone()
+            }
+        } else {
+            result.value.clone()
+        };
+
         // Extract value and done
-        let (value, done) = self.extract_iterator_result(&result.value);
+        let (value, done) = self.extract_iterator_result(&actual_result);
 
         if done {
             // Iterator is immediately done, resume generator with return value

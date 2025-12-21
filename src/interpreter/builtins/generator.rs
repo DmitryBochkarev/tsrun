@@ -149,26 +149,76 @@ pub fn generator_next(
                 // Keep guard alive until after call_function returns
                 let _ = iter_guard;
 
-                // Check if delegated iterator is done
-                let (value, done) = interp.extract_iterator_result(&result.value);
+                // For async generators, the delegated iterator might also be async.
+                // In that case, result.value is a Promise. We need to check for this
+                // and return a Promise that resolves to the proper iterator result.
+                if is_async {
+                    if let JsValue::Object(result_obj) = &result.value {
+                        if matches!(result_obj.borrow().exotic, ExoticObject::Promise(_)) {
+                            // The delegated iterator returned a Promise.
+                            // We need to wrap this in handling that:
+                            // 1. Awaits the promise
+                            // 2. Checks if done
+                            // 3. Either yields the value or resumes the outer generator
+                            //
+                            // For now, we return a Promise that resolves to the inner result
+                            // and handle the done/value logic in continuation.
+                            // This is complex, so we use a simpler approach:
+                            // Store that we need to await and handle on next .next() call
+                            //
+                            // Actually, the cleanest fix is to return the inner promise
+                            // wrapped with .then() to handle the done check.
+                            // But that requires promise chaining infrastructure.
+                            //
+                            // Simplest fix: await the promise now using resolve_promise_sync
+                            let promise_result =
+                                super::promise::resolve_promise_sync(interp, result_obj)?;
+                            let (value, done) = interp.extract_iterator_result(&promise_result);
 
-                if done {
-                    // Clear delegation and resume outer generator with the return value
-                    gen_state.borrow_mut().delegated_iterator = None;
-                    gen_state.borrow_mut().sent_value = value;
-                    let result = interp.resume_bytecode_generator(&gen_state)?;
-                    if is_async {
-                        wrap_in_fulfilled_promise(interp, result)
+                            if done {
+                                // Clear delegation and resume outer generator with the return value
+                                gen_state.borrow_mut().delegated_iterator = None;
+                                gen_state.borrow_mut().sent_value = value;
+                                let result = interp.resume_bytecode_generator(&gen_state)?;
+                                wrap_in_fulfilled_promise(interp, result)
+                            } else {
+                                // Yield the delegated value
+                                let result = create_generator_result(interp, value, false);
+                                wrap_in_fulfilled_promise(interp, result)
+                            }
+                        } else {
+                            // Result is not a Promise, extract value/done directly
+                            let (value, done) = interp.extract_iterator_result(&result.value);
+
+                            if done {
+                                gen_state.borrow_mut().delegated_iterator = None;
+                                gen_state.borrow_mut().sent_value = value;
+                                let result = interp.resume_bytecode_generator(&gen_state)?;
+                                wrap_in_fulfilled_promise(interp, result)
+                            } else {
+                                let result = create_generator_result(interp, value, false);
+                                wrap_in_fulfilled_promise(interp, result)
+                            }
+                        }
                     } else {
-                        Ok(result)
+                        // Result is not an object, treat as done
+                        gen_state.borrow_mut().delegated_iterator = None;
+                        gen_state.borrow_mut().sent_value = JsValue::Undefined;
+                        let result = interp.resume_bytecode_generator(&gen_state)?;
+                        wrap_in_fulfilled_promise(interp, result)
                     }
                 } else {
-                    // Yield the delegated value
-                    let result = create_generator_result(interp, value, false);
-                    if is_async {
-                        wrap_in_fulfilled_promise(interp, result)
+                    // Sync generator - extract value/done directly
+                    let (value, done) = interp.extract_iterator_result(&result.value);
+
+                    if done {
+                        // Clear delegation and resume outer generator with the return value
+                        gen_state.borrow_mut().delegated_iterator = None;
+                        gen_state.borrow_mut().sent_value = value;
+                        interp.resume_bytecode_generator(&gen_state)
                     } else {
-                        Ok(result)
+                        // Yield the delegated value
+                        Ok(create_generator_result(interp, value, false))
                     }
                 }
             } else {

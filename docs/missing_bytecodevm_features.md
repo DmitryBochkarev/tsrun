@@ -2,9 +2,9 @@
 
 This document analyzes test failures in the bytecode VM and categorizes them by feature area with implementation guidance.
 
-**Total Tests:** 1784
-**Passing:** 1625
-**Failing:** 151
+**Total Tests:** 1785
+**Passing:** 1654
+**Failing:** 124
 **Ignored:** 7
 
 ---
@@ -38,6 +38,7 @@ The following issues have been fixed:
 - ✅ **Private class members** - Private fields (`#field`) and private methods (`#method()`) now work correctly
 - ✅ **Eval completion values** - `eval()` now returns proper completion values for loops, switch, and empty blocks
 - ✅ **Eval strict mode this** - Direct eval inside functions now preserves the correct `this` binding
+- ✅ **Async iteration (for-await-of)** - `for await...of` loops now work with arrays, promises, and async generators
 
 ---
 
@@ -113,50 +114,31 @@ When module loading is needed, the VM should:
 
 ## 2. Async Iteration (for-await-of)
 
-**Error Message:** `Async iterators not yet implemented in VM`
+**Status: ✅ Fixed**
 
-**Affected Tests (~25 tests):**
-- `async_iter::test_for_await_of_*`
-- `async_iter::test_custom_async_iterable*`
-- `async_iter::test_async_generator_*` (several)
-- `async_iter::test_top_level_for_await*`
-- `async_iter::test_debug_nested_async_gen_*`
+All async iteration tests now pass (57/57):
+- ✅ `for await...of` with arrays of promises
+- ✅ `for await...of` with plain arrays
+- ✅ `for await...of` with async generators
+- ✅ Custom async iterables (objects with `Symbol.asyncIterator`)
+- ✅ Async generator `yield*` delegation
 
-**Current State:**
-The VM recognizes `for-await-of` syntax but throws an error at runtime.
+**Implementation Details:**
 
-**Implementation Strategy:**
+1. **GetAsyncIterator opcode** - Implements the async iteration protocol:
+   - First tries `Symbol.asyncIterator` on the iterable
+   - Falls back to `Symbol.iterator` if not found
+   - Returns an iterator object for the for-await-of loop
 
-### Step 1: Add ForAwaitOf Instruction
-```rust
-enum Opcode {
-    // Existing ForOf uses Symbol.iterator
-    ForOfNext { ... },
+2. **Compiler changes** - For `for await...of` loops:
+   - Emits `GetAsyncIterator` instead of `GetIterator`
+   - Adds `Await` after `IteratorNext` to await the iterator result
+   - Adds second `Await` after `IteratorValue` to await the value itself
 
-    // New: uses Symbol.asyncIterator, awaits each result
-    ForAwaitOfStart { iterator_reg: u8 },
-    ForAwaitOfNext { result_reg: u8, done_label: Label },
-}
-```
-
-### Step 2: Iteration Protocol
-1. Get `Symbol.asyncIterator` method from iterable
-2. If not present, fall back to `Symbol.iterator` (wrap values in promises)
-3. Call `.next()` on async iterator
-4. Await the returned promise
-5. Extract `value` and `done` from result
-
-### Step 3: Handle Suspension
-Each `await` in the loop body requires:
-- Saving loop state (iterator, current index)
-- Proper continuation after promise resolution
-
-**Key Difference from Regular for-of:**
-- Must await each `.next()` call result
-- Must handle async generator protocol
-
-**Complexity:** Medium-High
-**Estimated Effort:** 1-2 days
+3. **Async generator yield*** - Fixed delegation in async generators:
+   - `start_yield_star_delegation` now checks for `Symbol.asyncIterator` first
+   - `generator_next` handles Promise results from delegated async iterators
+   - Added `resolve_promise_sync` helper to extract fulfilled promise values
 
 ---
 
@@ -369,10 +351,10 @@ This was already working - likely fixed by a previous change.
 ### High Priority (Core Language Features)
 1. **Module System** - Essential for real-world usage
 2. ~~**Private Class Members**~~ - ✅ Fixed
-3. **Async Iteration** - Needed for async patterns
+3. ~~**Async Iteration**~~ - ✅ Fixed
 
 ### Medium Priority
-4. **Proxy Traps** - Important for metaprogramming
+4. ~~**Proxy Traps**~~ - ✅ Fixed
 5. **Decorators** - TypeScript feature, complex
 6. ~~**Generator Edge Cases**~~ - ✅ Fixed
 

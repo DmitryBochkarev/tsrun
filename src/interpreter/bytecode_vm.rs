@@ -2107,9 +2107,158 @@ impl BytecodeVM {
                 Ok(OpResult::Continue)
             }
 
-            Op::GetAsyncIterator { dst: _, obj: _ } => Err(JsError::internal_error(
-                "Async iterators not yet implemented in VM",
-            )),
+            Op::GetAsyncIterator { dst, obj } => {
+                let obj_val = self.get_reg(obj).clone();
+
+                // For async iteration, we first try Symbol.asyncIterator, then fall back to Symbol.iterator.
+                // For arrays without Symbol.asyncIterator, we use the same internal iterator as sync iteration.
+                // The Await opcode that follows IteratorNext will handle awaiting each value.
+
+                match &obj_val {
+                    JsValue::Object(obj_ref) => {
+                        // Check if it's a proxy first
+                        let is_proxy = matches!(obj_ref.borrow().exotic, ExoticObject::Proxy(_));
+
+                        if is_proxy {
+                            // For proxies, try Symbol.asyncIterator first, then Symbol.iterator
+                            let well_known =
+                                crate::interpreter::builtins::symbol::get_well_known_symbols();
+
+                            // Try Symbol.asyncIterator first
+                            let async_iterator_symbol = crate::value::JsSymbol::new(
+                                well_known.async_iterator,
+                                Some("Symbol.asyncIterator".to_string()),
+                            );
+                            let async_iterator_key =
+                                PropertyKey::Symbol(Box::new(async_iterator_symbol));
+
+                            let async_method_result =
+                                crate::interpreter::builtins::proxy::proxy_get(
+                                    interp,
+                                    obj_ref.cheap_clone(),
+                                    async_iterator_key,
+                                    obj_val.clone(),
+                                )?;
+
+                            if let JsValue::Object(method_obj) = async_method_result.value {
+                                // Call the async iterator method with the proxy as `this`
+                                let result = interp.call_function(
+                                    JsValue::Object(method_obj),
+                                    obj_val.clone(),
+                                    &[],
+                                )?;
+                                if let JsValue::Object(iter_obj) = &result.value {
+                                    self.register_guard.guard(iter_obj.cheap_clone());
+                                }
+                                self.set_reg(dst, result.value);
+                                return Ok(OpResult::Continue);
+                            }
+
+                            // Fall back to Symbol.iterator
+                            let iterator_symbol = crate::value::JsSymbol::new(
+                                well_known.iterator,
+                                Some("Symbol.iterator".to_string()),
+                            );
+                            let iterator_key = PropertyKey::Symbol(Box::new(iterator_symbol));
+
+                            let iterator_method_result =
+                                crate::interpreter::builtins::proxy::proxy_get(
+                                    interp,
+                                    obj_ref.cheap_clone(),
+                                    iterator_key,
+                                    obj_val.clone(),
+                                )?;
+
+                            if let JsValue::Object(method_obj) = iterator_method_result.value {
+                                let result = interp.call_function(
+                                    JsValue::Object(method_obj),
+                                    obj_val.clone(),
+                                    &[],
+                                )?;
+                                if let JsValue::Object(iter_obj) = &result.value {
+                                    self.register_guard.guard(iter_obj.cheap_clone());
+                                }
+                                self.set_reg(dst, result.value);
+                            } else {
+                                return Err(JsError::type_error("Object is not async iterable"));
+                            }
+                            return Ok(OpResult::Continue);
+                        }
+
+                        // Check for Symbol.asyncIterator first
+                        let well_known =
+                            crate::interpreter::builtins::symbol::get_well_known_symbols();
+                        let async_iterator_symbol = crate::value::JsSymbol::new(
+                            well_known.async_iterator,
+                            Some("Symbol.asyncIterator".to_string()),
+                        );
+                        let async_iterator_key =
+                            PropertyKey::Symbol(Box::new(async_iterator_symbol));
+
+                        let async_method = obj_ref.borrow().get_property(&async_iterator_key);
+
+                        if let Some(JsValue::Object(method_obj)) = async_method {
+                            // Call the async iterator method
+                            let result =
+                                interp.call_function(JsValue::Object(method_obj), obj_val, &[])?;
+                            if let JsValue::Object(iter_obj) = &result.value {
+                                self.register_guard.guard(iter_obj.cheap_clone());
+                            }
+                            self.set_reg(dst, result.value);
+                            return Ok(OpResult::Continue);
+                        }
+
+                        // Check if it's an array - use direct element iteration
+                        // The Await opcode will handle awaiting each element (promise or plain value)
+                        if obj_ref.borrow().array_elements().is_some() {
+                            let iter = interp.create_object(&self.register_guard);
+                            iter.borrow_mut().set_property(
+                                PropertyKey::from("__array__"),
+                                JsValue::Object(obj_ref.clone()),
+                            );
+                            iter.borrow_mut()
+                                .set_property(PropertyKey::from("__index__"), JsValue::Number(0.0));
+                            self.set_reg(dst, JsValue::Object(iter));
+                            return Ok(OpResult::Continue);
+                        }
+
+                        // Try Symbol.iterator as fallback
+                        let iterator_symbol = crate::value::JsSymbol::new(
+                            well_known.iterator,
+                            Some("Symbol.iterator".to_string()),
+                        );
+                        let iterator_key = PropertyKey::Symbol(Box::new(iterator_symbol));
+
+                        let iterator_method = obj_ref.borrow().get_property(&iterator_key);
+
+                        if let Some(JsValue::Object(method_obj)) = iterator_method {
+                            let result =
+                                interp.call_function(JsValue::Object(method_obj), obj_val, &[])?;
+                            if let JsValue::Object(iter_obj) = &result.value {
+                                self.register_guard.guard(iter_obj.cheap_clone());
+                            }
+                            self.set_reg(dst, result.value);
+                        } else {
+                            return Err(JsError::type_error("Object is not async iterable"));
+                        }
+                    }
+                    JsValue::String(s) => {
+                        // Create a string iterator (same as sync - Await will handle values)
+                        let iter = interp.create_object(&self.register_guard);
+                        iter.borrow_mut().set_property(
+                            PropertyKey::from("__string__"),
+                            JsValue::String(s.cheap_clone()),
+                        );
+                        iter.borrow_mut()
+                            .set_property(PropertyKey::from("__index__"), JsValue::Number(0.0));
+                        self.set_reg(dst, JsValue::Object(iter));
+                    }
+                    _ => {
+                        return Err(JsError::type_error("Object is not async iterable"));
+                    }
+                }
+                Ok(OpResult::Continue)
+            }
 
             Op::IteratorNext { dst, iterator } => {
                 let iter_val = self.get_reg(iterator).clone();

@@ -1067,6 +1067,49 @@ fn test_async_generator_take() {
 }
 
 #[test]
+fn test_debug_async_yield_star_manual() {
+    // Step 1: Can we manually iterate gen1?
+    let result = eval(
+        r#"
+        async function* gen1(): AsyncGenerator<number> {
+            yield 1;
+            yield 2;
+        }
+        async function test(): Promise<string> {
+            const g = gen1();
+            const r1 = await g.next();
+            const r2 = await g.next();
+            const r3 = await g.next();
+            return r1.value + "," + r2.value + "," + r3.done;
+        }
+        await test()
+    "#,
+    );
+    assert_eq!(result, JsValue::String("1,2,true".into()));
+}
+
+#[test]
+fn test_debug_async_yield_star_gen2_no_delegation() {
+    // Step 2: Can gen2 work without yield*?
+    let result = eval(
+        r#"
+        async function* gen2(): AsyncGenerator<number> {
+            yield 3;
+        }
+        async function test(): Promise<number> {
+            let sum = 0;
+            for await (const x of gen2()) {
+                sum += x;
+            }
+            return sum;
+        }
+        await test()
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(3.0));
+}
+
+#[test]
 fn test_async_generator_yield_star() {
     // yield* with async generator
     let result = eval(

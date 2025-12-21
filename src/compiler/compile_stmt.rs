@@ -635,7 +635,7 @@ impl Compiler {
             iterator: iter_reg,
         });
 
-        // For await...of, await the result
+        // For await...of, await the result (for true async iterators, next() returns a promise)
         if for_of.await_ {
             self.builder.emit(Op::Await {
                 dst: result_reg,
@@ -658,6 +658,14 @@ impl Compiler {
             dst: value_reg,
             result: result_reg,
         });
+
+        // For await...of, also await the value (for sync iterables with promise values)
+        if for_of.await_ {
+            self.builder.emit(Op::Await {
+                dst: value_reg,
+                promise: value_reg,
+            });
+        }
 
         // Bind to left side
         self.compile_for_in_of_left(&for_of.left, value_reg)?;

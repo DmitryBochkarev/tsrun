@@ -530,6 +530,35 @@ pub fn promise_resolve_static(
     Ok(Guarded::with_guard(JsValue::Object(promise), guard))
 }
 
+/// Synchronously extract the result value from a fulfilled Promise.
+/// Returns the value if the promise is fulfilled, or an error otherwise.
+/// This is used for async generator yield* delegation where we need to
+/// extract the iterator result from the inner generator's promise.
+pub fn resolve_promise_sync(
+    _interp: &mut Interpreter,
+    promise: &Gc<JsObject>,
+) -> Result<JsValue, JsError> {
+    let obj = promise.borrow();
+    let ExoticObject::Promise(ref state) = obj.exotic else {
+        return Err(JsError::type_error("Not a promise"));
+    };
+    let state_ref = state.borrow();
+    match state_ref.status {
+        PromiseStatus::Fulfilled => Ok(state_ref.result.clone().unwrap_or(JsValue::Undefined)),
+        PromiseStatus::Rejected => {
+            let reason = state_ref.result.clone().unwrap_or(JsValue::Undefined);
+            Err(JsError::ThrownValue { value: reason })
+        }
+        PromiseStatus::Pending => {
+            // For async generator delegation, the promise should already be settled.
+            // If pending, we have a bug - return an error
+            Err(JsError::internal_error(
+                "Cannot synchronously resolve pending promise in async generator delegation",
+            ))
+        }
+    }
+}
+
 /// Promise.reject(reason)
 pub fn promise_reject_static(
     interp: &mut Interpreter,
