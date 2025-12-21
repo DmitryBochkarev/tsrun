@@ -1590,6 +1590,21 @@ impl Compiler {
                 });
                 self.builder.free_register(value_reg);
             }
+            Statement::NamespaceDeclaration(nested_ns) => {
+                // Add nested namespace to parent namespace
+                let value_reg = self.builder.alloc_register()?;
+                let name_idx = self.builder.add_string(nested_ns.id.name.cheap_clone())?;
+                self.builder.emit(Op::GetVar {
+                    dst: value_reg,
+                    name: name_idx,
+                });
+                self.builder.emit(Op::SetPropertyConst {
+                    obj: ns_obj,
+                    key: name_idx,
+                    value: value_reg,
+                });
+                self.builder.free_register(value_reg);
+            }
             _ => {}
         }
         Ok(())
