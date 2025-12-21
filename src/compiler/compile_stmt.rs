@@ -1371,8 +1371,18 @@ impl Compiler {
             self.compile_field_decorators(dst, field, false)?;
         }
 
+        // Process instance private field decorators
+        for field in &instance_private_fields {
+            self.compile_field_decorators(dst, field, false)?;
+        }
+
         // Process static field decorators
         for field in &static_fields {
+            self.compile_field_decorators(dst, field, true)?;
+        }
+
+        // Process static private field decorators
+        for field in &static_private_fields {
             self.compile_field_decorators(dst, field, true)?;
         }
 
@@ -1413,6 +1423,11 @@ impl Compiler {
         // Define static private methods
         for method in &static_private_methods {
             self.compile_private_method(dst, method, true, class_brand)?;
+        }
+
+        // Define instance private methods (store on class for later installation on instances)
+        for method in &instance_private_methods {
+            self.compile_private_method(dst, method, false, class_brand)?;
         }
 
         // Pop class context
@@ -2000,6 +2015,30 @@ impl Compiler {
             self.builder.emit(Op::LoadUndefined { dst: value_reg });
         }
 
+        // Check if there's a field initializer from decorators
+        if !field.decorators.is_empty() {
+            // Get new.target (the constructor)
+            let class_reg = self.builder.alloc_register()?;
+            self.builder.emit(Op::LoadNewTarget { dst: class_reg });
+
+            // Get the stored initializer
+            let init_reg = self.builder.alloc_register()?;
+            self.builder.emit(Op::GetFieldInitializer {
+                dst: init_reg,
+                class: class_reg,
+                name: name_idx,
+            });
+
+            // Apply the initializer to the value (if it exists)
+            self.builder.emit(Op::ApplyFieldInitializer {
+                value: value_reg,
+                initializer: init_reg,
+            });
+
+            self.builder.free_register(init_reg);
+            self.builder.free_register(class_reg);
+        }
+
         // Define private field on this
         self.builder.emit(Op::DefinePrivateField {
             obj: this_reg,
@@ -2025,59 +2064,15 @@ impl Compiler {
             _ => return Ok(()), // Should only be called for private methods
         };
 
-        let name_idx = self.builder.add_string(method_name.cheap_clone())?;
+        let name_idx = self.builder.add_string(method_name)?;
 
-        // Compile method body
-        let func = &method.value;
-        let method_chunk = self.compile_function_body(
-            &func.params,
-            &func.body.body,
-            Some(method_name),
-            func.generator,
-            func.async_,
-            false,
-        )?;
-
-        let chunk_idx = self.builder.add_chunk(method_chunk)?;
-
-        // Create method function
-        let method_reg = self.builder.alloc_register()?;
-        if func.generator && func.async_ {
-            self.builder.emit(Op::CreateAsyncGenerator {
-                dst: method_reg,
-                chunk_idx,
-            });
-        } else if func.generator {
-            self.builder.emit(Op::CreateGenerator {
-                dst: method_reg,
-                chunk_idx,
-            });
-        } else if func.async_ {
-            self.builder.emit(Op::CreateAsync {
-                dst: method_reg,
-                chunk_idx,
-            });
-        } else {
-            self.builder.emit(Op::CreateClosure {
-                dst: method_reg,
-                chunk_idx,
-            });
-        }
-
-        // Get this
-        let this_reg = self.builder.alloc_register()?;
-        self.builder.emit(Op::LoadThis { dst: this_reg });
-
-        // Define private method on this
-        self.builder.emit(Op::DefinePrivateField {
-            obj: this_reg,
+        // Emit instruction to install the stored private method on this
+        // The method was already compiled and stored on the class during class definition
+        self.builder.emit(Op::InstallPrivateMethod {
             class_brand,
-            field_name: name_idx,
-            value: method_reg,
+            method_name: name_idx,
         });
 
-        self.builder.free_register(this_reg);
-        self.builder.free_register(method_reg);
         Ok(())
     }
 
@@ -2167,6 +2162,40 @@ impl Compiler {
                 dst: method_reg,
                 chunk_idx,
             });
+        }
+
+        // Apply method decorators (if any)
+        // Evaluation order: top-to-bottom (forward iteration)
+        // Application order: bottom-to-top (reverse iteration when applying)
+        if !method.decorators.is_empty() {
+            // Determine kind byte: 0 = method, 1 = getter, 2 = setter
+            let kind: u8 = match method.kind {
+                MethodKind::Method => 0,
+                MethodKind::Get => 1,
+                MethodKind::Set => 2,
+            };
+
+            // First, evaluate all decorator expressions (top-to-bottom)
+            let mut dec_regs: Vec<super::bytecode::Register> = Vec::new();
+            for decorator in &method.decorators {
+                let dec_reg = self.builder.alloc_register()?;
+                self.compile_expression(&decorator.expression, dec_reg)?;
+                dec_regs.push(dec_reg);
+            }
+
+            // Then apply decorators (bottom-to-top)
+            for dec_reg in dec_regs.into_iter().rev() {
+                self.builder.emit(Op::ApplyMethodDecorator {
+                    method: method_reg,
+                    decorator: dec_reg,
+                    name: name_idx,
+                    kind,
+                    is_static,
+                    is_private: true,
+                });
+
+                self.builder.free_register(dec_reg);
+            }
         }
 
         if is_static {

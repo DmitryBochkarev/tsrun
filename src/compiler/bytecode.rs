@@ -685,6 +685,13 @@ pub enum Op {
         is_static: bool,
     },
 
+    /// Install stored private method on instance during construction
+    /// Reads method from new.target's __private_methods__ and installs on this
+    InstallPrivateMethod {
+        class_brand: u32,
+        method_name: ConstantIndex,
+    },
+
     // ═══════════════════════════════════════════════════════════════════════════════
     // Miscellaneous
     // ═══════════════════════════════════════════════════════════════════════════════

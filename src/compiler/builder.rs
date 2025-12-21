@@ -387,6 +387,7 @@ impl BytecodeBuilder {
                 | Op::SetPrivateField { .. }
                 | Op::DefinePrivateField { .. }
                 | Op::DefinePrivateMethod { .. }
+                | Op::InstallPrivateMethod { .. }
                 | Op::Nop
                 | Op::Halt
                 | Op::Debugger

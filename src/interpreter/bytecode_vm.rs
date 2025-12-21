@@ -3461,6 +3461,64 @@ impl BytecodeVM {
 
                 Ok(OpResult::Continue)
             }
+
+            Op::InstallPrivateMethod {
+                class_brand,
+                method_name,
+            } => {
+                let method_name_str = self.get_string_constant(method_name).ok_or_else(|| {
+                    JsError::internal_error("Invalid private method name constant")
+                })?;
+
+                // Get new.target (the class constructor)
+                let JsValue::Object(new_target) = &self.new_target else {
+                    return Err(JsError::internal_error(
+                        "InstallPrivateMethod requires new.target to be an object",
+                    ));
+                };
+
+                // Get __private_methods__ from new.target
+                let private_methods_key = PropertyKey::String(interp.intern("__private_methods__"));
+                let methods_obj = {
+                    let new_target_borrowed = new_target.borrow();
+                    new_target_borrowed
+                        .get_own_property(&private_methods_key)
+                        .and_then(|p| {
+                            if let JsValue::Object(obj) = &p.value {
+                                Some(obj.cheap_clone())
+                            } else {
+                                None
+                            }
+                        })
+                };
+
+                if let Some(methods) = methods_obj {
+                    // Look up method by brand:name key
+                    let storage_key = PropertyKey::String(JsString::from(format!(
+                        "{}:{}",
+                        class_brand,
+                        method_name_str.as_str()
+                    )));
+                    let method_val = methods
+                        .borrow()
+                        .get_own_property(&storage_key)
+                        .map(|p| p.value.clone())
+                        .unwrap_or(JsValue::Undefined);
+
+                    if !matches!(method_val, JsValue::Undefined) {
+                        // Install on this
+                        let this_val = self.this_value.clone();
+                        let JsValue::Object(this_obj) = this_val else {
+                            return Err(JsError::type_error("this is not an object"));
+                        };
+
+                        let key = crate::value::PrivateFieldKey::new(class_brand, method_name_str);
+                        this_obj.borrow_mut().set_private_field(key, method_val);
+                    }
+                }
+
+                Ok(OpResult::Continue)
+            }
         }
     }
 
