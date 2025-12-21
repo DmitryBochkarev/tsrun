@@ -153,33 +153,25 @@ B. **Flat closure conversion:** Convert free variables to explicit closure slots
 
 ---
 
-### Priority 4: Keyword Matching in Lexer (Medium Impact, Low Effort)
+### Priority 4: Keyword Matching in Lexer ✅ DONE
 
 **Problem:** 13.2% of lexer time in `memcmp` for keyword matching.
 
-**Current approach:** Linear search or hash lookup with string comparison.
-
-**Proposed solutions:**
-
-A. **Perfect hash function:** Use `phf` crate for O(1) keyword lookup.
-
-```rust
-static KEYWORDS: phf::Map<&'static str, TokenKind> = phf_map! {
-    "if" => TokenKind::If,
-    "else" => TokenKind::Else,
-    // ...
-};
-```
-
-B. **Length-prefixed dispatch:** First dispatch on string length, then compare.
+**Solution implemented:** Length-prefixed dispatch in `scan_identifier()`:
+- First dispatch on identifier length (2-10 characters)
+- Then match only keywords of that length
+- Reduces comparison count from 50+ to at most 13 per identifier
 
 ```rust
-fn match_keyword(s: &str) -> Option<TokenKind> {
-    match s.len() {
-        2 => match s { "if" => Some(If), "in" => Some(In), "do" => Some(Do), _ => None },
-        3 => match s { "for" => Some(For), "let" => Some(Let), "var" => Some(Var), _ => None },
-        // ...
-    }
+match name.len() {
+    2 => match name.as_str() {
+        "if" => TokenKind::If, "in" => TokenKind::In, ...
+    },
+    3 => match name.as_str() {
+        "let" => TokenKind::Let, "var" => TokenKind::Var, ...
+    },
+    // ... lengths 4-10
+    _ => TokenKind::Identifier(...)
 }
 ```
 
@@ -245,9 +237,12 @@ Added `#[inline]` to the following hot path functions in `bytecode_vm.rs`:
 - `get_constant` (was already present)
 - `get_string_constant` ✅
 
-### 2. Use `FxHashMap` for environments (if not already)
+### 2. Use `FxHashMap` for environments ✅ ALREADY DONE
 
-Check if environment bindings use `FxHashMap` instead of `std::HashMap`.
+Verified: `FxHashMap` from `rustc_hash` is already used throughout the codebase:
+- `EnvironmentData::bindings` uses `FxHashMap<VarKey, Binding>`
+- `PropertyStorage::Map` uses `FxHashMap<PropertyKey, Property>`
+- All other internal hash maps use `FxHashMap`
 
 ### 3. Pre-size vectors with known capacity
 
