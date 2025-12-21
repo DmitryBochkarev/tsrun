@@ -48,39 +48,33 @@ Based on profiling the interpreter with `perf` on compute-intensive workloads, h
 
 ## Optimization Proposals
 
-### Priority 1: Register Allocation Overhead (High Impact, Medium Effort)
+### Priority 1: Register Allocation Overhead ✅ DONE
 
 **Problem:** `vec![JsValue::Undefined; register_count]` allocates and initializes a new Vec for every function call (~7.4% overhead in `extend_with`).
 
-**Current code (bytecode_vm.rs:1061):**
-```rust
-let mut new_registers = vec![JsValue::Undefined; register_count.max(1)];
-```
+**Solution implemented:** Added register pool to BytecodeVM:
+- `register_pool: Vec<Vec<JsValue>>` field stores reusable register files
+- `acquire_registers(size)` method tries to reuse existing frames
+- `release_registers(registers)` method returns frames to pool (max 16)
+- Updated `push_trampoline_frame_and_call_bytecode` and `push_trampoline_frame_and_call_bytecode_construct` to use pool
+- Updated `restore_from_trampoline_frame` and exception unwinding to release registers back to pool
 
-**Proposed solution:** Use a register pool with pre-allocated frames.
-
 ```rust
-struct RegisterPool {
-    frames: Vec<Vec<JsValue>>,
-    size_hint: usize,
+fn acquire_registers(&mut self, size: usize) -> Vec<JsValue> {
+    let size = size.max(1);
+    if let Some(pos) = self.register_pool.iter().position(|f| f.capacity() >= size) {
+        let mut frame = self.register_pool.swap_remove(pos);
+        frame.clear();
+        frame.resize(size, JsValue::Undefined);
+        return frame;
+    }
+    vec![JsValue::Undefined; size]
 }
 
-impl RegisterPool {
-    fn acquire(&mut self, size: usize) -> Vec<JsValue> {
-        // Try to find an existing frame of sufficient size
-        if let Some(pos) = self.frames.iter().position(|f| f.capacity() >= size) {
-            let mut frame = self.frames.swap_remove(pos);
-            frame.clear();
-            frame.resize(size, JsValue::Undefined);
-            return frame;
-        }
-        // Allocate new frame
-        vec![JsValue::Undefined; size.max(self.size_hint)]
-    }
-
-    fn release(&mut self, mut frame: Vec<JsValue>) {
-        frame.clear();
-        self.frames.push(frame);
+fn release_registers(&mut self, mut registers: Vec<JsValue>) {
+    registers.clear();
+    if self.register_pool.len() < 16 {
+        self.register_pool.push(registers);
     }
 }
 ```

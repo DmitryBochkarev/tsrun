@@ -184,6 +184,8 @@ pub struct BytecodeVM {
     pending_completion: Option<PendingCompletion>,
     /// Trampoline call stack - replaces Rust recursion with explicit stack
     trampoline_stack: Vec<TrampolineFrame>,
+    /// Pool of reusable register files to reduce allocation overhead
+    register_pool: Vec<Vec<JsValue>>,
 }
 
 impl BytecodeVM {
@@ -212,6 +214,7 @@ impl BytecodeVM {
             new_target: JsValue::Undefined,
             pending_completion: None,
             trampoline_stack: Vec::new(),
+            register_pool: Vec::new(),
         }
     }
 
@@ -258,6 +261,7 @@ impl BytecodeVM {
             new_target: JsValue::Undefined,
             pending_completion: None,
             trampoline_stack: Vec::new(),
+            register_pool: Vec::new(),
         }
     }
 
@@ -308,6 +312,33 @@ impl BytecodeVM {
             new_target,
             pending_completion: None,
             trampoline_stack: Vec::new(),
+            register_pool: Vec::new(),
+        }
+    }
+
+    /// Acquire a register file from the pool, or allocate a new one
+    #[inline]
+    fn acquire_registers(&mut self, size: usize) -> Vec<JsValue> {
+        let size = size.max(1);
+        // Try to find an existing frame of sufficient size
+        if let Some(pos) = self.register_pool.iter().position(|f| f.capacity() >= size) {
+            let mut frame = self.register_pool.swap_remove(pos);
+            frame.clear();
+            frame.resize(size, JsValue::Undefined);
+            return frame;
+        }
+        // Allocate new frame
+        vec![JsValue::Undefined; size]
+    }
+
+    /// Return a register file to the pool for reuse
+    #[inline]
+    fn release_registers(&mut self, mut registers: Vec<JsValue>) {
+        // Clear the registers to drop any references
+        registers.clear();
+        // Keep pool size reasonable (e.g., max 16 frames)
+        if self.register_pool.len() < 16 {
+            self.register_pool.push(registers);
         }
     }
 
@@ -602,6 +633,10 @@ impl BytecodeVM {
                     while let Some(frame) = self.trampoline_stack.pop() {
                         let is_async_frame = frame.is_async;
                         let return_register = frame.return_register;
+
+                        // Release current registers back to pool before restoring
+                        let current_registers = std::mem::take(&mut self.registers);
+                        self.release_registers(current_registers);
 
                         // Restore state from frame
                         self.ip = frame.ip;
@@ -1059,9 +1094,9 @@ impl BytecodeVM {
             }
         }
 
-        // Create the new register file for the called function
+        // Create the new register file for the called function (from pool if available)
         let register_count = bc_func.chunk.register_count as usize;
-        let mut new_registers = vec![JsValue::Undefined; register_count.max(1)];
+        let mut new_registers = self.acquire_registers(register_count);
         for (i, arg) in processed_args.iter().enumerate() {
             if i < new_registers.len() {
                 if let Some(slot) = new_registers.get_mut(i) {
@@ -1230,9 +1265,9 @@ impl BytecodeVM {
         // Also guard the construct_new_obj
         new_guard.guard(construct_new_obj.cheap_clone());
 
-        // Create the new register file for the called function
+        // Create the new register file for the called function (from pool if available)
         let register_count = bc_func.chunk.register_count as usize;
-        let mut new_registers = vec![JsValue::Undefined; register_count.max(1)];
+        let mut new_registers = self.acquire_registers(register_count);
         for (i, arg) in processed_args.iter().enumerate() {
             if i < new_registers.len() {
                 if let Some(slot) = new_registers.get_mut(i) {
@@ -1277,6 +1312,10 @@ impl BytecodeVM {
         frame: TrampolineFrame,
         return_value: JsValue,
     ) {
+        // Release current registers back to pool before restoring
+        let current_registers = std::mem::take(&mut self.registers);
+        self.release_registers(current_registers);
+
         // Restore VM state
         self.ip = frame.ip;
         self.chunk = frame.chunk;
@@ -1546,6 +1585,7 @@ impl BytecodeVM {
             new_target: state.new_target,
             pending_completion: None,
             trampoline_stack: Vec::new(),
+            register_pool: Vec::new(),
         }
     }
 
