@@ -3,8 +3,8 @@
 This document analyzes test failures in the bytecode VM and categorizes them by feature area with implementation guidance.
 
 **Total Tests:** 1792
-**Passing:** 1780
-**Failing:** 5
+**Passing:** 1785
+**Failing:** 0
 **Ignored:** 7
 
 ---
@@ -53,6 +53,7 @@ The following issues have been fixed:
 - ✅ **Auto-accessor decorator context.kind** - Auto-accessor decorators now receive `context.kind = "accessor"` instead of `"field"`
 - ✅ **Module System (Import/Export)** - ES Modules now work in bytecode VM with import/export declarations compiled to bytecode
 - ✅ **Auto-accessor decorator full support** - Auto-accessor decorators now receive `{ get, set }` object as first argument and can return modified `{ get, set }` to replace accessor methods
+- ✅ **Parameter decorators** - Decorators on function/constructor parameters now work with full context object (`kind`, `name`, `function`, `index`, `static`)
 
 ---
 
@@ -178,9 +179,9 @@ The bytecode VM delegates to proxy_* functions for all property operations. Key 
 
 ## 5. Decorators
 
-**Status: Mostly Fixed**
+**Status: ✅ Fixed**
 
-**Working Features:**
+All decorator features now work:
 - ✅ Class decorators - `@decorator class Foo {}` works correctly
 - ✅ Class decorator replacement - decorators can return a new class
 - ✅ Method decorators - `@decorator method() {}` works with full context
@@ -192,18 +193,18 @@ The bytecode VM delegates to proxy_* functions for all property operations. Key 
 - ✅ Decorator context object - `kind`, `name`, `static`, `private` properties
 - ✅ `addInitializer` support - `context.addInitializer(callback)` now works for class decorators
 - ✅ Auto-accessor decorators - decorators receive `{ get, set }` target and can return modified `{ get, set }`
+- ✅ Parameter decorators - decorators on function/constructor parameters with full context
 
 **Implementation Details:**
 - Added `ApplyMethodDecorator` opcode to handle method/getter/setter decorators
 - Added `ApplyFieldDecorator`, `StoreFieldInitializer`, `GetFieldInitializer`, `ApplyFieldInitializer` opcodes for field decorators
+- Added `ApplyParameterDecorator` opcode for parameter decorators with context containing `kind`, `name`, `function`, `index`, `static`
 - Field decorator initializers are stored on class's `__field_initializers__` object
 - Constructor uses `new.target` to retrieve stored initializers during field initialization
 - Method decorators pass context with `kind: "method"|"getter"|"setter"`, `name`, `static`, `private`
+- Parameter decorators pass context with `kind: "parameter"`, `name`, `function`, `index`, `static`
 - `addInitializer` callbacks are collected in an array during decorator application and executed after all class decorators are applied via `RunClassInitializers` opcode
 - Auto-accessors use `DefineAutoAccessor`, `ApplyAutoAccessorDecorator`, and `StoreAutoAccessor` opcodes to create getter/setter, apply decorators with `{ get, set }` target, and store the final accessor property
-
-**Still Missing (~5 tests):**
-- ❌ Parameter decorators (~5 tests) - decorators on function/constructor parameters
 
 ---
 
@@ -304,16 +305,18 @@ This was already working - likely fixed by a previous change.
 ## Implementation Priority
 
 ### High Priority (Core Language Features)
-1. **Module System** - Essential for real-world usage
+1. ~~**Module System**~~ - ✅ Fixed
 2. ~~**Private Class Members**~~ - ✅ Fixed
 3. ~~**Async Iteration**~~ - ✅ Fixed
 
 ### Medium Priority
 4. ~~**Proxy Traps**~~ - ✅ Fixed
-5. **Decorators** - TypeScript feature, complex
+5. ~~**Decorators**~~ - ✅ Fixed
 6. ~~**Generator Edge Cases**~~ - ✅ Fixed
 
 ### Lower Priority
 7. ~~**BigInt**~~ - ✅ Fixed (simplified)
 8. ~~**Eval Scoping**~~ - ✅ Fixed (completion values and strict mode `this`)
-9. **Miscellaneous Issues** - Various small fixes
+9. ~~**Miscellaneous Issues**~~ - ✅ Fixed
+
+**All known bytecode VM issues have been resolved!**

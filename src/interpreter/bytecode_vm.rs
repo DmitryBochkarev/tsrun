@@ -3043,6 +3043,70 @@ impl BytecodeVM {
                 Ok(OpResult::Continue)
             }
 
+            Op::ApplyParameterDecorator {
+                target,
+                decorator,
+                method_name,
+                param_name,
+                param_index,
+                is_static,
+            } => {
+                let target_val = self.get_reg(target).clone();
+                let decorator_val = self.get_reg(decorator).clone();
+                let method_name_str = self.get_string_constant(method_name);
+                let param_name_str = self.get_string_constant(param_name);
+
+                // Create decorator context object
+                let guard = interp.heap.create_guard();
+                let ctx = interp.create_object(&guard);
+
+                // Set context.kind = "parameter"
+                ctx.borrow_mut().set_property(
+                    PropertyKey::String(interp.intern("kind")),
+                    JsValue::String(interp.intern("parameter")),
+                );
+
+                // Set context.name (parameter name)
+                if let Some(n) = param_name_str {
+                    if !n.is_empty() {
+                        ctx.borrow_mut().set_property(
+                            PropertyKey::String(interp.intern("name")),
+                            JsValue::String(n),
+                        );
+                    }
+                }
+
+                // Set context.function (method name)
+                if let Some(n) = method_name_str {
+                    ctx.borrow_mut().set_property(
+                        PropertyKey::String(interp.intern("function")),
+                        JsValue::String(n),
+                    );
+                }
+
+                // Set context.index (parameter index)
+                ctx.borrow_mut().set_property(
+                    PropertyKey::String(interp.intern("index")),
+                    JsValue::Number(f64::from(param_index)),
+                );
+
+                // Set context.static
+                ctx.borrow_mut().set_property(
+                    PropertyKey::String(interp.intern("static")),
+                    JsValue::Boolean(is_static),
+                );
+
+                // Call decorator(target, context)
+                // Parameter decorators are called for side effects only (like metadata registration)
+                let _result = interp.call_function(
+                    decorator_val,
+                    JsValue::Undefined,
+                    &[target_val, JsValue::Object(ctx)],
+                )?;
+
+                Ok(OpResult::Continue)
+            }
+
             Op::ApplyFieldDecorator {
                 dst,
                 decorator,

@@ -1357,6 +1357,45 @@ impl Compiler {
         self.builder.free_register(ctor_reg);
         self.builder.free_register(super_reg);
 
+        // Apply constructor parameter decorators (target = the class, not the constructor)
+        if let Some(ctor) = constructor {
+            let ctor_name_idx = self.builder.add_string(JsString::from("constructor"))?;
+
+            for (param_index, param) in ctor.params.iter().enumerate() {
+                if param.decorators.is_empty() {
+                    continue;
+                }
+
+                // Get parameter name if it's a simple identifier
+                let param_name_idx = match &param.pattern {
+                    crate::ast::Pattern::Identifier(id) => {
+                        self.builder.add_string(id.name.cheap_clone())?
+                    }
+                    _ => self.builder.add_string(JsString::from(""))?,
+                };
+
+                // Evaluate and apply decorators for this parameter (bottom-to-top)
+                let mut dec_regs: Vec<super::bytecode::Register> = Vec::new();
+                for decorator in &param.decorators {
+                    let dec_reg = self.builder.alloc_register()?;
+                    self.compile_expression(&decorator.expression, dec_reg)?;
+                    dec_regs.push(dec_reg);
+                }
+
+                for dec_reg in dec_regs.into_iter().rev() {
+                    self.builder.emit(Op::ApplyParameterDecorator {
+                        target: dst, // target is the class
+                        decorator: dec_reg,
+                        method_name: ctor_name_idx,
+                        param_name: param_name_idx,
+                        param_index: param_index as u8,
+                        is_static: false,
+                    });
+                    self.builder.free_register(dec_reg);
+                }
+            }
+        }
+
         // Define instance methods (decorators are applied in compile_class_method)
         for method in &instance_methods {
             self.compile_class_method(dst, method, false)?;
@@ -1591,6 +1630,48 @@ impl Compiler {
             });
         }
 
+        // Apply parameter decorators first (before method decorators)
+        // Parameter decorators are called for side effects (like metadata registration)
+        let func = &method.value;
+        let method_name_idx = match &key {
+            MethodKey::Const(idx, _) | MethodKey::Private(idx, _) => *idx,
+            MethodKey::Computed(_) => self.builder.add_string(JsString::from(""))?,
+        };
+
+        for (param_index, param) in func.params.iter().enumerate() {
+            if param.decorators.is_empty() {
+                continue;
+            }
+
+            // Get parameter name if it's a simple identifier
+            let param_name_idx = match &param.pattern {
+                crate::ast::Pattern::Identifier(id) => {
+                    self.builder.add_string(id.name.cheap_clone())?
+                }
+                _ => self.builder.add_string(JsString::from(""))?,
+            };
+
+            // Evaluate and apply decorators for this parameter (bottom-to-top)
+            let mut dec_regs: Vec<super::bytecode::Register> = Vec::new();
+            for decorator in &param.decorators {
+                let dec_reg = self.builder.alloc_register()?;
+                self.compile_expression(&decorator.expression, dec_reg)?;
+                dec_regs.push(dec_reg);
+            }
+
+            for dec_reg in dec_regs.into_iter().rev() {
+                self.builder.emit(Op::ApplyParameterDecorator {
+                    target: method_reg,
+                    decorator: dec_reg,
+                    method_name: method_name_idx,
+                    param_name: param_name_idx,
+                    param_index: param_index as u8,
+                    is_static,
+                });
+                self.builder.free_register(dec_reg);
+            }
+        }
+
         // Apply method decorators
         // Evaluation order: top-to-bottom (forward iteration)
         // Application order: bottom-to-top (reverse iteration when applying)
@@ -1600,16 +1681,6 @@ impl Compiler {
                 MethodKind::Method => 0,
                 MethodKind::Get => 1,
                 MethodKind::Set => 2,
-            };
-
-            // Need a name_idx for decorators - for computed keys, create a placeholder
-            let dec_name_idx = match &key {
-                MethodKey::Const(idx, _) | MethodKey::Private(idx, _) => *idx,
-                MethodKey::Computed(_) => {
-                    // For computed keys, decorators need the name at runtime
-                    // We'll use an empty string placeholder for now
-                    self.builder.add_string(JsString::from(""))?
-                }
             };
 
             let is_private = matches!(&key, MethodKey::Private(_, _));
@@ -1627,7 +1698,7 @@ impl Compiler {
                 self.builder.emit(Op::ApplyMethodDecorator {
                     method: method_reg,
                     decorator: dec_reg,
-                    name: dec_name_idx,
+                    name: method_name_idx,
                     kind,
                     is_static,
                     is_private,

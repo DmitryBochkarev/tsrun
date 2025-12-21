@@ -375,6 +375,7 @@ impl BytecodeBuilder {
                 | Op::SuperSetConst { .. }
                 | Op::ApplyClassDecorator { .. }
                 | Op::ApplyMethodDecorator { .. }
+                | Op::ApplyParameterDecorator { .. }
                 | Op::ApplyFieldDecorator { .. }
                 | Op::StoreFieldInitializer { .. }
                 | Op::GetFieldInitializer { .. }

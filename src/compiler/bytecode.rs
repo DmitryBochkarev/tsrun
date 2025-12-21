@@ -595,6 +595,18 @@ pub enum Op {
         is_private: bool,
     },
 
+    /// Apply parameter decorator: decorator(r[target], context)
+    /// context contains { kind: "parameter", name, function, index, static }
+    /// Parameter decorators are called for side effects only (like metadata registration)
+    ApplyParameterDecorator {
+        target: Register, // The class (for constructor params) or method function
+        decorator: Register,
+        method_name: ConstantIndex, // The method/constructor name
+        param_name: ConstantIndex,  // The parameter name (may be empty)
+        param_index: u8,
+        is_static: bool,
+    },
+
     /// Apply field decorator: r[dst] = decorator(undefined, context)
     /// Field decorators receive undefined as first arg, return an initializer transformer
     /// For auto-accessors, is_accessor=true and context.kind will be "accessor" instead of "field"
