@@ -1217,6 +1217,15 @@ impl Compiler {
         // Only create inner binding if class has explicit id (not inferred name)
         let has_explicit_name = class.id.is_some();
 
+        // Compile class decorators first - they are evaluated before the class is created
+        // We store them in reverse order so we can apply them bottom-to-top later
+        let mut decorator_regs: Vec<super::bytecode::Register> = Vec::new();
+        for decorator in class.decorators.iter().rev() {
+            let dec_reg = self.builder.alloc_register()?;
+            self.compile_expression(&decorator.expression, dec_reg)?;
+            decorator_regs.push(dec_reg);
+        }
+
         // Generate a unique class brand for private field access
         let class_brand = self.new_class_brand();
 
@@ -1365,13 +1374,16 @@ impl Compiler {
         // Only create inner binding for explicit class names, not inferred names.
         // For `var C = class {}`, the binding is handled by the var declaration.
         // For `class C {}` or `var x = class C {}`, C needs an inner immutable binding.
+        // If decorators are present, the binding must be mutable so we can update it
+        // after decorators are applied (since decorators can replace the class).
+        let has_decorators = !decorator_regs.is_empty();
         if has_explicit_name {
             if let Some(ref name) = class_name {
                 let name_idx = self.builder.add_string(name.cheap_clone())?;
                 self.builder.emit(Op::DeclareVar {
                     name: name_idx,
                     init: dst,
-                    mutable: false,
+                    mutable: has_decorators, // mutable if decorators might replace the class
                 });
             }
         }
@@ -1393,6 +1405,38 @@ impl Compiler {
 
         // Pop class context
         self.class_context_stack.pop();
+
+        // Apply class decorators (in reverse order, bottom-to-top)
+        // Decorators are already in reverse order in decorator_regs
+        if !decorator_regs.is_empty() {
+            // Get class name constant index (or MAX for no name)
+            let class_name_idx = if let Some(ref name) = class_name {
+                self.builder.add_string(name.cheap_clone())?
+            } else {
+                super::bytecode::ConstantIndex::MAX
+            };
+
+            for dec_reg in decorator_regs {
+                self.builder.emit(Op::ApplyClassDecorator {
+                    class: dst,
+                    decorator: dec_reg,
+                    class_name: class_name_idx,
+                });
+                self.builder.free_register(dec_reg);
+            }
+
+            // Update the class name binding with the final decorated class
+            // (decorators may have replaced the class)
+            if has_explicit_name {
+                if let Some(ref name) = class_name {
+                    let name_idx = self.builder.add_string(name.cheap_clone())?;
+                    self.builder.emit(Op::SetVar {
+                        name: name_idx,
+                        src: dst,
+                    });
+                }
+            }
+        }
 
         Ok(())
     }

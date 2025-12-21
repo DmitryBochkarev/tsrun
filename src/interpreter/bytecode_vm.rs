@@ -2716,6 +2716,71 @@ impl BytecodeVM {
                 Ok(OpResult::Continue)
             }
 
+            Op::ApplyClassDecorator {
+                class,
+                decorator,
+                class_name,
+            } => {
+                let class_val = self.get_reg(class).clone();
+                let decorator_val = self.get_reg(decorator).clone();
+
+                // Get class name for context (None if class_name is MAX)
+                let name = if class_name == u16::MAX {
+                    None
+                } else {
+                    self.get_string_constant(class_name)
+                };
+
+                // Create decorator context object
+                let guard = interp.heap.create_guard();
+                let ctx = interp.create_object(&guard);
+
+                // Set context.kind = "class"
+                ctx.borrow_mut().set_property(
+                    PropertyKey::String(interp.intern("kind")),
+                    JsValue::String(interp.intern("class")),
+                );
+
+                // Set context.name if we have a class name
+                if let Some(n) = name {
+                    ctx.borrow_mut().set_property(
+                        PropertyKey::String(interp.intern("name")),
+                        JsValue::String(n),
+                    );
+                }
+
+                // Set context.addInitializer (stub for now - returns undefined)
+                // TODO: Implement full addInitializer support
+                let add_init_fn = interp.create_native_fn(
+                    &guard,
+                    "addInitializer",
+                    |_interp, _this, _args| {
+                        Ok(crate::value::Guarded::unguarded(JsValue::Undefined))
+                    },
+                    1,
+                );
+                ctx.borrow_mut().set_property(
+                    PropertyKey::String(interp.intern("addInitializer")),
+                    JsValue::Object(add_init_fn),
+                );
+
+                // Call decorator(class, context)
+                let result = interp.call_function(
+                    decorator_val,
+                    JsValue::Undefined,
+                    &[class_val.clone(), JsValue::Object(ctx)],
+                )?;
+
+                // If decorator returns undefined, keep original class; otherwise use return value
+                if matches!(result.value, JsValue::Undefined) {
+                    // Keep original class value in register
+                } else {
+                    self.set_reg(class, result.value);
+                }
+
+                Ok(OpResult::Continue)
+            }
+
             // ═══════════════════════════════════════════════════════════════════════════
             // Spread/Rest
             // ═══════════════════════════════════════════════════════════════════════════

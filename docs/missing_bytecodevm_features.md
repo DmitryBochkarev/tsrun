@@ -3,8 +3,8 @@
 This document analyzes test failures in the bytecode VM and categorizes them by feature area with implementation guidance.
 
 **Total Tests:** 1790
-**Passing:** 1664
-**Failing:** 119
+**Passing:** 1677
+**Failing:** 106
 **Ignored:** 7
 
 ---
@@ -40,6 +40,7 @@ The following issues have been fixed:
 - ✅ **Eval strict mode this** - Direct eval inside functions now preserves the correct `this` binding
 - ✅ **Async iteration (for-await-of)** - `for await...of` loops now work with arrays, promises, and async generators
 - ✅ **GC memory leak in loops** - Fixed nested block scope restoration and environment collection in loops
+- ✅ **Class decorators** - Class decorators now work with `@decorator class Foo {}` syntax, including class replacement
 
 ---
 
@@ -190,24 +191,26 @@ The bytecode VM delegates to proxy_* functions for all property operations. Key 
 
 ## 5. Decorators
 
-**Affected Tests (~60+ tests):**
-- `decorator::test_class_decorator_*`
-- `decorator::test_method_decorator_*`
-- `decorator::test_field_decorator_*`
-- `decorator::test_decorator_context_*`
-- `decorator::test_decorator_factory_*`
-- `decorator::test_accessor_*`
-- Plus many pattern-specific tests
+**Status: Partially Fixed**
+
+**Working Features:**
+- ✅ Class decorators - `@decorator class Foo {}` works correctly
+- ✅ Class decorator replacement - decorators can return a new class
+- ✅ Method decorators (basic) - `@decorator method() {}` works
+- ✅ Decorator factories - `@factory(args)` works
+- ✅ Multiple decorators - decorators are applied bottom-to-top
+
+**Still Missing (~50 tests):**
+- ❌ Decorator context object (kind, name, static, private, access)
+- ❌ `addInitializer` support
+- ❌ Field decorators
+- ❌ Parameter decorators
+- ❌ Accessor decorators (get/set)
 
 **Error Patterns:**
 - Decorator context not passed correctly
 - `addInitializer` not working
-- Decorator return values not applied
-- Static decorator context missing
 - Field decorator transform not applied
-
-**Current State:**
-Basic decorator invocation works for methods, but decorator context and advanced features are incomplete.
 
 **Implementation Strategy:**
 

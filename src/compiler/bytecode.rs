@@ -551,6 +551,14 @@ pub enum Op {
     /// Super property set with constant key: super.name = r[value]
     SuperSetConst { key: ConstantIndex, value: Register },
 
+    /// Apply class decorator: r[class] = decorator(r[class], context)
+    /// The class_name constant is optional (ConstantIndex::MAX means no name)
+    ApplyClassDecorator {
+        class: Register,
+        decorator: Register,
+        class_name: ConstantIndex,
+    },
+
     // ═══════════════════════════════════════════════════════════════════════════════
     // Spread/Rest
     // ═══════════════════════════════════════════════════════════════════════════════

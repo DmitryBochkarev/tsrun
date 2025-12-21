@@ -371,6 +371,7 @@ impl BytecodeBuilder {
                 | Op::SuperGetConst { .. }
                 | Op::SuperSet { .. }
                 | Op::SuperSetConst { .. }
+                | Op::ApplyClassDecorator { .. }
                 | Op::SpreadArray { .. }
                 | Op::CreateRestArray { .. }
                 | Op::CreateObjectRest { .. }
