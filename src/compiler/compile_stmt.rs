@@ -983,7 +983,7 @@ impl Compiler {
     }
 
     /// Compile class body - shared by class declarations and expressions
-    fn compile_class_body(
+    pub fn compile_class_body(
         &mut self,
         class: &ClassDeclaration,
         dst: super::bytecode::Register,

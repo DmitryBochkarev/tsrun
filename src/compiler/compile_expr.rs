@@ -2009,13 +2009,25 @@ impl Compiler {
     /// Compile class expression
     fn compile_class_expression(
         &mut self,
-        _class: &crate::ast::ClassExpression,
-        _dst: Register,
+        class: &crate::ast::ClassExpression,
+        dst: Register,
     ) -> Result<(), JsError> {
-        // TODO: Implement class compilation
-        Err(JsError::syntax_error_simple(
-            "Class expressions not yet supported in bytecode compiler",
-        ))
+        // Convert ClassExpression to ClassDeclaration to reuse compile_class_body
+        let class_decl = crate::ast::ClassDeclaration {
+            id: class.id.clone(),
+            type_parameters: class.type_parameters.clone(),
+            super_class: class.super_class.clone(),
+            implements: class.implements.clone(),
+            body: class.body.clone(),
+            decorators: class.decorators.clone(),
+            abstract_: false, // Expressions cannot be abstract
+            span: class.span,
+        };
+
+        // Compile the class body into the destination register
+        self.compile_class_body(&class_decl, dst)?;
+
+        Ok(())
     }
 
     // Helper methods for member access
