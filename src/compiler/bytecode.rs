@@ -594,6 +594,46 @@ pub enum Op {
     },
 
     // ═══════════════════════════════════════════════════════════════════════════════
+    // Private Class Members
+    // ═══════════════════════════════════════════════════════════════════════════════
+    /// Get private field: r[dst] = r[obj].#name
+    /// class_brand is a unique id per class definition (for brand checking)
+    /// field_name is a constant index for the field name (including # prefix)
+    GetPrivateField {
+        dst: Register,
+        obj: Register,
+        class_brand: u32,
+        field_name: ConstantIndex,
+    },
+
+    /// Set private field: r[obj].#name = r[value]
+    SetPrivateField {
+        obj: Register,
+        class_brand: u32,
+        field_name: ConstantIndex,
+        value: Register,
+    },
+
+    /// Define private field on object: r[obj].#name = r[value]
+    /// Called during instance creation to install private fields
+    DefinePrivateField {
+        obj: Register,
+        class_brand: u32,
+        field_name: ConstantIndex,
+        value: Register,
+    },
+
+    /// Define private method on class (stored in constructor for later installation)
+    /// When constructing instances, these get copied to the instance's private_fields
+    DefinePrivateMethod {
+        class: Register,
+        class_brand: u32,
+        method_name: ConstantIndex,
+        method: Register,
+        is_static: bool,
+    },
+
+    // ═══════════════════════════════════════════════════════════════════════════════
     // Miscellaneous
     // ═══════════════════════════════════════════════════════════════════════════════
     /// No operation (used for alignment/patching)

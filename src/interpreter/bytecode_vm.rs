@@ -2860,6 +2860,167 @@ impl BytecodeVM {
                 self.set_reg(dst, self.new_target.clone());
                 Ok(OpResult::Continue)
             }
+
+            Op::GetPrivateField {
+                dst,
+                obj,
+                class_brand,
+                field_name,
+            } => {
+                let obj_val = self.get_reg(obj);
+                let field_name_str = self.get_string_constant(field_name).ok_or_else(|| {
+                    JsError::internal_error("Invalid private field name constant")
+                })?;
+
+                let JsValue::Object(obj_ref) = obj_val else {
+                    return Err(JsError::type_error(format!(
+                        "Cannot read private member {} from non-object",
+                        field_name_str
+                    )));
+                };
+
+                let key = crate::value::PrivateFieldKey::new(class_brand, field_name_str);
+                let value = obj_ref
+                    .borrow()
+                    .get_private_field(&key)
+                    .cloned()
+                    .ok_or_else(|| {
+                        JsError::type_error(format!(
+                            "Cannot read private member {} from an object whose class did not declare it",
+                            key.field_name
+                        ))
+                    })?;
+
+                self.set_reg(dst, value);
+                Ok(OpResult::Continue)
+            }
+
+            Op::SetPrivateField {
+                obj,
+                class_brand,
+                field_name,
+                value,
+            } => {
+                let obj_val = self.get_reg(obj);
+                let field_name_str = self.get_string_constant(field_name).ok_or_else(|| {
+                    JsError::internal_error("Invalid private field name constant")
+                })?;
+                let val = self.get_reg(value).clone();
+
+                let JsValue::Object(obj_ref) = obj_val else {
+                    return Err(JsError::type_error(format!(
+                        "Cannot write private member {} to non-object",
+                        field_name_str
+                    )));
+                };
+
+                let key =
+                    crate::value::PrivateFieldKey::new(class_brand, field_name_str.cheap_clone());
+
+                // Check that this object has this private field (brand check)
+                if !obj_ref.borrow().has_private_field(&key) {
+                    return Err(JsError::type_error(format!(
+                        "Cannot write private member {} to an object whose class did not declare it",
+                        field_name_str
+                    )));
+                }
+
+                obj_ref.borrow_mut().set_private_field(key, val);
+                Ok(OpResult::Continue)
+            }
+
+            Op::DefinePrivateField {
+                obj,
+                class_brand,
+                field_name,
+                value,
+            } => {
+                let obj_val = self.get_reg(obj);
+                let field_name_str = self.get_string_constant(field_name).ok_or_else(|| {
+                    JsError::internal_error("Invalid private field name constant")
+                })?;
+                let val = self.get_reg(value).clone();
+
+                let JsValue::Object(obj_ref) = obj_val else {
+                    return Err(JsError::type_error(
+                        "Cannot define private field on non-object",
+                    ));
+                };
+
+                let key = crate::value::PrivateFieldKey::new(class_brand, field_name_str);
+                obj_ref.borrow_mut().set_private_field(key, val);
+                Ok(OpResult::Continue)
+            }
+
+            Op::DefinePrivateMethod {
+                class,
+                class_brand,
+                method_name,
+                method,
+                is_static,
+            } => {
+                let class_val = self.get_reg(class).clone();
+                let method_name_str = self.get_string_constant(method_name).ok_or_else(|| {
+                    JsError::internal_error("Invalid private method name constant")
+                })?;
+                let method_val = self.get_reg(method).clone();
+
+                let JsValue::Object(class_obj) = class_val else {
+                    return Err(JsError::type_error("Class is not an object"));
+                };
+
+                // For static private methods, install directly on the class constructor
+                if is_static {
+                    let key = crate::value::PrivateFieldKey::new(class_brand, method_name_str);
+                    class_obj.borrow_mut().set_private_field(key, method_val);
+                } else {
+                    // For instance private methods, we store them on the constructor
+                    // under a special key (__private_methods__) so that the constructor
+                    // can install them on new instances.
+                    // Each class stores its private methods in a map keyed by field name.
+                    let private_methods_key =
+                        PropertyKey::String(interp.intern("__private_methods__"));
+
+                    let methods_map = {
+                        let class_borrowed = class_obj.borrow();
+                        class_borrowed
+                            .get_own_property(&private_methods_key)
+                            .and_then(|p| {
+                                if let JsValue::Object(obj) = &p.value {
+                                    Some(obj.cheap_clone())
+                                } else {
+                                    None
+                                }
+                            })
+                    };
+
+                    let methods_obj = if let Some(existing) = methods_map {
+                        existing
+                    } else {
+                        // Create a new object to store private methods
+                        let guard = interp.heap.create_guard();
+                        let new_obj = interp.create_object_raw(&guard);
+                        class_obj.borrow_mut().set_property(
+                            private_methods_key.clone(),
+                            JsValue::Object(new_obj.cheap_clone()),
+                        );
+                        new_obj
+                    };
+
+                    // Store method with a key that includes class_brand for brand checking
+                    // Key format: "brand:field_name"
+                    let storage_key = PropertyKey::String(JsString::from(format!(
+                        "{}:{}",
+                        class_brand,
+                        method_name_str.as_str()
+                    )));
+                    methods_obj
+                        .borrow_mut()
+                        .set_property(storage_key, method_val);
+                }
+
+                Ok(OpResult::Continue)
+            }
         }
     }
 

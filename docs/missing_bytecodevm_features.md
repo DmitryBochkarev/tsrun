@@ -3,8 +3,8 @@
 This document analyzes test failures in the bytecode VM and categorizes them by feature area with implementation guidance.
 
 **Total Tests:** 1784
-**Passing:** 1614
-**Failing:** 163
+**Passing:** 1620
+**Failing:** 156
 **Ignored:** 7
 
 ---
@@ -35,6 +35,7 @@ The following issues have been fixed:
 - ✅ **Super computed property access** - `super[name]()` now works correctly
 - ✅ **Super property assignment** - `super.x = value` and `super[key] = value` now work correctly
 - ✅ **Class expression with var** - `var C = class {}` now works correctly (fixed inner binding scope)
+- ✅ **Private class members** - Private fields (`#field`) and private methods (`#method()`) now work correctly
 
 ---
 
@@ -159,52 +160,21 @@ Each `await` in the loop body requires:
 
 ## 3. Private Class Members
 
-**Error Message:** `Private fields not yet supported in bytecode compiler`
+**Status: ✅ Fixed**
 
-**Affected Tests (~15 tests):**
-- `class::test_private_field_*`
-- `class::test_private_method`
-- `class::test_static_private_field*`
-- `class::test_class_getter_setter` (uses private backing field)
-- `class::test_class_getter_only`
-- `class::test_class_getter_computed_key`
+Private fields and private methods now work in the bytecode VM:
+- ✅ Instance private fields (`#field`)
+- ✅ Static private fields (`static #field`)
+- ✅ Instance private methods (`#method()`)
+- ✅ Static private methods (`static #method()`)
+- ✅ Brand checking (private fields are only accessible within their class)
 
-**Current State:**
-The parser successfully parses private fields (`#field`), but the bytecode compiler rejects them.
-
-**Implementation Strategy:**
-
-### Step 1: Private Field Storage
-Private fields need special handling:
-```rust
-struct JsObject {
-    // ... existing
-    private_fields: HashMap<PrivateFieldId, JsValue>,
-}
-```
-
-### Step 2: Bytecode Instructions
-```rust
-enum Opcode {
-    GetPrivateField { obj_reg: u8, field_id: PrivateFieldId },
-    SetPrivateField { obj_reg: u8, field_id: PrivateFieldId, value_reg: u8 },
-    HasPrivateField { obj_reg: u8, field_id: PrivateFieldId }, // for #field in obj
-}
-```
-
-### Step 3: Brand Checking
-Private fields are "branded" - only accessible within the class that defined them:
-```javascript
-class A { #x = 1; getX(obj) { return obj.#x; } }
-new A().getX(new A()); // Works
-new A().getX({}); // TypeError
-```
-
-### Step 4: Private Methods
-Private methods are similar but stored as non-configurable, non-writable properties.
-
-**Complexity:** Medium
-**Estimated Effort:** 1-2 days
+**Implementation Notes:**
+- Added `private_fields: Option<FxHashMap<PrivateFieldKey, JsValue>>` to `JsObject`
+- Added new bytecode opcodes: `GetPrivateField`, `SetPrivateField`, `DefinePrivateField`, `DefinePrivateMethod`
+- Each class gets a unique `ClassBrandId` for brand checking
+- Private fields are installed during instance construction
+- Class context is copied to nested functions for proper private member resolution
 
 ---
 
@@ -393,7 +363,7 @@ This was already working - likely fixed by a previous change.
 
 ### High Priority (Core Language Features)
 1. **Module System** - Essential for real-world usage
-2. **Private Class Members** - Required for modern JS/TS
+2. ~~**Private Class Members**~~ - ✅ Fixed
 3. **Async Iteration** - Needed for async patterns
 
 ### Medium Priority

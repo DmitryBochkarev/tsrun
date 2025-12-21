@@ -15,6 +15,10 @@ use crate::value::{CheapClone, JsString};
 enum MemberKeyInfo {
     Const(ConstantIndex),
     Computed(Register),
+    Private {
+        class_brand: u32,
+        field_name: ConstantIndex,
+    },
 }
 
 impl Compiler {
@@ -1235,10 +1239,23 @@ impl Compiler {
                 });
                 self.builder.free_register(key_reg);
             }
-            MemberProperty::PrivateIdentifier(_) => {
-                return Err(JsError::syntax_error_simple(
-                    "Private fields not yet supported in bytecode compiler",
-                ));
+            MemberProperty::PrivateIdentifier(id) => {
+                // Look up the private member in class context
+                let (class_brand, _info) =
+                    self.lookup_private_member(&id.name).ok_or_else(|| {
+                        JsError::syntax_error_simple(format!(
+                            "Private field '{}' must be declared in an enclosing class",
+                            id.name
+                        ))
+                    })?;
+
+                let field_name_idx = self.builder.add_string(id.name.cheap_clone())?;
+                self.builder.emit(Op::GetPrivateField {
+                    dst,
+                    obj: obj_reg,
+                    class_brand,
+                    field_name: field_name_idx,
+                });
             }
         }
 
@@ -1366,10 +1383,23 @@ impl Compiler {
                 });
                 self.builder.free_register(key_reg);
             }
-            MemberProperty::PrivateIdentifier(_) => {
-                return Err(JsError::syntax_error_simple(
-                    "Private fields not yet supported in bytecode compiler",
-                ));
+            MemberProperty::PrivateIdentifier(id) => {
+                // Look up the private member in class context
+                let (class_brand, _info) =
+                    self.lookup_private_member(&id.name).ok_or_else(|| {
+                        JsError::syntax_error_simple(format!(
+                            "Private field '{}' must be declared in an enclosing class",
+                            id.name
+                        ))
+                    })?;
+
+                let field_name_idx = self.builder.add_string(id.name.cheap_clone())?;
+                self.builder.emit(Op::GetPrivateField {
+                    dst,
+                    obj: obj_reg,
+                    class_brand,
+                    field_name: field_name_idx,
+                });
             }
         }
 
@@ -1435,10 +1465,23 @@ impl Compiler {
                     });
                     self.builder.free_register(key_reg);
                 }
-                MemberProperty::PrivateIdentifier(_) => {
-                    return Err(JsError::syntax_error_simple(
-                        "Private fields not yet supported in bytecode compiler",
-                    ));
+                MemberProperty::PrivateIdentifier(id) => {
+                    // Look up the private member in class context
+                    let (class_brand, _info) =
+                        self.lookup_private_member(&id.name).ok_or_else(|| {
+                            JsError::syntax_error_simple(format!(
+                                "Private field '{}' must be declared in an enclosing class",
+                                id.name
+                            ))
+                        })?;
+
+                    let field_name_idx = self.builder.add_string(id.name.cheap_clone())?;
+                    self.builder.emit(Op::GetPrivateField {
+                        dst: method_reg,
+                        obj: obj_reg,
+                        class_brand,
+                        field_name: field_name_idx,
+                    });
                 }
             }
 
@@ -1508,10 +1551,23 @@ impl Compiler {
                     });
                     self.builder.free_register(key_reg);
                 }
-                MemberProperty::PrivateIdentifier(_) => {
-                    return Err(JsError::syntax_error_simple(
-                        "Private fields not yet supported in bytecode compiler",
-                    ));
+                MemberProperty::PrivateIdentifier(id) => {
+                    // Look up the private member in class context
+                    let (class_brand, _info) =
+                        self.lookup_private_member(&id.name).ok_or_else(|| {
+                            JsError::syntax_error_simple(format!(
+                                "Private field '{}' must be declared in an enclosing class",
+                                id.name
+                            ))
+                        })?;
+
+                    let field_name_idx = self.builder.add_string(id.name.cheap_clone())?;
+                    self.builder.emit(Op::GetPrivateField {
+                        dst: method_reg,
+                        obj: obj_reg,
+                        class_brand,
+                        field_name: field_name_idx,
+                    });
                 }
             }
 
@@ -1739,11 +1795,38 @@ impl Compiler {
                     self.builder.free_register(obj_reg);
                     return Ok(());
                 }
-                MemberProperty::PrivateIdentifier(_) => {
-                    // Private methods not yet supported
-                    return Err(JsError::syntax_error_simple(
-                        "Private methods not yet supported in bytecode compiler",
-                    ));
+                MemberProperty::PrivateIdentifier(id) => {
+                    // Private method call: obj.#method(args)
+                    // Need to get the method and call with obj as this
+                    let (class_brand, _info) =
+                        self.lookup_private_member(&id.name).ok_or_else(|| {
+                            JsError::syntax_error_simple(format!(
+                                "Private method '{}' must be declared in an enclosing class",
+                                id.name
+                            ))
+                        })?;
+
+                    let obj_reg = self.builder.alloc_register()?;
+                    self.compile_expression(&member.object, obj_reg)?;
+
+                    let field_name_idx = self.builder.add_string(id.name.cheap_clone())?;
+                    let method_reg = self.builder.alloc_register()?;
+                    self.builder.emit(Op::GetPrivateField {
+                        dst: method_reg,
+                        obj: obj_reg,
+                        class_brand,
+                        field_name: field_name_idx,
+                    });
+
+                    // Compile arguments (after callee is evaluated)
+                    let (args_start, argc, has_spread) = self.compile_arguments(&call.arguments)?;
+
+                    // Call with obj as this
+                    self.emit_call(dst, method_reg, obj_reg, args_start, argc, has_spread);
+
+                    self.builder.free_register(method_reg);
+                    self.builder.free_register(obj_reg);
+                    return Ok(());
                 }
             }
         }
@@ -2085,10 +2168,23 @@ impl Compiler {
                     });
                     self.builder.free_register(key_reg);
                 }
-                MemberProperty::PrivateIdentifier(_) => {
-                    return Err(JsError::syntax_error_simple(
-                        "Private fields not yet supported in bytecode compiler",
-                    ));
+                MemberProperty::PrivateIdentifier(id) => {
+                    // Look up the private member in class context
+                    let (class_brand, _info) =
+                        self.lookup_private_member(&id.name).ok_or_else(|| {
+                            JsError::syntax_error_simple(format!(
+                                "Private field '{}' must be declared in an enclosing class",
+                                id.name
+                            ))
+                        })?;
+
+                    let field_name_idx = self.builder.add_string(id.name.cheap_clone())?;
+                    self.builder.emit(Op::GetPrivateField {
+                        dst: tag_reg,
+                        obj: obj_reg,
+                        class_brand,
+                        field_name: field_name_idx,
+                    });
                 }
             }
             Some(obj_reg)
@@ -2393,9 +2489,22 @@ impl Compiler {
                 self.compile_expression(expr, reg)?;
                 Ok(MemberKeyInfo::Computed(reg))
             }
-            MemberProperty::PrivateIdentifier(_) => Err(JsError::syntax_error_simple(
-                "Private fields not yet supported in bytecode compiler",
-            )),
+            MemberProperty::PrivateIdentifier(id) => {
+                // Look up the private member in class context
+                let (class_brand, _info) =
+                    self.lookup_private_member(&id.name).ok_or_else(|| {
+                        JsError::syntax_error_simple(format!(
+                            "Private field '{}' must be declared in an enclosing class",
+                            id.name
+                        ))
+                    })?;
+
+                let field_name = self.builder.add_string(id.name.cheap_clone())?;
+                Ok(MemberKeyInfo::Private {
+                    class_brand,
+                    field_name,
+                })
+            }
         }
     }
 
@@ -2421,6 +2530,17 @@ impl Compiler {
                     key: *reg,
                 });
             }
+            MemberKeyInfo::Private {
+                class_brand,
+                field_name,
+            } => {
+                self.builder.emit(Op::GetPrivateField {
+                    dst,
+                    obj,
+                    class_brand: *class_brand,
+                    field_name: *field_name,
+                });
+            }
         }
         Ok(())
     }
@@ -2444,6 +2564,17 @@ impl Compiler {
                 self.builder.emit(Op::SetProperty {
                     obj,
                     key: *reg,
+                    value,
+                });
+            }
+            MemberKeyInfo::Private {
+                class_brand,
+                field_name,
+            } => {
+                self.builder.emit(Op::SetPrivateField {
+                    obj,
+                    class_brand: *class_brand,
+                    field_name: *field_name,
                     value,
                 });
             }

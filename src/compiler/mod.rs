@@ -43,6 +43,32 @@ pub struct Compiler {
     /// these variables should write to the register instead of the environment.
     /// This ensures closures capture pre-update values.
     loop_var_redirects: FxHashMap<JsString, Register>,
+
+    /// Stack of class contexts for private field access
+    /// Each class being compiled pushes its brand ID so inner code can access private fields
+    class_context_stack: Vec<ClassContext>,
+
+    /// Counter for generating unique class brand IDs
+    next_class_brand: u32,
+}
+
+/// Context for a class being compiled (for private field handling)
+#[derive(Clone)]
+struct ClassContext {
+    /// Unique brand ID for this class (for private field brand checking)
+    brand: u32,
+    /// Map from private field names (including #) to their info
+    private_members: FxHashMap<JsString, PrivateMemberInfo>,
+}
+
+/// Information about a private class member
+#[derive(Clone)]
+#[allow(dead_code)]
+struct PrivateMemberInfo {
+    /// Whether this is a method (vs field)
+    is_method: bool,
+    /// Whether this is a static member
+    is_static: bool,
 }
 
 /// Context for a loop (for break/continue handling)
@@ -69,7 +95,34 @@ impl Compiler {
             try_depth: 0,
             hoisted_vars: FxHashSet::default(),
             loop_var_redirects: FxHashMap::default(),
+            class_context_stack: Vec::new(),
+            next_class_brand: 0,
         }
+    }
+
+    /// Generate a new unique class brand ID
+    fn new_class_brand(&mut self) -> u32 {
+        let brand = self.next_class_brand;
+        self.next_class_brand += 1;
+        brand
+    }
+
+    /// Get the current class context (if inside a class)
+    #[allow(dead_code)]
+    fn current_class_context(&self) -> Option<&ClassContext> {
+        self.class_context_stack.last()
+    }
+
+    /// Look up a private member across all enclosing classes
+    /// Returns (brand, info) for the class that declared this private member
+    fn lookup_private_member(&self, name: &JsString) -> Option<(u32, &PrivateMemberInfo)> {
+        // Search from innermost to outermost class
+        for ctx in self.class_context_stack.iter().rev() {
+            if let Some(info) = ctx.private_members.get(name) {
+                return Some((ctx.brand, info));
+            }
+        }
+        None
     }
 
     /// Compile a program to bytecode

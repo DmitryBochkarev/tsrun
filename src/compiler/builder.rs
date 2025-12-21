@@ -377,6 +377,10 @@ impl BytecodeBuilder {
                 | Op::SpreadObject { .. }
                 | Op::TemplateConcat { .. }
                 | Op::TaggedTemplate { .. }
+                | Op::GetPrivateField { .. }
+                | Op::SetPrivateField { .. }
+                | Op::DefinePrivateField { .. }
+                | Op::DefinePrivateMethod { .. }
                 | Op::Nop
                 | Op::Halt
                 | Op::Debugger

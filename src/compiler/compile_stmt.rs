@@ -1013,6 +1013,9 @@ impl Compiler {
         // Create a new compiler for the function body
         let mut func_compiler = Compiler::new();
 
+        // Copy class context so private members can be accessed inside nested functions
+        func_compiler.class_context_stack = self.class_context_stack.clone();
+
         // Reserve registers for parameters - they are passed in registers 0, 1, 2...
         // We must reserve these before any other register allocation
         if !params.is_empty() {
@@ -1196,13 +1199,21 @@ impl Compiler {
         // Only create inner binding if class has explicit id (not inferred name)
         let has_explicit_name = class.id.is_some();
 
-        // Collect class members
+        // Generate a unique class brand for private field access
+        let class_brand = self.new_class_brand();
+
+        // Collect class members and build private member info
         let mut constructor: Option<&ClassConstructor> = None;
         let mut instance_methods: Vec<&ClassMethod> = Vec::new();
         let mut static_methods: Vec<&ClassMethod> = Vec::new();
         let mut instance_fields: Vec<&ClassProperty> = Vec::new();
         let mut static_fields: Vec<&ClassProperty> = Vec::new();
         let mut static_blocks: Vec<&crate::ast::BlockStatement> = Vec::new();
+        let mut instance_private_fields: Vec<&ClassProperty> = Vec::new();
+        let mut static_private_fields: Vec<&ClassProperty> = Vec::new();
+        let mut instance_private_methods: Vec<&ClassMethod> = Vec::new();
+        let mut static_private_methods: Vec<&ClassMethod> = Vec::new();
+        let mut private_members = rustc_hash::FxHashMap::default();
 
         for member in &class.body.members {
             match member {
@@ -1210,17 +1221,51 @@ impl Compiler {
                     constructor = Some(ctor);
                 }
                 ClassMember::Method(method) => {
-                    if method.static_ {
-                        static_methods.push(method);
+                    if let ObjectPropertyKey::PrivateIdentifier(id) = &method.key {
+                        // This is a private method
+                        private_members.insert(
+                            id.name.cheap_clone(),
+                            super::PrivateMemberInfo {
+                                is_method: true,
+                                is_static: method.static_,
+                            },
+                        );
+                        if method.static_ {
+                            static_private_methods.push(method);
+                        } else {
+                            instance_private_methods.push(method);
+                        }
                     } else {
-                        instance_methods.push(method);
+                        // Regular public method
+                        if method.static_ {
+                            static_methods.push(method);
+                        } else {
+                            instance_methods.push(method);
+                        }
                     }
                 }
                 ClassMember::Property(prop) => {
-                    if prop.static_ {
-                        static_fields.push(prop);
+                    if let ObjectPropertyKey::PrivateIdentifier(id) = &prop.key {
+                        // This is a private field
+                        private_members.insert(
+                            id.name.cheap_clone(),
+                            super::PrivateMemberInfo {
+                                is_method: false,
+                                is_static: prop.static_,
+                            },
+                        );
+                        if prop.static_ {
+                            static_private_fields.push(prop);
+                        } else {
+                            instance_private_fields.push(prop);
+                        }
                     } else {
-                        instance_fields.push(prop);
+                        // Regular public field
+                        if prop.static_ {
+                            static_fields.push(prop);
+                        } else {
+                            instance_fields.push(prop);
+                        }
                     }
                 }
                 ClassMember::StaticBlock(block) => {
@@ -1229,11 +1274,30 @@ impl Compiler {
             }
         }
 
+        // Push class context for private member access
+        self.class_context_stack.push(super::ClassContext {
+            brand: class_brand,
+            private_members,
+        });
+
         // Compile constructor (or create default one)
         let ctor_chunk = if let Some(ctor) = constructor {
-            self.compile_constructor_body(ctor, &instance_fields, class_name.clone())?
+            self.compile_constructor_body(
+                ctor,
+                &instance_fields,
+                &instance_private_fields,
+                &instance_private_methods,
+                class_brand,
+                class_name.clone(),
+            )?
         } else {
-            self.compile_default_constructor(&instance_fields, class_name.clone())?
+            self.compile_default_constructor(
+                &instance_fields,
+                &instance_private_fields,
+                &instance_private_methods,
+                class_brand,
+                class_name.clone(),
+            )?
         };
 
         let ctor_chunk_idx = self.builder.add_chunk(ctor_chunk)?;
@@ -1298,6 +1362,19 @@ impl Compiler {
         for block in &static_blocks {
             self.compile_static_block(dst, block)?;
         }
+
+        // Initialize static private fields (on the class constructor itself)
+        for field in &static_private_fields {
+            self.compile_static_private_field_initializer(dst, field, class_brand)?;
+        }
+
+        // Define static private methods
+        for method in &static_private_methods {
+            self.compile_private_method(dst, method, true, class_brand)?;
+        }
+
+        // Pop class context
+        self.class_context_stack.pop();
 
         Ok(())
     }
@@ -1421,11 +1498,17 @@ impl Compiler {
         &mut self,
         ctor: &ClassConstructor,
         instance_fields: &[&ClassProperty],
+        instance_private_fields: &[&ClassProperty],
+        instance_private_methods: &[&ClassMethod],
+        class_brand: u32,
         name: Option<JsString>,
     ) -> Result<super::BytecodeChunk, JsError> {
         use super::FunctionInfo;
 
         let mut func_compiler = Compiler::new();
+
+        // Copy the class context so private field access works inside the constructor
+        func_compiler.class_context_stack = self.class_context_stack.clone();
 
         // Reserve registers for parameters
         if !ctor.params.is_empty() {
@@ -1513,6 +1596,16 @@ impl Compiler {
             func_compiler.compile_instance_field_initializer(field)?;
         }
 
+        // Initialize instance private fields
+        for field in instance_private_fields {
+            func_compiler.compile_instance_private_field_initializer(field, class_brand)?;
+        }
+
+        // Install instance private methods on 'this'
+        for method in instance_private_methods {
+            func_compiler.compile_instance_private_method_initializer(method, class_brand)?;
+        }
+
         // Hoist var declarations in constructor body
         func_compiler.emit_hoisted_declarations(&ctor.body.body)?;
 
@@ -1546,15 +1639,31 @@ impl Compiler {
     fn compile_default_constructor(
         &mut self,
         instance_fields: &[&ClassProperty],
+        instance_private_fields: &[&ClassProperty],
+        instance_private_methods: &[&ClassMethod],
+        class_brand: u32,
         name: Option<JsString>,
     ) -> Result<super::BytecodeChunk, JsError> {
         use super::FunctionInfo;
 
         let mut func_compiler = Compiler::new();
 
+        // Copy the class context so private field access works inside the constructor
+        func_compiler.class_context_stack = self.class_context_stack.clone();
+
         // Compile instance field initializers
         for field in instance_fields {
             func_compiler.compile_instance_field_initializer(field)?;
+        }
+
+        // Initialize instance private fields
+        for field in instance_private_fields {
+            func_compiler.compile_instance_private_field_initializer(field, class_brand)?;
+        }
+
+        // Install instance private methods on 'this'
+        for method in instance_private_methods {
+            func_compiler.compile_instance_private_method_initializer(method, class_brand)?;
         }
 
         // Return this
@@ -1644,6 +1753,224 @@ impl Compiler {
         });
 
         self.builder.free_register(value_reg);
+        Ok(())
+    }
+
+    /// Compile an instance private field initializer (this.#field = value)
+    fn compile_instance_private_field_initializer(
+        &mut self,
+        field: &ClassProperty,
+        class_brand: u32,
+    ) -> Result<(), JsError> {
+        // Get field name
+        let field_name: JsString = match &field.key {
+            ObjectPropertyKey::PrivateIdentifier(id) => id.name.cheap_clone(),
+            _ => return Ok(()), // Should only be called for private fields
+        };
+
+        let name_idx = self.builder.add_string(field_name)?;
+
+        // Get this
+        let this_reg = self.builder.alloc_register()?;
+        self.builder.emit(Op::LoadThis { dst: this_reg });
+
+        // Compile field initializer or use undefined
+        let value_reg = self.builder.alloc_register()?;
+        if let Some(init) = &field.value {
+            self.compile_expression(init, value_reg)?;
+        } else {
+            self.builder.emit(Op::LoadUndefined { dst: value_reg });
+        }
+
+        // Define private field on this
+        self.builder.emit(Op::DefinePrivateField {
+            obj: this_reg,
+            class_brand,
+            field_name: name_idx,
+            value: value_reg,
+        });
+
+        self.builder.free_register(value_reg);
+        self.builder.free_register(this_reg);
+        Ok(())
+    }
+
+    /// Install an instance private method on 'this' during construction
+    fn compile_instance_private_method_initializer(
+        &mut self,
+        method: &ClassMethod,
+        class_brand: u32,
+    ) -> Result<(), JsError> {
+        // Get method name
+        let method_name: JsString = match &method.key {
+            ObjectPropertyKey::PrivateIdentifier(id) => id.name.cheap_clone(),
+            _ => return Ok(()), // Should only be called for private methods
+        };
+
+        let name_idx = self.builder.add_string(method_name.cheap_clone())?;
+
+        // Compile method body
+        let func = &method.value;
+        let method_chunk = self.compile_function_body(
+            &func.params,
+            &func.body.body,
+            Some(method_name),
+            func.generator,
+            func.async_,
+            false,
+        )?;
+
+        let chunk_idx = self.builder.add_chunk(method_chunk)?;
+
+        // Create method function
+        let method_reg = self.builder.alloc_register()?;
+        if func.generator && func.async_ {
+            self.builder.emit(Op::CreateAsyncGenerator {
+                dst: method_reg,
+                chunk_idx,
+            });
+        } else if func.generator {
+            self.builder.emit(Op::CreateGenerator {
+                dst: method_reg,
+                chunk_idx,
+            });
+        } else if func.async_ {
+            self.builder.emit(Op::CreateAsync {
+                dst: method_reg,
+                chunk_idx,
+            });
+        } else {
+            self.builder.emit(Op::CreateClosure {
+                dst: method_reg,
+                chunk_idx,
+            });
+        }
+
+        // Get this
+        let this_reg = self.builder.alloc_register()?;
+        self.builder.emit(Op::LoadThis { dst: this_reg });
+
+        // Define private method on this
+        self.builder.emit(Op::DefinePrivateField {
+            obj: this_reg,
+            class_brand,
+            field_name: name_idx,
+            value: method_reg,
+        });
+
+        self.builder.free_register(this_reg);
+        self.builder.free_register(method_reg);
+        Ok(())
+    }
+
+    /// Compile a static private field initializer
+    fn compile_static_private_field_initializer(
+        &mut self,
+        class_reg: super::bytecode::Register,
+        field: &ClassProperty,
+        class_brand: u32,
+    ) -> Result<(), JsError> {
+        // Get field name
+        let field_name: JsString = match &field.key {
+            ObjectPropertyKey::PrivateIdentifier(id) => id.name.cheap_clone(),
+            _ => return Ok(()), // Should only be called for private fields
+        };
+
+        let name_idx = self.builder.add_string(field_name)?;
+
+        // Compile field initializer or use undefined
+        let value_reg = self.builder.alloc_register()?;
+        if let Some(init) = &field.value {
+            self.compile_expression(init, value_reg)?;
+        } else {
+            self.builder.emit(Op::LoadUndefined { dst: value_reg });
+        }
+
+        // Define private field on class constructor
+        self.builder.emit(Op::DefinePrivateField {
+            obj: class_reg,
+            class_brand,
+            field_name: name_idx,
+            value: value_reg,
+        });
+
+        self.builder.free_register(value_reg);
+        Ok(())
+    }
+
+    /// Compile a private method
+    fn compile_private_method(
+        &mut self,
+        class_reg: super::bytecode::Register,
+        method: &ClassMethod,
+        is_static: bool,
+        class_brand: u32,
+    ) -> Result<(), JsError> {
+        // Get method name
+        let method_name: JsString = match &method.key {
+            ObjectPropertyKey::PrivateIdentifier(id) => id.name.cheap_clone(),
+            _ => return Ok(()), // Should only be called for private methods
+        };
+
+        let name_idx = self.builder.add_string(method_name.cheap_clone())?;
+
+        // Compile method body
+        let func = &method.value;
+        let method_chunk = self.compile_function_body(
+            &func.params,
+            &func.body.body,
+            Some(method_name),
+            func.generator,
+            func.async_,
+            false,
+        )?;
+
+        let chunk_idx = self.builder.add_chunk(method_chunk)?;
+
+        // Create method function
+        let method_reg = self.builder.alloc_register()?;
+        if func.generator && func.async_ {
+            self.builder.emit(Op::CreateAsyncGenerator {
+                dst: method_reg,
+                chunk_idx,
+            });
+        } else if func.generator {
+            self.builder.emit(Op::CreateGenerator {
+                dst: method_reg,
+                chunk_idx,
+            });
+        } else if func.async_ {
+            self.builder.emit(Op::CreateAsync {
+                dst: method_reg,
+                chunk_idx,
+            });
+        } else {
+            self.builder.emit(Op::CreateClosure {
+                dst: method_reg,
+                chunk_idx,
+            });
+        }
+
+        if is_static {
+            // Define on class constructor directly
+            self.builder.emit(Op::DefinePrivateField {
+                obj: class_reg,
+                class_brand,
+                field_name: name_idx,
+                value: method_reg,
+            });
+        } else {
+            // Store for later installation on instances
+            self.builder.emit(Op::DefinePrivateMethod {
+                class: class_reg,
+                class_brand,
+                method_name: name_idx,
+                method: method_reg,
+                is_static,
+            });
+        }
+
+        self.builder.free_register(method_reg);
         Ok(())
     }
 

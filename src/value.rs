@@ -641,6 +641,34 @@ impl From<JsString> for VarKey {
     }
 }
 
+/// Unique identifier for a private field/method.
+///
+/// Private fields in JavaScript are "branded" - two classes can both have
+/// a field named `#x`, but they are different fields. Each class gets a unique
+/// ClassBrandId, and a PrivateFieldKey combines this with the field name.
+pub type ClassBrandId = u32;
+
+/// Key for looking up private fields in an object.
+///
+/// This combines a class brand (unique per class definition) with the field name.
+/// The field_name includes the # prefix (e.g., "#count").
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct PrivateFieldKey {
+    /// Unique identifier for the class that defined this private field
+    pub class_brand: ClassBrandId,
+    /// The private field name (including # prefix)
+    pub field_name: JsString,
+}
+
+impl PrivateFieldKey {
+    pub fn new(class_brand: ClassBrandId, field_name: JsString) -> Self {
+        Self {
+            class_brand,
+            field_name,
+        }
+    }
+}
+
 // JsString wraps Rc<str>, so clone is cheap (just reference count increment)
 impl CheapClone for JsString {}
 
@@ -789,6 +817,7 @@ impl Reset for JsObject {
         // clear() preserves capacity, avoiding reallocation for reused objects
         self.properties.clear();
         self.exotic = ExoticObject::Ordinary;
+        self.private_fields = None;
     }
 }
 
@@ -1007,6 +1036,15 @@ impl Traceable for JsObject {
                 visitor(proxy_data.handler.copy_ref());
             }
         }
+
+        // Trace private fields (may contain object references)
+        if let Some(private_fields) = &self.private_fields {
+            for value in private_fields.values() {
+                if let JsValue::Object(obj) = value {
+                    visitor(obj.copy_ref());
+                }
+            }
+        }
     }
 }
 
@@ -1027,6 +1065,9 @@ pub struct JsObject {
     pub properties: PropertyStorage,
     /// Exotic object behavior
     pub exotic: ExoticObject,
+    /// Private fields storage (only used by instances of classes with private members)
+    /// Key is (ClassBrandId, field_name), value is the private field/method value
+    pub private_fields: Option<FxHashMap<PrivateFieldKey, JsValue>>,
 }
 
 impl JsObject {
@@ -1040,6 +1081,7 @@ impl JsObject {
             null_prototype: false,
             properties: PropertyStorage::new(),
             exotic: ExoticObject::Ordinary,
+            private_fields: None,
         }
     }
 
@@ -1053,6 +1095,7 @@ impl JsObject {
             null_prototype: false,
             properties: PropertyStorage::with_capacity(capacity),
             exotic: ExoticObject::Ordinary,
+            private_fields: None,
         }
     }
 
@@ -1066,7 +1109,27 @@ impl JsObject {
             null_prototype: false,
             properties: PropertyStorage::new(),
             exotic: ExoticObject::Ordinary,
+            private_fields: None,
         }
+    }
+
+    /// Get a private field value
+    pub fn get_private_field(&self, key: &PrivateFieldKey) -> Option<&JsValue> {
+        self.private_fields.as_ref().and_then(|pf| pf.get(key))
+    }
+
+    /// Set a private field value
+    pub fn set_private_field(&mut self, key: PrivateFieldKey, value: JsValue) {
+        self.private_fields
+            .get_or_insert_with(FxHashMap::default)
+            .insert(key, value);
+    }
+
+    /// Check if an object has a specific private field
+    pub fn has_private_field(&self, key: &PrivateFieldKey) -> bool {
+        self.private_fields
+            .as_ref()
+            .is_some_and(|pf| pf.contains_key(key))
     }
 
     /// Check if this object is callable
