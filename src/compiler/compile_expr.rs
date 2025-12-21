@@ -9,7 +9,7 @@ use crate::ast::{
     LogicalOp, MemberProperty, ObjectProperty, ObjectPropertyKey, PropertyKind, UnaryOp, UpdateOp,
 };
 use crate::error::JsError;
-use crate::value::CheapClone;
+use crate::value::{CheapClone, JsString};
 
 /// Information about a member key (const or computed)
 enum MemberKeyInfo {
@@ -1825,6 +1825,14 @@ impl Compiler {
         // Create a new compiler for the function body
         let mut func_compiler = super::Compiler::new();
 
+        // Reserve registers for parameters - they are passed in registers 0, 1, 2...
+        // We must reserve these before any other register allocation
+        if !params.is_empty() {
+            func_compiler
+                .builder
+                .reserve_registers(params.len() as u8)?;
+        }
+
         // Compile parameter declarations
         let mut param_names = Vec::with_capacity(params.len());
         let mut rest_param = None;
@@ -1857,7 +1865,18 @@ impl Compiler {
                         });
                     }
                 }
-                _ => {}
+                crate::ast::Pattern::Object(_) | crate::ast::Pattern::Array(_) => {
+                    // Handle destructuring patterns in function parameters
+                    // The argument is in arg_reg, compile the pattern binding
+                    let arg_reg = idx as u8;
+                    param_names.push(JsString::from(format!("__param{}__", idx)));
+                    func_compiler.compile_pattern_binding(&param.pattern, arg_reg, true, false)?;
+                }
+                crate::ast::Pattern::Assignment(_) => {
+                    // Parameter with default value - not fully supported in expression-bodied arrows
+                    // For now, just use a placeholder name
+                    param_names.push(JsString::from(format!("__param{}__", idx)));
+                }
             }
         }
 
