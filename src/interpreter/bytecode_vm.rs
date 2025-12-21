@@ -2663,6 +2663,135 @@ impl BytecodeVM {
                 Ok(OpResult::Continue)
             }
 
+            Op::DefineMethodComputed {
+                class,
+                key,
+                method,
+                is_static,
+            } => {
+                let class_val = self.get_reg(class).clone();
+                let JsValue::Object(class_obj) = class_val else {
+                    return Err(JsError::type_error("Class is not an object"));
+                };
+
+                let method_val = self.get_reg(method).clone();
+                let key_val = self.get_reg(key).clone();
+
+                // Convert key to string for property name
+                let method_name = key_val.to_js_string();
+
+                // Store __super__ and __super_target__ on method for super access
+                if let JsValue::Object(method_obj) = &method_val {
+                    // Copy __super__ from class constructor
+                    if let Some(super_val) = class_obj
+                        .borrow()
+                        .get_property(&PropertyKey::String(interp.intern("__super__")))
+                    {
+                        method_obj.borrow_mut().set_property(
+                            PropertyKey::String(interp.intern("__super__")),
+                            super_val,
+                        );
+                    }
+
+                    // Copy __super_target__ from class constructor
+                    if let Some(super_target) = class_obj
+                        .borrow()
+                        .get_property(&PropertyKey::String(interp.intern("__super_target__")))
+                    {
+                        method_obj.borrow_mut().set_property(
+                            PropertyKey::String(interp.intern("__super_target__")),
+                            super_target,
+                        );
+                    }
+                }
+
+                // Use from_value to handle numeric string keys correctly (e.g., "2" -> Index(2))
+                let prop_key = PropertyKey::from_value(&JsValue::String(method_name));
+
+                if is_static {
+                    // Add to class constructor directly
+                    class_obj.borrow_mut().set_property(prop_key, method_val);
+                } else {
+                    // Add to prototype
+                    let proto_key = PropertyKey::String(interp.intern("prototype"));
+                    if let Some(JsValue::Object(proto)) =
+                        class_obj.borrow().get_property(&proto_key)
+                    {
+                        proto.borrow_mut().set_property(prop_key, method_val);
+                    }
+                }
+
+                Ok(OpResult::Continue)
+            }
+
+            Op::DefineAccessorComputed {
+                class,
+                key,
+                getter,
+                setter,
+                is_static,
+            } => {
+                let class_val = self.get_reg(class).clone();
+                let JsValue::Object(class_obj) = class_val else {
+                    return Err(JsError::type_error("Class is not an object"));
+                };
+
+                let getter_val = self.get_reg(getter).clone();
+                let setter_val = self.get_reg(setter).clone();
+                let key_val = self.get_reg(key).clone();
+
+                // Convert key to string for accessor name
+                let accessor_name = key_val.to_js_string();
+
+                // Extract function objects (undefined means keep existing)
+                let new_getter = if let JsValue::Object(g) = getter_val {
+                    Some(g)
+                } else {
+                    None
+                };
+                let new_setter = if let JsValue::Object(s) = setter_val {
+                    Some(s)
+                } else {
+                    None
+                };
+
+                // Get target object (class for static, prototype for instance)
+                let target = if is_static {
+                    class_obj.cheap_clone()
+                } else {
+                    let proto_key = PropertyKey::String(interp.intern("prototype"));
+                    if let Some(JsValue::Object(proto)) =
+                        class_obj.borrow().get_property(&proto_key)
+                    {
+                        proto
+                    } else {
+                        return Ok(OpResult::Continue);
+                    }
+                };
+
+                // Get existing accessor property if any
+                // Use from_value to handle numeric string keys correctly (e.g., "2" -> Index(2))
+                let prop_key = PropertyKey::from_value(&JsValue::String(accessor_name));
+                let (existing_getter, existing_setter) = {
+                    let target_ref = target.borrow();
+                    if let Some(prop) = target_ref.properties.get(&prop_key) {
+                        (prop.getter().cloned(), prop.setter().cloned())
+                    } else {
+                        (None, None)
+                    }
+                };
+
+                // Merge with existing accessors
+                let final_getter = new_getter.or(existing_getter);
+                let final_setter = new_setter.or(existing_setter);
+
+                // Create accessor property
+                let property = Property::accessor(final_getter, final_setter);
+                target.borrow_mut().define_property(prop_key, property);
+
+                Ok(OpResult::Continue)
+            }
+
             Op::SuperCall {
                 dst,
                 args_start,

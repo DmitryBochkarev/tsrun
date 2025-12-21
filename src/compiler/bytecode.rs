@@ -532,6 +532,23 @@ pub enum Op {
         is_static: bool,
     },
 
+    /// Define class method with computed key
+    DefineMethodComputed {
+        class: Register,
+        key: Register,
+        method: Register,
+        is_static: bool,
+    },
+
+    /// Define getter/setter with computed key
+    DefineAccessorComputed {
+        class: Register,
+        key: Register,
+        getter: Register,
+        setter: Register,
+        is_static: bool,
+    },
+
     /// Super call: r[dst] = super(args...)
     SuperCall {
         dst: Register,

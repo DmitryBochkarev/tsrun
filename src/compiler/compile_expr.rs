@@ -1642,14 +1642,16 @@ impl Compiler {
             _ => return None,
         };
 
-        // Check if it's an OptionalChain
-        let opt_chain = match inner.as_ref() {
-            Expression::OptionalChain(opt) => opt,
-            _ => return None,
-        };
-
-        // Check if the base is a Member expression
-        match opt_chain.base.as_ref() {
+        match inner.as_ref() {
+            // Case 1: (a?.b) - parenthesized optional chain
+            Expression::OptionalChain(opt) => {
+                // Check if the base is a Member expression
+                match opt.base.as_ref() {
+                    Expression::Member(member) => Some((member.object.as_ref(), member)),
+                    _ => None,
+                }
+            }
+            // Case 2: (a.b) - parenthesized member expression
             Expression::Member(member) => Some((member.object.as_ref(), member)),
             _ => None,
         }
@@ -1850,6 +1852,141 @@ impl Compiler {
                 self.builder.free_register(arg_reg);
                 return Ok(());
             }
+        }
+
+        // Handle parenthesized method call: (a?.b)() or (a.b)()
+        // This preserves `this` binding for the method call
+        if let Some((obj_expr, member)) =
+            Self::extract_member_from_parenthesized_optional_chain(&call.callee)
+        {
+            let obj_reg = self.builder.alloc_register()?;
+
+            // Compile the object expression
+            // For (a?.b)(), we need to handle the optional chain
+            match obj_expr {
+                Expression::OptionalChain(inner_opt) => {
+                    // Handle optional chain in object - compile with short-circuit
+                    let jumps = self.compile_optional_chain_inner(&inner_opt.base, obj_reg)?;
+                    if !jumps.is_empty() {
+                        // Set undefined at end for short-circuit
+                        for jump in &jumps {
+                            self.builder.patch_jump(*jump);
+                        }
+                    }
+                }
+                _ => {
+                    self.compile_expression(obj_expr, obj_reg)?;
+                }
+            }
+
+            // If the inner member access is optional, check for nullish
+            if member.optional {
+                // Skip the rest if nullish
+                let end_label = self.builder.emit_jump_if_nullish(obj_reg);
+                // Get the method
+                let method_reg = self.builder.alloc_register()?;
+                match &member.property {
+                    MemberProperty::Identifier(id) => {
+                        let key_idx = self.builder.add_string(id.name.cheap_clone())?;
+                        self.builder.emit(Op::GetPropertyConst {
+                            dst: method_reg,
+                            obj: obj_reg,
+                            key: key_idx,
+                        });
+                    }
+                    MemberProperty::Expression(expr) => {
+                        let key_reg = self.builder.alloc_register()?;
+                        self.compile_expression(expr, key_reg)?;
+                        self.builder.emit(Op::GetProperty {
+                            dst: method_reg,
+                            obj: obj_reg,
+                            key: key_reg,
+                        });
+                        self.builder.free_register(key_reg);
+                    }
+                    MemberProperty::PrivateIdentifier(id) => {
+                        let (class_brand, _info) =
+                            self.lookup_private_member(&id.name).ok_or_else(|| {
+                                JsError::syntax_error_simple(format!(
+                                    "Private field '{}' must be declared in an enclosing class",
+                                    id.name
+                                ))
+                            })?;
+
+                        let field_name_idx = self.builder.add_string(id.name.cheap_clone())?;
+                        self.builder.emit(Op::GetPrivateField {
+                            dst: method_reg,
+                            obj: obj_reg,
+                            class_brand,
+                            field_name: field_name_idx,
+                        });
+                    }
+                }
+
+                // Compile arguments
+                let (args_start, argc, has_spread) = self.compile_arguments(&call.arguments)?;
+
+                // Call the method with obj as this
+                self.emit_call(dst, method_reg, obj_reg, args_start, argc, has_spread);
+
+                let skip_undefined = self.builder.emit_jump();
+                self.builder.patch_jump(end_label);
+                self.builder.emit(Op::LoadUndefined { dst });
+                self.builder.patch_jump(skip_undefined);
+
+                self.builder.free_register(method_reg);
+            } else {
+                // Get the method (non-optional)
+                let method_reg = self.builder.alloc_register()?;
+                match &member.property {
+                    MemberProperty::Identifier(id) => {
+                        let key_idx = self.builder.add_string(id.name.cheap_clone())?;
+                        self.builder.emit(Op::GetPropertyConst {
+                            dst: method_reg,
+                            obj: obj_reg,
+                            key: key_idx,
+                        });
+                    }
+                    MemberProperty::Expression(expr) => {
+                        let key_reg = self.builder.alloc_register()?;
+                        self.compile_expression(expr, key_reg)?;
+                        self.builder.emit(Op::GetProperty {
+                            dst: method_reg,
+                            obj: obj_reg,
+                            key: key_reg,
+                        });
+                        self.builder.free_register(key_reg);
+                    }
+                    MemberProperty::PrivateIdentifier(id) => {
+                        let (class_brand, _info) =
+                            self.lookup_private_member(&id.name).ok_or_else(|| {
+                                JsError::syntax_error_simple(format!(
+                                    "Private field '{}' must be declared in an enclosing class",
+                                    id.name
+                                ))
+                            })?;
+
+                        let field_name_idx = self.builder.add_string(id.name.cheap_clone())?;
+                        self.builder.emit(Op::GetPrivateField {
+                            dst: method_reg,
+                            obj: obj_reg,
+                            class_brand,
+                            field_name: field_name_idx,
+                        });
+                    }
+                }
+
+                // Compile arguments
+                let (args_start, argc, has_spread) = self.compile_arguments(&call.arguments)?;
+
+                // Call the method with obj as this
+                self.emit_call(dst, method_reg, obj_reg, args_start, argc, has_spread);
+
+                self.builder.free_register(method_reg);
+            }
+
+            self.builder.free_register(obj_reg);
+            return Ok(());
         }
 
         // Regular call

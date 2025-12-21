@@ -2,7 +2,7 @@
 //!
 //! Compiles AST statements to bytecode instructions.
 
-use super::bytecode::{Op, Register};
+use super::bytecode::{ConstantIndex, Op, Register};
 use super::Compiler;
 use crate::ast::{
     BlockStatement, BreakStatement, ClassConstructor, ClassDeclaration, ClassMember, ClassMethod,
@@ -1475,36 +1475,61 @@ impl Compiler {
         method: &ClassMethod,
         is_static: bool,
     ) -> Result<(), JsError> {
-        // Get method name and check if it's private
-        let (method_name, is_private): (JsString, bool) = match &method.key {
-            ObjectPropertyKey::Identifier(id) => (id.name.cheap_clone(), false),
-            ObjectPropertyKey::String(s) => (s.value.cheap_clone(), false),
+        // Get method name and check if it's private or computed
+        enum MethodKey {
+            Const(ConstantIndex, JsString),
+            Computed(super::bytecode::Register),
+            Private(ConstantIndex, JsString),
+        }
+
+        let key = match &method.key {
+            ObjectPropertyKey::Identifier(id) => {
+                let name = id.name.cheap_clone();
+                let name_idx = self.builder.add_string(name.cheap_clone())?;
+                MethodKey::Const(name_idx, name)
+            }
+            ObjectPropertyKey::String(s) => {
+                let name = s.value.cheap_clone();
+                let name_idx = self.builder.add_string(name.cheap_clone())?;
+                MethodKey::Const(name_idx, name)
+            }
             ObjectPropertyKey::Number(lit) => {
                 // Convert number to string for method name
                 use crate::ast::LiteralValue;
                 match &lit.value {
                     LiteralValue::Number(n) => {
-                        (JsString::from(crate::value::number_to_string(*n)), false)
+                        let name = JsString::from(crate::value::number_to_string(*n));
+                        let name_idx = self.builder.add_string(name.cheap_clone())?;
+                        MethodKey::Const(name_idx, name)
                     }
                     _ => return Err(JsError::syntax_error_simple("Invalid method key")),
                 }
             }
-            ObjectPropertyKey::Computed(_) => {
-                return Err(JsError::syntax_error_simple(
-                    "Computed method names not yet supported in bytecode compiler",
-                ))
+            ObjectPropertyKey::Computed(expr) => {
+                // Compile computed key expression to a register
+                let key_reg = self.builder.alloc_register()?;
+                self.compile_expression(expr, key_reg)?;
+                MethodKey::Computed(key_reg)
             }
-            ObjectPropertyKey::PrivateIdentifier(id) => (id.name.cheap_clone(), true),
+            ObjectPropertyKey::PrivateIdentifier(id) => {
+                let name = id.name.cheap_clone();
+                let name_idx = self.builder.add_string(name.cheap_clone())?;
+                MethodKey::Private(name_idx, name)
+            }
         };
 
-        let name_idx = self.builder.add_string(method_name.cheap_clone())?;
+        // Get method name for function naming (use None for computed)
+        let method_name = match &key {
+            MethodKey::Const(_, name) | MethodKey::Private(_, name) => Some(name.cheap_clone()),
+            MethodKey::Computed(_) => None,
+        };
 
         // Compile method body
         let func = &method.value;
         let method_chunk = self.compile_function_body(
             &func.params,
             &func.body.body,
-            Some(method_name),
+            method_name,
             func.generator,
             func.async_,
             false,
@@ -1549,6 +1574,18 @@ impl Compiler {
                 MethodKind::Set => 2,
             };
 
+            // Need a name_idx for decorators - for computed keys, create a placeholder
+            let dec_name_idx = match &key {
+                MethodKey::Const(idx, _) | MethodKey::Private(idx, _) => *idx,
+                MethodKey::Computed(_) => {
+                    // For computed keys, decorators need the name at runtime
+                    // We'll use an empty string placeholder for now
+                    self.builder.add_string(JsString::from(""))?
+                }
+            };
+
+            let is_private = matches!(&key, MethodKey::Private(_, _));
+
             // First, evaluate all decorator expressions (top-to-bottom)
             let mut dec_regs: Vec<super::bytecode::Register> = Vec::new();
             for decorator in &method.decorators {
@@ -1562,7 +1599,7 @@ impl Compiler {
                 self.builder.emit(Op::ApplyMethodDecorator {
                     method: method_reg,
                     decorator: dec_reg,
-                    name: name_idx,
+                    name: dec_name_idx,
                     kind,
                     is_static,
                     is_private,
@@ -1573,23 +1610,35 @@ impl Compiler {
         }
 
         // Emit DefineMethod or DefineAccessor based on method kind
-        match method.kind {
-            MethodKind::Method => {
+        match (&key, &method.kind) {
+            (
+                MethodKey::Const(name_idx, _) | MethodKey::Private(name_idx, _),
+                MethodKind::Method,
+            ) => {
                 self.builder.emit(Op::DefineMethod {
                     class: class_reg,
-                    name: name_idx,
+                    name: *name_idx,
                     method: method_reg,
                     is_static,
                 });
             }
-            MethodKind::Get => {
+            (MethodKey::Computed(key_reg), MethodKind::Method) => {
+                self.builder.emit(Op::DefineMethodComputed {
+                    class: class_reg,
+                    key: *key_reg,
+                    method: method_reg,
+                    is_static,
+                });
+                self.builder.free_register(*key_reg);
+            }
+            (MethodKey::Const(name_idx, _) | MethodKey::Private(name_idx, _), MethodKind::Get) => {
                 // Getter only - pass undefined for setter
                 let undefined_reg = self.builder.alloc_register()?;
                 self.builder.emit(Op::LoadUndefined { dst: undefined_reg });
 
                 self.builder.emit(Op::DefineAccessor {
                     class: class_reg,
-                    name: name_idx,
+                    name: *name_idx,
                     getter: method_reg,
                     setter: undefined_reg,
                     is_static,
@@ -1597,20 +1646,52 @@ impl Compiler {
 
                 self.builder.free_register(undefined_reg);
             }
-            MethodKind::Set => {
+            (MethodKey::Computed(key_reg), MethodKind::Get) => {
+                // Getter only - pass undefined for setter
+                let undefined_reg = self.builder.alloc_register()?;
+                self.builder.emit(Op::LoadUndefined { dst: undefined_reg });
+
+                self.builder.emit(Op::DefineAccessorComputed {
+                    class: class_reg,
+                    key: *key_reg,
+                    getter: method_reg,
+                    setter: undefined_reg,
+                    is_static,
+                });
+
+                self.builder.free_register(undefined_reg);
+                self.builder.free_register(*key_reg);
+            }
+            (MethodKey::Const(name_idx, _) | MethodKey::Private(name_idx, _), MethodKind::Set) => {
                 // Setter only - pass undefined for getter
                 let undefined_reg = self.builder.alloc_register()?;
                 self.builder.emit(Op::LoadUndefined { dst: undefined_reg });
 
                 self.builder.emit(Op::DefineAccessor {
                     class: class_reg,
-                    name: name_idx,
+                    name: *name_idx,
                     getter: undefined_reg,
                     setter: method_reg,
                     is_static,
                 });
 
                 self.builder.free_register(undefined_reg);
+            }
+            (MethodKey::Computed(key_reg), MethodKind::Set) => {
+                // Setter only - pass undefined for getter
+                let undefined_reg = self.builder.alloc_register()?;
+                self.builder.emit(Op::LoadUndefined { dst: undefined_reg });
+
+                self.builder.emit(Op::DefineAccessorComputed {
+                    class: class_reg,
+                    key: *key_reg,
+                    getter: undefined_reg,
+                    setter: method_reg,
+                    is_static,
+                });
+
+                self.builder.free_register(undefined_reg);
+                self.builder.free_register(*key_reg);
             }
         }
 

@@ -3,8 +3,8 @@
 This document analyzes test failures in the bytecode VM and categorizes them by feature area with implementation guidance.
 
 **Total Tests:** 1792
-**Passing:** 1712
-**Failing:** 73
+**Passing:** 1715
+**Failing:** 70
 **Ignored:** 7
 
 ---
@@ -47,6 +47,8 @@ The following issues have been fixed:
 - ✅ **Decorator evaluation order** - Decorator factories are evaluated top-to-bottom, decorators applied bottom-to-top
 - ✅ **Private method decorators** - Decorators on `#method()` now work correctly
 - ✅ **Private field decorators** - Decorators on `#field` now work correctly (initializer transformation)
+- ✅ **Computed class method names** - `get [key]() {}` and `set [key]() {}` now work correctly
+- ✅ **Parenthesized method calls** - `(a.b)?.()` and `(a?.b)()` now preserve `this` binding correctly
 
 ---
 
