@@ -1421,6 +1421,16 @@ impl BytecodeVM {
                 args_start,
                 argc,
             } => {
+                // Check call stack depth before making the call
+                // This prevents Rust stack overflow from deeply nested calls
+                let max_depth = interp.max_call_depth();
+                if max_depth > 0 && interp.call_stack.len() >= max_depth {
+                    return Err(JsError::range_error(format!(
+                        "Maximum call stack size exceeded (depth {})",
+                        interp.call_stack.len()
+                    )));
+                }
+
                 let callee_val = self.get_reg(callee).clone();
                 let this_val = self.get_reg(this).clone();
 
@@ -1441,6 +1451,15 @@ impl BytecodeVM {
                 args_start,
                 argc: _,
             } => {
+                // Check call stack depth before making the call
+                let max_depth = interp.max_call_depth();
+                if max_depth > 0 && interp.call_stack.len() >= max_depth {
+                    return Err(JsError::range_error(format!(
+                        "Maximum call stack size exceeded (depth {})",
+                        interp.call_stack.len()
+                    )));
+                }
+
                 // CallSpread: args_start points to an array of arguments
                 // We extract the array elements and call the function with them
                 let callee_val = self.get_reg(callee).clone();
@@ -1493,6 +1512,15 @@ impl BytecodeVM {
                 args_start,
                 argc,
             } => {
+                // Check call stack depth before making the call
+                let max_depth = interp.max_call_depth();
+                if max_depth > 0 && interp.call_stack.len() >= max_depth {
+                    return Err(JsError::range_error(format!(
+                        "Maximum call stack size exceeded (depth {})",
+                        interp.call_stack.len()
+                    )));
+                }
+
                 let obj_val = self.get_reg(obj).clone();
                 let method_name = self
                     .get_string_constant(method)
@@ -1517,6 +1545,15 @@ impl BytecodeVM {
                 args_start,
                 argc,
             } => {
+                // Check call stack depth before making the call
+                let max_depth = interp.max_call_depth();
+                if max_depth > 0 && interp.call_stack.len() >= max_depth {
+                    return Err(JsError::range_error(format!(
+                        "Maximum call stack size exceeded (depth {})",
+                        interp.call_stack.len()
+                    )));
+                }
+
                 let callee_val = self.get_reg(callee).clone();
 
                 let mut args = Vec::with_capacity(argc as usize);
@@ -1584,6 +1621,15 @@ impl BytecodeVM {
                 args_start,
                 argc: _,
             } => {
+                // Check call stack depth before making the call
+                let max_depth = interp.max_call_depth();
+                if max_depth > 0 && interp.call_stack.len() >= max_depth {
+                    return Err(JsError::range_error(format!(
+                        "Maximum call stack size exceeded (depth {})",
+                        interp.call_stack.len()
+                    )));
+                }
+
                 // ConstructSpread: args_start points to an array of arguments
                 let callee_val = self.get_reg(callee).clone();
                 let args_val = self.get_reg(args_start).clone();
@@ -2797,6 +2843,15 @@ impl BytecodeVM {
                 args_start,
                 argc,
             } => {
+                // Check call stack depth before making the call
+                let max_depth = interp.max_call_depth();
+                if max_depth > 0 && interp.call_stack.len() >= max_depth {
+                    return Err(JsError::range_error(format!(
+                        "Maximum call stack size exceeded (depth {})",
+                        interp.call_stack.len()
+                    )));
+                }
+
                 // Get the current function's __super__ property (parent constructor)
                 let super_ctor = self.get_super_constructor(interp)?;
 

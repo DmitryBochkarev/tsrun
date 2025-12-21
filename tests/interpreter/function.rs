@@ -342,16 +342,62 @@ fn test_fibonacci_iterative() {
     assert_eq!(result, JsValue::Number(55.0));
 }
 
+// Test that call stack depth limit works
 #[test]
-#[ignore = "Bytecode VM does not enforce call stack depth limit yet"]
-fn test_infinite_recursion_caught() {
-    // Infinite recursion should be caught by the call stack depth limit
-    // Tests use MAX_CALL_DEPTH=50 by default, so this should error quickly
-    use super::eval_result;
+fn test_call_stack_depth_limit() {
+    // Create a runtime with very low depth limit (10) to test without stack overflow
+    let mut runtime = typescript_eval::Runtime::new();
+    runtime.set_max_call_depth(10);
 
-    let result = eval_result(
+    // Test that recursion to depth 5 works (well under limit)
+    let result = runtime.eval_simple(
         r#"
-        function infinite(): number {
+        function countDown(n) {
+            if (n <= 0) return 0;
+            return 1 + countDown(n - 1);
+        }
+        countDown(5)
+    "#,
+    );
+    assert!(result.is_ok(), "countDown(5) should work");
+    assert_eq!(result.unwrap(), typescript_eval::JsValue::Number(5.0));
+
+    // Test that depth 15 should fail (over 10 limit)
+    let mut runtime2 = typescript_eval::Runtime::new();
+    runtime2.set_max_call_depth(10);
+    let result2 = runtime2.eval_simple(
+        r#"
+        function countDown(n) {
+            if (n <= 0) return 0;
+            return 1 + countDown(n - 1);
+        }
+        countDown(15)
+    "#,
+    );
+
+    assert!(
+        result2.is_err(),
+        "Deep recursion should error: {:?}",
+        result2
+    );
+    let err = format!("{:?}", result2.unwrap_err());
+    assert!(
+        err.contains("Maximum call stack size exceeded"),
+        "Error should mention stack size: {}",
+        err
+    );
+}
+
+// Test infinite recursion is caught
+#[test]
+fn test_infinite_recursion_caught() {
+    // Use a low depth limit to ensure we catch it without Rust stack overflow
+    let mut runtime = typescript_eval::Runtime::new();
+    runtime.set_max_call_depth(10);
+
+    let result = runtime.eval_simple(
+        r#"
+        function infinite() {
             return infinite();
         }
         infinite()
