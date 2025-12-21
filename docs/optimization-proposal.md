@@ -274,9 +274,10 @@ perf report --stdio --sort=symbol --no-children | head -50
 |--------|----------|---------------------|-------------|
 | Lexer throughput | ~65-73 MB/s | **115.31 MB/s** | **+58-77%** ✅ |
 | Parser throughput | ~20 MB/s | **24.40 MB/s** | **+22%** ✅ |
-| compute-intensive.ts | 242 ms | 242.2 ms | ~0% |
-| stress-test.ts | 128 ms | 129.3 ms | ~0% |
-| Fibonacci(30) | 2298 ms | 2269 ms | **+1.3%** |
+| compute-intensive.ts | 242 ms | 248 ms | ~0% |
+| stress-test.ts | 128 ms | 132 ms | ~0% |
+| Fibonacci(30) | 2298 ms | 2373 ms | ~0% |
+| Peak memory (fib30) | ~4.6 MB | ~4.6 MB | (GC working) |
 
 ### Benchmark Results (2024-12-21)
 
