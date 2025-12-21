@@ -128,13 +128,38 @@ for (i, elem) in elements.iter().enumerate() {
 }
 ```
 
-**Solution**: Add `OpResult::NativeCallback` variant that saves the native function's loop state and returns to the trampoline. The native function becomes a state machine:
-1. Save loop index, accumulated results, and continuation info
-2. Return `OpResult::NativeCallback` with the callback to invoke
-3. Trampoline invokes callback via normal call mechanism
-4. Resume native function with callback result
+**Solution Options**:
 
-**Complexity**: High - requires state machine for each affected builtin.
+**Option A: State Machine Pattern** (Original plan)
+1. Native function yields back to trampoline when it needs to call a callback
+2. Trampoline invokes callback via normal call mechanism
+3. Native function resumes with callback result
+4. Requires: `OpResult::NativeCallback` variant, continuation state per builtin
+
+**Option B: Inline Bytecode Generation**
+1. Instead of Rust loops, generate synthetic bytecode for array iteration
+2. Push bytecode onto trampoline stack
+3. Native becomes thin wrapper that generates bytecode
+4. Requires: bytecode generation in builtins, more complex than A
+
+**Option C: Callback Invoker with VM Context**
+1. Pass reference to current VM to native functions
+2. Native uses VM's trampoline directly for callbacks
+3. Requires: change all native function signatures (large refactor)
+
+**Complexity Assessment** (2025-01-21):
+- All options require significant architectural changes
+- The current `interp.call_function()` creates a new BytecodeVM for each call
+- This adds Rust stack frames even when JS depth is within limits
+- The current implementation works for typical use cases (JS depth limit prevents runaway)
+- Deep recursion *through* native callbacks (e.g., `arr.map(x => recurse(x))`) still uses Rust stack
+
+**Current Status**: Deferred. The trampoline pattern for regular function calls (Phase 1, 2, 5) handles most stack-overflow scenarios. Native callbacks add stack depth but are bounded by JS depth limits. A full solution requires major refactoring that may not be worth the complexity.
+
+**Workaround**: Users hitting stack issues with native callbacks can:
+1. Reduce call depth with iterative solutions
+2. Increase Rust stack size (if environment allows)
+3. Break up array operations into smaller chunks
 
 ### Phase 4: Migrate Proxy Calls (MEDIUM PRIORITY)
 
@@ -247,14 +272,23 @@ let result = interp.call_function(decorator_val, JsValue::Undefined, vec![method
 
 **Note**: This phase can be deferred indefinitely since decorators don't cause the stack overflow issues that motivate the trampoline pattern.
 
-## Implementation Order (Revised)
+## Implementation Order (Revised 2025-01-21)
 
-1. **Phase 1** ✅ COMPLETED: Fix depth counting bug
-2. **Phase 2** ✅ COMPLETED: Migrate Construct opcodes
-3. **Phase 5** ✅ COMPLETED: All generators and async functions now use trampoline
-4. **Phase 3** (HIGH PRIORITY): Migrate native function callbacks - most impactful for stack safety
-5. **Phase 4** (MEDIUM PRIORITY): Migrate proxy calls - moderate impact
-6. **Phase 6** (LOW PRIORITY): Migrate decorator call sites - can be deferred
+**Completed:**
+1. **Phase 1** ✅: Fix depth counting bug
+2. **Phase 2** ✅: Migrate Construct opcodes
+3. **Phase 5** ✅: All generators and async functions now use trampoline
+
+**Deferred (requires major architectural changes):**
+4. **Phase 3** (DEFERRED): Migrate native function callbacks
+   - Requires coroutine-like state machines for all affected builtins
+   - Current workaround: JS depth limit prevents runaway recursion
+5. **Phase 4** (DEFERRED): Migrate proxy calls
+   - Similar complexity to Phase 3
+6. **Phase 6** (LOW PRIORITY): Migrate decorator call sites
+   - Low impact, can be skipped entirely
+
+**Summary**: The core trampoline pattern is complete for bytecode function calls. The remaining phases would eliminate Rust stack growth for native callbacks but require substantial refactoring that may not be worth the effort given the JS depth limit workaround.
 
 ## Testing Strategy
 

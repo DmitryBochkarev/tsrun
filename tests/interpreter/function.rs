@@ -414,6 +414,75 @@ fn test_infinite_recursion_caught() {
 }
 
 // ============================================================
+// Array callback depth tests (for trampoline verification)
+// ============================================================
+
+/// Test that array callbacks don't blow the stack
+/// This tests the current behavior - callbacks go through interp.call_function
+/// which adds Rust stack frames. With trampoline migration, this would use
+/// less Rust stack.
+#[test]
+fn test_array_map_callback_depth() {
+    // Basic map with callback - should work fine
+    let mut runtime = typescript_eval::Runtime::new();
+    runtime.set_max_call_depth(100);
+
+    let result = runtime.eval_simple(
+        r#"
+        [1, 2, 3].map(function(x) { return x * 2; })
+    "#,
+    );
+    assert!(result.is_ok(), "Simple map should work: {:?}", result);
+}
+
+/// Test nested array callbacks - map inside map
+#[test]
+fn test_nested_array_callbacks() {
+    let mut runtime = typescript_eval::Runtime::new();
+    runtime.set_max_call_depth(100);
+
+    let result = runtime.eval_simple(
+        r#"
+        const arr = [[1, 2], [3, 4]];
+        arr.map(function(inner) {
+            return inner.map(function(x) { return x * 2; });
+        })
+    "#,
+    );
+    assert!(result.is_ok(), "Nested map should work: {:?}", result);
+}
+
+/// Test array callback that itself recurses
+/// This is the stress test for stack depth
+#[test]
+fn test_array_callback_with_recursion() {
+    let mut runtime = typescript_eval::Runtime::new();
+    runtime.set_max_call_depth(50);
+
+    // The callback itself has recursion depth 5
+    // forEach has 3 elements, each calling a recursive function
+    let result = runtime.eval_simple(
+        r#"
+        let sum = 0;
+        function countDown(n) {
+            if (n <= 0) return 0;
+            return 1 + countDown(n - 1);
+        }
+        [1, 2, 3].forEach(function(x) {
+            sum += countDown(3);
+        });
+        sum
+    "#,
+    );
+    assert!(
+        result.is_ok(),
+        "forEach with recursive callback should work: {:?}",
+        result
+    );
+    assert_eq!(result.unwrap(), typescript_eval::JsValue::Number(9.0));
+}
+
+// ============================================================
 // Function constructor tests
 // ============================================================
 
