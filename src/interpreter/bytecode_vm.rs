@@ -186,6 +186,8 @@ pub struct BytecodeVM {
     trampoline_stack: Vec<TrampolineFrame>,
     /// Pool of reusable register files to reduce allocation overhead
     register_pool: Vec<Vec<JsValue>>,
+    /// Pool of reusable argument vectors to reduce allocation overhead
+    arguments_pool: Vec<Vec<JsValue>>,
 }
 
 impl BytecodeVM {
@@ -215,6 +217,7 @@ impl BytecodeVM {
             pending_completion: None,
             trampoline_stack: Vec::new(),
             register_pool: Vec::new(),
+            arguments_pool: Vec::new(),
         }
     }
 
@@ -262,6 +265,7 @@ impl BytecodeVM {
             pending_completion: None,
             trampoline_stack: Vec::new(),
             register_pool: Vec::new(),
+            arguments_pool: Vec::new(),
         }
     }
 
@@ -313,6 +317,7 @@ impl BytecodeVM {
             pending_completion: None,
             trampoline_stack: Vec::new(),
             register_pool: Vec::new(),
+            arguments_pool: Vec::new(),
         }
     }
 
@@ -339,6 +344,32 @@ impl BytecodeVM {
         // Keep pool size reasonable (e.g., max 16 frames)
         if self.register_pool.len() < 16 {
             self.register_pool.push(registers);
+        }
+    }
+
+    /// Acquire an arguments vector from the pool, or allocate a new one
+    #[inline]
+    fn acquire_arguments(&mut self, args: &[JsValue]) -> Vec<JsValue> {
+        if let Some(pos) = self
+            .arguments_pool
+            .iter()
+            .position(|v| v.capacity() >= args.len())
+        {
+            let mut vec = self.arguments_pool.swap_remove(pos);
+            vec.clear();
+            vec.extend(args.iter().cloned());
+            return vec;
+        }
+        args.to_vec()
+    }
+
+    /// Return an arguments vector to the pool for reuse
+    #[inline]
+    fn release_arguments(&mut self, mut args: Vec<JsValue>) {
+        args.clear();
+        // Keep pool size reasonable (max 16)
+        if self.arguments_pool.len() < 16 {
+            self.arguments_pool.push(args);
         }
     }
 
@@ -637,6 +668,10 @@ impl BytecodeVM {
                         // Release current registers back to pool before restoring
                         let current_registers = std::mem::take(&mut self.registers);
                         self.release_registers(current_registers);
+
+                        // Release current arguments back to pool before restoring
+                        let current_arguments = std::mem::take(&mut self.arguments);
+                        self.release_arguments(current_arguments);
 
                         // Restore state from frame
                         self.ip = frame.ip;
@@ -1123,6 +1158,7 @@ impl BytecodeVM {
 
         // Save current VM state to trampoline stack
         let old_guard = std::mem::replace(&mut self.register_guard, new_guard);
+        let new_arguments = self.acquire_arguments(args);
         let frame = TrampolineFrame {
             ip: self.ip,
             chunk: self.chunk.cheap_clone(),
@@ -1132,7 +1168,7 @@ impl BytecodeVM {
             try_stack: std::mem::take(&mut self.try_stack),
             exception_value: self.exception_value.take(),
             saved_env_stack: std::mem::take(&mut self.saved_env_stack),
-            arguments: std::mem::replace(&mut self.arguments, args.to_vec()),
+            arguments: std::mem::replace(&mut self.arguments, new_arguments),
             new_target: std::mem::replace(&mut self.new_target, new_target),
             pending_completion: self.pending_completion.take(),
             return_register,
@@ -1310,6 +1346,7 @@ impl BytecodeVM {
 
         // Save current VM state to trampoline stack
         let old_guard = std::mem::replace(&mut self.register_guard, new_guard);
+        let new_arguments = self.acquire_arguments(args);
         let frame = TrampolineFrame {
             ip: self.ip,
             chunk: self.chunk.cheap_clone(),
@@ -1319,7 +1356,7 @@ impl BytecodeVM {
             try_stack: std::mem::take(&mut self.try_stack),
             exception_value: self.exception_value.take(),
             saved_env_stack: std::mem::take(&mut self.saved_env_stack),
-            arguments: std::mem::replace(&mut self.arguments, args.to_vec()),
+            arguments: std::mem::replace(&mut self.arguments, new_arguments),
             new_target: std::mem::replace(&mut self.new_target, new_target),
             pending_completion: self.pending_completion.take(),
             return_register,
@@ -1347,6 +1384,10 @@ impl BytecodeVM {
         // Release current registers back to pool before restoring
         let current_registers = std::mem::take(&mut self.registers);
         self.release_registers(current_registers);
+
+        // Release current arguments back to pool before restoring
+        let current_arguments = std::mem::take(&mut self.arguments);
+        self.release_arguments(current_arguments);
 
         // Restore VM state
         self.ip = frame.ip;
@@ -1618,6 +1659,7 @@ impl BytecodeVM {
             pending_completion: None,
             trampoline_stack: Vec::new(),
             register_pool: Vec::new(),
+            arguments_pool: Vec::new(),
         }
     }
 

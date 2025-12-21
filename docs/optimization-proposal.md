@@ -433,21 +433,39 @@ let guard = heap.stack_guard();  // No allocation
 
 ---
 
-#### M4: Avoid Argument Cloning (Medium Impact)
+#### M4: Avoid Argument Cloning ✅ DONE
 
 **Problem:** `to_vec()` clones argument vectors (~68 MB for fib(30)).
 
-**Current code pattern:**
+**Solution implemented:** Added argument vector pooling to BytecodeVM:
+- Added `arguments_pool: Vec<Vec<JsValue>>` to BytecodeVM struct
+- Added `acquire_arguments()` method to get pooled vectors
+- Added `release_arguments()` method to return vectors to pool
+- Updated trampoline frame push to use `acquire_arguments`
+- Updated trampoline frame restore to use `release_arguments`
+
 ```rust
-fn call_function(args: Vec<JsValue>) {
-    // args already owned, but we clone internally
-    let processed = args.clone();
+// Acquire an arguments vector from the pool, or allocate new
+fn acquire_arguments(&mut self, args: &[JsValue]) -> Vec<JsValue> {
+    if let Some(pos) = self.arguments_pool.iter().position(|v| v.capacity() >= args.len()) {
+        let mut vec = self.arguments_pool.swap_remove(pos);
+        vec.clear();
+        vec.extend(args.iter().cloned());
+        return vec;
+    }
+    args.to_vec()
+}
+
+// Return arguments vector to pool for reuse
+fn release_arguments(&mut self, mut args: Vec<JsValue>) {
+    args.clear();
+    if self.arguments_pool.len() < 16 {
+        self.arguments_pool.push(args);
+    }
 }
 ```
 
-**Proposed:** Pass by reference where possible, or take ownership explicitly.
-
-**Expected impact:** 5-10% reduction in allocations.
+**Expected impact:** Reduces argument vector allocations during function calls.
 
 ---
 
