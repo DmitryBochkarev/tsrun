@@ -320,6 +320,7 @@ impl BytecodeVM {
     }
 
     /// Set register value
+    #[inline]
     pub fn set_reg(&mut self, r: Register, value: JsValue) {
         let idx = r as usize;
         debug_assert!(
@@ -342,6 +343,7 @@ impl BytecodeVM {
     }
 
     /// Fetch the next instruction and advance IP
+    #[inline]
     fn fetch(&mut self) -> Option<Op> {
         let op = self.chunk.get(self.ip)?.clone();
         self.ip += 1;
@@ -355,6 +357,7 @@ impl BytecodeVM {
     }
 
     /// Get a string constant from the pool
+    #[inline]
     fn get_string_constant(&self, idx: u16) -> Option<JsString> {
         match self.get_constant(idx)? {
             Constant::String(s) => Some(s.cheap_clone()),
