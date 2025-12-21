@@ -794,10 +794,140 @@ fn test_super_in_arrow_inside_method() {
     );
 }
 
-// Test super with deep inheritance chain
-// TODO: Fix deep inheritance with super calls - causes stack overflow in bytecode VM
+// Test super with deep inheritance chain - 2 levels
 #[test]
-#[ignore = "Bytecode VM has issue with deep super.method() calls"]
+fn test_super_method_two_levels() {
+    assert_eq!(
+        eval(
+            r#"
+            class A {
+                value() { return "A"; }
+            }
+            class B extends A {
+                value() { return super.value() + "B"; }
+            }
+            new B().value()
+        "#
+        ),
+        JsValue::from("AB")
+    );
+}
+
+// Debug test for static super
+#[test]
+fn test_super_static_debug() {
+    // Super simple static method test - without super first
+    assert_eq!(
+        eval(
+            r#"
+            class B {
+                static method() { return 42; }
+            }
+            // Test that B.method works
+            B.method()
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+
+    // Now test with super
+    assert_eq!(
+        eval(
+            r#"
+            class B {
+                static method() { return 42; }
+            }
+            class C extends B {
+                static method() {
+                    console.log("C.method called");
+                    console.log("B.method exists:", typeof B.method);
+                    console.log("super.method is:", typeof super.method);
+                    return super.method();
+                }
+            }
+            C.method()
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+// Debug test to check call depth
+#[test]
+fn test_super_call_depth_debug() {
+    // Simple test: just one class with no super
+    assert_eq!(
+        eval(
+            r#"
+            class A {
+                value() { return "A"; }
+            }
+            new A().value()
+        "#
+        ),
+        JsValue::from("A")
+    );
+}
+
+// Test 2-level with super
+#[test]
+fn test_super_two_levels_debug() {
+    // 2-level with super.value() call
+    assert_eq!(
+        eval(
+            r#"
+            class A {
+                value() { return "A"; }
+            }
+            class B extends A {
+                value() { return super.value() + "B"; }
+            }
+            new B().value()
+        "#
+        ),
+        JsValue::from("AB")
+    );
+}
+
+// Test 3-level with console.log to see what's happening
+#[test]
+fn test_super_three_levels_debug() {
+    // 3-level with console.log
+    assert_eq!(
+        eval(
+            r#"
+            class A {
+                value() {
+                    console.log("A.value called");
+                    return "A";
+                }
+            }
+            class B extends A {
+                value() {
+                    console.log("B.value called");
+                    const a = super.value();
+                    console.log("B.value got:", a);
+                    return a + "B";
+                }
+            }
+            class C extends B {
+                value() {
+                    console.log("C.value called");
+                    const b = super.value();
+                    console.log("C.value got:", b);
+                    return b + "C";
+                }
+            }
+            new C().value()
+        "#
+        ),
+        JsValue::from("ABC")
+    );
+}
+
+// Test super with deep inheritance chain - 3 levels
+// Uses trampoline to avoid Rust stack overflow
+#[test]
 fn test_super_deep_inheritance() {
     assert_eq!(
         eval(
