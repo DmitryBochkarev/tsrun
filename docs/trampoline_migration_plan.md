@@ -53,7 +53,8 @@ This document outlines the plan to migrate all recursive call sites to use a tra
 
 ### Current Issues
 
-1. **Generators/async still recursive** - `JsFunction::BytecodeGenerator`, `BytecodeAsync`, `BytecodeAsyncGenerator` fall back to recursive calls.
+1. **Async functions still recursive** - `JsFunction::BytecodeAsync` falls back to recursive calls.
+   (Generators and async generators now handled directly without recursion.)
 
 2. **Decorator calls still recursive** - Complex multi-step logic in decorator opcodes.
 
@@ -142,43 +143,53 @@ for (i, elem) in elements.iter().enumerate() {
 
 **Recommendation**: Keep recursive for now. The main recursion problem is JS→JS calls, not JS→Native→JS.
 
-### Phase 5: Migrate Generator/Async Functions
+### Phase 5: Migrate Generator/Async Functions ✅ PARTIALLY COMPLETED
 
 **Problem**: Generator and async functions need special setup (create generator object, wrap in Promise) before running bytecode.
 
-**Current handling**:
-```rust
-JsFunction::BytecodeGenerator(_) | JsFunction::BytecodeAsync(_) | ... => {
-    // Falls back to interp.call_function_with_new_target()
-}
-```
+**Solution**: Split by function type:
 
-**Solution**: Split into two parts:
-1. Setup (create generator/promise) - done immediately
-2. Running the body - use trampoline
+1. **Generators (`BytecodeGenerator`)** ✅: Create generator object directly without recursion.
+   When a generator function is called, it just creates a generator object that captures
+   the bytecode, closure, and arguments. The body doesn't run until `.next()` is called.
 
-For generators:
+2. **Async Generators (`BytecodeAsyncGenerator`)** ✅: Same as generators - create object directly.
+   The body runs when `.next()` is called, returning Promises.
+
+3. **Async Functions (`BytecodeAsync`)**: Still use recursive call.
+   These run their body immediately and wrap result in Promise. A full trampoline
+   implementation would require adding promise resolution to the trampoline loop.
+
+**Implementation**:
 ```rust
 JsFunction::BytecodeGenerator(bc_func) => {
-    // Create generator object (doesn't run body yet)
-    let gen = interp.create_generator_object(bc_func, this_value, args)?;
-    self.set_reg(return_register, JsValue::Object(gen));
+    // Create generator state with args/this/closure
+    let state = BytecodeGeneratorState { chunk, closure, args, this_value, ... };
+    let gen_obj = create_bytecode_generator_object(interp, state);
+    self.set_reg(return_register, JsValue::Object(gen_obj));
     Ok(())
 }
-```
 
-For async:
-```rust
+JsFunction::BytecodeAsyncGenerator(bc_func) => {
+    // Same as above, but with is_async: true
+    let state = BytecodeGeneratorState { ..., is_async: true, ... };
+    let gen_obj = create_bytecode_generator_object(interp, state);
+    self.set_reg(return_register, JsValue::Object(gen_obj));
+    Ok(())
+}
+
 JsFunction::BytecodeAsync(bc_func) => {
-    // Create promise
-    let (promise, resolve, reject) = interp.create_promise_with_resolvers()?;
-    // Push trampoline frame that will resolve/reject promise on completion
-    self.push_async_trampoline_frame(...)?;
+    // Still recursive - runs body and wraps in Promise
+    let result = interp.call_function_with_new_target(...)?;
+    self.set_reg(return_register, result.value);
     Ok(())
 }
 ```
 
-**Files to change**: `src/interpreter/bytecode_vm.rs`, `src/interpreter/mod.rs`
+**Status**: Generators and async generators now handled directly in trampoline without recursion.
+Async functions still use recursive call (acceptable since they're not as prone to deep call stacks).
+
+**Files changed**: `src/interpreter/bytecode_vm.rs`
 
 ### Phase 6: Migrate Proxy Calls
 
@@ -198,7 +209,8 @@ pub fn proxy_apply(...) -> Result<Guarded, JsError> {
 
 1. **Phase 1** ✅ COMPLETED: Fix depth counting bug
 2. **Phase 2** ✅ COMPLETED: Migrate Construct opcodes
-3. **Phase 5** (Medium priority): Migrate async functions (if async-in-async causes issues)
+3. **Phase 5** ✅ PARTIALLY COMPLETED: Generators and async generators now handled directly;
+   async functions still recursive (acceptable tradeoff)
 4. **Phase 3, 4, 6** (Low priority): Keep recursive unless problems arise
 
 ## Testing Strategy

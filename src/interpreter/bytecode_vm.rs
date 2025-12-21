@@ -730,11 +730,80 @@ impl BytecodeVM {
                 self.set_reg(return_register, result.value);
                 Ok(())
             }
-            JsFunction::BytecodeGenerator(_)
-            | JsFunction::BytecodeAsync(_)
-            | JsFunction::BytecodeAsyncGenerator(_) => {
-                // Generators and async functions need special handling - they create
-                // generator/promise objects. Use the interpreter's call_function for these.
+            JsFunction::BytecodeGenerator(bc_func) => {
+                // Generators just create a generator object without running the body.
+                // The body runs when .next() is called. Handle directly without recursion.
+                use crate::value::{BytecodeGeneratorState, GeneratorStatus};
+
+                let gen_id = interp.next_generator_id;
+                interp.next_generator_id = interp.next_generator_id.wrapping_add(1);
+
+                let state = BytecodeGeneratorState {
+                    chunk: bc_func.chunk,
+                    closure: bc_func.closure,
+                    args: args.to_vec(),
+                    this_value,
+                    status: GeneratorStatus::Suspended,
+                    sent_value: JsValue::Undefined,
+                    id: gen_id,
+                    started: false,
+                    saved_ip: 0,
+                    saved_registers: Vec::new(),
+                    saved_call_stack: Vec::new(),
+                    saved_try_stack: Vec::new(),
+                    yield_result_register: None,
+                    func_env: None,
+                    current_env: None,
+                    delegated_iterator: None,
+                    is_async: false,
+                    throw_value: None,
+                };
+
+                let gen_obj =
+                    super::builtins::generator::create_bytecode_generator_object(interp, state);
+                self.set_reg(return_register, JsValue::Object(gen_obj));
+                Ok(())
+            }
+            JsFunction::BytecodeAsyncGenerator(bc_func) => {
+                // Async generators just create an async generator object without running the body.
+                // The body runs when .next() is called. Handle directly without recursion.
+                use crate::value::{BytecodeGeneratorState, GeneratorStatus};
+
+                let gen_id = interp.next_generator_id;
+                interp.next_generator_id = interp.next_generator_id.wrapping_add(1);
+
+                let state = BytecodeGeneratorState {
+                    chunk: bc_func.chunk,
+                    closure: bc_func.closure,
+                    args: args.to_vec(),
+                    this_value,
+                    status: GeneratorStatus::Suspended,
+                    sent_value: JsValue::Undefined,
+                    id: gen_id,
+                    started: false,
+                    saved_ip: 0,
+                    saved_registers: Vec::new(),
+                    saved_call_stack: Vec::new(),
+                    saved_try_stack: Vec::new(),
+                    yield_result_register: None,
+                    func_env: None,
+                    current_env: None,
+                    delegated_iterator: None,
+                    is_async: true, // Async generator
+                    throw_value: None,
+                };
+
+                let gen_obj =
+                    super::builtins::generator::create_bytecode_generator_object(interp, state);
+                self.set_reg(return_register, JsValue::Object(gen_obj));
+                Ok(())
+            }
+            JsFunction::BytecodeAsync(bc_func) => {
+                // Async functions run their body and wrap result in Promise.
+                // For now, use trampoline to run the body like a regular bytecode function,
+                // but wrap the result in a Promise.
+                // TODO: This could be improved to handle async/await more natively in the trampoline.
+                // For now, fall back to interpreter's call_function which handles async properly.
                 let result =
                     interp.call_function_with_new_target(callee, this_value, &args, new_target)?;
                 self.set_reg(return_register, result.value);
