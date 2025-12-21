@@ -2891,3 +2891,84 @@ fn test_bytecode_async_generator_multiple_yields() {
     );
     assert_eq!(result, JsValue::Number(6.0));
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Super in Static Methods
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_bytecode_super_in_instance_method() {
+    // First verify super works in instance methods
+    let result = eval_bytecode(
+        r#"
+        class B {
+            method() { return 1; }
+            get x() { return 2; }
+        }
+        class C extends B {
+            method() {
+                return super.x + super.method();
+            }
+        }
+        new C().method()
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(3.0));
+}
+
+#[test]
+fn test_bytecode_super_in_static_method() {
+    let result = eval_bytecode(
+        r#"
+        class B {
+            static method() { return 1; }
+            static get x() { return 2; }
+        }
+        class C extends B {
+            static method() {
+                return super.x + super.method();
+            }
+        }
+        C.method()
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(3.0));
+}
+
+#[test]
+fn test_bytecode_super_in_static_getter() {
+    let result = eval_bytecode(
+        r#"
+        class B {
+            static get value() { return 42; }
+        }
+        class C extends B {
+            static get doubled() {
+                return super.value * 2;
+            }
+        }
+        C.doubled
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(84.0));
+}
+
+#[test]
+fn test_bytecode_super_in_static_setter() {
+    let result = eval_bytecode(
+        r#"
+        class B {
+            static get base() { return 10; }
+        }
+        class C extends B {
+            static result: number = 0;
+            static set value(v: number) {
+                C.result = v + super.base;
+            }
+        }
+        C.value = 5;
+        C.result
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(15.0));
+}

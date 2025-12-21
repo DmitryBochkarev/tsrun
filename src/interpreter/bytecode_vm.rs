@@ -325,9 +325,13 @@ impl BytecodeVM {
         // The function is stored in the closure environment
         let super_key = PropertyKey::String(interp.intern("__super__"));
 
-        // Check if this is a method call by looking at the this value
         if let JsValue::Object(this_obj) = &self.this_value {
-            // Look up constructor from prototype chain
+            // For static methods: `this` IS the class constructor, check directly on it
+            if let Some(super_val) = this_obj.borrow().get_property(&super_key) {
+                return Ok(super_val);
+            }
+
+            // For instance methods: look up constructor from prototype chain
             if let Some(proto) = &this_obj.borrow().prototype {
                 if let Some(JsValue::Object(ctor_obj)) = proto
                     .borrow()
@@ -347,11 +351,22 @@ impl BytecodeVM {
 
     /// Get the super target object for super.x property access
     fn get_super_target(&self, interp: &mut Interpreter) -> Result<JsValue, JsError> {
+        let super_key = PropertyKey::String(interp.intern("__super__"));
         let super_target_key = PropertyKey::String(interp.intern("__super_target__"));
 
-        // Check if this is a method call by looking at the this value
         if let JsValue::Object(this_obj) = &self.this_value {
-            // Look up constructor from prototype chain
+            // For static methods: `this` IS the class constructor
+            // If `this` has __super__ directly, use __super__ (parent constructor)
+            // as the target for looking up static methods
+            if this_obj.borrow().get_property(&super_key).is_some() {
+                // Static method context: super.x looks up on parent constructor
+                if let Some(target) = this_obj.borrow().get_property(&super_key) {
+                    return Ok(target);
+                }
+            }
+
+            // For instance methods: look up constructor from prototype chain
+            // and use __super_target__ (parent prototype) for property access
             if let Some(proto) = &this_obj.borrow().prototype {
                 if let Some(JsValue::Object(ctor_obj)) = proto
                     .borrow()
