@@ -1534,3 +1534,136 @@ fn test_function_name_in_destructuring_default_function_expr() {
         JsValue::String(JsString::from("func"))
     );
 }
+
+// Function property descriptor tests
+#[test]
+fn test_function_name_descriptor() {
+    // name property should be: { writable: false, enumerable: false, configurable: true }
+    assert_eq!(
+        eval(
+            r#"
+            const f = function foo(a: number, b: number): number { return a + b; };
+            const desc = Object.getOwnPropertyDescriptor(f, 'name');
+            desc.writable
+        "#
+        ),
+        JsValue::Boolean(false)
+    );
+
+    assert_eq!(
+        eval(
+            r#"
+            const f = function foo(a: number, b: number): number { return a + b; };
+            const desc = Object.getOwnPropertyDescriptor(f, 'name');
+            desc.enumerable
+        "#
+        ),
+        JsValue::Boolean(false)
+    );
+
+    assert_eq!(
+        eval(
+            r#"
+            const f = function foo(a: number, b: number): number { return a + b; };
+            const desc = Object.getOwnPropertyDescriptor(f, 'name');
+            desc.configurable
+        "#
+        ),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_function_length_descriptor() {
+    // length property should be: { writable: false, enumerable: false, configurable: true }
+    assert_eq!(
+        eval(
+            r#"
+            const f = function foo(a: number, b: number): number { return a + b; };
+            const desc = Object.getOwnPropertyDescriptor(f, 'length');
+            desc.writable
+        "#
+        ),
+        JsValue::Boolean(false)
+    );
+
+    assert_eq!(
+        eval(
+            r#"
+            const f = function foo(a: number, b: number): number { return a + b; };
+            const desc = Object.getOwnPropertyDescriptor(f, 'length');
+            desc.enumerable
+        "#
+        ),
+        JsValue::Boolean(false)
+    );
+
+    assert_eq!(
+        eval(
+            r#"
+            const f = function foo(a: number, b: number): number { return a + b; };
+            const desc = Object.getOwnPropertyDescriptor(f, 'length');
+            desc.configurable
+        "#
+        ),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_builtin_function_name_descriptor() {
+    // Built-in function name should also have correct descriptors
+    assert_eq!(
+        eval(
+            r#"
+            const desc = Object.getOwnPropertyDescriptor([].push, 'name');
+            [desc.writable, desc.enumerable, desc.configurable].join(',')
+        "#
+        ),
+        JsValue::from("false,false,true")
+    );
+}
+
+#[test]
+fn test_builtin_function_length_descriptor() {
+    // Built-in function length should also have correct descriptors
+    assert_eq!(
+        eval(
+            r#"
+            const desc = Object.getOwnPropertyDescriptor([].push, 'length');
+            [desc.writable, desc.enumerable, desc.configurable].join(',')
+        "#
+        ),
+        JsValue::from("false,false,true")
+    );
+}
+
+#[test]
+fn test_arrow_function_name_descriptor() {
+    // Arrow function name should have correct descriptors
+    assert_eq!(
+        eval(
+            r#"
+            const f = (a: number) => a * 2;
+            const desc = Object.getOwnPropertyDescriptor(f, 'name');
+            [desc.writable, desc.enumerable, desc.configurable].join(',')
+        "#
+        ),
+        JsValue::from("false,false,true")
+    );
+}
+
+#[test]
+fn test_arrow_function_length_descriptor() {
+    // Arrow function length should have correct descriptors
+    assert_eq!(
+        eval(
+            r#"
+            const f = (a: number, b: number) => a + b;
+            const desc = Object.getOwnPropertyDescriptor(f, 'length');
+            [desc.writable, desc.enumerable, desc.configurable].join(',')
+        "#
+        ),
+        JsValue::from("false,false,true")
+    );
+}

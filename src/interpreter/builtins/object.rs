@@ -798,7 +798,14 @@ pub fn object_get_own_property_descriptor(
 
     let obj_borrowed = obj_ref.borrow();
 
-    if let Some(property) = obj_borrowed.get_own_property(&key) {
+    // Use get_property_descriptor which handles exotic properties (function name/length, array elements, etc.)
+    if let Some((property, in_prototype)) = obj_borrowed.get_property_descriptor(&key) {
+        // Only return descriptor if it's an own property (not from prototype)
+        if in_prototype {
+            return Ok(Guarded::unguarded(JsValue::Undefined));
+        }
+
+        // Check if the key is "name" or "length" on a function - those are own properties
         // Pre-intern all descriptor property keys
         let get_key = PropertyKey::String(interp.intern("get"));
         let set_key = PropertyKey::String(interp.intern("set"));

@@ -1403,11 +1403,17 @@ impl JsObject {
                             }
                             _ => None,
                         };
+                        // Per ES spec, function name is: writable: false, enumerable: false, configurable: true
                         return Some((
-                            Property::data(match name {
-                                Some(n) => JsValue::String(n),
-                                None => JsValue::String(JsString::from("")),
-                            }),
+                            Property::with_attributes(
+                                match name {
+                                    Some(n) => JsValue::String(n),
+                                    None => JsValue::String(JsString::from("")),
+                                },
+                                false, // writable
+                                false, // enumerable
+                                true,  // configurable
+                            ),
                             false,
                         ));
                     }
@@ -1460,7 +1466,16 @@ impl JsObject {
                             }
                             _ => 0,
                         };
-                        return Some((Property::data(JsValue::Number(arity as f64)), false));
+                        // Per ES spec, function length is: writable: false, enumerable: false, configurable: true
+                        return Some((
+                            Property::with_attributes(
+                                JsValue::Number(arity as f64),
+                                false, // writable
+                                false, // enumerable
+                                true,  // configurable
+                            ),
+                            false,
+                        ));
                     }
                     _ => {}
                 }
