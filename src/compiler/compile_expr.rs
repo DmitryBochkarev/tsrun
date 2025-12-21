@@ -421,6 +421,25 @@ impl Compiler {
                 // Delete needs special handling based on target
                 self.compile_delete_expression(&unary.argument, dst)
             }
+            UnaryOp::Typeof => {
+                // typeof needs special handling for identifiers:
+                // typeof undeclaredVar should return "undefined", not throw ReferenceError
+                let src = self.builder.alloc_register()?;
+                if let Expression::Identifier(id) = &*unary.argument {
+                    // Use TryGetVar to get undefined for undeclared variables
+                    let name_idx = self.builder.add_string(id.name.cheap_clone())?;
+                    self.builder.emit(Op::TryGetVar {
+                        dst: src,
+                        name: name_idx,
+                    });
+                } else {
+                    // For other expressions, evaluate normally
+                    self.compile_expression(&unary.argument, src)?;
+                }
+                self.builder.emit(Op::Typeof { dst, src });
+                self.builder.free_register(src);
+                Ok(())
+            }
             _ => {
                 // Compile operand
                 let src = self.builder.alloc_register()?;
@@ -432,14 +451,13 @@ impl Compiler {
                     UnaryOp::Plus => Op::Plus { dst, src },
                     UnaryOp::Not => Op::Not { dst, src },
                     UnaryOp::BitNot => Op::BitNot { dst, src },
-                    UnaryOp::Typeof => Op::Typeof { dst, src },
-                    UnaryOp::Void => Op::Void { dst, src },
-                    UnaryOp::Delete => {
+                    UnaryOp::Typeof | UnaryOp::Delete => {
                         // Handled above, but need to return something for match completeness
                         return Err(JsError::internal_error(
-                            "Delete should be handled separately",
+                            "Typeof/Delete should be handled separately",
                         ));
                     }
+                    UnaryOp::Void => Op::Void { dst, src },
                 };
                 self.builder.emit(op);
 
