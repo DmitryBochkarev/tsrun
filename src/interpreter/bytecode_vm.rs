@@ -2187,20 +2187,20 @@ impl BytecodeVM {
                     }
                 }
 
+                // Use from_value to handle numeric string keys correctly (e.g., "2" -> Index(2))
+                let prop_key =
+                    PropertyKey::from_value(&JsValue::String(method_name.cheap_clone()));
+
                 if is_static {
                     // Add to class constructor directly
-                    class_obj
-                        .borrow_mut()
-                        .set_property(PropertyKey::String(method_name), method_val);
+                    class_obj.borrow_mut().set_property(prop_key, method_val);
                 } else {
                     // Add to prototype
                     let proto_key = PropertyKey::String(interp.intern("prototype"));
                     if let Some(JsValue::Object(proto)) =
                         class_obj.borrow().get_property(&proto_key)
                     {
-                        proto
-                            .borrow_mut()
-                            .set_property(PropertyKey::String(method_name), method_val);
+                        proto.borrow_mut().set_property(prop_key, method_val);
                     }
                 }
 
@@ -2252,7 +2252,9 @@ impl BytecodeVM {
                 };
 
                 // Get existing accessor property if any
-                let prop_key = PropertyKey::String(accessor_name.cheap_clone());
+                // Use from_value to handle numeric string keys correctly (e.g., "2" -> Index(2))
+                let prop_key =
+                    PropertyKey::from_value(&JsValue::String(accessor_name.cheap_clone()));
                 let (existing_getter, existing_setter) = {
                     let target_ref = target.borrow();
                     if let Some(prop) = target_ref.properties.get(&prop_key) {
@@ -2268,9 +2270,7 @@ impl BytecodeVM {
 
                 // Create accessor property
                 let property = Property::accessor(final_getter, final_setter);
-                target
-                    .borrow_mut()
-                    .define_property(PropertyKey::String(accessor_name), property);
+                target.borrow_mut().define_property(prop_key, property);
 
                 Ok(OpResult::Continue)
             }
