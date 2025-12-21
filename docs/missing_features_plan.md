@@ -117,25 +117,15 @@ Tests added: `test_default_param_tdz_self_reference`, `test_default_param_tdz_fo
 
 ---
 
-### 6. Object.defineProperty with Array Indices
+### 6. Object.defineProperty with Array Indices ✅ IMPLEMENTED
 
-**Impact:** Many libraries use `Object.defineProperty` to set array elements with specific descriptors.
-
-**Current Behavior:**
-```javascript
-const arr = [];
-Object.defineProperty(arr, '0', { value: 42, writable: true, enumerable: true, configurable: true });
-arr.hasOwnProperty('0');  // false (should be true)
-```
-
-**Expected Behavior:** Array elements defined via `defineProperty` should be reflected in `hasOwnProperty`.
+**Status:** Implemented on 2025-12-21
 
 **Implementation:**
-1. In `object_define_property()`, detect numeric string keys
-2. For arrays, ensure the array's internal storage is updated
-3. Update array length if needed
-
-**Estimated Complexity:** Medium - requires coordinating object properties with array exotic behavior
+- Modified `object_define_property()` to detect numeric keys (both `PropertyKey::Index` and parseable string keys)
+- For arrays, extends the `elements` vector to include the index
+- Fixed `object_keys()` to avoid duplicate keys when both elements and properties contain the same index
+- Tests added: `test_object_define_property_on_array`, `test_define_property_array_access`, `test_define_property_array_object_keys`, `test_define_property_array_multiple_indices`
 
 ---
 
@@ -348,7 +338,7 @@ Promise[Symbol.species];  // undefined (should be Promise)
 ### Phase 2: Core Fixes (P1)
 4. ~~**Iterator close protocol** - Important for resource management~~ ✅ DONE
 5. ~~**Default parameter TDZ** - Semantic correctness~~ ✅ ALREADY IMPLEMENTED
-6. **Object.defineProperty arrays** - Common usage
+6. ~~**Object.defineProperty arrays** - Common usage~~ ✅ DONE
 
 ### Phase 3: Parser Improvements (P1-P2)
 7. **Escaped keywords in properties** - Lexer refactor

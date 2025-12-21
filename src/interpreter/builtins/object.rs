@@ -210,6 +210,34 @@ pub fn object_keys(
                 .filter(|k| !k.is_symbol())
                 .map(|k| JsValue::String(JsString::from(k.to_string())))
                 .collect()
+        } else if let ExoticObject::Array { ref elements } = obj.exotic {
+            // For arrays, include numeric indices first (0, 1, 2, ...), then other enumerable properties
+            let len = elements.len();
+            let mut result: Vec<JsValue> = (0..len)
+                .map(|i| JsValue::String(JsString::from(i.to_string())))
+                .collect();
+            // Add any other enumerable string properties (like "length" is not enumerable)
+            // Skip numeric index keys since they're already covered above
+            for (key, prop) in obj.properties.iter() {
+                if prop.enumerable() && !key.is_symbol() {
+                    // Skip if this is a numeric index that's already covered by elements
+                    let is_covered_index = match key {
+                        PropertyKey::Index(idx) => (*idx as usize) < len,
+                        PropertyKey::String(s) => {
+                            if let Ok(idx) = s.as_str().parse::<usize>() {
+                                idx < len
+                            } else {
+                                false
+                            }
+                        }
+                        PropertyKey::Symbol(_) => false,
+                    };
+                    if !is_covered_index {
+                        result.push(JsValue::String(JsString::from(key.to_string())));
+                    }
+                }
+            }
+            result
         } else {
             // Standard object - get from properties
             // Only include enumerable string keys, not symbols
@@ -623,6 +651,21 @@ pub fn object_has_own_property(
     let has_prop = if let ExoticObject::Enum(ref data) = obj_ref.exotic {
         // For enums, check EnumData
         data.has_property(&key)
+    } else if let ExoticObject::Array { ref elements } = obj_ref.exotic {
+        // For arrays, check if key is a valid array index
+        if let PropertyKey::String(key_str) = &key {
+            // Try to parse as integer index
+            if let Ok(index) = key_str.as_str().parse::<usize>() {
+                // Check if index is within bounds (and not a sparse/hole)
+                index < elements.len()
+            } else {
+                // Non-numeric key - check regular properties
+                obj_ref.properties.contains_key(&key)
+            }
+        } else {
+            // Symbol key - check regular properties
+            obj_ref.properties.contains_key(&key)
+        }
     } else {
         // Standard object - check properties
         obj_ref.properties.contains_key(&key)
@@ -929,8 +972,32 @@ pub fn object_define_property(
         obj_ref.borrow_mut().define_property(key, prop);
     } else {
         // Data descriptor
+        // For arrays with numeric index keys, also update the elements storage
+        let mut obj = obj_ref.borrow_mut();
+
+        // Check if this is an array and the key is a numeric index
+        if let ExoticObject::Array { ref mut elements } = obj.exotic {
+            let maybe_index = match &key {
+                PropertyKey::Index(idx) => Some(*idx as usize),
+                PropertyKey::String(key_str) => key_str.as_str().parse::<usize>().ok(),
+                PropertyKey::Symbol(_) => None,
+            };
+
+            if let Some(index) = maybe_index {
+                // Extend array if needed
+                while elements.len() <= index {
+                    elements.push(JsValue::Undefined);
+                }
+                // Set the value at this index
+                if let Some(elem) = elements.get_mut(index) {
+                    *elem = value.clone();
+                }
+            }
+        }
+
+        // Also set as property for correct descriptor behavior
         let prop = Property::with_attributes(value, writable, enumerable, configurable);
-        obj_ref.borrow_mut().define_property(key, prop);
+        obj.define_property(key, prop);
     }
 
     // Object was passed in by caller, already owned - no guard needed

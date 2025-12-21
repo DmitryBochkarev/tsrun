@@ -2345,3 +2345,149 @@ fn test_object_literal_computed_getter_setter_combined() {
         JsValue::Number(42.0)
     );
 }
+
+// Array index property tests
+#[test]
+fn test_array_hasownproperty_numeric_index() {
+    // Array should report true for hasOwnProperty with numeric indices
+    assert_eq!(
+        eval(
+            r#"
+            const arr: number[] = [1, 2, 3];
+            arr.hasOwnProperty(0)
+        "#
+        ),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_array_hasownproperty_string_index() {
+    // Array should report true for hasOwnProperty with string numeric indices
+    assert_eq!(
+        eval(
+            r#"
+            const arr: number[] = [1, 2, 3];
+            arr.hasOwnProperty("1")
+        "#
+        ),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_array_hasownproperty_out_of_bounds() {
+    // Array should report false for hasOwnProperty with out of bounds index
+    assert_eq!(
+        eval(
+            r#"
+            const arr: number[] = [1, 2, 3];
+            arr.hasOwnProperty(5)
+        "#
+        ),
+        JsValue::Boolean(false)
+    );
+}
+
+#[test]
+fn test_array_keys_includes_indices() {
+    // Object.keys on array should include indices
+    assert_eq!(
+        eval(
+            r#"
+            const arr: number[] = [1, 2, 3];
+            Object.keys(arr).length
+        "#
+        ),
+        JsValue::Number(3.0)
+    );
+}
+
+#[test]
+fn test_object_define_property_on_array() {
+    // Object.defineProperty should work with array indices
+    assert_eq!(
+        eval(
+            r#"
+            const arr: number[] = [];
+            Object.defineProperty(arr, '0', { value: 42, writable: true, enumerable: true, configurable: true });
+            arr.hasOwnProperty('0')
+        "#
+        ),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_debug_define_property_array_length() {
+    // Debug test: check what happens with defineProperty and array length
+    assert_eq!(
+        eval(
+            r#"
+            const arr: number[] = [];
+            Object.defineProperty(arr, '0', { value: 42, writable: true, enumerable: true, configurable: true });
+            arr.length
+        "#
+        ),
+        JsValue::Number(1.0)
+    );
+}
+
+#[test]
+fn test_define_property_array_access() {
+    // Access via arr[0] should work
+    assert_eq!(
+        eval(
+            r#"
+            const arr: number[] = [];
+            Object.defineProperty(arr, '0', { value: 42, writable: true, enumerable: true, configurable: true });
+            arr[0]
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+#[test]
+fn test_define_property_array_object_keys() {
+    // Object.keys should include the array index
+    assert_eq!(
+        eval(
+            r#"
+            const arr: number[] = [];
+            Object.defineProperty(arr, '0', { value: 42, writable: true, enumerable: true, configurable: true });
+            Object.keys(arr).join(',')
+        "#
+        ),
+        JsValue::from("0")
+    );
+}
+
+#[test]
+fn test_define_property_array_multiple_indices() {
+    // Define multiple indices
+    assert_eq!(
+        eval(
+            r#"
+            const arr: number[] = [];
+            Object.defineProperty(arr, '0', { value: 1, writable: true, enumerable: true, configurable: true });
+            Object.defineProperty(arr, '2', { value: 3, writable: true, enumerable: true, configurable: true });
+            arr.length
+        "#
+        ),
+        JsValue::Number(3.0)
+    );
+
+    // Note: undefined converts to empty string in join()
+    assert_eq!(
+        eval(
+            r#"
+            const arr: number[] = [];
+            Object.defineProperty(arr, '0', { value: 1, writable: true, enumerable: true, configurable: true });
+            Object.defineProperty(arr, '2', { value: 3, writable: true, enumerable: true, configurable: true });
+            [arr[0], arr[1], arr[2]].join(',')
+        "#
+        ),
+        JsValue::from("1,,3")
+    );
+}
