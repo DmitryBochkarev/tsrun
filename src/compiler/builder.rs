@@ -347,6 +347,7 @@ impl BytecodeBuilder {
                 | Op::CreateAsyncGenerator { .. }
                 | Op::Throw { .. }
                 | Op::PopTry
+                | Op::FinallyEnd
                 | Op::GetException { .. }
                 | Op::Rethrow
                 | Op::Await { .. }

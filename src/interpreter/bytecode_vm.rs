@@ -105,6 +105,15 @@ pub struct TryHandler {
     pub frame_depth: usize,
 }
 
+/// Pending completion to be executed after finally block
+#[derive(Debug, Clone)]
+pub enum PendingCompletion {
+    /// Return this value after finally completes
+    Return(JsValue),
+    /// Rethrow this exception after finally completes
+    Throw(JsValue),
+}
+
 /// The bytecode virtual machine
 pub struct BytecodeVM {
     /// Current instruction pointer
@@ -129,6 +138,8 @@ pub struct BytecodeVM {
     pub arguments: Vec<JsValue>,
     /// `new.target` value (constructor if called with new, undefined otherwise)
     pub new_target: JsValue,
+    /// Pending completion to execute after finally block
+    pending_completion: Option<PendingCompletion>,
 }
 
 impl BytecodeVM {
@@ -155,6 +166,7 @@ impl BytecodeVM {
             saved_env: None,
             arguments: Vec::new(),
             new_target: JsValue::Undefined,
+            pending_completion: None,
         }
     }
 
@@ -199,6 +211,7 @@ impl BytecodeVM {
             saved_env: None,
             arguments: args.to_vec(),
             new_target: JsValue::Undefined,
+            pending_completion: None,
         }
     }
 
@@ -247,6 +260,7 @@ impl BytecodeVM {
             saved_env: None,
             arguments: args.to_vec(),
             new_target,
+            pending_completion: None,
         }
     }
 
@@ -627,6 +641,7 @@ impl BytecodeVM {
             saved_env: None,
             arguments: state.arguments,
             new_target: state.new_target,
+            pending_completion: None,
         }
     }
 
@@ -1389,37 +1404,11 @@ impl BytecodeVM {
 
             Op::Return { value } => {
                 let return_val = self.get_reg(value).clone();
-
-                if let Some(frame) = self.call_stack.pop() {
-                    self.ip = frame.return_ip;
-                    self.chunk = frame.return_chunk;
-                    self.registers.truncate(frame.registers_base);
-                    if let Some(env) = frame.saved_env {
-                        interp.env = env;
-                    }
-                    self.set_reg(frame.return_register, return_val);
-                    Ok(OpResult::Continue)
-                } else {
-                    Ok(OpResult::Halt(guarded_js_value(return_val, interp)))
-                }
+                self.execute_return(return_val, interp)
             }
 
             Op::ReturnUndefined => {
-                if let Some(frame) = self.call_stack.pop() {
-                    self.ip = frame.return_ip;
-                    self.chunk = frame.return_chunk;
-                    self.registers.truncate(frame.registers_base);
-                    if let Some(env) = frame.saved_env {
-                        interp.env = env;
-                    }
-                    self.set_reg(frame.return_register, JsValue::Undefined);
-                    Ok(OpResult::Continue)
-                } else {
-                    Ok(OpResult::Halt(Guarded {
-                        value: JsValue::Undefined,
-                        guard: None,
-                    }))
-                }
+                self.execute_return(JsValue::Undefined, interp)
             }
 
             Op::CreateClosure { dst, chunk_idx } => {
@@ -1568,6 +1557,23 @@ impl BytecodeVM {
 
             Op::PopTry => {
                 self.try_stack.pop();
+                Ok(OpResult::Continue)
+            }
+
+            Op::FinallyEnd => {
+                // Complete any pending return/throw after finally block finishes
+                if let Some(pending) = self.pending_completion.take() {
+                    match pending {
+                        PendingCompletion::Return(val) => {
+                            // Continue with the return (recursively handles nested finally blocks)
+                            return self.execute_return(val, interp);
+                        }
+                        PendingCompletion::Throw(val) => {
+                            // Re-throw the exception after finally
+                            return Err(JsError::ThrownValue { value: val });
+                        }
+                    }
+                }
                 Ok(OpResult::Continue)
             }
 
@@ -2653,6 +2659,56 @@ impl BytecodeVM {
             JsValue::Null => Err(JsError::type_error("Cannot set properties of null")),
             JsValue::Undefined => Err(JsError::type_error("Cannot set properties of undefined")),
             _ => Ok(()),
+        }
+    }
+
+    /// Execute a return, running any pending finally blocks first
+    fn execute_return(
+        &mut self,
+        return_val: JsValue,
+        interp: &mut Interpreter,
+    ) -> Result<OpResult, JsError> {
+        // Check if there's a try handler with a finally block that needs to run
+        // We need to find try handlers for the current function (same call frame depth)
+        let current_frame_depth = self.call_stack.len();
+
+        // Find try handlers that belong to the current function
+        if let Some(handler_idx) = self
+            .try_stack
+            .iter()
+            .rposition(|h| h.frame_depth == current_frame_depth && h.finally_ip != 0)
+        {
+            // There's a finally block that needs to run
+            let handler = self
+                .try_stack
+                .get(handler_idx)
+                .cloned()
+                .ok_or_else(|| JsError::internal_error("Missing try handler"))?;
+
+            // Save the pending return
+            self.pending_completion = Some(PendingCompletion::Return(return_val));
+
+            // Pop the try handler (we're exiting this try block)
+            self.try_stack.truncate(handler_idx);
+
+            // Jump to the finally block
+            self.ip = handler.finally_ip;
+
+            return Ok(OpResult::Continue);
+        }
+
+        // No finally block, do normal return
+        if let Some(frame) = self.call_stack.pop() {
+            self.ip = frame.return_ip;
+            self.chunk = frame.return_chunk;
+            self.registers.truncate(frame.registers_base);
+            if let Some(env) = frame.saved_env {
+                interp.env = env;
+            }
+            self.set_reg(frame.return_register, return_val);
+            Ok(OpResult::Continue)
+        } else {
+            Ok(OpResult::Halt(guarded_js_value(return_val, interp)))
         }
     }
 }

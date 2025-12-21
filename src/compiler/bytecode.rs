@@ -438,6 +438,9 @@ pub enum Op {
     /// Pop try handler (normal completion)
     PopTry,
 
+    /// End of finally block - complete any pending return/throw
+    FinallyEnd,
+
     /// Get caught exception value: r[dst] = caught_exception
     GetException { dst: Register },
 

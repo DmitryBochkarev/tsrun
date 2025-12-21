@@ -693,6 +693,9 @@ impl Compiler {
             for stmt in finalizer.body.iter() {
                 self.compile_statement_impl(stmt)?;
             }
+
+            // FinallyEnd completes any pending return/throw
+            self.builder.emit(Op::FinallyEnd);
         }
 
         // End of try-catch-finally
