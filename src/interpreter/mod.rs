@@ -22,16 +22,6 @@ use crate::value::{
 };
 use rustc_hash::FxHashMap;
 
-/// Completion record for control flow
-/// Control flow completion type
-#[derive(Debug)]
-pub enum Completion {
-    Normal(JsValue),
-    Return(JsValue),
-    Break(Option<JsString>),
-    Continue(Option<JsString>),
-}
-
 // Re-export Guarded from value module - see value.rs for documentation
 
 /// A stack frame for tracking call stack
