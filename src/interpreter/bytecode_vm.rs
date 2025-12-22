@@ -3510,9 +3510,7 @@ impl BytecodeVM {
 
                         // Check that result is an object
                         if !matches!(result.value, JsValue::Object(_)) {
-                            return Err(JsError::type_error(
-                                "Iterator result is not an object",
-                            ));
+                            return Err(JsError::type_error("Iterator result is not an object"));
                         }
                     }
                 }

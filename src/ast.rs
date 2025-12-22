@@ -115,6 +115,10 @@ pub struct FunctionParam {
     pub type_annotation: Option<TypeAnnotation>,
     pub optional: bool,
     pub decorators: Vec<Decorator>,
+    /// TypeScript parameter property: `constructor(public x: number)`
+    pub accessibility: Option<Accessibility>,
+    /// TypeScript readonly parameter property: `constructor(readonly x: number)`
+    pub readonly: bool,
     pub span: Span,
 }
 

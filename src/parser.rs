@@ -471,6 +471,10 @@ impl<'a> Parser<'a> {
             // Parse parameter decorators (e.g., @inject param)
             let decorators = self.parse_decorators()?;
 
+            // TypeScript parameter properties: public/private/protected/readonly
+            let accessibility = self.parse_accessibility();
+            let readonly = self.match_token(&TokenKind::Readonly);
+
             // Check for rest parameter
             let pattern = if self.match_token(&TokenKind::DotDotDot) {
                 let arg = self.parse_binding_pattern()?;
@@ -514,6 +518,8 @@ impl<'a> Parser<'a> {
                 type_annotation,
                 optional,
                 decorators,
+                accessibility,
+                readonly,
                 span,
             });
 
@@ -2186,6 +2192,8 @@ impl<'a> Parser<'a> {
                             type_annotation: None,
                             optional: false,
                             decorators: vec![],
+                            accessibility: None,
+                            readonly: false,
                             span: self.span_from(start),
                         }],
                         start,
@@ -2555,6 +2563,8 @@ impl<'a> Parser<'a> {
                         type_annotation: None,
                         optional: false,
                         decorators: vec![],
+                        accessibility: None,
+                        readonly: false,
                         span: rest_span,
                     });
 
@@ -2644,6 +2654,8 @@ impl<'a> Parser<'a> {
                 type_annotation,
                 optional,
                 decorators,
+                accessibility: None,
+                readonly: false,
                 span,
             });
 
@@ -2726,6 +2738,8 @@ impl<'a> Parser<'a> {
                         type_annotation: None,
                         optional: false,
                         decorators: vec![],
+                        accessibility: None,
+                        readonly: false,
                         span: rest_span,
                     });
                     break;
@@ -2749,6 +2763,8 @@ impl<'a> Parser<'a> {
                 type_annotation: None,
                 optional: false,
                 decorators: vec![],
+                accessibility: None,
+                readonly: false,
                 span: param_span,
             }];
             return self.parse_arrow_function_from_params_async(params, start, true);
@@ -2779,6 +2795,8 @@ impl<'a> Parser<'a> {
             type_annotation,
             optional,
             decorators,
+            accessibility: None,
+            readonly: false,
             span,
         })
     }
@@ -3331,6 +3349,8 @@ impl<'a> Parser<'a> {
                 type_annotation,
                 optional,
                 decorators: vec![],
+                accessibility: None,
+                readonly: false,
                 span,
             });
 
@@ -4218,6 +4238,8 @@ impl<'a> Parser<'a> {
                     type_annotation: None,
                     optional: false,
                     decorators: vec![],
+                    accessibility: None,
+                    readonly: false,
                     span,
                 });
             }
@@ -4229,6 +4251,8 @@ impl<'a> Parser<'a> {
             type_annotation: None,
             optional: false,
             decorators: vec![],
+            accessibility: None,
+            readonly: false,
             span,
         })
     }

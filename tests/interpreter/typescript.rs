@@ -14,10 +14,12 @@ use typescript_eval::JsValue;
 #[test]
 fn test_type_annotation_number() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let x: number = 42;
             x
-        "#),
+        "#
+        ),
         JsValue::Number(42.0)
     );
 }
@@ -25,10 +27,12 @@ fn test_type_annotation_number() {
 #[test]
 fn test_type_annotation_string() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let s: string = "hello";
             s
-        "#),
+        "#
+        ),
         JsValue::from("hello")
     );
 }
@@ -36,10 +40,12 @@ fn test_type_annotation_string() {
 #[test]
 fn test_type_annotation_boolean() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let b: boolean = true;
             b
-        "#),
+        "#
+        ),
         JsValue::Boolean(true)
     );
 }
@@ -47,11 +53,13 @@ fn test_type_annotation_boolean() {
 #[test]
 fn test_type_annotation_any() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let a: any = 123;
             a = "now a string";
             a
-        "#),
+        "#
+        ),
         JsValue::from("now a string")
     );
 }
@@ -59,10 +67,12 @@ fn test_type_annotation_any() {
 #[test]
 fn test_type_annotation_unknown() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let u: unknown = 42;
             u
-        "#),
+        "#
+        ),
         JsValue::Number(42.0)
     );
 }
@@ -70,13 +80,15 @@ fn test_type_annotation_unknown() {
 #[test]
 fn test_type_annotation_void() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             function logMessage(msg: string): void {
                 // Side effect only
             }
             logMessage("hello");
             undefined
-        "#),
+        "#
+        ),
         JsValue::Undefined
     );
 }
@@ -84,10 +96,12 @@ fn test_type_annotation_void() {
 #[test]
 fn test_type_annotation_null() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let n: null = null;
             n
-        "#),
+        "#
+        ),
         JsValue::Null
     );
 }
@@ -95,10 +109,12 @@ fn test_type_annotation_null() {
 #[test]
 fn test_type_annotation_undefined() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let u: undefined = undefined;
             u
-        "#),
+        "#
+        ),
         JsValue::Undefined
     );
 }
@@ -110,10 +126,12 @@ fn test_type_annotation_undefined() {
 #[test]
 fn test_type_annotation_array() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let arr: number[] = [1, 2, 3];
             arr.length
-        "#),
+        "#
+        ),
         JsValue::Number(3.0)
     );
 }
@@ -121,10 +139,12 @@ fn test_type_annotation_array() {
 #[test]
 fn test_type_annotation_array_generic() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let arr: Array<string> = ["a", "b", "c"];
             arr.join("-")
-        "#),
+        "#
+        ),
         JsValue::from("a-b-c")
     );
 }
@@ -132,10 +152,12 @@ fn test_type_annotation_array_generic() {
 #[test]
 fn test_type_annotation_object() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let obj: { name: string; age: number } = { name: "Alice", age: 30 };
             obj.name + " is " + obj.age
-        "#),
+        "#
+        ),
         JsValue::from("Alice is 30")
     );
 }
@@ -143,10 +165,12 @@ fn test_type_annotation_object() {
 #[test]
 fn test_type_annotation_tuple() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let tuple: [string, number] = ["hello", 42];
             tuple[0] + tuple[1]
-        "#),
+        "#
+        ),
         JsValue::from("hello42")
     );
 }
@@ -158,12 +182,14 @@ fn test_type_annotation_tuple() {
 #[test]
 fn test_function_parameter_types() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             function add(a: number, b: number): number {
                 return a + b;
             }
             add(10, 20)
-        "#),
+        "#
+        ),
         JsValue::Number(30.0)
     );
 }
@@ -171,10 +197,12 @@ fn test_function_parameter_types() {
 #[test]
 fn test_arrow_function_types() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             const multiply = (x: number, y: number): number => x * y;
             multiply(6, 7)
-        "#),
+        "#
+        ),
         JsValue::Number(42.0)
     );
 }
@@ -182,12 +210,14 @@ fn test_arrow_function_types() {
 #[test]
 fn test_optional_parameters() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             function greet(name: string, greeting?: string): string {
                 return (greeting || "Hello") + ", " + name;
             }
             greet("World")
-        "#),
+        "#
+        ),
         JsValue::from("Hello, World")
     );
 }
@@ -195,12 +225,14 @@ fn test_optional_parameters() {
 #[test]
 fn test_default_parameters_with_types() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             function greet(name: string, greeting: string = "Hi"): string {
                 return greeting + ", " + name;
             }
             greet("TypeScript")
-        "#),
+        "#
+        ),
         JsValue::from("Hi, TypeScript")
     );
 }
@@ -208,12 +240,14 @@ fn test_default_parameters_with_types() {
 #[test]
 fn test_rest_parameters_with_types() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             function sum(...numbers: number[]): number {
                 return numbers.reduce((a, b) => a + b, 0);
             }
             sum(1, 2, 3, 4, 5)
-        "#),
+        "#
+        ),
         JsValue::Number(15.0)
     );
 }
@@ -221,10 +255,12 @@ fn test_rest_parameters_with_types() {
 #[test]
 fn test_function_type_expression() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let fn: (x: number) => number = (x) => x * 2;
             fn(21)
-        "#),
+        "#
+        ),
         JsValue::Number(42.0)
     );
 }
@@ -236,11 +272,13 @@ fn test_function_type_expression() {
 #[test]
 fn test_as_assertion() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let value: any = "hello";
             let len = (value as string).length;
             len
-        "#),
+        "#
+        ),
         JsValue::Number(5.0)
     );
 }
@@ -248,11 +286,13 @@ fn test_as_assertion() {
 #[test]
 fn test_angle_bracket_assertion() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let value: any = 42;
             let num = <number>value;
             num + 8
-        "#),
+        "#
+        ),
         JsValue::Number(50.0)
     );
 }
@@ -260,10 +300,12 @@ fn test_angle_bracket_assertion() {
 #[test]
 fn test_non_null_assertion() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let value: string | null = "hello";
             value!.length
-        "#),
+        "#
+        ),
         JsValue::Number(5.0)
     );
 }
@@ -271,10 +313,12 @@ fn test_non_null_assertion() {
 #[test]
 fn test_const_assertion() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             const arr = [1, 2, 3] as const;
             arr[0] + arr[1] + arr[2]
-        "#),
+        "#
+        ),
         JsValue::Number(6.0)
     );
 }
@@ -286,7 +330,8 @@ fn test_const_assertion() {
 #[test]
 fn test_interface_basic() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             interface Person {
                 name: string;
                 age: number;
@@ -294,7 +339,8 @@ fn test_interface_basic() {
 
             let person: Person = { name: "Bob", age: 25 };
             person.name
-        "#),
+        "#
+        ),
         JsValue::from("Bob")
     );
 }
@@ -302,7 +348,8 @@ fn test_interface_basic() {
 #[test]
 fn test_interface_optional_properties() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             interface Config {
                 host: string;
                 port?: number;
@@ -310,7 +357,8 @@ fn test_interface_optional_properties() {
 
             let config: Config = { host: "localhost" };
             config.host
-        "#),
+        "#
+        ),
         JsValue::from("localhost")
     );
 }
@@ -318,7 +366,8 @@ fn test_interface_optional_properties() {
 #[test]
 fn test_interface_readonly() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             interface Point {
                 readonly x: number;
                 readonly y: number;
@@ -326,7 +375,8 @@ fn test_interface_readonly() {
 
             let p: Point = { x: 10, y: 20 };
             p.x + p.y
-        "#),
+        "#
+        ),
         JsValue::Number(30.0)
     );
 }
@@ -334,7 +384,8 @@ fn test_interface_readonly() {
 #[test]
 fn test_interface_method_signature() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             interface Calculator {
                 add(a: number, b: number): number;
             }
@@ -345,7 +396,8 @@ fn test_interface_method_signature() {
                 }
             };
             calc.add(5, 3)
-        "#),
+        "#
+        ),
         JsValue::Number(8.0)
     );
 }
@@ -353,7 +405,8 @@ fn test_interface_method_signature() {
 #[test]
 fn test_interface_extends() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             interface Animal {
                 name: string;
             }
@@ -364,7 +417,8 @@ fn test_interface_extends() {
 
             let dog: Dog = { name: "Rex", breed: "German Shepherd" };
             dog.name + " - " + dog.breed
-        "#),
+        "#
+        ),
         JsValue::from("Rex - German Shepherd")
     );
 }
@@ -372,7 +426,8 @@ fn test_interface_extends() {
 #[test]
 fn test_interface_index_signature() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             interface StringMap {
                 [key: string]: string;
             }
@@ -380,7 +435,8 @@ fn test_interface_index_signature() {
             let map: StringMap = {};
             map["hello"] = "world";
             map["hello"]
-        "#),
+        "#
+        ),
         JsValue::from("world")
     );
 }
@@ -392,11 +448,13 @@ fn test_interface_index_signature() {
 #[test]
 fn test_type_alias_simple() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             type ID = number;
             let userId: ID = 12345;
             userId
-        "#),
+        "#
+        ),
         JsValue::Number(12345.0)
     );
 }
@@ -404,11 +462,13 @@ fn test_type_alias_simple() {
 #[test]
 fn test_type_alias_union() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             type StringOrNumber = string | number;
             let value: StringOrNumber = "hello";
             value
-        "#),
+        "#
+        ),
         JsValue::from("hello")
     );
 }
@@ -416,14 +476,16 @@ fn test_type_alias_union() {
 #[test]
 fn test_type_alias_intersection() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             type Named = { name: string };
             type Aged = { age: number };
             type Person = Named & Aged;
 
             let person: Person = { name: "Alice", age: 30 };
             person.age
-        "#),
+        "#
+        ),
         JsValue::Number(30.0)
     );
 }
@@ -431,7 +493,8 @@ fn test_type_alias_intersection() {
 #[test]
 fn test_type_alias_object() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             type Point = {
                 x: number;
                 y: number;
@@ -439,7 +502,8 @@ fn test_type_alias_object() {
 
             let p: Point = { x: 5, y: 10 };
             p.x * p.y
-        "#),
+        "#
+        ),
         JsValue::Number(50.0)
     );
 }
@@ -451,12 +515,14 @@ fn test_type_alias_object() {
 #[test]
 fn test_generic_function() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             function identity<T>(arg: T): T {
                 return arg;
             }
             identity<number>(42)
-        "#),
+        "#
+        ),
         JsValue::Number(42.0)
     );
 }
@@ -464,12 +530,14 @@ fn test_generic_function() {
 #[test]
 fn test_generic_function_inference() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             function identity<T>(arg: T): T {
                 return arg;
             }
             identity("hello")
-        "#),
+        "#
+        ),
         JsValue::from("hello")
     );
 }
@@ -477,14 +545,16 @@ fn test_generic_function_inference() {
 #[test]
 fn test_generic_interface() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             interface Container<T> {
                 value: T;
             }
 
             let box: Container<number> = { value: 42 };
             box.value
-        "#),
+        "#
+        ),
         JsValue::Number(42.0)
     );
 }
@@ -492,7 +562,8 @@ fn test_generic_interface() {
 #[test]
 fn test_generic_constraint() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             interface HasLength {
                 length: number;
             }
@@ -501,7 +572,8 @@ fn test_generic_constraint() {
                 return arg.length;
             }
             getLength("hello")
-        "#),
+        "#
+        ),
         JsValue::Number(5.0)
     );
 }
@@ -509,13 +581,15 @@ fn test_generic_constraint() {
 #[test]
 fn test_generic_multiple_types() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             function pair<T, U>(first: T, second: U): [T, U] {
                 return [first, second];
             }
             let p = pair<string, number>("age", 25);
             p[0] + ": " + p[1]
-        "#),
+        "#
+        ),
         JsValue::from("age: 25")
     );
 }
@@ -527,7 +601,8 @@ fn test_generic_multiple_types() {
 #[test]
 fn test_class_property_types() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             class Point {
                 x: number;
                 y: number;
@@ -540,7 +615,8 @@ fn test_class_property_types() {
 
             let p = new Point(3, 4);
             p.x + p.y
-        "#),
+        "#
+        ),
         JsValue::Number(7.0)
     );
 }
@@ -548,7 +624,8 @@ fn test_class_property_types() {
 #[test]
 fn test_class_access_modifiers() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             class Person {
                 public name: string;
                 private age: number;
@@ -567,7 +644,8 @@ fn test_class_access_modifiers() {
 
             let p = new Person("Alice", 30);
             p.getAge()
-        "#),
+        "#
+        ),
         JsValue::Number(30.0)
     );
 }
@@ -575,7 +653,8 @@ fn test_class_access_modifiers() {
 #[test]
 fn test_class_readonly_property() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             class Config {
                 readonly apiUrl: string;
 
@@ -586,7 +665,8 @@ fn test_class_readonly_property() {
 
             let config = new Config("https://api.example.com");
             config.apiUrl
-        "#),
+        "#
+        ),
         JsValue::from("https://api.example.com")
     );
 }
@@ -594,14 +674,16 @@ fn test_class_readonly_property() {
 #[test]
 fn test_class_parameter_properties() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             class Point {
                 constructor(public x: number, public y: number) {}
             }
 
             let p = new Point(10, 20);
             p.x + p.y
-        "#),
+        "#
+        ),
         JsValue::Number(30.0)
     );
 }
@@ -609,7 +691,8 @@ fn test_class_parameter_properties() {
 #[test]
 fn test_class_static_types() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             class MathUtils {
                 static PI: number = 3.14159;
 
@@ -619,7 +702,8 @@ fn test_class_static_types() {
             }
 
             MathUtils.double(21) + MathUtils.PI
-        "#),
+        "#
+        ),
         JsValue::Number(45.14159)
     );
 }
@@ -627,7 +711,8 @@ fn test_class_static_types() {
 #[test]
 fn test_class_implements_interface() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             interface Greetable {
                 greet(): string;
             }
@@ -642,7 +727,8 @@ fn test_class_implements_interface() {
 
             let p = new Person("World");
             p.greet()
-        "#),
+        "#
+        ),
         JsValue::from("Hello, World")
     );
 }
@@ -650,7 +736,8 @@ fn test_class_implements_interface() {
 #[test]
 fn test_class_extends_with_types() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             class Animal {
                 constructor(public name: string) {}
 
@@ -671,7 +758,8 @@ fn test_class_extends_with_types() {
 
             let dog = new Dog("Rex", "German Shepherd");
             dog.speak()
-        "#),
+        "#
+        ),
         JsValue::from("Rex barks")
     );
 }
@@ -679,7 +767,8 @@ fn test_class_extends_with_types() {
 #[test]
 fn test_abstract_class() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             abstract class Shape {
                 abstract getArea(): number;
 
@@ -700,7 +789,8 @@ fn test_abstract_class() {
 
             let rect = new Rectangle(5, 10);
             rect.getArea()
-        "#),
+        "#
+        ),
         JsValue::Number(50.0)
     );
 }
@@ -712,7 +802,8 @@ fn test_abstract_class() {
 #[test]
 fn test_numeric_enum() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             enum Direction {
                 Up,
                 Down,
@@ -720,7 +811,8 @@ fn test_numeric_enum() {
                 Right
             }
             Direction.Down
-        "#),
+        "#
+        ),
         JsValue::Number(1.0)
     );
 }
@@ -728,14 +820,16 @@ fn test_numeric_enum() {
 #[test]
 fn test_string_enum() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             enum Color {
                 Red = "RED",
                 Green = "GREEN",
                 Blue = "BLUE"
             }
             Color.Green
-        "#),
+        "#
+        ),
         JsValue::from("GREEN")
     );
 }
@@ -743,14 +837,16 @@ fn test_string_enum() {
 #[test]
 fn test_enum_with_explicit_values() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             enum HttpStatus {
                 OK = 200,
                 NotFound = 404,
                 InternalError = 500
             }
             HttpStatus.NotFound
-        "#),
+        "#
+        ),
         JsValue::Number(404.0)
     );
 }
@@ -758,14 +854,16 @@ fn test_enum_with_explicit_values() {
 #[test]
 fn test_const_enum() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             const enum Size {
                 Small = 1,
                 Medium = 2,
                 Large = 3
             }
             Size.Medium
-        "#),
+        "#
+        ),
         JsValue::Number(2.0)
     );
 }
@@ -777,7 +875,8 @@ fn test_const_enum() {
 #[test]
 fn test_namespace_basic() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             namespace MathUtils {
                 export function add(a: number, b: number): number {
                     return a + b;
@@ -787,7 +886,8 @@ fn test_namespace_basic() {
             }
 
             MathUtils.add(10, 20) + MathUtils.PI
-        "#),
+        "#
+        ),
         JsValue::Number(33.14159)
     );
 }
@@ -795,7 +895,8 @@ fn test_namespace_basic() {
 #[test]
 fn test_nested_namespace() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             namespace Outer {
                 export namespace Inner {
                     export function getValue(): number {
@@ -805,7 +906,8 @@ fn test_nested_namespace() {
             }
 
             Outer.Inner.getValue()
-        "#),
+        "#
+        ),
         JsValue::Number(42.0)
     );
 }
@@ -817,11 +919,13 @@ fn test_nested_namespace() {
 #[test]
 fn test_literal_types() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             type YesNo = "yes" | "no";
             let answer: YesNo = "yes";
             answer
-        "#),
+        "#
+        ),
         JsValue::from("yes")
     );
 }
@@ -831,11 +935,13 @@ fn test_template_literal_types() {
     // Template literal types are a compile-time feature
     // At runtime, we just use the string
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             type Greeting = `Hello ${string}`;
             let msg: Greeting = "Hello World";
             msg
-        "#),
+        "#
+        ),
         JsValue::from("Hello World")
     );
 }
@@ -843,11 +949,13 @@ fn test_template_literal_types() {
 #[test]
 fn test_typeof_in_type_position() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             let original = { x: 10, y: 20 };
             let copy: typeof original = { x: 30, y: 40 };
             copy.x + copy.y
-        "#),
+        "#
+        ),
         JsValue::Number(70.0)
     );
 }
@@ -855,7 +963,8 @@ fn test_typeof_in_type_position() {
 #[test]
 fn test_keyof() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             interface Person {
                 name: string;
                 age: number;
@@ -865,7 +974,8 @@ fn test_keyof() {
             // At runtime, keyof is stripped - we just work with values
             let key: PersonKeys = "name";
             key
-        "#),
+        "#
+        ),
         JsValue::from("name")
     );
 }
@@ -873,7 +983,8 @@ fn test_keyof() {
 #[test]
 fn test_mapped_types() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             type Readonly<T> = {
                 readonly [P in keyof T]: T[P];
             };
@@ -885,7 +996,8 @@ fn test_mapped_types() {
 
             let p: Readonly<Point> = { x: 5, y: 10 };
             p.x + p.y
-        "#),
+        "#
+        ),
         JsValue::Number(15.0)
     );
 }
@@ -893,13 +1005,15 @@ fn test_mapped_types() {
 #[test]
 fn test_conditional_types() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             type IsString<T> = T extends string ? true : false;
 
             // At runtime, conditional types are stripped
             let result: IsString<string> = true;
             result
-        "#),
+        "#
+        ),
         JsValue::Boolean(true)
     );
 }
@@ -907,7 +1021,8 @@ fn test_conditional_types() {
 #[test]
 fn test_infer_keyword() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             type ReturnType<T> = T extends (...args: any[]) => infer R ? R : never;
 
             function getNumber(): number {
@@ -917,7 +1032,8 @@ fn test_infer_keyword() {
             // At runtime, type annotations are stripped
             let result: ReturnType<typeof getNumber> = getNumber();
             result
-        "#),
+        "#
+        ),
         JsValue::Number(42.0)
     );
 }
@@ -929,7 +1045,8 @@ fn test_infer_keyword() {
 #[test]
 fn test_typeof_guard() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             function processValue(value: string | number): string {
                 if (typeof value === "string") {
                     return value.toUpperCase();
@@ -938,7 +1055,8 @@ fn test_typeof_guard() {
                 }
             }
             processValue("hello")
-        "#),
+        "#
+        ),
         JsValue::from("HELLO")
     );
 }
@@ -946,7 +1064,8 @@ fn test_typeof_guard() {
 #[test]
 fn test_instanceof_guard() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             class Dog {
                 bark(): string { return "woof"; }
             }
@@ -964,7 +1083,8 @@ fn test_instanceof_guard() {
             }
 
             makeSound(new Dog())
-        "#),
+        "#
+        ),
         JsValue::from("woof")
     );
 }
@@ -972,7 +1092,8 @@ fn test_instanceof_guard() {
 #[test]
 fn test_in_operator_guard() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             interface Fish {
                 swim: () => void;
             }
@@ -991,7 +1112,8 @@ fn test_in_operator_guard() {
 
             let fish: Fish = { swim: () => {} };
             move(fish)
-        "#),
+        "#
+        ),
         JsValue::from("swimming")
     );
 }
@@ -999,7 +1121,8 @@ fn test_in_operator_guard() {
 #[test]
 fn test_user_defined_type_guard() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             interface Cat {
                 meow(): string;
             }
@@ -1017,7 +1140,8 @@ fn test_user_defined_type_guard() {
             } else {
                 "not a cat"
             }
-        "#),
+        "#
+        ),
         JsValue::from("meow")
     );
 }
@@ -1029,7 +1153,8 @@ fn test_user_defined_type_guard() {
 #[test]
 fn test_async_function_return_type() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             async function fetchData(): Promise<number> {
                 return 42;
             }
@@ -1040,7 +1165,8 @@ fn test_async_function_return_type() {
             }
 
             main()
-        "#),
+        "#
+        ),
         JsValue::Number(42.0)
     );
 }
@@ -1048,13 +1174,15 @@ fn test_async_function_return_type() {
 #[test]
 fn test_async_arrow_with_types() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             const getData = async (): Promise<string> => {
                 return "hello";
             };
 
             getData()
-        "#),
+        "#
+        ),
         JsValue::from("hello")
     );
 }
@@ -1066,7 +1194,8 @@ fn test_async_arrow_with_types() {
 #[test]
 fn test_class_decorator_with_types() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             function sealed(constructor: Function): void {
                 Object.seal(constructor);
                 Object.seal(constructor.prototype);
@@ -1087,7 +1216,8 @@ fn test_class_decorator_with_types() {
 
             let g = new Greeter("world");
             g.greet()
-        "#),
+        "#
+        ),
         JsValue::from("Hello, world")
     );
 }
@@ -1095,7 +1225,8 @@ fn test_class_decorator_with_types() {
 #[test]
 fn test_method_decorator_with_types() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             function log(target: any, propertyKey: string, descriptor: PropertyDescriptor): PropertyDescriptor {
                 const original = descriptor.value;
                 descriptor.value = function(...args: any[]): any {
@@ -1114,7 +1245,8 @@ fn test_method_decorator_with_types() {
 
             let calc = new Calculator();
             calc.add(5, 3)
-        "#),
+        "#
+        ),
         JsValue::Number(8.0)
     );
 }
@@ -1126,7 +1258,8 @@ fn test_method_decorator_with_types() {
 #[test]
 fn test_discriminated_union() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             interface Square {
                 kind: "square";
                 size: number;
@@ -1151,7 +1284,8 @@ fn test_discriminated_union() {
 
             let square: Square = { kind: "square", size: 5 };
             area(square)
-        "#),
+        "#
+        ),
         JsValue::Number(25.0)
     );
 }
@@ -1159,7 +1293,8 @@ fn test_discriminated_union() {
 #[test]
 fn test_generic_class() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             class Stack<T> {
                 private items: T[] = [];
 
@@ -1185,7 +1320,8 @@ fn test_generic_class() {
             stack.push(2);
             stack.push(3);
             stack.pop()
-        "#),
+        "#
+        ),
         JsValue::Number(3.0)
     );
 }
@@ -1193,7 +1329,8 @@ fn test_generic_class() {
 #[test]
 fn test_utility_types_partial() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             interface Todo {
                 title: string;
                 description: string;
@@ -1208,7 +1345,8 @@ fn test_utility_types_partial() {
             let todo: Todo = { title: "Learn TS", description: "Study TypeScript", completed: false };
             let updated = updateTodo(todo, { completed: true });
             updated.completed
-        "#),
+        "#
+        ),
         JsValue::Boolean(true)
     );
 }
@@ -1216,7 +1354,8 @@ fn test_utility_types_partial() {
 #[test]
 fn test_builder_pattern_with_types() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             class RequestBuilder {
                 private url: string = "";
                 private method: string = "GET";
@@ -1252,7 +1391,8 @@ fn test_builder_pattern_with_types() {
                 .addHeader("Content-Type", "application/json");
 
             request.getMethod() + " " + request.getUrl()
-        "#),
+        "#
+        ),
         JsValue::from("POST https://api.example.com")
     );
 }
@@ -1260,7 +1400,8 @@ fn test_builder_pattern_with_types() {
 #[test]
 fn test_factory_pattern_with_types() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             interface Product {
                 name: string;
                 price: number;
@@ -1279,7 +1420,8 @@ fn test_factory_pattern_with_types() {
             let factory: ProductFactory = new DefaultProductFactory();
             let product = factory.createProduct("Widget", 29.99);
             product.name + ": $" + product.price
-        "#),
+        "#
+        ),
         JsValue::from("Widget: $29.99")
     );
 }
@@ -1287,7 +1429,8 @@ fn test_factory_pattern_with_types() {
 #[test]
 fn test_mixin_pattern() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             // Mixin: adds timestamping capability
             function Timestamped<TBase extends new (...args: any[]) => any>(Base: TBase) {
                 return class extends Base {
@@ -1302,7 +1445,8 @@ fn test_mixin_pattern() {
             const TimestampedUser = Timestamped(User);
             let user = new TimestampedUser("Alice");
             user.name
-        "#),
+        "#
+        ),
         JsValue::from("Alice")
     );
 }
@@ -1314,7 +1458,8 @@ fn test_mixin_pattern() {
 #[test]
 fn test_typed_error_handling() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             class ValidationError extends Error {
                 constructor(public field: string, message: string) {
                     super(message);
@@ -1337,7 +1482,8 @@ fn test_typed_error_handling() {
                     "Unknown error"
                 }
             }
-        "#),
+        "#
+        ),
         JsValue::from("age: Age cannot be negative")
     );
 }
@@ -1349,7 +1495,8 @@ fn test_typed_error_handling() {
 #[test]
 fn test_event_emitter_pattern() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             type EventHandler<T> = (data: T) => void;
 
             class EventEmitter<Events extends Record<string, any>> {
@@ -1386,7 +1533,8 @@ fn test_event_emitter_pattern() {
 
             emitter.emit("message", "Hello TypeScript!");
             result
-        "#),
+        "#
+        ),
         JsValue::from("Hello TypeScript!")
     );
 }
@@ -1394,7 +1542,8 @@ fn test_event_emitter_pattern() {
 #[test]
 fn test_repository_pattern() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             interface Entity {
                 id: number;
             }
@@ -1438,7 +1587,8 @@ fn test_repository_pattern() {
 
             let user = repo.findById(1);
             user ? user.name : "not found"
-        "#),
+        "#
+        ),
         JsValue::from("Alice")
     );
 }
@@ -1446,7 +1596,8 @@ fn test_repository_pattern() {
 #[test]
 fn test_state_machine_pattern() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             type State = "idle" | "loading" | "success" | "error";
 
             interface StateMachine {
@@ -1482,7 +1633,8 @@ fn test_state_machine_pattern() {
             machine = transition(machine, "FETCH");
             machine = transition(machine, "SUCCESS", { items: [1, 2, 3] });
             machine.state
-        "#),
+        "#
+        ),
         JsValue::from("success")
     );
 }
@@ -1494,7 +1646,8 @@ fn test_state_machine_pattern() {
 #[test]
 fn test_revealing_module_pattern() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             const Calculator = (function() {
                 // Private members
                 let result: number = 0;
@@ -1528,7 +1681,8 @@ fn test_revealing_module_pattern() {
             Calculator.add(5);
             Calculator.subtract(3);
             Calculator.getResult()
-        "#),
+        "#
+        ),
         JsValue::Number(12.0)
     );
 }
@@ -1540,7 +1694,8 @@ fn test_revealing_module_pattern() {
 #[test]
 fn test_data_transformation_pipeline() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             interface RawUser {
                 firstName: string;
                 lastName: string;
@@ -1570,7 +1725,8 @@ fn test_data_transformation_pipeline() {
 
             let processed = processUsers(rawUsers, 2024);
             processed[0].fullName + " is " + processed[0].age
-        "#),
+        "#
+        ),
         JsValue::from("Alice Smith is 34")
     );
 }
@@ -1578,7 +1734,8 @@ fn test_data_transformation_pipeline() {
 #[test]
 fn test_recursive_type() {
     assert_eq!(
-        eval(r#"
+        eval(
+            r#"
             interface TreeNode<T> {
                 value: T;
                 children: TreeNode<T>[];
@@ -1603,7 +1760,8 @@ fn test_recursive_type() {
             };
 
             sumTree(tree)
-        "#),
+        "#
+        ),
         JsValue::Number(10.0)
     );
 }
