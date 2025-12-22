@@ -332,6 +332,7 @@ pub fn generator_throw(
 }
 
 /// Create a new bytecode generator object
+// FIXME: accept guard to avoid rooting every time
 pub fn create_bytecode_generator_object(
     interp: &mut Interpreter,
     state: BytecodeGeneratorState,
