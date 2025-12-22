@@ -1878,7 +1878,56 @@ impl<'a> Parser<'a> {
             }));
         }
 
+        // TypeScript angle bracket type assertion: <Type>value
+        // Must check for < and distinguish from comparison or generics
+        if self.check(&TokenKind::Lt) {
+            // Try to parse as type assertion <Type>expr
+            if let Some(expr) = self.try_parse_angle_bracket_assertion()? {
+                return Ok(expr);
+            }
+        }
+
         self.parse_postfix_expression()
+    }
+
+    /// Try to parse a TypeScript angle-bracket type assertion: <Type>expression
+    /// Returns None if this is not a type assertion (e.g., comparison or JSX)
+    fn try_parse_angle_bracket_assertion(&mut self) -> Result<Option<Expression>, JsError> {
+        let start = self.current.span;
+
+        // Save position for backtracking
+        let saved_current = self.current.clone();
+        let checkpoint = self.lexer.checkpoint();
+
+        // Consume <
+        self.advance();
+
+        // Try to parse a type
+        match self.parse_type_annotation() {
+            Ok(type_ann) => {
+                // Must be followed by >
+                if self.match_token(&TokenKind::Gt) {
+                    // Parse the expression being asserted
+                    let expr = self.parse_unary_expression()?;
+                    let span = self.span_from(start);
+                    return Ok(Some(Expression::TypeAssertion(TypeAssertionExpression {
+                        expression: Rc::new(expr),
+                        type_annotation: type_ann,
+                        span,
+                    })));
+                }
+                // Not a valid type assertion, restore position
+                self.current = saved_current;
+                self.lexer.restore(checkpoint);
+                Ok(None)
+            }
+            Err(_) => {
+                // Not a type, restore position
+                self.current = saved_current;
+                self.lexer.restore(checkpoint);
+                Ok(None)
+            }
+        }
     }
 
     fn parse_postfix_expression(&mut self) -> Result<Expression, JsError> {
