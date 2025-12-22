@@ -3087,6 +3087,37 @@ impl<'a> Parser<'a> {
         let start = self.current.span;
 
         match &self.current.kind {
+            // keyof operator: keyof T
+            TokenKind::Keyof => {
+                self.advance();
+                let operand = self.parse_primary_type()?;
+                let mut ty = TypeAnnotation::Keyof(KeyofType {
+                    type_annotation: Box::new(operand),
+                    span: self.span_from(start),
+                });
+                // Array shorthand: keyof T[]
+                while self.check(&TokenKind::LBracket) {
+                    self.advance();
+                    if self.check(&TokenKind::RBracket) {
+                        self.advance();
+                        ty = TypeAnnotation::Array(ArrayType {
+                            element_type: Box::new(ty),
+                            span: self.span_from(start),
+                        });
+                    } else {
+                        // Indexed access: keyof T[K]
+                        let index_type = self.parse_type_annotation()?;
+                        self.require_token(&TokenKind::RBracket)?;
+                        ty = TypeAnnotation::Indexed(IndexedAccessType {
+                            object_type: Box::new(ty),
+                            index_type: Box::new(index_type),
+                            span: self.span_from(start),
+                        });
+                    }
+                }
+                Ok(ty)
+            }
+
             // Type keywords
             TokenKind::Any => {
                 self.advance();
@@ -3235,9 +3266,20 @@ impl<'a> Parser<'a> {
                 }
             }
 
-            // Object type
+            // Object type or mapped type
             TokenKind::LBrace => {
                 self.advance();
+
+                // Check for mapped type: { [P in keyof T]: T[P] }
+                // vs index signature: { [key: string]: T }
+                // We need to detect: { [ident in ...]
+                if self.check(&TokenKind::Readonly) || self.check(&TokenKind::LBracket) {
+                    // Try to parse as mapped type
+                    if let Some(mapped) = self.try_parse_mapped_type(start)? {
+                        return Ok(mapped);
+                    }
+                }
+
                 let members = self.parse_type_members()?;
                 self.require_token(&TokenKind::RBrace)?;
                 let mut ty = TypeAnnotation::Object(ObjectType {
@@ -3352,16 +3394,6 @@ impl<'a> Parser<'a> {
                 }))
             }
 
-            // keyof
-            TokenKind::Keyof => {
-                self.advance();
-                let ty = self.parse_primary_type()?;
-                Ok(TypeAnnotation::Keyof(KeyofType {
-                    type_annotation: Box::new(ty),
-                    span: self.span_from(start),
-                }))
-            }
-
             _ => Err(self.unexpected_token("type")),
         }
     }
@@ -3470,6 +3502,130 @@ impl<'a> Parser<'a> {
 
         self.require_token(&TokenKind::RParen)?;
         Ok(params)
+    }
+
+    /// Try to parse a mapped type: { [P in keyof T]: T[P] }
+    /// Called after consuming { and seeing [ or readonly
+    /// Returns None if this is not a mapped type (falls back to object type)
+    fn try_parse_mapped_type(&mut self, start: Span) -> Result<Option<TypeAnnotation>, JsError> {
+        // Save state for potential rollback
+        let lexer_checkpoint = self.lexer.checkpoint();
+        let saved_current = self.current.clone();
+        let saved_previous = self.previous.clone();
+
+        // Parse optional readonly modifier: +readonly, -readonly, or readonly
+        let readonly = if self.match_token(&TokenKind::Plus) {
+            if self.match_token(&TokenKind::Readonly) {
+                Some(MappedTypeModifier::Add)
+            } else {
+                // Not a valid mapped type, rollback
+                self.lexer.restore(lexer_checkpoint);
+                self.current = saved_current;
+                self.previous = saved_previous;
+                return Ok(None);
+            }
+        } else if self.match_token(&TokenKind::Minus) {
+            if self.match_token(&TokenKind::Readonly) {
+                Some(MappedTypeModifier::Remove)
+            } else {
+                // Not a valid mapped type, rollback
+                self.lexer.restore(lexer_checkpoint);
+                self.current = saved_current;
+                self.previous = saved_previous;
+                return Ok(None);
+            }
+        } else if self.match_token(&TokenKind::Readonly) {
+            Some(MappedTypeModifier::Add)
+        } else {
+            None
+        };
+
+        // Must have [
+        if !self.match_token(&TokenKind::LBracket) {
+            self.lexer.restore(lexer_checkpoint);
+            self.current = saved_current;
+            self.previous = saved_previous;
+            return Ok(None);
+        }
+
+        // Type parameter name
+        let param_name = match self.parse_identifier() {
+            Ok(id) => id,
+            Err(_) => {
+                self.lexer.restore(lexer_checkpoint);
+                self.current = saved_current;
+                self.previous = saved_previous;
+                return Ok(None);
+            }
+        };
+
+        // Must have 'in' keyword
+        if !self.match_token(&TokenKind::In) {
+            self.lexer.restore(lexer_checkpoint);
+            self.current = saved_current;
+            self.previous = saved_previous;
+            return Ok(None);
+        }
+
+        // This is definitely a mapped type now - no more rollback needed
+        // Parse the constraint type (e.g., keyof T)
+        let constraint = self.parse_type_annotation()?;
+
+        // Optional 'as' clause for key remapping: [P in keyof T as NewKey]
+        let name_type = if self.match_token(&TokenKind::As) {
+            Some(Box::new(self.parse_type_annotation()?))
+        } else {
+            None
+        };
+
+        self.require_token(&TokenKind::RBracket)?;
+
+        // Optional modifier: +?, -?, or ?
+        let optional = if self.match_token(&TokenKind::Plus) {
+            if self.match_token(&TokenKind::Question) {
+                Some(MappedTypeModifier::Add)
+            } else {
+                return Err(self.unexpected_token("?"));
+            }
+        } else if self.match_token(&TokenKind::Minus) {
+            if self.match_token(&TokenKind::Question) {
+                Some(MappedTypeModifier::Remove)
+            } else {
+                return Err(self.unexpected_token("?"));
+            }
+        } else if self.match_token(&TokenKind::Question) {
+            Some(MappedTypeModifier::Add)
+        } else {
+            None
+        };
+
+        // : type_annotation
+        let type_annotation = if self.match_token(&TokenKind::Colon) {
+            Some(Box::new(self.parse_type_annotation()?))
+        } else {
+            None
+        };
+
+        // Optional semicolon
+        let _ = self.match_token(&TokenKind::Semicolon);
+
+        self.require_token(&TokenKind::RBrace)?;
+
+        let type_parameter = TypeParameter {
+            name: param_name,
+            constraint: Some(Box::new(constraint)),
+            default: None,
+            span: self.span_from(start),
+        };
+
+        Ok(Some(TypeAnnotation::Mapped(MappedType {
+            type_parameter,
+            name_type,
+            type_annotation,
+            readonly,
+            optional,
+            span: self.span_from(start),
+        })))
     }
 
     fn parse_type_reference(&mut self) -> Result<TypeReference, JsError> {
@@ -4442,6 +4598,27 @@ mod tests {
     #[test]
     fn test_type_alias() {
         let prog = parse("type StringOrNumber = string | number;");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_keyof_type_simple_reference() {
+        // First ensure basic type reference works
+        let prog = parse("let x: Person;");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_keyof_type_basic() {
+        // Test keyof with simple type
+        let prog = parse("let x: keyof Person;");
+        assert_eq!(prog.body.len(), 1);
+    }
+
+    #[test]
+    fn test_mapped_type() {
+        // Mapped type with keyof
+        let prog = parse("type Readonly<T> = { readonly [P in keyof T]: T[P] };");
         assert_eq!(prog.body.len(), 1);
     }
 

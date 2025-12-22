@@ -1401,6 +1401,7 @@ impl<'a> Lexer<'a> {
                 "infer" => TokenKind::Infer,
                 "never" => TokenKind::Never,
                 "catch" => TokenKind::Catch,
+                "keyof" => TokenKind::Keyof,
                 _ => TokenKind::Identifier(self.string_dict.get_or_insert(&name)),
             },
             6 => match name.as_str() {
@@ -1413,7 +1414,6 @@ impl<'a> Lexer<'a> {
                 "delete" => TokenKind::Delete,
                 "public" => TokenKind::Public,
                 "module" => TokenKind::Module,
-                "keyof" => TokenKind::Keyof,
                 _ => TokenKind::Identifier(self.string_dict.get_or_insert(&name)),
             },
             7 => match name.as_str() {
