@@ -23,7 +23,14 @@ Use `/usr/bin/time -v` for a quick overview of execution time and memory usage:
 cargo build --release
 
 # Run with timing
-/usr/bin/time -v ./target/release/typescript-eval-runner examples/memory-management/stress-test.ts
+/usr/bin/time -v ./target/release/typescript-eval-runner examples/memory-management/gc-no-cycles.ts
+```
+
+Example output:
+```
+User time (seconds): 0.09
+Maximum resident set size (kbytes): 4284
+Minor (reclaiming a frame) page faults: 344
 ```
 
 Key metrics to watch:
@@ -40,7 +47,7 @@ Key metrics to watch:
 cargo build --profile profiling
 
 # Record performance data
-perf record -g ./target/profiling/typescript-eval-runner examples/memory-management/stress-test.ts
+perf record -g ./target/profiling/typescript-eval-runner examples/memory-management/gc-no-cycles.ts
 
 # View flat profile (top functions by self time)
 perf report --stdio --sort=symbol --no-children | head -50
@@ -54,7 +61,15 @@ perf report --stdio --sort=symbol | head -80
 ```bash
 # Get detailed CPU statistics
 perf stat -e cycles,instructions,cache-references,cache-misses \
-    ./target/release/typescript-eval-runner examples/memory-management/stress-test.ts
+    ./target/profiling/typescript-eval-runner examples/memory-management/gc-no-cycles.ts
+```
+
+Example output:
+```
+   492,057,481      cycles:u
+ 1,544,622,706      instructions:u                   #    3.14  insn per cycle
+    19,850,244      cache-references:u
+        79,108      cache-misses:u                   #    0.40% of all cache refs
 ```
 
 Key metrics:
@@ -71,7 +86,7 @@ cargo install flamegraph
 
 # Generate flamegraph (requires profiling build for good symbols)
 cargo flamegraph --profile profiling --bin typescript-eval-runner \
-    -o flamegraph.svg -- examples/memory-management/stress-test.ts
+    -o flamegraph.svg -- examples/memory-management/gc-no-cycles.ts
 
 # Open in browser
 firefox flamegraph.svg
@@ -81,27 +96,35 @@ firefox flamegraph.svg
 
 ### Example perf report output
 
+From profiling `gc-no-cycles.ts` (50K iterations, 150K objects):
+
 ```
 # Overhead  Symbol
 # ........  .......................................
-    19.27%  typescript_eval::interpreter::Interpreter::evaluate_member
-     9.15%  <alloc::rc::Rc<T,A> as core::hash::Hash>::hash
-     5.84%  typescript_eval::interpreter::Interpreter::evaluate
-     5.54%  typescript_eval::value::JsObject::get_property_descriptor
-     5.03%  typescript_eval::interpreter::Interpreter::execute_for_labeled
-     4.29%  hashbrown::raw::RawTable<T,A>::find
+    20.82%  typescript_eval::interpreter::bytecode_vm::BytecodeVM::run
+     8.79%  typescript_eval::interpreter::bytecode_vm::BytecodeVM::execute_op
+     8.67%  typescript_eval::interpreter::Interpreter::env_get
+     5.10%  typescript_eval::gc::Guard<T>::alloc
+     4.41%  typescript_eval::value::PropertyStorage::iter
+     4.12%  typescript_eval::interpreter::bytecode_vm::BytecodeVM::set_reg
+     3.58%  core::ptr::drop_in_place<Rc<RefCell<Space>>>
+     2.83%  <PropertyStorageIter as Iterator>::next
+     2.38%  alloc::vec::Vec<T,A>::push
+     2.32%  alloc::rc::Weak<T,A>::upgrade
 ```
 
 ### Common hotspots and their meanings
 
 | Symbol | What it does | Optimization hints |
 |--------|--------------|-------------------|
-| `evaluate_member` | Property access (`obj.prop`) | Reduce property lookups, cache results |
-| `Rc::hash` / `Hash::hash` | HashMap key hashing | Use faster hasher (FxHashMap) |
-| `RawTable::find` | HashMap lookup | Reduce map operations, use faster hasher |
-| `evaluate` | Expression evaluation | Core interpreter work, hard to optimize |
-| `get_property_descriptor` | Prototype chain lookup | Flatten prototype chains |
-| `execute_for_labeled` | For loop execution | Core interpreter work |
+| `BytecodeVM::run` | Main VM execution loop | Core work, hard to optimize |
+| `BytecodeVM::execute_op` | Opcode dispatch | Core work |
+| `env_get` | Variable lookup | Reduce scope chain depth |
+| `Guard::alloc` | GC object allocation | Reduce allocations, reuse objects |
+| `PropertyStorage::iter` | Property iteration | Reduce property access in loops |
+| `set_reg` | VM register writes | Core work |
+| `drop_in_place<Rc>` | Reference counting cleanup | Reduce Rc usage in hot paths |
+| `Weak::upgrade` | Weak reference upgrade | GC bookkeeping |
 | `malloc` / `cfree` | Memory allocation | Reduce allocations, use arena allocators |
 | `clone` | Value cloning | Use `Rc` for shared ownership |
 
@@ -116,7 +139,7 @@ sudo cpupower frequency-set --governor performance
 # Run multiple times and take the median
 for i in {1..5}; do
     /usr/bin/time -f "%e" ./target/release/typescript-eval-runner \
-        examples/memory-management/stress-test.ts 2>&1 | tail -1
+        examples/memory-management/gc-no-cycles.ts 2>&1 | tail -1
 done
 ```
 
@@ -127,13 +150,13 @@ done
 git stash  # or checkout baseline commit
 cargo build --release
 /usr/bin/time -v ./target/release/typescript-eval-runner \
-    examples/memory-management/stress-test.ts 2>&1 | tee baseline.txt
+    examples/memory-management/gc-no-cycles.ts 2>&1 | tee baseline.txt
 
 # Apply changes
 git stash pop  # or checkout new commit
 cargo build --release
 /usr/bin/time -v ./target/release/typescript-eval-runner \
-    examples/memory-management/stress-test.ts 2>&1 | tee optimized.txt
+    examples/memory-management/gc-no-cycles.ts 2>&1 | tee optimized.txt
 
 # Compare
 diff baseline.txt optimized.txt
@@ -145,6 +168,8 @@ The `examples/memory-management/` directory contains good profiling targets:
 
 | File | What it tests |
 |------|---------------|
+| `gc-no-cycles.ts` | Baseline: 150K simple objects without cycles (recommended starting point) |
+| `gc-scale-test.ts` | Same object count WITH circular references (compare to baseline) |
 | `stress-test.ts` | Object creation, property access, closures |
 | `main.ts` | Comprehensive test (imports all other tests) |
 | `object-churn.ts` | Heavy object allocation/deallocation |
@@ -160,15 +185,48 @@ cargo build
 
 # Check for memory leaks
 valgrind --leak-check=full \
-    ./target/debug/typescript-eval-runner examples/memory-management/main.ts
+    ./target/debug/typescript-eval-runner examples/memory-management/gc-no-cycles.ts
 
 # Profile memory allocation patterns
 valgrind --tool=massif \
-    ./target/debug/typescript-eval-runner examples/memory-management/stress-test.ts
+    ./target/debug/typescript-eval-runner examples/memory-management/gc-no-cycles.ts
 
 # View massif output
 ms_print massif.out.*
+
+# Clean up
+rm -f massif.out.*
 ```
+
+### Example massif output
+
+From profiling `gc-no-cycles.ts`:
+
+```
+    KB
+343.0^#
+     |#:::::::::::@:::@:::::::@:::::::@::::::@::::::@::::::@
+   0 +----------------------------------------------------------------------->
+```
+
+**Summary:**
+| Metric | Value |
+|--------|-------|
+| Peak heap usage | 343 KB |
+| Total allocations | 357,032 |
+| Total bytes allocated | 57 MB |
+| Memory leaks | 0 bytes |
+
+**Allocation breakdown at peak:**
+| % | Source |
+|---|--------|
+| 91% | `regex_automata` - Lexer regex compilation (one-time startup) |
+| 4% | `Rc<Expression>` - AST nodes |
+| 3% | `JsString` - String interning |
+| 1% | `Guard::alloc` - GC object allocation |
+| 1% | Parser vectors |
+
+The flat memory profile confirms GC is working - 150K objects created but peak stays at 343 KB.
 
 ## Profiling Specific Operations
 
@@ -181,7 +239,7 @@ use typescript_eval::parser::parse;
 use std::fs;
 
 fn main() {
-    let source = fs::read_to_string("examples/memory-management/stress-test.ts").unwrap();
+    let source = fs::read_to_string("examples/memory-management/gc-no-cycles.ts").unwrap();
     for _ in 0..1000 {
         let _ = parse(&source);
     }
@@ -236,9 +294,9 @@ Add performance tests to CI:
 ```bash
 # In CI script
 cargo build --release
-BASELINE=0.15  # seconds
+BASELINE=0.10  # seconds (gc-no-cycles.ts baseline)
 ACTUAL=$(/usr/bin/time -f "%e" ./target/release/typescript-eval-runner \
-    examples/memory-management/stress-test.ts 2>&1)
+    examples/memory-management/gc-no-cycles.ts 2>&1)
 
 if (( $(echo "$ACTUAL > $BASELINE * 1.2" | bc -l) )); then
     echo "Performance regression: ${ACTUAL}s > ${BASELINE}s * 1.2"
@@ -418,7 +476,7 @@ git stash pop
 cargo build --release
 
 hyperfine \
-    '/tmp/baseline examples/memory-management/stress-test.ts' \
-    './target/release/typescript-eval-runner examples/memory-management/stress-test.ts' \
+    '/tmp/baseline examples/memory-management/gc-no-cycles.ts' \
+    './target/release/typescript-eval-runner examples/memory-management/gc-no-cycles.ts' \
     --warmup 3
 ```

@@ -417,7 +417,7 @@ impl BytecodeVM {
     /// Fetch the next instruction and advance IP
     #[inline]
     fn fetch(&mut self) -> Option<Op> {
-        let op = self.chunk.get(self.ip)?.clone();
+        let op = *self.chunk.get(self.ip)?;
         self.ip += 1;
         Some(op)
     }

@@ -20,7 +20,10 @@ pub type JumpTarget = u32;
 ///
 /// Each instruction operates on virtual registers. The register-based design
 /// generates fewer instructions than a stack-based VM and has better cache locality.
-#[derive(Debug, Clone)]
+///
+/// Op is Copy because all variants contain only primitive types (u8, u16, u32, bool).
+/// This allows efficient pass-by-value without heap allocation or reference counting.
+#[derive(Debug, Clone, Copy)]
 pub enum Op {
     // ═══════════════════════════════════════════════════════════════════════════════
     // Constants & Register Operations
