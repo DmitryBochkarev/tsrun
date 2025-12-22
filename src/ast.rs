@@ -935,6 +935,7 @@ pub enum TypeAnnotation {
     Typeof(TypeofType),
     Keyof(KeyofType),
     TemplateLiteral(TemplateLiteralType),
+    TypePredicate(TypePredicateType),
     Parenthesized(Box<TypeAnnotation>),
     This,
 }
@@ -944,6 +945,14 @@ pub enum TypeAnnotation {
 pub struct TemplateLiteralType {
     pub quasis: Vec<JsString>,
     pub types: Vec<TypeAnnotation>,
+    pub span: Span,
+}
+
+/// Type predicate: `param is Type`
+#[derive(Debug, Clone)]
+pub struct TypePredicateType {
+    pub parameter_name: Identifier,
+    pub type_annotation: Box<TypeAnnotation>,
     pub span: Span,
 }
 

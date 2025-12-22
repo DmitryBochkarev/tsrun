@@ -3934,7 +3934,21 @@ impl<'a> Parser<'a> {
 
     fn parse_optional_return_type(&mut self) -> Result<Option<TypeAnnotation>, JsError> {
         if self.match_token(&TokenKind::Colon) {
-            Ok(Some(self.parse_type_annotation()?))
+            // Check for type predicate: param is Type
+            // This is an identifier followed by 'is' keyword
+            if self.check_identifier() && self.peek_is(&TokenKind::Is) {
+                let start = self.current.span;
+                let param_name = self.parse_identifier()?;
+                self.require_token(&TokenKind::Is)?;
+                let type_annotation = Box::new(self.parse_type_annotation()?);
+                Ok(Some(TypeAnnotation::TypePredicate(TypePredicateType {
+                    parameter_name: param_name,
+                    type_annotation,
+                    span: self.span_from(start),
+                })))
+            } else {
+                Ok(Some(self.parse_type_annotation()?))
+            }
         } else {
             Ok(None)
         }
