@@ -3020,7 +3020,31 @@ impl<'a> Parser<'a> {
     // ============ TYPE ANNOTATIONS ============
 
     fn parse_type_annotation(&mut self) -> Result<TypeAnnotation, JsError> {
-        self.parse_union_type()
+        self.parse_conditional_type()
+    }
+
+    /// Parse conditional type: T extends U ? X : Y
+    fn parse_conditional_type(&mut self) -> Result<TypeAnnotation, JsError> {
+        let start = self.current.span;
+        let check_type = self.parse_union_type()?;
+
+        // Check for extends (conditional type)
+        if self.match_token(&TokenKind::Extends) {
+            let extends_type = self.parse_union_type()?;
+            self.require_token(&TokenKind::Question)?;
+            let true_type = self.parse_type_annotation()?;
+            self.require_token(&TokenKind::Colon)?;
+            let false_type = self.parse_type_annotation()?;
+            return Ok(TypeAnnotation::Conditional(ConditionalType {
+                check_type: Box::new(check_type),
+                extends_type: Box::new(extends_type),
+                true_type: Box::new(true_type),
+                false_type: Box::new(false_type),
+                span: self.span_from(start),
+            }));
+        }
+
+        Ok(check_type)
     }
 
     fn parse_union_type(&mut self) -> Result<TypeAnnotation, JsError> {
