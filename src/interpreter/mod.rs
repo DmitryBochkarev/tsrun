@@ -33,13 +33,6 @@ pub struct StackFrame {
     pub location: Option<(u32, u32)>, // (line, column)
 }
 
-/// GC statistics for debugging and monitoring
-#[derive(Debug, Clone)]
-pub struct GcStats {
-    pub alive_count: usize,
-    pub free_count: usize,
-}
-
 /// The interpreter state
 pub struct Interpreter {
     // ═══════════════════════════════════════════════════════════════════════════
