@@ -227,10 +227,9 @@ fn trim_js_whitespace(s: &str) -> &str {
     s.trim_matches(is_js_whitespace)
 }
 
-use crate::ast::{ArrowFunctionBody, BlockStatement, Expression, FunctionParam, Pattern};
+use crate::ast::{ArrowFunctionBody, BlockStatement, Expression, FunctionParam};
 use crate::error::JsError;
 use crate::gc::{Gc, GcPtr, Guard, Heap, Reset, Traceable};
-use crate::lexer::Span;
 
 /// Trait for types that have cheap (O(1), reference-counted) clones.
 ///
@@ -881,10 +880,6 @@ impl Traceable for JsObject {
                             }
                         }
                     }
-                    JsFunction::Interpreted(interp) => {
-                        // Trace the closure environment
-                        visitor(interp.closure.copy_ref());
-                    }
                     JsFunction::Bytecode(bc)
                     | JsFunction::BytecodeGenerator(bc)
                     | JsFunction::BytecodeAsync(bc)
@@ -1180,7 +1175,6 @@ impl JsObject {
                             return Some(prop.value.clone());
                         }
                         let name = match func {
-                            JsFunction::Interpreted(f) => f.name.clone(),
                             JsFunction::Native(f) => Some(f.name.clone()),
                             JsFunction::Bytecode(bc)
                             | JsFunction::BytecodeGenerator(bc)
@@ -1196,10 +1190,6 @@ impl JsObject {
                                     &b.target.borrow().exotic
                                 {
                                     match target_func {
-                                        JsFunction::Interpreted(f) => f
-                                            .name
-                                            .as_ref()
-                                            .map(|n| JsString::from(format!("bound {}", n))),
                                         JsFunction::Native(f) => {
                                             Some(JsString::from(format!("bound {}", f.name)))
                                         }
@@ -1228,13 +1218,6 @@ impl JsObject {
                     }
                     "length" => {
                         let arity = match func {
-                            JsFunction::Interpreted(f) => {
-                                // Count parameters, excluding rest parameters
-                                f.params
-                                    .iter()
-                                    .filter(|p| !matches!(p.pattern, Pattern::Rest(_)))
-                                    .count()
-                            }
                             JsFunction::Native(f) => f.arity,
                             JsFunction::Bytecode(bc)
                             | JsFunction::BytecodeGenerator(bc)
@@ -1251,11 +1234,6 @@ impl JsObject {
                                     &b.target.borrow().exotic
                                 {
                                     let target_length = match target_func {
-                                        JsFunction::Interpreted(f) => f
-                                            .params
-                                            .iter()
-                                            .filter(|p| !matches!(p.pattern, Pattern::Rest(_)))
-                                            .count(),
                                         JsFunction::Native(f) => f.arity,
                                         JsFunction::Bytecode(bc)
                                         | JsFunction::BytecodeGenerator(bc)
@@ -1364,7 +1342,6 @@ impl JsObject {
                 match s.as_str() {
                     "name" => {
                         let name = match func {
-                            JsFunction::Interpreted(f) => f.name.clone(),
                             JsFunction::Native(f) => Some(f.name.clone()),
                             JsFunction::Bytecode(bc)
                             | JsFunction::BytecodeGenerator(bc)
@@ -1380,10 +1357,6 @@ impl JsObject {
                                     &b.target.borrow().exotic
                                 {
                                     match target_func {
-                                        JsFunction::Interpreted(f) => f
-                                            .name
-                                            .as_ref()
-                                            .map(|n| JsString::from(format!("bound {}", n))),
                                         JsFunction::Native(f) => {
                                             Some(JsString::from(format!("bound {}", f.name)))
                                         }
@@ -1421,13 +1394,6 @@ impl JsObject {
                     }
                     "length" => {
                         let arity = match func {
-                            JsFunction::Interpreted(f) => {
-                                // Count parameters, excluding rest parameters
-                                f.params
-                                    .iter()
-                                    .filter(|p| !matches!(p.pattern, Pattern::Rest(_)))
-                                    .count()
-                            }
                             JsFunction::Native(f) => f.arity,
                             JsFunction::Bytecode(bc)
                             | JsFunction::BytecodeGenerator(bc)
@@ -1444,11 +1410,6 @@ impl JsObject {
                                     &b.target.borrow().exotic
                                 {
                                     let target_length = match target_func {
-                                        JsFunction::Interpreted(f) => f
-                                            .params
-                                            .iter()
-                                            .filter(|p| !matches!(p.pattern, Pattern::Rest(_)))
-                                            .count(),
                                         JsFunction::Native(f) => f.arity,
                                         JsFunction::Bytecode(bc)
                                         | JsFunction::BytecodeGenerator(bc)
@@ -2629,8 +2590,6 @@ impl std::fmt::Debug for BytecodeGeneratorState {
 /// Function representation
 #[derive(Debug, Clone)]
 pub enum JsFunction {
-    /// User-defined function
-    Interpreted(InterpretedFunction),
     /// Bytecode function (compiled from source)
     Bytecode(BytecodeFunction),
     /// Bytecode generator function (creates a generator when called)
@@ -2704,7 +2663,6 @@ pub struct BoundFunctionData {
 impl JsFunction {
     pub fn name(&self) -> Option<&str> {
         match self {
-            JsFunction::Interpreted(f) => f.name.as_ref().map(|s| s.as_str()),
             JsFunction::Bytecode(f)
             | JsFunction::BytecodeGenerator(f)
             | JsFunction::BytecodeAsync(f)
@@ -2727,23 +2685,6 @@ impl JsFunction {
             JsFunction::ProxyRevoke(_) => Some("revoke"),
         }
     }
-}
-
-/// User-defined function
-#[derive(Debug, Clone)]
-pub struct InterpretedFunction {
-    pub name: Option<JsString>,
-    /// Function parameters wrapped in Rc for cheap cloning
-    pub params: Rc<[FunctionParam]>,
-    /// Function body wrapped in Rc for cheap cloning
-    pub body: Rc<FunctionBody>,
-    /// The captured closure environment (GC-managed)
-    pub closure: JsObjectRef,
-    pub source_location: Span,
-    /// Whether this is a generator function (function*)
-    pub generator: bool,
-    /// Whether this is an async function
-    pub async_: bool,
 }
 
 /// Bytecode-compiled function

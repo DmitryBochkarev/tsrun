@@ -764,13 +764,6 @@ impl BytecodeVM {
                     is_super_call, // pass through super call flag
                 )
             }
-            JsFunction::Interpreted(_) => {
-                // Legacy interpreted functions are no longer supported.
-                // All functions should be bytecode-compiled.
-                Err(JsError::internal_error(
-                    "InterpretedFunction is deprecated - use bytecode functions instead",
-                ))
-            }
             JsFunction::BytecodeGenerator(bc_func) => {
                 // Generators just create a generator object without running the body.
                 // The body runs when .next() is called. Handle directly without recursion.
@@ -4892,9 +4885,6 @@ impl BytecodeVM {
                         if let crate::value::ExoticObject::Function(func) = &obj_ref.exotic {
                             // Check if function already has a non-empty name
                             let has_name = match func {
-                                JsFunction::Interpreted(f) => {
-                                    f.name.as_ref().is_some_and(|n| !n.as_str().is_empty())
-                                }
                                 JsFunction::Native(f) => !f.name.as_str().is_empty(),
                                 JsFunction::Bytecode(bc)
                                 | JsFunction::BytecodeGenerator(bc)
@@ -4906,7 +4896,16 @@ impl BytecodeVM {
                                     .and_then(|info| info.name.as_ref())
                                     .is_some_and(|n| !n.as_str().is_empty()),
                                 JsFunction::Bound(_) => true, // Bound functions already have names
-                                _ => false, // Other function types, check if we should set name
+                                // Internal functions don't need names set
+                                JsFunction::PromiseResolve(_)
+                                | JsFunction::PromiseReject(_)
+                                | JsFunction::PromiseAllFulfill { .. }
+                                | JsFunction::PromiseAllReject(_)
+                                | JsFunction::AccessorGetter
+                                | JsFunction::AccessorSetter
+                                | JsFunction::ModuleExportGetter { .. }
+                                | JsFunction::ModuleReExportGetter { .. }
+                                | JsFunction::ProxyRevoke(_) => true,
                             };
                             // Also check if there's already an own name property set
                             let name_key = PropertyKey::String(interp.intern("name"));

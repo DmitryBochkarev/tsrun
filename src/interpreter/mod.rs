@@ -1741,26 +1741,12 @@ impl Interpreter {
 
         // Extract name and arity from the function
         let (func_name, arity) = match &func {
-            JsFunction::Interpreted(f) => {
-                let name = f.name.clone().unwrap_or_else(|| self.intern(""));
-                let arity = f.params.len();
-                (name, arity)
-            }
             JsFunction::Native(f) => (f.name.cheap_clone(), f.arity),
             JsFunction::Bound(b) => {
                 // Bound functions: compute name and length from target
                 let (target_name, target_length) =
                     if let ExoticObject::Function(target_func) = &b.target.borrow().exotic {
                         match target_func {
-                            JsFunction::Interpreted(f) => {
-                                let name = f.name.as_ref().map(|n| n.as_str()).unwrap_or("");
-                                let len = f
-                                    .params
-                                    .iter()
-                                    .filter(|p| !matches!(p.pattern, Pattern::Rest(_)))
-                                    .count();
-                                (name.to_string(), len)
-                            }
                             JsFunction::Native(f) => (f.name.to_string(), f.arity),
                             _ => (String::new(), 0),
                         }
@@ -2848,14 +2834,6 @@ impl Interpreter {
         };
 
         match func {
-            JsFunction::Interpreted(_) => {
-                // Legacy interpreted functions are no longer supported.
-                // All functions should be bytecode-compiled.
-                Err(JsError::internal_error(
-                    "InterpretedFunction is deprecated - use bytecode functions instead",
-                ))
-            }
-
             JsFunction::Native(native) => {
                 // Call native function - propagate the Guarded to preserve guard
                 (native.func)(self, this_value, args)
