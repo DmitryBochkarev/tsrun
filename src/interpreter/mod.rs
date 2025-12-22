@@ -8,42 +8,19 @@ pub mod builtins;
 // Bytecode virtual machine
 pub mod bytecode_vm;
 
-use crate::ast::{
-    Argument, ArrayElement, ArrayPattern, AssignmentExpression, AssignmentOp, AssignmentTarget,
-    BinaryExpression, BinaryOp, BlockStatement, CallExpression, ClassConstructor, ClassDeclaration,
-    ClassExpression, ClassMember, ClassMethod, ClassProperty, ConditionalExpression, Decorator,
-    Expression, ForInOfLeft, ForInit, FunctionParam, ImportSpecifier, LiteralValue,
-    LogicalExpression, LogicalOp, MemberExpression, MemberProperty, MethodKind, NewExpression,
-    ObjectExpression, ObjectPatternProperty, ObjectProperty, ObjectPropertyKey, Pattern, Program,
-    PropertyKind, SequenceExpression, Statement, TaggedTemplateExpression, TemplateLiteral,
-    UnaryExpression, UnaryOp, UpdateExpression, UpdateOp, VariableKind,
-};
+use crate::ast::{ForInOfLeft, ForInit, ImportSpecifier, ObjectPatternProperty, Pattern, Program, Statement, VariableKind};
 use crate::error::JsError;
 use crate::gc::{Gc, Guard, Heap};
-use crate::lexer::Span;
 use crate::parser::Parser;
 use crate::string_dict::StringDict;
 use crate::value::{
-    create_environment_unrooted, create_environment_unrooted_with_capacity, number_to_string,
-    Binding, BytecodeFunction, CheapClone, EnumData, EnvRef, EnvironmentData, ExoticObject,
-    FunctionBody, GeneratorStatus, Guarded, ImportBinding, InterpretedFunction, JsFunction,
+    create_environment_unrooted, create_environment_unrooted_with_capacity,
+    Binding, BytecodeFunction, CheapClone, EnvRef, EnvironmentData, ExoticObject,
+    GeneratorStatus, Guarded, ImportBinding, JsFunction,
     JsObject, JsString, JsSymbol, JsValue, ModuleExport, NativeFn, NativeFunction, PromiseStatus,
     Property, PropertyKey, VarKey,
 };
 use rustc_hash::FxHashMap;
-use std::rc::Rc;
-
-/// Type alias for accessor map: property key -> (getter, setter)
-type AccessorMap = FxHashMap<PropertyKey, (Option<Gc<JsObject>>, Option<Gc<JsObject>>)>;
-
-/// Result of evaluating a callee expression with its `this` binding.
-/// Returns (callee_value, this_value, callee_guard, this_guard).
-type CalleeWithThis = (
-    JsValue,
-    JsValue,
-    Option<Guard<JsObject>>,
-    Option<Guard<JsObject>>,
-);
 
 /// Completion record for control flow
 /// Control flow completion type
@@ -1721,23 +1698,6 @@ impl Interpreter {
     /// Intern a string
     pub fn intern(&mut self, s: &str) -> JsString {
         self.string_dict.get_or_insert(s)
-    }
-
-    /// Extract string key from ObjectPropertyKey (for destructuring)
-    fn extract_property_key_string(&self, key: &ObjectPropertyKey) -> Option<JsString> {
-        match key {
-            ObjectPropertyKey::Identifier(id) => Some(id.name.cheap_clone()),
-            ObjectPropertyKey::String(s) => Some(s.value.cheap_clone()),
-            ObjectPropertyKey::Number(l) => {
-                if let LiteralValue::Number(n) = &l.value {
-                    Some(n.to_string().into())
-                } else {
-                    None
-                }
-            }
-            ObjectPropertyKey::Computed(_) => None, // Can't statically determine
-            ObjectPropertyKey::PrivateIdentifier(id) => Some(id.name.cheap_clone()),
-        }
     }
 
     /// Create a rooted native function for global constructors.
@@ -3535,48 +3495,6 @@ impl Default for Interpreter {
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// Native implementation of context.addInitializer()
-/// This function captures the initializers array via the __initializers__ property
-fn add_initializer_impl(
-    interp: &mut Interpreter,
-    this: JsValue,
-    args: &[JsValue],
-) -> Result<Guarded, JsError> {
-    // Get the initializer function argument
-    let initializer = args.first().cloned().unwrap_or(JsValue::Undefined);
-
-    // Validate that the argument is a function
-    if !matches!(&initializer, JsValue::Object(obj) if obj.borrow().is_callable()) {
-        return Err(JsError::type_error(
-            "addInitializer callback must be a function",
-        ));
-    }
-
-    // Get the __initializers__ array from the addInitializer function itself
-    // The `this` binding is the context object (since addInitializer is called as context.addInitializer())
-    // We stored the initializers array on the addInitializer function object
-    if let JsValue::Object(ctx) = this {
-        let ctx_ref = ctx.borrow();
-        let key = interp.intern("addInitializer");
-        if let Some(JsValue::Object(add_init_fn)) = ctx_ref.get_property(&PropertyKey::String(key))
-        {
-            let func_ref = add_init_fn.borrow();
-            let init_key = interp.intern("__initializers__");
-            if let Some(JsValue::Object(init_arr)) =
-                func_ref.get_property(&PropertyKey::String(init_key))
-            {
-                // Push the initializer to the array using set_property which handles array growth
-                drop(func_ref);
-                let mut arr_ref = init_arr.borrow_mut();
-                let index = arr_ref.array_length().unwrap_or(0);
-                arr_ref.set_property(PropertyKey::Index(index), initializer);
-            }
-        }
-    }
-
-    Ok(Guarded::unguarded(JsValue::Undefined))
 }
 
 /// Native getter for Symbol.species that returns `this`.
