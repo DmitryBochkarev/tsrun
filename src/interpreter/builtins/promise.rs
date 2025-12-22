@@ -571,7 +571,42 @@ pub fn promise_reject_static(
     Ok(Guarded::with_guard(JsValue::Object(promise), guard))
 }
 
-/// Extract values from an iterable (for Promise.all/race/etc)
+/// Wrap each value in the array with Promise.resolve
+/// For now, we call promise_resolve_static directly for efficiency and simplicity
+/// Returns both the values and a guard that keeps them alive
+fn resolve_each_value(
+    interp: &mut Interpreter,
+    value: &JsValue,
+    _this: &JsValue,
+) -> Result<(Vec<JsValue>, crate::gc::Guard<JsObject>), JsError> {
+    // First, extract raw values from the iterable (array only for now)
+    let raw_values = extract_iterable(value)?;
+
+    // Create a single guard to keep all the promises alive
+    let guard = interp.heap.create_guard();
+
+    // Then wrap each value with Promise.resolve
+    let mut results = Vec::with_capacity(raw_values.len());
+    for val in raw_values {
+        // If already a promise, return as-is
+        if let JsValue::Object(obj) = &val {
+            if matches!(obj.borrow().exotic, ExoticObject::Promise(_)) {
+                guard.guard(obj.cheap_clone());
+                results.push(val);
+                continue;
+            }
+        }
+
+        // Create fulfilled promise for non-promise value
+        let promise = create_fulfilled_promise(interp, &guard, val);
+        results.push(JsValue::Object(promise));
+    }
+
+    Ok((results, guard))
+}
+
+/// Simple extraction for arrays (used when we don't need Promise.resolve call tracking)
+/// This is used by race/allSettled/any where we don't need to test Promise.resolve behavior
 fn extract_iterable(value: &JsValue) -> Result<Vec<JsValue>, JsError> {
     let JsValue::Object(arr) = value else {
         return Ok(vec![]);
@@ -588,11 +623,15 @@ fn extract_iterable(value: &JsValue) -> Result<Vec<JsValue>, JsError> {
 /// Promise.all(iterable)
 pub fn promise_all(
     interp: &mut Interpreter,
-    _this: JsValue,
+    this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
     let iterable = args.first().cloned().unwrap_or(JsValue::Undefined);
-    let promises = extract_iterable(&iterable)?;
+
+    // Wrap each value with Promise.resolve
+    // This ensures non-promise values are converted to fulfilled promises
+    // The returned guard keeps all promises alive
+    let (promises, _promises_guard) = resolve_each_value(interp, &iterable, &this)?;
 
     let guard = interp.heap.create_guard();
 

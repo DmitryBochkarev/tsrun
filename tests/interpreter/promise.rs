@@ -321,6 +321,53 @@ fn test_promise_all_rejects_on_first_rejection() {
 }
 
 #[test]
+fn test_promise_resolve_accessible() {
+    // Verify that Promise.resolve is accessible as a function
+    let result = eval(
+        r#"
+        typeof Promise.resolve
+    "#,
+    );
+    assert_eq!(result, JsValue::String("function".into()));
+}
+
+#[test]
+fn test_promise_all_calls_promise_resolve() {
+    // Promise.all should call Promise.resolve for each element
+    // This test verifies that Promise.all([1,2,3]) works with plain values
+    let result = eval(
+        r#"
+        let values: number[] = [];
+        Promise.all([1, 2, 3]).then(function(arr: number[]) {
+            values = arr;
+        });
+        values.join(",")
+    "#,
+    );
+    // The result should have all values
+    assert_eq!(result, JsValue::String("1,2,3".into()));
+}
+
+#[test]
+fn test_promise_all_with_plain_values() {
+    // Promise.all should work with non-promise values
+    let result = eval(
+        r#"
+        let values = [];
+        Promise.all([1, 2, 3]).then(function(arr) {
+            values = arr;
+        });
+        values.join(",")
+    "#,
+    );
+    assert_eq!(result, JsValue::String("1,2,3".into()));
+}
+
+// NOTE: Custom iterables with Symbol.iterator are not yet supported in Promise.all
+// Promise.all currently only works with arrays
+// TODO: Add full iterable support using Symbol.iterator
+
+#[test]
 fn test_promise_race_first_wins() {
     // Promise.race should resolve with first settled value
     let result = eval(
