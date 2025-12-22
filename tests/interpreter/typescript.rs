@@ -1979,7 +1979,6 @@ fn test_data_transform_two_args() {
 }
 
 #[test]
-#[ignore = "GC bug: objects returned from nested function calls in map get collected"]
 fn test_data_transform_return_object_js() {
     // Test transform that returns an object - without type annotations to verify it's not TS-specific
     assert_eq!(
@@ -2001,7 +2000,6 @@ fn test_data_transform_return_object_js() {
 }
 
 #[test]
-#[ignore = "GC bug: objects returned from nested function calls in map get collected"]
 fn test_data_transform_return_object() {
     // Test transform that returns an object
     assert_eq!(
@@ -2029,7 +2027,6 @@ fn test_data_transform_return_object() {
 }
 
 #[test]
-#[ignore = "GC bug: objects returned from nested function calls in map get collected"]
 fn test_data_transformation_pipeline() {
     assert_eq!(
         eval(

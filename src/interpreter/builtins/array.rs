@@ -280,11 +280,19 @@ pub fn array_map(
 
     let this_arg = args.get(1).cloned().unwrap_or(JsValue::Undefined);
 
+    // Create a single guard that will protect all values throughout the function.
+    // This guard protects: the callback, this_arg, arr, and all mapped result values.
+    let guard = interp.heap.create_guard();
+
     // Guard the callback and this_arg to prevent GC from collecting them
     // during the loop iterations which may trigger allocations.
-    let _callback_guard = interp.guard_value(&callback);
-    let _this_arg_guard = interp.guard_value(&this_arg);
-    let _arr_guard = interp.guard_value(&this);
+    if let JsValue::Object(obj) = &callback {
+        guard.guard(obj.cheap_clone());
+    }
+    if let JsValue::Object(obj) = &this_arg {
+        guard.guard(obj.cheap_clone());
+    }
+    guard.guard(arr.cheap_clone());
 
     // Use array-like length with full ToLength coercion (works on both arrays and array-like objects)
     let length = get_array_like_length(interp, &arr)?;
@@ -304,6 +312,12 @@ pub fn array_map(
                 &[elem, JsValue::Number(i as f64), this.clone()],
             )?;
 
+            // Guard the mapped value to keep it alive until we create the result array.
+            // Without this, GC could collect mapped objects during subsequent iterations.
+            if let JsValue::Object(obj) = &mapped {
+                guard.guard(obj.cheap_clone());
+            }
+
             result.push(mapped);
         } else {
             // Preserve holes as undefined in the result
@@ -311,7 +325,6 @@ pub fn array_map(
         }
     }
 
-    let guard = interp.heap.create_guard();
     let arr = interp.create_array_from(&guard, result);
     Ok(Guarded::with_guard(JsValue::Object(arr), guard))
 }
@@ -336,11 +349,19 @@ pub fn array_filter(
 
     let this_arg = args.get(1).cloned().unwrap_or(JsValue::Undefined);
 
+    // Create a single guard that will protect all values throughout the function.
+    // This guard protects: the callback, this_arg, arr, and all result elements.
+    let guard = interp.heap.create_guard();
+
     // Guard the callback and this_arg to prevent GC from collecting them
     // during the loop iterations which may trigger allocations.
-    let _callback_guard = interp.guard_value(&callback);
-    let _this_arg_guard = interp.guard_value(&this_arg);
-    let _arr_guard = interp.guard_value(&this);
+    if let JsValue::Object(obj) = &callback {
+        guard.guard(obj.cheap_clone());
+    }
+    if let JsValue::Object(obj) = &this_arg {
+        guard.guard(obj.cheap_clone());
+    }
+    guard.guard(arr.cheap_clone());
 
     // Use array-like length with full ToLength coercion (works on both arrays and array-like objects)
     let length = get_array_like_length(interp, &arr)?;
@@ -360,12 +381,15 @@ pub fn array_filter(
             )?;
 
             if keep.to_boolean() {
+                // Guard the element to keep it alive until we create the result array.
+                if let JsValue::Object(obj) = &elem {
+                    guard.guard(obj.cheap_clone());
+                }
                 result.push(elem);
             }
         }
     }
 
-    let guard = interp.heap.create_guard();
     let arr = interp.create_array_from(&guard, result);
     Ok(Guarded::with_guard(JsValue::Object(arr), guard))
 }
@@ -1550,10 +1574,17 @@ pub fn array_flat_map(
 
     let this_arg = args.get(1).cloned().unwrap_or(JsValue::Undefined);
 
+    // Create a single guard that will protect all values throughout the function.
+    let guard = interp.heap.create_guard();
+
     // Guard values to prevent GC from collecting them during iterations
-    let _callback_guard = interp.guard_value(&callback);
-    let _this_arg_guard = interp.guard_value(&this_arg);
-    let _arr_guard = interp.guard_value(&this);
+    if let JsValue::Object(obj) = &callback {
+        guard.guard(obj.cheap_clone());
+    }
+    if let JsValue::Object(obj) = &this_arg {
+        guard.guard(obj.cheap_clone());
+    }
+    guard.guard(arr.cheap_clone());
 
     let length = arr
         .borrow()
@@ -1570,7 +1601,7 @@ pub fn array_flat_map(
 
         let Guarded {
             value: mapped,
-            guard: mapped_guard,
+            guard: _mapped_guard,
         } = interp.call_function(
             callback.clone(),
             this_arg.clone(),
@@ -1580,6 +1611,12 @@ pub fn array_flat_map(
         let is_array = if let JsValue::Object(ref inner) = mapped {
             let inner_ref = inner.borrow();
             if let Some(elements) = inner_ref.array_elements() {
+                // Guard each element being added to result
+                for el in elements.iter() {
+                    if let JsValue::Object(obj) = el {
+                        guard.guard(obj.cheap_clone());
+                    }
+                }
                 result.extend(elements.iter().cloned());
                 true
             } else {
@@ -1590,15 +1627,15 @@ pub fn array_flat_map(
             false
         };
 
-        // Now safe to drop guard since borrows are released
-        drop(mapped_guard);
-
         if !is_array {
+            // Guard the mapped value to keep it alive until we create the result array.
+            if let JsValue::Object(obj) = &mapped {
+                guard.guard(obj.cheap_clone());
+            }
             result.push(mapped);
         }
     }
 
-    let guard = interp.heap.create_guard();
     let arr = interp.create_array_from(&guard, result);
     Ok(Guarded::with_guard(JsValue::Object(arr), guard))
 }
