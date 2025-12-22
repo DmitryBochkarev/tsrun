@@ -173,6 +173,9 @@ pub fn create_array_constructor(interp: &mut Interpreter) -> JsObjectRef {
         .borrow_mut()
         .set_property(constructor_key, JsValue::Object(constructor.clone()));
 
+    // Add Symbol.species getter
+    interp.register_species_getter(&constructor);
+
     constructor
 }
 

@@ -30,6 +30,9 @@ pub fn create_regexp_constructor(interp: &mut Interpreter) -> Gc<JsObject> {
         .borrow_mut()
         .set_property(constructor_key, JsValue::Object(constructor.clone()));
 
+    // Add Symbol.species getter
+    interp.register_species_getter(&constructor);
+
     constructor
 }
 

@@ -42,6 +42,9 @@ pub fn init_map(interp: &mut Interpreter) {
         .borrow_mut()
         .set_property(constructor_key, JsValue::Object(constructor.clone()));
 
+    // Add Symbol.species getter
+    interp.register_species_getter(&constructor);
+
     // Register globally
     let map_key = PropertyKey::String(interp.intern("Map"));
     interp

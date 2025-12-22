@@ -39,6 +39,9 @@ pub fn init_set(interp: &mut Interpreter) {
         .borrow_mut()
         .set_property(constructor_key, JsValue::Object(constructor.clone()));
 
+    // Add Symbol.species getter
+    interp.register_species_getter(&constructor);
+
     // Register globally
     let set_key = PropertyKey::String(interp.intern("Set"));
     interp

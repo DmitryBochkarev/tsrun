@@ -1869,6 +1869,27 @@ impl Interpreter {
         obj.borrow_mut().define_property(key, prop);
     }
 
+    /// Register Symbol.species getter on a constructor.
+    /// Per ECMAScript spec, Symbol.species is a getter that returns `this`.
+    /// The property is non-enumerable and configurable.
+    pub fn register_species_getter(&mut self, constructor: &Gc<JsObject>) {
+        // Create the getter function that returns `this`
+        let getter = self.create_native_function("get [Symbol.species]", species_getter, 0);
+        self.root_guard.guard(getter.cheap_clone());
+
+        // Get the well-known Symbol.species
+        let well_known = builtins::symbol::get_well_known_symbols();
+        let species_symbol = JsSymbol::new(well_known.species, Some("Symbol.species".to_string()));
+        let species_key = PropertyKey::Symbol(Box::new(species_symbol));
+
+        // Create accessor property (no setter, non-enumerable, configurable)
+        let mut prop = Property::accessor(Some(getter), None);
+        prop.set_enumerable(false);
+        prop.set_configurable(true);
+
+        constructor.borrow_mut().define_property(species_key, prop);
+    }
+
     /// Guard a value to prevent it from being garbage collected.
     /// Returns Some(guard) if the value is an object, None otherwise.
     pub fn guard_value(&mut self, value: &JsValue) -> Option<Guard<JsObject>> {
@@ -7662,6 +7683,17 @@ fn add_initializer_impl(
     }
 
     Ok(Guarded::unguarded(JsValue::Undefined))
+}
+
+/// Native getter for Symbol.species that returns `this`.
+/// Per ECMAScript spec, Symbol.species getter returns the constructor itself.
+fn species_getter(
+    _interp: &mut Interpreter,
+    this: JsValue,
+    _args: &[JsValue],
+) -> Result<Guarded, JsError> {
+    // Symbol.species getter simply returns `this`
+    Ok(Guarded::unguarded(this))
 }
 
 #[cfg(test)]

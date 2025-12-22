@@ -46,6 +46,9 @@ pub fn create_promise_constructor(interp: &mut Interpreter) -> Gc<JsObject> {
     interp.register_method(&ctor, "allSettled", promise_allsettled, 1);
     interp.register_method(&ctor, "any", promise_any, 1);
 
+    // Add Symbol.species getter
+    interp.register_species_getter(&ctor);
+
     ctor
 }
 

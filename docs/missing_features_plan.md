@@ -249,20 +249,21 @@ For full compliance, we would need to track escape validity and only reject in u
 
 ---
 
-### 16. Symbol.species (Previously #15)
+### 16. Symbol.species ✅ PARTIALLY IMPLEMENTED (Previously #15)
 
-**Impact:** Subclassing built-ins (Array, Promise, Map, etc.).
-
-**Current Behavior:**
-```javascript
-Promise[Symbol.species];  // undefined (should be Promise)
-```
+**Status:** Partially implemented on 2025-12-22
 
 **Implementation:**
-1. Add `Symbol.species` getter to all built-in constructors
-2. Use in methods that create new instances (`map`, `filter`, `then`, etc.)
+- Added `register_species_getter()` helper to Interpreter
+- Added `Symbol.species` getter to Array, Promise, Map, Set, and RegExp constructors
+- The getter returns `this` per ECMAScript spec
+- Tests added: `test_array_symbol_species`, `test_promise_symbol_species`, `test_map_symbol_species`,
+  `test_set_symbol_species`, `test_regexp_symbol_species`, `test_symbol_species_is_symbol`
 
-**Estimated Complexity:** Medium - affects many builtin methods
+**Note:** Full spec compliance would require:
+- Modifying methods like `map`, `filter`, `slice`, `then` to use SpeciesConstructor
+- This allows subclasses to control which constructor is used for derived objects
+- Current implementation provides the getter, which is sufficient for most real-world use cases
 
 ---
 
@@ -300,7 +301,7 @@ Promise[Symbol.species];  // undefined (should be Promise)
 
 ### Phase 5: New APIs (P3)
 13. ~~**Map.groupBy/Object.groupBy** - New ES2024~~ ✅ DONE
-14. **Symbol.species** - Subclassing support
+14. ~~**Symbol.species** - Subclassing support~~ ✅ PARTIALLY DONE
 15. **JSON.isRawJSON** - New JSON API
 
 ---

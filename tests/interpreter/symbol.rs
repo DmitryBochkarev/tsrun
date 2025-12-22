@@ -352,3 +352,52 @@ fn test_iterator_close_not_called_on_normal_completion() {
         JsValue::Number(0.0)
     );
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Symbol.species Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_array_symbol_species() {
+    // Array[Symbol.species] should be Array
+    assert_eq!(
+        eval("Array[Symbol.species] === Array"),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_promise_symbol_species() {
+    // Promise[Symbol.species] should be Promise
+    assert_eq!(
+        eval("Promise[Symbol.species] === Promise"),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_map_symbol_species() {
+    // Map[Symbol.species] should be Map
+    assert_eq!(eval("Map[Symbol.species] === Map"), JsValue::Boolean(true));
+}
+
+#[test]
+fn test_set_symbol_species() {
+    // Set[Symbol.species] should be Set
+    assert_eq!(eval("Set[Symbol.species] === Set"), JsValue::Boolean(true));
+}
+
+#[test]
+fn test_regexp_symbol_species() {
+    // RegExp[Symbol.species] should be RegExp
+    assert_eq!(
+        eval("RegExp[Symbol.species] === RegExp"),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_symbol_species_is_symbol() {
+    // Symbol.species should be a symbol
+    assert_eq!(eval("typeof Symbol.species"), JsValue::from("symbol"));
+}
