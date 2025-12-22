@@ -844,6 +844,11 @@ impl Compiler {
     fn compile_break(&mut self, break_stmt: &BreakStatement) -> Result<(), JsError> {
         self.builder.set_span(break_stmt.span);
 
+        // Per ES spec, break has "empty" completion value, which UpdateEmpty converts to undefined
+        if self.track_completion {
+            self.builder.emit(Op::LoadUndefined { dst: 0 });
+        }
+
         let label = break_stmt.label.as_ref().map(|id| &id.name);
         self.add_break_jump(label)?;
 
@@ -853,6 +858,11 @@ impl Compiler {
     /// Compile a continue statement
     fn compile_continue(&mut self, continue_stmt: &ContinueStatement) -> Result<(), JsError> {
         self.builder.set_span(continue_stmt.span);
+
+        // Per ES spec, continue has "empty" completion value, which UpdateEmpty converts to undefined
+        if self.track_completion {
+            self.builder.emit(Op::LoadUndefined { dst: 0 });
+        }
 
         let label = continue_stmt.label.as_ref().map(|id| &id.name);
         self.add_continue_jump(label)?;
@@ -910,8 +920,13 @@ impl Compiler {
             }
 
             // Compile catch body
-            for stmt in handler.body.body.iter() {
-                self.compile_statement_impl(stmt)?;
+            if handler.body.body.is_empty() && self.track_completion {
+                // Empty catch block has completion value undefined
+                self.builder.emit(Op::LoadUndefined { dst: 0 });
+            } else {
+                for stmt in handler.body.body.iter() {
+                    self.compile_statement_impl(stmt)?;
+                }
             }
 
             // Pop scope

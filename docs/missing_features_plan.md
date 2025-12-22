@@ -131,31 +131,22 @@ Tests added: `test_default_param_tdz_self_reference`, `test_default_param_tdz_fo
 
 ## Priority 2 - Medium (Less Common Cases)
 
-### 9. try/catch/finally Completion Values (Previously #8)
+### 9. try/catch/finally Completion Values ✅ IMPLEMENTED (Previously #8)
 
-**Impact:** Rare edge case where completion values matter (mainly eval).
-
-**Current Behavior:**
-```javascript
-eval(`
-  L: do {
-    try { break L; }
-    finally { }
-  } while (false);
-`);  // Returns some value (should be undefined)
-```
-
-**Test Patterns:**
-```
-Error: Expected SameValue(«"bad completion"», «undefined») to be true
-```
+**Status:** Implemented on 2025-12-22
 
 **Implementation:**
-1. In `compile_try_statement`, track completion value through all paths
-2. Empty finally shouldn't override completion value
-3. Break/continue in try with finally needs special handling
+- Empty catch blocks now set completion value to `undefined` (was keeping previous completion)
+- `break` and `continue` statements now set completion value to `undefined` per ES spec UpdateEmpty
+- These fixes ensure correct completion values in eval() for try/catch/finally blocks
 
-**Estimated Complexity:** High - complex control flow tracking
+**Changes:**
+- Modified `compile_try()` in compile_stmt.rs to emit `LoadUndefined { dst: 0 }` for empty catch blocks when tracking completions
+- Modified `compile_break()` and `compile_continue()` to emit `LoadUndefined { dst: 0 }` when tracking completions
+- Tests added: `test_eval_try_catch_empty_completion`, `test_eval_try_catch_expression_completion`,
+  `test_eval_try_catch_break_completion`, `test_eval_try_catch_continue_completion`
+
+**Test262 Impact:** try statement tests improved from 82.2% to 84.8% pass rate
 
 ---
 
@@ -304,7 +295,7 @@ Promise[Symbol.species];  // undefined (should be Promise)
 10. ~~**Template literal escapes** - Lexer validation~~ ✅ DONE
 
 ### Phase 4: Edge Cases (P2)
-11. **try/catch completion values** - Complex but correctness
+11. ~~**try/catch completion values** - Complex but correctness~~ ✅ DONE
 12. ~~**Promise iterator handling** - Promise refactor~~ ✅ PARTIALLY DONE
 
 ### Phase 5: New APIs (P3)

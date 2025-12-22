@@ -714,6 +714,82 @@ fn test_eval_try_completion() {
     );
 }
 
+// ============================================================================
+// try/catch/finally completion value tests (matching test262 cptn-catch.js etc)
+// ============================================================================
+
+#[test]
+fn test_eval_try_catch_empty_completion() {
+    // Empty catch block should have undefined completion
+    // Per test262 cptn-catch.js:
+    // assert.sameValue(eval('1; try { throw null; } catch (err) { }'), undefined);
+    assert_eq!(
+        eval("eval('1; try { throw null; } catch (err) { }')"),
+        JsValue::Undefined
+    );
+}
+
+#[test]
+fn test_eval_try_catch_expression_completion() {
+    // Catch block with expression should have that value as completion
+    // Per test262 cptn-catch.js:
+    // assert.sameValue(eval('2; try { throw null; } catch (err) { 3; }'), 3);
+    assert_eq!(
+        eval("eval('2; try { throw null; } catch (err) { 3; }')"),
+        JsValue::Number(3.0)
+    );
+}
+
+#[test]
+fn test_eval_try_no_throw_completion() {
+    // If no throw, completion is from try block
+    assert_eq!(
+        eval("eval('try { 5 } catch(e) { 6 }')"),
+        JsValue::Number(5.0)
+    );
+}
+
+#[test]
+fn test_eval_try_finally_no_throw() {
+    // try-finally without throw: completion from try block
+    // (finally doesn't change completion unless it has abrupt completion)
+    assert_eq!(eval("eval('try { 5 } finally { }')"), JsValue::Number(5.0));
+}
+
+#[test]
+fn test_eval_try_catch_finally_completion() {
+    // try-catch-finally: catch completion should propagate
+    assert_eq!(
+        eval("eval('try { throw null; } catch(e) { 7 } finally { }')"),
+        JsValue::Number(7.0)
+    );
+}
+
+#[test]
+fn test_eval_try_catch_break_completion() {
+    // Per test262 cptn-catch-empty-break.js:
+    // When break happens inside catch block, completion should be undefined
+    // (not the completion from previous loop iteration)
+    assert_eq!(
+        eval(
+            r#"eval("for (var i = 0; i < 2; ++i) { if (i) { try { throw null; } catch (e) { break; } } 'bad completion'; }")"#
+        ),
+        JsValue::Undefined
+    );
+}
+
+#[test]
+fn test_eval_try_catch_continue_completion() {
+    // Similar to break, continue should also reset completion to undefined
+    // Per test262 cptn-catch-empty-continue.js
+    assert_eq!(
+        eval(
+            r#"eval("var last; for (var i = 0; i < 2; ++i) { if (i) { try { throw null; } catch (e) { last = i; continue; } } 'bad completion'; }")"#
+        ),
+        JsValue::Undefined
+    );
+}
+
 #[test]
 fn test_eval_block_completion() {
     // block completion value is from last statement
