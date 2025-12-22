@@ -6,9 +6,8 @@ use std::time::Instant;
 use rustc_hash::FxHashMap;
 
 use crate::error::JsError;
-use crate::gc::Gc;
 use crate::interpreter::Interpreter;
-use crate::value::{Guarded, JsObject, JsValue, PropertyKey};
+use crate::value::{Guarded, JsValue, PropertyKey};
 
 /// Format a JsValue for console output (strings without quotes)
 fn format_for_console(value: &JsValue) -> String {
@@ -60,39 +59,6 @@ pub fn init_console(interp: &mut Interpreter) {
         .global
         .borrow_mut()
         .set_property(console_key, JsValue::Object(console));
-}
-
-/// Create console object with log, error, warn, info, debug methods (for compatibility)
-pub fn create_console_object(interp: &mut Interpreter) -> Gc<JsObject> {
-    // Use root_guard for permanent global objects
-    let console = interp.root_guard.alloc();
-    console.borrow_mut().prototype = Some(interp.object_prototype.clone());
-
-    // Logging methods
-    interp.register_method(&console, "log", console_log, 0);
-    interp.register_method(&console, "error", console_error, 0);
-    interp.register_method(&console, "warn", console_warn, 0);
-    interp.register_method(&console, "info", console_info, 0);
-    interp.register_method(&console, "debug", console_debug, 0);
-
-    // Display methods
-    interp.register_method(&console, "table", console_table, 1);
-    interp.register_method(&console, "dir", console_dir, 1);
-
-    // Timing methods
-    interp.register_method(&console, "time", console_time, 1);
-    interp.register_method(&console, "timeEnd", console_time_end, 1);
-
-    // Counting methods
-    interp.register_method(&console, "count", console_count, 1);
-    interp.register_method(&console, "countReset", console_count_reset, 1);
-
-    // Other methods
-    interp.register_method(&console, "clear", console_clear, 0);
-    interp.register_method(&console, "group", console_group, 0);
-    interp.register_method(&console, "groupEnd", console_group_end, 0);
-
-    console
 }
 
 pub fn console_log(
