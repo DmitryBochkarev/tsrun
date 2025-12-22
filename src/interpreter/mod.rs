@@ -3137,8 +3137,10 @@ impl Interpreter {
         };
 
         // Create the generator object
+        // FIXME: pass guard
         let gen_obj = builtins::generator::create_bytecode_generator_object(self, state);
 
+        // FIXME: return guarded
         Ok(Guarded::unguarded(JsValue::Object(gen_obj)))
     }
 
