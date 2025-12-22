@@ -88,7 +88,14 @@ impl<'a> Parser<'a> {
         if self.check(&TokenKind::At) {
             let decorators = self.parse_decorators()?;
             // After decorators, we expect a class declaration (or export)
-            if self.check(&TokenKind::Class) {
+            // Also handle: @decorator abstract class Foo {}
+            if self.check(&TokenKind::Abstract) {
+                self.advance(); // consume 'abstract'
+                let mut class_decl = self.parse_class_declaration()?;
+                class_decl.abstract_ = true;
+                class_decl.decorators = decorators;
+                return Ok(Statement::ClassDeclaration(class_decl));
+            } else if self.check(&TokenKind::Class) {
                 let mut class_decl = self.parse_class_declaration()?;
                 class_decl.decorators = decorators;
                 return Ok(Statement::ClassDeclaration(class_decl));
@@ -110,6 +117,14 @@ impl<'a> Parser<'a> {
                     self.current.span.column,
                 ));
             }
+        }
+
+        // Handle abstract class without decorators
+        if self.check(&TokenKind::Abstract) {
+            self.advance(); // consume 'abstract'
+            let mut class_decl = self.parse_class_declaration()?;
+            class_decl.abstract_ = true;
+            return Ok(Statement::ClassDeclaration(class_decl));
         }
 
         // Check for labeled statement first (identifier followed by colon)
@@ -653,6 +668,9 @@ impl<'a> Parser<'a> {
             return Ok(ClassMember::StaticBlock(block));
         }
 
+        // Parse abstract modifier (TypeScript)
+        let is_abstract = self.match_token(&TokenKind::Abstract);
+
         let accessibility = self.parse_accessibility();
         let readonly = self.match_token(&TokenKind::Readonly);
         let accessor = self.match_token(&TokenKind::Accessor);
@@ -696,7 +714,18 @@ impl<'a> Parser<'a> {
             let type_params = self.parse_optional_type_parameters()?;
             let params: Rc<[_]> = self.parse_function_params()?.into();
             let return_type = self.parse_optional_return_type()?;
-            let body = Rc::new(self.parse_block_statement()?);
+
+            // Abstract methods have no body - just a semicolon
+            let body = if is_abstract {
+                self.expect_semicolon()?;
+                // Create empty body for abstract methods (they're never called at runtime)
+                Rc::new(BlockStatement {
+                    body: Rc::from([]),
+                    span: self.span_from(start),
+                })
+            } else {
+                Rc::new(self.parse_block_statement()?)
+            };
 
             let value = FunctionExpression {
                 id: None,
