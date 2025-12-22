@@ -14,6 +14,8 @@ pub fn init_json(interp: &mut Interpreter) {
 
     interp.register_method(&json, "stringify", json_stringify, 3);
     interp.register_method(&json, "parse", json_parse, 2);
+    interp.register_method(&json, "rawJSON", json_raw_json, 1);
+    interp.register_method(&json, "isRawJSON", json_is_raw_json, 1);
 
     let json_key = PropertyKey::String(interp.intern("JSON"));
     interp
@@ -267,6 +269,12 @@ fn js_value_to_json_with_visited(
                             // String wrapper objects serialize as their primitive value
                             serde_json::Value::String(s.to_string())
                         }
+                        ExoticObject::RawJSON(raw) => {
+                            // RawJSON objects are serialized as their raw JSON value
+                            // We already validated the JSON when creating the RawJSON object,
+                            // so this parse should never fail
+                            serde_json::from_str(raw.as_str()).unwrap_or(serde_json::Value::Null)
+                        }
                     }
                 }
             };
@@ -321,4 +329,60 @@ pub fn json_to_js_value_with_interp(
     // Create a temporary guard - caller should guard the result if needed
     let guard = interp.heap.create_guard();
     json_to_js_value_with_guard(interp, json, &guard)
+}
+
+/// JSON.rawJSON(string) - Creates a raw JSON object
+///
+/// The raw JSON object contains a JSON string that will be inserted literally
+/// when passed to JSON.stringify, without additional escaping or conversion.
+/// This is useful for inserting pre-serialized JSON.
+pub fn json_raw_json(
+    interp: &mut Interpreter,
+    _this: JsValue,
+    args: &[JsValue],
+) -> Result<Guarded, JsError> {
+    let value = args.first().cloned().unwrap_or(JsValue::Undefined);
+
+    // Per spec: must be a string
+    let JsValue::String(json_string) = value else {
+        return Err(JsError::type_error(
+            "JSON.rawJSON argument must be a string".to_string(),
+        ));
+    };
+
+    // Per spec: must be valid JSON (parse it to verify)
+    let json_str = json_string.as_str();
+    serde_json::from_str::<serde_json::Value>(json_str)
+        .map_err(|e| JsError::syntax_error(format!("JSON.rawJSON: invalid JSON: {}", e), 0, 0))?;
+
+    // Create a RawJSON exotic object
+    let guard = interp.heap.create_guard();
+    let obj = interp.create_object(&guard);
+    {
+        let mut obj_ref = obj.borrow_mut();
+        obj_ref.exotic = ExoticObject::RawJSON(json_string);
+        // RawJSON objects have null prototype per spec
+        obj_ref.prototype = None;
+        obj_ref.null_prototype = true;
+    }
+
+    Ok(Guarded::with_guard(JsValue::Object(obj), guard))
+}
+
+/// JSON.isRawJSON(value) - Checks if a value is a raw JSON object
+///
+/// Returns true if the value was created by JSON.rawJSON.
+pub fn json_is_raw_json(
+    _interp: &mut Interpreter,
+    _this: JsValue,
+    args: &[JsValue],
+) -> Result<Guarded, JsError> {
+    let value = args.first().cloned().unwrap_or(JsValue::Undefined);
+
+    let is_raw_json = match value {
+        JsValue::Object(obj) => matches!(obj.borrow().exotic, ExoticObject::RawJSON(_)),
+        _ => false,
+    };
+
+    Ok(Guarded::unguarded(JsValue::Boolean(is_raw_json)))
 }

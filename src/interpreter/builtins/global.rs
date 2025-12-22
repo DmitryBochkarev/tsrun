@@ -961,6 +961,21 @@ fn clone_object(
         ExoticObject::Proxy(_) => Err(JsError::type_error(
             "Proxy cannot be cloned with structuredClone",
         )),
+
+        // RawJSON - clone the raw JSON string
+        ExoticObject::RawJSON(raw) => {
+            let raw_clone = raw.cheap_clone();
+            drop(obj_ref);
+
+            let raw_obj = interp.create_object(guard);
+            {
+                let mut raw_ref = raw_obj.borrow_mut();
+                raw_ref.exotic = ExoticObject::RawJSON(raw_clone);
+                raw_ref.prototype = None;
+                raw_ref.null_prototype = true;
+            }
+            Ok(JsValue::Object(raw_obj))
+        }
     }
 }
 

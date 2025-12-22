@@ -539,6 +539,7 @@ impl fmt::Debug for JsValue {
                     ExoticObject::Boolean(b) => write!(f, "[Boolean: {}]", b),
                     ExoticObject::Number(n) => write!(f, "[Number: {}]", n),
                     ExoticObject::StringObj(s) => write!(f, "[String: \"{}\"]", s),
+                    ExoticObject::RawJSON(raw) => write!(f, "[RawJSON: {}]", raw),
                 }
             }
         }
@@ -1031,7 +1032,8 @@ impl Traceable for JsObject {
             | ExoticObject::Enum(_)
             | ExoticObject::Boolean(_)
             | ExoticObject::Number(_)
-            | ExoticObject::StringObj(_) => {
+            | ExoticObject::StringObj(_)
+            | ExoticObject::RawJSON(_) => {
                 // These exotic types don't contain object references that need tracing
             }
             ExoticObject::Proxy(proxy_data) => {
@@ -2337,6 +2339,8 @@ pub enum ExoticObject {
     Enum(EnumData),
     /// Proxy exotic object - wraps target with handler traps
     Proxy(ProxyData),
+    /// Raw JSON exotic object - stores a JSON string for literal insertion in JSON.stringify
+    RawJSON(JsString),
 }
 
 /// Proxy internal state

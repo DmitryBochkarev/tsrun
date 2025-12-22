@@ -224,13 +224,21 @@ For full compliance, we would need to track escape validity and only reject in u
 
 ---
 
-### 14. JSON.isRawJSON (Previously #13)
+### 14. JSON.rawJSON and JSON.isRawJSON ✅ IMPLEMENTED (Previously #13)
 
-**Impact:** New ES2024 API for raw JSON handling.
+**Status:** Implemented on 2025-12-22
 
-**Implementation:** Add `json_is_raw_json()` and `JSON.rawJSON()` support.
-
-**Estimated Complexity:** Medium - new JSON functionality
+**Implementation:**
+- Added `ExoticObject::RawJSON(JsString)` variant for storing raw JSON strings
+- Added `JSON.rawJSON(string)` - creates a raw JSON object from a valid JSON string
+- Added `JSON.isRawJSON(value)` - returns true if value is a raw JSON object
+- Modified `json_stringify` to serialize RawJSON objects by parsing and inserting them literally
+- RawJSON objects have null prototype per ES2024 spec
+- Tests added: `test_json_raw_json_basic`, `test_json_is_raw_json_false_for_regular_objects`,
+  `test_json_stringify_with_raw_json_number`, `test_json_stringify_with_raw_json_object`,
+  `test_json_stringify_with_raw_json_array`, `test_json_stringify_with_raw_json_string`,
+  `test_json_raw_json_must_be_valid_json`, `test_json_raw_json_requires_string_argument`,
+  `test_json_raw_json_null_prototype`
 
 ---
 
@@ -302,7 +310,7 @@ For full compliance, we would need to track escape validity and only reject in u
 ### Phase 5: New APIs (P3)
 13. ~~**Map.groupBy/Object.groupBy** - New ES2024~~ ✅ DONE
 14. ~~**Symbol.species** - Subclassing support~~ ✅ PARTIALLY DONE
-15. **JSON.isRawJSON** - New JSON API
+15. ~~**JSON.rawJSON/isRawJSON** - New JSON API~~ ✅ DONE
 
 ---
 

@@ -747,6 +747,7 @@ pub fn object_to_string(
                 ExoticObject::Boolean(_) => "Boolean",
                 ExoticObject::Number(_) => "Number",
                 ExoticObject::StringObj(_) => "String",
+                ExoticObject::RawJSON(_) => "Object", // RawJSON objects are ordinary objects
             }
         }
     };
