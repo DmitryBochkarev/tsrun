@@ -235,11 +235,8 @@ pub fn eval_code_in_scope_with_this(
     // but can still read from it via the scope chain
     let eval_scope = interp.push_scope();
 
-    // Hoist var declarations in the eval scope
-    // This ensures `var` declarations are visible throughout the eval code
-    interp.hoist_var_declarations(&program.body);
-
     // Execute the program with completion value tracking for proper eval semantics
+    // Note: Var hoisting is handled by the bytecode compiler in compile_program_for_eval
     let result = interp.execute_program_for_eval_with_this(&program, this_value);
 
     // Pop the eval scope

@@ -8,7 +8,7 @@ pub mod builtins;
 // Bytecode virtual machine
 pub mod bytecode_vm;
 
-use crate::ast::{ForInOfLeft, ForInit, ImportSpecifier, ObjectPatternProperty, Pattern, Program, Statement, VariableKind};
+use crate::ast::{ImportSpecifier, Program, Statement};
 use crate::error::JsError;
 use crate::gc::{Gc, Guard, Heap};
 use crate::parser::Parser;
@@ -3333,139 +3333,6 @@ impl Interpreter {
         }
 
         Ok(Some(values))
-    }
-
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // Var Hoisting
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    /// Hoist var declarations to the current scope (function-scoped hoisting)
-    /// This defines all var-declared variables as undefined before execution
-    fn hoist_var_declarations(&mut self, statements: &[Statement]) {
-        for stmt in statements {
-            self.hoist_var_in_statement(stmt);
-        }
-    }
-
-    fn hoist_var_in_statement(&mut self, stmt: &Statement) {
-        match stmt {
-            Statement::VariableDeclaration(decl) if decl.kind == VariableKind::Var => {
-                for declarator in decl.declarations.iter() {
-                    self.hoist_pattern_names(&declarator.id);
-                }
-            }
-            Statement::Block(block) => {
-                // Var declarations inside blocks are still hoisted to function scope
-                self.hoist_var_declarations(&block.body);
-            }
-            Statement::If(if_stmt) => {
-                self.hoist_var_in_statement(&if_stmt.consequent);
-                if let Some(alt) = &if_stmt.alternate {
-                    self.hoist_var_in_statement(alt);
-                }
-            }
-            Statement::For(for_stmt) => {
-                if let Some(ForInit::Variable(decl)) = &for_stmt.init {
-                    if decl.kind == VariableKind::Var {
-                        for declarator in decl.declarations.iter() {
-                            self.hoist_pattern_names(&declarator.id);
-                        }
-                    }
-                }
-                self.hoist_var_in_statement(&for_stmt.body);
-            }
-            Statement::ForIn(for_in) => {
-                if let ForInOfLeft::Variable(decl) = &for_in.left {
-                    if decl.kind == VariableKind::Var {
-                        for declarator in decl.declarations.iter() {
-                            self.hoist_pattern_names(&declarator.id);
-                        }
-                    }
-                }
-                self.hoist_var_in_statement(&for_in.body);
-            }
-            Statement::ForOf(for_of) => {
-                if let ForInOfLeft::Variable(decl) = &for_of.left {
-                    if decl.kind == VariableKind::Var {
-                        for declarator in decl.declarations.iter() {
-                            self.hoist_pattern_names(&declarator.id);
-                        }
-                    }
-                }
-                self.hoist_var_in_statement(&for_of.body);
-            }
-            Statement::While(while_stmt) => {
-                self.hoist_var_in_statement(&while_stmt.body);
-            }
-            Statement::DoWhile(do_while) => {
-                self.hoist_var_in_statement(&do_while.body);
-            }
-            Statement::Try(try_stmt) => {
-                self.hoist_var_declarations(&try_stmt.block.body);
-                if let Some(catch) = &try_stmt.handler {
-                    self.hoist_var_declarations(&catch.body.body);
-                }
-                if let Some(finally) = &try_stmt.finalizer {
-                    self.hoist_var_declarations(&finally.body);
-                }
-            }
-            Statement::Switch(switch_stmt) => {
-                for case in switch_stmt.cases.iter() {
-                    self.hoist_var_declarations(&case.consequent);
-                }
-            }
-            Statement::Labeled(labeled) => {
-                self.hoist_var_in_statement(&labeled.body);
-            }
-            _ => {}
-        }
-    }
-
-    /// Extract variable names from a pattern and define them as undefined (hoisted)
-    fn hoist_pattern_names(&mut self, pattern: &Pattern) {
-        match pattern {
-            Pattern::Identifier(id) => {
-                // Only hoist if not already defined in this scope
-                if !self.env_has_own_binding(&id.name) {
-                    self.env_define(id.name.cheap_clone(), JsValue::Undefined, true);
-                }
-            }
-            Pattern::Object(obj_pat) => {
-                for prop in &obj_pat.properties {
-                    match prop {
-                        ObjectPatternProperty::KeyValue { value, .. } => {
-                            self.hoist_pattern_names(value);
-                        }
-                        ObjectPatternProperty::Rest(rest) => {
-                            self.hoist_pattern_names(&rest.argument);
-                        }
-                    }
-                }
-            }
-            Pattern::Array(arr_pat) => {
-                for pat in arr_pat.elements.iter().flatten() {
-                    self.hoist_pattern_names(pat);
-                }
-            }
-            Pattern::Rest(rest) => {
-                self.hoist_pattern_names(&rest.argument);
-            }
-            Pattern::Assignment(assign) => {
-                self.hoist_pattern_names(&assign.left);
-            }
-        }
-    }
-
-    /// Check if a binding exists in the current scope (not parent scopes)
-    fn env_has_own_binding(&self, name: &JsString) -> bool {
-        let env_ref = self.env.borrow();
-        if let Some(data) = env_ref.as_environment() {
-            let key = VarKey(name.cheap_clone());
-            data.bindings.contains_key(&key)
-        } else {
-            false
-        }
     }
 }
 
