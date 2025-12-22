@@ -3212,6 +3212,28 @@ impl<'a> Parser<'a> {
                 Ok(ty)
             }
 
+            // infer keyword: infer R
+            TokenKind::Infer => {
+                self.advance();
+                // Parse the type parameter name
+                let name = self.parse_identifier()?;
+                // Optional constraint: infer R extends SomeType
+                let constraint = if self.match_token(&TokenKind::Extends) {
+                    Some(Box::new(self.parse_primary_type()?))
+                } else {
+                    None
+                };
+                Ok(TypeAnnotation::Infer(InferType {
+                    type_parameter: TypeParameter {
+                        name,
+                        constraint,
+                        default: None,
+                        span: self.span_from(start),
+                    },
+                    span: self.span_from(start),
+                }))
+            }
+
             // Type keywords
             TokenKind::Any => {
                 self.advance();

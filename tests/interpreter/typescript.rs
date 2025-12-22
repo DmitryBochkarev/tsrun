@@ -1019,6 +1019,62 @@ fn test_conditional_types() {
 }
 
 #[test]
+fn test_infer_rest_params() {
+    // Test parsing rest parameters with array type in function type
+    assert_eq!(
+        eval(
+            r#"
+            type Fn = (...args: any[]) => void;
+            42
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+#[test]
+fn test_infer_simple_func_return() {
+    // Test simple function type return
+    assert_eq!(
+        eval(
+            r#"
+            type Fn = () => number;
+            42
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+#[test]
+fn test_infer_func_return_infer() {
+    // Test function type with infer in return
+    assert_eq!(
+        eval(
+            r#"
+            type Fn = () => infer R;
+            42
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+#[test]
+fn test_infer_conditional_with_func() {
+    // Test conditional type with function type on the left of extends
+    assert_eq!(
+        eval(
+            r#"
+            type ReturnType<T> = T extends () => infer R ? R : never;
+            42
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+#[test]
 fn test_infer_keyword() {
     assert_eq!(
         eval(
