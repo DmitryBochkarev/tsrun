@@ -163,7 +163,6 @@ pub struct Interpreter {
     internal_modules: FxHashMap<String, crate::InternalModule>,
 
     /// Instantiated internal module objects (cached after first import)
-    #[allow(dead_code)] // Used for future ES module implementation
     internal_module_cache: FxHashMap<String, Gc<JsObject>>,
 
     /// Loaded external modules (normalized path -> module namespace)
@@ -2366,7 +2365,6 @@ impl Interpreter {
     }
 
     /// Resolve an internal module (creates module object on first access)
-    #[allow(dead_code)] // Used for future ES module implementation
     fn resolve_internal_module(
         &mut self,
         specifier: &str,
@@ -2412,7 +2410,6 @@ impl Interpreter {
     }
 
     /// Create module object from native exports
-    #[allow(dead_code)] // Used for future ES module implementation
     fn create_native_module_object(
         &mut self,
         guard: &Guard<JsObject>,
@@ -2441,7 +2438,6 @@ impl Interpreter {
 
     /// Create module object from TypeScript source
     // FIXME: move up to other source parsing code?
-    #[allow(dead_code)] // Used for future ES module implementation
     fn create_source_module_object(
         &mut self,
         guard: &Guard<JsObject>,
@@ -2553,7 +2549,6 @@ impl Interpreter {
     }
 
     /// Create a function from an InternalFn
-    #[allow(dead_code)] // Used for future ES module implementation
     fn create_internal_function(
         &mut self,
         name: &str,
