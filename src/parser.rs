@@ -1980,7 +1980,20 @@ impl<'a> Parser<'a> {
         let optional_chain_start = start;
 
         loop {
-            if self.check(&TokenKind::LParen) {
+            // Check for call with either ( or < (type arguments)
+            if self.check(&TokenKind::LParen) || self.check(&TokenKind::Lt) {
+                // Try to parse as call with type arguments
+                // Use checkpoint in case < is actually a comparison
+                if self.check(&TokenKind::Lt) {
+                    if let Some(call_expr) =
+                        self.try_parse_call_with_type_args(expr.clone(), start)?
+                    {
+                        expr = call_expr;
+                        continue;
+                    }
+                    // Not a call with type args, fall through to break
+                    break;
+                }
                 let (arguments, type_arguments) = self.parse_call_arguments()?;
                 let span = self.span_from(start);
                 expr = Expression::Call(CallExpression {
@@ -2990,6 +3003,87 @@ impl<'a> Parser<'a> {
             expressions,
             span,
         }))
+    }
+
+    /// Try to parse a call expression with type arguments: fn<T>(args)
+    /// Returns None if the < is not actually type arguments (e.g., comparison)
+    fn try_parse_call_with_type_args(
+        &mut self,
+        callee: Expression,
+        start: Span,
+    ) -> Result<Option<Expression>, JsError> {
+        // Save state for backtracking
+        let checkpoint = self.lexer.checkpoint();
+        let saved_current = self.current.clone();
+        let saved_previous = self.previous.clone();
+
+        // Try to parse type arguments
+        let type_args = match self.parse_type_arguments() {
+            Ok(args) => args,
+            Err(_) => {
+                // Not valid type arguments, restore and return None
+                self.lexer.restore(checkpoint);
+                self.current = saved_current;
+                self.previous = saved_previous;
+                return Ok(None);
+            }
+        };
+
+        // Must be followed by ( for a call
+        if !self.check(&TokenKind::LParen) {
+            // Not a call, restore and return None
+            self.lexer.restore(checkpoint);
+            self.current = saved_current;
+            self.previous = saved_previous;
+            return Ok(None);
+        }
+
+        // Parse the call arguments (without type args since we already parsed them)
+        self.advance(); // consume (
+        let mut arguments = vec![];
+
+        while !self.check(&TokenKind::RParen) && !self.is_at_end() {
+            if self.match_token(&TokenKind::DotDotDot) {
+                let arg_start = self.current.span;
+                let argument = Rc::new(self.parse_assignment_expression()?);
+                let span = self.span_from(arg_start);
+                arguments.push(Argument::Spread(SpreadElement { argument, span }));
+            } else {
+                arguments.push(Argument::Expression(self.parse_assignment_expression()?));
+            }
+
+            if !self.match_token(&TokenKind::Comma) {
+                break;
+            }
+        }
+
+        self.require_token(&TokenKind::RParen)?;
+
+        let span = self.span_from(start);
+        Ok(Some(Expression::Call(CallExpression {
+            callee: Rc::new(callee),
+            arguments,
+            type_arguments: Some(type_args),
+            optional: false,
+            span,
+        })))
+    }
+
+    /// Parse type arguments: <T, U, V>
+    /// This is the non-optional version that returns an error if parsing fails
+    fn parse_type_arguments(&mut self) -> Result<TypeArguments, JsError> {
+        self.require_token(&TokenKind::Lt)?;
+        let mut types = vec![self.parse_type_annotation()?];
+
+        while self.match_token(&TokenKind::Comma) {
+            types.push(self.parse_type_annotation()?);
+        }
+
+        self.require_token(&TokenKind::Gt)?;
+        Ok(TypeArguments {
+            params: types,
+            span: Span::default(),
+        })
     }
 
     fn parse_call_arguments(&mut self) -> Result<(Vec<Argument>, Option<TypeArguments>), JsError> {
