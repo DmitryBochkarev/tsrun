@@ -2081,13 +2081,20 @@ impl<'a> Parser<'a> {
 
         // TypeScript type assertion (as)
         if self.match_token(&TokenKind::As) {
-            let type_annotation = self.parse_type_annotation()?;
-            let span = self.span_from(start);
-            expr = Expression::TypeAssertion(TypeAssertionExpression {
-                expression: Rc::new(expr),
-                type_annotation,
-                span,
-            });
+            // Handle "as const" - const assertion (TypeScript 3.4+)
+            // This is a compile-time feature; at runtime we just return the value unchanged
+            if self.match_token(&TokenKind::Const) {
+                // "as const" is a no-op at runtime - the value stays the same
+                // Just continue without wrapping in TypeAssertion
+            } else {
+                let type_annotation = self.parse_type_annotation()?;
+                let span = self.span_from(start);
+                expr = Expression::TypeAssertion(TypeAssertionExpression {
+                    expression: Rc::new(expr),
+                    type_annotation,
+                    span,
+                });
+            }
         }
 
         Ok(expr)
