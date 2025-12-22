@@ -15,6 +15,10 @@ pub struct Parser<'a> {
     lexer: Lexer<'a>,
     current: Token,
     previous: Token,
+    /// When true, 'in' is not treated as a binary operator.
+    /// This is used in for-loop init expressions where 'in' separates
+    /// the variable from the iterable (for x in obj).
+    no_in: bool,
 }
 
 impl<'a> Parser<'a> {
@@ -25,6 +29,7 @@ impl<'a> Parser<'a> {
             lexer,
             current,
             previous: Token::eof(0, 1, 1),
+            no_in: false,
         }
     }
 
@@ -924,7 +929,11 @@ impl<'a> Parser<'a> {
                 span: self.span_from(decl_start),
             }))
         } else {
-            let expr = self.parse_expression()?;
+            // Parse expression with no_in=true to allow 'in' as for-in separator
+            self.no_in = true;
+            let expr = self.parse_expression();
+            self.no_in = false;
+            let expr = expr?;
 
             // Check for for-in or for-of
             if self.check(&TokenKind::In) || self.check(&TokenKind::Of) {
@@ -3973,7 +3982,7 @@ impl<'a> Parser<'a> {
             TokenKind::LtEq => Some((BinaryOp::LtEq, 10, false)),
             TokenKind::Gt => Some((BinaryOp::Gt, 10, false)),
             TokenKind::GtEq => Some((BinaryOp::GtEq, 10, false)),
-            TokenKind::In => Some((BinaryOp::In, 10, false)),
+            TokenKind::In if !self.no_in => Some((BinaryOp::In, 10, false)),
             TokenKind::Instanceof => Some((BinaryOp::Instanceof, 10, false)),
             TokenKind::LtLt => Some((BinaryOp::LShift, 11, false)),
             TokenKind::GtGt => Some((BinaryOp::RShift, 11, false)),

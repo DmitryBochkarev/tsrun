@@ -715,6 +715,66 @@ fn test_for_var_hoisting_in_function() {
 // For-In Loops
 // -----------------------------------------------------------------------------
 
+// Test for-in with pre-declared variable (no let/const/var in for-in)
+#[test]
+fn test_for_in_with_predeclared_var() {
+    // This is valid JavaScript: the variable is declared before the loop
+    assert_eq!(
+        eval(
+            r#"
+            let x: string = "";
+            let obj: any = { a: 1, b: 2 };
+            for (x in obj) {
+                // x is assigned each key
+            }
+            x !== ""  // x should have been assigned
+        "#
+        ),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_for_in_with_predeclared_var_accumulate() {
+    // Accumulate keys using pre-declared variable
+    assert_eq!(
+        eval(
+            r#"
+            let key: string = "";
+            let keys: string[] = [];
+            let obj: any = { a: 1, b: 2, c: 3 };
+            for (key in obj) {
+                keys.push(key);
+            }
+            keys.length
+        "#
+        ),
+        JsValue::Number(3.0)
+    );
+}
+
+#[test]
+fn test_for_of_with_predeclared_var() {
+    // for-of with pre-declared variable
+    assert_eq!(
+        eval(
+            r#"
+            let sum: number = 0;
+            let item: number = 0;
+            let arr: number[] = [1, 2, 3, 4, 5];
+            for (item of arr) {
+                sum = sum + item;
+            }
+            sum
+        "#
+        ),
+        JsValue::Number(15.0)
+    );
+}
+
+// Note: for-in with member expression (e.g., for (obj.key in source)) is
+// not supported - member expressions are not valid destructuring targets.
+
 #[test]
 fn test_for_in_object_keys() {
     assert_eq!(

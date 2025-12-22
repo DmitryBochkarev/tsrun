@@ -109,9 +109,23 @@ Tests added: `test_default_param_tdz_self_reference`, `test_default_param_tdz_fo
 
 ---
 
+### 8. For-in/For-of with Pre-declared Variables ✅ IMPLEMENTED
+
+**Status:** Implemented on 2025-12-22
+
+**Implementation:**
+- Added `no_in` flag to Parser struct to control whether `in` is treated as a binary operator
+- When parsing for-loop init expressions, set `no_in = true` to allow `for (x in obj)` syntax
+- This enables `for (existingVar in object)` and `for (existingVar of iterable)` patterns
+- Tests added: `test_for_in_with_predeclared_var`, `test_for_in_with_predeclared_var_accumulate`, `test_for_of_with_predeclared_var`
+
+**Note:** Member expressions in for-in left-hand side (e.g., `for (obj.key in source)`) are not supported.
+
+---
+
 ## Priority 2 - Medium (Less Common Cases)
 
-### 8. try/catch/finally Completion Values
+### 9. try/catch/finally Completion Values (Previously #8)
 
 **Impact:** Rare edge case where completion values matter (mainly eval).
 
@@ -139,7 +153,7 @@ Error: Expected SameValue(«"bad completion"», «undefined») to be true
 
 ---
 
-### 9. Promise.all/race Iterator Handling ✅ PARTIALLY IMPLEMENTED
+### 10. Promise.all/race Iterator Handling ✅ PARTIALLY IMPLEMENTED (Previously #9)
 
 **Status:** Partially implemented on 2025-12-22.
 
@@ -158,7 +172,7 @@ These are edge cases that rarely affect real-world code.
 
 ---
 
-### 10. Strict Mode Parse-Time Errors ✅ IMPLEMENTED
+### 11. Strict Mode Parse-Time Errors ✅ IMPLEMENTED (Previously #10)
 
 **Status:** Already implemented. Verified on 2025-12-21.
 
@@ -179,7 +193,7 @@ Tests in `tests/interpreter/strict.rs`:
 
 ---
 
-### 11. Template Literal Invalid Escapes ✅ IMPLEMENTED
+### 12. Template Literal Invalid Escapes ✅ IMPLEMENTED (Previously #11)
 
 **Status:** Implemented on 2025-12-21
 
@@ -197,7 +211,7 @@ For full compliance, we would need to track escape validity and only reject in u
 
 ## Priority 3 - Low (New APIs / Rare Cases)
 
-### 12. Map.groupBy / Object.groupBy ✅ IMPLEMENTED
+### 13. Map.groupBy / Object.groupBy ✅ IMPLEMENTED (Previously #12)
 
 **Status:** Implemented on 2025-12-22
 
@@ -213,7 +227,7 @@ For full compliance, we would need to track escape validity and only reject in u
 
 ---
 
-### 13. JSON.isRawJSON
+### 14. JSON.isRawJSON (Previously #13)
 
 **Impact:** New ES2024 API for raw JSON handling.
 
@@ -223,7 +237,7 @@ For full compliance, we would need to track escape validity and only reject in u
 
 ---
 
-### 14. String.prototype.at Surrogate Handling
+### 15. String.prototype.at Surrogate Handling (Previously #14)
 
 **Impact:** Unicode surrogate pair handling in `at()`.
 
@@ -238,7 +252,7 @@ For full compliance, we would need to track escape validity and only reject in u
 
 ---
 
-### 15. Symbol.species
+### 16. Symbol.species (Previously #15)
 
 **Impact:** Subclassing built-ins (Array, Promise, Map, etc.).
 
@@ -255,7 +269,7 @@ Promise[Symbol.species];  // undefined (should be Promise)
 
 ---
 
-### 16. Symbol.unscopables
+### 17. Symbol.unscopables (Previously #16)
 
 **Impact:** Only affects `with` statement (deprecated).
 
@@ -279,17 +293,18 @@ Promise[Symbol.species];  // undefined (should be Promise)
 
 ### Phase 3: Parser Improvements (P1-P2)
 7. ~~**Unicode escapes in identifiers** - Lexer refactor~~ ✅ DONE
-8. ~~**Strict mode parse errors** - Parser awareness~~ ✅ ALREADY IMPLEMENTED
-9. ~~**Template literal escapes** - Lexer validation~~ ✅ DONE
+8. ~~**For-in/for-of with pre-declared variables** - Parser fix~~ ✅ DONE
+9. ~~**Strict mode parse errors** - Parser awareness~~ ✅ ALREADY IMPLEMENTED
+10. ~~**Template literal escapes** - Lexer validation~~ ✅ DONE
 
 ### Phase 4: Edge Cases (P2)
-10. **try/catch completion values** - Complex but correctness
-11. ~~**Promise iterator handling** - Promise refactor~~ ✅ PARTIALLY DONE
+11. **try/catch completion values** - Complex but correctness
+12. ~~**Promise iterator handling** - Promise refactor~~ ✅ PARTIALLY DONE
 
 ### Phase 5: New APIs (P3)
-12. ~~**Map.groupBy/Object.groupBy** - New ES2024~~ ✅ DONE
-13. **Symbol.species** - Subclassing support
-14. **JSON.isRawJSON** - New JSON API
+13. ~~**Map.groupBy/Object.groupBy** - New ES2024~~ ✅ DONE
+14. **Symbol.species** - Subclassing support
+15. **JSON.isRawJSON** - New JSON API
 
 ---
 
