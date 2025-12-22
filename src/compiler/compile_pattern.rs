@@ -257,11 +257,15 @@ impl Compiler {
         let result_reg = self.builder.alloc_register()?;
         let elem_value = self.builder.alloc_register()?;
 
+        // Track if iterator is exhausted (by rest pattern)
+        let mut iterator_exhausted = false;
+
         for (i, elem) in arr_pat.elements.iter().enumerate() {
             if let Some(pattern) = elem {
                 // Check for rest pattern
                 if let Pattern::Rest(rest) = pattern {
                     // Collect remaining elements into an array
+                    // This exhausts the iterator, so no need to close it
                     let rest_arr = self.builder.alloc_register()?;
                     self.builder.emit(Op::CreateRestArray {
                         dst: rest_arr,
@@ -269,6 +273,7 @@ impl Compiler {
                     });
                     self.compile_pattern_binding(&rest.argument, rest_arr, mutable, is_var)?;
                     self.builder.free_register(rest_arr);
+                    iterator_exhausted = true;
                     break;
                 }
 
@@ -293,6 +298,13 @@ impl Compiler {
                     iterator: iter_reg,
                 });
             }
+        }
+
+        // Close the iterator if it wasn't exhausted
+        // Per ES spec, IteratorClose should be called when destructuring
+        // completes without exhausting the iterator
+        if !iterator_exhausted {
+            self.builder.emit(Op::IteratorClose { iterator: iter_reg });
         }
 
         self.builder.free_register(elem_value);
@@ -503,6 +515,9 @@ impl Compiler {
         let result_reg = self.builder.alloc_register()?;
         let elem_value = self.builder.alloc_register()?;
 
+        // Track if iterator is exhausted (by rest pattern)
+        let mut iterator_exhausted = false;
+
         for (i, elem) in arr_pat.elements.iter().enumerate() {
             if let Some(pattern) = elem {
                 if let Pattern::Rest(rest) = pattern {
@@ -513,6 +528,7 @@ impl Compiler {
                     });
                     self.compile_pattern_assignment(&rest.argument, rest_arr)?;
                     self.builder.free_register(rest_arr);
+                    iterator_exhausted = true;
                     break;
                 }
 
@@ -533,6 +549,13 @@ impl Compiler {
                     iterator: iter_reg,
                 });
             }
+        }
+
+        // Close the iterator if it wasn't exhausted
+        // Per ES spec, IteratorClose should be called when destructuring
+        // completes without exhausting the iterator
+        if !iterator_exhausted {
+            self.builder.emit(Op::IteratorClose { iterator: iter_reg });
         }
 
         self.builder.free_register(elem_value);

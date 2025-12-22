@@ -5022,6 +5022,7 @@ impl Interpreter {
     /// ToPrimitive: Convert an object to a primitive value.
     /// For wrapper objects (Number, String, Boolean), this calls valueOf/toString.
     /// `hint` specifies preference: "number" tries valueOf first, "string" tries toString first.
+    /// For Date objects with "default" hint, uses "string" per ES spec (Date.prototype[@@toPrimitive]).
     /// Throws TypeError if neither method returns a primitive value (ES2015+ spec).
     fn coerce_to_primitive(&mut self, value: &JsValue, hint: &str) -> Result<JsValue, JsError> {
         let obj = match value {
@@ -5030,11 +5031,24 @@ impl Interpreter {
             _ => return Ok(value.clone()),
         };
 
+        // Per ES spec: Date objects prefer "string" for "default" hint
+        // This is what Date.prototype[@@toPrimitive] does
+        let effective_hint = if hint == "default" {
+            // Check if this is a Date object
+            if matches!(obj.borrow().exotic, ExoticObject::Date { .. }) {
+                "string"
+            } else {
+                hint
+            }
+        } else {
+            hint
+        };
+
         // Determine method order based on hint
-        let (first_method, second_method) = if hint == "string" {
+        let (first_method, second_method) = if effective_hint == "string" {
             ("toString", "valueOf")
         } else {
-            // "number" or "default" - try valueOf first
+            // "number" - try valueOf first
             ("valueOf", "toString")
         };
 

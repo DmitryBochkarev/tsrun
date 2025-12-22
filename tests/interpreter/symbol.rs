@@ -401,3 +401,117 @@ fn test_symbol_species_is_symbol() {
     // Symbol.species should be a symbol
     assert_eq!(eval("typeof Symbol.species"), JsValue::from("symbol"));
 }
+
+// ============================================================
+// Destructuring Iterator Close Tests
+// ============================================================
+
+#[test]
+fn test_destructuring_iterator_close_when_not_exhausted() {
+    // When array destructuring doesn't exhaust the iterator,
+    // iterator.return() should be called
+    assert_eq!(
+        eval(
+            r#"
+            var returnCount = 0;
+            var iterator = {
+                next: function() {
+                    return { done: false, value: 1 };
+                },
+                return: function() {
+                    returnCount += 1;
+                    return {};
+                }
+            };
+            var iterable = {
+                [Symbol.iterator]: function() { return iterator; }
+            };
+
+            var x;
+            [x] = iterable;  // Only takes 1 element
+            returnCount
+        "#
+        ),
+        JsValue::Number(1.0)
+    );
+}
+
+#[test]
+fn test_destructuring_iterator_close_with_rest() {
+    // When using rest pattern, iterator is exhausted, so return() should NOT be called
+    assert_eq!(
+        eval(
+            r#"
+            var returnCount = 0;
+            var iterator = {
+                next: function() {
+                    this.count = (this.count || 0) + 1;
+                    if (this.count > 3) return { done: true };
+                    return { done: false, value: this.count };
+                },
+                return: function() {
+                    returnCount += 1;
+                    return {};
+                }
+            };
+            var iterable = {
+                [Symbol.iterator]: function() { return iterator; }
+            };
+
+            var first, rest;
+            [first, ...rest] = iterable;  // Exhausts iterator
+            returnCount
+        "#
+        ),
+        JsValue::Number(0.0)
+    );
+}
+
+#[test]
+fn test_destructuring_iterator_close_throws_on_non_object_return() {
+    // If iterator.return() returns a non-object, TypeError should be thrown
+    use super::throws_error;
+    assert!(throws_error(
+        r#"
+        var iterator = {
+            next: function() { return { done: false, value: 1 }; },
+            return: function() { return null; }  // Non-object return
+        };
+        var iterable = {
+            [Symbol.iterator]: function() { return iterator; }
+        };
+        var x;
+        [x] = iterable;
+    "#,
+        "TypeError"
+    ));
+}
+
+#[test]
+fn test_destructuring_empty_pattern_calls_close() {
+    // Even empty destructuring pattern should call return()
+    assert_eq!(
+        eval(
+            r#"
+            var returnCount = 0;
+            var iterator = {
+                next: function() {
+                    return { done: false, value: 1 };
+                },
+                return: function() {
+                    returnCount += 1;
+                    return {};
+                }
+            };
+            var iterable = {
+                [Symbol.iterator]: function() { return iterator; }
+            };
+
+            [] = iterable;  // Empty pattern
+
+            returnCount === 1
+        "#
+        ),
+        JsValue::Boolean(true)
+    );
+}

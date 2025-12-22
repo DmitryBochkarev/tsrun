@@ -1667,3 +1667,114 @@ fn test_arrow_function_length_descriptor() {
         JsValue::from("false,false,true")
     );
 }
+
+// ============================================================
+// Function.prototype.call.bind() tests (Test262 propertyHelper pattern)
+// ============================================================
+
+#[test]
+fn test_call_bind_basic() {
+    // Function.prototype.call.bind() creates a function that calls the original
+    // with a specific receiver
+    assert_eq!(
+        eval(
+            r#"
+            var __push = Function.prototype.call.bind(Array.prototype.push);
+            var arr = [1, 2];
+            __push(arr, 3);
+            arr.length
+        "#
+        ),
+        JsValue::Number(3.0)
+    );
+}
+
+#[test]
+fn test_call_bind_with_array() {
+    // Verify the pushed value is correct
+    assert_eq!(
+        eval(
+            r#"
+            var __push = Function.prototype.call.bind(Array.prototype.push);
+            var arr = [1, 2];
+            __push(arr, 3);
+            arr[2]
+        "#
+        ),
+        JsValue::Number(3.0)
+    );
+}
+
+#[test]
+fn test_call_bind_hasownproperty() {
+    // Pattern used in test262: Function.prototype.call.bind(Object.prototype.hasOwnProperty)
+    assert_eq!(
+        eval(
+            r#"
+            var __hasOwnProperty = Function.prototype.call.bind(Object.prototype.hasOwnProperty);
+            var obj = { foo: 1 };
+            __hasOwnProperty(obj, "foo")
+        "#
+        ),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_call_bind_hasownproperty_false() {
+    assert_eq!(
+        eval(
+            r#"
+            var __hasOwnProperty = Function.prototype.call.bind(Object.prototype.hasOwnProperty);
+            var obj = { foo: 1 };
+            __hasOwnProperty(obj, "bar")
+        "#
+        ),
+        JsValue::Boolean(false)
+    );
+}
+
+#[test]
+fn test_call_bind_join() {
+    // Pattern: Function.prototype.call.bind(Array.prototype.join)
+    assert_eq!(
+        eval(
+            r#"
+            var __join = Function.prototype.call.bind(Array.prototype.join);
+            var arr = [1, 2, 3];
+            __join(arr, "-")
+        "#
+        ),
+        JsValue::from("1-2-3")
+    );
+}
+
+#[test]
+fn test_call_bind_tostring() {
+    // Pattern: Function.prototype.call.bind(Object.prototype.toString)
+    assert_eq!(
+        eval(
+            r#"
+            var __toString = Function.prototype.call.bind(Object.prototype.toString);
+            __toString({})
+        "#
+        ),
+        JsValue::from("[object Object]")
+    );
+}
+
+#[test]
+fn test_call_bind_get_own_property_descriptor() {
+    // Pattern: Function.prototype.call.bind on Object.getOwnPropertyDescriptor
+    assert_eq!(
+        eval(
+            r#"
+            var __getOwnPropertyDescriptor = Function.prototype.call.bind(Object.getOwnPropertyDescriptor);
+            var obj = { foo: 1 };
+            var desc = __getOwnPropertyDescriptor(Object, obj, "foo");
+            desc.value
+        "#
+        ),
+        JsValue::Number(1.0)
+    );
+}

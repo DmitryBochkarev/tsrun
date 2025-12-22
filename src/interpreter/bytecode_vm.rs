@@ -3499,13 +3499,21 @@ impl BytecodeVM {
                     let return_method = iter_obj.borrow().get_property(&return_key);
 
                     if let Some(JsValue::Object(return_fn)) = return_method {
-                        // Call the return method - ignore the result but propagate errors
-                        // According to spec, we should call it with the iterator as this
-                        let _ = interp.call_function(
+                        // Call the return method
+                        // Per ES spec 7.4.6: If Type(innerResult.[[value]]) is not Object,
+                        // throw a TypeError exception.
+                        let result = interp.call_function(
                             JsValue::Object(return_fn),
                             JsValue::Object(iter_obj),
                             &[],
                         )?;
+
+                        // Check that result is an object
+                        if !matches!(result.value, JsValue::Object(_)) {
+                            return Err(JsError::type_error(
+                                "Iterator result is not an object",
+                            ));
+                        }
                     }
                 }
 

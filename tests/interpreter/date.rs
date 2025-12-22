@@ -337,3 +337,54 @@ fn test_new_date_creates_object() {
     assert_eq!(eval("typeof new Date()"), JsValue::String("object".into()));
     assert_eq!(eval("typeof new Date(0)"), JsValue::String("object".into()));
 }
+
+// Date ToPrimitive/addition tests
+#[test]
+fn test_date_addition_uses_tostring() {
+    // Date objects use hint "string" for ToPrimitive by default (for "default" hint).
+    // This is what Date.prototype[@@toPrimitive] does.
+    // So date + date should concatenate their string representations.
+    let result = eval(
+        r#"
+        var date = new Date(0);
+        date + date === date.toString() + date.toString()
+    "#,
+    );
+    assert_eq!(result, JsValue::Boolean(true));
+}
+
+#[test]
+fn test_date_plus_number() {
+    // date + 0 should be date.toString() + "0"
+    let result = eval(
+        r#"
+        var date = new Date(0);
+        date + 0 === date.toString() + "0"
+    "#,
+    );
+    assert_eq!(result, JsValue::Boolean(true));
+}
+
+#[test]
+fn test_date_plus_boolean() {
+    // date + true should be date.toString() + "true"
+    let result = eval(
+        r#"
+        var date = new Date(0);
+        date + true === date.toString() + "true"
+    "#,
+    );
+    assert_eq!(result, JsValue::Boolean(true));
+}
+
+#[test]
+fn test_date_plus_object() {
+    // date + {} should be date.toString() + "[object Object]"
+    let result = eval(
+        r#"
+        var date = new Date(0);
+        date + {} === date.toString() + "[object Object]"
+    "#,
+    );
+    assert_eq!(result, JsValue::Boolean(true));
+}
