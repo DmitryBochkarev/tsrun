@@ -765,12 +765,11 @@ impl BytecodeVM {
                 )
             }
             JsFunction::Interpreted(_) => {
-                // Interpreted functions still need recursive call for now
-                // They compile to bytecode internally
-                let result =
-                    interp.call_function_with_new_target(callee, this_value, &args, new_target)?;
-                self.set_reg(return_register, result.value);
-                Ok(())
+                // Legacy interpreted functions are no longer supported.
+                // All functions should be bytecode-compiled.
+                Err(JsError::internal_error(
+                    "InterpretedFunction is deprecated - use bytecode functions instead",
+                ))
             }
             JsFunction::BytecodeGenerator(bc_func) => {
                 // Generators just create a generator object without running the body.

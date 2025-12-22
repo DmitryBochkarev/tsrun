@@ -2,13 +2,14 @@
 
 use std::rc::Rc;
 
-use crate::ast::{Expression, FunctionParam, Statement};
+use crate::ast::{Expression, Statement};
+use crate::compiler::Compiler;
 use crate::error::JsError;
 use crate::gc::Gc;
 use crate::interpreter::Interpreter;
 use crate::parser::Parser;
 use crate::value::{
-    BoundFunctionData, CheapClone, ExoticObject, FunctionBody, Guarded, JsFunction, JsObject,
+    BoundFunctionData, BytecodeFunction, CheapClone, ExoticObject, Guarded, JsFunction, JsObject,
     JsString, JsSymbol, JsValue, NativeFunction, PropertyKey,
 };
 
@@ -183,26 +184,27 @@ fn function_constructor_fn(
     // The program should contain one expression statement with a parenthesized function
     let func_expr = extract_function_expression(&program)?;
 
-    // Create the function with global scope (not the caller's closure)
-    let name: Option<JsString> = Some(JsString::from("anonymous"));
-    let params: Rc<[FunctionParam]> = func_expr.params.clone();
-    let body: Rc<FunctionBody> = Rc::new(FunctionBody::Block(func_expr.body.clone()));
-    let span = func_expr.span;
-
-    let guard = interp.heap.create_guard();
-
-    // Use global_env as the closure - this is what makes Function() different
-    // from regular function declarations (which capture the local scope)
-    let func_obj = interp.create_interpreted_function(
-        &guard,
-        name,
-        params,
-        body,
-        interp.global_env.clone(), // Global scope, not current scope!
-        span,
+    // Compile the function body to bytecode
+    let chunk = Compiler::compile_function_body_direct(
+        &func_expr.params,
+        &func_expr.body.body,
+        Some(JsString::from("anonymous")),
         false, // not a generator
         false, // not async
-    );
+    )
+    .map_err(|e| JsError::syntax_error_simple(format!("Failed to compile function: {}", e)))?;
+
+    // Create bytecode function with global scope as closure
+    // This is what makes Function() different from regular function declarations
+    // (which capture the local scope)
+    let bc_func = BytecodeFunction {
+        chunk: Rc::new(chunk),
+        closure: interp.global_env.clone(),
+        captured_this: None,
+    };
+
+    let guard = interp.heap.create_guard();
+    let func_obj = interp.create_bytecode_function(&guard, bc_func);
 
     Ok(Guarded::with_guard(JsValue::Object(func_obj), guard))
 }
