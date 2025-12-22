@@ -50,6 +50,7 @@ mod set;
 mod strict;
 mod string;
 mod symbol;
+mod typescript;
 
 use typescript_eval::{JsError, Runtime, RuntimeResult, RuntimeValue};
 
