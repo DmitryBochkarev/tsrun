@@ -127,10 +127,6 @@ pub struct Interpreter {
     // ═══════════════════════════════════════════════════════════════════════════
     // Execution State
     // ═══════════════════════════════════════════════════════════════════════════
-    /// Stores thrown value during exception propagation
-    #[allow(dead_code)] // Used for future module error handling
-    thrown_value: Option<JsValue>,
-
     /// Guard for the thrown value (keeps it alive during exception handling)
     thrown_guard: Option<Guard<JsObject>>,
 
@@ -297,7 +293,6 @@ impl Interpreter {
             reference_error_prototype,
             range_error_prototype,
             syntax_error_prototype,
-            thrown_value: None,
             thrown_guard: None,
             exports: FxHashMap::default(),
             call_stack: Vec::new(),
