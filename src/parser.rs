@@ -3443,6 +3443,15 @@ impl<'a> Parser<'a> {
                 Ok(ty)
             }
 
+            // Constructor type: new (...args: any[]) => T
+            TokenKind::New => {
+                self.advance();
+                // Parse as function type, the 'new' prefix just marks it as a constructor
+                // For our runtime purposes, we just parse and discard the type annotation
+                let func_type = self.try_parse_function_type()?;
+                Ok(func_type)
+            }
+
             // Parenthesized type or function type expression
             TokenKind::LParen => {
                 // Try to parse as function type expression: (a: T, b: T) => R
