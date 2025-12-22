@@ -1375,11 +1375,6 @@ impl Interpreter {
         self.env_guards.pop();
     }
 
-    /// Get the number of environment guards (for debugging)
-    pub fn env_guards_len(&self) -> usize {
-        self.env_guards.len()
-    }
-
     // ═══════════════════════════════════════════════════════════════════════════
     // Object/Array/Function Creation
     // ═══════════════════════════════════════════════════════════════════════════
