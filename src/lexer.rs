@@ -928,16 +928,20 @@ impl<'a> Lexer<'a> {
                             if !matches!(self.peek(), Some('0'..='9')) {
                                 value.push('\0');
                             } else {
-                                // Octal escapes not allowed in template literals, treat as literal
-                                value.push('0');
+                                // Octal escapes not allowed in template literals
+                                return TokenKind::Invalid('0');
                             }
                         }
                         Some((_, 'x')) => {
-                            // Hex escape \xNN
+                            // Hex escape \xNN - must be exactly 2 hex digits
                             if let Some(hex) = self.scan_hex_escape(2) {
                                 if let Some(ch) = char::from_u32(hex) {
                                     value.push(ch);
+                                } else {
+                                    return TokenKind::Invalid('x');
                                 }
+                            } else {
+                                return TokenKind::Invalid('x');
                             }
                         }
                         Some((_, 'u')) => {
@@ -945,27 +949,40 @@ impl<'a> Lexer<'a> {
                             if self.peek() == Some('{') {
                                 self.advance();
                                 let mut hex_str = String::new();
+                                let mut found_close = false;
                                 while let Some(ch) = self.peek() {
                                     if ch == '}' {
                                         self.advance();
+                                        found_close = true;
                                         break;
                                     }
                                     if ch.is_ascii_hexdigit() {
                                         hex_str.push(ch);
                                         self.advance();
                                     } else {
-                                        break;
+                                        return TokenKind::Invalid('u');
                                     }
+                                }
+                                if !found_close || hex_str.is_empty() {
+                                    return TokenKind::Invalid('u');
                                 }
                                 if let Ok(code) = u32::from_str_radix(&hex_str, 16) {
                                     if let Some(ch) = char::from_u32(code) {
                                         value.push(ch);
+                                    } else {
+                                        return TokenKind::Invalid('u');
                                     }
+                                } else {
+                                    return TokenKind::Invalid('u');
                                 }
                             } else if let Some(hex) = self.scan_hex_escape(4) {
                                 if let Some(ch) = char::from_u32(hex) {
                                     value.push(ch);
+                                } else {
+                                    return TokenKind::Invalid('u');
                                 }
+                            } else {
+                                return TokenKind::Invalid('u');
                             }
                         }
                         Some((_, c)) => value.push(c),
@@ -1009,15 +1026,20 @@ impl<'a> Lexer<'a> {
                         if !matches!(self.peek(), Some('0'..='9')) {
                             value.push('\0');
                         } else {
-                            value.push('0');
+                            // Octal escapes not allowed in template literals
+                            return TokenKind::Invalid('0');
                         }
                     }
                     Some((_, 'x')) => {
-                        // Hex escape \xNN
+                        // Hex escape \xNN - must be exactly 2 hex digits
                         if let Some(hex) = self.scan_hex_escape(2) {
                             if let Some(ch) = char::from_u32(hex) {
                                 value.push(ch);
+                            } else {
+                                return TokenKind::Invalid('x');
                             }
+                        } else {
+                            return TokenKind::Invalid('x');
                         }
                     }
                     Some((_, 'u')) => {
@@ -1025,27 +1047,40 @@ impl<'a> Lexer<'a> {
                         if self.peek() == Some('{') {
                             self.advance();
                             let mut hex_str = String::new();
+                            let mut found_close = false;
                             while let Some(ch) = self.peek() {
                                 if ch == '}' {
                                     self.advance();
+                                    found_close = true;
                                     break;
                                 }
                                 if ch.is_ascii_hexdigit() {
                                     hex_str.push(ch);
                                     self.advance();
                                 } else {
-                                    break;
+                                    return TokenKind::Invalid('u');
                                 }
+                            }
+                            if !found_close || hex_str.is_empty() {
+                                return TokenKind::Invalid('u');
                             }
                             if let Ok(code) = u32::from_str_radix(&hex_str, 16) {
                                 if let Some(ch) = char::from_u32(code) {
                                     value.push(ch);
+                                } else {
+                                    return TokenKind::Invalid('u');
                                 }
+                            } else {
+                                return TokenKind::Invalid('u');
                             }
                         } else if let Some(hex) = self.scan_hex_escape(4) {
                             if let Some(ch) = char::from_u32(hex) {
                                 value.push(ch);
+                            } else {
+                                return TokenKind::Invalid('u');
                             }
+                        } else {
+                            return TokenKind::Invalid('u');
                         }
                     }
                     Some((_, c)) => value.push(c),
@@ -1924,5 +1959,24 @@ mod tests {
         // So this should fail
         let tokens = lex(r"\u{1F600}");
         assert!(matches!(tokens.first(), Some(TokenKind::Invalid(_))));
+    }
+
+    #[test]
+    fn test_unicode_escape_id_start_special() {
+        // \u2118 (℘ - Weierstrass p) is Other_ID_Start in Unicode 4.0+
+        // This should parse as identifier "a℘"
+        assert_eq!(
+            lex(r"a\u2118"),
+            vec![TokenKind::Identifier(JsString::from("a℘"))]
+        );
+    }
+
+    #[test]
+    fn test_unicode_escape_id_continue_middle_dot() {
+        // \u00B7 (·) is a valid ID_Continue character (Other_ID_Continue)
+        assert_eq!(
+            lex(r"a\u00B7"),
+            vec![TokenKind::Identifier(JsString::from("a·"))]
+        );
     }
 }

@@ -1,6 +1,6 @@
 //! String-related tests
 
-use super::eval;
+use super::{eval, eval_result};
 use typescript_eval::value::JsString;
 use typescript_eval::JsValue;
 
@@ -1124,3 +1124,44 @@ fn test_hex_escape_in_template() {
     // \xNN in template literal should produce the character
     assert_eq!(eval(r#"`\x62`"#), JsValue::String(JsString::from("b")));
 }
+
+// =============================================================================
+// Template Literal Invalid Escape Tests
+// =============================================================================
+
+#[test]
+fn test_template_invalid_hex_escape() {
+    // \xZZ is not a valid hex escape - should throw SyntaxError
+    let result = eval_result(r#"`\xZZ`"#);
+    assert!(
+        result.is_err(),
+        "Invalid hex escape in template should be SyntaxError"
+    );
+}
+
+#[test]
+fn test_template_invalid_unicode_escape() {
+    // \uXXXG is not valid - should throw SyntaxError
+    let result = eval_result(r#"`\u00GG`"#);
+    assert!(
+        result.is_err(),
+        "Invalid unicode escape in template should be SyntaxError"
+    );
+}
+
+#[test]
+fn test_template_invalid_unicode_brace_escape() {
+    // \u{ZZZZ} is not valid - should throw SyntaxError
+    let result = eval_result(r#"`\u{ZZZZ}`"#);
+    assert!(
+        result.is_err(),
+        "Invalid unicode brace escape in template should be SyntaxError"
+    );
+}
+
+// NOTE: According to ES2018+, tagged templates should allow invalid escapes
+// (with undefined in cooked and preserved raw values).
+// Currently, our implementation rejects invalid escapes in ALL templates.
+// This is slightly stricter than the spec but prevents common errors.
+// TODO: Support invalid escapes in tagged templates for full ES2018+ compliance.
+// TODO: raw values are currently the same as cooked values - should preserve escapes

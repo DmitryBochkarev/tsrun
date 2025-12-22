@@ -2526,3 +2526,15 @@ fn test_unicode_escape_in_member_access() {
         JsValue::Number(42.0)
     );
 }
+
+#[test]
+fn test_unicode_escape_id_continue_middle_dot() {
+    // \u00B7 (·) is a valid ID_Continue character (Other_ID_Continue)
+    assert_eq!(eval(r#"var a\u00B7 = 42; a\u00B7"#), JsValue::Number(42.0));
+}
+
+#[test]
+fn test_unicode_escape_braced_form_in_identifier() {
+    // \u{61} is 'a' - braced form
+    assert_eq!(eval(r#"var \u{61}bc = 99; abc"#), JsValue::Number(99.0));
+}
