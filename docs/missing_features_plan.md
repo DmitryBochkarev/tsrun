@@ -197,21 +197,19 @@ For full compliance, we would need to track escape validity and only reject in u
 
 ## Priority 3 - Low (New APIs / Rare Cases)
 
-### 12. Map.groupBy / Object.groupBy
+### 12. Map.groupBy / Object.groupBy ✅ IMPLEMENTED
 
-**Impact:** New ES2024 API, easily polyfillable.
-
-**Test Patterns:**
-```
-TypeError: Not a function
-```
+**Status:** Implemented on 2025-12-22
 
 **Implementation:**
-1. Add `map_group_by()` native function
-2. Add `object_group_by()` native function
-3. Both take iterable and callback
+- Added `object_group_by()` in `builtins/object.rs` - groups array items by string keys
+- Added `map_group_by()` in `builtins/map.rs` - groups array items by any key type (using SameValueZero)
+- Object.groupBy returns an object with null prototype
+- Map.groupBy returns a Map instance
+- Both support callbacks with (item, index) arguments
+- Tests added: `test_object_groupby_*` (8 tests), `test_map_groupby_*` (6 tests)
 
-**Estimated Complexity:** Low - new builtin functions
+**Note:** Currently only supports arrays as input. Full spec compliance would use Symbol.iterator.
 
 ---
 
@@ -289,7 +287,7 @@ Promise[Symbol.species];  // undefined (should be Promise)
 11. ~~**Promise iterator handling** - Promise refactor~~ ✅ PARTIALLY DONE
 
 ### Phase 5: New APIs (P3)
-12. **Map.groupBy/Object.groupBy** - New ES2024
+12. ~~**Map.groupBy/Object.groupBy** - New ES2024~~ ✅ DONE
 13. **Symbol.species** - Subclassing support
 14. **JSON.isRawJSON** - New JSON API
 

@@ -26,6 +26,9 @@ pub fn init_map(interp: &mut Interpreter) {
     let constructor = interp.create_native_function("Map", map_constructor, 0);
     interp.root_guard.guard(constructor.clone());
 
+    // Add static methods to constructor
+    interp.register_method(&constructor, "groupBy", map_group_by, 2);
+
     // Set constructor.prototype = Map.prototype
     let proto_key = PropertyKey::String(interp.intern("prototype"));
     constructor
@@ -401,4 +404,118 @@ pub fn map_entries(
 
     let result = interp.create_array_from(&guard, entries);
     Ok(Guarded::with_guard(JsValue::Object(result), guard))
+}
+
+/// Map.groupBy(items, callbackFn)
+/// Groups elements of an iterable using a callback function.
+/// Returns a Map where keys are group values and values are arrays.
+/// Unlike Object.groupBy, keys can be any value (not just strings).
+pub fn map_group_by(
+    interp: &mut Interpreter,
+    _this: JsValue,
+    args: &[JsValue],
+) -> Result<Guarded, JsError> {
+    let items = args.first().cloned().unwrap_or(JsValue::Undefined);
+    let callback = args.get(1).cloned().unwrap_or(JsValue::Undefined);
+
+    // Items must be iterable - for now we support arrays
+    let JsValue::Object(items_ref) = items else {
+        return Err(JsError::type_error("Map.groupBy requires an iterable"));
+    };
+
+    // Guard the inputs
+    let guard = interp.heap.create_guard();
+    guard.guard(items_ref.clone());
+    if let JsValue::Object(cb_obj) = &callback {
+        guard.guard(cb_obj.clone());
+    }
+
+    // Get array elements
+    let elements: Vec<JsValue> = {
+        let items_borrowed = items_ref.borrow();
+        if let Some(elems) = items_borrowed.array_elements() {
+            elems.to_vec()
+        } else {
+            return Err(JsError::type_error(
+                "Map.groupBy requires an array-like object",
+            ));
+        }
+    };
+
+    // Create a new Map for the result
+    let size_key = PropertyKey::String(interp.intern("size"));
+    let map_obj = interp.create_object(&guard);
+    {
+        let mut obj = map_obj.borrow_mut();
+        obj.exotic = ExoticObject::Map {
+            entries: Vec::new(),
+        };
+        obj.prototype = Some(interp.map_prototype.clone());
+        obj.set_property(size_key.clone(), JsValue::Number(0.0));
+    }
+
+    // Track groups by key using SameValueZero comparison
+    // We store (key, items) pairs and check existing keys
+    let mut group_keys: Vec<JsValue> = Vec::new();
+    let mut group_items: Vec<Vec<JsValue>> = Vec::new();
+
+    // Iterate and group
+    for (index, item) in elements.into_iter().enumerate() {
+        // Guard the item in case callback triggers GC
+        if let JsValue::Object(item_obj) = &item {
+            guard.guard(item_obj.clone());
+        }
+
+        // Call the callback with (item, index)
+        let key_result = interp.call_function(
+            callback.clone(),
+            JsValue::Undefined,
+            &[item.clone(), JsValue::Number(index as f64)],
+        )?;
+
+        let key = key_result.value;
+
+        // Find existing group or create new one
+        let mut found_idx = None;
+        for (idx, existing_key) in group_keys.iter().enumerate() {
+            if same_value_zero(existing_key, &key) {
+                found_idx = Some(idx);
+                break;
+            }
+        }
+
+        match found_idx {
+            Some(idx) => {
+                if let Some(items_vec) = group_items.get_mut(idx) {
+                    items_vec.push(item);
+                }
+            }
+            None => {
+                group_keys.push(key);
+                group_items.push(vec![item]);
+            }
+        }
+    }
+
+    // Now build the Map from the groups
+    // First, create all the arrays (which may trigger GC)
+    let mut built_entries: Vec<(JsValue, JsValue)> = Vec::with_capacity(group_keys.len());
+    for (key, items) in group_keys.into_iter().zip(group_items.into_iter()) {
+        let arr = interp.create_array_from(&guard, items);
+        built_entries.push((key, JsValue::Object(arr)));
+    }
+
+    // Then add entries to the map
+    {
+        let mut map = map_obj.borrow_mut();
+        if let ExoticObject::Map { ref mut entries } = map.exotic {
+            for entry in built_entries {
+                entries.push(entry);
+            }
+            let len = entries.len();
+            map.set_property(size_key, JsValue::Number(len as f64));
+        }
+    }
+
+    Ok(Guarded::with_guard(JsValue::Object(map_obj), guard))
 }

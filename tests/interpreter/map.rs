@@ -167,3 +167,105 @@ fn test_union_type_with_generic_and_undefined() {
         JsValue::Number(2.0)
     );
 }
+
+// =============================================================================
+// Map.groupBy Tests (ES2024)
+// =============================================================================
+
+#[test]
+fn test_map_groupby_basic() {
+    // Basic grouping by a property - returns a Map
+    assert_eq!(
+        eval(
+            r#"
+            const items = [
+                { type: 'fruit', name: 'apple' },
+                { type: 'vegetable', name: 'carrot' },
+                { type: 'fruit', name: 'banana' }
+            ];
+            const grouped = Map.groupBy(items, (item: any) => item.type);
+            grouped.get('fruit').length
+        "#
+        ),
+        JsValue::Number(2.0)
+    );
+}
+
+#[test]
+fn test_map_groupby_empty_array() {
+    // Empty array should return empty Map
+    assert_eq!(
+        eval(
+            r#"
+            const grouped = Map.groupBy([], (x: any) => x);
+            grouped.size
+        "#
+        ),
+        JsValue::Number(0.0)
+    );
+}
+
+#[test]
+fn test_map_groupby_object_keys() {
+    // Map.groupBy can use objects as keys (unlike Object.groupBy)
+    assert_eq!(
+        eval(
+            r#"
+            const key1 = { id: 1 };
+            const key2 = { id: 2 };
+            const items = [
+                { key: key1, value: 'a' },
+                { key: key2, value: 'b' },
+                { key: key1, value: 'c' }
+            ];
+            const grouped = Map.groupBy(items, (item: any) => item.key);
+            grouped.get(key1).length
+        "#
+        ),
+        JsValue::Number(2.0)
+    );
+}
+
+#[test]
+fn test_map_groupby_preserves_order() {
+    // Items in each group should be in insertion order
+    assert_eq!(
+        eval(
+            r#"
+            const nums: number[] = [3, 1, 4, 1, 5, 9, 2, 6];
+            const grouped = Map.groupBy(nums, (n: number) => n % 2 === 0 ? "even" : "odd");
+            grouped.get('odd').join(',')
+        "#
+        ),
+        JsValue::String("3,1,1,5,9".into())
+    );
+}
+
+#[test]
+fn test_map_groupby_with_index() {
+    // Callback receives index as second argument
+    assert_eq!(
+        eval(
+            r#"
+            const letters: string[] = ['a', 'b', 'c', 'd'];
+            const grouped = Map.groupBy(letters, (_: string, i: number) => i < 2 ? "first" : "second");
+            [grouped.get('first').join(''), grouped.get('second').join('')].join('|')
+        "#
+        ),
+        JsValue::String("ab|cd".into())
+    );
+}
+
+#[test]
+fn test_map_groupby_returns_map_instance() {
+    // Result should be a Map
+    assert_eq!(
+        eval(
+            r#"
+            const grouped = Map.groupBy([1, 2], (x: number) => x);
+            grouped instanceof Map
+        "#
+        ),
+        JsValue::Boolean(true)
+    );
+}

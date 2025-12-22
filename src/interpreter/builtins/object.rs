@@ -33,6 +33,7 @@ pub fn create_object_constructor(interp: &mut Interpreter) -> JsObjectRef {
     interp.register_method(&constructor, "assign", object_assign, 2);
     interp.register_method(&constructor, "fromEntries", object_from_entries, 1);
     interp.register_method(&constructor, "create", object_create, 1);
+    interp.register_method(&constructor, "groupBy", object_group_by, 2);
 
     // Property checking
     interp.register_method(&constructor, "hasOwn", object_has_own, 2);
@@ -1332,4 +1333,96 @@ pub fn object_get_own_property_descriptors(
     }
 
     Ok(Guarded::with_guard(JsValue::Object(result), result_guard))
+}
+
+/// Object.groupBy(items, callbackFn)
+/// Groups elements of an iterable using a callback function.
+/// Returns an object with null prototype where keys are group names and values are arrays.
+pub fn object_group_by(
+    interp: &mut Interpreter,
+    _this: JsValue,
+    args: &[JsValue],
+) -> Result<Guarded, JsError> {
+    let items = args.first().cloned().unwrap_or(JsValue::Undefined);
+    let callback = args.get(1).cloned().unwrap_or(JsValue::Undefined);
+
+    // Items must be iterable - for now we support arrays
+    let JsValue::Object(items_ref) = items else {
+        return Err(JsError::type_error("Object.groupBy requires an iterable"));
+    };
+
+    // Guard the inputs
+    let guard = interp.heap.create_guard();
+    guard.guard(items_ref.clone());
+    if let JsValue::Object(cb_obj) = &callback {
+        guard.guard(cb_obj.clone());
+    }
+
+    // Get array elements
+    let elements: Vec<JsValue> = {
+        let items_borrowed = items_ref.borrow();
+        if let Some(elems) = items_borrowed.array_elements() {
+            elems.to_vec()
+        } else {
+            return Err(JsError::type_error(
+                "Object.groupBy requires an array-like object",
+            ));
+        }
+    };
+
+    // Create result object with null prototype
+    let result = interp.create_object(&guard);
+    {
+        let mut result_ref = result.borrow_mut();
+        result_ref.prototype = None;
+        result_ref.null_prototype = true;
+    }
+
+    // Track groups as we build them - use Vec to preserve insertion order
+    let mut group_keys: Vec<String> = Vec::new();
+    let mut group_items: Vec<Vec<JsValue>> = Vec::new();
+
+    // Iterate and group
+    for (index, item) in elements.into_iter().enumerate() {
+        // Guard the item in case callback triggers GC
+        if let JsValue::Object(item_obj) = &item {
+            guard.guard(item_obj.clone());
+        }
+
+        // Call the callback with (item, index)
+        let key_result = interp.call_function(
+            callback.clone(),
+            JsValue::Undefined,
+            &[item.clone(), JsValue::Number(index as f64)],
+        )?;
+
+        // Coerce key to string (property key)
+        let key_str = key_result.value.to_js_string().to_string();
+
+        // Find existing group or create new one
+        let found_idx = group_keys.iter().position(|k| k == &key_str);
+
+        match found_idx {
+            Some(idx) => {
+                if let Some(items_vec) = group_items.get_mut(idx) {
+                    items_vec.push(item);
+                }
+            }
+            None => {
+                group_keys.push(key_str);
+                group_items.push(vec![item]);
+            }
+        }
+    }
+
+    // Now create the arrays and set them on the result object
+    for (key, items) in group_keys.into_iter().zip(group_items.into_iter()) {
+        let arr = interp.create_array_from(&guard, items);
+        let prop_key = PropertyKey::String(interp.intern(&key));
+        result
+            .borrow_mut()
+            .set_property(prop_key, JsValue::Object(arr));
+    }
+
+    Ok(Guarded::with_guard(JsValue::Object(result), guard))
 }

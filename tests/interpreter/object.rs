@@ -2538,3 +2538,170 @@ fn test_unicode_escape_braced_form_in_identifier() {
     // \u{61} is 'a' - braced form
     assert_eq!(eval(r#"var \u{61}bc = 99; abc"#), JsValue::Number(99.0));
 }
+
+// =============================================================================
+// Object.groupBy Tests (ES2024)
+// =============================================================================
+
+#[test]
+fn test_object_groupby_basic() {
+    // Basic grouping by a property
+    assert_eq!(
+        eval(
+            r#"
+            const items = [
+                { type: 'fruit', name: 'apple' },
+                { type: 'vegetable', name: 'carrot' },
+                { type: 'fruit', name: 'banana' }
+            ];
+            const grouped = Object.groupBy(items, (item: any) => item.type);
+            grouped.fruit.length
+        "#
+        ),
+        JsValue::Number(2.0)
+    );
+}
+
+#[test]
+fn test_object_groupby_empty_array() {
+    // Empty array should return empty object
+    assert_eq!(
+        eval(
+            r#"
+            const grouped = Object.groupBy([], (x: any) => x);
+            Object.keys(grouped).length
+        "#
+        ),
+        JsValue::Number(0.0)
+    );
+}
+
+#[test]
+fn test_object_groupby_all_same_key() {
+    // All items in same group
+    assert_eq!(
+        eval(
+            r#"
+            const nums: number[] = [1, 2, 3, 4, 5];
+            const grouped = Object.groupBy(nums, () => "all");
+            grouped.all.length
+        "#
+        ),
+        JsValue::Number(5.0)
+    );
+}
+
+#[test]
+fn test_object_groupby_unique_keys() {
+    // Each item in its own group
+    assert_eq!(
+        eval(
+            r#"
+            const nums: number[] = [1, 2, 3];
+            const grouped = Object.groupBy(nums, (n: number) => n === 1 ? "a" : n === 2 ? "b" : "c");
+            Object.keys(grouped).sort().join(',')
+        "#
+        ),
+        JsValue::String("a,b,c".into())
+    );
+    // Verify each group has exactly 1 item
+    assert_eq!(
+        eval(
+            r#"
+            const nums: number[] = [1, 2, 3];
+            const grouped = Object.groupBy(nums, (n: number) => n === 1 ? "a" : n === 2 ? "b" : "c");
+            [grouped.a.length, grouped.b.length, grouped.c.length].join(',')
+        "#
+        ),
+        JsValue::String("1,1,1".into())
+    );
+}
+
+#[test]
+fn test_object_groupby_with_tostring_in_callback() {
+    // Test that n.toString() works inside callback - this tests GC safety
+    assert_eq!(
+        eval(
+            r#"
+            const nums: number[] = [1, 2, 3];
+            const grouped = Object.groupBy(nums, (n: number) => n.toString());
+            Object.keys(grouped).sort().join(',')
+        "#
+        ),
+        JsValue::String("1,2,3".into())
+    );
+}
+
+#[test]
+fn test_object_groupby_with_string_constructor_in_callback() {
+    // Test that String(n) works inside callback - this tests GC safety
+    assert_eq!(
+        eval(
+            r#"
+            const nums: number[] = [1, 2, 3];
+            const grouped = Object.groupBy(nums, (n: number) => String(n));
+            Object.keys(grouped).sort().join(',')
+        "#
+        ),
+        JsValue::String("1,2,3".into())
+    );
+}
+
+#[test]
+fn test_object_groupby_returns_null_prototype_object() {
+    // The result should have null prototype (no inherited properties)
+    assert_eq!(
+        eval(
+            r#"
+            const grouped = Object.groupBy([1, 2], (x: number) => "key");
+            Object.getPrototypeOf(grouped)
+        "#
+        ),
+        JsValue::Null
+    );
+}
+
+#[test]
+fn test_object_groupby_preserves_order() {
+    // Items in each group should be in insertion order
+    assert_eq!(
+        eval(
+            r#"
+            const nums: number[] = [3, 1, 4, 1, 5, 9, 2, 6];
+            const grouped = Object.groupBy(nums, (n: number) => n % 2 === 0 ? "even" : "odd");
+            grouped.odd.join(',')
+        "#
+        ),
+        JsValue::String("3,1,1,5,9".into())
+    );
+}
+
+#[test]
+fn test_object_groupby_with_index() {
+    // Callback receives index as second argument
+    assert_eq!(
+        eval(
+            r#"
+            const letters: string[] = ['a', 'b', 'c', 'd'];
+            const grouped = Object.groupBy(letters, (_: string, i: number) => i < 2 ? "first" : "second");
+            [grouped.first.join(''), grouped.second.join('')].join('|')
+        "#
+        ),
+        JsValue::String("ab|cd".into())
+    );
+}
+
+#[test]
+fn test_object_groupby_coerces_key_to_string() {
+    // Keys are coerced to strings (property keys)
+    assert_eq!(
+        eval(
+            r#"
+            const nums: number[] = [1, 2, 3];
+            const grouped = Object.groupBy(nums, (n: number) => n);
+            typeof Object.keys(grouped)[0]
+        "#
+        ),
+        JsValue::String("string".into())
+    );
+}
