@@ -1211,16 +1211,21 @@ fn test_async_function_return_type() {
     assert_eq!(
         eval(
             r#"
+            let result: number = 0;
+
             async function fetchData(): Promise<number> {
                 return 42;
             }
 
             async function main(): Promise<number> {
-                const result: number = await fetchData();
-                return result;
+                const value: number = await fetchData();
+                return value;
             }
 
-            main()
+            main().then(function(x: number) {
+                result = x;
+            });
+            result
         "#
         ),
         JsValue::Number(42.0)
@@ -1232,11 +1237,16 @@ fn test_async_arrow_with_types() {
     assert_eq!(
         eval(
             r#"
+            let result: string = "";
+
             const getData = async (): Promise<string> => {
                 return "hello";
             };
 
-            getData()
+            getData().then(function(x: string) {
+                result = x;
+            });
+            result
         "#
         ),
         JsValue::from("hello")
