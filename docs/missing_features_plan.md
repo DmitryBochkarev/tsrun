@@ -117,7 +117,13 @@ Tests added: `test_default_param_tdz_self_reference`, `test_default_param_tdz_fo
 - Added `no_in` flag to Parser struct to control whether `in` is treated as a binary operator
 - When parsing for-loop init expressions, set `no_in = true` to allow `for (x in obj)` syntax
 - This enables `for (existingVar in object)` and `for (existingVar of iterable)` patterns
-- Tests added: `test_for_in_with_predeclared_var`, `test_for_in_with_predeclared_var_accumulate`, `test_for_of_with_predeclared_var`
+- Reset `no_in = false` inside brackets `[]` and parentheses `()` per ECMAScript spec
+  - Array literals: `for (... [a in obj] ...)` - `in` works inside `[]`
+  - Computed properties: `for (const key in { ['x' in empty]: 1 })` - `in` works inside `[]`
+  - Member expressions: `obj[key in map]` - `in` works inside `[]`
+  - Parenthesized expressions: `('a' in obj ? 2 : 0)` - `in` works inside `()`
+- Tests added: `test_for_in_with_predeclared_var`, `test_for_in_with_predeclared_var_accumulate`,
+  `test_for_of_with_predeclared_var`, `test_for_in_computed_property_with_in`, `test_for_loop_array_with_in`
 
 **Note:** Member expressions in for-in left-hand side (e.g., `for (obj.key in source)`) are not supported.
 

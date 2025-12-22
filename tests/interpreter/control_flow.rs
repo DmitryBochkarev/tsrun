@@ -776,6 +776,42 @@ fn test_for_of_with_predeclared_var() {
 // not supported - member expressions are not valid destructuring targets.
 
 #[test]
+fn test_for_in_computed_property_with_in() {
+    // 'in' operator should work inside computed property names even in for-loop context
+    assert_eq!(
+        eval(
+            r#"
+            let empty: any = {};
+            let result: string = "";
+            for (const key in { ['x' in empty]: 1 }) {
+                result = key;
+            }
+            result
+        "#
+        ),
+        JsValue::from("false")
+    );
+}
+
+#[test]
+fn test_for_loop_array_with_in() {
+    // 'in' operator should work inside array literals in for-loop context
+    assert_eq!(
+        eval(
+            r#"
+            let obj: any = { a: 1 };
+            let arr: boolean[] = [];
+            for (let i: number = 0; i < ('a' in obj ? 2 : 0); i++) {
+                arr.push(true);
+            }
+            arr.length
+        "#
+        ),
+        JsValue::Number(2.0)
+    );
+}
+
+#[test]
 fn test_for_in_object_keys() {
     assert_eq!(
         eval(

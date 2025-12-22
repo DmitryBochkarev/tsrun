@@ -768,7 +768,12 @@ impl<'a> Parser<'a> {
 
     fn parse_class_element_name(&mut self) -> Result<(ObjectPropertyKey, bool), JsError> {
         if self.match_token(&TokenKind::LBracket) {
-            let expr = self.parse_assignment_expression()?;
+            // Inside [...] brackets, 'in' is allowed as binary operator even in for-loop context
+            let saved_no_in = self.no_in;
+            self.no_in = false;
+            let expr = self.parse_assignment_expression();
+            self.no_in = saved_no_in;
+            let expr = expr?;
             self.require_token(&TokenKind::RBracket)?;
             Ok((ObjectPropertyKey::Computed(Rc::new(expr)), true))
         } else if self.match_token(&TokenKind::Hash) {
@@ -1926,7 +1931,12 @@ impl<'a> Parser<'a> {
                     });
                 }
             } else if self.match_token(&TokenKind::LBracket) {
-                let property = self.parse_expression()?;
+                // Inside [...] brackets, 'in' is allowed as binary operator
+                let saved_no_in = self.no_in;
+                self.no_in = false;
+                let property = self.parse_expression();
+                self.no_in = saved_no_in;
+                let property = property?;
                 self.require_token(&TokenKind::RBracket)?;
                 let span = self.span_from(start);
                 expr = Expression::Member(MemberExpression {
@@ -1982,7 +1992,12 @@ impl<'a> Parser<'a> {
                         span,
                     });
                 } else if self.match_token(&TokenKind::LBracket) {
-                    let property = self.parse_expression()?;
+                    // Inside [...] brackets, 'in' is allowed as binary operator
+                    let saved_no_in = self.no_in;
+                    self.no_in = false;
+                    let property = self.parse_expression();
+                    self.no_in = saved_no_in;
+                    let property = property?;
                     self.require_token(&TokenKind::RBracket)?;
                     let span = self.span_from(start);
                     expr = Expression::Member(MemberExpression {
@@ -2073,7 +2088,12 @@ impl<'a> Parser<'a> {
                     });
                 }
             } else if self.match_token(&TokenKind::LBracket) {
-                let property = self.parse_expression()?;
+                // Inside [...] brackets, 'in' is allowed as binary operator
+                let saved_no_in = self.no_in;
+                self.no_in = false;
+                let property = self.parse_expression();
+                self.no_in = saved_no_in;
+                let property = property?;
                 self.require_token(&TokenKind::RBracket)?;
                 let span = self.span_from(start);
                 expr = Expression::Member(MemberExpression {
@@ -2278,6 +2298,10 @@ impl<'a> Parser<'a> {
         let start = self.current.span;
         self.require_token(&TokenKind::LBracket)?;
 
+        // Inside [...] brackets, 'in' is allowed as binary operator even in for-loop context
+        let saved_no_in = self.no_in;
+        self.no_in = false;
+
         let mut elements = vec![];
 
         while !self.check(&TokenKind::RBracket) && !self.is_at_end() {
@@ -2301,6 +2325,7 @@ impl<'a> Parser<'a> {
             }
         }
 
+        self.no_in = saved_no_in;
         self.require_token(&TokenKind::RBracket)?;
 
         let span = self.span_from(start);
@@ -2367,7 +2392,12 @@ impl<'a> Parser<'a> {
         let computed = self.check(&TokenKind::LBracket);
         let key = if computed {
             self.advance();
-            let expr = self.parse_assignment_expression()?;
+            // Inside [...] brackets, 'in' is allowed as binary operator even in for-loop context
+            let saved_no_in = self.no_in;
+            self.no_in = false;
+            let expr = self.parse_assignment_expression();
+            self.no_in = saved_no_in;
+            let expr = expr?;
             self.require_token(&TokenKind::RBracket)?;
             ObjectPropertyKey::Computed(Rc::new(expr))
         } else {
@@ -2469,7 +2499,13 @@ impl<'a> Parser<'a> {
 
         // Parse as parenthesized expression
         self.require_token(&TokenKind::LParen)?;
-        let first = self.parse_assignment_expression()?;
+
+        // Inside (...) parentheses, 'in' is allowed as binary operator even in for-loop context
+        let saved_no_in = self.no_in;
+        self.no_in = false;
+        let first = self.parse_assignment_expression();
+        self.no_in = saved_no_in;
+        let first = first?;
 
         if self.match_token(&TokenKind::RParen) {
             // Check for arrow (simple identifier case)
@@ -2487,6 +2523,10 @@ impl<'a> Parser<'a> {
         if self.match_token(&TokenKind::Comma) {
             let mut items = vec![first];
 
+            // Inside (...) parentheses, 'in' is allowed as binary operator
+            let saved_no_in = self.no_in;
+            self.no_in = false;
+
             while !self.check(&TokenKind::RParen) && !self.is_at_end() {
                 if self.match_token(&TokenKind::DotDotDot) {
                     // Rest parameter - definitely arrow function
@@ -2497,6 +2537,7 @@ impl<'a> Parser<'a> {
                     } else {
                         None
                     };
+                    self.no_in = saved_no_in;
                     self.require_token(&TokenKind::RParen)?;
 
                     let mut params: Vec<FunctionParam> = items
@@ -2526,6 +2567,8 @@ impl<'a> Parser<'a> {
                     break;
                 }
             }
+
+            self.no_in = saved_no_in;
 
             self.require_token(&TokenKind::RParen)?;
 
