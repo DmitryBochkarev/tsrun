@@ -934,8 +934,17 @@ pub enum TypeAnnotation {
     Indexed(IndexedAccessType),
     Typeof(TypeofType),
     Keyof(KeyofType),
+    TemplateLiteral(TemplateLiteralType),
     Parenthesized(Box<TypeAnnotation>),
     This,
+}
+
+/// Template literal type: `Hello ${string}`
+#[derive(Debug, Clone)]
+pub struct TemplateLiteralType {
+    pub quasis: Vec<JsString>,
+    pub types: Vec<TypeAnnotation>,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]

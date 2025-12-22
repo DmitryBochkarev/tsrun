@@ -3488,6 +3488,59 @@ impl<'a> Parser<'a> {
                 }))
             }
 
+            // Template literal type: `Hello ${string}`
+            TokenKind::TemplateHead(head) => {
+                let head = head.clone();
+                self.advance();
+                let mut quasis = vec![head];
+                let mut types = vec![];
+
+                loop {
+                    // Parse the type inside ${}
+                    let ty = self.parse_type_annotation()?;
+                    types.push(ty);
+
+                    // After parsing type, we're at RBrace - rescan for template continuation
+                    if !self.check(&TokenKind::RBrace) {
+                        return Err(self.unexpected_token("closing brace in template literal type"));
+                    }
+
+                    // Rescan from the RBrace position to get template continuation
+                    let cont = self.lexer.rescan_template_continuation(self.current.span);
+                    match cont {
+                        TokenKind::TemplateTail(tail) => {
+                            quasis.push(tail);
+                            // Advance past the tail token
+                            self.current = self.lexer.next_token();
+                            break;
+                        }
+                        TokenKind::TemplateMiddle(middle) => {
+                            quasis.push(middle);
+                            // Advance past the middle token to continue parsing
+                            self.current = self.lexer.next_token();
+                        }
+                        _ => return Err(self.unexpected_token("template middle or tail")),
+                    }
+                }
+
+                Ok(TypeAnnotation::TemplateLiteral(TemplateLiteralType {
+                    quasis,
+                    types,
+                    span: self.span_from(start),
+                }))
+            }
+
+            // Simple template string (no interpolation): `Hello`
+            TokenKind::TemplateNoSub(s) => {
+                let s = s.clone();
+                self.advance();
+                Ok(TypeAnnotation::TemplateLiteral(TemplateLiteralType {
+                    quasis: vec![s],
+                    types: vec![],
+                    span: self.span_from(start),
+                }))
+            }
+
             _ => Err(self.unexpected_token("type")),
         }
     }
