@@ -1225,7 +1225,6 @@ impl Interpreter {
     // FIXME: return guarded
     pub fn env_get(&self, name: &JsString) -> Result<JsValue, JsError> {
         let mut current = Some(self.env.cheap_clone());
-        let mut depth = 0;
         // Create VarKey once for pointer-based lookup
         let key = VarKey(name.cheap_clone());
 
@@ -1246,10 +1245,7 @@ impl Interpreter {
                     return Ok(binding.value.clone());
                 }
                 current = data.outer.cheap_clone();
-                depth += 1;
             } else {
-                eprintln!("[env_get] {} NOT FOUND: env id={} at depth {} is NOT an environment! exotic={:?}",
-                    name, env.id(), depth, std::mem::discriminant(&env_ref.exotic));
                 break;
             }
         }
