@@ -145,6 +145,8 @@ pub struct TrampolineFrame {
     pub arguments: Vec<JsValue>,
     /// Saved new.target
     pub new_target: JsValue,
+    /// Saved current constructor
+    pub current_constructor: Option<Gc<JsObject>>,
     /// Saved pending completion
     pub pending_completion: Option<PendingCompletion>,
     /// Register to store the return value in
@@ -183,6 +185,8 @@ pub struct BytecodeVM {
     pub arguments: Vec<JsValue>,
     /// `new.target` value (constructor if called with new, undefined otherwise)
     pub new_target: JsValue,
+    /// Current constructor being executed (for super() lookups in derived classes)
+    current_constructor: Option<Gc<JsObject>>,
     /// Pending completion to execute after finally block
     pending_completion: Option<PendingCompletion>,
     /// Trampoline call stack - replaces Rust recursion with explicit stack
@@ -217,6 +221,7 @@ impl BytecodeVM {
             saved_env_stack: Vec::new(),
             arguments: Vec::new(),
             new_target: JsValue::Undefined,
+            current_constructor: None,
             pending_completion: None,
             trampoline_stack: Vec::new(),
             register_pool: Vec::new(),
@@ -265,6 +270,7 @@ impl BytecodeVM {
             saved_env_stack: Vec::new(),
             arguments: args.to_vec(),
             new_target: JsValue::Undefined,
+            current_constructor: None,
             pending_completion: None,
             trampoline_stack: Vec::new(),
             register_pool: Vec::new(),
@@ -317,6 +323,7 @@ impl BytecodeVM {
             saved_env_stack: Vec::new(),
             arguments: args.to_vec(),
             new_target,
+            current_constructor: None,
             pending_completion: None,
             trampoline_stack: Vec::new(),
             register_pool: Vec::new(),
@@ -433,8 +440,15 @@ impl BytecodeVM {
     /// Get the super constructor from the current function's __super__ property
     fn get_super_constructor(&self, interp: &mut Interpreter) -> Result<JsValue, JsError> {
         // Look up __super__ in the current function's properties
-        // The function is stored in the closure environment
         let super_key = PropertyKey::String(interp.intern("__super__"));
+
+        // First, check if we have a current_constructor set (for construct calls)
+        // This is the most reliable way to find super() in derived class constructors
+        if let Some(ref ctor) = self.current_constructor {
+            if let Some(super_val) = ctor.borrow().get_property(&super_key) {
+                return Ok(super_val);
+            }
+        }
 
         if let JsValue::Object(this_obj) = &self.this_value {
             // For static methods: `this` IS the class constructor, check directly on it
@@ -591,6 +605,7 @@ impl BytecodeVM {
                     args,
                     return_register,
                     new_target,
+                    is_super_call,
                 }) => {
                     // Trampoline: save current state and switch to called function
                     match self.setup_trampoline_call(
@@ -600,6 +615,7 @@ impl BytecodeVM {
                         args,
                         return_register,
                         new_target,
+                        is_super_call,
                     ) {
                         Ok(()) => continue,
                         Err(e) => {
@@ -660,6 +676,7 @@ impl BytecodeVM {
     }
 
     /// Set up a trampoline call - save current state and switch to the called function
+    /// If `is_super_call` is true, the callee will be set as the current constructor for proper super() lookup
     fn setup_trampoline_call(
         &mut self,
         interp: &mut Interpreter,
@@ -668,6 +685,7 @@ impl BytecodeVM {
         args: Vec<JsValue>,
         return_register: Register,
         new_target: JsValue,
+        is_super_call: bool,
     ) -> Result<(), JsError> {
         use crate::value::{ExoticObject, JsFunction};
 
@@ -720,6 +738,7 @@ impl BytecodeVM {
                     return_register,
                     new_target,
                     false, // not async
+                    is_super_call,
                 )?;
                 Ok(())
             }
@@ -742,6 +761,7 @@ impl BytecodeVM {
                     full_args,
                     return_register,
                     new_target,
+                    is_super_call, // pass through super call flag
                 )
             }
             JsFunction::Interpreted(_) => {
@@ -832,7 +852,8 @@ impl BytecodeVM {
                     &args,
                     return_register,
                     new_target,
-                    true, // is_async - wrap result in Promise
+                    true,          // is_async - wrap result in Promise
+                    is_super_call, // pass through super call flag
                 )?;
                 Ok(())
             }
@@ -943,6 +964,7 @@ impl BytecodeVM {
         return_register: Register,
         new_target: JsValue,
         is_async: bool,
+        is_super_call: bool,
     ) -> Result<(), JsError> {
         use crate::interpreter::{create_environment_unrooted_with_capacity, Binding, VarKey};
 
@@ -1099,6 +1121,7 @@ impl BytecodeVM {
             saved_env_stack: std::mem::take(&mut self.saved_env_stack),
             arguments: std::mem::replace(&mut self.arguments, new_arguments),
             new_target: std::mem::replace(&mut self.new_target, new_target),
+            current_constructor: self.current_constructor.take(),
             pending_completion: self.pending_completion.take(),
             return_register,
             saved_interp_env,
@@ -1107,6 +1130,11 @@ impl BytecodeVM {
             is_async,
         };
         self.trampoline_stack.push(frame);
+
+        // For super() calls, set the current constructor so super() lookups work correctly
+        if is_super_call {
+            self.current_constructor = Some(func_obj);
+        }
 
         // Set up VM for the called function
         self.ip = 0;
@@ -1287,6 +1315,7 @@ impl BytecodeVM {
             saved_env_stack: std::mem::take(&mut self.saved_env_stack),
             arguments: std::mem::replace(&mut self.arguments, new_arguments),
             new_target: std::mem::replace(&mut self.new_target, new_target),
+            current_constructor: self.current_constructor.take(),
             pending_completion: self.pending_completion.take(),
             return_register,
             saved_interp_env,
@@ -1295,6 +1324,9 @@ impl BytecodeVM {
             is_async: false, // Construct calls are never async
         };
         self.trampoline_stack.push(frame);
+
+        // Set up the current constructor for super() lookups
+        self.current_constructor = Some(func_obj);
 
         // Set up VM for the called function
         self.ip = 0;
@@ -1330,6 +1362,7 @@ impl BytecodeVM {
         self.saved_env_stack = frame.saved_env_stack;
         self.arguments = frame.arguments;
         self.new_target = frame.new_target;
+        self.current_constructor = frame.current_constructor;
         self.pending_completion = frame.pending_completion;
 
         // Restore interpreter environment
@@ -1666,6 +1699,7 @@ impl BytecodeVM {
             saved_env_stack: Vec::new(),
             arguments: state.arguments,
             new_target: state.new_target,
+            current_constructor: None,
             pending_completion: None,
             trampoline_stack: Vec::new(),
             register_pool: Vec::new(),
@@ -2434,6 +2468,7 @@ impl BytecodeVM {
                     args,
                     return_register: dst,
                     new_target: JsValue::Undefined,
+                    is_super_call: false,
                 })
             }
 
@@ -2467,6 +2502,7 @@ impl BytecodeVM {
                     args,
                     return_register: dst,
                     new_target: JsValue::Undefined,
+                    is_super_call: false,
                 })
             }
 
@@ -2521,6 +2557,7 @@ impl BytecodeVM {
                     args,
                     return_register: dst,
                     new_target: JsValue::Undefined,
+                    is_super_call: false,
                 })
             }
 
@@ -3897,6 +3934,35 @@ impl BytecodeVM {
                     args,
                     return_register: dst,
                     new_target: JsValue::Undefined,
+                    is_super_call: true, // This is a super() call
+                })
+            }
+
+            Op::SuperCallSpread { dst, args_array } => {
+                // Get the current function's __super__ property (parent constructor)
+                let super_ctor = self.get_super_constructor(interp)?;
+
+                // Extract arguments from the array
+                let args_val = self.get_reg(args_array).clone();
+                let args: Vec<JsValue> = if let JsValue::Object(arr_ref) = &args_val {
+                    if let Some(elems) = arr_ref.borrow().array_elements() {
+                        elems.to_vec()
+                    } else {
+                        Vec::new()
+                    }
+                } else {
+                    Vec::new()
+                };
+
+                // Call super constructor with current this - use trampoline
+                let this = self.this_value.clone();
+                Ok(OpResult::Call {
+                    callee: super_ctor,
+                    this_value: this,
+                    args,
+                    return_register: dst,
+                    new_target: JsValue::Undefined,
+                    is_super_call: true, // This is a super() call
                 })
             }
 
@@ -3920,26 +3986,28 @@ impl BytecodeVM {
             }
 
             Op::SuperSet { key, value } => {
+                // In JavaScript, super.x = value sets the property on `this`, not on the super prototype
+                // The lookup is done through super (for semantics), but the assignment is to `this`
                 let key_val = self.get_reg(key).clone();
                 let set_value = self.get_reg(value).clone();
-                let super_target = self.get_super_target(interp)?;
 
-                if let JsValue::Object(obj) = super_target {
+                if let JsValue::Object(this_obj) = &self.this_value {
                     let prop_key = PropertyKey::from_value(&key_val);
-                    obj.borrow_mut().set_property(prop_key, set_value);
+                    this_obj.borrow_mut().set_property(prop_key, set_value);
                 }
                 Ok(OpResult::Continue)
             }
 
             Op::SuperSetConst { key, value } => {
+                // In JavaScript, super.x = value sets the property on `this`, not on the super prototype
                 let key_str = self
                     .get_string_constant(key)
                     .ok_or_else(|| JsError::internal_error("Invalid super property key"))?;
                 let set_value = self.get_reg(value).clone();
-                let super_target = self.get_super_target(interp)?;
 
-                if let JsValue::Object(obj) = super_target {
-                    obj.borrow_mut()
+                if let JsValue::Object(this_obj) = &self.this_value {
+                    this_obj
+                        .borrow_mut()
                         .set_property(PropertyKey::String(key_str), set_value);
                 }
                 Ok(OpResult::Continue)
@@ -5585,6 +5653,8 @@ enum OpResult {
         args: Vec<JsValue>,
         return_register: Register,
         new_target: JsValue,
+        /// If true, this is a super() call and the callee should be set as current_constructor
+        is_super_call: bool,
     },
     /// Construct a new object (for trampoline)
     Construct {

@@ -947,9 +947,28 @@ impl Interpreter {
                     }
                     PromiseStatus::Rejected => {
                         let reason = result.unwrap_or(JsValue::Undefined);
-                        // Guard the reason to prevent GC during error propagation
-                        self.thrown_guard = self.guard_value(&reason);
-                        return Err(JsError::thrown(reason));
+                        // Guard the reason to prevent GC during execution
+                        let vm_guard = self.heap.create_guard();
+                        if let JsValue::Object(ref obj) = reason {
+                            vm_guard.guard(obj.cheap_clone());
+                        }
+
+                        // Create VM from saved state and inject the exception
+                        let mut vm = BytecodeVM::from_saved_state(
+                            suspension.state,
+                            JsValue::Object(self.global.clone()),
+                            vm_guard,
+                        );
+
+                        // Inject the exception - this finds a try/catch handler if present
+                        if vm.inject_exception(reason.clone()) {
+                            // Handler found - run VM to handle the exception
+                            return self.run_vm_to_completion(vm);
+                        } else {
+                            // No handler - propagate as error
+                            self.thrown_guard = self.guard_value(&reason);
+                            return Err(JsError::thrown(reason));
+                        }
                     }
                     PromiseStatus::Pending => {
                         // Still pending - re-suspend

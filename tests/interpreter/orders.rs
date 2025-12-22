@@ -692,7 +692,6 @@ fn test_fetch_post_with_body() {
 }
 
 #[test]
-#[ignore = "Promise rejection during suspension not yet properly caught by try/catch"]
 fn test_fetch_network_error() {
     let mut runtime = create_test_runtime();
 
@@ -883,7 +882,6 @@ fn test_read_file_json_parse() {
 }
 
 #[test]
-#[ignore = "Promise rejection during suspension not yet properly caught by try/catch"]
 fn test_read_file_not_found() {
     let mut runtime = create_test_runtime();
 

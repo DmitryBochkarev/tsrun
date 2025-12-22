@@ -371,6 +371,7 @@ impl BytecodeBuilder {
                 | Op::DefineMethodComputed { .. }
                 | Op::DefineAccessorComputed { .. }
                 | Op::SuperCall { .. }
+                | Op::SuperCallSpread { .. }
                 | Op::SuperGet { .. }
                 | Op::SuperGetConst { .. }
                 | Op::SuperSet { .. }

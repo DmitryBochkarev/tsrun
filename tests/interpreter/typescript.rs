@@ -1574,7 +1574,6 @@ fn test_mixin_debug_simple_extend() {
 }
 
 #[test]
-#[ignore = "Implicit constructors don't forward arguments to super - pre-existing bug"]
 fn test_mixin_debug_implicit_super() {
     // Test: implicit super call forwards arguments
     assert_eq!(
@@ -1594,7 +1593,6 @@ fn test_mixin_debug_implicit_super() {
 }
 
 #[test]
-#[ignore = "Implicit constructors don't forward arguments to super - pre-existing bug"]
 fn test_mixin_with_param_properties() {
     // Test: class with parameter properties used with mixin
     assert_eq!(
@@ -1616,7 +1614,6 @@ fn test_mixin_with_param_properties() {
 }
 
 #[test]
-#[ignore = "Implicit constructors don't forward arguments to super - pre-existing bug"]
 fn test_mixin_pattern() {
     assert_eq!(
         eval(

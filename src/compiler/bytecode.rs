@@ -570,6 +570,10 @@ pub enum Op {
         argc: u8,
     },
 
+    /// Super call with spread: r[dst] = super(...r[args_array])
+    /// args_array should contain an array of arguments
+    SuperCallSpread { dst: Register, args_array: Register },
+
     /// Super property get: r[dst] = super[r[key]]
     SuperGet { dst: Register, key: Register },
 

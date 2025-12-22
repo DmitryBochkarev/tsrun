@@ -1362,6 +1362,7 @@ impl Compiler {
         });
 
         // Compile constructor (or create default one)
+        let has_super = class.super_class.is_some();
         let ctor_chunk = if let Some(ctor) = constructor {
             self.compile_constructor_body(
                 ctor,
@@ -1378,6 +1379,7 @@ impl Compiler {
                 &instance_private_methods,
                 class_brand,
                 class_name.clone(),
+                has_super,
             )?
         };
 
@@ -2167,6 +2169,7 @@ impl Compiler {
     }
 
     /// Compile default constructor (for classes without explicit constructor)
+    /// For derived classes, this generates: constructor(...args) { super(...args); }
     fn compile_default_constructor(
         &mut self,
         instance_fields: &[&ClassProperty],
@@ -2174,6 +2177,7 @@ impl Compiler {
         instance_private_methods: &[&ClassMethod],
         class_brand: u32,
         name: Option<JsString>,
+        has_super: bool,
     ) -> Result<super::BytecodeChunk, JsError> {
         use super::FunctionInfo;
 
@@ -2182,7 +2186,25 @@ impl Compiler {
         // Copy the class context so private field access works inside the constructor
         func_compiler.class_context_stack = self.class_context_stack.clone();
 
-        // Compile instance field initializers
+        // For derived classes, call super(...args) first to forward all arguments
+        if has_super {
+            // Load arguments as an array and call super with spread
+            let args_reg = func_compiler.builder.alloc_register()?;
+            func_compiler
+                .builder
+                .emit(Op::LoadArguments { dst: args_reg });
+
+            let result_reg = func_compiler.builder.alloc_register()?;
+            func_compiler.builder.emit(Op::SuperCallSpread {
+                dst: result_reg,
+                args_array: args_reg,
+            });
+
+            func_compiler.builder.free_register(result_reg);
+            func_compiler.builder.free_register(args_reg);
+        }
+
+        // Compile instance field initializers (these run AFTER super() call)
         for field in instance_fields {
             func_compiler.compile_instance_field_initializer(field)?;
         }
@@ -2207,13 +2229,13 @@ impl Compiler {
             name,
             param_count: 0,
             param_names: vec![],
-            rest_param: None,
+            rest_param: Some(0), // Rest parameter at index 0 to collect all args
             is_generator: false,
             is_async: false,
             is_arrow: false,
-            uses_arguments: false,
-            uses_this: true,  // constructors use this
-            binding_count: 3, // this + slack
+            uses_arguments: has_super, // Uses arguments if we have a super call
+            uses_this: true,           // constructors use this
+            binding_count: 3,          // this + slack
         });
 
         Ok(chunk)
