@@ -1577,50 +1577,6 @@ impl BytecodeVM {
         }
     }
 
-    /// Restore VM state from generator yield and set the sent value
-    pub fn restore_from_yield(
-        &mut self,
-        state: SavedVmState,
-        resume_register: Register,
-        sent_value: JsValue,
-        guard: Guard<JsObject>,
-    ) {
-        // Guard this_value if it's an object
-        if let JsValue::Object(obj) = &self.this_value {
-            guard.guard(obj.cheap_clone());
-        }
-
-        // Guard all objects in the restored registers
-        for val in &state.registers {
-            if let JsValue::Object(obj) = val {
-                guard.guard(obj.cheap_clone());
-            }
-        }
-
-        // Guard saved environments in call frames
-        for frame in &state.frames {
-            if let Some(ref env) = frame.saved_env {
-                guard.guard(env.cheap_clone());
-            }
-        }
-
-        // Guard sent value if it's an object
-        if let JsValue::Object(obj) = &sent_value {
-            guard.guard(obj.cheap_clone());
-        }
-
-        self.call_stack = state.frames;
-        self.ip = state.ip;
-        self.chunk = state.chunk;
-        self.registers = state.registers;
-        self.try_stack = state.try_stack;
-        self.register_guard = guard;
-        self.arguments = state.arguments;
-        self.new_target = state.new_target;
-        // Set the value passed to next() in the resume register
-        self.set_reg(resume_register, sent_value);
-    }
-
     /// Create a new VM from saved state (for generator resumption)
     /// The guard must protect all objects in the saved registers
     pub fn from_saved_state(
