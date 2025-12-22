@@ -127,9 +127,6 @@ pub struct Interpreter {
     // ═══════════════════════════════════════════════════════════════════════════
     // Execution State
     // ═══════════════════════════════════════════════════════════════════════════
-    /// Guard for the thrown value (keeps it alive during exception handling)
-    thrown_guard: Option<Guard<JsObject>>,
-
     /// Exported values from the module
     /// Uses ModuleExport to distinguish direct exports (with live bindings) from re-exports
     pub exports: FxHashMap<JsString, ModuleExport>,
@@ -292,7 +289,6 @@ impl Interpreter {
             reference_error_prototype,
             range_error_prototype,
             syntax_error_prototype,
-            thrown_guard: None,
             exports: FxHashMap::default(),
             call_stack: Vec::new(),
             next_generator_id: 1,
@@ -920,7 +916,6 @@ impl Interpreter {
                             return self.run_vm_to_completion(vm);
                         } else {
                             // No handler - propagate as error
-                            self.thrown_guard = self.guard_value(&reason);
                             return Err(JsError::thrown(reason));
                         }
                     }
