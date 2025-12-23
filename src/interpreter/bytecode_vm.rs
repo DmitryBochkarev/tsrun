@@ -4344,14 +4344,14 @@ impl BytecodeVM {
             }
 
             Op::GetFieldInitializer { dst, class, name } => {
-                let class_val = self.get_reg(class).clone();
+                let class_val = self.get_reg(class);
                 let field_name = self
                     .get_string_constant(name)
                     .unwrap_or_else(|| interp.intern(""));
 
                 let mut initializer = JsValue::Undefined;
 
-                if let JsValue::Object(class_obj) = &class_val {
+                if let JsValue::Object(class_obj) = class_val {
                     let init_key = interp.intern("__field_initializers__");
                     let borrowed = class_obj.borrow();
                     if let Some(JsValue::Object(inits)) =
@@ -4371,13 +4371,16 @@ impl BytecodeVM {
             }
 
             Op::ApplyFieldInitializer { value, initializer } => {
-                let value_val = self.get_reg(value).clone();
-                let init_val = self.get_reg(initializer).clone();
+                let init_val = self.get_reg(initializer);
 
                 // If initializer is a function, call it with the value
                 if matches!(&init_val, JsValue::Object(_)) {
-                    let result =
-                        interp.call_function(init_val, JsValue::Undefined, &[value_val])?;
+                    let value_val = self.get_reg(value);
+                    let result = interp.call_function(
+                        init_val.clone(),
+                        JsValue::Undefined,
+                        std::slice::from_ref(value_val),
+                    )?;
                     self.set_reg(value, result.value);
                 }
                 // If initializer is undefined, keep original value
@@ -4392,7 +4395,7 @@ impl BytecodeVM {
                 target_dst,
                 is_static,
             } => {
-                let class_val = self.get_reg(class).clone();
+                let class_val = self.get_reg(class);
                 let JsValue::Object(class_obj) = class_val else {
                     return Err(JsError::type_error("Class is not an object"));
                 };
@@ -4408,10 +4411,6 @@ impl BytecodeVM {
                     interp.intern(&format!("__accessor_{}__", accessor_name.as_str()));
 
                 let guard = interp.heap.create_guard();
-                // Guard the init value if it's an object
-                if let JsValue::Object(obj) = &init_val {
-                    guard.guard(obj.cheap_clone());
-                }
 
                 // Create getter function (AccessorGetter)
                 let getter = interp.create_object(&guard);
@@ -4484,7 +4483,7 @@ impl BytecodeVM {
                 accessor_obj,
                 is_static,
             } => {
-                let class_val = self.get_reg(class).clone();
+                let class_val = self.get_reg(class);
                 let JsValue::Object(class_obj) = class_val else {
                     return Err(JsError::type_error("Class is not an object"));
                 };
@@ -4493,7 +4492,7 @@ impl BytecodeVM {
                     .get_string_constant(name)
                     .unwrap_or_else(|| interp.intern(""));
 
-                let accessor_val = self.get_reg(accessor_obj).clone();
+                let accessor_val = self.get_reg(accessor_obj);
 
                 // Get target object (class for static, prototype for instance)
                 let target = if is_static {
@@ -4510,7 +4509,7 @@ impl BytecodeVM {
                 };
 
                 // Extract getter and setter from the accessor object
-                let (final_getter, final_setter) = if let JsValue::Object(obj) = &accessor_val {
+                let (final_getter, final_setter) = if let JsValue::Object(obj) = accessor_val {
                     let obj_ref = obj.borrow();
                     let get_key = interp.intern("get");
                     let set_key = interp.intern("set");
@@ -4550,8 +4549,8 @@ impl BytecodeVM {
                 name,
                 is_static,
             } => {
-                let decorator_val = self.get_reg(decorator).clone();
-                let target_val = self.get_reg(target).clone();
+                let decorator_val = self.get_reg(decorator);
+                let target_val = self.get_reg(target);
                 let accessor_name = self.get_string_constant(name);
 
                 // Create decorator context object
@@ -4585,16 +4584,19 @@ impl BytecodeVM {
                 );
 
                 // Call decorator(target, context)
-                let result = interp.call_function(
-                    decorator_val,
+                let Guarded {
+                    value,
+                    guard: _guard,
+                } = interp.call_function(
+                    decorator_val.clone(),
                     JsValue::Undefined,
                     &[target_val.clone(), JsValue::Object(ctx)],
                 )?;
 
                 // If decorator returns an object, use it as new target
                 // Otherwise keep the original target
-                if matches!(&result.value, JsValue::Object(_)) {
-                    self.set_reg(target, result.value);
+                if matches!(&value, JsValue::Object(_)) {
+                    self.set_reg(target, value);
                 }
 
                 Ok(OpResult::Continue)
@@ -4606,8 +4608,8 @@ impl BytecodeVM {
             Op::SpreadArray { dst, src } => {
                 // Spread elements from src iterable onto the dst array
                 // dst should already be an array - we append elements to it
-                let src_val = self.get_reg(src).clone();
-                let dst_val = self.get_reg(dst).clone();
+                let src_val = self.get_reg(src);
+                let dst_val = self.get_reg(dst);
 
                 let elements_to_add: Vec<JsValue> = match &src_val {
                     JsValue::Object(obj_ref) => {
@@ -4639,6 +4641,7 @@ impl BytecodeVM {
                 Ok(OpResult::Continue)
             }
 
+            // NOTE: review
             Op::CreateRestArray { dst, start_index } => {
                 // Create an array from remaining iterator elements
                 // This is used for rest patterns like [...rest] = arr
@@ -4652,7 +4655,7 @@ impl BytecodeVM {
                 // Look for the iterator in a previous register (typically dst - 3 based on pattern)
                 // This is a heuristic - the pattern compiler allocates registers in a specific order
                 let iter_reg = dst.saturating_sub(3);
-                let iter_val = self.get_reg(iter_reg).clone();
+                let iter_val = self.get_reg(iter_reg);
 
                 let mut elements = Vec::new();
 
@@ -4660,11 +4663,11 @@ impl BytecodeVM {
                     // Check for internal array iterator
                     let array_prop = iter_obj
                         .borrow()
-                        .get_property(&PropertyKey::from("__array__"));
+                        .get_property(&PropertyKey::String(interp.intern("__array__")));
                     if let Some(JsValue::Object(arr_ref)) = array_prop {
                         let index = match iter_obj
                             .borrow()
-                            .get_property(&PropertyKey::from("__index__"))
+                            .get_property(&PropertyKey::String(interp.intern("__index__")))
                         {
                             Some(JsValue::Number(n)) => n as usize,
                             _ => start_index as usize,
