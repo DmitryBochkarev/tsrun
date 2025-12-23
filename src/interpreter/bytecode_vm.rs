@@ -3910,8 +3910,8 @@ impl BytecodeVM {
                 let super_ctor = self.get_super_constructor(interp)?;
 
                 // Extract arguments from the array
-                let args_val = self.get_reg(args_array).clone();
-                let args: Vec<JsValue> = if let JsValue::Object(arr_ref) = &args_val {
+                let args_val = self.get_reg(args_array);
+                let args: Vec<JsValue> = if let JsValue::Object(arr_ref) = args_val {
                     if let Some(elems) = arr_ref.borrow().array_elements() {
                         elems.to_vec()
                     } else {
