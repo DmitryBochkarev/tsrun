@@ -3295,7 +3295,7 @@ impl BytecodeVM {
             }
 
             Op::IteratorNext { dst, iterator } => {
-                let iter_val = self.get_reg(iterator).clone();
+                let iter_val = self.get_reg(iterator);
 
                 let JsValue::Object(iter_obj) = iter_val else {
                     return Err(JsError::type_error("Iterator is not an object"));
@@ -3305,16 +3305,14 @@ impl BytecodeVM {
                 let array_prop = iter_obj
                     .borrow()
                     // FIXME: use interned property key
-                    .get_property(&PropertyKey::from("__array__"));
+                    .get_property(&PropertyKey::String(interp.intern("__array__")));
                 if let Some(JsValue::Object(arr_ref)) = array_prop {
                     // If the array is a proxy, fall through to custom iterator path
                     // which will call the next() method (which handles proxies properly)
+                    let index_key = PropertyKey::String(interp.intern("__index__"));
                     let is_proxy = matches!(arr_ref.borrow().exotic, ExoticObject::Proxy(_));
                     if !is_proxy {
-                        let index = match iter_obj
-                            .borrow()
-                            .get_property(&PropertyKey::from("__index__"))
-                        {
+                        let index = match iter_obj.borrow().get_property(&index_key) {
                             Some(JsValue::Number(n)) => n as usize,
                             _ => 0,
                         };
@@ -3332,20 +3330,20 @@ impl BytecodeVM {
                         };
 
                         // Update index
-                        iter_obj.borrow_mut().set_property(
-                            PropertyKey::from("__index__"),
-                            JsValue::Number((index + 1) as f64),
-                        );
+                        iter_obj
+                            .borrow_mut()
+                            .set_property(index_key, JsValue::Number((index + 1) as f64));
 
                         // Create result object { value, done }
                         let guard = interp.heap.create_guard();
                         let result = interp.create_object(&guard);
                         result
                             .borrow_mut()
-                            .set_property(PropertyKey::from("value"), value);
-                        result
-                            .borrow_mut()
-                            .set_property(PropertyKey::from("done"), JsValue::Boolean(done));
+                            .set_property(PropertyKey::String(interp.intern("value")), value);
+                        result.borrow_mut().set_property(
+                            PropertyKey::String(interp.intern("done")),
+                            JsValue::Boolean(done),
+                        );
                         self.set_reg(dst, JsValue::Object(result));
                         return Ok(OpResult::Continue);
                     }
@@ -3354,12 +3352,10 @@ impl BytecodeVM {
                 // Check if this is our internal string iterator
                 let string_prop = iter_obj
                     .borrow()
-                    .get_property(&PropertyKey::from("__string__"));
+                    .get_property(&PropertyKey::String(interp.intern("__string__")));
                 if let Some(JsValue::String(s)) = string_prop {
-                    let index = match iter_obj
-                        .borrow()
-                        .get_property(&PropertyKey::from("__index__"))
-                    {
+                    let index_key = PropertyKey::String(interp.intern("__index__"));
+                    let index = match iter_obj.borrow().get_property(&index_key) {
                         Some(JsValue::Number(n)) => n as usize,
                         _ => 0,
                     };
@@ -3376,10 +3372,9 @@ impl BytecodeVM {
                     };
 
                     // Update index
-                    iter_obj.borrow_mut().set_property(
-                        PropertyKey::from("__index__"),
-                        JsValue::Number((index + 1) as f64),
-                    );
+                    iter_obj
+                        .borrow_mut()
+                        .set_property(index_key, JsValue::Number((index + 1) as f64));
 
                     // Create result object { value, done }
                     let guard = interp.heap.create_guard();
@@ -3395,14 +3390,12 @@ impl BytecodeVM {
                 }
 
                 // Check if this is our internal keys iterator (for for-in)
+                let index_key = PropertyKey::String(interp.intern("__index__"));
                 let keys_prop = iter_obj
                     .borrow()
-                    .get_property(&PropertyKey::from("__keys__"));
+                    .get_property(&PropertyKey::String(interp.intern("__keys__")));
                 if let Some(JsValue::Object(keys_arr)) = keys_prop {
-                    let index = match iter_obj
-                        .borrow()
-                        .get_property(&PropertyKey::from("__index__"))
-                    {
+                    let index = match iter_obj.borrow().get_property(&index_key) {
                         Some(JsValue::Number(n)) => n as usize,
                         _ => 0,
                     };
@@ -3420,10 +3413,9 @@ impl BytecodeVM {
                     };
 
                     // Update index
-                    iter_obj.borrow_mut().set_property(
-                        PropertyKey::from("__index__"),
-                        JsValue::Number((index + 1) as f64),
-                    );
+                    iter_obj
+                        .borrow_mut()
+                        .set_property(index_key, JsValue::Number((index + 1) as f64));
 
                     // Create result object { value, done }
                     let guard = interp.heap.create_guard();
@@ -3443,12 +3435,15 @@ impl BytecodeVM {
                 let next_method = iter_obj.borrow().get_property(&next_key);
 
                 if let Some(JsValue::Object(next_fn)) = next_method {
-                    let result = interp.call_function(
+                    let Guarded {
+                        value,
+                        guard: _guard,
+                    } = interp.call_function(
                         JsValue::Object(next_fn),
-                        JsValue::Object(iter_obj),
+                        JsValue::Object(iter_obj.clone()),
                         &[],
                     )?;
-                    self.set_reg(dst, result.value);
+                    self.set_reg(dst, value);
                 } else {
                     return Err(JsError::type_error("Iterator must have a next method"));
                 }
