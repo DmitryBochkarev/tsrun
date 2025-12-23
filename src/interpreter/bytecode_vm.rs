@@ -479,6 +479,7 @@ impl BytecodeVM {
     }
 
     /// Get the super target object for super.x property access
+    // FIXME: return reference
     fn get_super_target(&self, interp: &mut Interpreter) -> Result<JsValue, JsError> {
         // First, try to look up __super_target__ from the current environment
         // This is set when entering a method via the trampoline
@@ -3934,9 +3935,9 @@ impl BytecodeVM {
             }
 
             Op::SuperGet { dst, key } => {
-                let key_val = self.get_reg(key).clone();
+                let key_val = self.get_reg(key);
                 let super_target = self.get_super_target(interp)?;
-                let value = self.get_property_value(interp, &super_target, &key_val)?;
+                let value = self.get_property_value(interp, &super_target, key_val)?;
                 self.set_reg(dst, value);
                 Ok(OpResult::Continue)
             }
