@@ -3531,7 +3531,7 @@ impl BytecodeVM {
                 super_class,
             } => {
                 // Get constructor function - it should be a function object
-                let ctor_val = self.get_reg(constructor).clone();
+                let ctor_val = self.get_reg(constructor);
                 let JsValue::Object(ctor_obj) = ctor_val else {
                     return Err(JsError::type_error("Class constructor must be a function"));
                 };
@@ -3541,7 +3541,7 @@ impl BytecodeVM {
                 let prototype = interp.create_object(&guard);
 
                 // Handle superclass if provided
-                let super_val = self.get_reg(super_class).clone();
+                let super_val = self.get_reg(super_class);
                 if !matches!(super_val, JsValue::Undefined) {
                     let JsValue::Object(super_ctor) = &super_val else {
                         return Err(JsError::type_error(
@@ -3597,7 +3597,7 @@ impl BytecodeVM {
                     ),
                 );
 
-                self.set_reg(dst, JsValue::Object(ctor_obj));
+                self.set_reg(dst, JsValue::Object(ctor_obj.clone()));
                 Ok(OpResult::Continue)
             }
 

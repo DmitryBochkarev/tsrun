@@ -2750,6 +2750,7 @@ impl Interpreter {
     }
 
     // NOTE: review
+    // FIXME: pass guard
     pub fn call_function(
         &mut self,
         callee: JsValue,
@@ -2960,6 +2961,7 @@ impl Interpreter {
     }
 
     /// Call a bytecode-compiled function with an explicit new.target value
+    // NOTE: review
     fn call_bytecode_function_with_new_target(
         &mut self,
         bc_func: BytecodeFunction,
@@ -3068,6 +3070,7 @@ impl Interpreter {
     }
 
     /// Call a bytecode async function - wraps result in Promise
+    // NOTE: review
     fn call_bytecode_async_function(
         &mut self,
         bc_func: BytecodeFunction,
@@ -3103,6 +3106,7 @@ impl Interpreter {
     }
 
     /// Create a bytecode generator object when a generator function is called
+    // NOTE: review
     fn create_and_call_bytecode_generator(
         &mut self,
         bc_func: BytecodeFunction,
@@ -3146,6 +3150,7 @@ impl Interpreter {
     }
 
     /// Create a bytecode async generator object when an async generator function is called
+    // NOTE: review
     fn create_and_call_bytecode_async_generator(
         &mut self,
         bc_func: BytecodeFunction,

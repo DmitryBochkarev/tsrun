@@ -987,6 +987,7 @@ pub fn proxy_own_keys(interp: &mut Interpreter, obj: JsObjectRef) -> Result<Guar
 }
 
 /// Proxy [[Call]] internal method (for function proxies)
+// NOTE: review
 pub fn proxy_apply(
     interp: &mut Interpreter,
     obj: JsObjectRef,

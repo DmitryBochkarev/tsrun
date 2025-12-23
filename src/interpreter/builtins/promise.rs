@@ -222,6 +222,7 @@ fn reject_promise(
 }
 
 /// Public function to resolve a promise
+// NOTE: review
 pub fn resolve_promise_value(
     interp: &mut Interpreter,
     promise: &Gc<JsObject>,
@@ -231,6 +232,7 @@ pub fn resolve_promise_value(
 }
 
 /// Public function to reject a promise
+// NOTE: review
 pub fn reject_promise_value(
     interp: &mut Interpreter,
     promise: &Gc<JsObject>,
@@ -742,6 +744,7 @@ pub fn promise_all(
 }
 
 /// Handle Promise.all fulfill - called when one of the input promises resolves
+// NOTE: review
 pub fn handle_promise_all_fulfill(
     interp: &mut Interpreter,
     state: &Rc<PromiseAllSharedState>,
@@ -778,6 +781,7 @@ pub fn handle_promise_all_fulfill(
 }
 
 /// Handle Promise.all reject - called when any of the input promises rejects
+// NOTE: review
 pub fn handle_promise_all_reject(
     interp: &mut Interpreter,
     state: &Rc<PromiseAllSharedState>,
