@@ -3956,12 +3956,14 @@ impl BytecodeVM {
             Op::SuperSet { key, value } => {
                 // In JavaScript, super.x = value sets the property on `this`, not on the super prototype
                 // The lookup is done through super (for semantics), but the assignment is to `this`
-                let key_val = self.get_reg(key).clone();
-                let set_value = self.get_reg(value).clone();
+                let key_val = self.get_reg(key);
 
                 if let JsValue::Object(this_obj) = &self.this_value {
-                    let prop_key = PropertyKey::from_value(&key_val);
-                    this_obj.borrow_mut().set_property(prop_key, set_value);
+                    let prop_key = PropertyKey::from_value(key_val);
+                    let set_value = self.get_reg(value);
+                    this_obj
+                        .borrow_mut()
+                        .set_property(prop_key, set_value.clone());
                 }
                 Ok(OpResult::Continue)
             }
@@ -3971,12 +3973,12 @@ impl BytecodeVM {
                 let key_str = self
                     .get_string_constant(key)
                     .ok_or_else(|| JsError::internal_error("Invalid super property key"))?;
-                let set_value = self.get_reg(value).clone();
 
                 if let JsValue::Object(this_obj) = &self.this_value {
+                    let set_value = self.get_reg(value);
                     this_obj
                         .borrow_mut()
-                        .set_property(PropertyKey::String(key_str), set_value);
+                        .set_property(PropertyKey::String(key_str), set_value.clone());
                 }
                 Ok(OpResult::Continue)
             }
