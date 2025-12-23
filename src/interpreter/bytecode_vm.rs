@@ -5275,6 +5275,7 @@ impl BytecodeVM {
     }
 
     /// Get a property value from an object, invoking getters if present
+    // FIXME: receive guard
     fn get_property_value(
         &self,
         interp: &mut Interpreter,
