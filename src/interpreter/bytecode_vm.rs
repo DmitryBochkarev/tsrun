@@ -3607,18 +3607,18 @@ impl BytecodeVM {
                 method,
                 is_static,
             } => {
-                let class_val = self.get_reg(class).clone();
+                let class_val = self.get_reg(class);
                 let JsValue::Object(class_obj) = class_val else {
                     return Err(JsError::type_error("Class is not an object"));
                 };
 
-                let method_val = self.get_reg(method).clone();
+                let method_val = self.get_reg(method);
                 let method_name = self
                     .get_string_constant(name)
                     .ok_or_else(|| JsError::internal_error("Invalid method name constant"))?;
 
                 // Store __super__ and __super_target__ on method for super access
-                if let JsValue::Object(method_obj) = &method_val {
+                if let JsValue::Object(method_obj) = method_val {
                     // Copy __super__ from class constructor
                     let super_key = PropertyKey::String(interp.intern("__super__"));
                     if let Some(super_val) = class_obj.borrow().get_property(&super_key) {
@@ -3653,7 +3653,7 @@ impl BytecodeVM {
                     // Methods are non-enumerable, writable, configurable (per spec)
                     class_obj.borrow_mut().define_property(
                         prop_key,
-                        Property::with_attributes(method_val, true, false, true),
+                        Property::with_attributes(method_val.clone(), true, false, true),
                     );
                 } else {
                     // Add to prototype
@@ -3664,7 +3664,7 @@ impl BytecodeVM {
                     {
                         proto.borrow_mut().define_property(
                             prop_key,
-                            Property::with_attributes(method_val, true, false, true),
+                            Property::with_attributes(method_val.clone(), true, false, true),
                         );
                     }
                 }
