@@ -4183,8 +4183,8 @@ impl BytecodeVM {
                 param_index,
                 is_static,
             } => {
-                let target_val = self.get_reg(target).clone();
-                let decorator_val = self.get_reg(decorator).clone();
+                let target_val = self.get_reg(target);
+                let decorator_val = self.get_reg(decorator);
                 let method_name_str = self.get_string_constant(method_name);
                 let param_name_str = self.get_string_constant(param_name);
 
@@ -4231,9 +4231,9 @@ impl BytecodeVM {
                 // Call decorator(target, context)
                 // Parameter decorators are called for side effects only (like metadata registration)
                 let _result = interp.call_function(
-                    decorator_val,
+                    decorator_val.clone(),
                     JsValue::Undefined,
-                    &[target_val, JsValue::Object(ctx)],
+                    &[target_val.clone(), JsValue::Object(ctx)],
                 )?;
 
                 Ok(OpResult::Continue)
@@ -4247,7 +4247,7 @@ impl BytecodeVM {
                 is_private,
                 is_accessor,
             } => {
-                let decorator_val = self.get_reg(decorator).clone();
+                let decorator_val = self.get_reg(decorator);
                 let field_name = self.get_string_constant(name);
 
                 // Create decorator context object
@@ -4283,14 +4283,17 @@ impl BytecodeVM {
 
                 // Call decorator(undefined, context)
                 // Field decorators receive undefined as first arg and return an initializer transformer
-                let result = interp.call_function(
-                    decorator_val,
+                let Guarded {
+                    value,
+                    guard: _guard,
+                } = interp.call_function(
+                    decorator_val.clone(),
                     JsValue::Undefined,
                     &[JsValue::Undefined, JsValue::Object(ctx)],
                 )?;
 
                 // Store the result (initializer transformer or undefined)
-                self.set_reg(dst, result.value);
+                self.set_reg(dst, value);
 
                 Ok(OpResult::Continue)
             }
@@ -4300,13 +4303,13 @@ impl BytecodeVM {
                 name,
                 initializer,
             } => {
-                let class_val = self.get_reg(class).clone();
-                let initializer_val = self.get_reg(initializer).clone();
+                let class_val = self.get_reg(class);
+                let initializer_val = self.get_reg(initializer);
                 let field_name = self
                     .get_string_constant(name)
                     .unwrap_or_else(|| interp.intern(""));
 
-                if let JsValue::Object(class_obj) = &class_val {
+                if let JsValue::Object(class_obj) = class_val {
                     // Get or create __field_initializers__ object
                     let init_key = interp.intern("__field_initializers__");
                     #[allow(clippy::map_clone)]
@@ -4317,11 +4320,11 @@ impl BytecodeVM {
                             .map(|v| v.clone())
                     };
 
+                    let guard = interp.heap.create_guard();
                     let inits = match inits_obj {
                         Some(JsValue::Object(obj)) => obj,
                         _ => {
                             // Create new __field_initializers__ object
-                            let guard = interp.heap.create_guard();
                             let new_obj = interp.create_object_raw(&guard);
                             class_obj.borrow_mut().set_property(
                                 PropertyKey::String(init_key),
@@ -4334,7 +4337,7 @@ impl BytecodeVM {
                     // Store the initializer for this field
                     inits
                         .borrow_mut()
-                        .set_property(PropertyKey::String(field_name), initializer_val);
+                        .set_property(PropertyKey::String(field_name), initializer_val.clone());
                 }
 
                 Ok(OpResult::Continue)
