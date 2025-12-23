@@ -4737,8 +4737,8 @@ impl BytecodeVM {
 
             Op::SpreadObject { dst, src } => {
                 // Copy all enumerable own properties from src to dst
-                let dst_val = self.get_reg(dst).clone();
-                let src_val = self.get_reg(src).clone();
+                let dst_val = self.get_reg(dst);
+                let src_val = self.get_reg(src);
 
                 if let (JsValue::Object(dst_obj), JsValue::Object(src_obj)) = (&dst_val, &src_val) {
                     // Collect properties first to avoid borrow issues
@@ -4766,12 +4766,12 @@ impl BytecodeVM {
             // ═══════════════════════════════════════════════════════════════════════════
             Op::TemplateConcat { dst, start, count } => {
                 let mut result = String::new();
+                let to_string_key = PropertyKey::String(interp.intern("toString"));
                 for i in 0..count {
-                    let val = self.get_reg(start + i).clone();
+                    let val = self.get_reg(start + i);
                     // For objects, call toString method; for primitives, use to_js_string
                     let str_val = if let JsValue::Object(obj) = &val {
                         // Check if object has a custom toString method
-                        let to_string_key = PropertyKey::String(interp.intern("toString"));
                         if let Some(JsValue::Object(func_obj)) =
                             obj.borrow().get_property(&to_string_key)
                         {
