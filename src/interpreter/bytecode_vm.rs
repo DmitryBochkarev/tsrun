@@ -3989,9 +3989,9 @@ impl BytecodeVM {
                 class_name,
                 initializers,
             } => {
-                let class_val = self.get_reg(class).clone();
-                let decorator_val = self.get_reg(decorator).clone();
-                let initializers_arr = self.get_reg(initializers).clone();
+                let class_val = self.get_reg(class);
+                let decorator_val = self.get_reg(decorator);
+                let initializers_arr = self.get_reg(initializers);
 
                 // Get class name for context (None if class_name is MAX)
                 let name = if class_name == u16::MAX {
@@ -4026,7 +4026,7 @@ impl BytecodeVM {
                 // Store the initializers array on context so addInitializer can access it
                 let init_key = interp.intern("__initializers__");
                 ctx.borrow_mut()
-                    .set_property(PropertyKey::String(init_key), initializers_arr);
+                    .set_property(PropertyKey::String(init_key), initializers_arr.clone());
 
                 // Create addInitializer function that pushes to context.__initializers__
                 let add_init_fn = interp.create_native_fn(
@@ -4060,17 +4060,20 @@ impl BytecodeVM {
                 );
 
                 // Call decorator(class, context)
-                let result = interp.call_function(
-                    decorator_val,
+                let Guarded {
+                    value,
+                    guard: _guard,
+                } = interp.call_function(
+                    decorator_val.clone(),
                     JsValue::Undefined,
                     &[class_val.clone(), JsValue::Object(ctx)],
                 )?;
 
                 // If decorator returns undefined, keep original class; otherwise use return value
-                if matches!(result.value, JsValue::Undefined) {
+                if matches!(value, JsValue::Undefined) {
                     // Keep original class value in register
                 } else {
-                    self.set_reg(class, result.value);
+                    self.set_reg(class, value);
                 }
 
                 Ok(OpResult::Continue)
