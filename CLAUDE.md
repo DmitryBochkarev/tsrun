@@ -4,138 +4,104 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-TypeScript interpreter written in Rust for config/manifest generation with support for ES modules and async/await. Types are parsed but stripped at runtime (not type-checked). The interpreter uses a **register-based bytecode VM** for execution, enabling efficient execution and suspension at import/await points.
+TypeScript interpreter written in Rust for config/manifest generation with support for ES modules and async/await. Types are parsed but stripped at runtime (not type-checked). The interpreter uses a **register-based bytecode VM** for execution.
 
-## Build and Test Commands
+## Quick Reference
 
-```bash
-cargo build                    # Build the project
-timeout 30 cargo test          # Run all tests (with 30s timeout)
-cargo test --test interpreter  # Run only interpreter integration tests
-cargo test lexer               # Run only lexer tests
-cargo test parser              # Run only parser tests
-cargo test -- --nocapture      # Show test output
-```
-
-**Important:** Always run tests with a 30 second timeout to catch infinite loops early:
-```bash
-timeout 30 cargo test bytecode::    # Run bytecode tests with timeout
-timeout 30 cargo test test_name     # Run specific test with timeout
-```
-
-### Running Specific Tests
+### Build & Test Commands
 
 ```bash
-# Run tests matching a pattern
-cargo test test_name           # Run tests containing "test_name"
-cargo test string_match        # Run all string_match* tests
-cargo test test_tdz            # Run all TDZ-related tests
-
-# Run tests in a specific module
-cargo test string::            # Run all tests in string module
-cargo test array::             # Run all tests in array module
-
-# Run a single specific test with output
-cargo test test_string_match_basic -- --nocapture
-
-# Run tests and show all output (including passing tests)
-cargo test -- --nocapture --show-output
+cargo build                              # Build the project
+timeout 30 cargo test                    # Run all tests (always use timeout!)
+timeout 30 cargo test --test interpreter # Run interpreter integration tests
+timeout 30 cargo test test_name          # Run specific test
+timeout 30 cargo test -- --nocapture     # Show test output
 ```
 
-### Test Organization
+### Key Files
 
-Tests are located in:
-- `tests/interpreter/` - Integration tests organized by feature (array.rs, string.rs, etc.)
-- `src/parser.rs` (bottom) - Parser unit tests
-- `src/value.rs` (bottom) - Value type unit tests
+| File/Directory | Purpose |
+|----------------|---------|
+| `src/lib.rs` | Public API - `Runtime` struct |
+| `src/lexer.rs` | Tokenizer |
+| `src/parser.rs` | Recursive descent + Pratt parsing |
+| `src/ast.rs` | AST node types |
+| `src/value.rs` | Runtime values, object model, GC |
+| `src/compiler/` | Bytecode compiler |
+| `src/interpreter/` | VM and builtins |
+| `tests/interpreter/` | Integration tests by feature |
 
-## Important Rules
+## Development Rules
 
-- **Always use the proper Edit tool to modify files** - never use shell commands like `echo >>` to modify files
-- Prefer small, focused edits over large rewrites
-- **Always add TypeScript type annotations in test code** - even though types are stripped at runtime, tests should use proper TypeScript syntax
-- **No tech debt**: Fix failing tests immediately before moving on. Do not leave TODO/FIXME comments for known bugs - implement the fix or ask for clarification
-- **Use TDD**: If a test fails because a feature is not implemented, implement the feature first rather than deleting or modifying the test to work around the limitation
-- **Never change failing test cases** - if a test fails because a syntax/feature is not yet supported, write additional simpler tests to verify the current implementation scope, but keep the original test as a goal to implement the missing feature
-- **Fix pre-existing bugs**: If you discover a pre-existing bug while working on a feature (e.g., `null.foo` returning undefined instead of throwing TypeError), write a test that covers the bug and fix it before continuing. Do not work around pre-existing issues.
-- **Proper fixes over workarounds**: If fixing a bug requires changes to the AST, parser, or interpreter architecture, make those changes properly. Write tests first, then implement the fix. Do not implement partial fixes or workarounds that leave the codebase in an inconsistent state.
-- **Debugging tests** - write debug tests in test files and run with `cargo test test_name -- --nocapture` to see output. Use `console.log()` in test code to inspect runtime behavior. Do not use heredoc/echo commands in bash or create ad-hoc script files to run code - always write proper tests in the test files instead.
+- **Always use the Edit tool** - never shell commands like `echo >>` to modify files
+- **Use TypeScript annotations in tests** - types are stripped at runtime but tests should use proper syntax
+- **No tech debt** - fix failing tests immediately, no TODO/FIXME for known bugs
+- **Use TDD** - if a test fails because a feature isn't implemented, implement the feature
+- **Never change failing test cases** - write simpler tests to verify current scope, keep original as goal
+- **Fix pre-existing bugs** - write a test, fix it, then continue with your feature
+- **Proper fixes over workarounds** - make architectural changes if needed
+- **Debug via tests** - use `cargo test test_name -- --nocapture` with `console.log()`, not ad-hoc scripts
 
-## Zero-Panic Policy
+### TDD Workflow
 
-This codebase enforces a **zero-panic policy** via Clippy lints. The following patterns are **denied** in production code:
+1. **Verify parser support** - write parser test first, implement if needed
+2. Write failing interpreter test
+3. Implement minimal code to pass
+4. Refactor while keeping tests green
+5. Run `cargo test && cargo fmt && cargo clippy` before committing
+
+## Code Safety
+
+### Zero-Panic Policy
+
+These patterns are **denied** via Clippy lints:
 
 | Pattern | Alternative |
 |---------|-------------|
-| `.unwrap()` | Use `.ok_or_else()`, `if let`, or `match` |
-| `.expect()` | Use `.ok_or_else()` with descriptive error |
-| `[index]` | Use `.get(index)` with error handling |
-| `panic!()` | Return `Err(JsError::...)` |
-| `unreachable!()` | Return `Err(JsError::internal_error(...))` |
+| `.unwrap()` | `.ok_or_else()`, `if let`, `match` |
+| `.expect()` | `.ok_or_else()` with descriptive error |
+| `[index]` | `.get(index)` with error handling |
+| `panic!()` | `Err(JsError::...)` |
+| `unreachable!()` | `Err(JsError::internal_error(...))` |
 | `todo!()` | Implement the feature or return error |
-| `unimplemented!()` | Return `Err(JsError::type_error(...))` |
-| `&str[start..end]` | Use `.get(start..end)` for safe slicing |
+| `&str[start..end]` | `.get(start..end)` for safe slicing |
 
-### Clippy Configuration
-
-The lints are configured in `Cargo.toml`:
-```toml
-[lints.clippy]
-unwrap_used = "deny"
-expect_used = "deny"
-indexing_slicing = "deny"
-panic = "deny"
-unreachable = "deny"
-todo = "deny"
-unimplemented = "deny"
-string_slice = "deny"
-```
-
-Test code is exempt via `clippy.toml`:
-```toml
-allow-unwrap-in-tests = true
-allow-expect-in-tests = true
-allow-indexing-slicing-in-tests = true
-allow-panic-in-tests = true
-```
+Test code is exempt via `clippy.toml`.
 
 ### Safe Access Patterns
 
-**For function arguments:**
 ```rust
-// Instead of: args[0]
+// Function arguments
 let first = args.first().cloned().unwrap_or(JsValue::Undefined);
-
-// Instead of: args[1]
 let second = args.get(1).cloned().unwrap_or(JsValue::Undefined);
-```
 
-**For array/vector access:**
-```rust
-// Instead of: elements[i]
+// Array/vector access
 let elem = elements.get(i).ok_or_else(|| JsError::internal_error("index out of bounds"))?;
-
-// For slicing: args[i..]
 let rest = args.get(i..).unwrap_or_default().to_vec();
-```
 
-**For string slicing:**
-```rust
-// Instead of: s[start..end]
+// String slicing
 let slice = s.get(start..end).unwrap_or("");
-```
 
-**For Option unwrapping:**
-```rust
-// Instead of: opt.unwrap()
+// Option unwrapping
 let value = opt.ok_or_else(|| JsError::internal_error("expected value"))?;
 ```
 
-### Guard System and GC Safety
+### Clone Conventions
 
-> **📖 For comprehensive guard documentation, see [docs/proper_use_of_guards.md](docs/proper_use_of_guards.md)**
+Use `.cheap_clone()` for O(1) reference-counted clones:
 
-The `Guarded` struct (from `value.rs`) wraps a `JsValue` with a `Guard` that keeps objects alive during GC:
+| Type | Clone Cost | Method |
+|------|-----------|--------|
+| `Gc<JsObject>` | Cheap | `.cheap_clone()` |
+| `JsString` | Cheap | `.cheap_clone()` |
+| `Rc<T>` | Cheap | `.cheap_clone()` |
+| `String`, `Vec<T>`, AST | Expensive | `.clone()` with comment |
+
+## GC & Guards
+
+### Overview
+
+The `Guarded` struct wraps a `JsValue` with a `Guard` that keeps objects alive during GC:
 
 ```rust
 pub struct Guarded {
@@ -144,367 +110,83 @@ pub struct Guarded {
 }
 ```
 
-**Bytecode VM register guard:** The VM maintains a `register_guard` that keeps all values in registers alive. When returning from the VM, values are wrapped in `Guarded`:
-
-```rust
-// VmResult::Complete returns Guarded to keep result alive
-pub enum VmResult {
-    Complete(Guarded),    // Value with guard
-    Suspend(VmSuspension),
-    Yield(GeneratorYield),
-    Error(JsError),
-}
-```
-
-**Creating guarded values:**
-```rust
-// For native functions returning objects
-fn guarded_js_value(val: JsValue, interp: &Interpreter) -> Guarded {
-    match &val {
-        JsValue::Object(obj) => {
-            let guard = interp.heap.create_guard();
-            guard.guard(obj.cheap_clone());
-            Guarded { value: val, guard: Some(guard) }
-        }
-        _ => Guarded { value: val, guard: None },
-    }
-}
-```
-
-**Why this matters:** The guard keeps objects alive in the GC. If you drop the guard before you're done using the value, the garbage collector may reclaim the object.
-
-**Rule: Never assign temporary objects to root_guard:**
-Do not allocate temporary objects from `root_guard` - they will never be garbage collected, causing memory leaks.
+The VM maintains a `register_guard` that keeps all register values alive. When returning from the VM, values are wrapped in `Guarded`.
 
 ### Object Creation API
 
-**API pattern:** Caller provides guard, method allocates from it:
-```rust
-// CORRECT: Caller controls lifetime via guard
-let guard = self.heap.create_guard();
-let obj = self.create_object(&guard);        // With prototype
-let raw = self.create_object_raw(&guard);    // Without prototype
-let arr = self.create_array_from(&guard, elements);
-let func = self.create_interpreted_function(&guard, name, params, body, closure, span, generator, async_);
-let native = self.create_native_fn(&guard, "name", native_fn, arity);
+Caller provides guard, method allocates from it:
 
-// Multiple objects share one guard
+```rust
+let guard = self.heap.create_guard();
+let obj = self.create_object(&guard);           // With prototype
+let raw = self.create_object_raw(&guard);       // Without prototype
+let arr = self.create_array_from(&guard, elements);
+let func = self.create_native_fn(&guard, "name", native_fn, arity);
+
+// Multiple objects can share one guard
 let guard = self.heap.create_guard();
 let obj1 = self.create_object(&guard);
 let obj2 = self.create_object(&guard);
-let arr = self.create_array_from(&guard, vec![JsValue::Object(obj1), JsValue::Object(obj2)]);
 ```
 
-**Method variants:**
-| Method | Description |
-|--------|-------------|
-| `create_object(&guard)` | Plain object with `object_prototype` |
-| `create_object_raw(&guard)` | Plain object without prototype |
-| `create_array_from(&guard, elements)` | Array with `array_prototype` |
-| `create_empty_array(&guard)` | Empty array with `array_prototype` |
-| `create_interpreted_function(&guard, ...)` | Interpreted function with `function_prototype` |
-| `create_native_fn(&guard, name, func, arity)` | Native function with `function_prototype` |
-| `create_js_function(&guard, js_func)` | Function from JsFunction variant |
+### Critical GC Rules
 
-**Why this matters:**
-- Caller has explicit control over object lifetime
-- One guard can protect multiple related objects (fewer allocations)
-- Makes GC safety more visible at call sites
-
-**Rule: Return Guarded when returning JsValue:**
-When functions return `JsValue`, they should return `Guarded` to keep the guard alive until ownership is transferred:
+**1. Guard before allocate** - GC runs BEFORE allocation when threshold is reached:
 ```rust
-// CORRECT: Return Guarded to maintain GC safety
-pub fn some_builtin(interp: &mut Interpreter, ...) -> Result<Guarded, JsError> {
+// CORRECT
+let guard = interp.heap.create_guard();
+interp.guard_value_with(&guard, &input_value);  // Guard input FIRST
+let obj = interp.create_object(&guard);         // Then allocate
+
+// WRONG - input_value may be collected during allocation!
+let obj = interp.create_object(&guard);
+```
+
+**2. Return Guarded when returning objects**:
+```rust
+// CORRECT
+pub fn some_builtin(...) -> Result<Guarded, JsError> {
     let guard = interp.heap.create_guard();
     let arr = interp.create_array(&guard, elements);
     Ok(Guarded { value: JsValue::Object(arr), guard: Some(guard) })
 }
 
-// WRONG: Returning JsValue drops the guard, object may be collected!
-pub fn some_builtin(interp: &mut Interpreter, ...) -> Result<JsValue, JsError> {
-    let guard = interp.heap.create_guard();
-    let arr = interp.create_array(&guard, elements);
-    Ok(JsValue::Object(arr))  // BUG: guard dropped here!
-}
+// WRONG - guard dropped, object may be collected!
+pub fn some_builtin(...) -> Result<JsValue, JsError> { ... }
 ```
 
-**Why this matters:** When we create temporary objects and return them, the guard must stay alive until ownership is established (e.g., the value is stored in a variable, property, or array). By returning `Guarded`, the caller receives both the value and the guard, ensuring the object survives until properly owned.
-
-### Aggressive Test Defaults
-
-Tests use aggressive defaults to catch bugs early:
-- `GC_THRESHOLD=1` - GC on every allocation to catch GC bugs
-- `MAX_CALL_DEPTH=50` - Low recursion limit to catch infinite loops before Rust stack overflow
-
-Override via environment variables:
-
-```bash
-cargo test                      # Default: aggressive settings
-GC_THRESHOLD=100 cargo test     # Less aggressive GC for faster runs
-MAX_CALL_DEPTH=256 cargo test   # Higher recursion limit (production default)
-```
-
-**Common GC bugs caught by stress testing:**
-- "X is not a function" - prototype collected before method call
-- Missing array elements - array or elements collected mid-operation
-- Undefined property values - object collected while accessing properties
-
-### GC Timing: Guard Before Allocate
-
-When creating objects that reference other values, **guard the input values BEFORE allocating the new object**:
-
+**3. Guard scope in collect-then-store loops**:
 ```rust
-// CORRECT: Guard value, then allocate promise
-pub fn create_fulfilled_promise(interp: &mut Interpreter, value: JsValue) -> Gc<JsObject> {
-    let guard = interp.heap.create_guard();
-    interp.guard_value_with(&guard, &value);  // Guard input FIRST
-    let obj = interp.create_object(&guard);   // Then allocate
-    // ... store value in promise state ...
-    obj
-}
-
-// WRONG: Allocating first may trigger GC that collects value!
-pub fn create_fulfilled_promise(interp: &mut Interpreter, value: JsValue) -> Gc<JsObject> {
-    let guard = interp.heap.create_guard();
-    let obj = interp.create_object(&guard);  // GC may run here!
-    // value may have been collected if it was the only reference
-    // ... store value in promise state ...  // BUG: value may be invalid!
-    obj
-}
-```
-
-**Why this matters:** GC runs BEFORE allocation when the threshold is reached. If you allocate first, GC may collect input values that aren't yet guarded.
-
-### Collecting Multiple Results Before Creating Container
-
-When building a collection (array, object) from multiple computed values, **use a single guard for all objects**:
-
-```rust
-// CORRECT: Single guard protects all objects
-let guard = interp.heap.create_guard();
-let mut results: Vec<JsValue> = Vec::new();
-
-for item in items {
-    let result_obj = interp.create_object(&guard);
-    // ... populate result_obj ...
-    results.push(JsValue::Object(result_obj));
-}
-
-let arr = interp.create_array(&guard, results);
-// guard keeps everything alive until end of scope
-```
-
-**Why this matters:** With the new API, one guard can protect multiple objects, eliminating the need to collect guards in a separate vector.
-
-### Guard Scope in Collect-Then-Store Loops
-
-When a loop collects objects that will be stored AFTER the loop completes, **declare guard collection at outer scope**:
-
-```rust
-// CORRECT: Guards collected at outer scope, dropped after storage
-let mut all_guards: Vec<Guard<JsObject>> = Vec::new();  // OUTER scope
+// CORRECT - guards at outer scope
+let mut all_guards: Vec<Guard<JsObject>> = Vec::new();
 let mut methods: Vec<(String, Gc<JsObject>)> = Vec::new();
 
 for item in items {
-    let (func, guard) = create_decorated_function(...)?;
-    if let Some(g) = guard {
-        all_guards.push(g);  // Guard survives loop iteration
-    }
+    let (func, guard) = create_function(...)?;
+    if let Some(g) = guard { all_guards.push(g); }
     methods.push((name, func));
 }
-
-// Store methods on prototype
+// Store methods - guards still alive
 for (name, func) in methods {
     prototype.borrow_mut().set_property(name, JsValue::Object(func));
 }
-// NOW guards can be dropped - objects are stored
-let _ = all_guards;
 
-// WRONG: Guards dropped at end of each loop iteration!
-let mut methods: Vec<(String, Gc<JsObject>)> = Vec::new();
-
-for item in items {
-    let mut loop_guards: Vec<Guard<JsObject>> = Vec::new();  // INNER scope - BUG!
-    let (func, guard) = create_decorated_function(...)?;
-    if let Some(g) = guard {
-        loop_guards.push(g);
-    }
-    methods.push((name, func));
-    // loop_guards dropped here - func may be GC'd before storage!
-}
-
-// By this point, funcs in `methods` may have been collected and reused!
-for (name, func) in methods {
-    prototype.borrow_mut().set_property(name, JsValue::Object(func));  // BUG: corrupt data
-}
+// WRONG - guards dropped each iteration, funcs may be GC'd before storage
 ```
 
-**Why this matters:** If guards are scoped to loop iterations but objects are stored after the loop, GC can collect and reuse the memory between guard drop and storage. This causes corruption where property A returns object B's data.
+**4. Never allocate temporary objects from root_guard** - they'll never be collected (memory leak).
 
-**Symptoms of this bug:**
-- Property lookup returns wrong function (e.g., `obj.compute` returns `getResult`)
-- Infinite recursion when method A calls method B but B is actually A
-- "X is not a function" errors on valid methods
+### Aggressive Test Defaults
 
-### Promise/Async Value Guarding
+Tests use aggressive settings to catch bugs early:
+- `GC_THRESHOLD=1` - GC on every allocation
+- `MAX_CALL_DEPTH=50` - Low recursion limit
 
-When extracting values from promises or async operations, guard the result immediately:
-
-```rust
-// CORRECT: Guard extracted value before using it
-let promise_result = promise_state.result.clone();
-let _result_guard = interp.guard_value(&promise_result);
-// Now safe to use promise_result
-
-// WRONG: Value may be collected if promise was only reference
-let promise_result = promise_state.result.clone();
-// If GC runs here, promise_result may be invalid!
-```
-
-## Development Workflow
-
-Use TDD (Test-Driven Development) for new features:
-1. **Verify parser support first** - Before implementing an interpreter feature, write a parser test to ensure the syntax is correctly parsed. If parsing fails, implement parser support first.
-2. Write a failing interpreter test that demonstrates the desired behavior
-3. Implement the minimal code to make the test pass
-4. Refactor if needed while keeping tests green
-5. **Run quality checks** - After implementing each feature, run:
-   ```bash
-   cargo test && cargo fmt && cargo clippy
-   ```
-   Fix any test failures, formatting issues, or clippy warnings before committing.
-
-### Parser Testing Before Implementation
-
-When implementing a new language feature (e.g., private fields, class methods, etc.):
-
-1. **Write parser tests** in `src/parser.rs` tests section - include both JavaScript (no types) and TypeScript (with types) variants:
-```rust
-#[test]
-fn test_parse_class_method() {
-    // JavaScript style (no types)
-    let source = "class Foo { bar() { return 1; } }";
-    parse(source).expect("should parse JS class");
-
-    // TypeScript style (with types)
-    let source_ts = "class Foo { bar(): number { return 1; } }";
-    parse(source_ts).expect("should parse TS class");
-}
-
-#[test]
-fn test_parse_private_field() {
-    // JavaScript style
-    let source = "class Foo { #bar = 1; }";
-    parse(source).expect("should parse JS private field");
-
-    // TypeScript style
-    let source_ts = "class Foo { #bar: number = 1; }";
-    parse(source_ts).expect("should parse TS private field");
-}
-```
-
-2. **Run the parser test** to verify parsing works:
-```bash
-cargo test test_parse_private_field -- --nocapture
-```
-
-3. **Only then** proceed to interpreter implementation and tests.
-
-**Note:** Always test BOTH JavaScript and TypeScript syntax variants. Types should be parsed but stripped at runtime.
-
-### Implementing Built-in Methods
-
-When adding new built-in methods (Array, String, Object, etc.), follow this pattern:
-
-#### 1. Write Tests First
-Add tests in the appropriate file under `tests/interpreter/` (e.g., `tests/interpreter/array.rs`):
-```rust
-#[test]
-fn test_array_mymethod() {
-    assert_eq!(eval("[1,2,3].myMethod()"), JsValue::Number(expected));
-}
-```
-
-#### 2. Add the Native Function Implementation
-Add the implementation in the appropriate builtins file (e.g., `interpreter/builtins/array.rs`):
-```rust
-pub fn array_my_method(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
-    let JsValue::Object(arr) = this else {
-        return Err(JsError::type_error("Array.prototype.myMethod called on non-object"));
-    };
-    // Implementation here
-    Ok(result)
-}
-```
-
-#### 3. Register the Method on Prototype
-In the same builtins file, add the method registration in the `create_*_prototype()` function:
-```rust
-let mymethod_fn = create_function(JsFunction::Native(NativeFunction {
-    name: "myMethod".to_string(),
-    func: array_my_method,
-    arity: 1,
-}));
-p.set_property(PropertyKey::from("myMethod"), JsValue::Object(mymethod_fn));
-```
-
-#### 4. Update design.md
-Mark the feature as implemented: `- [x] \`Array.prototype.myMethod()\``
-
-#### 5. Commit
-After tests pass, commit with descriptive message.
-
-### Native Function Signature
-All native functions follow this signature:
-```rust
-fn name(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError>
-```
-- `interp`: Interpreter instance (for calling other functions, creating arrays, etc.)
-- `this`: The receiver object (e.g., the array for array methods)
-- `args`: Function arguments as a vector
-
-### Prototype Chain
-- Objects fall back to `object_prototype` for methods like `hasOwnProperty`, `toString`
-- Arrays have `array_prototype` with all array methods
-- Strings use `string_prototype` (looked up in `evaluate_member`)
-- Numbers use `number_prototype` (looked up in `evaluate_member`)
-
-### Common Patterns
-
-**Getting array length:**
-```rust
-let length = match &arr.borrow().exotic {
-    ExoticObject::Array { length } => *length,
-    _ => return Err(JsError::type_error("Not an array")),
-};
-```
-
-**Updating array length (must update both):**
-```rust
-if let ExoticObject::Array { ref mut length } = arr_ref.exotic {
-    *length = new_length;
-}
-arr_ref.set_property(PropertyKey::from("length"), JsValue::Number(new_length as f64));
-```
-
-**Calling a callback function:**
-```rust
-let result = interp.call_function(
-    callback.clone(),
-    this_arg.clone(),
-    vec![elem, JsValue::Number(index as f64), this.clone()],
-)?;
-```
-
-**Creating a new array with results:**
-```rust
-Ok(JsValue::Object(interp.create_array(elements)))
-```
+Common GC bugs caught: "X is not a function", missing array elements, undefined properties.
 
 ## Architecture
 
-The interpreter follows a pipeline: source code is lexed, parsed to AST, compiled to bytecode, then executed by the VM.
+### Pipeline
 
 ```
 Source → Lexer → Parser → AST → Compiler → Bytecode → BytecodeVM → RuntimeResult
@@ -512,348 +194,151 @@ Source → Lexer → Parser → AST → Compiler → Bytecode → BytecodeVM →
                                               ┌──────────────────────────┼──────────────────────────┐
                                               ▼                          ▼                          ▼
                                          Complete                   NeedImports                 Suspended
-                                          (value)                 (Vec<ImportRequest>)      (pending orders)
 ```
 
-### Register-Based Bytecode VM
+### Register-Based VM
 
-The interpreter uses a **register-based bytecode VM** instead of a stack-based interpreter. This provides:
-- **Fewer instructions**: Binary ops directly reference registers (no push/pop overhead)
-- **Better cache locality**: Register file accessed sequentially
-- **Simpler code generation**: Allocator assigns registers per expression
-- **State capture**: VM state can be saved/restored for suspension at await/yield
+The VM uses registers instead of a stack:
+- Fewer instructions (no push/pop overhead)
+- Better cache locality
+- State capture for suspension at await/yield
 
-**Key differences from stack-based:**
-```
-Stack-based:              Register-based:
-  Push 1                    LoadInt r0, 1
-  Push 2                    LoadInt r1, 2
-  Add                       Add r2, r0, r1
-  Pop result                // result in r2
-```
+### Key Types
 
-### Bytecode Compilation Pipeline
+| Type | Description |
+|------|-------------|
+| `JsValue` | Enum: Undefined, Null, Boolean, Number, String, Object |
+| `Gc<JsObject>` | GC-managed object pointer |
+| `JsString` | `Rc<str>` reference-counted string |
+| `Op` | Bytecode instruction (100+ variants) |
+| `BytecodeChunk` | Compiled function with instructions + constants |
+| `Register` | Virtual register index (u8, 0-255 per frame) |
 
-1. **Parser** produces AST
-2. **Compiler** (`src/compiler/`) converts AST to bytecode:
-   - `compile_stmt.rs`: Statement compilation
-   - `compile_expr.rs`: Expression compilation
-   - `compile_pattern.rs`: Destructuring patterns
-   - `builder.rs`: Bytecode builder with register allocation
-   - `hoist.rs`: Variable hoisting (var/function declarations)
-3. **BytecodeVM** (`src/interpreter/bytecode_vm.rs`) executes bytecode
-
-### Key VM Types
-
-```rust
-/// Virtual register (0-255 per call frame)
-pub type Register = u8;
-
-/// Constant pool index
-pub type ConstantIndex = u16;
-
-/// Jump target (instruction offset)
-pub type JumpTarget = u32;
-
-/// Bytecode chunk containing instructions and metadata
-pub struct BytecodeChunk {
-    pub code: Vec<Op>,                 // Instructions
-    pub constants: Vec<Constant>,      // Constant pool
-    pub source_map: Vec<SourceMapEntry>, // For debugging
-    pub register_count: u8,            // Max registers needed
-    pub function_info: Option<FunctionInfo>,
-}
-
-/// VM execution state
-pub struct BytecodeVM {
-    pub ip: usize,                     // Instruction pointer
-    pub chunk: Rc<BytecodeChunk>,      // Current bytecode
-    pub registers: Vec<JsValue>,       // Register file (256 per frame)
-    pub call_stack: Vec<CallFrame>,    // Function call frames
-    pub try_stack: Vec<TryHandler>,    // Exception handlers
-}
-
-/// VM execution result
-pub enum VmResult {
-    Complete(Guarded),                 // Execution completed
-    Suspend(VmSuspension),             // Suspended for await
-    Yield(GeneratorYield),             // Generator yielded
-    Error(JsError),                    // Error occurred
-}
-```
-
-### Instruction Set Overview
-
-The bytecode has 100+ instructions organized by category:
-
-| Category | Examples | Count |
-|----------|----------|-------|
-| Constants & Registers | `LoadConst`, `LoadInt`, `Move` | 6 |
-| Arithmetic | `Add`, `Sub`, `Mul`, `Div`, `Mod`, `Exp` | 6 |
-| Comparison | `Eq`, `StrictEq`, `Lt`, `Gt`, etc. | 8 |
-| Bitwise | `BitAnd`, `BitOr`, `LShift`, `RShift` | 6 |
-| Unary | `Neg`, `Not`, `Typeof`, `Void` | 6 |
-| Control Flow | `Jump`, `JumpIfTrue`, `JumpIfFalse` | 6 |
-| Variables | `GetVar`, `SetVar`, `DeclareVar` | 6 |
-| Objects/Arrays | `CreateObject`, `CreateArray`, `GetProperty`, `SetProperty` | 10 |
-| Functions | `Call`, `CallMethod`, `Construct`, `Return` | 9 |
-| Exceptions | `Throw`, `PushTry`, `PopTry` | 6 |
-| Async/Generators | `Await`, `Yield`, `YieldStar` | 3 |
-| Classes | `CreateClass`, `DefineMethod`, `SuperCall` | 7 |
-| Iteration | `GetIterator`, `IteratorNext`, `IteratorDone` | 5 |
-
-### Runtime Result Types
+### Runtime Result
 
 ```rust
 pub enum RuntimeResult {
-    Complete(RuntimeValue),                         // Finished with guarded value
-    NeedImports(Vec<ImportRequest>),                // Need modules loaded
-    Suspended { pending, cancelled },               // Waiting for orders
-}
-
-/// A value with a guard that keeps it alive until dropped.
-/// Access via .value() - the guard is private to prevent extraction.
-pub struct RuntimeValue { ... }
-```
-
-**Host Loop Pattern:**
-```rust
-let mut result = runtime.eval(source)?;
-loop {
-    match result {
-        RuntimeResult::Complete(rv) => {
-            // rv keeps value alive - use rv.value() to access &JsValue
-            break;
-        }
-        RuntimeResult::NeedImports(imports) => {
-            for req in imports {
-                let source = load_module(&req.resolved_path)?;
-                runtime.provide_module(req.resolved_path, &source)?;
-            }
-        }
-        RuntimeResult::Suspended { pending, .. } => {
-            // Handle orders from host
-            for order in pending {
-                let response = handle_order(order.payload.value())?;
-                runtime.fulfill_orders(vec![OrderResponse { id: order.id, result: Ok(response) }])?;
-            }
-        }
-    }
-    result = runtime.continue_eval()?;
+    Complete(RuntimeValue),              // Finished
+    NeedImports(Vec<ImportRequest>),     // Need modules loaded
+    Suspended { pending, cancelled },    // Waiting for orders
 }
 ```
 
 ### Module Structure
 
-- **lib.rs**: Public API - `Runtime` struct with `eval()` method
-- **lexer.rs**: Tokenizer with span tracking for error reporting
-- **parser.rs**: Recursive descent + Pratt parsing for expressions
-- **ast.rs**: All AST node types (statements, expressions, patterns, types)
-- **value.rs**: Runtime values (`JsValue` enum), object model, GC
-- **compiler/**: Bytecode compiler
-  - **mod.rs**: Compiler entry point
-  - **bytecode.rs**: Instruction set (`Op` enum) and `BytecodeChunk`
-  - **builder.rs**: `BytecodeBuilder` with register allocation
-  - **compile_expr.rs**: Expression compilation
-  - **compile_stmt.rs**: Statement compilation
-  - **compile_pattern.rs**: Destructuring compilation
-  - **hoist.rs**: Variable hoisting
-- **interpreter/mod.rs**: Runtime initialization and VM integration
-- **interpreter/bytecode_vm.rs**: Bytecode VM execution loop
-- **interpreter/builtins/**: Built-in function implementations
-- **error.rs**: Error types (`JsError`) with source locations
-- **tests/interpreter/**: Integration tests organized by feature
+**Compiler** (`src/compiler/`):
+- `compile_stmt.rs` / `compile_expr.rs` - Statement/expression compilation
+- `compile_pattern.rs` - Destructuring patterns
+- `builder.rs` - Bytecode builder with register allocation
+- `hoist.rs` - Variable hoisting
 
-### Builtins Module Structure
+**Builtins** (`src/interpreter/builtins/`):
+- `array.rs`, `string.rs`, `number.rs`, `object.rs` - Core types
+- `function.rs`, `math.rs`, `json.rs`, `date.rs` - Standard objects
+- `regexp.rs`, `map.rs`, `set.rs`, `error.rs` - Other builtins
+- `global.rs` - Global functions (parseInt, parseFloat, etc.)
 
-Each builtin type has its own file in `interpreter/builtins/`:
+## Implementation Patterns
 
-| File | Contents |
-|------|----------|
-| `array.rs` | `create_array_prototype()`, `create_array_constructor()`, array methods |
-| `string.rs` | `create_string_prototype()`, `create_string_constructor()`, string methods |
-| `number.rs` | `create_number_prototype()`, `create_number_constructor()`, number methods |
-| `object.rs` | `create_object_prototype()`, `create_object_constructor()`, object methods |
-| `function.rs` | `create_function_prototype()`, call/apply/bind |
-| `math.rs` | `create_math_object()`, math functions and constants |
-| `json.rs` | `create_json_object()`, stringify/parse |
-| `console.rs` | `create_console_object()`, log/error/warn/info/debug |
-| `date.rs` | `create_date_prototype()`, `create_date_constructor()`, date methods |
-| `regexp.rs` | `create_regexp_prototype()`, `create_regexp_constructor()`, test/exec |
-| `map.rs` | `create_map_prototype()`, `create_map_constructor()`, map methods |
-| `set.rs` | `create_set_prototype()`, `create_set_constructor()`, set methods |
-| `error.rs` | `create_error_constructors()`, Error/TypeError/etc. |
-| `global.rs` | `register_global_functions()`, parseInt/parseFloat/isNaN/etc. |
+### Adding Built-in Methods
 
-### Test Structure
-
-Integration tests are located in `tests/interpreter/` and organized by feature:
-
-| File | Contents |
-|------|----------|
-| `main.rs` | Entry point, declares modules, shared `eval()` helper |
-| `array.rs` | Array method tests (push, pop, map, filter, etc.) |
-| `basics.rs` | Basic language features (arithmetic, variables, conditionals) |
-| `console.rs` | Console methods (log, error, warn, info, debug) |
-| `date.rs` | Date object tests |
-| `error.rs` | Error constructor tests |
-| `function.rs` | Function features (call, apply, bind, arrows) |
-| `global.rs` | Global functions (parseInt, parseFloat, isNaN, etc.) |
-| `map.rs` | Map object tests |
-| `math.rs` | Math object tests |
-| `number.rs` | Number object tests |
-| `object.rs` | Object method tests |
-| `regexp.rs` | RegExp tests |
-| `set.rs` | Set object tests |
-| `string.rs` | String method tests |
-
-Each test file uses a shared `eval()` helper from `main.rs`:
+1. **Write test** in `tests/interpreter/<type>.rs`:
 ```rust
-use super::eval;
-use typescript_eval::JsValue;
-
 #[test]
-fn test_example() {
-    assert_eq!(eval("1 + 2"), JsValue::Number(3.0));
+fn test_array_mymethod() {
+    assert_eq!(eval("[1,2,3].myMethod()"), JsValue::Number(expected));
 }
 ```
 
-### Test262 Conformance Testing
+2. **Implement** in `src/interpreter/builtins/<type>.rs`:
+```rust
+pub fn array_my_method(interp: &mut Interpreter, this: JsValue, args: Vec<JsValue>) -> Result<JsValue, JsError> {
+    let JsValue::Object(arr) = this else {
+        return Err(JsError::type_error("Array.prototype.myMethod called on non-object"));
+    };
+    // Implementation
+    Ok(result)
+}
+```
 
-The project includes a runner for the [Test262](https://github.com/tc39/test262) ECMAScript conformance test suite. See `test262.md` for full documentation.
+3. **Register** in `create_*_prototype()`:
+```rust
+let fn_obj = create_native_fn(&guard, "myMethod", array_my_method, 1);
+p.set_property(PropertyKey::from("myMethod"), JsValue::Object(fn_obj));
+```
 
-**Setup:**
+4. **Update** design.md checklist
+
+### Common Patterns
+
+```rust
+// Get array length
+let length = match &arr.borrow().exotic {
+    ExoticObject::Array { length } => *length,
+    _ => return Err(JsError::type_error("Not an array")),
+};
+
+// Update array length (must update both!)
+if let ExoticObject::Array { ref mut length } = arr_ref.exotic {
+    *length = new_length;
+}
+arr_ref.set_property(PropertyKey::from("length"), JsValue::Number(new_length as f64));
+
+// Call a callback
+let result = interp.call_function(
+    callback.clone(),
+    this_arg.clone(),
+    vec![elem, JsValue::Number(index as f64), this.clone()],
+)?;
+```
+
+### Prototype Chain
+
+- Objects → `object_prototype` (hasOwnProperty, toString)
+- Arrays → `array_prototype` → `object_prototype`
+- Strings → `string_prototype` (looked up in evaluate_member)
+- Numbers → `number_prototype` (looked up in evaluate_member)
+
+## Testing
+
+### Test Organization
+
+| Location | Contents |
+|----------|----------|
+| `tests/interpreter/*.rs` | Integration tests by feature |
+| `src/parser.rs` (bottom) | Parser unit tests |
+| `src/value.rs` (bottom) | Value type unit tests |
+
+Each test file uses the shared `eval()` helper:
+```rust
+use super::eval;
+assert_eq!(eval("1 + 2"), JsValue::Number(3.0));
+```
+
+### Test262 Conformance
+
 ```bash
-git submodule update --init --depth 1  # Initialize test262 submodule
+git submodule update --init --depth 1
 cargo build --release --bin test262-runner
-```
-
-**Basic usage:**
-```bash
-# Run tests in a directory (use --strict-only for accurate results)
 ./target/release/test262-runner --strict-only language/types
-
-# Verbose output with stop on first failure (good for debugging)
-./target/release/test262-runner --verbose --stop-on-fail language/statements
-
-# List tests without running
-./target/release/test262-runner --list language/expressions/addition
 ```
 
-**Important:** The interpreter runs all code in strict mode, so use `--strict-only` for meaningful pass rates.
-
-**Key options:**
-| Option | Description |
-|--------|-------------|
-| `--strict-only` | Only run strict mode variants (recommended) |
-| `--verbose` / `-v` | Show detailed output for each test |
-| `--stop-on-fail` | Stop on first failure |
-| `--filter <PATTERN>` | Filter tests by path pattern |
-| `--skip-features <LIST>` | Skip tests requiring specific features |
-
-**Skipped features:** BigInt, WeakRef/WeakMap/WeakSet, TypedArray, Atomics, Temporal, eval, with statement, tail-call-optimization, and various parser limitations (see test262.md for full list).
-
-**Debugging a specific test:**
-```bash
-./target/release/test262-runner --verbose --stop-on-fail \
-  test262/test/language/expressions/addition/S11.6.1_A1.js
-cat test262/test/language/expressions/addition/S11.6.1_A1.js
-```
-
-### Key Types
-
-- `JsValue`: Enum with `Undefined`, `Null`, `Boolean(bool)`, `Number(f64)`, `String(JsString)`, `Object(Gc<JsObject>)`
-- `Gc<JsObject>`: GC-managed pointer to objects (cheap clone)
-- `JsString`: `Rc<str>` - reference-counted string (cheap clone)
-- `Op`: Bytecode instruction enum (100+ variants)
-- `BytecodeChunk`: Compiled function (instructions + constants + source map)
-- `Register`: Virtual register index (u8, 0-255 per call frame)
-
-### Clone Conventions (CheapClone Trait)
-
-The codebase distinguishes between cheap (O(1), reference-counted) and expensive clones using the `CheapClone` trait.
-
-**Cheap clones - use `.cheap_clone()`:**
-```rust
-// Gc<JsObject> (GC-managed pointer)
-arr.borrow_mut().prototype = Some(self.array_prototype.cheap_clone());
-
-// JsString (Rc<str>)
-let s = js_string.cheap_clone();
-
-// Rc<BytecodeChunk> (reference-counted bytecode)
-let chunk = self.chunk.cheap_clone();
-```
-
-**Expensive clones - add comment explaining why:**
-```rust
-// AST clone - needed to release borrow before execution
-state.body.clone(),
-
-// Environment clone - needed to restore after execution
-let saved_env = self.env.clone();
-
-// Vec<JsValue> clone - needed for bound function args
-let mut full_args = bound_data.bound_args.clone();
-
-// String clone - env.define takes ownership
-self.env.define(id.name.clone(), value, mutable);
-```
-
-**Type classification:**
-| Type | Clone Cost | Notes |
-|------|-----------|-------|
-| `Gc<JsObject>` | Cheap | Use `.cheap_clone()` |
-| `JsString` | Cheap | Use `.cheap_clone()` |
-| `Rc<BytecodeChunk>` | Cheap | Use `.cheap_clone()` |
-| `Rc<T>` | Cheap | Use `.cheap_clone()` |
-| `JsValue` | Varies | May contain Gc/Rc types |
-| `String`, `Vec<T>` | Expensive | Heap allocations |
-| AST types | Expensive | Deep structure clones |
+The interpreter runs all code in strict mode - use `--strict-only` for meaningful results.
 
 ### TypeScript Handling
 
-- Type annotations, interfaces, and type aliases are parsed but become no-ops at runtime
-- `enum` declarations compile to object literals
-- Type assertions (`x as T`, `<T>x`) and non-null assertions (`x!`) evaluate to just the expression
+- Type annotations, interfaces, type aliases → parsed but no-op at runtime
+- `enum` declarations → compile to object literals
+- Type assertions (`x as T`, `<T>x`) → evaluate to just the expression
 
-## Current Implementation Status
+## Implementation Status
 
-**Test Status:** 1550+ passing tests (see `docs/missing_bytecodevm_features.md` for details)
+**1550+ passing tests**
 
-**Language Features:** variables (let/const/var), functions (declarations, expressions, arrows), closures, control flow (if/for/while/switch/try-catch), classes with inheritance and static blocks, object/array literals, destructuring, spread operator, template literals, all operators.
+**Language Features:** variables, functions, closures, control flow, classes with inheritance/static blocks, destructuring, spread, template literals, all operators, generators, async/await, Promises.
 
-**Built-in Objects:**
-- `Array`: isArray, from, of, push, pop, shift, unshift, slice, splice, concat, join, reverse, sort, indexOf, lastIndexOf, includes, find, findIndex, findLast, findLastIndex, filter, map, forEach, reduce, reduceRight, every, some, flat, flatMap, fill, copyWithin, at, toReversed, toSorted, toSpliced, with
-- `String`: fromCharCode, charAt, charCodeAt, at, indexOf, lastIndexOf, includes, startsWith, endsWith, slice, substring, toLowerCase, toUpperCase, trim, trimStart, trimEnd, split, repeat, replace, replaceAll, padStart, padEnd, concat
-- `Object`: keys, values, entries, assign, fromEntries, hasOwn, create, freeze, isFrozen, seal, isSealed, hasOwnProperty, toString, valueOf
-- `Number`: isNaN, isFinite, isInteger, isSafeInteger, parseInt, parseFloat, toFixed, toString, toPrecision, toExponential, constants
-- `Math`: abs, floor, ceil, round, trunc, sign, min, max, pow, sqrt, cbrt, hypot, log, log10, log2, log1p, exp, expm1, sin, cos, tan, asin, acos, atan, atan2, sinh, cosh, tanh, asinh, acosh, atanh, random, PI, E, LN2, LN10, LOG2E, LOG10E, SQRT2, SQRT1_2
-- `JSON`: stringify, parse
-- `Map`: get, set, has, delete, clear, forEach, size
-- `Set`: add, has, delete, clear, forEach, size
-- `WeakMap`: get, set, has, delete
-- `WeakSet`: add, has, delete
-- `Date`: now, UTC, parse, getTime, getFullYear, getMonth, getDate, getDay, getHours, getMinutes, getSeconds, getMilliseconds, toISOString, toJSON, valueOf
-- `RegExp`: test, exec, source, flags, global, ignoreCase, multiline
-- `Function`: call, apply, bind
-- `Error`: Error, TypeError, ReferenceError, SyntaxError, RangeError, URIError, EvalError
-- `Symbol`: Symbol(), Symbol.for(), Symbol.keyFor(), well-known symbols (iterator, toStringTag, hasInstance)
-- `Proxy`: all traps, Proxy.revocable
-- `Reflect`: all methods
-- Global: parseInt, parseFloat, isNaN, isFinite, encodeURI, decodeURI, encodeURIComponent, decodeURIComponent, eval, console.log/error/warn/info/debug
-- Generators: function*, yield, yield*
-- Namespace declarations with export and merging
-- `Promise`: new, resolve, reject, then, catch, finally, all, race, allSettled, any
-- Async/await: async functions, async arrow functions, await expressions
+**Built-in Objects:** Array, String, Object, Number, Math, JSON, Map, Set, WeakMap, WeakSet, Date, RegExp, Function, Error types, Symbol, Proxy, Reflect, console.
 
-**Not yet fully implemented in bytecode VM:**
-- ES Modules (import/export) - not yet compiled to bytecode
-- for-await-of loops
-- Private class members (#fields)
-- BigInt
-- Some decorator edge cases
+**Not yet implemented:** ES Modules (import/export), for-await-of, private class members (#fields), BigInt, some decorator edge cases.
 
-See `docs/missing_bytecodevm_features.md` for detailed status and implementation guidance.
-See design.md for the complete feature checklist.
-See profiling.md for performance optimization notes.
+See design.md for complete feature checklist, profiling.md for performance notes.
