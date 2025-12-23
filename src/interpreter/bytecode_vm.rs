@@ -3679,13 +3679,13 @@ impl BytecodeVM {
                 setter,
                 is_static,
             } => {
-                let class_val = self.get_reg(class).clone();
+                let class_val = self.get_reg(class);
                 let JsValue::Object(class_obj) = class_val else {
                     return Err(JsError::type_error("Class is not an object"));
                 };
 
-                let getter_val = self.get_reg(getter).clone();
-                let setter_val = self.get_reg(setter).clone();
+                let getter_val = self.get_reg(getter);
+                let setter_val = self.get_reg(setter);
                 let accessor_name = self
                     .get_string_constant(name)
                     .ok_or_else(|| JsError::internal_error("Invalid accessor name constant"))?;
@@ -3730,8 +3730,8 @@ impl BytecodeVM {
                 };
 
                 // Merge with existing accessors
-                let final_getter = new_getter.or(existing_getter);
-                let final_setter = new_setter.or(existing_setter);
+                let final_getter = new_getter.cloned().or(existing_getter);
+                let final_setter = new_setter.cloned().or(existing_setter);
 
                 // Create accessor property
                 let property = Property::accessor(final_getter, final_setter);
