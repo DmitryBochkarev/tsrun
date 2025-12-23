@@ -3746,13 +3746,13 @@ impl BytecodeVM {
                 method,
                 is_static,
             } => {
-                let class_val = self.get_reg(class).clone();
+                let class_val = self.get_reg(class);
                 let JsValue::Object(class_obj) = class_val else {
                     return Err(JsError::type_error("Class is not an object"));
                 };
 
-                let method_val = self.get_reg(method).clone();
-                let key_val = self.get_reg(key).clone();
+                let method_val = self.get_reg(method);
+                let key_val = self.get_reg(key);
 
                 // Convert key to string for property name
                 let method_name = key_val.to_js_string();
@@ -3793,7 +3793,7 @@ impl BytecodeVM {
                     // Methods are non-enumerable, writable, configurable (per spec)
                     class_obj.borrow_mut().define_property(
                         prop_key,
-                        Property::with_attributes(method_val, true, false, true),
+                        Property::with_attributes(method_val.clone(), true, false, true),
                     );
                 } else {
                     // Add to prototype
@@ -3804,7 +3804,7 @@ impl BytecodeVM {
                     {
                         proto.borrow_mut().define_property(
                             prop_key,
-                            Property::with_attributes(method_val, true, false, true),
+                            Property::with_attributes(method_val.clone(), true, false, true),
                         );
                     }
                 }

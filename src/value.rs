@@ -395,6 +395,7 @@ impl JsValue {
     }
 
     /// Convert to string (ToString)
+    // FIXME: use interned strings
     pub fn to_js_string(&self) -> JsString {
         match self {
             JsValue::Undefined => JsString::from("undefined"),
