@@ -5066,7 +5066,7 @@ impl BytecodeVM {
                 method,
                 is_static,
             } => {
-                let class_val = self.get_reg(class).clone();
+                let class_val = self.get_reg(class);
                 let method_name_str = self.get_string_constant(method_name).ok_or_else(|| {
                     JsError::internal_error("Invalid private method name constant")
                 })?;
@@ -5161,7 +5161,7 @@ impl BytecodeVM {
 
                 if let Some(methods) = methods_obj {
                     // Look up method by brand:name key
-                    let storage_key = PropertyKey::String(JsString::from(format!(
+                    let storage_key = PropertyKey::String(interp.intern(&format!(
                         "{}:{}",
                         class_brand,
                         method_name_str.as_str()
