@@ -3231,6 +3231,7 @@ impl BytecodeVM {
                     }
                     JsValue::String(s) => {
                         // Create a string iterator (same as sync - Await will handle values)
+                        // FIXME: duplicate guarding, set_reg already guards, here should be temporary guard
                         let iter = interp.create_object(&self.register_guard);
                         iter.borrow_mut().set_property(
                             PropertyKey::from("__string__"),
