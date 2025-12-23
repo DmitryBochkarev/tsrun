@@ -416,6 +416,7 @@ impl BytecodeVM {
     }
 
     /// Fetch the next instruction and advance IP
+    // FIXME: return reference to Op not copy
     #[inline]
     fn fetch(&mut self) -> Option<Op> {
         let op = *self.chunk.get(self.ip)?;
@@ -430,6 +431,7 @@ impl BytecodeVM {
     }
 
     /// Get a string constant from the pool
+    // FIXME: return reference
     #[inline]
     fn get_string_constant(&self, idx: u16) -> Option<JsString> {
         match self.get_constant(idx)? {
@@ -439,6 +441,7 @@ impl BytecodeVM {
     }
 
     /// Get the super constructor from the current function's __super__ property
+    // FIXME: return reference
     fn get_super_constructor(&self, interp: &mut Interpreter) -> Result<JsValue, JsError> {
         // Look up __super__ in the current function's properties
         let super_key = PropertyKey::String(interp.intern("__super__"));
@@ -1662,14 +1665,14 @@ impl BytecodeVM {
             // Constants & Register Operations
             // ═══════════════════════════════════════════════════════════════════════════
             Op::LoadConst { dst, idx } => {
-                let value = match self.get_constant(idx) {
-                    Some(Constant::String(s)) => JsValue::String(s.cheap_clone()),
-                    Some(Constant::Number(n)) => JsValue::Number(*n),
+                let (value, _guard) = match self.get_constant(idx) {
+                    Some(Constant::String(s)) => (JsValue::String(s.cheap_clone()), None),
+                    Some(Constant::Number(n)) => (JsValue::Number(*n), None),
                     Some(Constant::RegExp { pattern, flags }) => {
                         let guard = interp.heap.create_guard();
                         let obj =
                             interp.create_regexp_literal(&guard, pattern.as_str(), flags.as_str());
-                        JsValue::Object(obj)
+                        (JsValue::Object(obj), Some(guard))
                     }
                     Some(Constant::Chunk(_)) => {
                         return Err(JsError::internal_error("Cannot load chunk as value"));
@@ -1720,12 +1723,12 @@ impl BytecodeVM {
             // Binary Arithmetic Operations
             // ═══════════════════════════════════════════════════════════════════════════
             Op::Add { dst, left, right } => {
-                let left_val = self.get_reg(left).clone();
-                let right_val = self.get_reg(right).clone();
+                let left_val = self.get_reg(left);
+                let right_val = self.get_reg(right);
 
                 // First convert objects to primitives with "default" hint
-                let left_prim = interp.coerce_to_primitive(&left_val, "default")?;
-                let right_prim = interp.coerce_to_primitive(&right_val, "default")?;
+                let left_prim = interp.coerce_to_primitive(left_val, "default")?;
+                let right_prim = interp.coerce_to_primitive(right_val, "default")?;
 
                 let result = match (&left_prim, &right_prim) {
                     (JsValue::String(a), _) => {
@@ -2079,8 +2082,10 @@ impl BytecodeVM {
                 Ok(OpResult::Continue)
             }
 
+            // NOTE: review
             Op::Break { target, try_depth } => self.execute_break(target as usize, try_depth),
 
+            // NOTE: review
             Op::Continue { target, try_depth } => self.execute_continue(target as usize, try_depth),
 
             // ═══════════════════════════════════════════════════════════════════════════
@@ -2140,8 +2145,8 @@ impl BytecodeVM {
                 let name = self
                     .get_string_constant(name)
                     .ok_or_else(|| JsError::internal_error("Invalid global name constant"))?;
-                let global = interp.global.clone();
-                let prop_key = PropertyKey::from(name.as_str());
+                let global = interp.global.cheap_clone();
+                let prop_key = PropertyKey::String(name);
                 let value = global
                     .borrow()
                     .get_property(&prop_key)
@@ -2222,10 +2227,10 @@ impl BytecodeVM {
             }
 
             Op::DeleteProperty { dst, obj, key } => {
-                let obj_val = self.get_reg(obj).clone();
-                let key_val = self.get_reg(key).clone();
+                let obj_val = self.get_reg(obj);
+                let key_val = self.get_reg(key);
 
-                match &obj_val {
+                match obj_val {
                     JsValue::Null => {
                         return Err(JsError::type_error("Cannot delete property of null"));
                     }
@@ -2233,7 +2238,7 @@ impl BytecodeVM {
                         return Err(JsError::type_error("Cannot delete property of undefined"));
                     }
                     JsValue::Object(obj_ref) => {
-                        let prop_key = PropertyKey::from_value(&key_val);
+                        let prop_key = PropertyKey::from_value(key_val);
 
                         // Check if this is a proxy - delegate to proxy_delete_property if so
                         if matches!(obj_ref.borrow().exotic, ExoticObject::Proxy(_)) {
@@ -2290,12 +2295,12 @@ impl BytecodeVM {
             }
 
             Op::DeletePropertyConst { dst, obj, key } => {
-                let obj_val = self.get_reg(obj).clone();
+                let obj_val = self.get_reg(obj);
                 let key = self
                     .get_string_constant(key)
                     .ok_or_else(|| JsError::internal_error("Invalid property key constant"))?;
 
-                match &obj_val {
+                match obj_val {
                     JsValue::Null => {
                         return Err(JsError::type_error("Cannot delete property of null"));
                     }
@@ -2303,7 +2308,7 @@ impl BytecodeVM {
                         return Err(JsError::type_error("Cannot delete property of undefined"));
                     }
                     JsValue::Object(obj_ref) => {
-                        let prop_key = PropertyKey::from(key.as_str());
+                        let prop_key = PropertyKey::String(key);
 
                         // Check if this is a proxy - delegate to proxy_delete_property if so
                         if matches!(obj_ref.borrow().exotic, ExoticObject::Proxy(_)) {
@@ -2351,10 +2356,10 @@ impl BytecodeVM {
             } => {
                 let obj_val = self.get_reg(obj);
                 let key_val = self.get_reg(key);
-                let val = self.get_reg(value).clone();
 
                 if let JsValue::Object(obj_ref) = obj_val {
                     let prop_key = PropertyKey::from_value(key_val);
+                    let val = self.get_reg(value).clone();
                     obj_ref.borrow_mut().set_property(prop_key, val);
                 }
                 Ok(OpResult::Continue)
@@ -3258,6 +3263,7 @@ impl BytecodeVM {
                 // Check if this is our internal array iterator
                 let array_prop = iter_obj
                     .borrow()
+                    // FIXME: use interned property key
                     .get_property(&PropertyKey::from("__array__"));
                 if let Some(JsValue::Object(arr_ref)) = array_prop {
                     // If the array is a proxy, fall through to custom iterator path

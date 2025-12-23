@@ -1151,6 +1151,7 @@ impl JsObject {
     }
 
     /// Get a property, searching the prototype chain
+    // FIXME: return reference
     pub fn get_property(&self, key: &PropertyKey) -> Option<JsValue> {
         // For arrays, handle index access and length from elements Vec
         if let ExoticObject::Array { ref elements } = self.exotic {
@@ -1642,7 +1643,7 @@ impl PropertyKey {
                         return PropertyKey::Index(idx);
                     }
                 }
-                PropertyKey::String(s.clone())
+                PropertyKey::String(s.cheap_clone())
             }
             JsValue::Symbol(s) => PropertyKey::Symbol(s.clone()),
             _ => PropertyKey::String(value.to_js_string()),
@@ -1664,6 +1665,7 @@ impl PropertyKey {
     }
 }
 
+// FIXME: remove it as it overused, we should  explicitly create PropertyKey from interned strings
 impl From<&str> for PropertyKey {
     #[inline]
     fn from(s: &str) -> Self {
@@ -1682,12 +1684,14 @@ impl From<&str> for PropertyKey {
     }
 }
 
+// FIXME: remove it as it overused, we should  explicitly create PropertyKey from interned strings
 impl From<String> for PropertyKey {
     fn from(s: String) -> Self {
         PropertyKey::from(s.as_str())
     }
 }
 
+// FIXME: remove it as it overused, we should  explicitly create PropertyKey from interned strings
 impl From<JsString> for PropertyKey {
     #[inline]
     fn from(s: JsString) -> Self {
@@ -1706,6 +1710,7 @@ impl From<JsString> for PropertyKey {
     }
 }
 
+// FIXME: remove it as it overused
 impl From<u32> for PropertyKey {
     fn from(idx: u32) -> Self {
         PropertyKey::Index(idx)

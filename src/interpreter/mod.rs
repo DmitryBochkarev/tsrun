@@ -1222,7 +1222,7 @@ impl Interpreter {
     }
 
     /// Get a variable from the environment chain
-    // FIXME: return guarded
+    // FIXME: return reference
     pub fn env_get(&self, name: &JsString) -> Result<JsValue, JsError> {
         let mut current = Some(self.env.cheap_clone());
         // Create VarKey once for pointer-based lookup
