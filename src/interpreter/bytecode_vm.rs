@@ -4835,7 +4835,7 @@ impl BytecodeVM {
                 let raw_arr = interp.create_array_from(&guard, raw_strings);
 
                 // Add 'raw' property to strings array
-                let raw_key = PropertyKey::String(JsString::from("raw"));
+                let raw_key = PropertyKey::String(interp.intern("raw"));
                 strings_arr
                     .borrow_mut()
                     .set_property(raw_key, JsValue::Object(raw_arr));
@@ -4847,13 +4847,16 @@ impl BytecodeVM {
                 }
 
                 // Get the tag function and this value
-                let tag_fn = self.get_reg(tag).clone();
-                let this_val = self.get_reg(this).clone();
+                let tag_fn = self.get_reg(tag);
+                let this_val = self.get_reg(this);
 
                 // Call the tag function
-                let result = interp.call_function(tag_fn, this_val, &args)?;
+                let Guarded {
+                    value,
+                    guard: _guard,
+                } = interp.call_function(tag_fn.clone(), this_val.clone(), &args)?;
 
-                self.set_reg(dst, result.value);
+                self.set_reg(dst, value);
                 Ok(OpResult::Continue)
             }
 
