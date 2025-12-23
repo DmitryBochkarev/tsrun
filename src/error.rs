@@ -86,10 +86,12 @@ pub enum JsError {
 
     /// Error thrown with a JsValue (used for Promise rejection handling)
     #[error("ThrownValue")]
+    // FIXME: guard value
     ThrownValue { value: crate::value::JsValue },
 
     /// Internal marker for generator yield (not a real error)
     #[error("GeneratorYield")]
+    // FIXME: guard value
     GeneratorYield { value: crate::value::JsValue },
 
     /// Internal marker for optional chain short-circuit (not a real error)

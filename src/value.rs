@@ -765,6 +765,7 @@ pub struct JsSymbol {
     /// Unique identifier for this symbol
     id: u64,
     /// Optional description (from Symbol('description'))
+    // FIXME: use JsString
     pub description: Option<String>,
 }
 

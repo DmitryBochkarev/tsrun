@@ -2375,9 +2375,10 @@ impl BytecodeVM {
                 args_start,
                 argc,
             } => {
-                let callee_val = self.get_reg(callee).clone();
-                let this_val = self.get_reg(this).clone();
+                let callee_val = self.get_reg(callee);
+                let this_val = self.get_reg(this);
 
+                // FIXME: use pool, tinyvec
                 let mut args = Vec::with_capacity(argc as usize);
                 for i in 0..argc {
                     args.push(self.get_reg(args_start + i).clone());
@@ -2385,8 +2386,8 @@ impl BytecodeVM {
 
                 // Use trampoline for function calls
                 Ok(OpResult::Call {
-                    callee: callee_val,
-                    this_value: this_val,
+                    callee: callee_val.clone(),
+                    this_value: this_val.clone(),
                     args,
                     return_register: dst,
                     new_target: JsValue::Undefined,
@@ -2430,25 +2431,28 @@ impl BytecodeVM {
 
             Op::DirectEval { dst, arg } => {
                 // Direct eval - executes code in the current lexical scope
-                let arg_val = self.get_reg(arg).clone();
+                let arg_val = self.get_reg(arg);
 
                 // If argument is not a string, return it directly
                 let code = match &arg_val {
-                    JsValue::String(s) => s.to_string(),
+                    JsValue::String(s) => s,
                     _ => {
-                        self.set_reg(dst, arg_val);
+                        self.set_reg(dst, arg_val.clone());
                         return Ok(OpResult::Continue);
                     }
                 };
 
                 // Execute the code in current scope with the current `this` value
-                let result = crate::interpreter::builtins::global::eval_code_in_scope_with_this(
+                let Guarded {
+                    value,
+                    guard: _guard,
+                } = crate::interpreter::builtins::global::eval_code_in_scope_with_this(
                     interp,
-                    &code,
+                    code.as_str(),
                     false,
                     self.this_value.clone(),
                 )?;
-                self.set_reg(dst, result.value);
+                self.set_reg(dst, value);
                 Ok(OpResult::Continue)
             }
 
@@ -2459,13 +2463,13 @@ impl BytecodeVM {
                 args_start,
                 argc,
             } => {
-                let obj_val = self.get_reg(obj).clone();
+                let obj_val = self.get_reg(obj);
                 let method_name = self
                     .get_string_constant(method)
                     .ok_or_else(|| JsError::internal_error("Invalid method name constant"))?;
 
                 let callee =
-                    self.get_property_value(interp, &obj_val, &JsValue::String(method_name))?;
+                    self.get_property_value(interp, obj_val, &JsValue::String(method_name))?;
 
                 let mut args = Vec::with_capacity(argc as usize);
                 for i in 0..argc {
@@ -2475,7 +2479,7 @@ impl BytecodeVM {
                 // Use trampoline for function calls
                 Ok(OpResult::Call {
                     callee,
-                    this_value: obj_val,
+                    this_value: obj_val.clone(),
                     args,
                     return_register: dst,
                     new_target: JsValue::Undefined,
@@ -2489,7 +2493,7 @@ impl BytecodeVM {
                 args_start,
                 argc,
             } => {
-                let callee_val = self.get_reg(callee).clone();
+                let callee_val = self.get_reg(callee);
 
                 let mut args = Vec::with_capacity(argc as usize);
                 for i in 0..argc {
@@ -2497,19 +2501,22 @@ impl BytecodeVM {
                 }
 
                 // Inline constructor call logic (similar to evaluate_new)
-                let JsValue::Object(ctor) = &callee_val else {
+                let JsValue::Object(ctor) = callee_val else {
                     return Err(JsError::type_error("Constructor is not a callable object"));
                 };
 
                 // Check if this is a proxy - delegate to proxy_construct if so
                 if matches!(ctor.borrow().exotic, ExoticObject::Proxy(_)) {
-                    let result = crate::interpreter::builtins::proxy::proxy_construct(
+                    let Guarded {
+                        value,
+                        guard: _guard,
+                    } = crate::interpreter::builtins::proxy::proxy_construct(
                         interp,
                         ctor.cheap_clone(),
                         args,
                         callee_val.clone(), // new.target is the proxy itself
                     )?;
-                    self.set_reg(dst, result.value);
+                    self.set_reg(dst, value);
                     return Ok(OpResult::Continue);
                 }
 
@@ -2537,7 +2544,7 @@ impl BytecodeVM {
                     this_value: this,
                     args,
                     return_register: dst,
-                    new_target: callee_val, // new.target is the constructor itself
+                    new_target: callee_val.clone(), // new.target is the constructor itself
                     new_obj,
                 })
             }
@@ -2549,8 +2556,8 @@ impl BytecodeVM {
                 argc: _,
             } => {
                 // ConstructSpread: args_start points to an array of arguments
-                let callee_val = self.get_reg(callee).clone();
-                let args_val = self.get_reg(args_start).clone();
+                let callee_val = self.get_reg(callee);
+                let args_val = self.get_reg(args_start);
 
                 let args: Vec<JsValue> = if let JsValue::Object(arr_ref) = &args_val {
                     if let Some(elems) = arr_ref.borrow().array_elements() {
@@ -2563,19 +2570,22 @@ impl BytecodeVM {
                 };
 
                 // Inline constructor call logic (same as Construct)
-                let JsValue::Object(ctor) = &callee_val else {
+                let JsValue::Object(ctor) = callee_val else {
                     return Err(JsError::type_error("Constructor is not a callable object"));
                 };
 
                 // Check if this is a proxy - delegate to proxy_construct if so
                 if matches!(ctor.borrow().exotic, ExoticObject::Proxy(_)) {
-                    let result = crate::interpreter::builtins::proxy::proxy_construct(
+                    let Guarded {
+                        value,
+                        guard: _guard,
+                    } = crate::interpreter::builtins::proxy::proxy_construct(
                         interp,
                         ctor.cheap_clone(),
                         args,
                         callee_val.clone(), // new.target is the proxy itself
                     )?;
-                    self.set_reg(dst, result.value);
+                    self.set_reg(dst, value);
                     return Ok(OpResult::Continue);
                 }
 
@@ -2588,6 +2598,7 @@ impl BytecodeVM {
 
                 // Create a new object - guard it so it survives until the trampoline handles it
                 self.register_guard.guard(ctor.cheap_clone());
+                // FIXME: use proper guard
                 let new_obj = interp.create_object(&self.register_guard);
 
                 // Get the constructor's prototype
@@ -2598,18 +2609,20 @@ impl BytecodeVM {
 
                 // Use trampoline for constructor call
                 let this = JsValue::Object(new_obj.cheap_clone());
+                // FIXME: pass guard
                 Ok(OpResult::Construct {
                     callee: callee_val.clone(),
                     this_value: this,
                     args,
                     return_register: dst,
-                    new_target: callee_val, // new.target is the constructor itself
+                    new_target: callee_val.clone(), // new.target is the constructor itself
                     new_obj,
                 })
             }
 
             Op::Return { value } => {
                 let return_val = self.get_reg(value).clone();
+                // NOTE: review
                 self.execute_return(return_val, interp)
             }
 
@@ -2743,6 +2756,7 @@ impl BytecodeVM {
             // ═══════════════════════════════════════════════════════════════════════════
             Op::Throw { value } => {
                 let val = self.get_reg(value).clone();
+                // FIXME: pass guarded value
                 Err(JsError::ThrownValue { value: val })
             }
 
@@ -2795,6 +2809,7 @@ impl BytecodeVM {
                         }
                         PendingCompletion::Throw(val) => {
                             // Re-throw the exception after finally
+                            // FIXME: pass guarded value
                             return Err(JsError::ThrownValue { value: val });
                         }
                         PendingCompletion::Break { target, try_depth } => {
@@ -2818,6 +2833,7 @@ impl BytecodeVM {
 
             Op::Rethrow => {
                 if let Some(val) = self.exception_value.take() {
+                    // FIXME: pass guarded value
                     Err(JsError::ThrownValue { value: val })
                 } else {
                     Err(JsError::internal_error("No exception to rethrow"))
@@ -2830,10 +2846,10 @@ impl BytecodeVM {
             Op::Await { dst, promise } => {
                 use crate::value::{ExoticObject, PromiseStatus};
 
-                let promise_val = self.get_reg(promise).clone();
+                let promise_val = self.get_reg(promise);
 
                 // Check if it's a promise
-                if let JsValue::Object(obj) = &promise_val {
+                if let JsValue::Object(obj) = promise_val {
                     let obj_ref = obj.borrow();
                     if let ExoticObject::Promise(state) = &obj_ref.exotic {
                         let state_ref = state.borrow();
@@ -2858,7 +2874,7 @@ impl BytecodeVM {
                                 drop(state_ref);
                                 drop(obj_ref);
                                 return Ok(OpResult::Suspend {
-                                    promise: guarded_js_value(promise_val, interp),
+                                    promise: guarded_js_value(promise_val.clone(), interp),
                                     resume_register: dst,
                                 });
                             }
@@ -2867,7 +2883,7 @@ impl BytecodeVM {
                 }
 
                 // Not a promise - treat as resolved value (await 42 === 42)
-                self.set_reg(dst, promise_val);
+                self.set_reg(dst, promise_val.clone());
                 Ok(OpResult::Continue)
             }
 
@@ -2911,11 +2927,11 @@ impl BytecodeVM {
             // Iteration
             // ═══════════════════════════════════════════════════════════════════════════
             Op::GetIterator { dst, obj } => {
-                let obj_val = self.get_reg(obj).clone();
+                let obj_val = self.get_reg(obj);
 
                 // For arrays and strings, create an internal array iterator
                 // The iterator is stored as an object with internal index state
-                match &obj_val {
+                match obj_val {
                     JsValue::Object(obj_ref) => {
                         // Check if it's a proxy first - need to get Symbol.iterator through proxy trap
                         let is_proxy = matches!(obj_ref.borrow().exotic, ExoticObject::Proxy(_));
@@ -2940,16 +2956,15 @@ impl BytecodeVM {
 
                             if let JsValue::Object(method_obj) = iterator_method_result.value {
                                 // Call the iterator method with the proxy as `this`
-                                let result = interp.call_function(
+                                let Guarded {
+                                    value,
+                                    guard: _guard,
+                                } = interp.call_function(
                                     JsValue::Object(method_obj),
                                     obj_val.clone(),
                                     &[],
                                 )?;
-                                // Guard the result iterator object
-                                if let JsValue::Object(iter_obj) = &result.value {
-                                    self.register_guard.guard(iter_obj.cheap_clone());
-                                }
-                                self.set_reg(dst, result.value);
+                                self.set_reg(dst, value);
                             } else {
                                 return Err(JsError::type_error("Object is not iterable"));
                             }
@@ -2960,13 +2975,16 @@ impl BytecodeVM {
                         if obj_ref.borrow().array_elements().is_some() {
                             // Create an iterator object with the array and index
                             // Use register_guard to keep it alive across loop iterations
-                            let iter = interp.create_object(&self.register_guard);
+                            let guard = interp.heap.create_guard();
+                            let iter = interp.create_object(&guard);
                             iter.borrow_mut().set_property(
-                                PropertyKey::from("__array__"),
+                                PropertyKey::String(interp.intern("__array__")),
                                 JsValue::Object(obj_ref.clone()),
                             );
-                            iter.borrow_mut()
-                                .set_property(PropertyKey::from("__index__"), JsValue::Number(0.0));
+                            iter.borrow_mut().set_property(
+                                PropertyKey::String(interp.intern("__index__")),
+                                JsValue::Number(0.0),
+                            );
                             self.set_reg(dst, JsValue::Object(iter));
                             return Ok(OpResult::Continue);
                         }
@@ -2984,27 +3002,31 @@ impl BytecodeVM {
 
                         if let Some(JsValue::Object(method_obj)) = iterator_method {
                             // Call the iterator method
-                            let result =
-                                interp.call_function(JsValue::Object(method_obj), obj_val, &[])?;
-                            // Guard the result iterator object
-                            if let JsValue::Object(iter_obj) = &result.value {
-                                self.register_guard.guard(iter_obj.cheap_clone());
-                            }
-                            self.set_reg(dst, result.value);
+                            let Guarded {
+                                value,
+                                guard: _guard,
+                            } = interp.call_function(
+                                JsValue::Object(method_obj),
+                                obj_val.clone(),
+                                &[],
+                            )?;
+                            self.set_reg(dst, value);
                         } else {
                             return Err(JsError::type_error("Object is not iterable"));
                         }
                     }
                     JsValue::String(s) => {
                         // Create a string iterator
-                        // Use register_guard to keep it alive across loop iterations
-                        let iter = interp.create_object(&self.register_guard);
+                        let guard = interp.heap.create_guard();
+                        let iter = interp.create_object(&guard);
                         iter.borrow_mut().set_property(
-                            PropertyKey::from("__string__"),
+                            PropertyKey::String(interp.intern("__string__")),
                             JsValue::String(s.cheap_clone()),
                         );
-                        iter.borrow_mut()
-                            .set_property(PropertyKey::from("__index__"), JsValue::Number(0.0));
+                        iter.borrow_mut().set_property(
+                            PropertyKey::String(interp.intern("__index__")),
+                            JsValue::Number(0.0),
+                        );
                         self.set_reg(dst, JsValue::Object(iter));
                     }
                     _ => {
@@ -5425,6 +5447,7 @@ impl BytecodeVM {
     }
 
     /// Execute a return, running any pending finally blocks first
+    // NOTE: review
     fn execute_return(
         &mut self,
         return_val: JsValue,
@@ -5475,6 +5498,7 @@ impl BytecodeVM {
     }
 
     /// Execute a break, running any pending finally blocks first
+    // NOTE: review
     fn execute_break(&mut self, target: usize, try_depth: u8) -> Result<OpResult, JsError> {
         // Check if there's a try handler with a finally block between us and the target
         let target_try_depth = try_depth as usize;
@@ -5515,6 +5539,7 @@ impl BytecodeVM {
     }
 
     /// Execute a continue, running any pending finally blocks first
+    // NOTE: review
     fn execute_continue(&mut self, target: usize, try_depth: u8) -> Result<OpResult, JsError> {
         // Check if there's a try handler with a finally block between us and the target
         let target_try_depth = try_depth as usize;
@@ -5577,6 +5602,7 @@ enum OpResult {
         resume_register: Register,
     },
     /// Call a function (for trampoline)
+    // FIXME: add guard for values
     Call {
         callee: JsValue,
         this_value: JsValue,
@@ -5587,6 +5613,7 @@ enum OpResult {
         is_super_call: bool,
     },
     /// Construct a new object (for trampoline)
+    // FIXME: add guard for values
     Construct {
         callee: JsValue,
         this_value: JsValue,

@@ -14,11 +14,10 @@ use crate::gc::{Gc, Guard, Heap};
 use crate::parser::Parser;
 use crate::string_dict::StringDict;
 use crate::value::{
-    create_environment_unrooted, create_environment_unrooted_with_capacity,
-    Binding, BytecodeFunction, CheapClone, EnvRef, EnvironmentData, ExoticObject,
-    GeneratorStatus, Guarded, ImportBinding, JsFunction,
-    JsObject, JsString, JsSymbol, JsValue, ModuleExport, NativeFn, NativeFunction, PromiseStatus,
-    Property, PropertyKey, VarKey,
+    create_environment_unrooted, create_environment_unrooted_with_capacity, Binding,
+    BytecodeFunction, CheapClone, EnvRef, EnvironmentData, ExoticObject, GeneratorStatus, Guarded,
+    ImportBinding, JsFunction, JsObject, JsString, JsSymbol, JsValue, ModuleExport, NativeFn,
+    NativeFunction, PromiseStatus, Property, PropertyKey, VarKey,
 };
 use rustc_hash::FxHashMap;
 
@@ -1548,6 +1547,7 @@ impl Interpreter {
 
     /// Create a bytecode generator function object.
     /// Caller provides the guard to control object lifetime.
+    // NOTE: review
     pub fn create_bytecode_generator_function(
         &mut self,
         guard: &Guard<JsObject>,
@@ -1584,6 +1584,7 @@ impl Interpreter {
 
     /// Create a bytecode async function object.
     /// Caller provides the guard to control object lifetime.
+    // NOTE: review
     pub fn create_bytecode_async_function(
         &mut self,
         guard: &Guard<JsObject>,
@@ -2747,7 +2748,6 @@ impl Interpreter {
             }
         }
     }
-
 
     pub fn call_function(
         &mut self,
