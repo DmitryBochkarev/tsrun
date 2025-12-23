@@ -3130,13 +3130,13 @@ impl BytecodeVM {
             }
 
             Op::GetAsyncIterator { dst, obj } => {
-                let obj_val = self.get_reg(obj).clone();
+                let obj_val = self.get_reg(obj);
 
                 // For async iteration, we first try Symbol.asyncIterator, then fall back to Symbol.iterator.
                 // For arrays without Symbol.asyncIterator, we use the same internal iterator as sync iteration.
                 // The Await opcode that follows IteratorNext will handle awaiting each value.
 
-                match &obj_val {
+                match obj_val {
                     JsValue::Object(obj_ref) => {
                         // Check if it's a proxy first
                         let is_proxy = matches!(obj_ref.borrow().exotic, ExoticObject::Proxy(_));
@@ -3164,15 +3164,15 @@ impl BytecodeVM {
 
                             if let JsValue::Object(method_obj) = async_method_result.value {
                                 // Call the async iterator method with the proxy as `this`
-                                let result = interp.call_function(
+                                let Guarded {
+                                    value,
+                                    guard: _guard,
+                                } = interp.call_function(
                                     JsValue::Object(method_obj),
                                     obj_val.clone(),
                                     &[],
                                 )?;
-                                if let JsValue::Object(iter_obj) = &result.value {
-                                    self.register_guard.guard(iter_obj.cheap_clone());
-                                }
-                                self.set_reg(dst, result.value);
+                                self.set_reg(dst, value);
                                 return Ok(OpResult::Continue);
                             }
 
@@ -3192,15 +3192,15 @@ impl BytecodeVM {
                                 )?;
 
                             if let JsValue::Object(method_obj) = iterator_method_result.value {
-                                let result = interp.call_function(
+                                let Guarded {
+                                    value,
+                                    guard: _guard,
+                                } = interp.call_function(
                                     JsValue::Object(method_obj),
                                     obj_val.clone(),
                                     &[],
                                 )?;
-                                if let JsValue::Object(iter_obj) = &result.value {
-                                    self.register_guard.guard(iter_obj.cheap_clone());
-                                }
-                                self.set_reg(dst, result.value);
+                                self.set_reg(dst, value);
                             } else {
                                 return Err(JsError::type_error("Object is not async iterable"));
                             }
@@ -3221,25 +3221,31 @@ impl BytecodeVM {
 
                         if let Some(JsValue::Object(method_obj)) = async_method {
                             // Call the async iterator method
-                            let result =
-                                interp.call_function(JsValue::Object(method_obj), obj_val, &[])?;
-                            if let JsValue::Object(iter_obj) = &result.value {
-                                self.register_guard.guard(iter_obj.cheap_clone());
-                            }
-                            self.set_reg(dst, result.value);
+                            let Guarded {
+                                value,
+                                guard: _guard,
+                            } = interp.call_function(
+                                JsValue::Object(method_obj),
+                                obj_val.clone(),
+                                &[],
+                            )?;
+                            self.set_reg(dst, value);
                             return Ok(OpResult::Continue);
                         }
 
                         // Check if it's an array - use direct element iteration
                         // The Await opcode will handle awaiting each element (promise or plain value)
                         if obj_ref.borrow().array_elements().is_some() {
-                            let iter = interp.create_object(&self.register_guard);
+                            let guard = interp.heap.create_guard();
+                            let iter = interp.create_object(&guard);
                             iter.borrow_mut().set_property(
-                                PropertyKey::from("__array__"),
+                                PropertyKey::String(interp.intern("__array__")),
                                 JsValue::Object(obj_ref.clone()),
                             );
-                            iter.borrow_mut()
-                                .set_property(PropertyKey::from("__index__"), JsValue::Number(0.0));
+                            iter.borrow_mut().set_property(
+                                PropertyKey::String(interp.intern("__index__")),
+                                JsValue::Number(0.0),
+                            );
                             self.set_reg(dst, JsValue::Object(iter));
                             return Ok(OpResult::Continue);
                         }
@@ -3254,26 +3260,31 @@ impl BytecodeVM {
                         let iterator_method = obj_ref.borrow().get_property(&iterator_key);
 
                         if let Some(JsValue::Object(method_obj)) = iterator_method {
-                            let result =
-                                interp.call_function(JsValue::Object(method_obj), obj_val, &[])?;
-                            if let JsValue::Object(iter_obj) = &result.value {
-                                self.register_guard.guard(iter_obj.cheap_clone());
-                            }
-                            self.set_reg(dst, result.value);
+                            let Guarded {
+                                value,
+                                guard: _guard,
+                            } = interp.call_function(
+                                JsValue::Object(method_obj),
+                                obj_val.clone(),
+                                &[],
+                            )?;
+                            self.set_reg(dst, value);
                         } else {
                             return Err(JsError::type_error("Object is not async iterable"));
                         }
                     }
                     JsValue::String(s) => {
                         // Create a string iterator (same as sync - Await will handle values)
-                        // FIXME: duplicate guarding, set_reg already guards, here should be temporary guard
-                        let iter = interp.create_object(&self.register_guard);
+                        let guard = interp.heap.create_guard();
+                        let iter = interp.create_object(&guard);
                         iter.borrow_mut().set_property(
-                            PropertyKey::from("__string__"),
+                            PropertyKey::String(interp.intern("__string__")),
                             JsValue::String(s.cheap_clone()),
                         );
-                        iter.borrow_mut()
-                            .set_property(PropertyKey::from("__index__"), JsValue::Number(0.0));
+                        iter.borrow_mut().set_property(
+                            PropertyKey::String(interp.intern("__index__")),
+                            JsValue::Number(0.0),
+                        );
                         self.set_reg(dst, JsValue::Object(iter));
                     }
                     _ => {
