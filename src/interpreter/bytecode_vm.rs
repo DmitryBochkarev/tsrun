@@ -3431,8 +3431,9 @@ impl BytecodeVM {
                 }
 
                 // For custom iterators, call next() method
-                let next_key = PropertyKey::from("next");
-                let next_method = iter_obj.borrow().get_property(&next_key);
+                let next_method = iter_obj
+                    .borrow()
+                    .get_property(&PropertyKey::String(interp.intern("next")));
 
                 if let Some(JsValue::Object(next_fn)) = next_method {
                     let Guarded {
@@ -3455,7 +3456,10 @@ impl BytecodeVM {
                 let result_val = self.get_reg(result);
 
                 let done = if let JsValue::Object(obj_ref) = result_val {
-                    match obj_ref.borrow().get_property(&PropertyKey::from("done")) {
+                    match obj_ref
+                        .borrow()
+                        .get_property(&PropertyKey::String(interp.intern("done")))
+                    {
                         Some(JsValue::Boolean(b)) => b,
                         _ => false,
                     }
@@ -3475,7 +3479,7 @@ impl BytecodeVM {
                 let value = if let JsValue::Object(obj_ref) = result_val {
                     obj_ref
                         .borrow()
-                        .get_property(&PropertyKey::from("value"))
+                        .get_property(&PropertyKey::String(interp.intern("value")))
                         .unwrap_or(JsValue::Undefined)
                 } else {
                     JsValue::Undefined
@@ -3486,27 +3490,30 @@ impl BytecodeVM {
             }
 
             Op::IteratorClose { iterator } => {
-                let iter_val = self.get_reg(iterator).clone();
+                let iter_val = self.get_reg(iterator);
 
                 // Check if iterator has a return() method
                 if let JsValue::Object(iter_obj) = iter_val {
                     // For internal array/string/keys iterators, there's no return method
                     // Only check for custom iterators that have a 'return' property
-                    let return_key = PropertyKey::from("return");
+                    let return_key = PropertyKey::String(interp.intern("return"));
                     let return_method = iter_obj.borrow().get_property(&return_key);
 
                     if let Some(JsValue::Object(return_fn)) = return_method {
                         // Call the return method
                         // Per ES spec 7.4.6: If Type(innerResult.[[value]]) is not Object,
                         // throw a TypeError exception.
-                        let result = interp.call_function(
+                        let Guarded {
+                            value,
+                            guard: _guard,
+                        } = interp.call_function(
                             JsValue::Object(return_fn),
-                            JsValue::Object(iter_obj),
+                            JsValue::Object(iter_obj.clone()),
                             &[],
                         )?;
 
                         // Check that result is an object
-                        if !matches!(result.value, JsValue::Object(_)) {
+                        if !matches!(value, JsValue::Object(_)) {
                             return Err(JsError::type_error("Iterator result is not an object"));
                         }
                     }

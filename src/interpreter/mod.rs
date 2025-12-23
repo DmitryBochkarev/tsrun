@@ -2749,6 +2749,7 @@ impl Interpreter {
         }
     }
 
+    // NOTE: review
     pub fn call_function(
         &mut self,
         callee: JsValue,
