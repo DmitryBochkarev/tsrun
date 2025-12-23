@@ -4083,8 +4083,8 @@ impl BytecodeVM {
                 class,
                 initializers,
             } => {
-                let class_val = self.get_reg(class).clone();
-                let initializers_val = self.get_reg(initializers).clone();
+                let class_val = self.get_reg(class);
+                let initializers_val = self.get_reg(initializers);
 
                 // Get the initializers array and call each function with class as `this`
                 if let JsValue::Object(arr) = initializers_val {
@@ -4115,8 +4115,8 @@ impl BytecodeVM {
                 is_static,
                 is_private,
             } => {
-                let method_val = self.get_reg(method).clone();
-                let decorator_val = self.get_reg(decorator).clone();
+                let method_val = self.get_reg(method);
+                let decorator_val = self.get_reg(decorator);
                 let method_name = self.get_string_constant(name);
 
                 // Create decorator context object
@@ -4156,17 +4156,20 @@ impl BytecodeVM {
                 );
 
                 // Call decorator(method, context)
-                let result = interp.call_function(
-                    decorator_val,
+                let Guarded {
+                    value,
+                    guard: _guard,
+                } = interp.call_function(
+                    decorator_val.clone(),
                     JsValue::Undefined,
                     &[method_val.clone(), JsValue::Object(ctx)],
                 )?;
 
                 // If decorator returns undefined, keep original method; otherwise use return value
-                if matches!(result.value, JsValue::Undefined) {
+                if matches!(value, JsValue::Undefined) {
                     // Keep original method value in register
                 } else {
-                    self.set_reg(method, result.value);
+                    self.set_reg(method, value);
                 }
 
                 Ok(OpResult::Continue)
