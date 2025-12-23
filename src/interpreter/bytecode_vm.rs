@@ -3037,23 +3037,26 @@ impl BytecodeVM {
             }
 
             Op::GetKeysIterator { dst, obj } => {
-                let obj_val = self.get_reg(obj).clone();
+                let obj_val = self.get_reg(obj);
 
                 // Create a keys iterator that iterates over enumerable property keys
-                let keys: Vec<JsValue> = match &obj_val {
+                let keys: Vec<JsValue> = match obj_val {
                     JsValue::Object(obj_ref) => {
                         // Check if this is a proxy - use proxy_own_keys if so
                         let is_proxy = matches!(obj_ref.borrow().exotic, ExoticObject::Proxy(_));
 
                         if is_proxy {
                             // Get keys through proxy trap
-                            let keys_result = crate::interpreter::builtins::proxy::proxy_own_keys(
+                            let Guarded {
+                                value,
+                                guard: _guard,
+                            } = crate::interpreter::builtins::proxy::proxy_own_keys(
                                 interp,
                                 obj_ref.cheap_clone(),
                             )?;
 
                             // proxy_own_keys returns an array of keys
-                            if let JsValue::Object(keys_arr) = keys_result.value {
+                            if let JsValue::Object(keys_arr) = value {
                                 if let Some(elements) = keys_arr.borrow().array_elements() {
                                     elements.to_vec()
                                 } else {
@@ -3111,12 +3114,17 @@ impl BytecodeVM {
                 };
 
                 // Create a keys array iterator
-                let iter = interp.create_object(&self.register_guard);
+                let guard = interp.heap.create_guard();
+                let iter = interp.create_object(&guard);
                 let keys_arr = interp.create_array_from(&self.register_guard, keys);
-                iter.borrow_mut()
-                    .set_property(PropertyKey::from("__keys__"), JsValue::Object(keys_arr));
-                iter.borrow_mut()
-                    .set_property(PropertyKey::from("__index__"), JsValue::Number(0.0));
+                iter.borrow_mut().set_property(
+                    PropertyKey::String(interp.intern("__keys__")),
+                    JsValue::Object(keys_arr),
+                );
+                iter.borrow_mut().set_property(
+                    PropertyKey::String(interp.intern("__index__")),
+                    JsValue::Number(0.0),
+                );
                 self.set_reg(dst, JsValue::Object(iter));
                 Ok(OpResult::Continue)
             }
