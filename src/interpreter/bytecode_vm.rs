@@ -347,6 +347,7 @@ impl BytecodeVM {
     }
 
     /// Return a register file to the pool for reuse
+    // FIXME: clear register_guard
     #[inline]
     fn release_registers(&mut self, mut registers: Vec<JsValue>) {
         // Clear the registers to drop any references
