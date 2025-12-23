@@ -4617,7 +4617,7 @@ impl BytecodeVM {
                             elems.to_vec()
                         } else {
                             // Try iterator protocol
-                            match interp.collect_iterator_values(&src_val) {
+                            match interp.collect_iterator_values(src_val) {
                                 Ok(Some(values)) => values,
                                 Ok(None) => Vec::new(),
                                 Err(e) => return Err(e),
@@ -4695,12 +4695,12 @@ impl BytecodeVM {
                 excluded_keys,
             } => {
                 // Create an object with all properties from src except excluded_keys
-                let src_val = self.get_reg(src).clone();
+                let src_val = self.get_reg(src);
 
                 // Get excluded keys from constant pool
                 let excluded = match self.chunk.constants.get(excluded_keys as usize) {
-                    Some(Constant::ExcludedKeys(keys)) => keys.clone(),
-                    _ => vec![],
+                    Some(Constant::ExcludedKeys(keys)) => keys,
+                    _ => &vec![],
                 };
 
                 let guard = interp.heap.create_guard();
