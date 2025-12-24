@@ -362,22 +362,25 @@ These functions create objects or handle values that need guarding:
 
 ---
 
-### Phase 6: Function Signature Updates
+### Phase 6: Function Signature Updates [COMPLETED]
 
 **Goal:** Make guard passing explicit in key APIs.
 
-1. `create_bytecode_generator_object`: Accept `&Guard<JsObject>`
-2. `proxy_apply`: Accept guard parameter
-3. Remove deprecated `guard_value` function
-4. Consider updating `call_function` signature
+**Changes made:**
+1. `create_bytecode_generator_object`: Now accepts `&Guard<JsObject>` parameter
+   - Updated all callers in bytecode_vm.rs to pass `&self.register_guard`
+   - Updated callers in mod.rs to create a guard and return proper `Guarded`
+   - Fixed memory leak: previously used `root_guard` which never released generators
+2. `proxy_apply`: Already safe - creates guard internally, documented properly
+3. `guard_value`: Kept as useful utility, improved documentation
+   - Used throughout codebase for guarding input values before GC-triggering operations
+   - Works correctly, just creates a new guard for each call (intentional)
 
-**Files to modify:**
-- `src/interpreter/mod.rs`
+**Files modified:**
 - `src/interpreter/builtins/generator.rs`
+- `src/interpreter/bytecode_vm.rs`
+- `src/interpreter/mod.rs`
 - `src/interpreter/builtins/proxy.rs`
-- All callers of these functions
-
-**Estimated scope:** ~100 lines changed (many call sites)
 
 ---
 
@@ -428,7 +431,9 @@ After each phase, run the test262 suite:
 1. ~~**Phase 4** (exception_value)~~ **DONE**
 2. ~~**Phase 1** (OpResult)~~ **DONE**, ~~**Phase 2** (PendingCompletion)~~ **DONE**, ~~**Phase 3** (GeneratorYield)~~ **DONE**
 3. ~~**Phase 5** (JsError)~~ **DONE**
-4. **Phase 6** (Function signatures) - can be done incrementally
+4. ~~**Phase 6** (Function signatures)~~ **DONE**
+
+**All phases completed!**
 
 ---
 

@@ -1866,9 +1866,11 @@ impl Interpreter {
         constructor.borrow_mut().define_property(species_key, prop);
     }
 
-    /// Guard a value to prevent it from being garbage collected.
-    /// Returns Some(guard) if the value is an object, None otherwise.
-    // FIXME: remove!
+    /// Create a guard for a value to prevent it from being garbage collected.
+    /// Returns Some(guard) if the value is an object, None for primitives.
+    ///
+    /// Use this to guard input values before operations that may trigger GC.
+    /// The returned guard must be kept alive for the duration needed.
     pub fn guard_value(&mut self, value: &JsValue) -> Option<Guard<JsObject>> {
         if let JsValue::Object(obj) = value {
             let guard = self.heap.create_guard();
@@ -3234,12 +3236,11 @@ impl Interpreter {
             throw_value: None,        // For generator.throw()
         };
 
-        // Create the generator object
-        // FIXME: pass guard
-        let gen_obj = builtins::generator::create_bytecode_generator_object(self, state);
+        // Create the generator object with a guard
+        let guard = self.heap.create_guard();
+        let gen_obj = builtins::generator::create_bytecode_generator_object(self, &guard, state);
 
-        // FIXME: return guarded
-        Ok(Guarded::unguarded(JsValue::Object(gen_obj)))
+        Ok(Guarded::with_guard(JsValue::Object(gen_obj), guard))
     }
 
     /// Create a bytecode async generator object when an async generator function is called
@@ -3278,10 +3279,11 @@ impl Interpreter {
             throw_value: None,        // For generator.throw()
         };
 
-        // Create the generator object (uses same object type, behavior differs based on is_async)
-        let gen_obj = builtins::generator::create_bytecode_generator_object(self, state);
+        // Create the generator object with a guard
+        let guard = self.heap.create_guard();
+        let gen_obj = builtins::generator::create_bytecode_generator_object(self, &guard, state);
 
-        Ok(Guarded::unguarded(JsValue::Object(gen_obj)))
+        Ok(Guarded::with_guard(JsValue::Object(gen_obj), guard))
     }
 
     /// Collect all values from an iterable using the Symbol.iterator protocol.

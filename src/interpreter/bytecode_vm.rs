@@ -795,8 +795,11 @@ impl BytecodeVM {
                     throw_value: None,
                 };
 
-                let gen_obj =
-                    super::builtins::generator::create_bytecode_generator_object(interp, state);
+                let gen_obj = super::builtins::generator::create_bytecode_generator_object(
+                    interp,
+                    &self.register_guard,
+                    state,
+                );
                 self.set_reg(return_register, JsValue::Object(gen_obj));
                 Ok(())
             }
@@ -829,8 +832,11 @@ impl BytecodeVM {
                     throw_value: None,
                 };
 
-                let gen_obj =
-                    super::builtins::generator::create_bytecode_generator_object(interp, state);
+                let gen_obj = super::builtins::generator::create_bytecode_generator_object(
+                    interp,
+                    &self.register_guard,
+                    state,
+                );
                 self.set_reg(return_register, JsValue::Object(gen_obj));
                 Ok(())
             }

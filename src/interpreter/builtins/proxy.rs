@@ -987,8 +987,9 @@ pub fn proxy_own_keys(interp: &mut Interpreter, obj: JsObjectRef) -> Result<Guar
 }
 
 /// Proxy [[Call]] internal method (for function proxies)
-// NOTE: review
-// FIXME accept guard, references
+///
+/// Implements the [[Call]] internal method for Proxy exotic objects.
+/// Creates its own guard internally for the arguments array.
 pub fn proxy_apply(
     interp: &mut Interpreter,
     obj: JsObjectRef,

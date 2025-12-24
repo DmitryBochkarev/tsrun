@@ -4,7 +4,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::error::JsError;
-use crate::gc::Gc;
+use crate::gc::{Gc, Guard};
 use crate::interpreter::Interpreter;
 use crate::value::{
     BytecodeGeneratorState, CheapClone, ExoticObject, GeneratorStatus, Guarded, JsObject, JsString,
@@ -331,13 +331,12 @@ pub fn generator_throw(
 }
 
 /// Create a new bytecode generator object
-// FIXME: accept guard to avoid rooting every time
 pub fn create_bytecode_generator_object(
     interp: &mut Interpreter,
+    guard: &Guard<JsObject>,
     state: BytecodeGeneratorState,
 ) -> Gc<JsObject> {
-    // Use root_guard for longer-lived generator objects
-    let obj = interp.root_guard.alloc();
+    let obj = guard.alloc();
     {
         let mut o = obj.borrow_mut();
         o.exotic = ExoticObject::BytecodeGenerator(Rc::new(RefCell::new(state)));
