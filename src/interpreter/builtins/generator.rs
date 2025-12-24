@@ -11,8 +11,6 @@ use crate::value::{
     JsSymbol, JsValue, PropertyKey,
 };
 
-use super::symbol::get_well_known_symbols;
-
 /// Initialize Generator.prototype
 pub fn init_generator_prototype(interp: &mut Interpreter) {
     let proto = interp.generator_prototype.clone();
@@ -27,7 +25,7 @@ pub fn init_generator_prototype(interp: &mut Interpreter) {
     interp.register_method(&proto, "return", generator_return, 1);
     interp.register_method(&proto, "throw", generator_throw, 1);
 
-    let well_known = get_well_known_symbols();
+    let well_known = interp.well_known_symbols;
 
     // Add Symbol.iterator - returns the generator itself
     // This makes generators work with for-of loops

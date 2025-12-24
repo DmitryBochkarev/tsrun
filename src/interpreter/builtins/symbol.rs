@@ -1,29 +1,8 @@
 //! Symbol built-in object implementation
 
-use std::cell::RefCell;
-use std::sync::atomic::{AtomicU64, Ordering};
-
-use rustc_hash::FxHashMap;
-
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
 use crate::value::{CheapClone, Guarded, JsString, JsSymbol, JsValue, PropertyKey};
-
-/// Global symbol ID counter for generating unique symbol IDs
-// FIXME: store in interpreter
-static SYMBOL_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
-
-/// Generate a unique symbol ID
-pub fn next_symbol_id() -> u64 {
-    SYMBOL_ID_COUNTER.fetch_add(1, Ordering::SeqCst)
-}
-
-// Symbol registry - maps string keys to symbols for Symbol.for()
-// This is a thread-local registry to avoid requiring synchronization
-// FIXME: store in interpreter
-thread_local! {
-    static SYMBOL_REGISTRY: RefCell<FxHashMap<JsString, JsSymbol>> = RefCell::new(FxHashMap::default());
-}
 
 /// Well-known symbol IDs (reserved during initialization)
 #[derive(Clone, Copy)]
@@ -44,36 +23,35 @@ pub struct WellKnownSymbols {
 
 impl Default for WellKnownSymbols {
     fn default() -> Self {
-        Self::new()
+        Self::new(&mut 1)
     }
 }
 
 impl WellKnownSymbols {
-    pub fn new() -> Self {
+    /// Create well-known symbols using the provided counter.
+    /// The counter is incremented for each symbol allocated.
+    pub fn new(next_id: &mut u64) -> Self {
+        let mut alloc = || {
+            let id = *next_id;
+            *next_id += 1;
+            id
+        };
+
         Self {
-            iterator: next_symbol_id(),
-            to_string_tag: next_symbol_id(),
-            has_instance: next_symbol_id(),
-            is_concat_spreadable: next_symbol_id(),
-            species: next_symbol_id(),
-            to_primitive: next_symbol_id(),
-            unscopables: next_symbol_id(),
-            match_symbol: next_symbol_id(),
-            replace: next_symbol_id(),
-            search: next_symbol_id(),
-            split: next_symbol_id(),
-            async_iterator: next_symbol_id(),
+            iterator: alloc(),
+            to_string_tag: alloc(),
+            has_instance: alloc(),
+            is_concat_spreadable: alloc(),
+            species: alloc(),
+            to_primitive: alloc(),
+            unscopables: alloc(),
+            match_symbol: alloc(),
+            replace: alloc(),
+            search: alloc(),
+            split: alloc(),
+            async_iterator: alloc(),
         }
     }
-}
-
-// Global well-known symbols singleton
-thread_local! {
-    static WELL_KNOWN_SYMBOLS: WellKnownSymbols = WellKnownSymbols::new();
-}
-
-pub fn get_well_known_symbols() -> WellKnownSymbols {
-    WELL_KNOWN_SYMBOLS.with(|s| *s)
 }
 
 /// Initialize Symbol.prototype with toString and valueOf methods
@@ -95,7 +73,7 @@ pub fn init_symbol_prototype(interp: &mut Interpreter) {
 pub fn init_symbol(interp: &mut Interpreter) {
     init_symbol_prototype(interp);
 
-    let well_known = get_well_known_symbols();
+    let well_known = interp.well_known_symbols;
 
     // Create the Symbol function (not a constructor - can't be called with new)
     let symbol_fn = interp.create_native_function("Symbol", symbol_call, 0);
@@ -201,17 +179,11 @@ pub fn init_symbol(interp: &mut Interpreter) {
         );
         sym.set_property(
             search_key,
-            JsValue::Symbol(Box::new(JsSymbol::new(
-                well_known.search,
-                Some(sym_search),
-            ))),
+            JsValue::Symbol(Box::new(JsSymbol::new(well_known.search, Some(sym_search)))),
         );
         sym.set_property(
             split_key,
-            JsValue::Symbol(Box::new(JsSymbol::new(
-                well_known.split,
-                Some(sym_split),
-            ))),
+            JsValue::Symbol(Box::new(JsSymbol::new(well_known.split, Some(sym_split)))),
         );
         sym.set_property(
             async_iterator_key,
@@ -239,7 +211,7 @@ pub fn init_symbol(interp: &mut Interpreter) {
 
 /// Symbol() - create a new unique symbol
 fn symbol_call(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
@@ -248,7 +220,7 @@ fn symbol_call(
         Some(other) => Some(other.to_js_string()),
     };
 
-    let id = next_symbol_id();
+    let id = interp.next_symbol_id();
     Ok(Guarded::unguarded(JsValue::Symbol(Box::new(
         JsSymbol::new(id, description),
     ))))
@@ -265,22 +237,21 @@ fn symbol_for(
         .map(|v| v.to_js_string())
         .unwrap_or_else(|| interp.intern("undefined"));
 
-    SYMBOL_REGISTRY.with(|registry| {
-        let mut registry = registry.borrow_mut();
-        if let Some(sym) = registry.get(&key) {
-            return Ok(Guarded::unguarded(JsValue::Symbol(Box::new(sym.clone()))));
-        }
+    // Check if symbol already exists in registry
+    if let Some(sym) = interp.symbol_registry_get(&key) {
+        return Ok(Guarded::unguarded(JsValue::Symbol(Box::new(sym))));
+    }
 
-        let id = next_symbol_id();
-        let sym = JsSymbol::new(id, Some(key.cheap_clone()));
-        registry.insert(key, sym.clone());
-        Ok(Guarded::unguarded(JsValue::Symbol(Box::new(sym))))
-    })
+    // Create new symbol and register it
+    let id = interp.next_symbol_id();
+    let sym = JsSymbol::new(id, Some(key.cheap_clone()));
+    interp.symbol_registry_insert(key, sym.clone());
+    Ok(Guarded::unguarded(JsValue::Symbol(Box::new(sym))))
 }
 
 /// Symbol.keyFor(sym) - get the key for a registered symbol
 fn symbol_key_for(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
@@ -293,15 +264,10 @@ fn symbol_key_for(
         }
     };
 
-    SYMBOL_REGISTRY.with(|registry| {
-        let registry = registry.borrow();
-        for (key, registered_sym) in registry.iter() {
-            if registered_sym.id() == sym.id() {
-                return Ok(Guarded::unguarded(JsValue::String(key.cheap_clone())));
-            }
-        }
-        Ok(Guarded::unguarded(JsValue::Undefined))
-    })
+    match interp.symbol_registry_key_for(sym.id()) {
+        Some(key) => Ok(Guarded::unguarded(JsValue::String(key))),
+        None => Ok(Guarded::unguarded(JsValue::Undefined)),
+    }
 }
 
 /// Symbol.prototype.toString()

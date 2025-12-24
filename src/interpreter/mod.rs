@@ -10,6 +10,7 @@ pub mod bytecode_vm;
 
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::time::Instant;
 
 use crate::ast::{ImportSpecifier, Program, Statement};
 use crate::error::JsError;
@@ -17,9 +18,14 @@ use crate::gc::{Gc, Guard, Heap};
 use crate::parser::Parser;
 use crate::string_dict::StringDict;
 use crate::value::{
-    Binding, BytecodeFunction, BytecodeGeneratorState, CheapClone, EnvRef, EnvironmentData, ExoticObject, GeneratorStatus, Guarded, ImportBinding, JsFunction, JsObject, JsString, JsSymbol, JsValue, ModuleExport, NativeFn, NativeFunction, PromiseStatus, Property, PropertyKey, VarKey, create_environment_unrooted, create_environment_unrooted_with_capacity
+    create_environment_unrooted, create_environment_unrooted_with_capacity, Binding,
+    BytecodeFunction, BytecodeGeneratorState, CheapClone, EnvRef, EnvironmentData, ExoticObject,
+    GeneratorStatus, Guarded, ImportBinding, JsFunction, JsObject, JsString, JsSymbol, JsValue,
+    ModuleExport, NativeFn, NativeFunction, PromiseStatus, Property, PropertyKey, VarKey,
 };
 use rustc_hash::FxHashMap;
+
+use self::builtins::symbol::WellKnownSymbols;
 
 // Re-export Guarded from value module - see value.rs for documentation
 
@@ -135,6 +141,21 @@ pub struct Interpreter {
 
     /// Counter for generating unique generator IDs
     next_generator_id: u64,
+
+    /// Counter for generating unique symbol IDs
+    next_symbol_id: u64,
+
+    /// Symbol registry for Symbol.for() / Symbol.keyFor()
+    symbol_registry: FxHashMap<JsString, JsSymbol>,
+
+    /// Well-known symbols (Symbol.iterator, Symbol.toStringTag, etc.)
+    pub well_known_symbols: WellKnownSymbols,
+
+    /// Console timers for console.time() / console.timeEnd()
+    console_timers: FxHashMap<String, Instant>,
+
+    /// Console counters for console.count() / console.countReset()
+    console_counters: FxHashMap<String, u64>,
 
     // ═══════════════════════════════════════════════════════════════════════════
     // Timeout and Limits
@@ -262,6 +283,11 @@ impl Interpreter {
 
         let string_dict = StringDict::new();
 
+        // Initialize symbol counter and well-known symbols
+        // Well-known symbols get IDs 1-12, next_symbol_id starts at 13
+        let mut symbol_counter = 1u64;
+        let well_known_symbols = WellKnownSymbols::new(&mut symbol_counter);
+
         let mut interp = Self {
             heap,
             root_guard,
@@ -291,6 +317,11 @@ impl Interpreter {
             exports: FxHashMap::default(),
             call_stack: Vec::new(),
             next_generator_id: 1,
+            next_symbol_id: symbol_counter,
+            symbol_registry: FxHashMap::default(),
+            well_known_symbols,
+            console_timers: FxHashMap::default(),
+            console_counters: FxHashMap::default(),
             timeout_ms: 3000, // Default 3 second timeout
             execution_start: None,
             step_counter: 0,
@@ -487,6 +518,65 @@ impl Interpreter {
             }
         }
         Ok(())
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Symbol Management
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// Generate a unique symbol ID
+    pub fn next_symbol_id(&mut self) -> u64 {
+        let id = self.next_symbol_id;
+        self.next_symbol_id += 1;
+        id
+    }
+
+    /// Get a symbol from the registry by key (for Symbol.for)
+    pub fn symbol_registry_get(&self, key: &JsString) -> Option<JsSymbol> {
+        self.symbol_registry.get(key).cloned()
+    }
+
+    /// Insert a symbol into the registry (for Symbol.for)
+    pub fn symbol_registry_insert(&mut self, key: JsString, symbol: JsSymbol) {
+        self.symbol_registry.insert(key, symbol);
+    }
+
+    /// Find the key for a registered symbol (for Symbol.keyFor)
+    pub fn symbol_registry_key_for(&self, symbol_id: u64) -> Option<JsString> {
+        for (key, sym) in &self.symbol_registry {
+            if sym.id() == symbol_id {
+                return Some(key.cheap_clone());
+            }
+        }
+        None
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Console State
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// Start a console timer
+    pub fn console_timer_start(&mut self, label: String) {
+        self.console_timers.insert(label, Instant::now());
+    }
+
+    /// End a console timer and return elapsed milliseconds, or None if timer doesn't exist
+    pub fn console_timer_end(&mut self, label: &str) -> Option<u128> {
+        self.console_timers
+            .remove(label)
+            .map(|start| start.elapsed().as_millis())
+    }
+
+    /// Increment a console counter and return the new count
+    pub fn console_counter_increment(&mut self, label: String) -> u64 {
+        let count = self.console_counters.entry(label).or_insert(0);
+        *count += 1;
+        *count
+    }
+
+    /// Reset a console counter
+    pub fn console_counter_reset(&mut self, label: &str) {
+        self.console_counters.remove(label);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -1764,7 +1854,7 @@ impl Interpreter {
         self.root_guard.guard(getter.cheap_clone());
 
         // Get the well-known Symbol.species
-        let well_known = builtins::symbol::get_well_known_symbols();
+        let well_known = self.well_known_symbols;
         let species_symbol = JsSymbol::new(well_known.species, Some(self.intern("Symbol.species")));
         let species_key = PropertyKey::Symbol(Box::new(species_symbol));
 
@@ -2107,7 +2197,7 @@ impl Interpreter {
         };
 
         // Get Symbol.iterator (for async generators, also try Symbol.asyncIterator)
-        let well_known = builtins::symbol::get_well_known_symbols();
+        let well_known = self.well_known_symbols;
 
         // Create a guard to keep the iterator and its contents alive throughout delegation
         let iter_guard = self.heap.create_guard();
@@ -3222,7 +3312,7 @@ impl Interpreter {
         }
 
         // Check for Symbol.iterator method
-        let well_known = builtins::symbol::get_well_known_symbols();
+        let well_known = self.well_known_symbols;
         let iterator_symbol =
             JsSymbol::new(well_known.iterator, Some(self.intern("Symbol.iterator")));
         let iterator_key = PropertyKey::Symbol(Box::new(iterator_symbol));

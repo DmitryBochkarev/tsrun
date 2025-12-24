@@ -1,10 +1,5 @@
 //! Console built-in methods
 
-use std::sync::Mutex;
-use std::time::Instant;
-
-use rustc_hash::FxHashMap;
-
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
 use crate::value::{Guarded, JsValue, PropertyKey};
@@ -15,13 +10,6 @@ fn format_for_console(value: &JsValue) -> String {
         JsValue::String(s) => s.to_string(),
         other => format!("{:?}", other),
     }
-}
-
-// Thread-local storage for console timers and counters
-// FIXME: store this in interpreter
-lazy_static::lazy_static! {
-    static ref CONSOLE_TIMERS: Mutex<FxHashMap<String, Instant>> = Mutex::new(FxHashMap::default());
-    static ref CONSOLE_COUNTERS: Mutex<FxHashMap<String, u64>> = Mutex::new(FxHashMap::default());
 }
 
 /// Initialize console global object
@@ -180,7 +168,7 @@ pub fn console_dir(
 /// console.time(label)
 /// Starts a timer with a specified label
 pub fn console_time(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
@@ -189,16 +177,14 @@ pub fn console_time(
         .map(|v| v.to_js_string().to_string())
         .unwrap_or_else(|| "default".to_string());
 
-    if let Ok(mut timers) = CONSOLE_TIMERS.lock() {
-        timers.insert(label, Instant::now());
-    }
+    interp.console_timer_start(label);
     Ok(Guarded::unguarded(JsValue::Undefined))
 }
 
 /// console.timeEnd(label)
 /// Stops a timer and logs the elapsed time
 pub fn console_time_end(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
@@ -207,13 +193,9 @@ pub fn console_time_end(
         .map(|v| v.to_js_string().to_string())
         .unwrap_or_else(|| "default".to_string());
 
-    if let Ok(mut timers) = CONSOLE_TIMERS.lock() {
-        if let Some(start) = timers.remove(&label) {
-            let elapsed = start.elapsed();
-            println!("{}: {}ms", label, elapsed.as_millis());
-        } else {
-            println!("Timer '{}' does not exist", label);
-        }
+    match interp.console_timer_end(&label) {
+        Some(elapsed_ms) => println!("{}: {}ms", label, elapsed_ms),
+        None => println!("Timer '{}' does not exist", label),
     }
     Ok(Guarded::unguarded(JsValue::Undefined))
 }
@@ -221,7 +203,7 @@ pub fn console_time_end(
 /// console.count(label)
 /// Logs the number of times this particular call to count() has been called
 pub fn console_count(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
@@ -230,18 +212,15 @@ pub fn console_count(
         .map(|v| v.to_js_string().to_string())
         .unwrap_or_else(|| "default".to_string());
 
-    if let Ok(mut counters) = CONSOLE_COUNTERS.lock() {
-        let count = counters.entry(label.clone()).or_insert(0);
-        *count += 1;
-        println!("{}: {}", label, count);
-    }
+    let count = interp.console_counter_increment(label.clone());
+    println!("{}: {}", label, count);
     Ok(Guarded::unguarded(JsValue::Undefined))
 }
 
 /// console.countReset(label)
 /// Resets the counter for the given label
 pub fn console_count_reset(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
@@ -250,9 +229,7 @@ pub fn console_count_reset(
         .map(|v| v.to_js_string().to_string())
         .unwrap_or_else(|| "default".to_string());
 
-    if let Ok(mut counters) = CONSOLE_COUNTERS.lock() {
-        counters.remove(&label);
-    }
+    interp.console_counter_reset(&label);
     Ok(Guarded::unguarded(JsValue::Undefined))
 }
 

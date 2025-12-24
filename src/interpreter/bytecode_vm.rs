@@ -1929,7 +1929,7 @@ impl BytecodeVM {
                 };
 
                 // Step 1: Check for Symbol.hasInstance method (custom instanceof behavior)
-                let well_known = crate::interpreter::builtins::symbol::get_well_known_symbols();
+                let well_known = interp.well_known_symbols;
                 let has_instance_symbol = crate::value::JsSymbol::new(
                     well_known.has_instance,
                     Some(interp.intern("Symbol.hasInstance")),
@@ -2939,8 +2939,7 @@ impl BytecodeVM {
 
                         if is_proxy {
                             // For proxies, use proxy_get to get Symbol.iterator method
-                            let well_known =
-                                crate::interpreter::builtins::symbol::get_well_known_symbols();
+                            let well_known = interp.well_known_symbols;
                             let iterator_symbol = crate::value::JsSymbol::new(
                                 well_known.iterator,
                                 Some(interp.intern("Symbol.iterator")),
@@ -2991,8 +2990,7 @@ impl BytecodeVM {
                         }
 
                         // For non-array objects, try Symbol.iterator
-                        let well_known =
-                            crate::interpreter::builtins::symbol::get_well_known_symbols();
+                        let well_known = interp.well_known_symbols;
                         let iterator_symbol = crate::value::JsSymbol::new(
                             well_known.iterator,
                             Some(interp.intern("Symbol.iterator")),
@@ -3144,8 +3142,7 @@ impl BytecodeVM {
 
                         if is_proxy {
                             // For proxies, try Symbol.asyncIterator first, then Symbol.iterator
-                            let well_known =
-                                crate::interpreter::builtins::symbol::get_well_known_symbols();
+                            let well_known = interp.well_known_symbols;
 
                             // Try Symbol.asyncIterator first
                             let async_iterator_symbol = crate::value::JsSymbol::new(
@@ -3209,8 +3206,7 @@ impl BytecodeVM {
                         }
 
                         // Check for Symbol.asyncIterator first
-                        let well_known =
-                            crate::interpreter::builtins::symbol::get_well_known_symbols();
+                        let well_known = interp.well_known_symbols;
                         let async_iterator_symbol = crate::value::JsSymbol::new(
                             well_known.async_iterator,
                             Some(interp.intern("Symbol.asyncIterator")),

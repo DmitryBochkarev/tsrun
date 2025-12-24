@@ -142,7 +142,7 @@ pub fn init_array_prototype(interp: &mut Interpreter) {
     interp.register_method(&proto, "entries", array_entries, 0);
 
     // Symbol.iterator = Array.prototype.values
-    let well_known = super::symbol::get_well_known_symbols();
+    let well_known = interp.well_known_symbols;
     let iterator_symbol =
         crate::value::JsSymbol::new(well_known.iterator, Some(interp.intern("Symbol.iterator")));
     let iterator_key = crate::value::PropertyKey::Symbol(Box::new(iterator_symbol));
@@ -719,10 +719,8 @@ pub fn array_concat(
     this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    use crate::interpreter::builtins::symbol::get_well_known_symbols;
-
     let mut result = Vec::new();
-    let well_known = get_well_known_symbols();
+    let well_known = interp.well_known_symbols;
     let spreadable_key = PropertyKey::Symbol(Box::new(crate::value::JsSymbol::new(
         well_known.is_concat_spreadable,
         None,
@@ -1987,7 +1985,7 @@ pub fn array_values(
         .set_property(PropertyKey::from("next"), JsValue::Object(next_fn));
 
     // Make it its own iterator (for use in for-of)
-    let well_known = super::symbol::get_well_known_symbols();
+    let well_known = interp.well_known_symbols;
     let iterator_symbol =
         crate::value::JsSymbol::new(well_known.iterator, Some(interp.intern("Symbol.iterator")));
     let iterator_key = PropertyKey::Symbol(Box::new(iterator_symbol));

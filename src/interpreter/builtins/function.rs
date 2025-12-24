@@ -50,7 +50,7 @@ pub fn init_function_prototype(interp: &mut Interpreter) {
     interp.register_method(&proto, "bind", function_bind, 1);
 
     // Add Symbol.hasInstance method
-    let well_known = super::symbol::get_well_known_symbols();
+    let well_known = interp.well_known_symbols;
     let has_instance_symbol = JsSymbol::new(
         well_known.has_instance,
         Some(interp.intern("Symbol.hasInstance")),
