@@ -182,53 +182,20 @@ Callers will pass `&interp.root_guard`.
    - `Op::SuperGet`
    - `Op::SuperGetConst`
 
-### Phase 4: Fix `create_native_function`
+### Phase 4 & 5: `create_native_function`, `register_method`, `register_species_getter` ⏭️ SKIPPED
 
-**Files to modify:**
-- `src/interpreter/mod.rs`
-- `src/interpreter/builtins/*.rs` (all files that call `create_native_function`)
+**Decision:** These functions were NOT changed to accept explicit guard parameters.
 
-**Steps:**
+**Rationale:**
+1. All ~200 call sites are during initialization and correctly use `root_guard`
+2. Changing the signatures would require updating every call site
+3. Borrow checker issues: `interp.method(&interp.root_guard, ...)` creates conflicting borrows
+4. This was a design improvement for explicitness, not a bug fix
 
-1. Change signature to accept guard:
-   ```rust
-   // Before
-   pub fn create_native_function(&mut self, name: &str, func: NativeFn, arity: usize) -> Gc<JsObject>
+**Current implementation:** These functions use `self.root_guard` internally, which is correct
+for builtin initialization. Functions are permanently rooted and never collected.
 
-   // After
-   pub fn create_native_function(&mut self, guard: &Guard<JsObject>, name: &str, func: NativeFn, arity: usize) -> Gc<JsObject>
-   ```
-
-2. Replace `self.root_guard.alloc()` with `guard.alloc()`.
-
-3. Update all callers to pass `&interp.root_guard` (since all calls are during initialization).
-
-4. Update `register_method` which calls `create_native_function`.
-
-### Phase 5: Fix `register_species_getter`
-
-**Files to modify:**
-- `src/interpreter/mod.rs`
-- `src/interpreter/builtins/array.rs`
-- `src/interpreter/builtins/map.rs`
-- `src/interpreter/builtins/set.rs`
-- `src/interpreter/builtins/promise.rs`
-- `src/interpreter/builtins/regexp.rs`
-
-**Steps:**
-
-1. Change signature to accept guard:
-   ```rust
-   // Before
-   pub fn register_species_getter(&mut self, constructor: &Gc<JsObject>)
-
-   // After
-   pub fn register_species_getter(&mut self, guard: &Guard<JsObject>, constructor: &Gc<JsObject>)
-   ```
-
-2. Update implementation to use provided guard.
-
-3. Update all callers to pass `&interp.root_guard`.
+**Documentation updated:** Added doc comments explaining that `root_guard` is used internally.
 
 ### Phase 6: Add Tests
 
@@ -250,12 +217,12 @@ Callers will pass `&interp.root_guard`.
 
 ## Order of Implementation
 
-1. **Phase 1** - `to_object` (critical bug fix)
-2. **Phase 2** - `call_function` (large impact, many callers)
-3. **Phase 3** - `get_property_value` (depends on Phase 2)
-4. **Phase 4** - `create_native_function` (many callers in builtins)
-5. **Phase 5** - `register_species_getter` (few callers)
-6. **Phase 6** - Add tests
+1. **Phase 1** - `to_object` ✅ COMPLETED
+2. **Phase 2** - `call_function` (already returns Guarded, no change needed)
+3. **Phase 3** - `get_property_value` ✅ COMPLETED
+4. **Phase 4** - `create_native_function` ⏭️ SKIPPED (uses root_guard correctly)
+5. **Phase 5** - `register_species_getter` ⏭️ SKIPPED (uses root_guard correctly)
+6. **Phase 6** - Add tests (pending)
 
 ## Files Changed Summary
 

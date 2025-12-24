@@ -1754,10 +1754,9 @@ impl Interpreter {
         self.string_dict.get_or_insert(s)
     }
 
-    /// Create a rooted native function for global constructors.
+    /// Create a native function object, permanently rooted via `root_guard`.
+    /// Use this for builtin constructors and methods during initialization.
     /// The function is permanently rooted and never collected.
-    /// Use this for built-in constructors during initialization.
-    // FIXME: accept guard
     pub fn create_native_function(
         &mut self,
         name: &str,
@@ -1828,7 +1827,8 @@ impl Interpreter {
         func_obj
     }
 
-    /// Register a method on an object (for builtin initialization)
+    /// Register a method on an object (for builtin initialization).
+    /// Uses root_guard internally - functions are permanently rooted.
     /// Per ECMAScript spec, builtin methods are: writable, non-enumerable, configurable
     pub fn register_method(
         &mut self,
@@ -1846,12 +1846,11 @@ impl Interpreter {
 
     /// Register Symbol.species getter on a constructor.
     /// Per ECMAScript spec, Symbol.species is a getter that returns `this`.
+    /// Uses root_guard internally - the getter is permanently rooted.
     /// The property is non-enumerable and configurable.
-    // FIXME: accept Guard
     pub fn register_species_getter(&mut self, constructor: &Gc<JsObject>) {
         // Create the getter function that returns `this`
         let getter = self.create_native_function("get [Symbol.species]", species_getter, 0);
-        self.root_guard.guard(getter.cheap_clone());
 
         // Get the well-known Symbol.species
         let well_known = self.well_known_symbols;
@@ -2630,7 +2629,8 @@ impl Interpreter {
         Ok(module_obj)
     }
 
-    /// Create a function from an InternalFn
+    /// Create a function from an InternalFn.
+    /// Uses root_guard internally - the function is permanently rooted.
     fn create_internal_function(
         &mut self,
         name: &str,
