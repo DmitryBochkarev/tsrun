@@ -178,10 +178,6 @@ for (name, func) in methods {
 
 ### Aggressive Test Defaults
 
-Tests use aggressive settings to catch bugs early:
-- `GC_THRESHOLD=1` - GC on every allocation
-- `MAX_CALL_DEPTH=50` - Low recursion limit
-
 Common GC bugs caught: "X is not a function", missing array elements, undefined properties.
 
 ## Architecture
