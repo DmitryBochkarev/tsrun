@@ -165,21 +165,22 @@ Callers will pass `&interp.root_guard`.
    - `object_get_own_property_descriptors`
 4. Updated exhaustive matches for the new `ExoticObject::Symbol` variant
 
-### Phase 3: Fix `get_property_value`
+### Phase 3: Fix `get_property_value` ✅ COMPLETED
 
-**Files to modify:**
+**Files modified:**
 - `src/interpreter/bytecode_vm.rs`
 
-**Steps:**
+**Changes made:**
 
-1. Change signature to accept guard:
-   ```rust
-   // Before
-   fn get_property_value(&self, interp: &mut Interpreter, obj: &JsValue, key: &JsValue) -> Result<JsValue, JsError>
-
-   // After
-   fn get_property_value(&self, interp: &mut Interpreter, obj: &JsValue, key: &JsValue) -> Result<Guarded, JsError>
-   ```
+1. Changed `get_property_value` to return `Guarded` instead of `JsValue`
+2. For proxy_get and getter calls, the Guarded is now properly propagated
+3. For primitive value lookups, returns `Guarded::unguarded(value)`
+4. Updated all callers:
+   - `Op::GetProperty`
+   - `Op::GetPropertyConst`
+   - `Op::CallMethod` (with proper guard transfer)
+   - `Op::SuperGet`
+   - `Op::SuperGetConst`
 
 ### Phase 4: Fix `create_native_function`
 

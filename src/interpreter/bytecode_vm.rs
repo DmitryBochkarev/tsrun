@@ -2197,8 +2197,8 @@ impl BytecodeVM {
             Op::GetProperty { dst, obj, key } => {
                 let obj_val = self.get_reg(obj);
                 let key_val = self.get_reg(key);
-                let result = self.get_property_value(interp, obj_val, key_val)?;
-                self.set_reg(dst, result);
+                let Guarded { value, .. } = self.get_property_value(interp, obj_val, key_val)?;
+                self.set_reg(dst, value);
                 Ok(OpResult::Continue)
             }
 
@@ -2208,8 +2208,8 @@ impl BytecodeVM {
                     .get_string_constant(key)
                     .ok_or_else(|| JsError::internal_error("Invalid property key constant"))?;
                 let key_val = JsValue::String(key);
-                let result = self.get_property_value(interp, obj_val, &key_val)?;
-                self.set_reg(dst, result);
+                let Guarded { value, .. } = self.get_property_value(interp, obj_val, &key_val)?;
+                self.set_reg(dst, value);
                 Ok(OpResult::Continue)
             }
 
@@ -2492,8 +2492,10 @@ impl BytecodeVM {
                     .get_string_constant(method)
                     .ok_or_else(|| JsError::internal_error("Invalid method name constant"))?;
 
-                let callee =
-                    self.get_property_value(interp, obj_val, &JsValue::String(method_name))?;
+                let Guarded {
+                    value: callee,
+                    guard: callee_guard,
+                } = self.get_property_value(interp, obj_val, &JsValue::String(method_name))?;
 
                 let mut args = Vec::with_capacity(argc as usize);
                 for i in 0..argc {
@@ -2506,6 +2508,13 @@ impl BytecodeVM {
                 obj_val.guard_by(&guard);
                 for arg in &args {
                     arg.guard_by(&guard);
+                }
+                // Transfer callee guard to our guard (if any)
+                if let Some(cg) = callee_guard {
+                    if let JsValue::Object(obj) = &callee {
+                        guard.guard(obj.cheap_clone());
+                    }
+                    drop(cg);
                 }
 
                 // Use trampoline for function calls
@@ -4002,7 +4011,8 @@ impl BytecodeVM {
             Op::SuperGet { dst, key } => {
                 let key_val = self.get_reg(key);
                 let super_target = self.get_super_target(interp)?;
-                let value = self.get_property_value(interp, &super_target, key_val)?;
+                let Guarded { value, .. } =
+                    self.get_property_value(interp, &super_target, key_val)?;
                 self.set_reg(dst, value);
                 Ok(OpResult::Continue)
             }
@@ -4012,7 +4022,7 @@ impl BytecodeVM {
                     .get_string_constant(key)
                     .ok_or_else(|| JsError::internal_error("Invalid super property key"))?;
                 let super_target = self.get_super_target(interp)?;
-                let value =
+                let Guarded { value, .. } =
                     self.get_property_value(interp, &super_target, &JsValue::String(key_str))?;
                 self.set_reg(dst, value);
                 Ok(OpResult::Continue)
@@ -5339,37 +5349,39 @@ impl BytecodeVM {
         }
     }
 
-    /// Get a property value from an object, invoking getters if present
-    // FIXME: receive guard
+    /// Get a property value from an object, invoking getters if present.
+    /// Returns a Guarded to keep newly allocated objects alive (e.g., from getters or proxies).
     fn get_property_value(
         &self,
         interp: &mut Interpreter,
         obj: &JsValue,
         key: &JsValue,
-    ) -> Result<JsValue, JsError> {
+    ) -> Result<Guarded, JsError> {
         match obj {
             JsValue::Object(obj_ref) => {
                 // Check if this is a proxy - delegate to proxy_get if so
                 if matches!(obj_ref.borrow().exotic, ExoticObject::Proxy(_)) {
                     let prop_key = PropertyKey::from_value(key);
-                    let result = crate::interpreter::builtins::proxy::proxy_get(
+                    // proxy_get already returns Guarded
+                    return crate::interpreter::builtins::proxy::proxy_get(
                         interp,
                         obj_ref.cheap_clone(),
                         prop_key,
                         obj.clone(),
-                    )?;
-                    return Ok(result.value);
+                    );
                 }
 
                 // Handle __proto__ special property - return prototype
                 if let JsValue::String(k) = key {
                     if k.as_str() == "__proto__" {
-                        return Ok(obj_ref
-                            .borrow()
-                            .prototype
-                            .as_ref()
-                            .map(|p| JsValue::Object(p.clone()))
-                            .unwrap_or(JsValue::Null));
+                        return Ok(Guarded::unguarded(
+                            obj_ref
+                                .borrow()
+                                .prototype
+                                .as_ref()
+                                .map(|p| JsValue::Object(p.clone()))
+                                .unwrap_or(JsValue::Null),
+                        ));
                     }
                 }
 
@@ -5380,54 +5392,56 @@ impl BytecodeVM {
                     Some((prop, _)) if prop.is_accessor() => {
                         // Property has a getter - invoke it
                         if let Some(getter) = prop.getter() {
-                            let result = interp.call_function(
+                            // call_function already returns Guarded
+                            interp.call_function(
                                 JsValue::Object(getter.clone()),
                                 obj.clone(),
                                 &[],
-                            )?;
-                            Ok(result.value)
+                            )
                         } else {
-                            Ok(JsValue::Undefined)
+                            Ok(Guarded::unguarded(JsValue::Undefined))
                         }
                     }
-                    Some((prop, _)) => Ok(prop.value.clone()),
-                    None => Ok(JsValue::Undefined),
+                    Some((prop, _)) => Ok(Guarded::unguarded(prop.value.clone())),
+                    None => Ok(Guarded::unguarded(JsValue::Undefined)),
                 }
             }
             JsValue::String(s) => match key {
-                JsValue::String(k) if k.as_str() == "length" => {
-                    Ok(JsValue::Number(s.as_str().chars().count() as f64))
-                }
+                JsValue::String(k) if k.as_str() == "length" => Ok(Guarded::unguarded(
+                    JsValue::Number(s.as_str().chars().count() as f64),
+                )),
                 JsValue::Number(n) => {
                     let idx = *n as usize;
                     if let Some(c) = s.as_str().chars().nth(idx) {
-                        return Ok(JsValue::String(JsString::from(c.to_string())));
+                        return Ok(Guarded::unguarded(JsValue::String(JsString::from(
+                            c.to_string(),
+                        ))));
                     }
-                    Ok(JsValue::Undefined)
+                    Ok(Guarded::unguarded(JsValue::Undefined))
                 }
                 _ => {
                     let prop_key = PropertyKey::from_value(key);
                     if let Some(val) = interp.string_prototype.borrow().get_property(&prop_key) {
-                        Ok(val.clone())
+                        Ok(Guarded::unguarded(val.clone()))
                     } else {
-                        Ok(JsValue::Undefined)
+                        Ok(Guarded::unguarded(JsValue::Undefined))
                     }
                 }
             },
             JsValue::Number(_) => {
                 let prop_key = PropertyKey::from_value(key);
                 if let Some(val) = interp.number_prototype.borrow().get_property(&prop_key) {
-                    Ok(val.clone())
+                    Ok(Guarded::unguarded(val.clone()))
                 } else {
-                    Ok(JsValue::Undefined)
+                    Ok(Guarded::unguarded(JsValue::Undefined))
                 }
             }
             JsValue::Boolean(_) => {
                 let prop_key = PropertyKey::from_value(key);
                 if let Some(val) = interp.boolean_prototype.borrow().get_property(&prop_key) {
-                    Ok(val.clone())
+                    Ok(Guarded::unguarded(val.clone()))
                 } else {
-                    Ok(JsValue::Undefined)
+                    Ok(Guarded::unguarded(JsValue::Undefined))
                 }
             }
             JsValue::Null => Err(JsError::type_error("Cannot read properties of null")),
@@ -5436,19 +5450,20 @@ impl BytecodeVM {
                 // Symbols have a description property
                 if let JsValue::String(k) = key {
                     if k.as_str() == "description" {
-                        return Ok(sym
-                            .description
-                            .as_ref()
-                            .map(|d| JsValue::String(d.cheap_clone()))
-                            .unwrap_or(JsValue::Undefined));
+                        return Ok(Guarded::unguarded(
+                            sym.description
+                                .as_ref()
+                                .map(|d| JsValue::String(d.cheap_clone()))
+                                .unwrap_or(JsValue::Undefined),
+                        ));
                     }
                 }
                 // Other symbol prototype methods
                 let prop_key = PropertyKey::from_value(key);
                 if let Some(val) = interp.symbol_prototype.borrow().get_property(&prop_key) {
-                    Ok(val.clone())
+                    Ok(Guarded::unguarded(val.clone()))
                 } else {
-                    Ok(JsValue::Undefined)
+                    Ok(Guarded::unguarded(JsValue::Undefined))
                 }
             }
         }
