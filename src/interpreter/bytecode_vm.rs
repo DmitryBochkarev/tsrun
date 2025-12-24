@@ -137,9 +137,8 @@ pub struct TrampolineFrame {
     pub vm_call_stack: Vec<CallFrame>,
     /// Saved try handlers
     pub try_stack: Vec<TryHandler>,
-    /// Saved exception value
-    // TODO: change to Option<Guarded>
-    pub exception_value: Option<JsValue>,
+    /// Saved exception value (guarded to keep it alive during finally block execution)
+    pub exception_value: Option<Guarded>,
     /// Saved environment stack
     pub saved_env_stack: Vec<Gc<JsObject>>,
     /// Saved arguments
@@ -184,8 +183,8 @@ pub struct BytecodeVM {
     /// Current `this` value
     this_value: JsValue,
     /// Current exception value (for catch blocks)
-    // TODO: change to Option<Guarded> (currently incorrectly uses register_guard)
-    exception_value: Option<JsValue>,
+    /// Guarded to keep the exception alive during finally block execution
+    exception_value: Option<Guarded>,
     /// Stack of saved environments for nested scope restoration
     saved_env_stack: Vec<Gc<JsObject>>,
     /// Original arguments array (for `arguments` object)
@@ -1474,10 +1473,7 @@ impl BytecodeVM {
         if let Some(handler_ip) = self.find_exception_handler() {
             self.ip = handler_ip;
             let exc_val = self.error_to_value(interp, e);
-            if let JsValue::Object(obj) = &exc_val {
-                self.register_guard.guard(obj.cheap_clone());
-            }
-            self.exception_value = Some(exc_val);
+            self.exception_value = Some(Guarded::from_value(exc_val, &interp.heap));
             return Some(());
         }
 
@@ -1530,10 +1526,7 @@ impl BytecodeVM {
             if let Some(handler_ip) = self.find_exception_handler() {
                 self.ip = handler_ip;
                 let exc_val = self.error_to_value(interp, e);
-                if let JsValue::Object(obj) = &exc_val {
-                    self.register_guard.guard(obj.cheap_clone());
-                }
-                self.exception_value = Some(exc_val);
+                self.exception_value = Some(Guarded::from_value(exc_val, &interp.heap));
                 return Some(());
             }
         }
@@ -1567,7 +1560,13 @@ impl BytecodeVM {
         }
 
         // Guard exception_value if it's an object
-        if let Some(JsValue::Object(obj)) = &self.exception_value {
+        // (exception_value is already Guarded, but we also add it to the saved state guard
+        // for consistency when the saved state is restored)
+        if let Some(Guarded {
+            value: JsValue::Object(obj),
+            ..
+        }) = &self.exception_value
+        {
             guard.guard(obj.cheap_clone());
         }
 
@@ -1647,20 +1646,22 @@ impl BytecodeVM {
     /// Inject an exception into the VM for generator.throw()
     /// This sets up the VM to handle the exception as if it was thrown at the current position.
     /// Returns true if an exception handler was found, false if the exception should propagate.
-    pub fn inject_exception(&mut self, exception: JsValue) -> bool {
-        // Guard exception value if it's an object
-        if let JsValue::Object(obj) = &exception {
-            self.register_guard.guard(obj.cheap_clone());
-        }
+    pub fn inject_exception(
+        &mut self,
+        exception: JsValue,
+        heap: &crate::gc::Heap<JsObject>,
+    ) -> bool {
+        // Create guarded exception value
+        let guarded = Guarded::from_value(exception, heap);
 
         // Try to find an exception handler
         if let Some(handler_ip) = self.find_exception_handler() {
             self.ip = handler_ip;
-            self.exception_value = Some(exception);
+            self.exception_value = Some(guarded);
             true
         } else {
             // No handler found - store exception for propagation
-            self.exception_value = Some(exception);
+            self.exception_value = Some(guarded);
             false
         }
     }
@@ -2833,15 +2834,21 @@ impl BytecodeVM {
             }
 
             Op::GetException { dst } => {
-                let val = self.exception_value.take().unwrap_or(JsValue::Undefined);
+                let val = self
+                    .exception_value
+                    .take()
+                    .map(|g| g.value)
+                    .unwrap_or(JsValue::Undefined);
                 self.set_reg(dst, val);
                 Ok(OpResult::Continue)
             }
 
             Op::Rethrow => {
-                if let Some(val) = self.exception_value.take() {
-                    // FIXME: pass guarded value
-                    Err(JsError::ThrownValue { value: val })
+                if let Some(guarded) = self.exception_value.take() {
+                    // FIXME: pass guarded value (Phase 5 will address this)
+                    Err(JsError::ThrownValue {
+                        value: guarded.value,
+                    })
                 } else {
                     Err(JsError::internal_error("No exception to rethrow"))
                 }
@@ -5535,7 +5542,10 @@ impl BytecodeVM {
             self.set_reg(frame.return_register, return_val);
             Ok(OpResult::Continue)
         } else {
-            Ok(OpResult::Halt(Guarded::from_value(return_val, &interp.heap)))
+            Ok(OpResult::Halt(Guarded::from_value(
+                return_val,
+                &interp.heap,
+            )))
         }
     }
 

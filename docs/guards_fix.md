@@ -317,37 +317,23 @@ These functions create objects or handle values that need guarding:
 
 ---
 
-### Phase 4: Fix VM exception_value Guarding
+### Phase 4: Fix VM exception_value Guarding [COMPLETED]
 
 **Goal:** Replace incorrect `register_guard` usage for exception_value with `Guarded` type.
 
-**Changes to `BytecodeVm`:**
-```rust
-pub struct BytecodeVm {
-    exception_value: Option<Guarded>,  // Changed from Option<JsValue>
-    ...
-}
-```
+**Changes made:**
+1. Changed `BytecodeVM::exception_value` from `Option<JsValue>` to `Option<Guarded>`
+2. Changed `TrampolineFrame::exception_value` from `Option<JsValue>` to `Option<Guarded>`
+3. Updated `handle_error_with_trampoline_unwind` to use `Guarded::from_value` instead of `register_guard`
+4. Updated `inject_exception` to take a `heap` parameter and use `Guarded::from_value`
+5. Updated `Op::GetException` to extract `.value` from `Guarded`
+6. Updated `Op::Rethrow` to extract `.value` from `Guarded`
+7. Updated `save_state` to properly pattern match on `Guarded`
+8. Updated call sites in `mod.rs` to pass `&self.heap` to `inject_exception`
 
-**Changes to `TrampolineFrame`:**
-```rust
-pub struct TrampolineFrame {
-    pub exception_value: Option<Guarded>,  // Changed from Option<JsValue>
-    ...
-}
-```
-
-**Locations to update:**
-1. `BytecodeVm` struct definition - change `exception_value` type
-2. `TrampolineFrame` struct definition - change `exception_value` type
-3. All places that set `exception_value` - create `Guarded` instead of using register_guard
-4. All places that read `exception_value` - extract `.value` from Guarded
-5. All places that save/restore trampoline frames - already handled by type change
-
-**Files to modify:**
+**Files modified:**
 - `src/interpreter/bytecode_vm.rs`
-
-**Estimated scope:** ~40 lines changed
+- `src/interpreter/mod.rs`
 
 ---
 
@@ -453,7 +439,7 @@ After each phase, run the test262 suite:
 
 ### Suggested Order
 
-1. **Phase 4** (exception_value) - fixes existing incorrect register_guard usage
+1. ~~**Phase 4** (exception_value) - fixes existing incorrect register_guard usage~~ **DONE**
 2. **Phases 1-3** (OpResult, PendingCompletion, GeneratorYield) - similar patterns
 3. **Phase 5** (JsError) - higher impact, needs careful Clone audit
 4. **Phase 6** (Function signatures) - can be done incrementally
