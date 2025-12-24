@@ -552,7 +552,8 @@ pub fn resolve_promise_sync(
         PromiseStatus::Fulfilled => Ok(state_ref.result.clone().unwrap_or(JsValue::Undefined)),
         PromiseStatus::Rejected => {
             let reason = state_ref.result.clone().unwrap_or(JsValue::Undefined);
-            Err(JsError::ThrownValue { value: reason })
+            let guarded = Guarded::from_value(reason, &_interp.heap);
+            Err(JsError::ThrownValue { guarded })
         }
         PromiseStatus::Pending => {
             // For async generator delegation, the promise should already be settled.

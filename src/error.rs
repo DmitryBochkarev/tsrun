@@ -1,5 +1,6 @@
 //! Error types for the TypeScript interpreter
 
+use crate::value::Guarded;
 use std::path::PathBuf;
 use thiserror::Error;
 
@@ -86,13 +87,11 @@ pub enum JsError {
 
     /// Error thrown with a JsValue (used for Promise rejection handling)
     #[error("ThrownValue")]
-    // FIXME: guard value
-    ThrownValue { value: crate::value::JsValue },
+    ThrownValue { guarded: Guarded },
 
     /// Internal marker for generator yield (not a real error)
     #[error("GeneratorYield")]
-    // FIXME: guard value
-    GeneratorYield { value: crate::value::JsValue },
+    GeneratorYield { guarded: Guarded },
 
     /// Internal marker for optional chain short-circuit (not a real error)
     /// When a?.b evaluates with a being null/undefined, we need to short-circuit
@@ -178,16 +177,16 @@ impl JsError {
         }
     }
 
-    /// Create an error that wraps a thrown JsValue
-    pub fn thrown(value: crate::value::JsValue) -> Self {
-        JsError::ThrownValue { value }
+    /// Create an error that wraps a thrown JsValue with its guard
+    pub fn thrown(guarded: Guarded) -> Self {
+        JsError::ThrownValue { guarded }
     }
 
     /// Extract the JsValue from this error (for Promise rejection handling)
     pub fn to_value(&self) -> crate::value::JsValue {
         match self {
-            JsError::ThrownValue { value } => value.clone(),
-            JsError::GeneratorYield { value } => value.clone(),
+            JsError::ThrownValue { guarded } => guarded.value.clone(),
+            JsError::GeneratorYield { guarded } => guarded.value.clone(),
             JsError::TypeError { message } => crate::value::JsValue::String(
                 crate::value::JsString::from(format!("TypeError: {}", message)),
             ),

@@ -300,13 +300,15 @@ pub fn generator_throw(
             {
                 let state_ref = gen_state.borrow();
                 if state_ref.status == GeneratorStatus::Completed {
-                    return Err(JsError::ThrownValue { value: exception });
+                    let guarded = Guarded::from_value(exception, &interp.heap);
+                    return Err(JsError::ThrownValue { guarded });
                 }
                 if !state_ref.started {
                     // Generator hasn't started, just throw
                     drop(state_ref);
                     gen_state.borrow_mut().status = GeneratorStatus::Completed;
-                    return Err(JsError::ThrownValue { value: exception });
+                    let guarded = Guarded::from_value(exception, &interp.heap);
+                    return Err(JsError::ThrownValue { guarded });
                 }
             }
 

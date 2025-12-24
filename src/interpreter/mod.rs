@@ -720,9 +720,9 @@ impl Interpreter {
     /// This function extracts the error information while it's still valid.
     fn materialize_thrown_error(&self, error: JsError) -> JsError {
         match error {
-            JsError::ThrownValue { value } => {
+            JsError::ThrownValue { guarded } => {
                 // Extract error name and message from the thrown value
-                if let JsValue::Object(obj) = &value {
+                if let JsValue::Object(obj) = &guarded.value {
                     let obj_ref = obj.borrow();
                     let name = obj_ref
                         .get_property(&PropertyKey::from("name"))
@@ -741,7 +741,7 @@ impl Interpreter {
                     // Non-object thrown value - convert to string
                     JsError::RuntimeError {
                         kind: "Error".to_string(),
-                        message: value.to_js_string().to_string(),
+                        message: guarded.value.to_js_string().to_string(),
                         stack: Vec::new(),
                     }
                 }
@@ -1005,7 +1005,8 @@ impl Interpreter {
                             return self.run_vm_to_completion(vm);
                         } else {
                             // No handler - propagate as error
-                            return Err(JsError::thrown(reason));
+                            let guarded = Guarded::from_value(reason, &self.heap);
+                            return Err(JsError::thrown(guarded));
                         }
                     }
                     PromiseStatus::Pending => {
@@ -2103,7 +2104,8 @@ impl Interpreter {
                     // No exception handler found, propagate the error
                     gen_state.borrow_mut().status = GeneratorStatus::Completed;
                     self.env = saved_env;
-                    return Err(JsError::ThrownValue { value: exception });
+                    let guarded = Guarded::from_value(exception, &self.heap);
+                    return Err(JsError::ThrownValue { guarded });
                 }
                 // Handler found - continue to run the VM which will execute the catch block
             } else {

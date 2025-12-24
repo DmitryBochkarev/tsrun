@@ -515,8 +515,8 @@ fn format_error(err: &JsError) -> String {
         JsError::ModuleError { message } => format!("ModuleError: {}", message),
         JsError::Internal(msg) => format!("InternalError: {}", msg),
         JsError::Thrown => "Error: (thrown)".to_string(),
-        JsError::ThrownValue { value } => format!("Error: {:?}", value),
-        JsError::GeneratorYield { value } => format!("GeneratorYield: {:?}", value),
+        JsError::ThrownValue { guarded } => format!("Error: {:?}", guarded.value),
+        JsError::GeneratorYield { guarded } => format!("GeneratorYield: {:?}", guarded.value),
         JsError::Timeout {
             timeout_ms,
             elapsed_ms,

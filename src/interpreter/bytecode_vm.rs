@@ -630,13 +630,10 @@ impl BytecodeVM {
                         Ok(()) => continue,
                         Err(e) => {
                             // Try to find an exception handler, unwinding trampoline if needed
-                            if self
-                                .handle_error_with_trampoline_unwind(interp, &e)
-                                .is_some()
-                            {
-                                continue;
+                            if let Err(e) = self.handle_error_with_trampoline_unwind(interp, e) {
+                                return VmResult::Error(e);
                             }
-                            return VmResult::Error(e);
+                            continue;
                         }
                     }
                 }
@@ -662,25 +659,19 @@ impl BytecodeVM {
                         Ok(()) => continue,
                         Err(e) => {
                             // Try to find an exception handler, unwinding trampoline if needed
-                            if self
-                                .handle_error_with_trampoline_unwind(interp, &e)
-                                .is_some()
-                            {
-                                continue;
+                            if let Err(e) = self.handle_error_with_trampoline_unwind(interp, e) {
+                                return VmResult::Error(e);
                             }
-                            return VmResult::Error(e);
+                            continue;
                         }
                     }
                 }
                 Err(e) => {
                     // Try to find an exception handler, unwinding trampoline if needed
-                    if self
-                        .handle_error_with_trampoline_unwind(interp, &e)
-                        .is_some()
-                    {
-                        continue;
+                    if let Err(e) = self.handle_error_with_trampoline_unwind(interp, e) {
+                        return VmResult::Error(e);
                     }
-                    return VmResult::Error(e);
+                    continue;
                 }
             }
         }
@@ -1420,15 +1411,15 @@ impl BytecodeVM {
         self.set_reg(frame.return_register, final_value);
     }
 
-    /// Convert an error to a JS value
-    fn error_to_value(&self, interp: &mut Interpreter, error: &JsError) -> JsValue {
+    /// Convert an error to a guarded JS value (takes ownership to avoid re-guarding)
+    fn error_to_guarded(&self, interp: &mut Interpreter, error: JsError) -> Guarded {
         match error {
-            JsError::ThrownValue { value } => value.clone(),
-            _ => {
+            JsError::ThrownValue { guarded } => guarded,
+            other => {
                 // Create an error object using the proper error type
                 use crate::interpreter::builtins::error::create_error_object;
-                let (value, _guard) = create_error_object(interp, error);
-                value
+                let (value, guard) = create_error_object(interp, &other);
+                Guarded { value, guard }
             }
         }
     }
@@ -1463,19 +1454,18 @@ impl BytecodeVM {
     }
 
     /// Handle an error, including unwinding the trampoline stack to find handlers.
-    /// Returns Some(()) if a handler was found and execution should continue,
-    /// or None with the error set to be returned from run().
+    /// Returns Ok(()) if a handler was found and execution should continue,
+    /// or Err(e) if no handler was found (caller should return the error).
     fn handle_error_with_trampoline_unwind(
         &mut self,
         interp: &mut Interpreter,
-        e: &JsError,
-    ) -> Option<()> {
+        e: JsError,
+    ) -> Result<(), JsError> {
         // First check for handler in current frame
         if let Some(handler_ip) = self.find_exception_handler() {
             self.ip = handler_ip;
-            let exc_val = self.error_to_value(interp, e);
-            self.exception_value = Some(Guarded::from_value(exc_val, &interp.heap));
-            return Some(());
+            self.exception_value = Some(self.error_to_guarded(interp, e));
+            return Ok(());
         }
 
         // Unwind trampoline stack to find a handler in parent frames
@@ -1512,28 +1502,29 @@ impl BytecodeVM {
 
             // For async frames: convert error to rejected Promise instead of propagating
             if is_async_frame {
-                let error_val = self.error_to_value(interp, e);
+                let error_guarded = self.error_to_guarded(interp, e);
                 let promise = super::builtins::promise::create_rejected_promise(
                     interp,
                     &self.register_guard,
-                    error_val,
+                    error_guarded.value,
                 );
+                // error_guarded.guard keeps the reason alive until promise is created
+                drop(error_guarded.guard);
                 self.register_guard.guard(promise.cheap_clone());
                 self.set_reg(return_register, JsValue::Object(promise));
-                return Some(());
+                return Ok(());
             }
 
             // Check for exception handler in this frame
             if let Some(handler_ip) = self.find_exception_handler() {
                 self.ip = handler_ip;
-                let exc_val = self.error_to_value(interp, e);
-                self.exception_value = Some(Guarded::from_value(exc_val, &interp.heap));
-                return Some(());
+                self.exception_value = Some(self.error_to_guarded(interp, e));
+                return Ok(());
             }
         }
 
-        // No handler found
-        None
+        // No handler found - return the error back to caller
+        Err(e)
     }
 
     /// Save VM state for suspension
@@ -2808,8 +2799,8 @@ impl BytecodeVM {
             // ═══════════════════════════════════════════════════════════════════════════
             Op::Throw { value } => {
                 let val = self.get_reg(value).clone();
-                // FIXME: pass guarded value
-                Err(JsError::ThrownValue { value: val })
+                let guarded = Guarded::from_value(val, &interp.heap);
+                Err(JsError::ThrownValue { guarded })
             }
 
             Op::PushTry {
@@ -2861,10 +2852,7 @@ impl BytecodeVM {
                         }
                         PendingCompletion::Throw(guarded) => {
                             // Re-throw the exception after finally
-                            // FIXME: pass guarded value (Phase 5 will address this in JsError)
-                            return Err(JsError::ThrownValue {
-                                value: guarded.value,
-                            });
+                            return Err(JsError::ThrownValue { guarded });
                         }
                         PendingCompletion::Break { target, try_depth } => {
                             // Continue with the break (recursively handles nested finally blocks)
@@ -2891,10 +2879,7 @@ impl BytecodeVM {
 
             Op::Rethrow => {
                 if let Some(guarded) = self.exception_value.take() {
-                    // FIXME: pass guarded value (Phase 5 will address this)
-                    Err(JsError::ThrownValue {
-                        value: guarded.value,
-                    })
+                    Err(JsError::ThrownValue { guarded })
                 } else {
                     Err(JsError::internal_error("No exception to rethrow"))
                 }
@@ -2927,7 +2912,8 @@ impl BytecodeVM {
                                 let reason = state_ref.result.clone().unwrap_or(JsValue::Undefined);
                                 drop(state_ref);
                                 drop(obj_ref);
-                                return Err(JsError::thrown(reason));
+                                let guarded = Guarded::from_value(reason, &interp.heap);
+                                return Err(JsError::thrown(guarded));
                             }
                             PromiseStatus::Pending => {
                                 // Suspend execution and wait for promise resolution

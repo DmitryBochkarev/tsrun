@@ -286,6 +286,15 @@ pub struct Guarded {
     pub guard: Option<Guard<JsObject>>,
 }
 
+impl std::fmt::Debug for Guarded {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Guarded")
+            .field("value", &self.value)
+            .field("guard", &self.guard.as_ref().map(|_| "<guard>"))
+            .finish()
+    }
+}
+
 impl Guarded {
     /// Create a guarded value with a guard.
     /// If the value is a primitive, the guard is dropped and `guard` will be `None`.

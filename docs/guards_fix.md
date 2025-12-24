@@ -336,42 +336,29 @@ These functions create objects or handle values that need guarding:
 
 ---
 
-### Phase 5: Use Guarded in JsError Variants
+### Phase 5: Use Guarded in JsError Variants [COMPLETED]
 
 **Goal:** Change `JsError::ThrownValue` and `JsError::GeneratorYield` to use `Guarded`.
 
-**Changes to `src/error.rs`:**
-```rust
-// Before:
-ThrownValue { value: JsValue },
-GeneratorYield { value: JsValue },
+**Changes made:**
+1. Changed `JsError::ThrownValue { value: JsValue }` to `ThrownValue { guarded: Guarded }`
+2. Changed `JsError::GeneratorYield { value: JsValue }` to `GeneratorYield { guarded: Guarded }`
+3. Added `Debug` implementation for `Guarded` struct
+4. Updated `JsError::thrown()` helper to accept `Guarded`
+5. Updated `JsError::to_value()` to extract from `guarded.value`
+6. Changed `error_to_value` to `error_to_guarded` returning `Guarded` (takes ownership)
+7. Updated `handle_error_with_trampoline_unwind` to take `JsError` by value and return `Result<(), JsError>`
+8. Updated all creation sites to use `Guarded::from_value(value, &heap)`
+9. Updated all match sites to use `guarded.value`
 
-// After:
-ThrownValue { guarded: Guarded },
-GeneratorYield { guarded: Guarded },
-```
-
-**Locations to update:**
-1. `src/error.rs` - Change variant definitions
-2. `src/interpreter/bytecode_vm.rs:2760` - `Op::Throw` - create Guarded
-3. `src/interpreter/bytecode_vm.rs:2837` - `Op::Rethrow` - create Guarded
-4. `src/interpreter/mod.rs:721-750` - `materialize_thrown_error` - extract from Guarded
-5. `src/interpreter/mod.rs:2106` - Generator exception propagation
-6. `src/interpreter/builtins/generator.rs:303,309` - Generator throw
-7. `src/interpreter/builtins/promise.rs:555` - Promise rejection
-8. All match sites on these error variants
-
-**Files to modify:**
+**Files modified:**
 - `src/error.rs`
+- `src/value.rs` (added Debug impl for Guarded)
 - `src/interpreter/bytecode_vm.rs`
 - `src/interpreter/mod.rs`
 - `src/interpreter/builtins/generator.rs`
 - `src/interpreter/builtins/promise.rs`
-- `src/bin/test262-runner.rs` (error matching)
-
-**Note:** This makes `JsError` non-Clone. Need to audit all `.clone()` calls on JsError.
-
-**Estimated scope:** ~60 lines changed
+- `src/bin/test262-runner.rs`
 
 ---
 
@@ -440,7 +427,7 @@ After each phase, run the test262 suite:
 
 1. ~~**Phase 4** (exception_value)~~ **DONE**
 2. ~~**Phase 1** (OpResult)~~ **DONE**, ~~**Phase 2** (PendingCompletion)~~ **DONE**, ~~**Phase 3** (GeneratorYield)~~ **DONE**
-3. **Phase 5** (JsError) - higher impact, needs careful Clone audit
+3. ~~**Phase 5** (JsError)~~ **DONE**
 4. **Phase 6** (Function signatures) - can be done incrementally
 
 ---
