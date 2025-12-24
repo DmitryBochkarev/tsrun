@@ -285,19 +285,18 @@ These functions create objects or handle values that need guarding:
 
 ---
 
-### Phase 2: Guard PendingCompletion Values
+### Phase 2: Guard PendingCompletion Values [COMPLETED]
 
 **Goal:** Ensure return/throw values survive finally block execution.
 
-1. Change `PendingCompletion::Return(JsValue)` to `Return(Guarded)`
-2. Change `PendingCompletion::Throw(JsValue)` to `Throw(Guarded)`
-3. Update creation sites to wrap values in `Guarded`
-4. Update match sites to extract `.value` from Guarded
+**Changes made:**
+1. Changed `PendingCompletion::Return(JsValue)` to `Return(Guarded)`
+2. Changed `PendingCompletion::Throw(JsValue)` to `Throw(Guarded)`
+3. Updated creation site in `execute_return` to use `Guarded::from_value`
+4. Updated consumption site in `Op::FinallyEnd` to extract `.value` from Guarded
 
-**Files to modify:**
+**Files modified:**
 - `src/interpreter/bytecode_vm.rs`
-
-**Estimated scope:** ~30 lines changed
 
 ---
 
@@ -441,7 +440,7 @@ After each phase, run the test262 suite:
 ### Suggested Order
 
 1. ~~**Phase 4** (exception_value) - fixes existing incorrect register_guard usage~~ **DONE**
-2. ~~**Phase 1** (OpResult)~~ **DONE**, **Phases 2-3** (PendingCompletion, GeneratorYield) - similar patterns
+2. ~~**Phase 1** (OpResult)~~ **DONE**, ~~**Phase 2** (PendingCompletion)~~ **DONE**, **Phase 3** (GeneratorYield) - similar patterns
 3. **Phase 5** (JsError) - higher impact, needs careful Clone audit
 4. **Phase 6** (Function signatures) - can be done incrementally
 

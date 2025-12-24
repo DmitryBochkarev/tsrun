@@ -110,12 +110,11 @@ pub struct TryHandler {
 }
 
 /// Pending completion to be executed after finally block
-#[derive(Debug, Clone)]
 pub enum PendingCompletion {
     /// Return this value after finally completes
-    Return(JsValue),
+    Return(Guarded),
     /// Rethrow this exception after finally completes
-    Throw(JsValue),
+    Throw(Guarded),
     /// Break to target after finally completes
     Break { target: usize, try_depth: u8 },
     /// Continue to target after finally completes
@@ -2856,14 +2855,16 @@ impl BytecodeVM {
                 // Complete any pending return/throw/break/continue after finally block finishes
                 if let Some(pending) = self.pending_completion.take() {
                     match pending {
-                        PendingCompletion::Return(val) => {
+                        PendingCompletion::Return(guarded) => {
                             // Continue with the return (recursively handles nested finally blocks)
-                            return self.execute_return(val, interp);
+                            return self.execute_return(guarded.value, interp);
                         }
-                        PendingCompletion::Throw(val) => {
+                        PendingCompletion::Throw(guarded) => {
                             // Re-throw the exception after finally
-                            // FIXME: pass guarded value
-                            return Err(JsError::ThrownValue { value: val });
+                            // FIXME: pass guarded value (Phase 5 will address this in JsError)
+                            return Err(JsError::ThrownValue {
+                                value: guarded.value,
+                            });
                         }
                         PendingCompletion::Break { target, try_depth } => {
                             // Continue with the break (recursively handles nested finally blocks)
@@ -5582,8 +5583,11 @@ impl BytecodeVM {
                 .cloned()
                 .ok_or_else(|| JsError::internal_error("Missing try handler"))?;
 
-            // Save the pending return
-            self.pending_completion = Some(PendingCompletion::Return(return_val));
+            // Save the pending return with a guard to keep it alive during finally execution
+            self.pending_completion = Some(PendingCompletion::Return(Guarded::from_value(
+                return_val,
+                &interp.heap,
+            )));
 
             // Pop the try handler (we're exiting this try block)
             self.try_stack.truncate(handler_idx);
