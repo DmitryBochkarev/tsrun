@@ -2022,7 +2022,7 @@ impl Interpreter {
                     self.env = saved_env;
                     Ok(builtins::create_generator_result(
                         self,
-                        yield_result.value,
+                        yield_result.value.value, // Extract JsValue from Guarded
                         false,
                     ))
                 }
@@ -2042,7 +2042,7 @@ impl Interpreter {
                     // Delegate to the iterable - get its iterator and next value
                     self.start_yield_star_delegation(
                         gen_state,
-                        yield_star_result.iterable,
+                        yield_star_result.iterable.value, // Extract JsValue from Guarded
                         saved_env,
                     )
                 }
@@ -2134,7 +2134,7 @@ impl Interpreter {
                     self.env = saved_env;
                     Ok(builtins::create_generator_result(
                         self,
-                        yield_result.value,
+                        yield_result.value.value, // Extract JsValue from Guarded
                         false,
                     ))
                 }
@@ -2152,7 +2152,7 @@ impl Interpreter {
                     }
                     self.start_yield_star_delegation(
                         gen_state,
-                        yield_star_result.iterable,
+                        yield_star_result.iterable.value, // Extract JsValue from Guarded
                         saved_env,
                     )
                 }

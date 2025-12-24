@@ -300,20 +300,19 @@ These functions create objects or handle values that need guarding:
 
 ---
 
-### Phase 3: Guard Generator Yield Values
+### Phase 3: Guard Generator Yield Values [COMPLETED]
 
 **Goal:** Ensure yielded values survive between yield and resume.
 
-1. Change `GeneratorYield::value` from `JsValue` to `Guarded`
-2. Change `GeneratorYieldStar::iterable` from `JsValue` to `Guarded`
-3. Wrap values in `Guarded` when constructing these structs
-4. Update consumers to extract `.value` from Guarded
+**Changes made:**
+1. Changed `GeneratorYield::value` from `JsValue` to `Guarded`
+2. Changed `GeneratorYieldStar::iterable` from `JsValue` to `Guarded`
+3. Updated VmResult::Yield/YieldStar creation to pass Guarded directly
+4. Updated consumers in mod.rs to extract `.value` from Guarded
 
-**Files to modify:**
+**Files modified:**
 - `src/interpreter/bytecode_vm.rs`
-- `src/interpreter/mod.rs` (generator handling)
-
-**Estimated scope:** ~40 lines changed
+- `src/interpreter/mod.rs`
 
 ---
 
@@ -439,8 +438,8 @@ After each phase, run the test262 suite:
 
 ### Suggested Order
 
-1. ~~**Phase 4** (exception_value) - fixes existing incorrect register_guard usage~~ **DONE**
-2. ~~**Phase 1** (OpResult)~~ **DONE**, ~~**Phase 2** (PendingCompletion)~~ **DONE**, **Phase 3** (GeneratorYield) - similar patterns
+1. ~~**Phase 4** (exception_value)~~ **DONE**
+2. ~~**Phase 1** (OpResult)~~ **DONE**, ~~**Phase 2** (PendingCompletion)~~ **DONE**, ~~**Phase 3** (GeneratorYield)~~ **DONE**
 3. **Phase 5** (JsError) - higher impact, needs careful Clone audit
 4. **Phase 6** (Function signatures) - can be done incrementally
 

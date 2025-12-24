@@ -30,8 +30,8 @@ pub enum VmResult {
 
 /// Generator yield result
 pub struct GeneratorYield {
-    /// The yielded value
-    pub value: JsValue,
+    /// The yielded value (guarded to keep alive during suspension)
+    pub value: Guarded,
     /// Register to store the value passed to next() when resumed
     pub resume_register: Register,
     /// Saved VM state for resumption
@@ -40,8 +40,8 @@ pub struct GeneratorYield {
 
 /// Generator yield* result
 pub struct GeneratorYieldStar {
-    /// The iterable to delegate to
-    pub iterable: JsValue,
+    /// The iterable to delegate to (guarded to keep alive during suspension)
+    pub iterable: Guarded,
     /// Register to store the final value when delegation completes
     pub resume_register: Register,
     /// Saved VM state for resumption
@@ -593,7 +593,7 @@ impl BytecodeVM {
                     resume_register,
                 }) => {
                     return VmResult::Yield(GeneratorYield {
-                        value: value.value,
+                        value, // Pass Guarded directly
                         resume_register,
                         state: self.save_state(interp),
                     });
@@ -603,7 +603,7 @@ impl BytecodeVM {
                     resume_register,
                 }) => {
                     return VmResult::YieldStar(GeneratorYieldStar {
-                        iterable: iterable.value,
+                        iterable, // Pass Guarded directly
                         resume_register,
                         state: self.save_state(interp),
                     });
