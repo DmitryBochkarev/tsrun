@@ -138,6 +138,7 @@ pub struct TrampolineFrame {
     /// Saved try handlers
     pub try_stack: Vec<TryHandler>,
     /// Saved exception value
+    // TODO: change to Option<Guarded>
     pub exception_value: Option<JsValue>,
     /// Saved environment stack
     pub saved_env_stack: Vec<Gc<JsObject>>,
@@ -153,7 +154,8 @@ pub struct TrampolineFrame {
     pub return_register: Register,
     /// Saved interpreter environment
     pub saved_interp_env: Gc<JsObject>,
-    /// Guard that was protecting this frame's objects
+    /// Guard that was protecting this frame's register values.
+    /// This is ONLY for the saved `registers` - not for exception_value or other fields.
     pub register_guard: Guard<JsObject>,
     /// For construct calls: the new object to fall back to if constructor doesn't return an object
     pub construct_new_obj: Option<Gc<JsObject>>,
@@ -169,7 +171,11 @@ pub struct BytecodeVM {
     pub chunk: Rc<BytecodeChunk>,
     /// Register file
     pub registers: Vec<JsValue>,
-    /// Guard keeping all register values alive
+    /// Guard keeping all register values alive.
+    ///
+    /// IMPORTANT: This guard is ONLY for values stored in `registers`.
+    /// Do NOT use it for exception_value, OpResult values, PendingCompletion,
+    /// or any other non-register storage. Those must have their own dedicated guards.
     register_guard: Guard<JsObject>,
     /// Call stack (return addresses)
     pub call_stack: Vec<CallFrame>,
@@ -178,6 +184,7 @@ pub struct BytecodeVM {
     /// Current `this` value
     this_value: JsValue,
     /// Current exception value (for catch blocks)
+    // TODO: change to Option<Guarded> (currently incorrectly uses register_guard)
     exception_value: Option<JsValue>,
     /// Stack of saved environments for nested scope restoration
     saved_env_stack: Vec<Gc<JsObject>>,
@@ -2874,7 +2881,7 @@ impl BytecodeVM {
                                 drop(state_ref);
                                 drop(obj_ref);
                                 return Ok(OpResult::Suspend {
-                                    promise: guarded_js_value(promise_val.clone(), interp),
+                                    promise: Guarded::from_value(promise_val.clone(), &interp.heap),
                                     resume_register: dst,
                                 });
                             }
@@ -2892,7 +2899,7 @@ impl BytecodeVM {
                 // Return a Yield result - the generator will be suspended
                 // The dst register will receive the value passed to next() when resumed
                 Ok(OpResult::Yield {
-                    value: guarded_js_value(yield_val, interp),
+                    value: Guarded::from_value(yield_val, &interp.heap),
                     resume_register: dst,
                 })
             }
@@ -2901,7 +2908,7 @@ impl BytecodeVM {
                 // yield* delegates to another iterator
                 let iterable_val = self.get_reg(iterable).clone();
                 Ok(OpResult::YieldStar {
-                    iterable: guarded_js_value(iterable_val, interp),
+                    iterable: Guarded::from_value(iterable_val, &interp.heap),
                     resume_register: dst,
                 })
             }
@@ -4931,7 +4938,7 @@ impl BytecodeVM {
                     .first()
                     .cloned()
                     .unwrap_or(JsValue::Undefined);
-                Ok(OpResult::Halt(guarded_js_value(result, interp)))
+                Ok(OpResult::Halt(Guarded::from_value(result, &interp.heap)))
             }
 
             Op::Debugger => Ok(OpResult::Continue),
@@ -5528,7 +5535,7 @@ impl BytecodeVM {
             self.set_reg(frame.return_register, return_val);
             Ok(OpResult::Continue)
         } else {
-            Ok(OpResult::Halt(guarded_js_value(return_val, interp)))
+            Ok(OpResult::Halt(Guarded::from_value(return_val, &interp.heap)))
         }
     }
 
@@ -5658,21 +5665,4 @@ enum OpResult {
         /// The new object to use if constructor doesn't return an object
         new_obj: Gc<JsObject>,
     },
-}
-
-fn guarded_js_value(val: JsValue, interp: &Interpreter) -> Guarded {
-    match &val {
-        JsValue::Object(obj) => {
-            let guard = interp.heap.create_guard();
-            guard.guard(obj.cheap_clone());
-            Guarded {
-                value: val,
-                guard: Some(guard),
-            }
-        }
-        _ => Guarded {
-            value: val,
-            guard: None,
-        },
-    }
 }

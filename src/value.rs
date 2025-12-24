@@ -287,17 +287,41 @@ pub struct Guarded {
 }
 
 impl Guarded {
-    /// Create a guarded value with a guard
+    /// Create a guarded value with a guard.
+    /// If the value is a primitive, the guard is dropped and `guard` will be `None`.
+    /// NOTE: You must call `value.guard_by(&guard)` before this if the value is an object.
     pub fn with_guard(value: JsValue, guard: Guard<JsObject>) -> Self {
-        Self {
-            value,
-            guard: Some(guard),
+        if matches!(value, JsValue::Object(_)) {
+            Self {
+                value,
+                guard: Some(guard),
+            }
+        } else {
+            // Primitives don't need guarding - drop the guard
+            drop(guard);
+            Self { value, guard: None }
         }
     }
 
     /// Create an unguarded value (for primitives or already-owned objects)
     pub fn unguarded(value: JsValue) -> Self {
         Self { value, guard: None }
+    }
+
+    /// Create a guarded value for returning from the VM.
+    /// Creates a new guard from the heap if the value is an object.
+    /// For primitives, returns an unguarded value.
+    pub fn from_value(value: JsValue, heap: &Heap<JsObject>) -> Self {
+        if let JsValue::Object(obj) = &value {
+            let guard = heap.create_guard();
+            guard.guard(obj.cheap_clone());
+            Self {
+                value,
+                guard: Some(guard),
+            }
+        } else {
+            Self { value, guard: None }
+        }
     }
 
     /// Return a new value with the same guard (for derived values)
@@ -331,6 +355,14 @@ impl JsValue {
     /// Check if this is a string value
     pub fn is_string(&self) -> bool {
         matches!(self, JsValue::String(_))
+    }
+
+    /// If this value is an object, add it to the guard.
+    /// This keeps the object alive as long as the guard exists.
+    pub fn guard_by(&self, guard: &Guard<JsObject>) {
+        if let JsValue::Object(obj) = self {
+            guard.guard(obj.cheap_clone());
+        }
     }
 
     /// Get the typeof result for this value
