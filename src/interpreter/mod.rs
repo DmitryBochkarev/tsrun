@@ -8,16 +8,16 @@ pub mod builtins;
 // Bytecode virtual machine
 pub mod bytecode_vm;
 
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use crate::ast::{ImportSpecifier, Program, Statement};
 use crate::error::JsError;
 use crate::gc::{Gc, Guard, Heap};
 use crate::parser::Parser;
 use crate::string_dict::StringDict;
 use crate::value::{
-    create_environment_unrooted, create_environment_unrooted_with_capacity, Binding,
-    BytecodeFunction, CheapClone, EnvRef, EnvironmentData, ExoticObject, GeneratorStatus, Guarded,
-    ImportBinding, JsFunction, JsObject, JsString, JsSymbol, JsValue, ModuleExport, NativeFn,
-    NativeFunction, PromiseStatus, Property, PropertyKey, VarKey,
+    Binding, BytecodeFunction, BytecodeGeneratorState, CheapClone, EnvRef, EnvironmentData, ExoticObject, GeneratorStatus, Guarded, ImportBinding, JsFunction, JsObject, JsString, JsSymbol, JsValue, ModuleExport, NativeFn, NativeFunction, PromiseStatus, Property, PropertyKey, VarKey, create_environment_unrooted, create_environment_unrooted_with_capacity
 };
 use rustc_hash::FxHashMap;
 
@@ -1667,6 +1667,7 @@ impl Interpreter {
     /// Create a rooted native function for global constructors.
     /// The function is permanently rooted and never collected.
     /// Use this for built-in constructors during initialization.
+    // FIXME: accept guard
     pub fn create_native_function(
         &mut self,
         name: &str,
@@ -1756,6 +1757,7 @@ impl Interpreter {
     /// Register Symbol.species getter on a constructor.
     /// Per ECMAScript spec, Symbol.species is a getter that returns `this`.
     /// The property is non-enumerable and configurable.
+    // FIXME: accept Guard
     pub fn register_species_getter(&mut self, constructor: &Gc<JsObject>) {
         // Create the getter function that returns `this`
         let getter = self.create_native_function("get [Symbol.species]", species_getter, 0);
@@ -1776,6 +1778,7 @@ impl Interpreter {
 
     /// Guard a value to prevent it from being garbage collected.
     /// Returns Some(guard) if the value is an object, None otherwise.
+    // FIXME: remove!
     pub fn guard_value(&mut self, value: &JsValue) -> Option<Guard<JsObject>> {
         if let JsValue::Object(obj) = value {
             let guard = self.heap.create_guard();
@@ -1793,7 +1796,7 @@ impl Interpreter {
     /// Resume a bytecode generator from a suspended state
     pub fn resume_bytecode_generator(
         &mut self,
-        gen_state: &std::rc::Rc<std::cell::RefCell<crate::value::BytecodeGeneratorState>>,
+        gen_state: &Rc<RefCell<BytecodeGeneratorState>>,
     ) -> Result<Guarded, JsError> {
         use bytecode_vm::{BytecodeVM, VmResult};
 
@@ -2085,7 +2088,7 @@ impl Interpreter {
     /// Start yield* delegation - get the first value from the iterable
     fn start_yield_star_delegation(
         &mut self,
-        gen_state: &std::rc::Rc<std::cell::RefCell<crate::value::BytecodeGeneratorState>>,
+        gen_state: &Rc<RefCell<BytecodeGeneratorState>>,
         iterable: JsValue,
         saved_env: Gc<JsObject>,
     ) -> Result<Guarded, JsError> {
@@ -2247,7 +2250,7 @@ impl Interpreter {
     /// to bytecode and then executes it using the bytecode VM.
     pub fn run_bytecode(
         &mut self,
-        chunk: std::rc::Rc<crate::compiler::BytecodeChunk>,
+        chunk: Rc<crate::compiler::BytecodeChunk>,
     ) -> Result<Guarded, JsError> {
         self.run_bytecode_with_this(chunk, JsValue::Object(self.global.clone()))
     }
@@ -2255,7 +2258,7 @@ impl Interpreter {
     /// Run bytecode using the bytecode VM with a specific `this` value
     fn run_bytecode_with_this(
         &mut self,
-        chunk: std::rc::Rc<crate::compiler::BytecodeChunk>,
+        chunk: Rc<crate::compiler::BytecodeChunk>,
         this_value: JsValue,
     ) -> Result<Guarded, JsError> {
         use bytecode_vm::{BytecodeVM, VmResult};
