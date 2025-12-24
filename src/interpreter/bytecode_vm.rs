@@ -616,6 +616,7 @@ impl BytecodeVM {
                     return_register,
                     new_target,
                     is_super_call,
+                    guard: _guard, // Guard keeps values alive until trampoline frame is pushed
                 }) => {
                     // Trampoline: save current state and switch to called function
                     match self.setup_trampoline_call(
@@ -647,6 +648,7 @@ impl BytecodeVM {
                     return_register,
                     new_target,
                     new_obj,
+                    guard: _guard, // Guard keeps values alive until trampoline frame is pushed
                 }) => {
                     // Trampoline for construct: save current state and switch to constructor
                     match self.setup_trampoline_construct(
@@ -2392,6 +2394,14 @@ impl BytecodeVM {
                     args.push(self.get_reg(args_start + i).clone());
                 }
 
+                // Create guard and protect all object values
+                let guard = interp.heap.create_guard();
+                callee_val.guard_by(&guard);
+                this_val.guard_by(&guard);
+                for arg in &args {
+                    arg.guard_by(&guard);
+                }
+
                 // Use trampoline for function calls
                 Ok(OpResult::Call {
                     callee: callee_val.clone(),
@@ -2400,6 +2410,7 @@ impl BytecodeVM {
                     return_register: dst,
                     new_target: JsValue::Undefined,
                     is_super_call: false,
+                    guard,
                 })
             }
 
@@ -2426,6 +2437,14 @@ impl BytecodeVM {
                     Vec::new()
                 };
 
+                // Create guard and protect all object values
+                let guard = interp.heap.create_guard();
+                callee_val.guard_by(&guard);
+                this_val.guard_by(&guard);
+                for arg in &args {
+                    arg.guard_by(&guard);
+                }
+
                 // Use trampoline for function calls
                 Ok(OpResult::Call {
                     callee: callee_val,
@@ -2434,6 +2453,7 @@ impl BytecodeVM {
                     return_register: dst,
                     new_target: JsValue::Undefined,
                     is_super_call: false,
+                    guard,
                 })
             }
 
@@ -2484,6 +2504,14 @@ impl BytecodeVM {
                     args.push(self.get_reg(args_start + i).clone());
                 }
 
+                // Create guard and protect all object values
+                let guard = interp.heap.create_guard();
+                callee.guard_by(&guard);
+                obj_val.guard_by(&guard);
+                for arg in &args {
+                    arg.guard_by(&guard);
+                }
+
                 // Use trampoline for function calls
                 Ok(OpResult::Call {
                     callee,
@@ -2492,6 +2520,7 @@ impl BytecodeVM {
                     return_register: dst,
                     new_target: JsValue::Undefined,
                     is_super_call: false,
+                    guard,
                 })
             }
 
@@ -2535,14 +2564,22 @@ impl BytecodeVM {
                     }
                 }
 
-                // Create a new object - guard it so it survives until the trampoline handles it
-                self.register_guard.guard(ctor.cheap_clone());
-                let new_obj = interp.create_object(&self.register_guard);
+                // Create guard for OpResult values
+                let guard = interp.heap.create_guard();
+                guard.guard(ctor.cheap_clone());
+
+                // Create a new object
+                let new_obj = interp.create_object(&guard);
 
                 // Get the constructor's prototype
                 let proto_key = PropertyKey::String(interp.intern("prototype"));
                 if let Some(JsValue::Object(proto)) = ctor.borrow().get_property(&proto_key) {
                     new_obj.borrow_mut().prototype = Some(proto.cheap_clone());
+                }
+
+                // Guard all object values in args
+                for arg in &args {
+                    arg.guard_by(&guard);
                 }
 
                 // Use trampoline for constructor call
@@ -2554,6 +2591,7 @@ impl BytecodeVM {
                     return_register: dst,
                     new_target: callee_val.clone(), // new.target is the constructor itself
                     new_obj,
+                    guard,
                 })
             }
 
@@ -2604,10 +2642,12 @@ impl BytecodeVM {
                     }
                 }
 
-                // Create a new object - guard it so it survives until the trampoline handles it
-                self.register_guard.guard(ctor.cheap_clone());
-                // FIXME: use proper guard
-                let new_obj = interp.create_object(&self.register_guard);
+                // Create guard for OpResult values
+                let guard = interp.heap.create_guard();
+                guard.guard(ctor.cheap_clone());
+
+                // Create a new object
+                let new_obj = interp.create_object(&guard);
 
                 // Get the constructor's prototype
                 let proto_key = PropertyKey::String(interp.intern("prototype"));
@@ -2615,9 +2655,13 @@ impl BytecodeVM {
                     new_obj.borrow_mut().prototype = Some(proto.cheap_clone());
                 }
 
+                // Guard all object values in args
+                for arg in &args {
+                    arg.guard_by(&guard);
+                }
+
                 // Use trampoline for constructor call
                 let this = JsValue::Object(new_obj.cheap_clone());
-                // FIXME: pass guard
                 Ok(OpResult::Construct {
                     callee: callee_val.clone(),
                     this_value: this,
@@ -2625,6 +2669,7 @@ impl BytecodeVM {
                     return_register: dst,
                     new_target: callee_val.clone(), // new.target is the constructor itself
                     new_obj,
+                    guard,
                 })
             }
 
@@ -3903,6 +3948,14 @@ impl BytecodeVM {
                     args.push(self.get_reg(args_start + i).clone());
                 }
 
+                // Create guard and protect all object values
+                let guard = interp.heap.create_guard();
+                super_ctor.guard_by(&guard);
+                self.this_value.guard_by(&guard);
+                for arg in &args {
+                    arg.guard_by(&guard);
+                }
+
                 // Call super constructor with current this - use trampoline
                 let this = self.this_value.clone();
                 Ok(OpResult::Call {
@@ -3912,6 +3965,7 @@ impl BytecodeVM {
                     return_register: dst,
                     new_target: JsValue::Undefined,
                     is_super_call: true, // This is a super() call
+                    guard,
                 })
             }
 
@@ -3931,6 +3985,14 @@ impl BytecodeVM {
                     Vec::new()
                 };
 
+                // Create guard and protect all object values
+                let guard = interp.heap.create_guard();
+                super_ctor.guard_by(&guard);
+                self.this_value.guard_by(&guard);
+                for arg in &args {
+                    arg.guard_by(&guard);
+                }
+
                 // Call super constructor with current this - use trampoline
                 let this = self.this_value.clone();
                 Ok(OpResult::Call {
@@ -3940,6 +4002,7 @@ impl BytecodeVM {
                     return_register: dst,
                     new_target: JsValue::Undefined,
                     is_super_call: true, // This is a super() call
+                    guard,
                 })
             }
 
@@ -5654,7 +5717,6 @@ enum OpResult {
         resume_register: Register,
     },
     /// Call a function (for trampoline)
-    // FIXME: add guard for values
     Call {
         callee: JsValue,
         this_value: JsValue,
@@ -5663,9 +5725,10 @@ enum OpResult {
         new_target: JsValue,
         /// If true, this is a super() call and the callee should be set as current_constructor
         is_super_call: bool,
+        /// Guard keeping all object values alive between OpResult creation and trampoline handling
+        guard: Guard<JsObject>,
     },
     /// Construct a new object (for trampoline)
-    // FIXME: add guard for values
     Construct {
         callee: JsValue,
         this_value: JsValue,
@@ -5674,5 +5737,7 @@ enum OpResult {
         new_target: JsValue,
         /// The new object to use if constructor doesn't return an object
         new_obj: Gc<JsObject>,
+        /// Guard keeping all object values alive between OpResult creation and trampoline handling
+        guard: Guard<JsObject>,
     },
 }

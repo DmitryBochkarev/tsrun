@@ -268,19 +268,20 @@ These functions create objects or handle values that need guarding:
 
 ## Implementation Plan
 
-### Phase 1: Guard OpResult Values (High Priority)
+### Phase 1: Guard OpResult Values (High Priority) [COMPLETED]
 
 **Goal:** Ensure values in `OpResult::Call` and `OpResult::Construct` stay alive.
 
-1. Add `guard: Guard<JsObject>` field to `OpResult::Call`
-2. Add `guard: Guard<JsObject>` field to `OpResult::Construct`
-3. Before returning, create guard and call `.guard_by(&guard)` on all object values
-4. Update all match sites to include the guard field (guard is dropped when variant is consumed)
+**Changes made:**
+1. Added `guard: Guard<JsObject>` field to `OpResult::Call`
+2. Added `guard: Guard<JsObject>` field to `OpResult::Construct`
+3. Updated 6 `OpResult::Call` creation sites (Op::Call, Op::CallSpread, Op::CallMethod, Op::SuperCall, Op::SuperCallSpread)
+4. Updated 2 `OpResult::Construct` creation sites (Op::Construct, Op::ConstructSpread)
+5. Each creation site creates a guard and guards callee, this_value, args, and new_target
+6. Updated match sites to include the guard field
 
-**Files to modify:**
+**Files modified:**
 - `src/interpreter/bytecode_vm.rs`
-
-**Estimated scope:** ~50 lines changed
 
 ---
 
@@ -440,7 +441,7 @@ After each phase, run the test262 suite:
 ### Suggested Order
 
 1. ~~**Phase 4** (exception_value) - fixes existing incorrect register_guard usage~~ **DONE**
-2. **Phases 1-3** (OpResult, PendingCompletion, GeneratorYield) - similar patterns
+2. ~~**Phase 1** (OpResult)~~ **DONE**, **Phases 2-3** (PendingCompletion, GeneratorYield) - similar patterns
 3. **Phase 5** (JsError) - higher impact, needs careful Clone audit
 4. **Phase 6** (Function signatures) - can be done incrementally
 
