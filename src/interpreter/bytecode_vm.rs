@@ -416,7 +416,6 @@ impl BytecodeVM {
     }
 
     /// Fetch the next instruction and advance IP
-    // FIXME: return reference to Op not copy
     #[inline]
     fn fetch(&mut self) -> Option<Op> {
         let op = *self.chunk.get(self.ip)?;
