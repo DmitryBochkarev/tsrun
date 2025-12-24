@@ -144,31 +144,26 @@ Callers will pass `&interp.root_guard`.
 
 ## Detailed Fix Plan
 
-### Phase 1: Fix `to_object` (Critical)
+### Phase 1: Fix `to_object` (Critical) ✅ COMPLETED
 
-**Files to modify:**
+**Files modified:**
 - `src/interpreter/mod.rs`
 - `src/interpreter/builtins/object.rs`
+- `src/value.rs` (added `ExoticObject::Symbol` variant)
+- `src/interpreter/builtins/global.rs` (updated structuredClone for Symbol)
+- `src/interpreter/builtins/json.rs` (updated JSON serialization for Symbol)
 
-**Steps:**
+**Changes made:**
 
-1. Change `to_object` signature:
-   ```rust
-   // Before
-   pub fn to_object(&mut self, value: JsValue) -> Result<Gc<JsObject>, JsError>
-
-   // After
-   pub fn to_object(&mut self, value: JsValue) -> Result<Guarded, JsError>
-   ```
-
-   Functions to update:
+1. Changed `to_object` signature to return `Guarded` instead of `Gc<JsObject>`
+2. Added `ExoticObject::Symbol(Box<JsSymbol>)` variant to properly wrap Symbol values
+3. Updated all callers to extract the object from `Guarded.value` while keeping the guard alive:
    - `object_keys`
-   - `object_freeze`
-   - `object_seal`
-   - `object_is_frozen`
+   - `object_get_own_property_descriptor`
+   - `object_get_own_property_names`
+   - `object_get_own_property_symbols`
    - `object_get_own_property_descriptors`
-
-4. For each caller, ensure the wrapper object remains guarded until returned or stored.
+4. Updated exhaustive matches for the new `ExoticObject::Symbol` variant
 
 ### Phase 3: Fix `get_property_value`
 

@@ -2794,9 +2794,10 @@ impl Interpreter {
 
     /// ToObject abstract operation (ES2015+).
     /// Converts primitives to their wrapper objects. Throws TypeError for null/undefined.
-    pub fn to_object(&mut self, value: JsValue) -> Result<Gc<JsObject>, JsError> {
+    /// Returns a `Guarded` to keep wrapper objects alive until the caller is done with them.
+    pub fn to_object(&mut self, value: JsValue) -> Result<Guarded, JsError> {
         match value {
-            JsValue::Object(obj) => Ok(obj),
+            JsValue::Object(obj) => Ok(Guarded::unguarded(JsValue::Object(obj))),
             JsValue::Undefined | JsValue::Null => Err(JsError::type_error(
                 "Cannot convert undefined or null to object",
             )),
@@ -2809,7 +2810,7 @@ impl Interpreter {
                     obj_ref.prototype = Some(self.boolean_prototype.cheap_clone());
                     obj_ref.exotic = ExoticObject::Boolean(b);
                 }
-                Ok(gc_obj)
+                Ok(Guarded::with_guard(JsValue::Object(gc_obj), guard))
             }
             JsValue::Number(n) => {
                 // Create Number wrapper object
@@ -2820,7 +2821,7 @@ impl Interpreter {
                     obj_ref.prototype = Some(self.number_prototype.cheap_clone());
                     obj_ref.exotic = ExoticObject::Number(n);
                 }
-                Ok(gc_obj)
+                Ok(Guarded::with_guard(JsValue::Object(gc_obj), guard))
             }
             JsValue::String(s) => {
                 // Create String wrapper object
@@ -2831,15 +2832,19 @@ impl Interpreter {
                     obj_ref.prototype = Some(self.string_prototype.cheap_clone());
                     obj_ref.exotic = ExoticObject::StringObj(s);
                 }
-                Ok(gc_obj)
+                Ok(Guarded::with_guard(JsValue::Object(gc_obj), guard))
             }
-            JsValue::Symbol(_) => {
+            JsValue::Symbol(sym) => {
                 // Create Symbol wrapper object - use ordinary object with symbol prototype
-                // (Symbol exotic objects aren't commonly used)
+                // Store the symbol value in the exotic slot so it can be retrieved
                 let guard = self.heap.create_guard();
                 let gc_obj = guard.alloc();
-                gc_obj.borrow_mut().prototype = Some(self.symbol_prototype.cheap_clone());
-                Ok(gc_obj)
+                {
+                    let mut obj_ref = gc_obj.borrow_mut();
+                    obj_ref.prototype = Some(self.symbol_prototype.cheap_clone());
+                    obj_ref.exotic = ExoticObject::Symbol(sym);
+                }
+                Ok(Guarded::with_guard(JsValue::Object(gc_obj), guard))
             }
         }
     }

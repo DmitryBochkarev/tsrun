@@ -580,6 +580,10 @@ impl fmt::Debug for JsValue {
                     ExoticObject::Boolean(b) => write!(f, "[Boolean: {}]", b),
                     ExoticObject::Number(n) => write!(f, "[Number: {}]", n),
                     ExoticObject::StringObj(s) => write!(f, "[String: \"{}\"]", s),
+                    ExoticObject::Symbol(sym) => match &sym.description {
+                        Some(desc) => write!(f, "[Symbol: Symbol({})]", desc.as_str()),
+                        None => write!(f, "[Symbol: Symbol()]"),
+                    },
                     ExoticObject::RawJSON(raw) => write!(f, "[RawJSON: {}]", raw),
                 }
             }
@@ -1070,6 +1074,7 @@ impl Traceable for JsObject {
             | ExoticObject::Boolean(_)
             | ExoticObject::Number(_)
             | ExoticObject::StringObj(_)
+            | ExoticObject::Symbol(_)
             | ExoticObject::RawJSON(_) => {
                 // These exotic types don't contain object references that need tracing
             }
@@ -2322,6 +2327,8 @@ pub enum ExoticObject {
     Number(f64),
     /// String wrapper object - stores primitive string value
     StringObj(JsString),
+    /// Symbol wrapper object - stores primitive symbol value
+    Symbol(Box<JsSymbol>),
     /// Function exotic object
     Function(JsFunction),
     /// Map exotic object - stores key-value pairs preserving insertion order

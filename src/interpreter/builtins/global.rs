@@ -973,6 +973,20 @@ fn clone_object(
             }
             Ok(JsValue::Object(raw_obj))
         }
+
+        // Symbol wrapper objects - clone with the same symbol value
+        ExoticObject::Symbol(sym) => {
+            let sym_clone = sym.clone();
+            drop(obj_ref);
+
+            let sym_obj = interp.create_object(guard);
+            {
+                let mut sym_ref = sym_obj.borrow_mut();
+                sym_ref.exotic = ExoticObject::Symbol(sym_clone);
+                sym_ref.prototype = Some(interp.symbol_prototype.cheap_clone());
+            }
+            Ok(JsValue::Object(sym_obj))
+        }
     }
 }
 

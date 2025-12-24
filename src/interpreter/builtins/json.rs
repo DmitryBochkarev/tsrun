@@ -275,6 +275,10 @@ fn js_value_to_json_with_visited(
                             // so this parse should never fail
                             serde_json::from_str(raw.as_str()).unwrap_or(serde_json::Value::Null)
                         }
+                        ExoticObject::Symbol(_) => {
+                            // Symbol wrapper objects serialize to undefined (null in JSON)
+                            serde_json::Value::Null
+                        }
                     }
                 }
             };

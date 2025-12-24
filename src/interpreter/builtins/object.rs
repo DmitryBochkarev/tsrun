@@ -6,7 +6,9 @@ use crate::interpreter::builtins::proxy::{
     proxy_is_extensible, proxy_own_keys, proxy_prevent_extensions, proxy_set_prototype_of,
 };
 use crate::interpreter::Interpreter;
-use crate::value::{ExoticObject, Guarded, JsObjectRef, JsString, JsValue, Property, PropertyKey};
+use crate::value::{
+    CheapClone, ExoticObject, Guarded, JsObjectRef, JsString, JsValue, Property, PropertyKey,
+};
 
 /// Initialize Object.prototype with hasOwnProperty, toString, valueOf, isPrototypeOf methods.
 /// The prototype object must already exist in `interp.object_prototype`.
@@ -172,7 +174,13 @@ pub fn object_keys(
     let arg = args.first().cloned().unwrap_or(JsValue::Undefined);
 
     // ES2015+: Convert to object (primitives get boxed, null/undefined throw)
-    let obj_ref = interp.to_object(arg)?;
+    let to_obj_guarded = interp.to_object(arg)?;
+    let obj_ref = match &to_obj_guarded.value {
+        JsValue::Object(obj) => obj.cheap_clone(),
+        _ => return Err(JsError::internal_error("to_object returned non-object")),
+    };
+    // Keep to_obj_guarded alive while we use obj_ref
+    let _guard = to_obj_guarded;
 
     // Use proxy trap if it's a proxy - ownKeys trap returns all keys
     if is_proxy(&obj_ref) {
@@ -747,6 +755,7 @@ pub fn object_to_string(
                 ExoticObject::Boolean(_) => "Boolean",
                 ExoticObject::Number(_) => "Number",
                 ExoticObject::StringObj(_) => "String",
+                ExoticObject::Symbol(_) => "Symbol",
                 ExoticObject::RawJSON(_) => "Object", // RawJSON objects are ordinary objects
             }
         }
@@ -789,7 +798,13 @@ pub fn object_get_own_property_descriptor(
     let prop = args.get(1).cloned().unwrap_or(JsValue::Undefined);
 
     // ES2015+: Convert to object (primitives get boxed, null/undefined throw)
-    let obj_ref = interp.to_object(obj)?;
+    let to_obj_guarded = interp.to_object(obj)?;
+    let obj_ref = match &to_obj_guarded.value {
+        JsValue::Object(obj) => obj.cheap_clone(),
+        _ => return Err(JsError::internal_error("to_object returned non-object")),
+    };
+    // Keep to_obj_guarded alive while we use obj_ref
+    let _guard = to_obj_guarded;
 
     let key = PropertyKey::from_value(&prop);
 
@@ -858,7 +873,13 @@ pub fn object_get_own_property_names(
     let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
 
     // ES2015+: Convert to object (primitives get boxed, null/undefined throw)
-    let obj_ref = interp.to_object(obj)?;
+    let to_obj_guarded = interp.to_object(obj)?;
+    let obj_ref = match &to_obj_guarded.value {
+        JsValue::Object(obj) => obj.cheap_clone(),
+        _ => return Err(JsError::internal_error("to_object returned non-object")),
+    };
+    // Keep to_obj_guarded alive while we use obj_ref
+    let _guard = to_obj_guarded;
 
     // Filter out symbol keys - getOwnPropertyNames only returns string keys
     let names: Vec<JsValue> = obj_ref
@@ -883,7 +904,13 @@ pub fn object_get_own_property_symbols(
     let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
 
     // ES2015+: Convert to object (primitives get boxed, null/undefined throw)
-    let obj_ref = interp.to_object(obj)?;
+    let to_obj_guarded = interp.to_object(obj)?;
+    let obj_ref = match &to_obj_guarded.value {
+        JsValue::Object(obj) => obj.cheap_clone(),
+        _ => return Err(JsError::internal_error("to_object returned non-object")),
+    };
+    // Keep to_obj_guarded alive while we use obj_ref
+    let _guard = to_obj_guarded;
 
     // Return only symbol keys
     let symbols: Vec<JsValue> = obj_ref
@@ -1268,7 +1295,13 @@ pub fn object_get_own_property_descriptors(
     let obj = args.first().cloned().unwrap_or(JsValue::Undefined);
 
     // ES2015+: Convert to object (primitives get boxed, null/undefined throw)
-    let obj_ref = interp.to_object(obj)?;
+    let to_obj_guarded = interp.to_object(obj)?;
+    let obj_ref = match &to_obj_guarded.value {
+        JsValue::Object(obj) => obj.cheap_clone(),
+        _ => return Err(JsError::internal_error("to_object returned non-object")),
+    };
+    // Keep to_obj_guarded alive while we use obj_ref
+    let _guard = to_obj_guarded;
 
     // Pre-intern descriptor property keys
     let get_key = PropertyKey::String(interp.intern("get"));
