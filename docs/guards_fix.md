@@ -104,26 +104,6 @@ fn get_property_value(&self, interp: &mut Interpreter, obj: &JsValue, key: &JsVa
 
 Update callers to hold the guard until value is stored in register.
 
-### Issue 3: `call_function` Should Accept Guard
-
-**Location:** `src/interpreter/mod.rs:2847-2856`
-
-**Current State:** Returns `Result<Guarded, JsError>` but doesn't accept a guard parameter.
-
-**Problem:** Callers should explicitly pass a guard to ensure inputs (`callee`, `this_value`, `args`) remain protected during the call. This makes the contract explicit and prevents subtle bugs.
-
-**Fix:** Add guard parameter:
-
-```rust
-pub fn call_function(
-    &mut self,
-    guard: &Guard<JsObject>,
-    callee: JsValue,
-    this_value: JsValue,
-    args: &[JsValue],
-) -> Result<Guarded, JsError>
-```
-
 ### Issue 4: `create_native_function` Should Accept Guard
 
 **Location:** `src/interpreter/mod.rs:1760-1785`
@@ -178,24 +158,7 @@ Callers will pass `&interp.root_guard`.
    pub fn to_object(&mut self, value: JsValue) -> Result<Gc<JsObject>, JsError>
 
    // After
-   pub fn to_object(&mut self, guard: &Guard<JsObject>, value: JsValue) -> Result<Gc<JsObject>, JsError>
-   ```
-
-2. Update implementation to use provided guard:
-   ```rust
-   JsValue::Boolean(b) => {
-       let gc_obj = guard.alloc();  // Use caller's guard
-       // ... rest unchanged
-       Ok(gc_obj)
-   }
-   ```
-
-3. Update all callers in `object.rs` - these functions already create guards for their results, reuse that guard:
-   ```rust
-   // Example: object_keys already has a guard for the result array
-   let guard = interp.heap.create_guard();
-   let obj_ref = interp.to_object(&guard, arg)?;  // Use same guard
-   // ... create result array with same guard ...
+   pub fn to_object(&mut self, value: JsValue) -> Result<Guarded, JsError>
    ```
 
    Functions to update:
@@ -206,64 +169,6 @@ Callers will pass `&interp.root_guard`.
    - `object_get_own_property_descriptors`
 
 4. For each caller, ensure the wrapper object remains guarded until returned or stored.
-
-### Phase 2: Fix `call_function`
-
-**Files to modify:**
-- `src/interpreter/mod.rs`
-- `src/interpreter/bytecode_vm.rs`
-- `src/interpreter/builtins/*.rs` (all files that call `call_function`)
-
-**Steps:**
-
-1. Change `call_function` signature:
-   ```rust
-   // Before
-   pub fn call_function(
-       &mut self,
-       callee: JsValue,
-       this_value: JsValue,
-       args: &[JsValue],
-   ) -> Result<Guarded, JsError>
-
-   // After
-   pub fn call_function(
-       &mut self,
-       guard: &Guard<JsObject>,
-       callee: JsValue,
-       this_value: JsValue,
-       args: &[JsValue],
-   ) -> Result<Guarded, JsError>
-   ```
-
-2. Update `call_function_with_new_target` similarly.
-
-3. Update callers based on context:
-
-   **In bytecode_vm.rs** - create temporary guard:
-   ```rust
-   // Before
-   let result = interp.call_function(callee, this_val, &args)?;
-
-   // After
-   let guard = interp.heap.create_guard();
-   let result = interp.call_function(&guard, callee, this_val, &args)?;
-   ```
-
-   **In builtins** - use existing function guard:
-   ```rust
-   // Builtins already create guards at function start
-   let guard = interp.heap.create_guard();
-   // ... later ...
-   let result = interp.call_function(&guard, callback, this_arg, &args)?;
-   ```
-
-   **In mod.rs (recursive calls)** - pass through received guard or create new:
-   ```rust
-   // For bound function calls, create new guard
-   let guard = self.heap.create_guard();
-   self.call_function(&guard, JsValue::Object(bound.target), ...)
-   ```
 
 ### Phase 3: Fix `get_property_value`
 
@@ -278,26 +183,7 @@ Callers will pass `&interp.root_guard`.
    fn get_property_value(&self, interp: &mut Interpreter, obj: &JsValue, key: &JsValue) -> Result<JsValue, JsError>
 
    // After
-   fn get_property_value(&self, interp: &mut Interpreter, guard: &Guard<JsObject>, obj: &JsValue, key: &JsValue) -> Result<JsValue, JsError>
-   ```
-
-2. Pass guard to `call_function` when invoking getters:
-   ```rust
-   let result = interp.call_function(guard, JsValue::Object(getter.clone()), obj.clone(), &[])?;
-   Ok(result.value)
-   ```
-
-3. Update all callers to create a temporary guard:
-   ```rust
-   // Before
-   let result = self.get_property_value(interp, obj_val, key_val)?;
-   self.set_reg(dst, result);
-
-   // After
-   let guard = interp.heap.create_guard();
-   let result = self.get_property_value(interp, &guard, obj_val, key_val)?;
-   self.set_reg(dst, result);
-   // guard dropped after value is safely in register
+   fn get_property_value(&self, interp: &mut Interpreter, obj: &JsValue, key: &JsValue) -> Result<Guarded, JsError>
    ```
 
 ### Phase 4: Fix `create_native_function`
