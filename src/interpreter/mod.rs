@@ -1765,7 +1765,7 @@ impl Interpreter {
 
         // Get the well-known Symbol.species
         let well_known = builtins::symbol::get_well_known_symbols();
-        let species_symbol = JsSymbol::new(well_known.species, Some("Symbol.species".to_string()));
+        let species_symbol = JsSymbol::new(well_known.species, Some(self.intern("Symbol.species")));
         let species_key = PropertyKey::Symbol(Box::new(species_symbol));
 
         // Create accessor property (no setter, non-enumerable, configurable)
@@ -2113,12 +2113,12 @@ impl Interpreter {
         let iter_guard = self.heap.create_guard();
 
         // Try to get the iterator method - for async generators, prefer Symbol.asyncIterator
+        let sym_iterator = self.intern("Symbol.iterator");
+        let sym_async_iterator = self.intern("Symbol.asyncIterator");
         let iterator_method = if is_async {
             // Try Symbol.asyncIterator first
-            let async_iterator_symbol = JsSymbol::new(
-                well_known.async_iterator,
-                Some("Symbol.asyncIterator".to_string()),
-            );
+            let async_iterator_symbol =
+                JsSymbol::new(well_known.async_iterator, Some(sym_async_iterator));
             let async_iterator_key = PropertyKey::Symbol(Box::new(async_iterator_symbol));
             let async_method = obj.borrow().get_property(&async_iterator_key);
 
@@ -2127,13 +2127,12 @@ impl Interpreter {
             } else {
                 // Fall back to Symbol.iterator
                 let iterator_symbol =
-                    JsSymbol::new(well_known.iterator, Some("Symbol.iterator".to_string()));
+                    JsSymbol::new(well_known.iterator, Some(sym_iterator.cheap_clone()));
                 let iterator_key = PropertyKey::Symbol(Box::new(iterator_symbol));
                 obj.borrow().get_property(&iterator_key)
             }
         } else {
-            let iterator_symbol =
-                JsSymbol::new(well_known.iterator, Some("Symbol.iterator".to_string()));
+            let iterator_symbol = JsSymbol::new(well_known.iterator, Some(sym_iterator));
             let iterator_key = PropertyKey::Symbol(Box::new(iterator_symbol));
             obj.borrow().get_property(&iterator_key)
         };
@@ -3225,7 +3224,7 @@ impl Interpreter {
         // Check for Symbol.iterator method
         let well_known = builtins::symbol::get_well_known_symbols();
         let iterator_symbol =
-            JsSymbol::new(well_known.iterator, Some("Symbol.iterator".to_string()));
+            JsSymbol::new(well_known.iterator, Some(self.intern("Symbol.iterator")));
         let iterator_key = PropertyKey::Symbol(Box::new(iterator_symbol));
 
         let iterator_method = {

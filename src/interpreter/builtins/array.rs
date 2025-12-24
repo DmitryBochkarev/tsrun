@@ -144,7 +144,7 @@ pub fn init_array_prototype(interp: &mut Interpreter) {
     // Symbol.iterator = Array.prototype.values
     let well_known = super::symbol::get_well_known_symbols();
     let iterator_symbol =
-        crate::value::JsSymbol::new(well_known.iterator, Some("Symbol.iterator".to_string()));
+        crate::value::JsSymbol::new(well_known.iterator, Some(interp.intern("Symbol.iterator")));
     let iterator_key = crate::value::PropertyKey::Symbol(Box::new(iterator_symbol));
     let values_fn = interp.create_native_function("[Symbol.iterator]", array_values, 0);
     proto
@@ -1989,7 +1989,7 @@ pub fn array_values(
     // Make it its own iterator (for use in for-of)
     let well_known = super::symbol::get_well_known_symbols();
     let iterator_symbol =
-        crate::value::JsSymbol::new(well_known.iterator, Some("Symbol.iterator".to_string()));
+        crate::value::JsSymbol::new(well_known.iterator, Some(interp.intern("Symbol.iterator")));
     let iterator_key = PropertyKey::Symbol(Box::new(iterator_symbol));
     let self_fn = interp.create_native_function("[Symbol.iterator]", return_this, 0);
     guard.guard(self_fn.cheap_clone());

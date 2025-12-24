@@ -1932,7 +1932,7 @@ impl BytecodeVM {
                 let well_known = crate::interpreter::builtins::symbol::get_well_known_symbols();
                 let has_instance_symbol = crate::value::JsSymbol::new(
                     well_known.has_instance,
-                    Some("Symbol.hasInstance".to_string()),
+                    Some(interp.intern("Symbol.hasInstance")),
                 );
                 let has_instance_key = PropertyKey::Symbol(Box::new(has_instance_symbol));
 
@@ -2943,7 +2943,7 @@ impl BytecodeVM {
                                 crate::interpreter::builtins::symbol::get_well_known_symbols();
                             let iterator_symbol = crate::value::JsSymbol::new(
                                 well_known.iterator,
-                                Some("Symbol.iterator".to_string()),
+                                Some(interp.intern("Symbol.iterator")),
                             );
                             let iterator_key = PropertyKey::Symbol(Box::new(iterator_symbol));
 
@@ -2995,7 +2995,7 @@ impl BytecodeVM {
                             crate::interpreter::builtins::symbol::get_well_known_symbols();
                         let iterator_symbol = crate::value::JsSymbol::new(
                             well_known.iterator,
-                            Some("Symbol.iterator".to_string()),
+                            Some(interp.intern("Symbol.iterator")),
                         );
                         let iterator_key = PropertyKey::Symbol(Box::new(iterator_symbol));
 
@@ -3150,7 +3150,7 @@ impl BytecodeVM {
                             // Try Symbol.asyncIterator first
                             let async_iterator_symbol = crate::value::JsSymbol::new(
                                 well_known.async_iterator,
-                                Some("Symbol.asyncIterator".to_string()),
+                                Some(interp.intern("Symbol.asyncIterator")),
                             );
                             let async_iterator_key =
                                 PropertyKey::Symbol(Box::new(async_iterator_symbol));
@@ -3180,7 +3180,7 @@ impl BytecodeVM {
                             // Fall back to Symbol.iterator
                             let iterator_symbol = crate::value::JsSymbol::new(
                                 well_known.iterator,
-                                Some("Symbol.iterator".to_string()),
+                                Some(interp.intern("Symbol.iterator")),
                             );
                             let iterator_key = PropertyKey::Symbol(Box::new(iterator_symbol));
 
@@ -3213,7 +3213,7 @@ impl BytecodeVM {
                             crate::interpreter::builtins::symbol::get_well_known_symbols();
                         let async_iterator_symbol = crate::value::JsSymbol::new(
                             well_known.async_iterator,
-                            Some("Symbol.asyncIterator".to_string()),
+                            Some(interp.intern("Symbol.asyncIterator")),
                         );
                         let async_iterator_key =
                             PropertyKey::Symbol(Box::new(async_iterator_symbol));
@@ -3254,7 +3254,7 @@ impl BytecodeVM {
                         // Try Symbol.iterator as fallback
                         let iterator_symbol = crate::value::JsSymbol::new(
                             well_known.iterator,
-                            Some("Symbol.iterator".to_string()),
+                            Some(interp.intern("Symbol.iterator")),
                         );
                         let iterator_key = PropertyKey::Symbol(Box::new(iterator_symbol));
 
@@ -5374,7 +5374,7 @@ impl BytecodeVM {
                         return Ok(sym
                             .description
                             .as_ref()
-                            .map(|d| JsValue::String(JsString::from(d.as_str())))
+                            .map(|d| JsValue::String(d.cheap_clone()))
                             .unwrap_or(JsValue::Undefined));
                     }
                 }

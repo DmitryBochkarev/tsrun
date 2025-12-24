@@ -31,7 +31,8 @@ pub fn init_generator_prototype(interp: &mut Interpreter) {
 
     // Add Symbol.iterator - returns the generator itself
     // This makes generators work with for-of loops
-    let iterator_symbol = JsSymbol::new(well_known.iterator, Some("Symbol.iterator".to_string()));
+    let sym_iterator = interp.intern("Symbol.iterator");
+    let iterator_symbol = JsSymbol::new(well_known.iterator, Some(sym_iterator));
     let iterator_key = PropertyKey::Symbol(Box::new(iterator_symbol));
 
     // Create the [Symbol.iterator]() method that returns `this`
@@ -42,10 +43,8 @@ pub fn init_generator_prototype(interp: &mut Interpreter) {
 
     // Add Symbol.asyncIterator - returns the generator itself
     // This makes async generators work with for-await-of
-    let async_iterator_symbol = JsSymbol::new(
-        well_known.async_iterator,
-        Some("Symbol.asyncIterator".to_string()),
-    );
+    let sym_async_iterator = interp.intern("Symbol.asyncIterator");
+    let async_iterator_symbol = JsSymbol::new(well_known.async_iterator, Some(sym_async_iterator));
     let async_iterator_key = PropertyKey::Symbol(Box::new(async_iterator_symbol));
 
     // Create the [Symbol.asyncIterator]() method that returns `this`

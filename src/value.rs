@@ -407,7 +407,7 @@ impl JsValue {
             JsValue::Symbol(s) => {
                 // Symbol.prototype.toString returns "Symbol(description)"
                 match &s.description {
-                    Some(desc) => JsString::from(format!("Symbol({})", desc)),
+                    Some(desc) => JsString::from(format!("Symbol({})", desc.as_str())),
                     None => JsString::from("Symbol()"),
                 }
             }
@@ -482,7 +482,7 @@ impl fmt::Debug for JsValue {
             JsValue::Number(n) => write!(f, "{}", n),
             JsValue::String(s) => write!(f, "\"{}\"", s.as_ref()),
             JsValue::Symbol(s) => match &s.description {
-                Some(desc) => write!(f, "Symbol({})", desc),
+                Some(desc) => write!(f, "Symbol({})", desc.as_str()),
                 None => write!(f, "Symbol()"),
             },
             JsValue::Object(obj) => {
@@ -766,13 +766,12 @@ pub struct JsSymbol {
     /// Unique identifier for this symbol
     id: u64,
     /// Optional description (from Symbol('description'))
-    // FIXME: use JsString
-    pub description: Option<String>,
+    pub description: Option<JsString>,
 }
 
 impl JsSymbol {
     /// Create a new unique symbol with an optional description
-    pub fn new(id: u64, description: Option<String>) -> Self {
+    pub fn new(id: u64, description: Option<JsString>) -> Self {
         Self { id, description }
     }
 
@@ -1725,7 +1724,7 @@ impl fmt::Display for PropertyKey {
             PropertyKey::String(s) => write!(f, "{}", s),
             PropertyKey::Index(i) => write!(f, "{}", i),
             PropertyKey::Symbol(s) => match &s.description {
-                Some(desc) => write!(f, "Symbol({})", desc),
+                Some(desc) => write!(f, "Symbol({})", desc.as_str()),
                 None => write!(f, "Symbol()"),
             },
         }

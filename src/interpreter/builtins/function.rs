@@ -53,7 +53,7 @@ pub fn init_function_prototype(interp: &mut Interpreter) {
     let well_known = super::symbol::get_well_known_symbols();
     let has_instance_symbol = JsSymbol::new(
         well_known.has_instance,
-        Some("Symbol.hasInstance".to_string()),
+        Some(interp.intern("Symbol.hasInstance")),
     );
     let has_instance_key = PropertyKey::Symbol(Box::new(has_instance_symbol));
     let has_instance_fn =

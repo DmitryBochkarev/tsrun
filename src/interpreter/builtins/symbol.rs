@@ -7,7 +7,7 @@ use rustc_hash::FxHashMap;
 
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
-use crate::value::{Guarded, JsString, JsSymbol, JsValue, PropertyKey};
+use crate::value::{CheapClone, Guarded, JsString, JsSymbol, JsValue, PropertyKey};
 
 /// Global symbol ID counter for generating unique symbol IDs
 // FIXME: store in interpreter
@@ -22,7 +22,7 @@ pub fn next_symbol_id() -> u64 {
 // This is a thread-local registry to avoid requiring synchronization
 // FIXME: store in interpreter
 thread_local! {
-    static SYMBOL_REGISTRY: RefCell<FxHashMap<String, JsSymbol>> = RefCell::new(FxHashMap::default());
+    static SYMBOL_REGISTRY: RefCell<FxHashMap<JsString, JsSymbol>> = RefCell::new(FxHashMap::default());
 }
 
 /// Well-known symbol IDs (reserved during initialization)
@@ -119,6 +119,20 @@ pub fn init_symbol(interp: &mut Interpreter) {
     let split_key = PropertyKey::String(interp.intern("split"));
     let async_iterator_key = PropertyKey::String(interp.intern("asyncIterator"));
 
+    // Intern well-known symbol descriptions
+    let sym_iterator = interp.intern("Symbol.iterator");
+    let sym_to_string_tag = interp.intern("Symbol.toStringTag");
+    let sym_has_instance = interp.intern("Symbol.hasInstance");
+    let sym_is_concat_spreadable = interp.intern("Symbol.isConcatSpreadable");
+    let sym_species = interp.intern("Symbol.species");
+    let sym_to_primitive = interp.intern("Symbol.toPrimitive");
+    let sym_unscopables = interp.intern("Symbol.unscopables");
+    let sym_match = interp.intern("Symbol.match");
+    let sym_replace = interp.intern("Symbol.replace");
+    let sym_search = interp.intern("Symbol.search");
+    let sym_split = interp.intern("Symbol.split");
+    let sym_async_iterator = interp.intern("Symbol.asyncIterator");
+
     {
         let mut sym = symbol_fn.borrow_mut();
 
@@ -126,84 +140,84 @@ pub fn init_symbol(interp: &mut Interpreter) {
             iterator_key,
             JsValue::Symbol(Box::new(JsSymbol::new(
                 well_known.iterator,
-                Some("Symbol.iterator".to_string()),
+                Some(sym_iterator),
             ))),
         );
         sym.set_property(
             to_string_tag_key,
             JsValue::Symbol(Box::new(JsSymbol::new(
                 well_known.to_string_tag,
-                Some("Symbol.toStringTag".to_string()),
+                Some(sym_to_string_tag),
             ))),
         );
         sym.set_property(
             has_instance_key,
             JsValue::Symbol(Box::new(JsSymbol::new(
                 well_known.has_instance,
-                Some("Symbol.hasInstance".to_string()),
+                Some(sym_has_instance),
             ))),
         );
         sym.set_property(
             is_concat_spreadable_key,
             JsValue::Symbol(Box::new(JsSymbol::new(
                 well_known.is_concat_spreadable,
-                Some("Symbol.isConcatSpreadable".to_string()),
+                Some(sym_is_concat_spreadable),
             ))),
         );
         sym.set_property(
             species_key,
             JsValue::Symbol(Box::new(JsSymbol::new(
                 well_known.species,
-                Some("Symbol.species".to_string()),
+                Some(sym_species),
             ))),
         );
         sym.set_property(
             to_primitive_key,
             JsValue::Symbol(Box::new(JsSymbol::new(
                 well_known.to_primitive,
-                Some("Symbol.toPrimitive".to_string()),
+                Some(sym_to_primitive),
             ))),
         );
         sym.set_property(
             unscopables_key,
             JsValue::Symbol(Box::new(JsSymbol::new(
                 well_known.unscopables,
-                Some("Symbol.unscopables".to_string()),
+                Some(sym_unscopables),
             ))),
         );
         sym.set_property(
             match_key,
             JsValue::Symbol(Box::new(JsSymbol::new(
                 well_known.match_symbol,
-                Some("Symbol.match".to_string()),
+                Some(sym_match),
             ))),
         );
         sym.set_property(
             replace_key,
             JsValue::Symbol(Box::new(JsSymbol::new(
                 well_known.replace,
-                Some("Symbol.replace".to_string()),
+                Some(sym_replace),
             ))),
         );
         sym.set_property(
             search_key,
             JsValue::Symbol(Box::new(JsSymbol::new(
                 well_known.search,
-                Some("Symbol.search".to_string()),
+                Some(sym_search),
             ))),
         );
         sym.set_property(
             split_key,
             JsValue::Symbol(Box::new(JsSymbol::new(
                 well_known.split,
-                Some("Symbol.split".to_string()),
+                Some(sym_split),
             ))),
         );
         sym.set_property(
             async_iterator_key,
             JsValue::Symbol(Box::new(JsSymbol::new(
                 well_known.async_iterator,
-                Some("Symbol.asyncIterator".to_string()),
+                Some(sym_async_iterator),
             ))),
         );
     }
@@ -231,7 +245,7 @@ fn symbol_call(
 ) -> Result<Guarded, JsError> {
     let description = match args.first() {
         None | Some(JsValue::Undefined) => None,
-        Some(other) => Some(other.to_js_string().to_string()),
+        Some(other) => Some(other.to_js_string()),
     };
 
     let id = next_symbol_id();
@@ -242,14 +256,14 @@ fn symbol_call(
 
 /// Symbol.for(key) - get or create a symbol in the global registry
 fn symbol_for(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
     let key = args
         .first()
-        .map(|v| v.to_js_string().to_string())
-        .unwrap_or_else(|| "undefined".to_string());
+        .map(|v| v.to_js_string())
+        .unwrap_or_else(|| interp.intern("undefined"));
 
     SYMBOL_REGISTRY.with(|registry| {
         let mut registry = registry.borrow_mut();
@@ -258,7 +272,7 @@ fn symbol_for(
         }
 
         let id = next_symbol_id();
-        let sym = JsSymbol::new(id, Some(key.clone()));
+        let sym = JsSymbol::new(id, Some(key.cheap_clone()));
         registry.insert(key, sym.clone());
         Ok(Guarded::unguarded(JsValue::Symbol(Box::new(sym))))
     })
@@ -283,9 +297,7 @@ fn symbol_key_for(
         let registry = registry.borrow();
         for (key, registered_sym) in registry.iter() {
             if registered_sym.id() == sym.id() {
-                return Ok(Guarded::unguarded(JsValue::String(JsString::from(
-                    key.as_str(),
-                ))));
+                return Ok(Guarded::unguarded(JsValue::String(key.cheap_clone())));
             }
         }
         Ok(Guarded::unguarded(JsValue::Undefined))
@@ -301,7 +313,7 @@ fn symbol_to_string(
     match this {
         JsValue::Symbol(s) => {
             let result = match &s.description {
-                Some(desc) => format!("Symbol({})", desc),
+                Some(desc) => format!("Symbol({})", desc.as_str()),
                 None => "Symbol()".to_string(),
             };
             Ok(Guarded::unguarded(JsValue::String(JsString::from(result))))
