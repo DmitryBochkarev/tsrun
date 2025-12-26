@@ -354,10 +354,16 @@ impl BytecodeVM {
         vec![JsValue::Undefined; size]
     }
 
-    /// Return a register file to the pool for reuse
-    // FIXME: clear register_guard
+    /// Return a register file to the pool for reuse.
+    /// Also clears the register_guard to remove stale roots that could waste
+    /// GC cycles iterating over now-pooled objects.
     #[inline]
     fn release_registers(&mut self, mut registers: Vec<JsValue>) {
+        // Clear register_guard BEFORE clearing registers - this removes the guard's
+        // roots while the objects still have valid ref_counts from the registers Vec.
+        // If we cleared registers first, the guard would have stale roots pointing
+        // to potentially-pooled GcBoxes.
+        self.register_guard.clear();
         // Clear the registers to drop any references
         registers.clear();
         // Keep pool size reasonable (e.g., max 16 frames)
