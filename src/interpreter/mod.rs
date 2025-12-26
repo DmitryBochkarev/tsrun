@@ -2771,8 +2771,15 @@ impl Interpreter {
     /// This properly calls the object's valueOf/toString methods per ECMAScript spec.
     pub fn coerce_to_number(&mut self, value: &JsValue) -> Result<f64, JsError> {
         match value {
+            JsValue::Symbol(_) => {
+                Err(JsError::type_error("Cannot convert a Symbol value to a number"))
+            }
             JsValue::Object(_) => {
                 let prim = self.coerce_to_primitive(value, "number")?;
+                // The primitive could be a Symbol if valueOf returns one
+                if matches!(prim, JsValue::Symbol(_)) {
+                    return Err(JsError::type_error("Cannot convert a Symbol value to a number"));
+                }
                 Ok(prim.to_number())
             }
             _ => Ok(value.to_number()),

@@ -1367,7 +1367,7 @@ pub fn array_from(
 }
 
 pub fn array_at(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
@@ -1377,12 +1377,16 @@ pub fn array_at(
         ));
     };
 
+    // ToIntegerOrInfinity on the index argument (calls valueOf if object)
+    let index = match args.first() {
+        Some(v) => interp.coerce_to_number(v)? as i64,
+        None => 0,
+    };
+
     let arr_ref = arr.borrow();
     let length = arr_ref
         .array_length()
         .ok_or_else(|| JsError::type_error("Not an array"))? as i64;
-
-    let index = args.first().map(|v| v.to_number() as i64).unwrap_or(0);
 
     let actual_index = if index < 0 { length + index } else { index };
 

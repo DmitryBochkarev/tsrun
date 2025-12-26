@@ -1,6 +1,6 @@
 //! Array-related tests
 
-use super::eval;
+use super::{eval, eval_result};
 use typescript_eval::value::JsString;
 use typescript_eval::JsValue;
 
@@ -834,6 +834,30 @@ fn test_array_at() {
     assert_eq!(eval("[1, 2, 3].at(-1)"), JsValue::Number(3.0));
     assert_eq!(eval("[1, 2, 3].at(-2)"), JsValue::Number(2.0));
     assert_eq!(eval("[1, 2, 3].at(5)"), JsValue::Undefined);
+}
+
+#[test]
+fn test_array_at_valueof() {
+    // Test that valueOf is called on the index argument (ToIntegerOrInfinity)
+    assert_eq!(
+        eval(
+            r#"
+            let a = [0, 1, 2, 3];
+            let index = { valueOf() { return 1; } };
+            a.at(index);
+            "#
+        ),
+        JsValue::Number(1.0)
+    );
+}
+
+#[test]
+fn test_array_at_symbol_throws() {
+    // Symbol cannot be converted to number - should throw TypeError
+    let result = eval_result("[1, 2, 3].at(Symbol())");
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(err.to_string().contains("TypeError") || err.to_string().contains("Symbol"));
 }
 
 // Array.prototype.lastIndexOf tests
