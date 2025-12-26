@@ -104,6 +104,9 @@ pub struct TryHandler {
     pub registers_snapshot: usize,
     /// Call frame depth at time of push
     pub frame_depth: usize,
+    /// Scope depth at time of push (saved_env_stack.len())
+    /// Used to pop any scopes that were entered in the try block when catching
+    pub scope_depth: usize,
     /// Iterator register for for-of iterator close (None for regular try)
     /// When set, this is a PushIterTry handler that should close the iterator on exception
     pub iterator_reg: Option<Register>,
@@ -1435,7 +1438,8 @@ impl BytecodeVM {
     }
 
     /// Find an exception handler for the current position
-    fn find_exception_handler(&mut self) -> Option<usize> {
+    /// Returns (handler_ip, scope_depth) where scope_depth is the number of scopes to unwind
+    fn find_exception_handler(&mut self, interp: &mut Interpreter) -> Option<usize> {
         while let Some(handler) = self.try_stack.pop() {
             // Unwind to this handler's frame depth
             while self.call_stack.len() > handler.frame_depth {
@@ -1451,12 +1455,26 @@ impl BytecodeVM {
                         finally_ip: handler.finally_ip,
                         registers_snapshot: handler.registers_snapshot,
                         frame_depth: handler.frame_depth,
+                        scope_depth: handler.scope_depth,
                         iterator_reg: handler.iterator_reg,
                     });
+                }
+                // Unwind any scopes that were entered in the try block
+                // This is like executing PopScope for each scope that was entered
+                while self.saved_env_stack.len() > handler.scope_depth {
+                    if let Some(saved_env) = self.saved_env_stack.pop() {
+                        interp.pop_scope(saved_env);
+                    }
                 }
                 return Some(handler.catch_ip);
             }
             if handler.finally_ip > 0 {
+                // Also unwind scopes for finally handlers
+                while self.saved_env_stack.len() > handler.scope_depth {
+                    if let Some(saved_env) = self.saved_env_stack.pop() {
+                        interp.pop_scope(saved_env);
+                    }
+                }
                 return Some(handler.finally_ip);
             }
         }
@@ -1472,7 +1490,7 @@ impl BytecodeVM {
         e: JsError,
     ) -> Result<(), JsError> {
         // First check for handler in current frame
-        if let Some(handler_ip) = self.find_exception_handler() {
+        if let Some(handler_ip) = self.find_exception_handler(interp) {
             self.ip = handler_ip;
             self.exception_value = Some(self.error_to_guarded(interp, e));
             return Ok(());
@@ -1490,6 +1508,13 @@ impl BytecodeVM {
             // Release current arguments back to pool before restoring
             let current_arguments = std::mem::take(&mut self.arguments);
             self.release_arguments(current_arguments);
+
+            // Unwind current frame's scopes before restoring - if the called function
+            // had any scopes pushed (e.g., from PushScope in its body), we need to pop
+            // them and their guards before switching to the caller's saved_env_stack
+            while let Some(saved_env) = self.saved_env_stack.pop() {
+                interp.pop_scope(saved_env);
+            }
 
             // Restore state from frame
             self.ip = frame.ip;
@@ -1526,7 +1551,7 @@ impl BytecodeVM {
             }
 
             // Check for exception handler in this frame
-            if let Some(handler_ip) = self.find_exception_handler() {
+            if let Some(handler_ip) = self.find_exception_handler(interp) {
                 self.ip = handler_ip;
                 self.exception_value = Some(self.error_to_guarded(interp, e));
                 return Ok(());
@@ -1648,16 +1673,12 @@ impl BytecodeVM {
     /// Inject an exception into the VM for generator.throw()
     /// This sets up the VM to handle the exception as if it was thrown at the current position.
     /// Returns true if an exception handler was found, false if the exception should propagate.
-    pub fn inject_exception(
-        &mut self,
-        exception: JsValue,
-        heap: &crate::gc::Heap<JsObject>,
-    ) -> bool {
+    pub fn inject_exception(&mut self, interp: &mut Interpreter, exception: JsValue) -> bool {
         // Create guarded exception value
-        let guarded = Guarded::from_value(exception, heap);
+        let guarded = Guarded::from_value(exception, &interp.heap);
 
         // Try to find an exception handler
-        if let Some(handler_ip) = self.find_exception_handler() {
+        if let Some(handler_ip) = self.find_exception_handler(interp) {
             self.ip = handler_ip;
             self.exception_value = Some(guarded);
             true
@@ -2833,6 +2854,7 @@ impl BytecodeVM {
                     finally_ip: finally_target as usize,
                     registers_snapshot: self.registers.len(),
                     frame_depth: self.call_stack.len(),
+                    scope_depth: self.saved_env_stack.len(),
                     iterator_reg: None,
                 });
                 Ok(OpResult::Continue)
@@ -2852,6 +2874,7 @@ impl BytecodeVM {
                     finally_ip: 0, // No finally for iterator try
                     registers_snapshot: self.registers.len(),
                     frame_depth: self.call_stack.len(),
+                    scope_depth: self.saved_env_stack.len(),
                     iterator_reg: Some(iterator),
                 });
                 Ok(OpResult::Continue)

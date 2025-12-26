@@ -1332,6 +1332,226 @@ fn test_nested_for_loop_environments_collected() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// Function call register cleanup tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_function_call_registers_cleaned_up() {
+    // Test that objects created in a function's registers are collected after return.
+    // This exercises the register_guard cleanup in restore_from_trampoline_frame.
+    let baseline = get_baseline_live_count();
+
+    let source = r#"
+        function createTemporaryObjects() {
+            // These objects exist only in this function's registers
+            const temp1 = { a: 1, b: 2, c: 3 };
+            const temp2 = { x: [1, 2, 3], y: [4, 5, 6] };
+            const temp3 = [{ nested: true }, { also: "nested" }];
+            // Return a simple number - temp objects should be collected
+            return temp1.a + temp2.x[0];
+        }
+
+        let sum = 0;
+        for (let i = 0; i < 500; i++) {
+            sum = sum + createTemporaryObjects();
+        }
+        sum
+    "#;
+
+    let mut runtime = Runtime::new();
+    runtime.set_gc_threshold(100); // Trigger GC frequently during execution
+    runtime.set_timeout_ms(0);
+
+    let result = match runtime.eval(source).unwrap() {
+        RuntimeResult::Complete(value) => value,
+        other => panic!("Expected Complete, got {:?}", other),
+    };
+
+    runtime.collect();
+    let stats = runtime.gc_stats();
+
+    println!("Result: {:?}", result);
+    println!(
+        "Baseline: {}, After test: total={}, pooled={}, live={}",
+        baseline, stats.total_objects, stats.pooled_objects, stats.live_objects
+    );
+
+    // Verify computation: 500 * (1 + 1) = 1000
+    assert_eq!(result, JsValue::Number(1000.0));
+
+    // If function registers weren't cleaned up, we'd have 500 * 5+ = 2500+ leaked objects
+    // (temp1, temp2, temp3, plus arrays and nested objects)
+    let overhead = stats.live_objects.saturating_sub(baseline);
+    assert!(
+        overhead < 100,
+        "Too many live objects: {} over baseline. Function register cleanup may be broken.",
+        overhead
+    );
+}
+
+#[test]
+fn test_nested_function_calls_registers_cleaned_up() {
+    // Test nested function calls - each call frame should clean up its registers
+    let baseline = get_baseline_live_count();
+
+    let source = r#"
+        function inner(x: number): number {
+            const temp = { value: x, extra: [1, 2, 3] };
+            return temp.value * 2;
+        }
+
+        function outer(y: number): number {
+            const temp = { input: y, data: { nested: true } };
+            return inner(temp.input) + 1;
+        }
+
+        let sum = 0;
+        for (let i = 0; i < 300; i++) {
+            sum = sum + outer(i);
+        }
+        sum
+    "#;
+
+    let mut runtime = Runtime::new();
+    runtime.set_gc_threshold(50); // Very aggressive GC
+    runtime.set_timeout_ms(0);
+
+    let result = match runtime.eval(source).unwrap() {
+        RuntimeResult::Complete(value) => value,
+        other => panic!("Expected Complete, got {:?}", other),
+    };
+
+    runtime.collect();
+    let stats = runtime.gc_stats();
+
+    println!("Result: {:?}", result);
+    println!(
+        "Baseline: {}, After test: total={}, pooled={}, live={}",
+        baseline, stats.total_objects, stats.pooled_objects, stats.live_objects
+    );
+
+    // sum = sum of (i * 2 + 1) for i = 0..299
+    // = 2 * (0 + 1 + ... + 299) + 300
+    // = 2 * 299 * 300 / 2 + 300 = 89700 + 300 = 90000
+    assert_eq!(result, JsValue::Number(90000.0));
+
+    // 300 outer calls * 300 inner calls = 600 calls total, each with temp objects
+    // If not cleaned up, we'd have thousands of leaked objects
+    let overhead = stats.live_objects.saturating_sub(baseline);
+    assert!(
+        overhead < 100,
+        "Too many live objects: {} over baseline. Nested function register cleanup may be broken.",
+        overhead
+    );
+}
+
+#[test]
+fn test_exception_unwind_registers_cleaned_up() {
+    // Test that register cleanup happens during exception unwinding too
+    let baseline = get_baseline_live_count();
+
+    // First verify normal returns work (no exception path)
+    let source_normal = r#"
+        function noThrow(x: number): number {
+            const temp = { data: x };
+            return temp.data;
+        }
+
+        let sum = 0;
+        for (let i = 0; i < 200; i++) {
+            sum = sum + noThrow(i);
+        }
+        sum
+    "#;
+
+    let mut runtime = Runtime::new();
+    runtime.set_gc_threshold(50);
+    runtime.set_timeout_ms(0);
+
+    let result = match runtime.eval(source_normal).unwrap() {
+        RuntimeResult::Complete(value) => value,
+        other => panic!("Expected Complete, got {:?}", other),
+    };
+
+    runtime.collect();
+    let stats = runtime.gc_stats();
+
+    println!("Normal return path:");
+    println!("Result: {:?}", result);
+    println!(
+        "Baseline: {}, After test: total={}, pooled={}, live={}",
+        baseline, stats.total_objects, stats.pooled_objects, stats.live_objects
+    );
+
+    // sum = 0 + 1 + 2 + ... + 199 = 199 * 200 / 2 = 19900
+    assert_eq!(result, JsValue::Number(19900.0));
+
+    let normal_overhead = stats.live_objects.saturating_sub(baseline);
+    println!("Normal path overhead: {}", normal_overhead);
+
+    // Now test exception path
+    drop(runtime);
+
+    // Use var instead of let to avoid for-loop per-iteration scope complexity
+    let source_throws = r#"
+        function throws(x: number): number {
+            const temp = { data: x };
+            if (x > 0) {
+                throw x;
+            }
+            return temp.data;
+        }
+
+        var sum = 0;
+        var i = 0;
+        while (i < 200) {
+            try {
+                sum = sum + throws(i);
+            } catch (e) {
+                sum = sum - 1;
+            }
+            i = i + 1;
+        }
+        sum
+    "#;
+
+    let mut runtime = Runtime::new();
+    runtime.set_gc_threshold(50);
+    runtime.set_timeout_ms(0);
+
+    let result = match runtime.eval(source_throws).unwrap() {
+        RuntimeResult::Complete(value) => value,
+        other => panic!("Expected Complete, got {:?}", other),
+    };
+
+    runtime.collect();
+    let stats = runtime.gc_stats();
+
+    println!("\nException path:");
+    println!("Result: {:?}", result);
+    println!(
+        "Baseline: {}, After test: total={}, pooled={}, live={}",
+        baseline, stats.total_objects, stats.pooled_objects, stats.live_objects
+    );
+
+    // throws(0) returns 0 (no throw)
+    // throws(1..199) throws, catch adds -1
+    // sum = 0 + 199 * (-1) = -199
+    assert_eq!(result, JsValue::Number(-199.0));
+
+    let exception_overhead = stats.live_objects.saturating_sub(baseline);
+    println!("Exception path overhead: {}", exception_overhead);
+
+    // Compare: exception path should have similar overhead to normal path
+    // Allow some slack for try/catch bytecode but not 200+ leaked objects
+    assert!(
+        exception_overhead < 100,
+        "Too many live objects: {} over baseline (normal path had {}). Exception unwind register cleanup may be broken.",
+        exception_overhead, normal_overhead
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // Size checks for memory optimization
 // ═══════════════════════════════════════════════════════════════════════════════
 

@@ -1005,7 +1005,7 @@ impl Interpreter {
                         );
 
                         // Inject the exception - this finds a try/catch handler if present
-                        if vm.inject_exception(reason.clone(), &self.heap) {
+                        if vm.inject_exception(self, reason.clone()) {
                             // Handler found - run VM to handle the exception
                             return self.run_vm_to_completion(vm);
                         } else {
@@ -2218,7 +2218,7 @@ impl Interpreter {
             if let Some(exception) = throw_value {
                 // Inject the exception - if there's a handler, it will jump to catch
                 // If no handler, the exception will propagate
-                if !vm.inject_exception(exception.clone(), &self.heap) {
+                if !vm.inject_exception(self, exception.clone()) {
                     // No exception handler found, propagate the error
                     gen_state.borrow_mut().status = GeneratorStatus::Completed;
                     self.env = saved_env;
