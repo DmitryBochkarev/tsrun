@@ -587,12 +587,11 @@ pub struct ArrowFunctionExpression {
     pub params: Rc<[FunctionParam]>,
     pub return_type: Option<Box<TypeAnnotation>>,
     pub type_parameters: Option<TypeParameters>,
-    pub body: Rc<ArrowFunctionBody>,
+    pub body: Box<ArrowFunctionBody>,
     pub async_: bool,
     pub span: Span,
 }
 
-// FIXME: do not need to wrap in rc
 #[derive(Debug, Clone)]
 pub enum ArrowFunctionBody {
     Expression(Rc<Expression>),

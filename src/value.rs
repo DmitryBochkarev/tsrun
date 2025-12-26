@@ -224,7 +224,7 @@ fn trim_js_whitespace(s: &str) -> &str {
     s.trim_matches(is_js_whitespace)
 }
 
-use crate::ast::{ArrowFunctionBody, BlockStatement, Expression, FunctionParam};
+use crate::ast::{BlockStatement, FunctionParam};
 use crate::error::JsError;
 use crate::gc::{Gc, GcPtr, Guard, Heap, Reset, Traceable};
 
@@ -2693,23 +2693,6 @@ pub struct BytecodeFunction {
     pub closure: JsObjectRef,
     /// Captured `this` value for arrow functions (None for regular functions)
     pub captured_this: Option<Box<JsValue>>,
-}
-
-/// Function body (block or expression for arrow functions)
-// FIXME: do not need to wrap in rc
-#[derive(Debug, Clone)]
-pub enum FunctionBody {
-    Block(Rc<BlockStatement>),
-    Expression(Rc<Expression>),
-}
-
-impl From<Rc<ArrowFunctionBody>> for FunctionBody {
-    fn from(body: Rc<ArrowFunctionBody>) -> Self {
-        match body.as_ref() {
-            ArrowFunctionBody::Block(block) => FunctionBody::Block(block.clone()),
-            ArrowFunctionBody::Expression(expr) => FunctionBody::Expression(expr.clone()),
-        }
-    }
 }
 
 /// Native function signature type

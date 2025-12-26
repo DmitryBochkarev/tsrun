@@ -2809,7 +2809,7 @@ impl<'a> Parser<'a> {
                 params: params.into(),
                 return_type,
                 type_parameters: None,
-                body: Rc::new(body),
+                body: Box::new(body),
                 async_: is_async,
                 span,
             },
