@@ -20,31 +20,29 @@ pub enum SourceType {
 
 // ============ STATEMENTS ============
 
-// FIXME: remove clippy allow when large_enum_variant is fixed
 #[derive(Debug, Clone)]
-#[allow(clippy::large_enum_variant)]
 pub enum Statement {
     // Declarations
     VariableDeclaration(VariableDeclaration),
-    FunctionDeclaration(FunctionDeclaration),
-    ClassDeclaration(ClassDeclaration),
+    FunctionDeclaration(Box<FunctionDeclaration>),
+    ClassDeclaration(Box<ClassDeclaration>),
 
     // TypeScript (no-op at runtime)
-    TypeAlias(TypeAliasDeclaration),
-    InterfaceDeclaration(InterfaceDeclaration),
-    EnumDeclaration(EnumDeclaration),
-    NamespaceDeclaration(NamespaceDeclaration),
+    TypeAlias(Box<TypeAliasDeclaration>),
+    InterfaceDeclaration(Box<InterfaceDeclaration>),
+    EnumDeclaration(Box<EnumDeclaration>),
+    NamespaceDeclaration(Box<NamespaceDeclaration>),
 
     // Control Flow
     Block(BlockStatement),
     If(IfStatement),
     Switch(SwitchStatement),
-    For(ForStatement),
-    ForIn(ForInStatement),
-    ForOf(ForOfStatement),
+    For(Box<ForStatement>),
+    ForIn(Box<ForInStatement>),
+    ForOf(Box<ForOfStatement>),
     While(WhileStatement),
     DoWhile(DoWhileStatement),
-    Try(TryStatement),
+    Try(Box<TryStatement>),
 
     // Jump
     Return(ReturnStatement),
@@ -53,8 +51,8 @@ pub enum Statement {
     Throw(ThrowStatement),
 
     // Module
-    Import(ImportDeclaration),
-    Export(ExportDeclaration),
+    Import(Box<ImportDeclaration>),
+    Export(Box<ExportDeclaration>),
 
     // Other
     Expression(ExpressionStatement),
@@ -92,7 +90,7 @@ pub enum VariableKind {
 #[derive(Debug, Clone)]
 pub struct VariableDeclarator {
     pub id: Pattern,
-    pub type_annotation: Option<TypeAnnotation>,
+    pub type_annotation: Option<Box<TypeAnnotation>>,
     pub init: Option<Rc<Expression>>,
     pub span: Span,
 }
@@ -101,7 +99,7 @@ pub struct VariableDeclarator {
 pub struct FunctionDeclaration {
     pub id: Option<Identifier>,
     pub params: Rc<[FunctionParam]>,
-    pub return_type: Option<TypeAnnotation>,
+    pub return_type: Option<Box<TypeAnnotation>>,
     pub type_parameters: Option<TypeParameters>,
     pub body: Rc<BlockStatement>,
     pub generator: bool,
@@ -112,7 +110,7 @@ pub struct FunctionDeclaration {
 #[derive(Debug, Clone)]
 pub struct FunctionParam {
     pub pattern: Pattern,
-    pub type_annotation: Option<TypeAnnotation>,
+    pub type_annotation: Option<Box<TypeAnnotation>>,
     pub optional: bool,
     pub decorators: Vec<Decorator>,
     /// TypeScript parameter property: `constructor(public x: number)`
@@ -142,9 +140,9 @@ pub struct ClassBody {
 
 #[derive(Debug, Clone)]
 pub enum ClassMember {
-    Method(ClassMethod),
-    Property(ClassProperty),
-    Constructor(ClassConstructor),
+    Method(Box<ClassMethod>),
+    Property(Box<ClassProperty>),
+    Constructor(Box<ClassConstructor>),
     StaticBlock(BlockStatement),
 }
 
@@ -177,8 +175,8 @@ pub enum Accessibility {
 #[derive(Debug, Clone)]
 pub struct ClassProperty {
     pub key: ObjectPropertyKey,
-    pub value: Option<Expression>,
-    pub type_annotation: Option<TypeAnnotation>,
+    pub value: Option<Box<Expression>>,
+    pub type_annotation: Option<Box<TypeAnnotation>>,
     pub computed: bool,
     pub static_: bool,
     pub readonly: bool,
@@ -329,7 +327,7 @@ pub struct LabeledStatement {
 pub struct TypeAliasDeclaration {
     pub id: Identifier,
     pub type_parameters: Option<TypeParameters>,
-    pub type_annotation: TypeAnnotation,
+    pub type_annotation: Box<TypeAnnotation>,
     pub span: Span,
 }
 
@@ -415,14 +413,14 @@ pub struct ExportSpecifier {
 #[derive(Debug, Clone)]
 pub enum Expression {
     // Literals
-    Literal(Literal),
+    Literal(Box<Literal>),
     Array(ArrayExpression),
     Object(ObjectExpression),
-    Function(FunctionExpression),
-    ArrowFunction(ArrowFunctionExpression),
-    Class(ClassExpression),
-    Template(TemplateLiteral),
-    TaggedTemplate(TaggedTemplateExpression),
+    Function(Box<FunctionExpression>),
+    ArrowFunction(Box<ArrowFunctionExpression>),
+    Class(Box<ClassExpression>),
+    Template(Box<TemplateLiteral>),
+    TaggedTemplate(Box<TaggedTemplateExpression>),
 
     // Identifiers
     Identifier(Identifier),
@@ -434,15 +432,15 @@ pub enum Expression {
     Binary(BinaryExpression),
     Logical(LogicalExpression),
     Conditional(ConditionalExpression),
-    Assignment(AssignmentExpression),
+    Assignment(Box<AssignmentExpression>),
     Update(UpdateExpression),
     Sequence(SequenceExpression),
 
     // Access
-    Member(MemberExpression),
+    Member(Box<MemberExpression>),
     OptionalChain(OptionalChainExpression),
-    Call(CallExpression),
-    New(NewExpression),
+    Call(Box<CallExpression>),
+    New(Box<NewExpression>),
 
     // TypeScript
     TypeAssertion(TypeAssertionExpression),
@@ -540,9 +538,8 @@ pub struct ObjectExpression {
 }
 
 #[derive(Debug, Clone)]
-#[allow(clippy::large_enum_variant)]
 pub enum ObjectProperty {
-    Property(Property),
+    Property(Box<Property>),
     Spread(SpreadElement),
 }
 
@@ -577,7 +574,7 @@ pub enum PropertyKind {
 pub struct FunctionExpression {
     pub id: Option<Identifier>,
     pub params: Rc<[FunctionParam]>,
-    pub return_type: Option<TypeAnnotation>,
+    pub return_type: Option<Box<TypeAnnotation>>,
     pub type_parameters: Option<TypeParameters>,
     pub body: Rc<BlockStatement>,
     pub generator: bool,
@@ -588,7 +585,7 @@ pub struct FunctionExpression {
 #[derive(Debug, Clone)]
 pub struct ArrowFunctionExpression {
     pub params: Rc<[FunctionParam]>,
-    pub return_type: Option<TypeAnnotation>,
+    pub return_type: Option<Box<TypeAnnotation>>,
     pub type_parameters: Option<TypeParameters>,
     pub body: Rc<ArrowFunctionBody>,
     pub async_: bool,
@@ -843,7 +840,7 @@ pub struct AwaitExpression {
 #[derive(Debug, Clone)]
 pub struct TypeAssertionExpression {
     pub expression: Rc<Expression>,
-    pub type_annotation: TypeAnnotation,
+    pub type_annotation: Box<TypeAnnotation>,
     pub span: Span,
 }
 
@@ -879,7 +876,7 @@ impl Pattern {
 #[derive(Debug, Clone)]
 pub struct ObjectPattern {
     pub properties: Vec<ObjectPatternProperty>,
-    pub type_annotation: Option<TypeAnnotation>,
+    pub type_annotation: Option<Box<TypeAnnotation>>,
     pub span: Span,
 }
 
@@ -897,14 +894,14 @@ pub enum ObjectPatternProperty {
 #[derive(Debug, Clone)]
 pub struct ArrayPattern {
     pub elements: Vec<Option<Pattern>>,
-    pub type_annotation: Option<TypeAnnotation>,
+    pub type_annotation: Option<Box<TypeAnnotation>>,
     pub span: Span,
 }
 
 #[derive(Debug, Clone)]
 pub struct RestElement {
     pub argument: Box<Pattern>,
-    pub type_annotation: Option<TypeAnnotation>,
+    pub type_annotation: Option<Box<TypeAnnotation>>,
     pub span: Span,
 }
 
@@ -1029,7 +1026,7 @@ pub enum TypeMember {
 #[derive(Debug, Clone)]
 pub struct PropertySignature {
     pub key: ObjectPropertyKey,
-    pub type_annotation: Option<TypeAnnotation>,
+    pub type_annotation: Option<Box<TypeAnnotation>>,
     pub optional: bool,
     pub readonly: bool,
     pub span: Span,
@@ -1039,7 +1036,7 @@ pub struct PropertySignature {
 pub struct MethodSignature {
     pub key: ObjectPropertyKey,
     pub params: Vec<FunctionParam>,
-    pub return_type: Option<TypeAnnotation>,
+    pub return_type: Option<Box<TypeAnnotation>>,
     pub type_parameters: Option<TypeParameters>,
     pub optional: bool,
     pub span: Span,
@@ -1048,8 +1045,8 @@ pub struct MethodSignature {
 #[derive(Debug, Clone)]
 pub struct IndexSignature {
     pub key: Identifier,
-    pub key_type: TypeAnnotation,
-    pub value_type: TypeAnnotation,
+    pub key_type: Box<TypeAnnotation>,
+    pub value_type: Box<TypeAnnotation>,
     pub readonly: bool,
     pub span: Span,
 }
@@ -1057,7 +1054,7 @@ pub struct IndexSignature {
 #[derive(Debug, Clone)]
 pub struct CallSignature {
     pub params: Vec<FunctionParam>,
-    pub return_type: Option<TypeAnnotation>,
+    pub return_type: Option<Box<TypeAnnotation>>,
     pub type_parameters: Option<TypeParameters>,
     pub span: Span,
 }
@@ -1065,7 +1062,7 @@ pub struct CallSignature {
 #[derive(Debug, Clone)]
 pub struct ConstructSignature {
     pub params: Vec<FunctionParam>,
-    pub return_type: Option<TypeAnnotation>,
+    pub return_type: Option<Box<TypeAnnotation>>,
     pub type_parameters: Option<TypeParameters>,
     pub span: Span,
 }

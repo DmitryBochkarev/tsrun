@@ -182,10 +182,7 @@ pub fn string_to_number(s: &str) -> f64 {
     // Try to parse as a decimal number
     // Rust's parse::<f64> handles most cases, but we need to ensure
     // the entire string is consumed and matches JS semantics
-    match trimmed.parse::<f64>() {
-        Ok(n) => n,
-        Err(_) => f64::NAN,
-    }
+    trimmed.parse::<f64>().unwrap_or(f64::NAN)
 }
 
 /// Trim JavaScript whitespace from both ends of a string.

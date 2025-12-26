@@ -2691,7 +2691,7 @@ impl Compiler {
                     // Check for numeric literal
                     matches!(
                         init,
-                        crate::ast::Expression::Literal(crate::ast::Literal { value: crate::ast::LiteralValue::Number(_), .. })
+                        crate::ast::Expression::Literal(lit) if matches!(lit.as_ref(), crate::ast::Literal { value: crate::ast::LiteralValue::Number(_), .. })
                     ) ||
                     // Check for unary minus of numeric literal (e.g., -10)
                     matches!(
@@ -2700,7 +2700,7 @@ impl Compiler {
                             if unary.operator == crate::ast::UnaryOp::Minus
                             && matches!(
                                 unary.argument.as_ref(),
-                                crate::ast::Expression::Literal(crate::ast::Literal { value: crate::ast::LiteralValue::Number(_), .. })
+                                crate::ast::Expression::Literal(lit) if matches!(lit.as_ref(), crate::ast::Literal { value: crate::ast::LiteralValue::Number(_), .. })
                             )
                     )
                 }

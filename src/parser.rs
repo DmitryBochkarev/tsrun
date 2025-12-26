@@ -94,11 +94,11 @@ impl<'a> Parser<'a> {
                 let mut class_decl = self.parse_class_declaration()?;
                 class_decl.abstract_ = true;
                 class_decl.decorators = decorators;
-                return Ok(Statement::ClassDeclaration(class_decl));
+                return Ok(Statement::ClassDeclaration(Box::new(class_decl)));
             } else if self.check(&TokenKind::Class) {
                 let mut class_decl = self.parse_class_declaration()?;
                 class_decl.decorators = decorators;
-                return Ok(Statement::ClassDeclaration(class_decl));
+                return Ok(Statement::ClassDeclaration(Box::new(class_decl)));
             } else if self.check(&TokenKind::Export) {
                 // Handle: @decorator export class Foo {}
                 // or: @decorator export default class Foo {}
@@ -109,7 +109,7 @@ impl<'a> Parser<'a> {
                         class_decl.decorators = decorators;
                     }
                 }
-                return Ok(Statement::Export(export_decl));
+                return Ok(Statement::Export(Box::new(export_decl)));
             } else {
                 return Err(JsError::syntax_error(
                     "Decorators can only be applied to class declarations".to_string(),
@@ -124,7 +124,7 @@ impl<'a> Parser<'a> {
             self.advance(); // consume 'abstract'
             let mut class_decl = self.parse_class_declaration()?;
             class_decl.abstract_ = true;
-            return Ok(Statement::ClassDeclaration(class_decl));
+            return Ok(Statement::ClassDeclaration(Box::new(class_decl)));
         }
 
         // Check for labeled statement first (identifier followed by colon)
@@ -135,25 +135,27 @@ impl<'a> Parser<'a> {
 
         // Check for const enum before variable declaration
         if self.check(&TokenKind::Const) && self.peek_is(&TokenKind::Enum) {
-            return Ok(Statement::EnumDeclaration(self.parse_enum()?));
+            return Ok(Statement::EnumDeclaration(Box::new(self.parse_enum()?)));
         }
 
         match &self.current.kind {
             TokenKind::Let | TokenKind::Const | TokenKind::Var => Ok(
                 Statement::VariableDeclaration(self.parse_variable_declaration()?),
             ),
-            TokenKind::Function => Ok(Statement::FunctionDeclaration(
+            TokenKind::Function => Ok(Statement::FunctionDeclaration(Box::new(
                 self.parse_function_declaration(false)?,
-            )),
+            ))),
             TokenKind::Async => {
                 // async function declaration
                 self.advance(); // consume 'async'
                 self.require_token(&TokenKind::Function)?;
                 let mut func = self.parse_function_declaration_inner()?;
                 func.async_ = true;
-                Ok(Statement::FunctionDeclaration(func))
+                Ok(Statement::FunctionDeclaration(Box::new(func)))
             }
-            TokenKind::Class => Ok(Statement::ClassDeclaration(self.parse_class_declaration()?)),
+            TokenKind::Class => Ok(Statement::ClassDeclaration(Box::new(
+                self.parse_class_declaration()?,
+            ))),
             TokenKind::If => self.parse_if_statement(),
             TokenKind::For => self.parse_for_statement(),
             TokenKind::While => self.parse_while_statement(),
@@ -175,15 +177,17 @@ impl<'a> Parser<'a> {
                 Ok(Statement::Debugger)
             }
             // TypeScript declarations (no-op at runtime)
-            TokenKind::Type => Ok(Statement::TypeAlias(self.parse_type_alias()?)),
-            TokenKind::Interface => Ok(Statement::InterfaceDeclaration(self.parse_interface()?)),
-            TokenKind::Enum => Ok(Statement::EnumDeclaration(self.parse_enum()?)),
+            TokenKind::Type => Ok(Statement::TypeAlias(Box::new(self.parse_type_alias()?))),
+            TokenKind::Interface => Ok(Statement::InterfaceDeclaration(Box::new(
+                self.parse_interface()?,
+            ))),
+            TokenKind::Enum => Ok(Statement::EnumDeclaration(Box::new(self.parse_enum()?))),
             // Module declarations
-            TokenKind::Import => Ok(Statement::Import(self.parse_import()?)),
-            TokenKind::Export => Ok(Statement::Export(self.parse_export()?)),
-            TokenKind::Namespace | TokenKind::Module => {
-                Ok(Statement::NamespaceDeclaration(self.parse_namespace()?))
-            }
+            TokenKind::Import => Ok(Statement::Import(Box::new(self.parse_import()?))),
+            TokenKind::Export => Ok(Statement::Export(Box::new(self.parse_export()?))),
+            TokenKind::Namespace | TokenKind::Module => Ok(Statement::NamespaceDeclaration(
+                Box::new(self.parse_namespace()?),
+            )),
             _ => {
                 // Expression statement
                 let expr = self.parse_expression()?;
@@ -229,7 +233,7 @@ impl<'a> Parser<'a> {
 
         // Optional type annotation
         let type_annotation = if self.match_token(&TokenKind::Colon) {
-            Some(self.parse_type_annotation()?)
+            Some(Box::new(self.parse_type_annotation()?))
         } else {
             None
         };
@@ -359,7 +363,7 @@ impl<'a> Parser<'a> {
         self.require_token(&TokenKind::RBrace)?;
 
         let type_annotation = if self.match_token(&TokenKind::Colon) {
-            Some(self.parse_type_annotation()?)
+            Some(Box::new(self.parse_type_annotation()?))
         } else {
             None
         };
@@ -423,7 +427,7 @@ impl<'a> Parser<'a> {
         self.require_token(&TokenKind::RBracket)?;
 
         let type_annotation = if self.match_token(&TokenKind::Colon) {
-            Some(self.parse_type_annotation()?)
+            Some(Box::new(self.parse_type_annotation()?))
         } else {
             None
         };
@@ -509,7 +513,7 @@ impl<'a> Parser<'a> {
             let optional = self.match_token(&TokenKind::Question);
 
             let type_annotation = if self.match_token(&TokenKind::Colon) {
-                Some(self.parse_type_annotation()?)
+                Some(Box::new(self.parse_type_annotation()?))
             } else {
                 None
             };
@@ -687,12 +691,12 @@ impl<'a> Parser<'a> {
             let params = self.parse_function_params()?;
             let body = self.parse_block_statement()?;
             let span = self.span_from(start);
-            return Ok(ClassMember::Constructor(ClassConstructor {
+            return Ok(ClassMember::Constructor(Box::new(ClassConstructor {
                 params,
                 body,
                 accessibility,
                 span,
-            }));
+            })));
         }
 
         // Check for getter/setter
@@ -739,7 +743,7 @@ impl<'a> Parser<'a> {
             };
 
             let span = self.span_from(start);
-            Ok(ClassMember::Method(ClassMethod {
+            Ok(ClassMember::Method(Box::new(ClassMethod {
                 key,
                 value,
                 kind: method_kind,
@@ -748,18 +752,18 @@ impl<'a> Parser<'a> {
                 accessibility,
                 decorators,
                 span,
-            }))
+            })))
         } else {
             // Property
             let optional = self.match_token(&TokenKind::Question);
             let type_annotation = if self.match_token(&TokenKind::Colon) {
-                Some(self.parse_type_annotation()?)
+                Some(Box::new(self.parse_type_annotation()?))
             } else {
                 None
             };
 
             let value = if self.match_token(&TokenKind::Eq) {
-                Some(self.parse_assignment_expression()?)
+                Some(Box::new(self.parse_assignment_expression()?))
             } else {
                 None
             };
@@ -767,7 +771,7 @@ impl<'a> Parser<'a> {
             self.expect_semicolon()?;
 
             let span = self.span_from(start);
-            Ok(ClassMember::Property(ClassProperty {
+            Ok(ClassMember::Property(Box::new(ClassProperty {
                 key,
                 value,
                 type_annotation,
@@ -779,7 +783,7 @@ impl<'a> Parser<'a> {
                 accessibility,
                 decorators,
                 span,
-            }))
+            })))
         }
     }
 
@@ -892,7 +896,7 @@ impl<'a> Parser<'a> {
 
             // Parse optional type annotation (for TypeScript)
             let type_ann = if self.match_token(&TokenKind::Colon) {
-                Some(self.parse_type_annotation()?)
+                Some(Box::new(self.parse_type_annotation()?))
             } else {
                 None
             };
@@ -919,23 +923,23 @@ impl<'a> Parser<'a> {
                 });
 
                 return if is_of {
-                    Ok(Statement::ForOf(ForOfStatement {
+                    Ok(Statement::ForOf(Box::new(ForOfStatement {
                         left,
                         right: Rc::new(right),
                         body,
                         await_: is_await,
                         span,
-                    }))
+                    })))
                 } else {
                     if is_await {
                         return Err(self.error("for await is only valid with for-of loops"));
                     }
-                    Ok(Statement::ForIn(ForInStatement {
+                    Ok(Statement::ForIn(Box::new(ForInStatement {
                         left,
                         right: Rc::new(right),
                         body,
                         span,
-                    }))
+                    })))
                 };
             }
 
@@ -988,23 +992,23 @@ impl<'a> Parser<'a> {
                 let left = ForInOfLeft::Pattern(self.expression_to_pattern(&expr)?);
 
                 return if is_of {
-                    Ok(Statement::ForOf(ForOfStatement {
+                    Ok(Statement::ForOf(Box::new(ForOfStatement {
                         left,
                         right: Rc::new(right),
                         body,
                         await_: is_await,
                         span,
-                    }))
+                    })))
                 } else {
                     if is_await {
                         return Err(self.error("for await is only valid with for-of loops"));
                     }
-                    Ok(Statement::ForIn(ForInStatement {
+                    Ok(Statement::ForIn(Box::new(ForInStatement {
                         left,
                         right: Rc::new(right),
                         body,
                         span,
-                    }))
+                    })))
                 };
             }
 
@@ -1036,13 +1040,13 @@ impl<'a> Parser<'a> {
         let body = Rc::new(self.parse_statement()?);
 
         let span = self.span_from(start);
-        Ok(Statement::For(ForStatement {
+        Ok(Statement::For(Box::new(ForStatement {
             init,
             test,
             update,
             body,
             span,
-        }))
+        })))
     }
 
     fn parse_while_statement(&mut self) -> Result<Statement, JsError> {
@@ -1155,12 +1159,12 @@ impl<'a> Parser<'a> {
         }
 
         let span = self.span_from(start);
-        Ok(Statement::Try(TryStatement {
+        Ok(Statement::Try(Box::new(TryStatement {
             block,
             handler,
             finalizer,
             span,
-        }))
+        })))
     }
 
     fn parse_return_statement(&mut self) -> Result<Statement, JsError> {
@@ -1265,7 +1269,7 @@ impl<'a> Parser<'a> {
         let id = self.parse_identifier()?;
         let type_parameters = self.parse_optional_type_parameters()?;
         self.require_token(&TokenKind::Eq)?;
-        let type_annotation = self.parse_type_annotation()?;
+        let type_annotation = Box::new(self.parse_type_annotation()?);
         self.expect_semicolon()?;
 
         let span = self.span_from(start);
@@ -1487,7 +1491,7 @@ impl<'a> Parser<'a> {
                 let type_alias = self.parse_type_alias_after_type_keyword()?;
                 let span = self.span_from(start);
                 return Ok(ExportDeclaration {
-                    declaration: Some(Box::new(Statement::TypeAlias(type_alias))),
+                    declaration: Some(Box::new(Statement::TypeAlias(Box::new(type_alias)))),
                     specifiers: vec![],
                     source: None,
                     namespace_export: None,
@@ -1512,7 +1516,7 @@ impl<'a> Parser<'a> {
                 if self.check(&TokenKind::Class) {
                     let mut class_decl = self.parse_class_declaration()?;
                     class_decl.decorators = all_decorators;
-                    Some(Box::new(Statement::ClassDeclaration(class_decl)))
+                    Some(Box::new(Statement::ClassDeclaration(Box::new(class_decl))))
                 } else {
                     return Err(JsError::syntax_error(
                         "Decorators can only be applied to class declarations".to_string(),
@@ -1526,15 +1530,15 @@ impl<'a> Parser<'a> {
                 self.require_token(&TokenKind::Function)?;
                 let mut func = self.parse_function_declaration_inner()?;
                 func.async_ = true;
-                Some(Box::new(Statement::FunctionDeclaration(func)))
+                Some(Box::new(Statement::FunctionDeclaration(Box::new(func))))
             } else if self.check(&TokenKind::Function) {
-                Some(Box::new(Statement::FunctionDeclaration(
+                Some(Box::new(Statement::FunctionDeclaration(Box::new(
                     self.parse_function_declaration(false)?,
-                )))
+                ))))
             } else if self.check(&TokenKind::Class) {
                 let mut class_decl = self.parse_class_declaration()?;
                 class_decl.decorators = decorators;
-                Some(Box::new(Statement::ClassDeclaration(class_decl)))
+                Some(Box::new(Statement::ClassDeclaration(Box::new(class_decl))))
             } else {
                 let expr = self.parse_assignment_expression()?;
                 self.expect_semicolon()?;
@@ -1640,23 +1644,27 @@ impl<'a> Parser<'a> {
                 self.require_token(&TokenKind::Function)?;
                 let mut func = self.parse_function_declaration_inner()?;
                 func.async_ = true;
-                Some(Box::new(Statement::FunctionDeclaration(func)))
+                Some(Box::new(Statement::FunctionDeclaration(Box::new(func))))
             }
-            TokenKind::Function => Some(Box::new(Statement::FunctionDeclaration(
+            TokenKind::Function => Some(Box::new(Statement::FunctionDeclaration(Box::new(
                 self.parse_function_declaration(false)?,
-            ))),
+            )))),
             TokenKind::Class => {
                 let mut class_decl = self.parse_class_declaration()?;
                 class_decl.decorators = decorators;
-                Some(Box::new(Statement::ClassDeclaration(class_decl)))
+                Some(Box::new(Statement::ClassDeclaration(Box::new(class_decl))))
             }
-            TokenKind::Interface => Some(Box::new(Statement::InterfaceDeclaration(
+            TokenKind::Interface => Some(Box::new(Statement::InterfaceDeclaration(Box::new(
                 self.parse_interface()?,
-            ))),
-            TokenKind::Type => Some(Box::new(Statement::TypeAlias(self.parse_type_alias()?))),
-            TokenKind::Enum => Some(Box::new(Statement::EnumDeclaration(self.parse_enum()?))),
+            )))),
+            TokenKind::Type => Some(Box::new(Statement::TypeAlias(Box::new(
+                self.parse_type_alias()?,
+            )))),
+            TokenKind::Enum => Some(Box::new(Statement::EnumDeclaration(Box::new(
+                self.parse_enum()?,
+            )))),
             TokenKind::Namespace | TokenKind::Module => Some(Box::new(
-                Statement::NamespaceDeclaration(self.parse_namespace()?),
+                Statement::NamespaceDeclaration(Box::new(self.parse_namespace()?)),
             )),
             _ => return Err(self.unexpected_token("export declaration")),
         };
@@ -1714,12 +1722,12 @@ impl<'a> Parser<'a> {
             let right = Rc::new(self.parse_assignment_expression()?);
             let left = self.expression_to_assignment_target(&expr)?;
             let span = self.span_from(start);
-            return Ok(Expression::Assignment(AssignmentExpression {
+            return Ok(Expression::Assignment(Box::new(AssignmentExpression {
                 operator: op,
                 left,
                 right,
                 span,
-            }));
+            })));
         }
 
         Ok(expr)
@@ -1912,7 +1920,7 @@ impl<'a> Parser<'a> {
                     let span = self.span_from(start);
                     return Ok(Some(Expression::TypeAssertion(TypeAssertionExpression {
                         expression: Rc::new(expr),
-                        type_annotation: type_ann,
+                        type_annotation: Box::new(type_ann),
                         span,
                     })));
                 }
@@ -1964,12 +1972,12 @@ impl<'a> Parser<'a> {
                     (vec![], None)
                 };
             let span = self.span_from(start);
-            Expression::New(NewExpression {
+            Expression::New(Box::new(NewExpression {
                 callee,
                 arguments,
                 type_arguments,
                 span,
-            })
+            }))
         } else {
             self.parse_member_expression()?
         };
@@ -1996,36 +2004,36 @@ impl<'a> Parser<'a> {
                 }
                 let (arguments, type_arguments) = self.parse_call_arguments()?;
                 let span = self.span_from(start);
-                expr = Expression::Call(CallExpression {
+                expr = Expression::Call(Box::new(CallExpression {
                     callee: Rc::new(expr),
                     arguments,
                     type_arguments,
                     optional: false,
                     span,
-                });
+                }));
             } else if self.match_token(&TokenKind::Dot) {
                 // Check for private identifier (#name)
                 if self.match_token(&TokenKind::Hash) {
                     let name = self.parse_private_identifier()?;
                     let span = self.span_from(start);
-                    expr = Expression::Member(MemberExpression {
+                    expr = Expression::Member(Box::new(MemberExpression {
                         object: Rc::new(expr),
                         property: MemberProperty::PrivateIdentifier(name),
                         computed: false,
                         optional: false,
                         span,
-                    });
+                    }));
                 } else {
                     // After a dot, any identifier or keyword can be used as a property name
                     let property = self.parse_identifier_name()?;
                     let span = self.span_from(start);
-                    expr = Expression::Member(MemberExpression {
+                    expr = Expression::Member(Box::new(MemberExpression {
                         object: Rc::new(expr),
                         property: MemberProperty::Identifier(property),
                         computed: false,
                         optional: false,
                         span,
-                    });
+                    }));
                 }
             } else if self.match_token(&TokenKind::LBracket) {
                 // Inside [...] brackets, 'in' is allowed as binary operator
@@ -2036,13 +2044,13 @@ impl<'a> Parser<'a> {
                 let property = property?;
                 self.require_token(&TokenKind::RBracket)?;
                 let span = self.span_from(start);
-                expr = Expression::Member(MemberExpression {
+                expr = Expression::Member(Box::new(MemberExpression {
                     object: Rc::new(expr),
                     property: MemberProperty::Expression(Rc::new(property)),
                     computed: true,
                     optional: false,
                     span,
-                });
+                }));
             } else if let TokenKind::TemplateHead(s) = self.current.kind.clone() {
                 // Tagged template literal with substitutions: tag`...${...}...`
                 let template_start = self.current.span;
@@ -2050,18 +2058,18 @@ impl<'a> Parser<'a> {
                 let template = self.parse_template_literal(s, template_start)?;
                 if let Expression::Template(quasi) = template {
                     let span = self.span_from(start);
-                    expr = Expression::TaggedTemplate(TaggedTemplateExpression {
+                    expr = Expression::TaggedTemplate(Box::new(TaggedTemplateExpression {
                         tag: Rc::new(expr),
-                        quasi,
+                        quasi: *quasi,
                         span,
-                    });
+                    }));
                 }
             } else if let TokenKind::TemplateNoSub(s) = self.current.kind.clone() {
                 // Tagged template literal without substitutions: tag`...`
                 let template_start = self.current.span;
                 self.advance(); // consume TemplateNoSub
                 let span = self.span_from(start);
-                expr = Expression::TaggedTemplate(TaggedTemplateExpression {
+                expr = Expression::TaggedTemplate(Box::new(TaggedTemplateExpression {
                     tag: Rc::new(expr),
                     quasi: TemplateLiteral {
                         quasis: vec![TemplateElement {
@@ -2073,7 +2081,7 @@ impl<'a> Parser<'a> {
                         span: template_start,
                     },
                     span,
-                });
+                }));
             } else if self.match_token(&TokenKind::QuestionDot) {
                 // Optional chaining - mark that we're in an optional chain
                 in_optional_chain = true;
@@ -2081,13 +2089,13 @@ impl<'a> Parser<'a> {
                 if self.check(&TokenKind::LParen) {
                     let (arguments, type_arguments) = self.parse_call_arguments()?;
                     let span = self.span_from(start);
-                    expr = Expression::Call(CallExpression {
+                    expr = Expression::Call(Box::new(CallExpression {
                         callee: Rc::new(expr),
                         arguments,
                         type_arguments,
                         optional: true,
                         span,
-                    });
+                    }));
                 } else if self.match_token(&TokenKind::LBracket) {
                     // Inside [...] brackets, 'in' is allowed as binary operator
                     let saved_no_in = self.no_in;
@@ -2097,24 +2105,24 @@ impl<'a> Parser<'a> {
                     let property = property?;
                     self.require_token(&TokenKind::RBracket)?;
                     let span = self.span_from(start);
-                    expr = Expression::Member(MemberExpression {
+                    expr = Expression::Member(Box::new(MemberExpression {
                         object: Rc::new(expr),
                         property: MemberProperty::Expression(Rc::new(property)),
                         computed: true,
                         optional: true,
                         span,
-                    });
+                    }));
                 } else {
                     // After ?. any identifier or keyword can be used as a property name
                     let property = self.parse_identifier_name()?;
                     let span = self.span_from(start);
-                    expr = Expression::Member(MemberExpression {
+                    expr = Expression::Member(Box::new(MemberExpression {
                         object: Rc::new(expr),
                         property: MemberProperty::Identifier(property),
                         computed: false,
                         optional: true,
                         span,
-                    });
+                    }));
                 }
             } else if self.check(&TokenKind::Bang) && !self.lexer.had_newline_before() {
                 // TypeScript non-null assertion (!)
@@ -2149,7 +2157,7 @@ impl<'a> Parser<'a> {
                 // "as const" is a no-op at runtime - the value stays the same
                 // Just continue without wrapping in TypeAssertion
             } else {
-                let type_annotation = self.parse_type_annotation()?;
+                let type_annotation = Box::new(self.parse_type_annotation()?);
                 let span = self.span_from(start);
                 expr = Expression::TypeAssertion(TypeAssertionExpression {
                     expression: Rc::new(expr),
@@ -2172,24 +2180,24 @@ impl<'a> Parser<'a> {
                 if self.match_token(&TokenKind::Hash) {
                     let name = self.parse_private_identifier()?;
                     let span = self.span_from(start);
-                    expr = Expression::Member(MemberExpression {
+                    expr = Expression::Member(Box::new(MemberExpression {
                         object: Rc::new(expr),
                         property: MemberProperty::PrivateIdentifier(name),
                         computed: false,
                         optional: false,
                         span,
-                    });
+                    }));
                 } else {
                     // After a dot, any identifier or keyword can be used as a property name
                     let property = self.parse_identifier_name()?;
                     let span = self.span_from(start);
-                    expr = Expression::Member(MemberExpression {
+                    expr = Expression::Member(Box::new(MemberExpression {
                         object: Rc::new(expr),
                         property: MemberProperty::Identifier(property),
                         computed: false,
                         optional: false,
                         span,
-                    });
+                    }));
                 }
             } else if self.match_token(&TokenKind::LBracket) {
                 // Inside [...] brackets, 'in' is allowed as binary operator
@@ -2200,13 +2208,13 @@ impl<'a> Parser<'a> {
                 let property = property?;
                 self.require_token(&TokenKind::RBracket)?;
                 let span = self.span_from(start);
-                expr = Expression::Member(MemberExpression {
+                expr = Expression::Member(Box::new(MemberExpression {
                     object: Rc::new(expr),
                     property: MemberProperty::Expression(Rc::new(property)),
                     computed: true,
                     optional: false,
                     span,
-                });
+                }));
             } else {
                 break;
             }
@@ -2223,47 +2231,47 @@ impl<'a> Parser<'a> {
             TokenKind::Number(n) => {
                 let n = *n;
                 self.advance();
-                Ok(Expression::Literal(Literal {
+                Ok(Expression::Literal(Box::new(Literal {
                     value: LiteralValue::Number(n),
                     span: self.span_from(start),
-                }))
+                })))
             }
             TokenKind::String(s) => {
                 let s = s.clone();
                 self.advance();
-                Ok(Expression::Literal(Literal {
+                Ok(Expression::Literal(Box::new(Literal {
                     value: LiteralValue::String(s),
                     span: self.span_from(start),
-                }))
+                })))
             }
             TokenKind::BigInt(s) => {
                 let s = s.clone();
                 self.advance();
-                Ok(Expression::Literal(Literal {
+                Ok(Expression::Literal(Box::new(Literal {
                     value: LiteralValue::BigInt(s),
                     span: self.span_from(start),
-                }))
+                })))
             }
             TokenKind::True => {
                 self.advance();
-                Ok(Expression::Literal(Literal {
+                Ok(Expression::Literal(Box::new(Literal {
                     value: LiteralValue::Boolean(true),
                     span: self.span_from(start),
-                }))
+                })))
             }
             TokenKind::False => {
                 self.advance();
-                Ok(Expression::Literal(Literal {
+                Ok(Expression::Literal(Box::new(Literal {
                     value: LiteralValue::Boolean(false),
                     span: self.span_from(start),
-                }))
+                })))
             }
             TokenKind::Null => {
                 self.advance();
-                Ok(Expression::Literal(Literal {
+                Ok(Expression::Literal(Box::new(Literal {
                     value: LiteralValue::Null,
                     span: self.span_from(start),
-                }))
+                })))
             }
             TokenKind::Identifier(_)
             // Contextual keywords can also be used as identifiers in expressions
@@ -2338,7 +2346,7 @@ impl<'a> Parser<'a> {
                 let decorators = self.parse_decorators()?;
                 if self.check(&TokenKind::Class) {
                     let decl = self.parse_class_declaration()?;
-                    Ok(Expression::Class(ClassExpression {
+                    Ok(Expression::Class(Box::new(ClassExpression {
                         id: decl.id,
                         type_parameters: decl.type_parameters,
                         super_class: decl.super_class,
@@ -2346,7 +2354,7 @@ impl<'a> Parser<'a> {
                         body: decl.body,
                         decorators,
                         span: decl.span,
-                    }))
+                    })))
                 } else {
                     Err(JsError::syntax_error(
                         "Decorators can only be applied to class expressions in expression position"
@@ -2364,7 +2372,7 @@ impl<'a> Parser<'a> {
             TokenKind::TemplateNoSub(s) => {
                 let s = s.clone();
                 self.advance();
-                Ok(Expression::Template(TemplateLiteral {
+                Ok(Expression::Template(Box::new(TemplateLiteral {
                     quasis: vec![TemplateElement {
                         value: s,
                         tail: true,
@@ -2372,7 +2380,7 @@ impl<'a> Parser<'a> {
                     }],
                     expressions: vec![],
                     span: self.span_from(start),
-                }))
+                })))
             }
             TokenKind::TemplateHead(s) => {
                 let s = s.clone();
@@ -2387,10 +2395,10 @@ impl<'a> Parser<'a> {
                 let token = self.lexer.rescan_as_regexp(self.current.span);
                 if let TokenKind::RegExp(pattern, flags) = token.kind {
                     self.current = self.lexer.next_token();
-                    Ok(Expression::Literal(Literal {
+                    Ok(Expression::Literal(Box::new(Literal {
                         value: LiteralValue::RegExp { pattern, flags },
                         span: self.span_from(start),
-                    }))
+                    })))
                 } else {
                     Err(self.unexpected_token("regexp literal"))
                 }
@@ -2451,7 +2459,7 @@ impl<'a> Parser<'a> {
                 let span = self.span_from(arg_start);
                 properties.push(ObjectProperty::Spread(SpreadElement { argument, span }));
             } else {
-                properties.push(ObjectProperty::Property(self.parse_property()?));
+                properties.push(ObjectProperty::Property(Box::new(self.parse_property()?)));
             }
 
             if !self.match_token(&TokenKind::Comma) {
@@ -2518,7 +2526,7 @@ impl<'a> Parser<'a> {
             let body = Rc::new(self.parse_block_statement()?);
 
             let func_span = self.span_from(start);
-            let value = Expression::Function(FunctionExpression {
+            let value = Expression::Function(Box::new(FunctionExpression {
                 id: None,
                 params,
                 return_type,
@@ -2527,7 +2535,7 @@ impl<'a> Parser<'a> {
                 generator: is_generator,
                 async_: is_async,
                 span: func_span,
-            });
+            }));
 
             let span = self.span_from(start);
             return Ok(Property {
@@ -2639,7 +2647,7 @@ impl<'a> Parser<'a> {
                     let rest_start = self.current.span;
                     let pattern = self.parse_binding_pattern()?;
                     let type_ann = if self.match_token(&TokenKind::Colon) {
-                        Some(self.parse_type_annotation()?)
+                        Some(Box::new(self.parse_type_annotation()?))
                     } else {
                         None
                     };
@@ -2728,7 +2736,7 @@ impl<'a> Parser<'a> {
             let optional = self.match_token(&TokenKind::Question);
 
             let type_annotation = if self.match_token(&TokenKind::Colon) {
-                Some(self.parse_type_annotation()?)
+                Some(Box::new(self.parse_type_annotation()?))
             } else {
                 None
             };
@@ -2796,14 +2804,16 @@ impl<'a> Parser<'a> {
         };
 
         let span = self.span_from(start);
-        Ok(Expression::ArrowFunction(ArrowFunctionExpression {
-            params: params.into(),
-            return_type,
-            type_parameters: None,
-            body: Rc::new(body),
-            async_: is_async,
-            span,
-        }))
+        Ok(Expression::ArrowFunction(Box::new(
+            ArrowFunctionExpression {
+                params: params.into(),
+                return_type,
+                type_parameters: None,
+                body: Rc::new(body),
+                async_: is_async,
+                span,
+            },
+        )))
     }
 
     fn parse_async_expression(&mut self) -> Result<Expression, JsError> {
@@ -2878,7 +2888,7 @@ impl<'a> Parser<'a> {
         let pattern = self.parse_binding_pattern()?;
         let optional = self.match_token(&TokenKind::Question);
         let type_annotation = if self.match_token(&TokenKind::Colon) {
-            Some(self.parse_type_annotation()?)
+            Some(Box::new(self.parse_type_annotation()?))
         } else {
             None
         };
@@ -2916,7 +2926,7 @@ impl<'a> Parser<'a> {
         let body = Rc::new(self.parse_block_statement()?);
 
         let span = self.span_from(start);
-        Ok(Expression::Function(FunctionExpression {
+        Ok(Expression::Function(Box::new(FunctionExpression {
             id,
             params,
             return_type,
@@ -2925,12 +2935,12 @@ impl<'a> Parser<'a> {
             generator,
             async_: is_async,
             span,
-        }))
+        })))
     }
 
     fn parse_class_expression(&mut self) -> Result<Expression, JsError> {
         let decl = self.parse_class_declaration()?;
-        Ok(Expression::Class(ClassExpression {
+        Ok(Expression::Class(Box::new(ClassExpression {
             id: decl.id,
             type_parameters: decl.type_parameters,
             super_class: decl.super_class,
@@ -2938,7 +2948,7 @@ impl<'a> Parser<'a> {
             body: decl.body,
             decorators: decl.decorators,
             span: decl.span,
-        }))
+        })))
     }
 
     fn parse_template_literal(
@@ -2998,11 +3008,11 @@ impl<'a> Parser<'a> {
         self.current = self.lexer.next_token();
 
         let span = self.span_from(start);
-        Ok(Expression::Template(TemplateLiteral {
+        Ok(Expression::Template(Box::new(TemplateLiteral {
             quasis,
             expressions,
             span,
-        }))
+        })))
     }
 
     /// Try to parse a call expression with type arguments: fn<T>(args)
@@ -3060,13 +3070,13 @@ impl<'a> Parser<'a> {
         self.require_token(&TokenKind::RParen)?;
 
         let span = self.span_from(start);
-        Ok(Some(Expression::Call(CallExpression {
+        Ok(Some(Expression::Call(Box::new(CallExpression {
             callee: Rc::new(callee),
             arguments,
             type_arguments: Some(type_args),
             optional: false,
             span,
-        })))
+        }))))
     }
 
     /// Parse type arguments: <T, U, V>
@@ -3657,7 +3667,7 @@ impl<'a> Parser<'a> {
 
             // Type annotation (required for function type params to distinguish from parenthesized)
             let type_annotation = if self.match_token(&TokenKind::Colon) {
-                Some(self.parse_type_annotation()?)
+                Some(Box::new(self.parse_type_annotation()?))
             } else {
                 None
             };
@@ -3830,10 +3840,10 @@ impl<'a> Parser<'a> {
                 self.advance(); // consume [
                 let key = self.parse_identifier()?;
                 self.require_token(&TokenKind::Colon)?;
-                let key_type = self.parse_type_annotation()?;
+                let key_type = Box::new(self.parse_type_annotation()?);
                 self.require_token(&TokenKind::RBracket)?;
                 self.require_token(&TokenKind::Colon)?;
-                let value_type = self.parse_type_annotation()?;
+                let value_type = Box::new(self.parse_type_annotation()?);
 
                 let span = self.span_from(start);
                 members.push(TypeMember::Index(IndexSignature {
@@ -3865,7 +3875,7 @@ impl<'a> Parser<'a> {
                 } else {
                     // Property signature
                     let type_annotation = if self.match_token(&TokenKind::Colon) {
-                        Some(self.parse_type_annotation()?)
+                        Some(Box::new(self.parse_type_annotation()?))
                     } else {
                         None
                     };
@@ -3963,7 +3973,7 @@ impl<'a> Parser<'a> {
         Ok(Some(TypeArguments { params, span }))
     }
 
-    fn parse_optional_return_type(&mut self) -> Result<Option<TypeAnnotation>, JsError> {
+    fn parse_optional_return_type(&mut self) -> Result<Option<Box<TypeAnnotation>>, JsError> {
         if self.match_token(&TokenKind::Colon) {
             // Check for type predicate: param is Type
             // This is an identifier followed by 'is' keyword
@@ -3972,13 +3982,15 @@ impl<'a> Parser<'a> {
                 let param_name = self.parse_identifier()?;
                 self.require_token(&TokenKind::Is)?;
                 let type_annotation = Box::new(self.parse_type_annotation()?);
-                Ok(Some(TypeAnnotation::TypePredicate(TypePredicateType {
-                    parameter_name: param_name,
-                    type_annotation,
-                    span: self.span_from(start),
-                })))
+                Ok(Some(Box::new(TypeAnnotation::TypePredicate(
+                    TypePredicateType {
+                        parameter_name: param_name,
+                        type_annotation,
+                        span: self.span_from(start),
+                    },
+                ))))
             } else {
-                Ok(Some(self.parse_type_annotation()?))
+                Ok(Some(Box::new(self.parse_type_annotation()?)))
             }
         } else {
             Ok(None)
@@ -4655,7 +4667,7 @@ impl<'a> Parser<'a> {
     ) -> Result<AssignmentTarget, JsError> {
         match expr {
             Expression::Identifier(id) => Ok(AssignmentTarget::Identifier(id.clone())),
-            Expression::Member(m) => Ok(AssignmentTarget::Member(m.clone())),
+            Expression::Member(m) => Ok(AssignmentTarget::Member((**m).clone())),
             Expression::Object(_) | Expression::Array(_) => {
                 let pattern = self.expression_to_pattern(expr)?;
                 Ok(AssignmentTarget::Pattern(pattern))
