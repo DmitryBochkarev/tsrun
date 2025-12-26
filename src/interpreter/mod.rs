@@ -1769,18 +1769,14 @@ impl Interpreter {
             JsValue::Boolean(false) => self.intern("false"),
             JsValue::Number(n) => JsString::from(crate::value::number_to_string(*n)),
             JsValue::String(s) => s.cheap_clone(),
-            JsValue::Symbol(s) => {
-                match &s.description {
-                    Some(desc) => JsString::from(format!("Symbol({})", desc.as_str())),
-                    None => self.intern("Symbol()"),
-                }
-            }
+            JsValue::Symbol(s) => match &s.description {
+                Some(desc) => JsString::from(format!("Symbol({})", desc.as_str())),
+                None => self.intern("Symbol()"),
+            },
             JsValue::Object(obj) => {
                 let borrowed = obj.borrow();
                 match &borrowed.exotic {
-                    ExoticObject::Number(n) => {
-                        JsString::from(crate::value::number_to_string(*n))
-                    }
+                    ExoticObject::Number(n) => JsString::from(crate::value::number_to_string(*n)),
                     ExoticObject::StringObj(s) => s.cheap_clone(),
                     ExoticObject::Boolean(b) => {
                         if *b {
@@ -2897,14 +2893,16 @@ impl Interpreter {
     /// This properly calls the object's valueOf/toString methods per ECMAScript spec.
     pub fn coerce_to_number(&mut self, value: &JsValue) -> Result<f64, JsError> {
         match value {
-            JsValue::Symbol(_) => {
-                Err(JsError::type_error("Cannot convert a Symbol value to a number"))
-            }
+            JsValue::Symbol(_) => Err(JsError::type_error(
+                "Cannot convert a Symbol value to a number",
+            )),
             JsValue::Object(_) => {
                 let prim = self.coerce_to_primitive(value, "number")?;
                 // The primitive could be a Symbol if valueOf returns one
                 if matches!(prim, JsValue::Symbol(_)) {
-                    return Err(JsError::type_error("Cannot convert a Symbol value to a number"));
+                    return Err(JsError::type_error(
+                        "Cannot convert a Symbol value to a number",
+                    ));
                 }
                 Ok(prim.to_number())
             }

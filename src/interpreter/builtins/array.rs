@@ -2097,10 +2097,9 @@ fn array_iterator_next(
 
         // Re-create the key since it was consumed above
         let index_key = interp.property_key("__index__");
-        iter_obj.borrow_mut().set_property(
-            index_key,
-            JsValue::Number((index + 1) as f64),
-        );
+        iter_obj
+            .borrow_mut()
+            .set_property(index_key, JsValue::Number((index + 1) as f64));
 
         let guard = interp.heap.create_guard();
         let result = interp.create_object_raw(&guard);

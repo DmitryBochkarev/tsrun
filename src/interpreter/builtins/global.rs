@@ -847,8 +847,7 @@ fn clone_object(
                 regexp_ref.set_property(key_global, JsValue::Boolean(flags_clone.contains('g')));
                 regexp_ref
                     .set_property(key_ignore_case, JsValue::Boolean(flags_clone.contains('i')));
-                regexp_ref
-                    .set_property(key_multiline, JsValue::Boolean(flags_clone.contains('m')));
+                regexp_ref.set_property(key_multiline, JsValue::Boolean(flags_clone.contains('m')));
                 regexp_ref.set_property(key_dot_all, JsValue::Boolean(flags_clone.contains('s')));
                 regexp_ref.set_property(key_unicode, JsValue::Boolean(flags_clone.contains('u')));
                 regexp_ref.set_property(key_sticky, JsValue::Boolean(flags_clone.contains('y')));
@@ -989,4 +988,3 @@ fn clone_object(
         }
     }
 }
-

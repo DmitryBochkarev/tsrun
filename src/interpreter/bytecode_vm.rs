@@ -3705,7 +3705,8 @@ impl BytecodeVM {
                 }
 
                 // Use from_value to handle numeric string keys correctly (e.g., "2" -> Index(2))
-                let prop_key = interp.property_key_from_value(&JsValue::String(method_name.cheap_clone()));
+                let prop_key =
+                    interp.property_key_from_value(&JsValue::String(method_name.cheap_clone()));
 
                 if is_static {
                     // Add to class constructor directly
@@ -4859,9 +4860,7 @@ impl BytecodeVM {
                                     val.clone(),
                                     &[],
                                 ) {
-                                    Ok(Guarded { value, guard: _ }) => {
-                                        interp.to_js_string(&value)
-                                    }
+                                    Ok(Guarded { value, guard: _ }) => interp.to_js_string(&value),
                                     Err(_) => interp.to_js_string(val),
                                 }
                             } else {
@@ -5397,11 +5396,7 @@ impl BytecodeVM {
                         // Property has a getter - invoke it
                         if let Some(getter) = prop.getter() {
                             // call_function already returns Guarded
-                            interp.call_function(
-                                JsValue::Object(getter.clone()),
-                                obj.clone(),
-                                &[],
-                            )
+                            interp.call_function(JsValue::Object(getter.clone()), obj.clone(), &[])
                         } else {
                             Ok(Guarded::unguarded(JsValue::Undefined))
                         }
