@@ -3390,7 +3390,6 @@ impl BytecodeVM {
                 // Check if this is our internal array iterator
                 let array_prop = iter_obj
                     .borrow()
-                    // FIXME: use interned property key
                     .get_property(&PropertyKey::String(interp.intern("__array__")));
                 if let Some(JsValue::Object(arr_ref)) = array_prop {
                     // If the array is a proxy, fall through to custom iterator path
