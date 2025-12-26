@@ -2340,7 +2340,6 @@ pub enum ExoticObject {
     /// Date exotic object - stores timestamp in milliseconds since Unix epoch
     Date { timestamp: f64 },
     /// RegExp exotic object - stores pattern and flags
-    // FIXME: use JsStrings
     RegExp { pattern: String, flags: String },
     /// Generator exotic object - stores generator state (AST-based)
     Generator(Rc<RefCell<GeneratorState>>),
