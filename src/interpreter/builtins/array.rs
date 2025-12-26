@@ -799,7 +799,7 @@ pub fn array_concat(
 }
 
 pub fn array_join(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
@@ -809,16 +809,10 @@ pub fn array_join(
         ));
     };
 
-    let separator = args
-        .first()
-        .map(|v| {
-            if matches!(v, JsValue::Undefined) {
-                ",".to_string()
-            } else {
-                v.to_js_string().to_string()
-            }
-        })
-        .unwrap_or_else(|| ",".to_string());
+    let separator = match args.first() {
+        Some(v) if !matches!(v, JsValue::Undefined) => interp.to_js_string(v).to_string(),
+        _ => ",".to_string(),
+    };
 
     let length = arr
         .borrow()
@@ -834,7 +828,7 @@ pub fn array_join(
 
         let part = match elem {
             JsValue::Undefined | JsValue::Null => String::new(),
-            _ => elem.to_js_string().to_string(),
+            _ => interp.to_js_string(&elem).to_string(),
         };
         parts.push(part);
     }
@@ -1084,11 +1078,16 @@ pub fn array_sort(
             }
         }
     } else {
-        elements.sort_by(|a, b| {
-            let a_str = a.to_js_string();
-            let b_str = b.to_js_string();
-            a_str.as_str().cmp(b_str.as_str())
-        });
+        // Pre-compute string representations for sorting
+        let mut pairs: Vec<(JsString, JsValue)> = elements
+            .into_iter()
+            .map(|v| {
+                let s = interp.to_js_string(&v);
+                (s, v)
+            })
+            .collect();
+        pairs.sort_by(|(a_str, _), (b_str, _)| a_str.as_str().cmp(b_str.as_str()));
+        elements = pairs.into_iter().map(|(_, v)| v).collect();
     }
 
     {
@@ -1823,11 +1822,16 @@ pub fn array_to_sorted(
             }
         }
     } else {
-        elements.sort_by(|a, b| {
-            let a_str = a.to_js_string();
-            let b_str = b.to_js_string();
-            a_str.as_str().cmp(b_str.as_str())
-        });
+        // Pre-compute string representations for sorting
+        let mut pairs: Vec<(JsString, JsValue)> = elements
+            .into_iter()
+            .map(|v| {
+                let s = interp.to_js_string(&v);
+                (s, v)
+            })
+            .collect();
+        pairs.sort_by(|(a_str, _), (b_str, _)| a_str.as_str().cmp(b_str.as_str()));
+        elements = pairs.into_iter().map(|(_, v)| v).collect();
     }
 
     let guard = interp.heap.create_guard();
@@ -1974,19 +1978,23 @@ pub fn array_values(
     let iter_obj = interp.create_object_raw(&guard);
 
     // Store the array and current index on the iterator
+    let array_key = interp.property_key("__array__");
+    let index_key = interp.property_key("__index__");
+    let next_key = interp.property_key("next");
+
     iter_obj
         .borrow_mut()
-        .set_property(PropertyKey::from("__array__"), JsValue::Object(arr));
+        .set_property(array_key, JsValue::Object(arr));
     iter_obj
         .borrow_mut()
-        .set_property(PropertyKey::from("__index__"), JsValue::Number(0.0));
+        .set_property(index_key, JsValue::Number(0.0));
 
     // Add next() method
     let next_fn = interp.create_native_function("next", array_iterator_next, 0);
     guard.guard(next_fn.cheap_clone());
     iter_obj
         .borrow_mut()
-        .set_property(PropertyKey::from("next"), JsValue::Object(next_fn));
+        .set_property(next_key, JsValue::Object(next_fn));
 
     // Make it its own iterator (for use in for-of)
     let well_known = interp.well_known_symbols;
@@ -2021,13 +2029,15 @@ fn array_iterator_next(
         return Err(JsError::type_error("next called on non-object"));
     };
 
+    // Pre-create property keys
+    let array_key = interp.property_key("__array__");
+    let index_key = interp.property_key("__index__");
+    let value_key = interp.property_key("value");
+    let done_key = interp.property_key("done");
+
     // Get the array and current index
-    let arr = iter_obj
-        .borrow()
-        .get_property(&PropertyKey::from("__array__"));
-    let index = iter_obj
-        .borrow()
-        .get_property(&PropertyKey::from("__index__"));
+    let arr = iter_obj.borrow().get_property(&array_key);
+    let index = iter_obj.borrow().get_property(&index_key);
 
     let Some(JsValue::Object(arr)) = arr else {
         return Err(JsError::type_error("Invalid array iterator"));
@@ -2043,7 +2053,7 @@ fn array_iterator_next(
 
     let length = if is_proxy {
         // Get length through proxy trap
-        let length_key = PropertyKey::String(interp.intern("length"));
+        let length_key = interp.property_key("length");
         let length_result = super::proxy::proxy_get(
             interp,
             arr.cheap_clone(),
@@ -2064,10 +2074,10 @@ fn array_iterator_next(
         let result = interp.create_object_raw(&guard);
         result
             .borrow_mut()
-            .set_property(PropertyKey::from("value"), JsValue::Undefined);
+            .set_property(value_key, JsValue::Undefined);
         result
             .borrow_mut()
-            .set_property(PropertyKey::from("done"), JsValue::Boolean(true));
+            .set_property(done_key, JsValue::Boolean(true));
         Ok(Guarded::with_guard(JsValue::Object(result), guard))
     } else {
         // Get value through proxy if needed
@@ -2085,19 +2095,21 @@ fn array_iterator_next(
                 .unwrap_or(JsValue::Undefined)
         };
 
+        // Re-create the key since it was consumed above
+        let index_key = interp.property_key("__index__");
         iter_obj.borrow_mut().set_property(
-            PropertyKey::from("__index__"),
+            index_key,
             JsValue::Number((index + 1) as f64),
         );
 
         let guard = interp.heap.create_guard();
         let result = interp.create_object_raw(&guard);
+        let value_key = interp.property_key("value");
+        let done_key = interp.property_key("done");
+        result.borrow_mut().set_property(value_key, value);
         result
             .borrow_mut()
-            .set_property(PropertyKey::from("value"), value);
-        result
-            .borrow_mut()
-            .set_property(PropertyKey::from("done"), JsValue::Boolean(false));
+            .set_property(done_key, JsValue::Boolean(false));
         Ok(Guarded::with_guard(JsValue::Object(result), guard))
     }
 }

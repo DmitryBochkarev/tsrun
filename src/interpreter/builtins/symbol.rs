@@ -217,7 +217,7 @@ fn symbol_call(
 ) -> Result<Guarded, JsError> {
     let description = match args.first() {
         None | Some(JsValue::Undefined) => None,
-        Some(other) => Some(other.to_js_string()),
+        Some(other) => Some(interp.to_js_string(other)),
     };
 
     let id = interp.next_symbol_id();
@@ -232,10 +232,10 @@ fn symbol_for(
     _this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    let key = args
-        .first()
-        .map(|v| v.to_js_string())
-        .unwrap_or_else(|| interp.intern("undefined"));
+    let key = match args.first() {
+        Some(v) => interp.to_js_string(v),
+        None => interp.intern("undefined"),
+    };
 
     // Check if symbol already exists in registry
     if let Some(sym) = interp.symbol_registry_get(&key) {

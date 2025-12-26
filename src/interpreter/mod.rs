@@ -718,19 +718,23 @@ impl Interpreter {
     /// JsError::ThrownValue contains a JsValue that may have Gc pointers.
     /// These pointers become invalid when the interpreter/heap is dropped.
     /// This function extracts the error information while it's still valid.
-    fn materialize_thrown_error(&self, error: JsError) -> JsError {
+    fn materialize_thrown_error(&mut self, error: JsError) -> JsError {
         match error {
             JsError::ThrownValue { guarded } => {
                 // Extract error name and message from the thrown value
                 if let JsValue::Object(obj) = &guarded.value {
+                    let name_key = self.property_key("name");
+                    let message_key = self.property_key("message");
                     let obj_ref = obj.borrow();
-                    let name = obj_ref
-                        .get_property(&PropertyKey::from("name"))
-                        .map(|v| v.to_js_string().to_string())
+                    let name_val = obj_ref.get_property(&name_key);
+                    let message_val = obj_ref.get_property(&message_key);
+                    drop(obj_ref);
+
+                    let name = name_val
+                        .map(|v| self.to_js_string(&v).to_string())
                         .unwrap_or_else(|| "Error".to_string());
-                    let message = obj_ref
-                        .get_property(&PropertyKey::from("message"))
-                        .map(|v| v.to_js_string().to_string())
+                    let message = message_val
+                        .map(|v| self.to_js_string(&v).to_string())
                         .unwrap_or_default();
                     JsError::RuntimeError {
                         kind: name,
@@ -739,9 +743,10 @@ impl Interpreter {
                     }
                 } else {
                     // Non-object thrown value - convert to string
+                    let message = self.to_js_string(&guarded.value).to_string();
                     JsError::RuntimeError {
                         kind: "Error".to_string(),
-                        message: guarded.value.to_js_string().to_string(),
+                        message,
                         stack: Vec::new(),
                     }
                 }
@@ -1754,6 +1759,122 @@ impl Interpreter {
         self.string_dict.get_or_insert(s)
     }
 
+    /// Convert a JsValue to its string representation using interned strings
+    /// for common values (undefined, null, true, false).
+    pub fn to_js_string(&mut self, value: &JsValue) -> JsString {
+        match value {
+            JsValue::Undefined => self.intern("undefined"),
+            JsValue::Null => self.intern("null"),
+            JsValue::Boolean(true) => self.intern("true"),
+            JsValue::Boolean(false) => self.intern("false"),
+            JsValue::Number(n) => JsString::from(crate::value::number_to_string(*n)),
+            JsValue::String(s) => s.cheap_clone(),
+            JsValue::Symbol(s) => {
+                match &s.description {
+                    Some(desc) => JsString::from(format!("Symbol({})", desc.as_str())),
+                    None => self.intern("Symbol()"),
+                }
+            }
+            JsValue::Object(obj) => {
+                let borrowed = obj.borrow();
+                match &borrowed.exotic {
+                    ExoticObject::Number(n) => {
+                        JsString::from(crate::value::number_to_string(*n))
+                    }
+                    ExoticObject::StringObj(s) => s.cheap_clone(),
+                    ExoticObject::Boolean(b) => {
+                        if *b {
+                            self.intern("true")
+                        } else {
+                            self.intern("false")
+                        }
+                    }
+                    ExoticObject::Array { elements } => {
+                        let strings: Vec<String> = elements
+                            .iter()
+                            .map(|v| match v {
+                                JsValue::Null | JsValue::Undefined => String::new(),
+                                JsValue::String(s) => s.to_string(),
+                                JsValue::Number(n) => crate::value::number_to_string(*n),
+                                JsValue::Boolean(true) => "true".to_string(),
+                                JsValue::Boolean(false) => "false".to_string(),
+                                _ => "[object Object]".to_string(),
+                            })
+                            .collect();
+                        JsString::from(strings.join(","))
+                    }
+                    _ => self.intern("[object Object]"),
+                }
+            }
+        }
+    }
+
+    /// Get the typeof result for a value as an interned string.
+    pub fn type_of(&mut self, value: &JsValue) -> JsString {
+        match value {
+            JsValue::Undefined => self.intern("undefined"),
+            JsValue::Null => self.intern("object"), // Historical quirk
+            JsValue::Boolean(_) => self.intern("boolean"),
+            JsValue::Number(_) => self.intern("number"),
+            JsValue::String(_) => self.intern("string"),
+            JsValue::Symbol(_) => self.intern("symbol"),
+            JsValue::Object(obj) => {
+                if obj.borrow().is_callable() {
+                    self.intern("function")
+                } else {
+                    self.intern("object")
+                }
+            }
+        }
+    }
+
+    /// Create a PropertyKey from a string, using interned strings.
+    pub fn property_key(&mut self, s: &str) -> PropertyKey {
+        // Fast path: check if it's an array index
+        if let Some(first) = s.bytes().next() {
+            if first.is_ascii_digit() {
+                if let Ok(idx) = s.parse::<u32>() {
+                    if idx.to_string() == s {
+                        return PropertyKey::Index(idx);
+                    }
+                }
+            }
+        }
+        PropertyKey::String(self.intern(s))
+    }
+
+    /// Create a PropertyKey from an already-interned JsString.
+    pub fn property_key_from_js_string(&mut self, s: JsString) -> PropertyKey {
+        // Fast path: check if it's an array index
+        if let Some(first) = s.as_str().bytes().next() {
+            if first.is_ascii_digit() {
+                if let Ok(idx) = s.parse::<u32>() {
+                    if idx.to_string() == s.as_str() {
+                        return PropertyKey::Index(idx);
+                    }
+                }
+            }
+        }
+        PropertyKey::String(s)
+    }
+
+    /// Create a PropertyKey from a JsValue.
+    pub fn property_key_from_value(&mut self, value: &JsValue) -> PropertyKey {
+        match value {
+            JsValue::Number(n) => {
+                let idx = *n as u32;
+                if idx as f64 == *n && *n >= 0.0 {
+                    PropertyKey::Index(idx)
+                } else {
+                    PropertyKey::String(self.to_js_string(value))
+                }
+            }
+            JsValue::String(s) => self.property_key_from_js_string(s.cheap_clone()),
+            JsValue::Symbol(s) => PropertyKey::Symbol(s.clone()),
+            _ => PropertyKey::String(self.to_js_string(value)),
+        }
+    }
+
     /// Create a native function object, permanently rooted via `root_guard`.
     /// Use this for builtin constructors and methods during initialization.
     /// The function is permanently rooted and never collected.
@@ -2243,16 +2364,18 @@ impl Interpreter {
                 // Guard the iterator object to keep it and its properties alive
                 iter_guard.guard(iter_obj.cheap_clone());
 
+                let next_key = self.property_key("next");
                 let next_method = iter_obj
                     .borrow()
-                    .get_property(&PropertyKey::from("next"))
+                    .get_property(&next_key)
                     .ok_or_else(|| JsError::type_error("Iterator has no next method"))?;
 
                 (iter_obj, next_method)
             }
             None => {
                 // Check if it's already an iterator (has .next())
-                if let Some(next_method) = obj.borrow().get_property(&PropertyKey::from("next")) {
+                let next_key = self.property_key("next");
+                if let Some(next_method) = obj.borrow().get_property(&next_key) {
                     iter_guard.guard(obj.cheap_clone());
                     (obj.cheap_clone(), next_method)
                 } else {
@@ -2306,17 +2429,20 @@ impl Interpreter {
     }
 
     /// Extract value and done from an iterator result object
-    fn extract_iterator_result(&self, result: &JsValue) -> (JsValue, bool) {
+    fn extract_iterator_result(&mut self, result: &JsValue) -> (JsValue, bool) {
         let JsValue::Object(obj) = result else {
             return (JsValue::Undefined, true);
         };
 
+        let value_key = self.property_key("value");
+        let done_key = self.property_key("done");
+
         let value = obj
             .borrow()
-            .get_property(&PropertyKey::from("value"))
+            .get_property(&value_key)
             .unwrap_or(JsValue::Undefined);
 
-        let done = match obj.borrow().get_property(&PropertyKey::from("done")) {
+        let done = match obj.borrow().get_property(&done_key) {
             Some(JsValue::Boolean(b)) => b,
             _ => false,
         };
@@ -2793,9 +2919,9 @@ impl Interpreter {
             JsValue::Object(_) => {
                 // ToPrimitive with "string" hint - tries toString first, then valueOf
                 let prim = self.coerce_to_primitive(value, "string")?;
-                Ok(prim.to_js_string())
+                Ok(self.to_js_string(&prim))
             }
-            _ => Ok(value.to_js_string()),
+            _ => Ok(self.to_js_string(value)),
         }
     }
 

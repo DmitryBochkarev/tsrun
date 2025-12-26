@@ -252,16 +252,12 @@ pub fn date_utc(
 }
 
 pub fn date_parse(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    let s = args
-        .first()
-        .cloned()
-        .unwrap_or(JsValue::Undefined)
-        .to_js_string()
-        .to_string();
+    let arg = args.first().cloned().unwrap_or(JsValue::Undefined);
+    let s = interp.to_js_string(&arg).to_string();
     let timestamp = parse_date_string(&s);
     Ok(Guarded::unguarded(JsValue::Number(timestamp)))
 }

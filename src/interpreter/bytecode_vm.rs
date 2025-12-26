@@ -1738,10 +1738,12 @@ impl BytecodeVM {
 
                 let result = match (&left_prim, &right_prim) {
                     (JsValue::String(a), _) => {
-                        JsValue::String(a.cheap_clone() + &right_prim.to_js_string())
+                        let right_str = interp.to_js_string(&right_prim);
+                        JsValue::String(a.cheap_clone() + right_str.as_str())
                     }
                     (_, JsValue::String(b)) => {
-                        JsValue::String(left_prim.to_js_string() + b.as_str())
+                        let left_str = interp.to_js_string(&left_prim);
+                        JsValue::String(left_str + b.as_str())
                     }
                     _ => JsValue::Number(left_prim.to_number() + right_prim.to_number()),
                 };
@@ -1905,7 +1907,7 @@ impl BytecodeVM {
                     ));
                 };
 
-                let prop_key = PropertyKey::from_value(key);
+                let prop_key = interp.property_key_from_value(key);
 
                 // Check if this is a proxy - delegate to proxy_has if so
                 let has_prop = if matches!(obj_ref.borrow().exotic, ExoticObject::Proxy(_)) {
@@ -2244,7 +2246,7 @@ impl BytecodeVM {
                         return Err(JsError::type_error("Cannot delete property of undefined"));
                     }
                     JsValue::Object(obj_ref) => {
-                        let prop_key = PropertyKey::from_value(key_val);
+                        let prop_key = interp.property_key_from_value(key_val);
 
                         // Check if this is a proxy - delegate to proxy_delete_property if so
                         if matches!(obj_ref.borrow().exotic, ExoticObject::Proxy(_)) {
@@ -2364,7 +2366,7 @@ impl BytecodeVM {
                 let key_val = self.get_reg(key);
 
                 if let JsValue::Object(obj_ref) = obj_val {
-                    let prop_key = PropertyKey::from_value(key_val);
+                    let prop_key = interp.property_key_from_value(key_val);
                     let val = self.get_reg(value).clone();
                     obj_ref.borrow_mut().set_property(prop_key, val);
                 }
@@ -3436,12 +3438,12 @@ impl BytecodeVM {
                     // Create result object { value, done }
                     let guard = interp.heap.create_guard();
                     let result = interp.create_object(&guard);
+                    let value_key = interp.property_key("value");
+                    let done_key = interp.property_key("done");
+                    result.borrow_mut().set_property(value_key, value);
                     result
                         .borrow_mut()
-                        .set_property(PropertyKey::from("value"), value);
-                    result
-                        .borrow_mut()
-                        .set_property(PropertyKey::from("done"), JsValue::Boolean(done));
+                        .set_property(done_key, JsValue::Boolean(done));
                     self.set_reg(dst, JsValue::Object(result));
                     return Ok(OpResult::Continue);
                 }
@@ -3477,12 +3479,12 @@ impl BytecodeVM {
                     // Create result object { value, done }
                     let guard = interp.heap.create_guard();
                     let result = interp.create_object(&guard);
+                    let value_key = interp.property_key("value");
+                    let done_key = interp.property_key("done");
+                    result.borrow_mut().set_property(value_key, value);
                     result
                         .borrow_mut()
-                        .set_property(PropertyKey::from("value"), value);
-                    result
-                        .borrow_mut()
-                        .set_property(PropertyKey::from("done"), JsValue::Boolean(done));
+                        .set_property(done_key, JsValue::Boolean(done));
                     self.set_reg(dst, JsValue::Object(result));
                     return Ok(OpResult::Continue);
                 }
@@ -3703,7 +3705,7 @@ impl BytecodeVM {
                 }
 
                 // Use from_value to handle numeric string keys correctly (e.g., "2" -> Index(2))
-                let prop_key = PropertyKey::from_value(&JsValue::String(method_name.cheap_clone()));
+                let prop_key = interp.property_key_from_value(&JsValue::String(method_name.cheap_clone()));
 
                 if is_static {
                     // Add to class constructor directly
@@ -3776,7 +3778,7 @@ impl BytecodeVM {
                 // Get existing accessor property if any
                 // Use from_value to handle numeric string keys correctly (e.g., "2" -> Index(2))
                 let prop_key =
-                    PropertyKey::from_value(&JsValue::String(accessor_name.cheap_clone()));
+                    interp.property_key_from_value(&JsValue::String(accessor_name.cheap_clone()));
                 let (existing_getter, existing_setter) = {
                     let target_ref = target.borrow();
                     if let Some(prop) = target_ref.properties.get(&prop_key) {
@@ -3812,7 +3814,7 @@ impl BytecodeVM {
                 let key_val = self.get_reg(key);
 
                 // Convert key to string for property name
-                let method_name = key_val.to_js_string();
+                let method_name = interp.to_js_string(key_val);
 
                 // Store __super__ and __super_target__ on method for super access
                 if let JsValue::Object(method_obj) = &method_val {
@@ -3843,7 +3845,7 @@ impl BytecodeVM {
                 }
 
                 // Use from_value to handle numeric string keys correctly (e.g., "2" -> Index(2))
-                let prop_key = PropertyKey::from_value(&JsValue::String(method_name));
+                let prop_key = interp.property_key_from_value(&JsValue::String(method_name));
 
                 if is_static {
                     // Add to class constructor directly
@@ -3886,7 +3888,7 @@ impl BytecodeVM {
                 let key_val = self.get_reg(key);
 
                 // Convert key to string for accessor name
-                let accessor_name = key_val.to_js_string();
+                let accessor_name = interp.to_js_string(key_val);
 
                 // Extract function objects (undefined means keep existing)
                 let new_getter = if let JsValue::Object(g) = getter_val {
@@ -3916,7 +3918,7 @@ impl BytecodeVM {
 
                 // Get existing accessor property if any
                 // Use from_value to handle numeric string keys correctly (e.g., "2" -> Index(2))
-                let prop_key = PropertyKey::from_value(&JsValue::String(accessor_name));
+                let prop_key = interp.property_key_from_value(&JsValue::String(accessor_name));
                 let (existing_getter, existing_setter) = {
                     let target_ref = target.borrow();
                     if let Some(prop) = target_ref.properties.get(&prop_key) {
@@ -4034,7 +4036,7 @@ impl BytecodeVM {
                 let key_val = self.get_reg(key);
 
                 if let JsValue::Object(this_obj) = &self.this_value {
-                    let prop_key = PropertyKey::from_value(key_val);
+                    let prop_key = interp.property_key_from_value(key_val);
                     let set_value = self.get_reg(value);
                     this_obj
                         .borrow_mut()
@@ -4857,17 +4859,19 @@ impl BytecodeVM {
                                     val.clone(),
                                     &[],
                                 ) {
-                                    Ok(Guarded { value, guard: _ }) => value.to_js_string(),
-                                    Err(_) => val.to_js_string(),
+                                    Ok(Guarded { value, guard: _ }) => {
+                                        interp.to_js_string(&value)
+                                    }
+                                    Err(_) => interp.to_js_string(val),
                                 }
                             } else {
-                                val.to_js_string()
+                                interp.to_js_string(val)
                             }
                         } else {
-                            val.to_js_string()
+                            interp.to_js_string(val)
                         }
                     } else {
-                        val.to_js_string()
+                        interp.to_js_string(val)
                     };
                     result.push_str(str_val.as_str());
                 }
@@ -5361,7 +5365,7 @@ impl BytecodeVM {
             JsValue::Object(obj_ref) => {
                 // Check if this is a proxy - delegate to proxy_get if so
                 if matches!(obj_ref.borrow().exotic, ExoticObject::Proxy(_)) {
-                    let prop_key = PropertyKey::from_value(key);
+                    let prop_key = interp.property_key_from_value(key);
                     // proxy_get already returns Guarded
                     return crate::interpreter::builtins::proxy::proxy_get(
                         interp,
@@ -5385,7 +5389,7 @@ impl BytecodeVM {
                     }
                 }
 
-                let prop_key = PropertyKey::from_value(key);
+                let prop_key = interp.property_key_from_value(key);
                 // Get property descriptor to check for accessor properties
                 let prop_desc = obj_ref.borrow().get_property_descriptor(&prop_key);
                 match prop_desc {
@@ -5420,7 +5424,7 @@ impl BytecodeVM {
                     Ok(Guarded::unguarded(JsValue::Undefined))
                 }
                 _ => {
-                    let prop_key = PropertyKey::from_value(key);
+                    let prop_key = interp.property_key_from_value(key);
                     if let Some(val) = interp.string_prototype.borrow().get_property(&prop_key) {
                         Ok(Guarded::unguarded(val.clone()))
                     } else {
@@ -5429,7 +5433,7 @@ impl BytecodeVM {
                 }
             },
             JsValue::Number(_) => {
-                let prop_key = PropertyKey::from_value(key);
+                let prop_key = interp.property_key_from_value(key);
                 if let Some(val) = interp.number_prototype.borrow().get_property(&prop_key) {
                     Ok(Guarded::unguarded(val.clone()))
                 } else {
@@ -5437,7 +5441,7 @@ impl BytecodeVM {
                 }
             }
             JsValue::Boolean(_) => {
-                let prop_key = PropertyKey::from_value(key);
+                let prop_key = interp.property_key_from_value(key);
                 if let Some(val) = interp.boolean_prototype.borrow().get_property(&prop_key) {
                     Ok(Guarded::unguarded(val.clone()))
                 } else {
@@ -5459,7 +5463,7 @@ impl BytecodeVM {
                     }
                 }
                 // Other symbol prototype methods
-                let prop_key = PropertyKey::from_value(key);
+                let prop_key = interp.property_key_from_value(key);
                 if let Some(val) = interp.symbol_prototype.borrow().get_property(&prop_key) {
                     Ok(Guarded::unguarded(val.clone()))
                 } else {
@@ -5481,7 +5485,7 @@ impl BytecodeVM {
             JsValue::Object(obj_ref) => {
                 // Check if this is a proxy - delegate to proxy_set if so
                 if matches!(obj_ref.borrow().exotic, ExoticObject::Proxy(_)) {
-                    let prop_key = PropertyKey::from_value(key);
+                    let prop_key = interp.property_key_from_value(key);
                     crate::interpreter::builtins::proxy::proxy_set(
                         interp,
                         obj_ref.cheap_clone(),
@@ -5510,7 +5514,7 @@ impl BytecodeVM {
                     }
                 }
 
-                let prop_key = PropertyKey::from_value(key);
+                let prop_key = interp.property_key_from_value(key);
 
                 // Check if object is frozen/sealed or property is non-writable
                 // First, check for accessor or non-writable property (including prototype chain)

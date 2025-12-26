@@ -182,7 +182,7 @@ pub fn string_char_at(
     this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    let s = this.to_js_string();
+    let s = interp.to_js_string(&this);
     // ToInteger: convert to number (with ToPrimitive for objects), then truncate towards zero
     let index_num = if let Some(v) = args.first() {
         interp.coerce_to_number(v)?
@@ -212,15 +212,15 @@ pub fn string_char_at(
 }
 
 pub fn string_index_of(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    let s = this.to_js_string();
-    let search = args
-        .first()
-        .map(|v| v.to_js_string().to_string())
-        .unwrap_or_default();
+    let s = interp.to_js_string(&this);
+    let search = match args.first() {
+        Some(v) => interp.to_js_string(v),
+        None => interp.intern(""),
+    };
     let from_index = args.get(1).map(|v| v.to_number() as usize).unwrap_or(0);
 
     if from_index >= s.len() {
@@ -231,7 +231,7 @@ pub fn string_index_of(
     match s
         .as_str()
         .get(from_index..)
-        .and_then(|slice| slice.find(&search))
+        .and_then(|slice| slice.find(search.as_str()))
     {
         Some(pos) => Ok(Guarded::unguarded(JsValue::Number(
             (from_index + pos) as f64,
@@ -241,15 +241,15 @@ pub fn string_index_of(
 }
 
 pub fn string_last_index_of(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    let s = this.to_js_string();
-    let search = args
-        .first()
-        .map(|v| v.to_js_string().to_string())
-        .unwrap_or_default();
+    let s = interp.to_js_string(&this);
+    let search = match args.first() {
+        Some(v) => interp.to_js_string(v),
+        None => interp.intern(""),
+    };
     let len = s.len();
 
     // Default from_index is length of string
@@ -276,7 +276,7 @@ pub fn string_last_index_of(
     match s
         .as_str()
         .get(..search_end)
-        .and_then(|slice| slice.rfind(&search))
+        .and_then(|slice| slice.rfind(search.as_str()))
     {
         Some(pos) => Ok(Guarded::unguarded(JsValue::Number(pos as f64))),
         None => Ok(Guarded::unguarded(JsValue::Number(-1.0))),
@@ -288,7 +288,7 @@ pub fn string_at(
     this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    let s = this.to_js_string();
+    let s = interp.to_js_string(&this);
     let len = s.len() as isize;
     let index = if let Some(v) = args.first() {
         interp.coerce_to_number(v)? as isize
@@ -313,15 +313,15 @@ pub fn string_at(
 }
 
 pub fn string_includes(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    let s = this.to_js_string();
-    let search = args
-        .first()
-        .map(|v| v.to_js_string().to_string())
-        .unwrap_or_default();
+    let s = interp.to_js_string(&this);
+    let search = match args.first() {
+        Some(v) => interp.to_js_string(v),
+        None => interp.intern(""),
+    };
     let from_index = args.get(1).map(|v| v.to_number() as usize).unwrap_or(0);
 
     if from_index >= s.len() {
@@ -331,21 +331,21 @@ pub fn string_includes(
     Ok(Guarded::unguarded(JsValue::Boolean(
         s.as_str()
             .get(from_index..)
-            .map(|slice| slice.contains(&search))
+            .map(|slice| slice.contains(search.as_str()))
             .unwrap_or(false),
     )))
 }
 
 pub fn string_starts_with(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    let s = this.to_js_string();
-    let search = args
-        .first()
-        .map(|v| v.to_js_string().to_string())
-        .unwrap_or_default();
+    let s = interp.to_js_string(&this);
+    let search = match args.first() {
+        Some(v) => interp.to_js_string(v),
+        None => interp.intern(""),
+    };
     let position = args.get(1).map(|v| v.to_number() as usize).unwrap_or(0);
 
     if position >= s.len() {
@@ -355,21 +355,21 @@ pub fn string_starts_with(
     Ok(Guarded::unguarded(JsValue::Boolean(
         s.as_str()
             .get(position..)
-            .map(|slice| slice.starts_with(&search))
+            .map(|slice| slice.starts_with(search.as_str()))
             .unwrap_or(false),
     )))
 }
 
 pub fn string_ends_with(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    let s = this.to_js_string();
-    let search = args
-        .first()
-        .map(|v| v.to_js_string().to_string())
-        .unwrap_or_default();
+    let s = interp.to_js_string(&this);
+    let search = match args.first() {
+        Some(v) => interp.to_js_string(v),
+        None => interp.intern(""),
+    };
     let end_position = args
         .get(1)
         .map(|v| v.to_number() as usize)
@@ -379,17 +379,17 @@ pub fn string_ends_with(
     Ok(Guarded::unguarded(JsValue::Boolean(
         s.as_str()
             .get(..end)
-            .map(|slice| slice.ends_with(&search))
+            .map(|slice| slice.ends_with(search.as_str()))
             .unwrap_or(false),
     )))
 }
 
 pub fn string_slice(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    let s = this.to_js_string();
+    let s = interp.to_js_string(&this);
     let len = s.len() as i64;
 
     let start_arg = args.first().map(|v| v.to_number() as i64).unwrap_or(0);
@@ -422,11 +422,11 @@ pub fn string_slice(
 }
 
 pub fn string_substring(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    let s = this.to_js_string();
+    let s = interp.to_js_string(&this);
     let len = s.len();
 
     let start = args
@@ -471,11 +471,11 @@ pub fn string_substring(
 
 /// String.prototype.substr(start, length?) - deprecated but still supported
 pub fn string_substr(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    let s = this.to_js_string();
+    let s = interp.to_js_string(&this);
     let chars: Vec<char> = s.as_str().chars().collect();
     let len = chars.len() as i64;
 
@@ -521,55 +521,55 @@ pub fn string_substr(
 }
 
 pub fn string_to_lower_case(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     this: JsValue,
     _args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    let s = this.to_js_string();
+    let s = interp.to_js_string(&this);
     Ok(Guarded::unguarded(JsValue::String(JsString::from(
         s.as_str().to_lowercase(),
     ))))
 }
 
 pub fn string_to_upper_case(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     this: JsValue,
     _args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    let s = this.to_js_string();
+    let s = interp.to_js_string(&this);
     Ok(Guarded::unguarded(JsValue::String(JsString::from(
         s.as_str().to_uppercase(),
     ))))
 }
 
 pub fn string_trim(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     this: JsValue,
     _args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    let s = this.to_js_string();
+    let s = interp.to_js_string(&this);
     Ok(Guarded::unguarded(JsValue::String(JsString::from(
         s.as_str().trim(),
     ))))
 }
 
 pub fn string_trim_start(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     this: JsValue,
     _args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    let s = this.to_js_string();
+    let s = interp.to_js_string(&this);
     Ok(Guarded::unguarded(JsValue::String(JsString::from(
         s.as_str().trim_start(),
     ))))
 }
 
 pub fn string_trim_end(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     this: JsValue,
     _args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    let s = this.to_js_string();
+    let s = interp.to_js_string(&this);
     Ok(Guarded::unguarded(JsValue::String(JsString::from(
         s.as_str().trim_end(),
     ))))
@@ -583,7 +583,7 @@ pub fn string_split(
     use super::regexp::build_regex;
     use crate::value::ExoticObject;
 
-    let s = this.to_js_string();
+    let s = interp.to_js_string(&this);
     let separator_arg = args.first().cloned();
     let limit = args.get(1).map(|v| v.to_number() as usize);
 
@@ -627,7 +627,7 @@ pub fn string_split(
             }
 
             // String separator
-            let sep_str = sep.to_js_string().to_string();
+            let sep_str = interp.to_js_string(&sep);
             if sep_str.is_empty() {
                 // Empty separator - split into characters
                 let chars: Vec<JsValue> = s
@@ -640,7 +640,7 @@ pub fn string_split(
                     None => chars,
                 }
             } else {
-                let split: Vec<&str> = s.as_str().split(&sep_str).collect();
+                let split: Vec<&str> = s.as_str().split(sep_str.as_str()).collect();
                 let result: Vec<JsValue> = split
                     .into_iter()
                     .map(|p| JsValue::String(JsString::from(p)))
@@ -660,11 +660,11 @@ pub fn string_split(
 }
 
 pub fn string_repeat(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    let s = this.to_js_string();
+    let s = interp.to_js_string(&this);
     let count = args.first().map(|v| v.to_number() as usize).unwrap_or(0);
     Ok(Guarded::unguarded(JsValue::String(JsString::from(
         s.as_str().repeat(count),
@@ -679,7 +679,7 @@ pub fn string_replace(
     use super::regexp::build_regex;
     use crate::value::ExoticObject;
 
-    let s = this.to_js_string().to_string();
+    let s = interp.to_js_string(&this).to_string();
     let search_arg = args.first().cloned().unwrap_or(JsValue::Undefined);
     let replacement_arg = args.get(1).cloned().unwrap_or(JsValue::Undefined);
 
@@ -739,7 +739,7 @@ pub fn string_replace(
                         JsValue::Undefined,
                         &call_args,
                     )?;
-                    result.push_str(replace_result.value.to_js_string().as_ref());
+                    result.push_str(interp.to_js_string(&replace_result.value).as_ref());
 
                     last_end = m.end();
                 }
@@ -747,7 +747,7 @@ pub fn string_replace(
                 return Ok(Guarded::unguarded(JsValue::String(JsString::from(result))));
             } else {
                 // String replacement with $ pattern expansion
-                let replacement_template = replacement_arg.to_js_string().to_string();
+                let replacement_template = interp.to_js_string(&replacement_arg).to_string();
                 let mut result = String::new();
                 let mut last_end = 0;
 
@@ -795,7 +795,7 @@ pub fn string_replace(
 
             let replace_result =
                 interp.call_function(replacement_arg, JsValue::Undefined, &call_args)?;
-            let replacement = replace_result.value.to_js_string().to_string();
+            let replacement = interp.to_js_string(&replace_result.value).to_string();
 
             let mut result = String::new();
             result.push_str(s.get(..start).unwrap_or(""));
@@ -807,7 +807,7 @@ pub fn string_replace(
     }
 
     // String replacement with $ pattern expansion
-    let replacement_template = replacement_arg.to_js_string().to_string();
+    let replacement_template = interp.to_js_string(&replacement_arg).to_string();
     if let Some(start) = s.find(&search) {
         let before = s.get(..start).unwrap_or("");
         let after = s.get(start + search.len()..).unwrap_or("");
@@ -829,37 +829,37 @@ pub fn string_replace(
 }
 
 pub fn string_replace_all(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    let s = this.to_js_string();
-    let search = args
-        .first()
-        .map(|v| v.to_js_string().to_string())
-        .unwrap_or_default();
-    let replacement = args
-        .get(1)
-        .map(|v| v.to_js_string().to_string())
-        .unwrap_or_default();
+    let s = interp.to_js_string(&this);
+    let search = match args.first() {
+        Some(v) => interp.to_js_string(v),
+        None => interp.intern(""),
+    };
+    let replacement = match args.get(1) {
+        Some(v) => interp.to_js_string(v),
+        None => interp.intern(""),
+    };
 
     // Replace all occurrences
     Ok(Guarded::unguarded(JsValue::String(JsString::from(
-        s.as_str().replace(&search, &replacement),
+        s.as_str().replace(search.as_str(), replacement.as_str()),
     ))))
 }
 
 pub fn string_pad_start(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    let s = this.to_js_string();
+    let s = interp.to_js_string(&this);
     let target_length = args.first().map(|v| v.to_number() as usize).unwrap_or(0);
-    let pad_string = args
-        .get(1)
-        .map(|v| v.to_js_string().to_string())
-        .unwrap_or_else(|| " ".to_string());
+    let pad_string = match args.get(1) {
+        Some(v) => interp.to_js_string(v),
+        None => interp.intern(" "),
+    };
 
     let current_len = s.as_str().chars().count();
     if current_len >= target_length || pad_string.is_empty() {
@@ -869,7 +869,7 @@ pub fn string_pad_start(
     let pad_len = target_length - current_len;
     let mut padding = String::new();
     while padding.len() < pad_len {
-        padding.push_str(&pad_string);
+        padding.push_str(pad_string.as_str());
     }
     padding.truncate(pad_len);
 
@@ -879,16 +879,16 @@ pub fn string_pad_start(
 }
 
 pub fn string_pad_end(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    let s = this.to_js_string();
+    let s = interp.to_js_string(&this);
     let target_length = args.first().map(|v| v.to_number() as usize).unwrap_or(0);
-    let pad_string = args
-        .get(1)
-        .map(|v| v.to_js_string().to_string())
-        .unwrap_or_else(|| " ".to_string());
+    let pad_string = match args.get(1) {
+        Some(v) => interp.to_js_string(v),
+        None => interp.intern(" "),
+    };
 
     let current_len = s.as_str().chars().count();
     if current_len >= target_length || pad_string.is_empty() {
@@ -898,7 +898,7 @@ pub fn string_pad_end(
     let pad_len = target_length - current_len;
     let mut padding = String::new();
     while padding.len() < pad_len {
-        padding.push_str(&pad_string);
+        padding.push_str(pad_string.as_str());
     }
     padding.truncate(pad_len);
 
@@ -908,13 +908,13 @@ pub fn string_pad_end(
 }
 
 pub fn string_concat(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    let mut result = this.to_js_string().to_string();
+    let mut result = interp.to_js_string(&this).to_string();
     for arg in args {
-        result.push_str(arg.to_js_string().as_ref());
+        result.push_str(interp.to_js_string(arg).as_ref());
     }
     Ok(Guarded::unguarded(JsValue::String(JsString::from(result))))
 }
@@ -924,7 +924,7 @@ pub fn string_char_code_at(
     this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    let s = this.to_js_string();
+    let s = interp.to_js_string(&this);
     let index = if let Some(v) = args.first() {
         interp.coerce_to_number(v)? as usize
     } else {
@@ -1012,11 +1012,11 @@ pub fn string_from_code_point(
 /// String.prototype.codePointAt(index)
 /// Returns the Unicode code point value at the given index
 pub fn string_code_point_at(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    let s = this.to_js_string();
+    let s = interp.to_js_string(&this);
     let index = args.first().map(|v| v.to_number()).unwrap_or(0.0);
 
     // Check for negative or non-integer index
@@ -1043,7 +1043,7 @@ pub fn string_match(
     use super::regexp::build_regex;
     use crate::value::ExoticObject;
 
-    let s = this.to_js_string().to_string();
+    let s = interp.to_js_string(&this).to_string();
     let arg = args.first().cloned().unwrap_or(JsValue::Undefined);
 
     // Check if argument is a RegExp
@@ -1058,11 +1058,11 @@ pub fn string_match(
         } else {
             // Convert to string and use as pattern
             drop(obj_ref);
-            (arg.to_js_string().to_string(), String::new())
+            (interp.to_js_string(&arg).to_string(), String::new())
         }
     } else {
         // Convert to string and use as pattern
-        (arg.to_js_string().to_string(), String::new())
+        (interp.to_js_string(&arg).to_string(), String::new())
     };
 
     let re = build_regex(&pattern, &flags)?;
@@ -1124,7 +1124,7 @@ pub fn string_match_all(
     use super::regexp::build_regex;
     use crate::value::ExoticObject;
 
-    let s = this.to_js_string().to_string();
+    let s = interp.to_js_string(&this).to_string();
     let arg = args.first().cloned().unwrap_or(JsValue::Undefined);
 
     // Check if argument is a RegExp
@@ -1145,11 +1145,11 @@ pub fn string_match_all(
         } else {
             drop(obj_ref);
             // Convert to string, treat as global search
-            (arg.to_js_string().to_string(), "g".to_string())
+            (interp.to_js_string(&arg).to_string(), "g".to_string())
         }
     } else {
         // Convert to string, treat as global search
-        (arg.to_js_string().to_string(), "g".to_string())
+        (interp.to_js_string(&arg).to_string(), "g".to_string())
     };
 
     let re = build_regex(&pattern, &flags)?;
@@ -1189,14 +1189,14 @@ pub fn string_match_all(
 /// String.prototype.search(regexp)
 /// Returns the index of the first match, or -1 if not found
 pub fn string_search(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
     use super::regexp::build_regex;
     use crate::value::ExoticObject;
 
-    let s = this.to_js_string().to_string();
+    let s = interp.to_js_string(&this).to_string();
     let arg = args.first().cloned().unwrap_or(JsValue::Undefined);
 
     // Check if argument is a RegExp
@@ -1210,10 +1210,10 @@ pub fn string_search(
             (pattern.clone(), flags.clone())
         } else {
             drop(obj_ref);
-            (arg.to_js_string().to_string(), String::new())
+            (interp.to_js_string(&arg).to_string(), String::new())
         }
     } else {
-        (arg.to_js_string().to_string(), String::new())
+        (interp.to_js_string(&arg).to_string(), String::new())
     };
 
     let re = build_regex(&pattern, &flags)?;
@@ -1228,26 +1228,26 @@ pub fn string_search(
 /// Returns the Unicode Normalization Form of the string
 /// Forms: "NFC" (default), "NFD", "NFKC", "NFKD"
 pub fn string_normalize(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    let s = this.to_js_string().to_string();
+    let s = interp.to_js_string(&this);
 
-    let form = args
-        .first()
-        .map(|v| v.to_js_string().to_string())
-        .unwrap_or_else(|| "NFC".to_string());
+    let form = match args.first() {
+        Some(v) => interp.to_js_string(v),
+        None => interp.intern("NFC"),
+    };
 
     let normalized = match form.as_str() {
-        "NFC" => s.nfc().collect::<String>(),
-        "NFD" => s.nfd().collect::<String>(),
-        "NFKC" => s.nfkc().collect::<String>(),
-        "NFKD" => s.nfkd().collect::<String>(),
+        "NFC" => s.as_str().nfc().collect::<String>(),
+        "NFD" => s.as_str().nfd().collect::<String>(),
+        "NFKC" => s.as_str().nfkc().collect::<String>(),
+        "NFKD" => s.as_str().nfkd().collect::<String>(),
         _ => {
             return Err(JsError::range_error(format!(
                 "The normalization form should be one of NFC, NFD, NFKC, NFKD. Received: {}",
-                form
+                form.as_str()
             )))
         }
     };
@@ -1356,18 +1356,18 @@ fn expand_replacement_pattern(
 /// Compares two strings in the current locale
 /// Returns: -1 if string comes before, 0 if equal, 1 if string comes after
 pub fn string_locale_compare(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    let s = this.to_js_string().to_string();
-    let compare_string = args
-        .first()
-        .map(|v| v.to_js_string().to_string())
-        .unwrap_or_default();
+    let s = interp.to_js_string(&this);
+    let compare_string = match args.first() {
+        Some(v) => interp.to_js_string(v),
+        None => interp.intern(""),
+    };
 
     // Simple lexicographic comparison (locale-insensitive for now)
-    let result = match s.cmp(&compare_string) {
+    let result = match s.as_str().cmp(compare_string.as_str()) {
         std::cmp::Ordering::Less => -1.0,
         std::cmp::Ordering::Equal => 0.0,
         std::cmp::Ordering::Greater => 1.0,

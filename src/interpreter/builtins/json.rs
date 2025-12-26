@@ -112,7 +112,7 @@ pub fn json_parse(
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
     let text = args.first().cloned().unwrap_or(JsValue::Undefined);
-    let text_str = text.to_js_string();
+    let text_str = interp.to_js_string(&text);
 
     let json: serde_json::Value = serde_json::from_str(text_str.as_str())
         .map_err(|e| JsError::syntax_error(format!("JSON parse error: {}", e), 0, 0))?;

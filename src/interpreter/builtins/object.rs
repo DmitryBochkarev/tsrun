@@ -404,9 +404,9 @@ pub fn object_from_entries(
                 let value = entry_borrow
                     .get_property(&PropertyKey::Index(1))
                     .unwrap_or(JsValue::Undefined);
-                let key_str = key.to_js_string().to_string();
                 drop(entry_borrow);
-                let interned_key = PropertyKey::String(interp.intern(&key_str));
+                let key_str = interp.to_js_string(&key).to_string();
+                let interned_key = interp.property_key(&key_str);
                 result.borrow_mut().set_property(interned_key, value);
             }
         }
@@ -427,8 +427,8 @@ pub fn object_has_own(
         return Ok(Guarded::unguarded(JsValue::Boolean(false)));
     };
 
-    let key_str = key.to_js_string().to_string();
-    let interned_key = PropertyKey::String(interp.intern(&key_str));
+    let key_str = interp.to_js_string(&key).to_string();
+    let interned_key = interp.property_key(&key_str);
 
     let borrowed = obj_ref.borrow();
     let has = if let ExoticObject::Enum(ref data) = borrowed.exotic {
@@ -652,8 +652,8 @@ pub fn object_has_own_property(
     let key = if let JsValue::Symbol(ref sym) = arg {
         PropertyKey::Symbol(sym.clone())
     } else {
-        let prop_name = arg.to_js_string().to_string();
-        PropertyKey::String(interp.intern(&prop_name))
+        let prop_name = interp.to_js_string(&arg).to_string();
+        interp.property_key(&prop_name)
     };
 
     let obj_ref = obj.borrow();
@@ -662,18 +662,25 @@ pub fn object_has_own_property(
         data.has_property(&key)
     } else if let ExoticObject::Array { ref elements } = obj_ref.exotic {
         // For arrays, check if key is a valid array index
-        if let PropertyKey::String(key_str) = &key {
-            // Try to parse as integer index
-            if let Ok(index) = key_str.as_str().parse::<usize>() {
-                // Check if index is within bounds (and not a sparse/hole)
-                index < elements.len()
-            } else {
-                // Non-numeric key - check regular properties
+        match &key {
+            PropertyKey::Index(index) => {
+                // Direct numeric index - check if within bounds
+                (*index as usize) < elements.len()
+            }
+            PropertyKey::String(key_str) => {
+                // Try to parse as integer index
+                if let Ok(index) = key_str.as_str().parse::<usize>() {
+                    // Check if index is within bounds
+                    index < elements.len()
+                } else {
+                    // Non-numeric key - check regular properties
+                    obj_ref.properties.contains_key(&key)
+                }
+            }
+            PropertyKey::Symbol(_) => {
+                // Symbol key - check regular properties
                 obj_ref.properties.contains_key(&key)
             }
-        } else {
-            // Symbol key - check regular properties
-            obj_ref.properties.contains_key(&key)
         }
     } else {
         // Standard object - check properties
@@ -1431,7 +1438,7 @@ pub fn object_group_by(
         )?;
 
         // Coerce key to string (property key)
-        let key_str = key_result.value.to_js_string().to_string();
+        let key_str = interp.to_js_string(&key_result.value).to_string();
 
         // Find existing group or create new one
         let found_idx = group_keys.iter().position(|k| k == &key_str);

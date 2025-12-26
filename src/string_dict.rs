@@ -88,6 +88,9 @@ const COMMON_STRINGS: &[&str] = &[
     "object",
     "function",
     "symbol",
+    // Boolean literals
+    "true",
+    "false",
     // Built-in constructors
     "Object",
     "Array",

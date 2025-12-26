@@ -61,21 +61,22 @@ pub fn number_constructor_fn(
 /// Number.prototype.valueOf()
 /// Returns the primitive number value
 pub fn number_value_of(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     this: JsValue,
     _args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    let num_val = get_number_value(&this)?;
+    let num_val = get_number_value(interp, &this)?;
     Ok(Guarded::unguarded(JsValue::Number(num_val)))
 }
 
 /// Helper to extract number value from `this`
 /// Works for both primitive numbers and Number wrapper objects
 /// Also handles Number.prototype (which has [[NumberData]] = 0)
-fn get_number_value(this: &JsValue) -> Result<f64, JsError> {
+fn get_number_value(interp: &mut Interpreter, this: &JsValue) -> Result<f64, JsError> {
     match this {
         JsValue::Number(n) => Ok(*n),
         JsValue::Object(obj) => {
+            let to_fixed_key = interp.property_key("toFixed");
             let borrowed = obj.borrow();
             match borrowed.exotic {
                 ExoticObject::Number(n) => Ok(n),
@@ -84,10 +85,7 @@ fn get_number_value(this: &JsValue) -> Result<f64, JsError> {
                     // Number.prototype doesn't have ExoticObject::Number but should
                     // return 0 when toString/valueOf is called on it
                     // We recognize it by checking if it has number methods but no exotic value
-                    if borrowed
-                        .get_property(&PropertyKey::from("toFixed"))
-                        .is_some()
-                    {
+                    if borrowed.get_property(&to_fixed_key).is_some() {
                         Ok(0.0)
                     } else {
                         Err(JsError::type_error(
@@ -158,16 +156,12 @@ pub fn create_number_constructor(interp: &mut Interpreter) -> Gc<JsObject> {
 
 /// Number.parseFloat - same as global parseFloat
 pub fn number_parse_float(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    let s = args
-        .first()
-        .cloned()
-        .unwrap_or(JsValue::Undefined)
-        .to_js_string()
-        .to_string();
+    let arg = args.first().cloned().unwrap_or(JsValue::Undefined);
+    let s = interp.to_js_string(&arg).to_string();
 
     let trimmed = s.trim_start();
     let result = trimmed.parse::<f64>().unwrap_or(f64::NAN);
@@ -176,16 +170,12 @@ pub fn number_parse_float(
 
 /// Number.parseInt - same as global parseInt
 pub fn number_parse_int(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    let s = args
-        .first()
-        .cloned()
-        .unwrap_or(JsValue::Undefined)
-        .to_js_string()
-        .to_string();
+    let arg = args.first().cloned().unwrap_or(JsValue::Undefined);
+    let s = interp.to_js_string(&arg).to_string();
     let radix = args.get(1).map(|v| v.to_number() as i32).unwrap_or(10);
 
     let trimmed = s.trim_start();
@@ -263,11 +253,11 @@ pub fn number_is_safe_integer(
 
 // Number.prototype.toFixed
 pub fn number_to_fixed(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    let n = get_number_value(&this)?;
+    let n = get_number_value(interp, &this)?;
     let digits = args.first().map(|v| v.to_number() as i32).unwrap_or(0);
 
     if !(0..=100).contains(&digits) {
@@ -298,11 +288,11 @@ fn format_number_js(n: f64) -> String {
 
 // Number.prototype.toString
 pub fn number_to_string(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    let n = get_number_value(&this)?;
+    let n = get_number_value(interp, &this)?;
     let radix = args.first().map(|v| v.to_number() as i32).unwrap_or(10);
 
     if !(2..=36).contains(&radix) {
@@ -360,11 +350,11 @@ pub fn number_to_string(
 
 // Number.prototype.toPrecision
 pub fn number_to_precision(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    let n = get_number_value(&this)?;
+    let n = get_number_value(interp, &this)?;
 
     if args.is_empty() || matches!(args.first(), Some(JsValue::Undefined)) {
         return Ok(Guarded::unguarded(JsValue::String(JsString::from(
@@ -425,11 +415,11 @@ pub fn number_to_precision(
 
 // Number.prototype.toExponential
 pub fn number_to_exponential(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    let n = get_number_value(&this)?;
+    let n = get_number_value(interp, &this)?;
 
     if !n.is_finite() {
         return Ok(Guarded::unguarded(JsValue::String(JsString::from(

@@ -42,18 +42,16 @@ pub fn regexp_constructor(
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
     let empty = interp.intern("");
-    let pattern = args
+    let pattern_arg = args
         .first()
         .cloned()
-        .unwrap_or(JsValue::String(empty.clone()))
-        .to_js_string()
-        .to_string();
-    let flags = args
+        .unwrap_or(JsValue::String(empty.clone()));
+    let pattern = interp.to_js_string(&pattern_arg).to_string();
+    let flags_arg = args
         .get(1)
         .cloned()
-        .unwrap_or(JsValue::String(empty))
-        .to_js_string()
-        .to_string();
+        .unwrap_or(JsValue::String(empty));
+    let flags = interp.to_js_string(&flags_arg).to_string();
 
     // Pre-intern all property keys
     let source_key = PropertyKey::String(interp.intern("source"));

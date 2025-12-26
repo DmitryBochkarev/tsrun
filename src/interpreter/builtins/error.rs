@@ -211,22 +211,25 @@ pub fn error_to_string(
     };
 
     // Pre-intern keys
-    let name_key = PropertyKey::String(interp.intern("name"));
-    let message_key = PropertyKey::String(interp.intern("message"));
+    let name_key = interp.property_key("name");
+    let message_key = interp.property_key("message");
 
     let obj_ref = obj.borrow();
+    let name_val = obj_ref.get_property(&name_key);
+    let message_val = obj_ref.get_property(&message_key);
+    drop(obj_ref);
 
     // Get name, default to "Error"
-    let name = obj_ref
-        .get_property(&name_key)
-        .map(|v| v.to_js_string().to_string())
-        .unwrap_or_else(|| "Error".to_string());
+    let name = match name_val {
+        Some(v) => interp.to_js_string(&v).to_string(),
+        None => "Error".to_string(),
+    };
 
     // Get message, default to ""
-    let message = obj_ref
-        .get_property(&message_key)
-        .map(|v| v.to_js_string().to_string())
-        .unwrap_or_default();
+    let message = match message_val {
+        Some(v) => interp.to_js_string(&v).to_string(),
+        None => String::new(),
+    };
 
     if message.is_empty() {
         Ok(Guarded::unguarded(JsValue::String(JsString::from(name))))
@@ -238,10 +241,15 @@ pub fn error_to_string(
 }
 
 /// Initialize error properties on an existing object
-fn initialize_error_on_this(obj: &Gc<JsObject>, name: &str, message: JsValue) {
+fn initialize_error_on_this(
+    interp: &mut Interpreter,
+    obj: &Gc<JsObject>,
+    name: &str,
+    message: JsValue,
+) {
     let msg_str = match &message {
-        JsValue::Undefined => JsString::from(""),
-        other => other.to_js_string(),
+        JsValue::Undefined => interp.intern(""),
+        other => interp.to_js_string(other),
     };
 
     // Build a simple stack trace
@@ -251,21 +259,19 @@ fn initialize_error_on_this(obj: &Gc<JsObject>, name: &str, message: JsValue) {
         JsString::from(format!("{}: {}", name, msg_str))
     };
 
+    let name_key = interp.property_key("name");
+    let message_key = interp.property_key("message");
+    let stack_key = interp.property_key("stack");
+
     let mut obj_ref = obj.borrow_mut();
-    obj_ref.set_property(
-        PropertyKey::from("name"),
-        JsValue::String(JsString::from(name)),
-    );
-    obj_ref.set_property(
-        PropertyKey::from("message"),
-        JsValue::String(msg_str.clone()),
-    );
-    obj_ref.set_property(PropertyKey::from("stack"), JsValue::String(stack));
+    obj_ref.set_property(name_key, JsValue::String(JsString::from(name)));
+    obj_ref.set_property(message_key, JsValue::String(msg_str.clone()));
+    obj_ref.set_property(stack_key, JsValue::String(stack));
 }
 
 /// Error constructor - sets name and message on `this`
 pub fn error_constructor(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
@@ -273,7 +279,7 @@ pub fn error_constructor(
 
     // When called via `new Error()`, this is the newly created object
     if let JsValue::Object(ref this_obj) = this {
-        initialize_error_on_this(this_obj, "Error", message);
+        initialize_error_on_this(interp, this_obj, "Error", message);
     }
 
     // Return undefined - new handler will return the created object
@@ -282,78 +288,78 @@ pub fn error_constructor(
 
 /// TypeError constructor
 pub fn type_error_constructor(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
     let message = args.first().cloned().unwrap_or(JsValue::Undefined);
     if let JsValue::Object(ref this_obj) = this {
-        initialize_error_on_this(this_obj, "TypeError", message);
+        initialize_error_on_this(interp, this_obj, "TypeError", message);
     }
     Ok(Guarded::unguarded(JsValue::Undefined))
 }
 
 /// RangeError constructor
 pub fn range_error_constructor(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
     let message = args.first().cloned().unwrap_or(JsValue::Undefined);
     if let JsValue::Object(ref this_obj) = this {
-        initialize_error_on_this(this_obj, "RangeError", message);
+        initialize_error_on_this(interp, this_obj, "RangeError", message);
     }
     Ok(Guarded::unguarded(JsValue::Undefined))
 }
 
 /// ReferenceError constructor
 pub fn reference_error_constructor(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
     let message = args.first().cloned().unwrap_or(JsValue::Undefined);
     if let JsValue::Object(ref this_obj) = this {
-        initialize_error_on_this(this_obj, "ReferenceError", message);
+        initialize_error_on_this(interp, this_obj, "ReferenceError", message);
     }
     Ok(Guarded::unguarded(JsValue::Undefined))
 }
 
 /// SyntaxError constructor
 pub fn syntax_error_constructor(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
     let message = args.first().cloned().unwrap_or(JsValue::Undefined);
     if let JsValue::Object(ref this_obj) = this {
-        initialize_error_on_this(this_obj, "SyntaxError", message);
+        initialize_error_on_this(interp, this_obj, "SyntaxError", message);
     }
     Ok(Guarded::unguarded(JsValue::Undefined))
 }
 
 /// URIError constructor
 pub fn uri_error_constructor(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
     let message = args.first().cloned().unwrap_or(JsValue::Undefined);
     if let JsValue::Object(ref this_obj) = this {
-        initialize_error_on_this(this_obj, "URIError", message);
+        initialize_error_on_this(interp, this_obj, "URIError", message);
     }
     Ok(Guarded::unguarded(JsValue::Undefined))
 }
 
 /// EvalError constructor
 pub fn eval_error_constructor(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
     let message = args.first().cloned().unwrap_or(JsValue::Undefined);
     if let JsValue::Object(ref this_obj) = this {
-        initialize_error_on_this(this_obj, "EvalError", message);
+        initialize_error_on_this(interp, this_obj, "EvalError", message);
     }
     Ok(Guarded::unguarded(JsValue::Undefined))
 }
@@ -434,14 +440,15 @@ pub fn create_error_object(
         JsString::from(format!("{}: {}", name, msg_str))
     };
 
+    let name_key = interp.property_key("name");
+    let message_key = interp.property_key("message");
+    let stack_key = interp.property_key("stack");
+
     {
         let mut obj = error_obj.borrow_mut();
-        obj.set_property(
-            PropertyKey::from("name"),
-            JsValue::String(JsString::from(name)),
-        );
-        obj.set_property(PropertyKey::from("message"), JsValue::String(msg_str));
-        obj.set_property(PropertyKey::from("stack"), JsValue::String(stack_str));
+        obj.set_property(name_key, JsValue::String(JsString::from(name)));
+        obj.set_property(message_key, JsValue::String(msg_str));
+        obj.set_property(stack_key, JsValue::String(stack_str));
     }
 
     (JsValue::Object(error_obj), Some(guard))

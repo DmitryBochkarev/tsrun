@@ -374,26 +374,6 @@ impl JsValue {
         }
     }
 
-    /// Get the typeof result for this value
-    // FIXME: use intern strings
-    pub fn type_of(&self) -> &'static str {
-        match self {
-            JsValue::Undefined => "undefined",
-            JsValue::Null => "object", // Historical quirk
-            JsValue::Boolean(_) => "boolean",
-            JsValue::Number(_) => "number",
-            JsValue::String(_) => "string",
-            JsValue::Symbol(_) => "symbol",
-            JsValue::Object(obj) => {
-                if obj.borrow().is_callable() {
-                    "function"
-                } else {
-                    "object"
-                }
-            }
-        }
-    }
-
     /// Convert to boolean (ToBoolean)
     pub fn to_boolean(&self) -> bool {
         match self {
@@ -436,7 +416,8 @@ impl JsValue {
     }
 
     /// Convert to string (ToString)
-    // FIXME: use interned strings
+    /// Note: Prefer using `Interpreter::to_js_string()` which uses interned strings.
+    /// This method is kept for internal use in value.rs, Debug impl, and tests.
     pub fn to_js_string(&self) -> JsString {
         match self {
             JsValue::Undefined => JsString::from("undefined"),
@@ -514,6 +495,19 @@ impl JsValue {
     }
 }
 
+/// Helper function for Debug impl to format a value as a string (without using to_js_string)
+fn format_value_for_debug(value: &JsValue) -> String {
+    match value {
+        JsValue::Undefined => "undefined".to_string(),
+        JsValue::Null => "null".to_string(),
+        JsValue::Boolean(b) => if *b { "true".to_string() } else { "false".to_string() },
+        JsValue::Number(n) => number_to_string(*n),
+        JsValue::String(s) => s.to_string(),
+        JsValue::Symbol(_) => "Symbol()".to_string(),
+        JsValue::Object(_) => "[object Object]".to_string(),
+    }
+}
+
 impl fmt::Debug for JsValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -531,16 +525,16 @@ impl fmt::Debug for JsValue {
                 match &obj.exotic {
                     ExoticObject::Ordinary => {
                         // Check if this is an Error object (has name and message properties)
-                        let name_key = PropertyKey::from("name");
-                        let message_key = PropertyKey::from("message");
+                        let name_key = PropertyKey::String(JsString::from("name"));
+                        let message_key = PropertyKey::String(JsString::from("message"));
 
                         if let (Some(name_prop), Some(message_prop)) = (
                             obj.properties.get(&name_key),
                             obj.properties.get(&message_key),
                         ) {
-                            let name = name_prop.value.to_js_string();
-                            let msg = message_prop.value.to_js_string();
-                            write!(f, "{}: {}", name.as_ref(), msg.as_ref())
+                            let name = format_value_for_debug(&name_prop.value);
+                            let msg = format_value_for_debug(&message_prop.value);
+                            write!(f, "{}: {}", name, msg)
                         } else {
                             write!(f, "{{...}}")
                         }

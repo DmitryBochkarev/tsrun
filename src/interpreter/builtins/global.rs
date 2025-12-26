@@ -256,14 +256,14 @@ pub fn eval_code_in_scope_with_this(
 }
 
 pub fn global_parse_int(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    let string = args
-        .first()
-        .map(|v| v.to_js_string())
-        .unwrap_or_else(|| JsString::from(""));
+    let string = match args.first() {
+        Some(v) => interp.to_js_string(v),
+        None => interp.intern(""),
+    };
     let string = string.as_str().to_string();
     let radix = args.get(1).map(|v| v.to_number() as i32).unwrap_or(10);
 
@@ -320,14 +320,14 @@ pub fn global_parse_int(
 }
 
 pub fn global_parse_float(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    let string = args
-        .first()
-        .map(|v| v.to_js_string())
-        .unwrap_or_else(|| JsString::from(""));
+    let string = match args.first() {
+        Some(v) => interp.to_js_string(v),
+        None => interp.intern(""),
+    };
     let string = string.as_str().to_string();
     let s = string.trim();
 
@@ -406,14 +406,14 @@ const URI_UNESCAPED: &str =
 const URI_RESERVED: &str = ";/?:@&=+$,#";
 
 pub fn global_encode_uri(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    let s = args
-        .first()
-        .map(|v| v.to_js_string())
-        .unwrap_or_else(|| JsString::from(""));
+    let s = match args.first() {
+        Some(v) => interp.to_js_string(v),
+        None => interp.intern(""),
+    };
     let allowed: Vec<char> = URI_UNESCAPED.chars().chain(URI_RESERVED.chars()).collect();
     let mut result = String::new();
     for c in s.as_str().chars() {
@@ -430,27 +430,27 @@ pub fn global_encode_uri(
 }
 
 pub fn global_decode_uri(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    let s = args
-        .first()
-        .map(|v| v.to_js_string())
-        .unwrap_or_else(|| JsString::from(""));
+    let s = match args.first() {
+        Some(v) => interp.to_js_string(v),
+        None => interp.intern(""),
+    };
     let result = percent_decode(s.as_str(), true);
     Ok(Guarded::unguarded(JsValue::String(JsString::from(result))))
 }
 
 pub fn global_encode_uri_component(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    let s = args
-        .first()
-        .map(|v| v.to_js_string())
-        .unwrap_or_else(|| JsString::from(""));
+    let s = match args.first() {
+        Some(v) => interp.to_js_string(v),
+        None => interp.intern(""),
+    };
     let allowed: Vec<char> = URI_UNESCAPED.chars().collect();
     let mut result = String::new();
     for c in s.as_str().chars() {
@@ -467,14 +467,14 @@ pub fn global_encode_uri_component(
 }
 
 pub fn global_decode_uri_component(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    let s = args
-        .first()
-        .map(|v| v.to_js_string())
-        .unwrap_or_else(|| JsString::from(""));
+    let s = match args.first() {
+        Some(v) => interp.to_js_string(v),
+        None => interp.intern(""),
+    };
     let result = percent_decode(s.as_str(), false);
     Ok(Guarded::unguarded(JsValue::String(JsString::from(result))))
 }
@@ -518,14 +518,14 @@ const BASE64_ALPHABET: &[u8; 64] =
 /// btoa - Binary to ASCII (base64 encode)
 /// Encodes a string of binary data to a base64 encoded ASCII string
 pub fn global_btoa(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    let s = args
-        .first()
-        .map(|v| v.to_js_string())
-        .unwrap_or_else(|| JsString::from(""));
+    let s = match args.first() {
+        Some(v) => interp.to_js_string(v),
+        None => interp.intern(""),
+    };
 
     // Check that all characters are in the Latin-1 range (0-255)
     for c in s.as_str().chars() {
@@ -544,14 +544,14 @@ pub fn global_btoa(
 /// atob - ASCII to Binary (base64 decode)
 /// Decodes a base64 encoded string to a string of binary data
 pub fn global_atob(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    let s = args
-        .first()
-        .map(|v| v.to_js_string())
-        .unwrap_or_else(|| JsString::from(""));
+    let s = match args.first() {
+        Some(v) => interp.to_js_string(v),
+        None => interp.intern(""),
+    };
 
     // Remove whitespace as per spec
     let cleaned: String = s.as_str().chars().filter(|c| !c.is_whitespace()).collect();
@@ -815,6 +815,17 @@ fn clone_object(
             let flags_clone = flags.clone();
             drop(obj_ref);
 
+            // Pre-compute property keys before borrowing
+            let key_source = interp.property_key("source");
+            let key_flags = interp.property_key("flags");
+            let key_global = interp.property_key("global");
+            let key_ignore_case = interp.property_key("ignoreCase");
+            let key_multiline = interp.property_key("multiline");
+            let key_dot_all = interp.property_key("dotAll");
+            let key_unicode = interp.property_key("unicode");
+            let key_sticky = interp.property_key("sticky");
+            let key_last_index = interp.property_key("lastIndex");
+
             let regexp_obj = interp.create_object(guard);
             {
                 let mut regexp_ref = regexp_obj.borrow_mut();
@@ -826,38 +837,22 @@ fn clone_object(
 
                 // Set properties like source, flags, etc.
                 regexp_ref.set_property(
-                    PropertyKey::from("source"),
+                    key_source,
                     JsValue::String(JsString::from(pattern_clone.as_str())),
                 );
                 regexp_ref.set_property(
-                    PropertyKey::from("flags"),
+                    key_flags,
                     JsValue::String(JsString::from(flags_clone.as_str())),
                 );
-                regexp_ref.set_property(
-                    PropertyKey::from("global"),
-                    JsValue::Boolean(flags_clone.contains('g')),
-                );
-                regexp_ref.set_property(
-                    PropertyKey::from("ignoreCase"),
-                    JsValue::Boolean(flags_clone.contains('i')),
-                );
-                regexp_ref.set_property(
-                    PropertyKey::from("multiline"),
-                    JsValue::Boolean(flags_clone.contains('m')),
-                );
-                regexp_ref.set_property(
-                    PropertyKey::from("dotAll"),
-                    JsValue::Boolean(flags_clone.contains('s')),
-                );
-                regexp_ref.set_property(
-                    PropertyKey::from("unicode"),
-                    JsValue::Boolean(flags_clone.contains('u')),
-                );
-                regexp_ref.set_property(
-                    PropertyKey::from("sticky"),
-                    JsValue::Boolean(flags_clone.contains('y')),
-                );
-                regexp_ref.set_property(PropertyKey::from("lastIndex"), JsValue::Number(0.0));
+                regexp_ref.set_property(key_global, JsValue::Boolean(flags_clone.contains('g')));
+                regexp_ref
+                    .set_property(key_ignore_case, JsValue::Boolean(flags_clone.contains('i')));
+                regexp_ref
+                    .set_property(key_multiline, JsValue::Boolean(flags_clone.contains('m')));
+                regexp_ref.set_property(key_dot_all, JsValue::Boolean(flags_clone.contains('s')));
+                regexp_ref.set_property(key_unicode, JsValue::Boolean(flags_clone.contains('u')));
+                regexp_ref.set_property(key_sticky, JsValue::Boolean(flags_clone.contains('y')));
+                regexp_ref.set_property(key_last_index, JsValue::Number(0.0));
             }
             Ok(JsValue::Object(regexp_obj))
         }
@@ -933,7 +928,12 @@ fn clone_object(
                 .collect();
 
             // Check if this is an Error object by looking at prototype chain
-            let is_error = is_error_object(&obj_ref, interp);
+            let key_name = interp.property_key("name");
+            let key_message = interp.property_key("message");
+            let key_stack = interp.property_key("stack");
+            let is_error = obj_ref.properties.contains_key(&key_name)
+                && obj_ref.properties.contains_key(&key_message)
+                && obj_ref.properties.contains_key(&key_stack);
 
             drop(obj_ref);
 
@@ -990,15 +990,3 @@ fn clone_object(
     }
 }
 
-/// Check if an object is an Error object by looking for error-like properties
-fn is_error_object(obj_ref: &std::cell::Ref<JsObject>, _interp: &Interpreter) -> bool {
-    // Check if it has name, message, and stack properties typical of Error objects
-    let has_name = obj_ref.properties.contains_key(&PropertyKey::from("name"));
-    let has_message = obj_ref
-        .properties
-        .contains_key(&PropertyKey::from("message"));
-    let has_stack = obj_ref.properties.contains_key(&PropertyKey::from("stack"));
-
-    // If it has all three error-like properties, consider it an error
-    has_name && has_message && has_stack
-}

@@ -172,10 +172,10 @@ pub fn console_time(
     _this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    let label = args
-        .first()
-        .map(|v| v.to_js_string().to_string())
-        .unwrap_or_else(|| "default".to_string());
+    let label = match args.first() {
+        Some(v) => interp.to_js_string(v).to_string(),
+        None => "default".to_string(),
+    };
 
     interp.console_timer_start(label);
     Ok(Guarded::unguarded(JsValue::Undefined))
@@ -188,10 +188,10 @@ pub fn console_time_end(
     _this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    let label = args
-        .first()
-        .map(|v| v.to_js_string().to_string())
-        .unwrap_or_else(|| "default".to_string());
+    let label = match args.first() {
+        Some(v) => interp.to_js_string(v).to_string(),
+        None => "default".to_string(),
+    };
 
     match interp.console_timer_end(&label) {
         Some(elapsed_ms) => println!("{}: {}ms", label, elapsed_ms),
@@ -207,10 +207,10 @@ pub fn console_count(
     _this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    let label = args
-        .first()
-        .map(|v| v.to_js_string().to_string())
-        .unwrap_or_else(|| "default".to_string());
+    let label = match args.first() {
+        Some(v) => interp.to_js_string(v).to_string(),
+        None => "default".to_string(),
+    };
 
     let count = interp.console_counter_increment(label.clone());
     println!("{}: {}", label, count);
@@ -224,10 +224,10 @@ pub fn console_count_reset(
     _this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    let label = args
-        .first()
-        .map(|v| v.to_js_string().to_string())
-        .unwrap_or_else(|| "default".to_string());
+    let label = match args.first() {
+        Some(v) => interp.to_js_string(v).to_string(),
+        None => "default".to_string(),
+    };
 
     interp.console_counter_reset(&label);
     Ok(Guarded::unguarded(JsValue::Undefined))
@@ -249,14 +249,14 @@ pub fn console_clear(
 /// console.group(label)
 /// Creates a new inline group, indenting subsequent console messages
 pub fn console_group(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    let label = args
-        .first()
-        .map(|v| v.to_js_string().to_string())
-        .unwrap_or_default();
+    let label = match args.first() {
+        Some(v) => interp.to_js_string(v).to_string(),
+        None => String::new(),
+    };
 
     if label.is_empty() {
         println!("▼");
