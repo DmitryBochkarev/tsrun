@@ -363,20 +363,19 @@ impl BytecodeVM {
         }
     }
 
-    /// Acquire an arguments vector from the pool, or allocate a new one
+    /// Acquire an empty arguments vector with given capacity from pool
     #[inline]
-    fn acquire_arguments(&mut self, args: &[JsValue]) -> Vec<JsValue> {
+    fn acquire_arguments_vec(&mut self, capacity: usize) -> Vec<JsValue> {
         if let Some(pos) = self
             .arguments_pool
             .iter()
-            .position(|v| v.capacity() >= args.len())
+            .position(|v| v.capacity() >= capacity)
         {
             let mut vec = self.arguments_pool.swap_remove(pos);
             vec.clear();
-            vec.extend(args.iter().cloned());
             return vec;
         }
-        args.to_vec()
+        Vec::with_capacity(capacity)
     }
 
     /// Return an arguments vector to the pool for reuse
@@ -733,7 +732,7 @@ impl BytecodeVM {
                     func_obj.cheap_clone(),
                     bc_func,
                     this_value,
-                    &args,
+                    args,
                     return_register,
                     new_target,
                     false, // not async
@@ -846,7 +845,7 @@ impl BytecodeVM {
                     func_obj.cheap_clone(),
                     bc_func,
                     this_value,
-                    &args,
+                    args,
                     return_register,
                     new_target,
                     true,          // is_async - wrap result in Promise
@@ -910,7 +909,7 @@ impl BytecodeVM {
                     func_obj.cheap_clone(),
                     bc_func,
                     this_value,
-                    &args,
+                    args,
                     return_register,
                     new_target,
                     new_obj,
@@ -957,7 +956,7 @@ impl BytecodeVM {
         func_obj: Gc<JsObject>,
         bc_func: BytecodeFunction,
         this_value: JsValue,
-        args: &[JsValue],
+        args: Vec<JsValue>,
         return_register: Register,
         new_target: JsValue,
         is_async: bool,
@@ -1064,10 +1063,11 @@ impl BytecodeVM {
         interp.env = func_env;
         interp.push_env_guard(func_guard);
 
-        // Handle rest parameters
+        // Handle rest parameters - separate args for registers vs arguments object
         let new_guard = interp.heap.create_guard();
-        let processed_args: Vec<JsValue> =
+        let (processed_args, new_arguments): (Option<Vec<JsValue>>, Vec<JsValue>) =
             if let Some(rest_idx) = func_info.and_then(|info| info.rest_param) {
+                // Rest param case: create processed version for registers
                 let mut result_args = Vec::with_capacity(rest_idx + 1);
                 for i in 0..rest_idx {
                     result_args.push(args.get(i).cloned().unwrap_or(JsValue::Undefined));
@@ -1075,10 +1075,13 @@ impl BytecodeVM {
                 let rest_elements: Vec<JsValue> = args.get(rest_idx..).unwrap_or_default().to_vec();
                 let rest_array = interp.create_array_from(&new_guard, rest_elements);
                 result_args.push(JsValue::Object(rest_array));
-                result_args
+                (Some(result_args), args)
             } else {
-                args.to_vec()
+                // No rest params: use args directly (no clone needed!)
+                (None, args)
             };
+        // Use processed args for registers if available, otherwise use original args
+        let register_args = processed_args.as_ref().unwrap_or(&new_arguments);
 
         // Guard all values for the new frame
         if let JsValue::Object(obj) = &effective_this {
@@ -1087,7 +1090,7 @@ impl BytecodeVM {
         if let JsValue::Object(obj) = &new_target {
             new_guard.guard(obj.cheap_clone());
         }
-        for arg in &processed_args {
+        for arg in register_args {
             if let JsValue::Object(obj) = arg {
                 new_guard.guard(obj.cheap_clone());
             }
@@ -1096,7 +1099,7 @@ impl BytecodeVM {
         // Create the new register file for the called function (from pool if available)
         let register_count = bc_func.chunk.register_count as usize;
         let mut new_registers = self.acquire_registers(register_count);
-        for (i, arg) in processed_args.iter().enumerate() {
+        for (i, arg) in register_args.iter().enumerate() {
             if i < new_registers.len() {
                 if let Some(slot) = new_registers.get_mut(i) {
                     *slot = arg.clone();
@@ -1106,7 +1109,7 @@ impl BytecodeVM {
 
         // Save current VM state to trampoline stack
         let old_guard = std::mem::replace(&mut self.register_guard, new_guard);
-        let new_arguments = self.acquire_arguments(args);
+        // new_arguments already set from rest parameter handling above - no extra allocation needed
         let frame = TrampolineFrame {
             ip: self.ip,
             chunk: self.chunk.cheap_clone(),
@@ -1150,7 +1153,7 @@ impl BytecodeVM {
         func_obj: Gc<JsObject>,
         bc_func: BytecodeFunction,
         this_value: JsValue,
-        args: &[JsValue],
+        args: Vec<JsValue>,
         return_register: Register,
         new_target: JsValue,
         construct_new_obj: Gc<JsObject>,
@@ -1256,10 +1259,11 @@ impl BytecodeVM {
         interp.env = func_env;
         interp.push_env_guard(func_guard);
 
-        // Handle rest parameters
+        // Handle rest parameters - separate args for registers vs arguments object
         let new_guard = interp.heap.create_guard();
-        let processed_args: Vec<JsValue> =
+        let (processed_args, new_arguments): (Option<Vec<JsValue>>, Vec<JsValue>) =
             if let Some(rest_idx) = func_info.and_then(|info| info.rest_param) {
+                // Rest param case: create processed version for registers
                 let mut result_args = Vec::with_capacity(rest_idx + 1);
                 for i in 0..rest_idx {
                     result_args.push(args.get(i).cloned().unwrap_or(JsValue::Undefined));
@@ -1267,10 +1271,13 @@ impl BytecodeVM {
                 let rest_elements: Vec<JsValue> = args.get(rest_idx..).unwrap_or_default().to_vec();
                 let rest_array = interp.create_array_from(&new_guard, rest_elements);
                 result_args.push(JsValue::Object(rest_array));
-                result_args
+                (Some(result_args), args)
             } else {
-                args.to_vec()
+                // No rest params: use args directly (no clone needed!)
+                (None, args)
             };
+        // Use processed args for registers if available, otherwise use original args
+        let register_args = processed_args.as_ref().unwrap_or(&new_arguments);
 
         // Guard all values for the new frame
         if let JsValue::Object(obj) = &effective_this {
@@ -1279,7 +1286,7 @@ impl BytecodeVM {
         if let JsValue::Object(obj) = &new_target {
             new_guard.guard(obj.cheap_clone());
         }
-        for arg in &processed_args {
+        for arg in register_args {
             if let JsValue::Object(obj) = arg {
                 new_guard.guard(obj.cheap_clone());
             }
@@ -1290,7 +1297,7 @@ impl BytecodeVM {
         // Create the new register file for the called function (from pool if available)
         let register_count = bc_func.chunk.register_count as usize;
         let mut new_registers = self.acquire_registers(register_count);
-        for (i, arg) in processed_args.iter().enumerate() {
+        for (i, arg) in register_args.iter().enumerate() {
             if i < new_registers.len() {
                 if let Some(slot) = new_registers.get_mut(i) {
                     *slot = arg.clone();
@@ -1300,7 +1307,7 @@ impl BytecodeVM {
 
         // Save current VM state to trampoline stack
         let old_guard = std::mem::replace(&mut self.register_guard, new_guard);
-        let new_arguments = self.acquire_arguments(args);
+        // new_arguments already set from rest parameter handling above - no extra allocation needed
         let frame = TrampolineFrame {
             ip: self.ip,
             chunk: self.chunk.cheap_clone(),
@@ -2380,14 +2387,13 @@ impl BytecodeVM {
                 args_start,
                 argc,
             } => {
-                let callee_val = self.get_reg(callee);
-                let this_val = self.get_reg(this);
-
-                // FIXME: use pool, tinyvec
-                let mut args = Vec::with_capacity(argc as usize);
+                // Acquire args vec first (mutable borrow), then get register values
+                let mut args = self.acquire_arguments_vec(argc as usize);
                 for i in 0..argc {
                     args.push(self.get_reg(args_start + i).clone());
                 }
+                let callee_val = self.get_reg(callee).clone();
+                let this_val = self.get_reg(this).clone();
 
                 // Create guard and protect all object values
                 let guard = interp.heap.create_guard();
@@ -2399,8 +2405,8 @@ impl BytecodeVM {
 
                 // Use trampoline for function calls
                 Ok(OpResult::Call {
-                    callee: callee_val.clone(),
-                    this_value: this_val.clone(),
+                    callee: callee_val,
+                    this_value: this_val,
                     args,
                     return_register: dst,
                     new_target: JsValue::Undefined,
@@ -2486,7 +2492,13 @@ impl BytecodeVM {
                 args_start,
                 argc,
             } => {
-                let obj_val = self.get_reg(obj);
+                // Acquire args vec first (mutable borrow), then get register values
+                let mut args = self.acquire_arguments_vec(argc as usize);
+                for i in 0..argc {
+                    args.push(self.get_reg(args_start + i).clone());
+                }
+
+                let obj_val = self.get_reg(obj).clone();
                 let method_name = self
                     .get_string_constant(method)
                     .ok_or_else(|| JsError::internal_error("Invalid method name constant"))?;
@@ -2494,12 +2506,7 @@ impl BytecodeVM {
                 let Guarded {
                     value: callee,
                     guard: callee_guard,
-                } = self.get_property_value(interp, obj_val, &JsValue::String(method_name))?;
-
-                let mut args = Vec::with_capacity(argc as usize);
-                for i in 0..argc {
-                    args.push(self.get_reg(args_start + i).clone());
-                }
+                } = self.get_property_value(interp, &obj_val, &JsValue::String(method_name))?;
 
                 // Create guard and protect all object values
                 let guard = interp.heap.create_guard();
@@ -2519,7 +2526,7 @@ impl BytecodeVM {
                 // Use trampoline for function calls
                 Ok(OpResult::Call {
                     callee,
-                    this_value: obj_val.clone(),
+                    this_value: obj_val,
                     args,
                     return_register: dst,
                     new_target: JsValue::Undefined,
@@ -2534,15 +2541,15 @@ impl BytecodeVM {
                 args_start,
                 argc,
             } => {
-                let callee_val = self.get_reg(callee);
-
-                let mut args = Vec::with_capacity(argc as usize);
+                // Acquire args vec first (mutable borrow), then get register values
+                let mut args = self.acquire_arguments_vec(argc as usize);
                 for i in 0..argc {
                     args.push(self.get_reg(args_start + i).clone());
                 }
+                let callee_val = self.get_reg(callee).clone();
 
                 // Inline constructor call logic (similar to evaluate_new)
-                let JsValue::Object(ctor) = callee_val else {
+                let JsValue::Object(ctor) = &callee_val else {
                     return Err(JsError::type_error("Constructor is not a callable object"));
                 };
 
@@ -2593,7 +2600,7 @@ impl BytecodeVM {
                     this_value: this,
                     args,
                     return_register: dst,
-                    new_target: callee_val.clone(), // new.target is the constructor itself
+                    new_target: callee_val, // new.target is the constructor itself
                     new_obj,
                     guard,
                 })
@@ -3945,7 +3952,7 @@ impl BytecodeVM {
                 // Get the current function's __super__ property (parent constructor)
                 let super_ctor = self.get_super_constructor(interp)?;
 
-                let mut args = Vec::with_capacity(argc as usize);
+                let mut args = self.acquire_arguments_vec(argc as usize);
                 for i in 0..argc {
                     args.push(self.get_reg(args_start + i).clone());
                 }
