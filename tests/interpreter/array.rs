@@ -860,6 +860,189 @@ fn test_array_at_symbol_throws() {
     assert!(err.to_string().contains("TypeError") || err.to_string().contains("Symbol"));
 }
 
+#[test]
+fn test_array_at_function_length() {
+    // Array.prototype.at.length should be 1 (one formal parameter)
+    assert_eq!(eval("Array.prototype.at.length"), JsValue::Number(1.0));
+}
+
+#[test]
+fn test_array_at_function_name() {
+    // Array.prototype.at.name should be "at"
+    assert_eq!(
+        eval("Array.prototype.at.name"),
+        JsValue::String(JsString::from("at"))
+    );
+}
+
+#[test]
+fn test_function_call_bind() {
+    // Test Function.prototype.call.bind() pattern used by test262 harness
+    assert_eq!(
+        eval(
+            r#"
+            var __hasOwnProperty = Function.prototype.call.bind(Object.prototype.hasOwnProperty);
+            __hasOwnProperty({a: 1}, 'a');
+            "#
+        ),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_get_own_property_descriptor_function_length() {
+    // Test Object.getOwnPropertyDescriptor on function length property
+    assert_eq!(
+        eval(
+            r#"
+            var desc = Object.getOwnPropertyDescriptor(Array.prototype.at, 'length');
+            desc.value;
+            "#
+        ),
+        JsValue::Number(1.0)
+    );
+}
+
+#[test]
+fn test_function_length_descriptor_attributes() {
+    // Test that function.length has correct property descriptor attributes
+    // Per spec: writable: false, enumerable: false, configurable: true
+    assert_eq!(
+        eval(
+            r#"
+            var desc = Object.getOwnPropertyDescriptor(Array.prototype.at, 'length');
+            [desc.writable, desc.enumerable, desc.configurable].join(',');
+            "#
+        ),
+        JsValue::String(JsString::from("false,false,true"))
+    );
+}
+
+#[test]
+fn test_function_name_descriptor_attributes() {
+    // Test that function.name has correct property descriptor attributes
+    // Per spec: writable: false, enumerable: false, configurable: true
+    assert_eq!(
+        eval(
+            r#"
+            var desc = Object.getOwnPropertyDescriptor(Array.prototype.at, 'name');
+            [desc.value, desc.writable, desc.enumerable, desc.configurable].join(',');
+            "#
+        ),
+        JsValue::String(JsString::from("at,false,false,true"))
+    );
+}
+
+#[test]
+fn test_verify_property_pattern() {
+    // Test the exact pattern used by test262 propertyHelper.js
+    assert_eq!(
+        eval(
+            r#"
+            // Capture primordials like propertyHelper.js does
+            var __getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+            var __hasOwnProperty = Function.prototype.call.bind(Object.prototype.hasOwnProperty);
+
+            // Verify length property like the test does
+            var obj = Array.prototype.at;
+            var name = "length";
+            var originalDesc = __getOwnPropertyDescriptor(obj, name);
+
+            // Return the result
+            [
+                originalDesc.value,
+                originalDesc.writable,
+                originalDesc.enumerable,
+                originalDesc.configurable
+            ].join(',');
+            "#
+        ),
+        JsValue::String(JsString::from("1,false,false,true"))
+    );
+}
+
+#[test]
+fn test_full_verify_property_simulation() {
+    // Simulate the full verifyProperty call from test262
+    assert_eq!(
+        eval(
+            r#"
+            // From propertyHelper.js
+            var __hasOwnProperty = Function.prototype.call.bind(Object.prototype.hasOwnProperty);
+            var __getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+
+            function verifyProperty(obj, name, desc) {
+                var originalDesc = __getOwnPropertyDescriptor(obj, name);
+                var nameStr = String(name);
+
+                if (!__hasOwnProperty(obj, name)) {
+                    throw new Error("obj should have own property " + nameStr);
+                }
+
+                if (__hasOwnProperty(desc, 'value')) {
+                    if (desc.value !== originalDesc.value) {
+                        throw new Error("Expected " + nameStr + " to have value " + desc.value + " but got " + originalDesc.value);
+                    }
+                }
+
+                return true;
+            }
+
+            // The actual test
+            verifyProperty(Array.prototype.at, "length", { value: 1 });
+            "#
+        ),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_assert_samevalue_pattern() {
+    // Test assert.sameValue pattern from test262
+    assert_eq!(
+        eval(
+            r#"
+            // From assert.js
+            function assert(mustBeTrue, message) {
+                if (mustBeTrue === true) return;
+                throw new Error(message || 'Expected true');
+            }
+
+            assert._isSameValue = function(a, b) {
+                if (a === b) {
+                    return a !== 0 || 1 / a === 1 / b;
+                }
+                return a !== a && b !== b;
+            };
+
+            assert.sameValue = function(actual, expected, message) {
+                if (assert._isSameValue(actual, expected)) return;
+                throw new Error(message || 'Expected same value');
+            };
+
+            // Test what the test262 test does
+            assert.sameValue(typeof Array.prototype.at, 'function');
+            "passed";
+            "#
+        ),
+        JsValue::String(JsString::from("passed"))
+    );
+}
+
+#[test]
+fn test_array_map_call() {
+    // Test Array.prototype.map.call pattern used in assert.js
+    assert_eq!(
+        eval(
+            r#"
+            var result = Array.prototype.map.call([1, 2, 3], String).join(', ');
+            result;
+            "#
+        ),
+        JsValue::String(JsString::from("1, 2, 3"))
+    );
+}
+
 // Array.prototype.lastIndexOf tests
 #[test]
 fn test_array_lastindexof() {
