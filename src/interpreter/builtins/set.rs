@@ -1,9 +1,9 @@
 //! Set built-in methods
 
-use super::map::same_value_zero;
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
-use crate::value::{ExoticObject, Guarded, JsValue, PropertyKey};
+use crate::value::{ExoticObject, Guarded, JsMapKey, JsValue, PropertyKey};
+use indexmap::IndexSet;
 
 /// Initialize Set.prototype with add, has, delete, clear, forEach methods
 pub fn init_set_prototype(interp: &mut Interpreter) {
@@ -62,7 +62,7 @@ pub fn set_constructor(
     {
         let mut obj = set_obj.borrow_mut();
         obj.exotic = ExoticObject::Set {
-            entries: Vec::new(),
+            entries: IndexSet::new(),
         };
         obj.prototype = Some(interp.set_prototype.clone());
         obj.set_property(size_key, JsValue::Number(0.0));
@@ -79,11 +79,7 @@ pub fn set_constructor(
             let mut set = set_obj.borrow_mut();
             if let ExoticObject::Set { ref mut entries } = set.exotic {
                 for value in items {
-                    // Only add if not already present
-                    let exists = entries.iter().any(|e| same_value_zero(e, &value));
-                    if !exists {
-                        entries.push(value);
-                    }
+                    entries.insert(JsMapKey(value));
                 }
                 let len = entries.len();
                 set.set_property(size_key, JsValue::Number(len as f64));
@@ -112,13 +108,9 @@ pub fn set_add(
     let mut set = set_obj.borrow_mut();
 
     if let ExoticObject::Set { ref mut entries } = set.exotic {
-        // Only add if not already present
-        let exists = entries.iter().any(|e| same_value_zero(e, &value));
-        if !exists {
-            entries.push(value);
-            let len = entries.len();
-            set.set_property(size_key, JsValue::Number(len as f64));
-        }
+        entries.insert(JsMapKey(value));
+        let len = entries.len();
+        set.set_property(size_key, JsValue::Number(len as f64));
     }
 
     drop(set);
@@ -140,11 +132,9 @@ pub fn set_has(
     let set = set_obj.borrow();
 
     if let ExoticObject::Set { ref entries } = set.exotic {
-        for e in entries {
-            if same_value_zero(e, &value) {
-                return Ok(Guarded::unguarded(JsValue::Boolean(true)));
-            }
-        }
+        return Ok(Guarded::unguarded(JsValue::Boolean(
+            entries.contains(&JsMapKey(value)),
+        )));
     }
 
     Ok(Guarded::unguarded(JsValue::Boolean(false)))
@@ -167,8 +157,7 @@ pub fn set_delete(
     let mut set = set_obj.borrow_mut();
 
     if let ExoticObject::Set { ref mut entries } = set.exotic {
-        if let Some(i) = entries.iter().position(|v| same_value_zero(v, &value)) {
-            entries.remove(i);
+        if entries.shift_remove(&JsMapKey(value)) {
             let len = entries.len();
             set.set_property(size_key, JsValue::Number(len as f64));
             return Ok(Guarded::unguarded(JsValue::Boolean(true)));
@@ -220,7 +209,7 @@ pub fn set_foreach(
     {
         let set = set_obj.borrow();
         if let ExoticObject::Set { entries: ref e } = set.exotic {
-            entries = e.clone();
+            entries = e.iter().map(|k| k.0.clone()).collect();
         } else {
             return Err(JsError::type_error(
                 "Set.prototype.forEach called on non-Set",
@@ -264,7 +253,7 @@ pub fn set_values(
     {
         let set = set_obj.borrow();
         if let ExoticObject::Set { entries: ref e } = set.exotic {
-            values = e.clone();
+            values = e.iter().map(|k| k.0.clone()).collect();
         } else {
             return Err(JsError::type_error(
                 "Set.prototype.values called on non-Set",
@@ -296,7 +285,7 @@ pub fn set_entries(
     {
         let set = set_obj.borrow();
         if let ExoticObject::Set { entries: ref e } = set.exotic {
-            raw_entries = e.clone();
+            raw_entries = e.iter().map(|k| k.0.clone()).collect();
         } else {
             return Err(JsError::type_error(
                 "Set.prototype.entries called on non-Set",

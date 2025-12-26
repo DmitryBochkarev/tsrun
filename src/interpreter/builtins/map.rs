@@ -2,7 +2,8 @@
 
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
-use crate::value::{ExoticObject, Guarded, JsValue, PropertyKey};
+use crate::value::{ExoticObject, Guarded, JsMapKey, JsValue, PropertyKey};
+use indexmap::IndexMap;
 
 /// Initialize Map.prototype with get, set, has, delete, clear, forEach methods
 pub fn init_map_prototype(interp: &mut Interpreter) {
@@ -53,25 +54,6 @@ pub fn init_map(interp: &mut Interpreter) {
         .set_property(map_key, JsValue::Object(constructor));
 }
 
-// Helper to check SameValueZero equality for Map/Set keys
-pub fn same_value_zero(a: &JsValue, b: &JsValue) -> bool {
-    match (a, b) {
-        (JsValue::Number(x), JsValue::Number(y)) => {
-            // NaN equals NaN, -0 equals +0
-            if x.is_nan() && y.is_nan() {
-                return true;
-            }
-            x == y
-        }
-        (JsValue::String(x), JsValue::String(y)) => x == y,
-        (JsValue::Boolean(x), JsValue::Boolean(y)) => x == y,
-        (JsValue::Null, JsValue::Null) => true,
-        (JsValue::Undefined, JsValue::Undefined) => true,
-        (JsValue::Object(x), JsValue::Object(y)) => x.id() == y.id(),
-        _ => false,
-    }
-}
-
 pub fn map_constructor(
     interp: &mut Interpreter,
     _this: JsValue,
@@ -84,7 +66,7 @@ pub fn map_constructor(
     {
         let mut obj = map_obj.borrow_mut();
         obj.exotic = ExoticObject::Map {
-            entries: Vec::new(),
+            entries: IndexMap::new(),
         };
         obj.prototype = Some(interp.map_prototype.clone());
         obj.set_property(size_key, JsValue::Number(0.0));
@@ -120,18 +102,7 @@ pub fn map_constructor(
         let mut map = map_obj.borrow_mut();
         if let ExoticObject::Map { ref mut entries } = map.exotic {
             for (key, value) in pairs {
-                // Check if key already exists
-                let mut found = false;
-                for entry in entries.iter_mut() {
-                    if same_value_zero(&entry.0, &key) {
-                        entry.1 = value.clone();
-                        found = true;
-                        break;
-                    }
-                }
-                if !found {
-                    entries.push((key, value));
-                }
+                entries.insert(JsMapKey(key), value);
             }
             let len = entries.len();
             map.set_property(size_key, JsValue::Number(len as f64));
@@ -156,10 +127,8 @@ pub fn map_get(
     let map = map_obj.borrow();
 
     if let ExoticObject::Map { ref entries } = map.exotic {
-        for (k, v) in entries {
-            if same_value_zero(k, &key) {
-                return Ok(Guarded::unguarded(v.clone()));
-            }
+        if let Some(value) = entries.get(&JsMapKey(key)) {
+            return Ok(Guarded::unguarded(value.clone()));
         }
     }
 
@@ -185,16 +154,7 @@ pub fn map_set(
     let mut map = map_obj.borrow_mut();
 
     if let ExoticObject::Map { ref mut entries } = map.exotic {
-        // Check if key already exists
-        for entry in entries.iter_mut() {
-            if same_value_zero(&entry.0, &key) {
-                entry.1 = value;
-                drop(map);
-                return Ok(Guarded::unguarded(this)); // Return the map for chaining
-            }
-        }
-        entries.push((key, value));
-        // Update size property
+        entries.insert(JsMapKey(key), value);
         let len = entries.len();
         map.set_property(size_key, JsValue::Number(len as f64));
     }
@@ -218,11 +178,9 @@ pub fn map_has(
     let map = map_obj.borrow();
 
     if let ExoticObject::Map { ref entries } = map.exotic {
-        for (k, _) in entries {
-            if same_value_zero(k, &key) {
-                return Ok(Guarded::unguarded(JsValue::Boolean(true)));
-            }
-        }
+        return Ok(Guarded::unguarded(JsValue::Boolean(
+            entries.contains_key(&JsMapKey(key)),
+        )));
     }
 
     Ok(Guarded::unguarded(JsValue::Boolean(false)))
@@ -245,8 +203,7 @@ pub fn map_delete(
     let mut map = map_obj.borrow_mut();
 
     if let ExoticObject::Map { ref mut entries } = map.exotic {
-        if let Some(i) = entries.iter().position(|(k, _)| same_value_zero(k, &key)) {
-            entries.remove(i);
+        if entries.shift_remove(&JsMapKey(key)).is_some() {
             let len = entries.len();
             map.set_property(size_key, JsValue::Number(len as f64));
             return Ok(Guarded::unguarded(JsValue::Boolean(true)));
@@ -298,7 +255,7 @@ pub fn map_foreach(
     {
         let map = map_obj.borrow();
         if let ExoticObject::Map { entries: ref e } = map.exotic {
-            entries = e.clone();
+            entries = e.iter().map(|(k, v)| (k.0.clone(), v.clone())).collect();
         } else {
             return Err(JsError::type_error(
                 "Map.prototype.forEach called on non-Map",
@@ -332,7 +289,7 @@ pub fn map_keys(
     {
         let map = map_obj.borrow();
         if let ExoticObject::Map { entries: ref e } = map.exotic {
-            keys = e.iter().map(|(k, _)| k.clone()).collect();
+            keys = e.keys().map(|k| k.0.clone()).collect();
         } else {
             return Err(JsError::type_error("Map.prototype.keys called on non-Map"));
         }
@@ -390,7 +347,7 @@ pub fn map_entries(
     {
         let map = map_obj.borrow();
         if let ExoticObject::Map { entries: ref e } = map.exotic {
-            raw_entries = e.clone();
+            raw_entries = e.iter().map(|(k, v)| (k.0.clone(), v.clone())).collect();
         } else {
             return Err(JsError::type_error(
                 "Map.prototype.entries called on non-Map",
@@ -451,16 +408,14 @@ pub fn map_group_by(
     {
         let mut obj = map_obj.borrow_mut();
         obj.exotic = ExoticObject::Map {
-            entries: Vec::new(),
+            entries: IndexMap::new(),
         };
         obj.prototype = Some(interp.map_prototype.clone());
         obj.set_property(size_key.clone(), JsValue::Number(0.0));
     }
 
-    // Track groups by key using SameValueZero comparison
-    // We store (key, items) pairs and check existing keys
-    let mut group_keys: Vec<JsValue> = Vec::new();
-    let mut group_items: Vec<Vec<JsValue>> = Vec::new();
+    // Track groups using IndexMap for O(1) lookup with SameValueZero semantics
+    let mut groups: IndexMap<JsMapKey, Vec<JsValue>> = IndexMap::new();
 
     // Iterate and group
     for (index, item) in elements.into_iter().enumerate() {
@@ -478,43 +433,23 @@ pub fn map_group_by(
 
         let key = key_result.value;
 
-        // Find existing group or create new one
-        let mut found_idx = None;
-        for (idx, existing_key) in group_keys.iter().enumerate() {
-            if same_value_zero(existing_key, &key) {
-                found_idx = Some(idx);
-                break;
-            }
-        }
-
-        match found_idx {
-            Some(idx) => {
-                if let Some(items_vec) = group_items.get_mut(idx) {
-                    items_vec.push(item);
-                }
-            }
-            None => {
-                group_keys.push(key);
-                group_items.push(vec![item]);
-            }
-        }
+        // Add to existing group or create new one
+        groups.entry(JsMapKey(key)).or_default().push(item);
     }
 
     // Now build the Map from the groups
     // First, create all the arrays (which may trigger GC)
-    let mut built_entries: Vec<(JsValue, JsValue)> = Vec::with_capacity(group_keys.len());
-    for (key, items) in group_keys.into_iter().zip(group_items.into_iter()) {
+    let mut built_entries: IndexMap<JsMapKey, JsValue> = IndexMap::with_capacity(groups.len());
+    for (key, items) in groups {
         let arr = interp.create_array_from(&guard, items);
-        built_entries.push((key, JsValue::Object(arr)));
+        built_entries.insert(key, JsValue::Object(arr));
     }
 
     // Then add entries to the map
     {
         let mut map = map_obj.borrow_mut();
         if let ExoticObject::Map { ref mut entries } = map.exotic {
-            for entry in built_entries {
-                entries.push(entry);
-            }
+            *entries = built_entries;
             let len = entries.len();
             map.set_property(size_key, JsValue::Number(len as f64));
         }

@@ -4,8 +4,10 @@
 
 use std::cell::RefCell;
 use std::fmt;
+use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 
+use indexmap::{IndexMap, IndexSet};
 use rustc_hash::FxHashMap;
 
 /// Convert a JavaScript number to its canonical string representation.
@@ -955,7 +957,7 @@ impl Traceable for JsObject {
             }
             ExoticObject::Map { entries } => {
                 for (k, v) in entries {
-                    if let JsValue::Object(obj) = k {
+                    if let JsValue::Object(obj) = &k.0 {
                         visitor(obj.copy_ref());
                     }
                     if let JsValue::Object(obj) = v {
@@ -965,7 +967,7 @@ impl Traceable for JsObject {
             }
             ExoticObject::Set { entries } => {
                 for entry in entries {
-                    if let JsValue::Object(obj) = entry {
+                    if let JsValue::Object(obj) = &entry.0 {
                         visitor(obj.copy_ref());
                     }
                 }
@@ -2258,6 +2260,74 @@ impl Default for EnvironmentData {
     }
 }
 
+/// A wrapper around JsValue that implements Hash and Eq using SameValueZero semantics.
+///
+/// This is used as the key type for Map and Set to provide O(1) lookup while
+/// preserving JavaScript's SameValueZero comparison semantics:
+/// - NaN equals NaN (unlike IEEE 754)
+/// - -0 equals +0
+/// - Objects are compared by identity (pointer equality)
+#[derive(Debug, Clone)]
+pub struct JsMapKey(pub JsValue);
+
+impl JsMapKey {
+    /// Check SameValueZero equality (used by Map/Set for key comparison)
+    fn same_value_zero(a: &JsValue, b: &JsValue) -> bool {
+        match (a, b) {
+            (JsValue::Number(x), JsValue::Number(y)) => {
+                // NaN equals NaN, -0 equals +0
+                if x.is_nan() && y.is_nan() {
+                    return true;
+                }
+                x == y
+            }
+            (JsValue::String(x), JsValue::String(y)) => x == y,
+            (JsValue::Boolean(x), JsValue::Boolean(y)) => x == y,
+            (JsValue::Null, JsValue::Null) => true,
+            (JsValue::Undefined, JsValue::Undefined) => true,
+            (JsValue::Object(x), JsValue::Object(y)) => x.id() == y.id(),
+            (JsValue::Symbol(x), JsValue::Symbol(y)) => x.id == y.id,
+            _ => false,
+        }
+    }
+}
+
+impl PartialEq for JsMapKey {
+    fn eq(&self, other: &Self) -> bool {
+        Self::same_value_zero(&self.0, &other.0)
+    }
+}
+
+impl Eq for JsMapKey {}
+
+impl Hash for JsMapKey {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        // Hash discriminant first to differentiate types
+        std::mem::discriminant(&self.0).hash(state);
+
+        match &self.0 {
+            JsValue::Undefined | JsValue::Null => {
+                // No additional data to hash
+            }
+            JsValue::Boolean(b) => b.hash(state),
+            JsValue::Number(n) => {
+                // NaN must hash consistently (all NaNs are equal in SameValueZero)
+                // -0 and +0 must hash the same (they're equal in SameValueZero)
+                if n.is_nan() {
+                    0x7FF8_0000_0000_0000u64.hash(state); // Canonical NaN bits
+                } else if *n == 0.0 {
+                    0u64.hash(state); // Both -0 and +0 hash to 0
+                } else {
+                    n.to_bits().hash(state);
+                }
+            }
+            JsValue::String(s) => s.hash(state),
+            JsValue::Symbol(sym) => sym.id.hash(state),
+            JsValue::Object(obj) => obj.id().hash(state),
+        }
+    }
+}
+
 /// Exotic object behavior
 #[derive(Debug)]
 pub enum ExoticObject {
@@ -2276,11 +2346,13 @@ pub enum ExoticObject {
     /// Function exotic object
     Function(JsFunction),
     /// Map exotic object - stores key-value pairs preserving insertion order
-    // FIXME: use a proper hash map
-    Map { entries: Vec<(JsValue, JsValue)> },
+    /// Uses IndexMap for O(1) lookup with SameValueZero key comparison
+    Map {
+        entries: IndexMap<JsMapKey, JsValue>,
+    },
     /// Set exotic object - stores unique values preserving insertion order
-    // FIXME: use a proper set
-    Set { entries: Vec<JsValue> },
+    /// Uses IndexSet for O(1) lookup with SameValueZero comparison
+    Set { entries: IndexSet<JsMapKey> },
     /// Date exotic object - stores timestamp in milliseconds since Unix epoch
     Date { timestamp: f64 },
     /// RegExp exotic object - stores pattern and flags

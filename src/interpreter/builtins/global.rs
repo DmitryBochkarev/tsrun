@@ -5,8 +5,9 @@ use crate::gc::{Gc, Guard};
 use crate::interpreter::Interpreter;
 use crate::parser::Parser;
 use crate::value::{
-    CheapClone, ExoticObject, Guarded, JsObject, JsString, JsValue, Property, PropertyKey,
+    CheapClone, ExoticObject, Guarded, JsMapKey, JsObject, JsString, JsValue, Property, PropertyKey,
 };
+use indexmap::{IndexMap, IndexSet};
 
 /// Register global functions (parseInt, parseFloat, isNaN, isFinite, URI functions)
 pub fn init_global_functions(interp: &mut Interpreter) {
@@ -753,14 +754,17 @@ fn clone_object(
 
         // Maps - clone entries recursively
         ExoticObject::Map { entries } => {
-            let entries_to_clone: Vec<(JsValue, JsValue)> = entries.clone();
+            let entries_to_clone: Vec<(JsValue, JsValue)> = entries
+                .iter()
+                .map(|(k, v)| (k.0.clone(), v.clone()))
+                .collect();
             drop(obj_ref);
 
-            let mut cloned_entries = Vec::with_capacity(entries_to_clone.len());
+            let mut cloned_entries = IndexMap::with_capacity(entries_to_clone.len());
             for (key, val) in &entries_to_clone {
                 let cloned_key = structured_clone_internal(interp, guard, key)?;
                 let cloned_val = structured_clone_internal(interp, guard, val)?;
-                cloned_entries.push((cloned_key, cloned_val));
+                cloned_entries.insert(JsMapKey(cloned_key), cloned_val);
             }
 
             let map_obj = interp.create_object(guard);
@@ -776,12 +780,12 @@ fn clone_object(
 
         // Sets - clone entries recursively
         ExoticObject::Set { entries } => {
-            let entries_to_clone: Vec<JsValue> = entries.clone();
+            let entries_to_clone: Vec<JsValue> = entries.iter().map(|k| k.0.clone()).collect();
             drop(obj_ref);
 
-            let mut cloned_entries = Vec::with_capacity(entries_to_clone.len());
+            let mut cloned_entries = IndexSet::with_capacity(entries_to_clone.len());
             for entry in &entries_to_clone {
-                cloned_entries.push(structured_clone_internal(interp, guard, entry)?);
+                cloned_entries.insert(JsMapKey(structured_clone_internal(interp, guard, entry)?));
             }
 
             let set_obj = interp.create_object(guard);
