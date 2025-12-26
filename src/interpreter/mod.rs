@@ -2640,7 +2640,6 @@ impl Interpreter {
     }
 
     /// Create module object from TypeScript source
-    // FIXME: move up to other source parsing code?
     fn create_source_module_object(
         &mut self,
         guard: &Guard<JsObject>,
