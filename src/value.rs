@@ -1198,7 +1198,6 @@ impl JsObject {
     }
 
     /// Get a property, searching the prototype chain
-    // FIXME: return reference
     pub fn get_property(&self, key: &PropertyKey) -> Option<JsValue> {
         // For arrays, handle index access and length from elements Vec
         if let ExoticObject::Array { ref elements } = self.exotic {

@@ -435,7 +435,6 @@ impl BytecodeVM {
     }
 
     /// Get a string constant from the pool
-    // FIXME: return reference
     #[inline]
     fn get_string_constant(&self, idx: u16) -> Option<JsString> {
         match self.get_constant(idx)? {
@@ -445,7 +444,6 @@ impl BytecodeVM {
     }
 
     /// Get the super constructor from the current function's __super__ property
-    // FIXME: return reference
     fn get_super_constructor(&self, interp: &mut Interpreter) -> Result<JsValue, JsError> {
         // Look up __super__ in the current function's properties
         let super_key = PropertyKey::String(interp.intern("__super__"));
@@ -483,7 +481,6 @@ impl BytecodeVM {
     }
 
     /// Get the super target object for super.x property access
-    // FIXME: return reference
     fn get_super_target(&self, interp: &mut Interpreter) -> Result<JsValue, JsError> {
         // First, try to look up __super_target__ from the current environment
         // This is set when entering a method via the trampoline
