@@ -126,29 +126,23 @@ impl Iterator for UnmarkedIter<'_> {
 /// Works like `Rc<T>` - cloning increments ref_count, dropping decrements it.
 /// Objects are collected by the GC when unreachable (not when ref_count hits 0).
 pub struct Gc<T: Default + Reset + Traceable> {
-    /// Unique object ID (for ownership tracking)
-    // FIXME: duplicated index same as in gc
-    id: usize,
-
     /// Pointer to the GcBox for fast access
     ptr: NonNull<GcBox<T>>,
 
     /// Weak reference to space - used to check if space is still alive before accessing ptr
     /// This prevents use-after-free when Gc outlives the Space (e.g., during interpreter shutdown)
     space: Weak<RefCell<Space<T>>>,
-    // Generation this Gc was created for. Must match GcBox's generation to affect ref_count.
-    //generation: u32,
 }
 
 impl<T: Default + Reset + Traceable> PartialEq for Gc<T> {
     fn eq(&self, other: &Self) -> bool {
-        self.id == other.id
+        self.ptr == other.ptr
     }
 }
 
 impl<T: Default + Reset + Traceable> std::hash::Hash for Gc<T> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.id.hash(state);
+        self.ptr.hash(state);
     }
 }
 
@@ -165,14 +159,14 @@ impl<T: Default + Reset + Traceable> Gc<T> {
         unsafe { self.ptr.as_ref().data.borrow_mut() }
     }
 
-    /// Get the object's unique ID
+    /// Get the object's unique ID (pointer address)
     pub fn id(&self) -> usize {
-        self.id
+        self.ptr.as_ptr() as usize
     }
 
     /// Check if two Gc pointers point to the same object
     pub fn ptr_eq(a: &Gc<T>, b: &Gc<T>) -> bool {
-        a.id == b.id
+        a.ptr == b.ptr
     }
 
     /// Create a copy of this Gc without incrementing ref_count.
@@ -182,10 +176,7 @@ impl<T: Default + Reset + Traceable> Gc<T> {
     /// SAFETY: Returns a GcPtr that does NOT have Drop. The caller must ensure
     /// the GcPtr doesn't outlive the original Gc.
     pub fn copy_ref(&self) -> GcPtr<T> {
-        GcPtr {
-            id: self.id,
-            ptr: self.ptr,
-        }
+        GcPtr { ptr: self.ptr }
     }
 }
 
@@ -196,8 +187,6 @@ impl<T: Default + Reset + Traceable> Gc<T> {
 /// A raw pointer to a GC-managed object. Copy and no Drop.
 /// Used during tracing to avoid affecting ref_counts.
 pub struct GcPtr<T: Default + Reset + Traceable> {
-    /// Unique object ID
-    pub(crate) id: usize,
     /// Pointer to the GcBox
     pub(crate) ptr: NonNull<GcBox<T>>,
 }
@@ -210,35 +199,19 @@ impl<T: Default + Reset + Traceable> Clone for GcPtr<T> {
     }
 }
 
-impl<T: Default + Reset + Traceable> GcPtr<T> {
-    /// Get the object's unique ID
-    pub fn id(&self) -> usize {
-        self.id
-    }
-
-    /// Get the GcBox's current index (stable - doesn't change when object is reused)
-    pub fn gcbox_index(&self) -> usize {
-        unsafe { self.ptr.as_ref().index }
-    }
-}
-
 impl<T: Default + Reset + Traceable> Clone for Gc<T> {
     fn clone(&self) -> Self {
         // Increment ref_count (only if space is still alive)
         if let Some(_space) = self.space.upgrade() {
             let gc_box = unsafe { self.ptr.as_ref() };
-            // Only increment if generation matches (object wasn't swept and reused)
-            if !gc_box.pooled.get()
-            /*&& gc_box.generation.get() == self.generation*/
-            {
+            // Only increment if not pooled
+            if !gc_box.pooled.get() {
                 gc_box.ref_count.set(gc_box.ref_count.get() + 1);
             }
         }
         Self {
-            id: self.id,
             ptr: self.ptr,
             space: self.space.clone(),
-            //generation: self.generation,
         }
     }
 }
@@ -283,7 +256,7 @@ impl<T: Default + Reset + Traceable> Drop for Gc<T> {
 
 impl<T: Default + Reset + Traceable> std::fmt::Debug for Gc<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Gc").field("id", &self.id).finish()
+        f.debug_struct("Gc").field("ptr", &self.ptr).finish()
     }
 }
 
@@ -458,7 +431,7 @@ impl<T: Default + Reset + Traceable> Space<T> {
             self.collect();
         }
 
-        let (index, ptr /*, generation */) = if let Some(ptr) = self.free_list.pop() {
+        let ptr = if let Some(ptr) = self.free_list.pop() {
             // Reuse from pool - safe because pool contains valid pointers
             // Safety: ptr came from our chunks which have stable addresses
             let gc_box = unsafe { ptr.as_ptr().as_mut() };
@@ -474,12 +447,7 @@ impl<T: Default + Reset + Traceable> Space<T> {
             gc_box.data.borrow_mut().reset();
             gc_box.ref_count.set(1); // Start with ref_count = 1 for the returned Gc
             gc_box.pooled.set(false);
-            // Increment generation - old Gc pointers with old generation won't affect this object
-            // let new_gen = gc_box.generation.get().wrapping_add(1);
-            // gc_box.generation.set(new_gen);
-
-            // Index stays the same for reused objects
-            (gc_box.index, ptr /*, new_gen */)
+            ptr
         } else {
             // Need to allocate new - check if current chunk has space
             let need_new_chunk = self
@@ -526,17 +494,12 @@ impl<T: Default + Reset + Traceable> Space<T> {
                 }
             };
             gc_box.ref_count.set(1); // Start with ref_count = 1 for the returned Gc
-            let ptr = NonNull::from(gc_box);
-            //let generation = gc_box.generation.get(); // New objects start at generation 0
-
-            (index, ptr /*, generation */)
+            NonNull::from(gc_box)
         };
 
         Gc {
-            id: index,
             ptr,
             space: self.self_weak.clone(),
-            //generation,
         }
     }
 
