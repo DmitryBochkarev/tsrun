@@ -1566,7 +1566,7 @@ impl Interpreter {
     pub fn create_native_fn(
         &mut self,
         guard: &Guard<JsObject>,
-        name: &str, // FIXME: make it JsString
+        name: &str,
         func: NativeFn,
         arity: usize,
     ) -> Gc<JsObject> {
