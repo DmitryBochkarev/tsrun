@@ -6,8 +6,8 @@
 
 use serde_json::json;
 use typescript_eval::{
-    interpreter::builtins::create_eval_internal_module, InternalModule, JsError, JsValue,
-    OrderResponse, Runtime, RuntimeConfig, RuntimeResult, RuntimeValue,
+    interpreter::builtins::create_eval_internal_module, value::PropertyKey, InternalModule,
+    JsError, JsString, JsValue, OrderResponse, Runtime, RuntimeConfig, RuntimeResult, RuntimeValue,
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -97,7 +97,10 @@ fn create_test_runtime() -> Runtime {
 /// Extract string property from JsValue object
 fn get_string_prop(obj: &JsValue, key: &str) -> Option<String> {
     if let JsValue::Object(o) = obj {
-        if let Some(JsValue::String(s)) = o.borrow().get_property(&key.into()) {
+        if let Some(JsValue::String(s)) = o
+            .borrow()
+            .get_property(&PropertyKey::String(JsString::from(key)))
+        {
             return Some(s.to_string());
         }
     }
@@ -107,7 +110,10 @@ fn get_string_prop(obj: &JsValue, key: &str) -> Option<String> {
 /// Extract number property from JsValue object
 fn get_number_prop(obj: &JsValue, key: &str) -> Option<f64> {
     if let JsValue::Object(o) = obj {
-        if let Some(JsValue::Number(n)) = o.borrow().get_property(&key.into()) {
+        if let Some(JsValue::Number(n)) = o
+            .borrow()
+            .get_property(&PropertyKey::String(JsString::from(key)))
+        {
             return Some(n);
         }
     }

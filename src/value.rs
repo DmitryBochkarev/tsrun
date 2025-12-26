@@ -500,7 +500,13 @@ fn format_value_for_debug(value: &JsValue) -> String {
     match value {
         JsValue::Undefined => "undefined".to_string(),
         JsValue::Null => "null".to_string(),
-        JsValue::Boolean(b) => if *b { "true".to_string() } else { "false".to_string() },
+        JsValue::Boolean(b) => {
+            if *b {
+                "true".to_string()
+            } else {
+                "false".to_string()
+            }
+        }
         JsValue::Number(n) => number_to_string(*n),
         JsValue::String(s) => s.to_string(),
         JsValue::Symbol(_) => "Symbol()".to_string(),
@@ -1703,58 +1709,6 @@ impl PropertyKey {
             PropertyKey::String(js_str) => js_str.as_str() == s,
             PropertyKey::Index(_) | PropertyKey::Symbol(_) => false,
         }
-    }
-}
-
-// FIXME: remove it as it overused, we should  explicitly create PropertyKey from interned strings
-impl From<&str> for PropertyKey {
-    #[inline]
-    fn from(s: &str) -> Self {
-        // Fast path: check first char is a digit before parsing
-        if let Some(first) = s.bytes().next() {
-            if first.is_ascii_digit() {
-                if let Ok(idx) = s.parse::<u32>() {
-                    // Verify it's canonical (no leading zeros except "0")
-                    if idx.to_string() == s {
-                        return PropertyKey::Index(idx);
-                    }
-                }
-            }
-        }
-        PropertyKey::String(JsString::from(s))
-    }
-}
-
-// FIXME: remove it as it overused, we should  explicitly create PropertyKey from interned strings
-impl From<String> for PropertyKey {
-    fn from(s: String) -> Self {
-        PropertyKey::from(s.as_str())
-    }
-}
-
-// FIXME: remove it as it overused, we should  explicitly create PropertyKey from interned strings
-impl From<JsString> for PropertyKey {
-    #[inline]
-    fn from(s: JsString) -> Self {
-        // Fast path: check first char is a digit before parsing
-        if let Some(first) = s.as_str().bytes().next() {
-            if first.is_ascii_digit() {
-                if let Ok(idx) = s.parse::<u32>() {
-                    // Verify it's canonical (no leading zeros except "0")
-                    if idx.to_string() == s.as_str() {
-                        return PropertyKey::Index(idx);
-                    }
-                }
-            }
-        }
-        PropertyKey::String(s)
-    }
-}
-
-// FIXME: remove it as it overused
-impl From<u32> for PropertyKey {
-    fn from(idx: u32) -> Self {
-        PropertyKey::Index(idx)
     }
 }
 
