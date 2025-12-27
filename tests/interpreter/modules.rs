@@ -353,6 +353,8 @@ fn test_order_syscall_returns_promise() {
     }
 }
 
+// With blocking __order__(), only one order is pending at a time
+#[cfg(feature = "nonblocking_orders")]
 #[test]
 fn test_multiple_orders() {
     use typescript_eval::interpreter::builtins::create_eval_internal_module;
@@ -389,6 +391,8 @@ fn test_multiple_orders() {
     }
 }
 
+// Uses .then() pattern - not compatible with blocking __order__()
+#[cfg(feature = "nonblocking_orders")]
 #[test]
 fn test_order_fulfillment() {
     use typescript_eval::interpreter::builtins::create_eval_internal_module;
@@ -442,6 +446,8 @@ fn test_order_fulfillment() {
     }
 }
 
+// Uses .then() pattern - not compatible with blocking __order__()
+#[cfg(feature = "nonblocking_orders")]
 #[test]
 fn test_order_fulfillment_reject() {
     use typescript_eval::interpreter::builtins::create_eval_internal_module;

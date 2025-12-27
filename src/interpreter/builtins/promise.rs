@@ -361,7 +361,7 @@ pub fn promise_then(
     this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    let JsValue::Object(promise) = this else {
+    let JsValue::Object(obj) = this else {
         return Err(JsError::type_error(
             "Promise.prototype.then called on non-object",
         ));
@@ -369,7 +369,8 @@ pub fn promise_then(
 
     // Guard the promise
     let guard = interp.heap.create_guard();
-    guard.guard(promise.clone());
+    guard.guard(obj.clone());
+    let promise = obj;
 
     let on_fulfilled = args.first().cloned();
     let on_rejected = args.get(1).cloned();
@@ -454,11 +455,13 @@ pub fn promise_finally(
     this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    let JsValue::Object(promise) = this.clone() else {
+    let JsValue::Object(obj) = this.clone() else {
         return Err(JsError::type_error(
             "Promise.prototype.finally called on non-object",
         ));
     };
+
+    let promise = obj;
 
     let on_finally = args.first().cloned();
     let on_finally = on_finally.filter(|v| v.is_callable());
@@ -466,6 +469,7 @@ pub fn promise_finally(
     match on_finally {
         Some(callback) => {
             let guard = interp.heap.create_guard();
+            guard.guard(promise.clone());
             let result_promise = create_promise(interp, &guard);
 
             let (status, result) = {
@@ -595,9 +599,11 @@ fn resolve_each_value(
     // Then wrap each value with Promise.resolve
     let mut results = Vec::with_capacity(raw_values.len());
     for val in raw_values {
-        // If already a promise, return as-is
+        // If already a promise, use it directly
         if let JsValue::Object(obj) = &val {
-            if matches!(obj.borrow().exotic, ExoticObject::Promise(_)) {
+            let obj_ref = obj.borrow();
+            if matches!(&obj_ref.exotic, ExoticObject::Promise(_)) {
+                drop(obj_ref);
                 guard.guard(obj.cheap_clone());
                 results.push(val);
                 continue;

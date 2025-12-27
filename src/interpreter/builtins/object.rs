@@ -764,6 +764,7 @@ pub fn object_to_string(
                 ExoticObject::StringObj(_) => "String",
                 ExoticObject::Symbol(_) => "Symbol",
                 ExoticObject::RawJSON(_) => "Object", // RawJSON objects are ordinary objects
+                ExoticObject::PendingOrder { .. } => "Object", // PendingOrder markers are objects
             }
         }
     };

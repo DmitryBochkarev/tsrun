@@ -18,8 +18,10 @@ use super::Interpreter;
 pub enum VmResult {
     /// Execution completed with a value
     Complete(Guarded),
-    /// Need to suspend for await/yield
+    /// Need to suspend for await/yield on a Promise
     Suspend(VmSuspension),
+    /// Suspended waiting for order fulfillment from host
+    SuspendForOrder(VmOrderSuspension),
     /// Generator yielded a value
     Yield(GeneratorYield),
     /// Generator yielded via yield*
@@ -48,13 +50,23 @@ pub struct GeneratorYieldStar {
     pub state: SavedVmState,
 }
 
-/// Suspension state for async/generator
+/// Suspension state for async/generator (waiting on a Promise)
 pub struct VmSuspension {
-    /// The promise or generator we're waiting on
+    /// The promise we're waiting on
     pub waiting_on: Gc<JsObject>,
     /// Saved VM state for resumption
     pub state: SavedVmState,
     /// Register to store the resume value (for await)
+    pub resume_register: Register,
+}
+
+/// Suspension state for awaiting order fulfillment from host
+pub struct VmOrderSuspension {
+    /// The order ID we're waiting for
+    pub order_id: crate::OrderId,
+    /// Saved VM state for resumption
+    pub state: SavedVmState,
+    /// Register to store the response value
     pub resume_register: Register,
 }
 
@@ -76,6 +88,8 @@ pub struct SavedVmState {
     pub arguments: Vec<JsValue>,
     /// new.target value
     pub new_target: JsValue,
+    /// Trampoline call stack (for nested function calls)
+    pub trampoline_stack: Vec<SavedTrampolineFrame>,
 }
 
 /// A call frame in the VM
@@ -122,6 +136,40 @@ pub enum PendingCompletion {
     Break { target: usize, try_depth: u8 },
     /// Continue to target after finally completes
     Continue { target: usize, try_depth: u8 },
+}
+
+/// A saved trampoline frame for suspension (Clone-able version without Guard)
+/// The SavedVmState.guard keeps all objects alive during suspension
+#[derive(Clone)]
+pub struct SavedTrampolineFrame {
+    /// Saved instruction pointer
+    pub ip: usize,
+    /// Saved bytecode chunk
+    pub chunk: Rc<BytecodeChunk>,
+    /// Saved registers
+    pub registers: Vec<JsValue>,
+    /// Saved this value
+    pub this_value: JsValue,
+    /// Saved VM call stack
+    pub vm_call_stack: Vec<CallFrame>,
+    /// Saved try handlers
+    pub try_stack: Vec<TryHandler>,
+    /// Saved environment stack
+    pub saved_env_stack: Vec<Gc<JsObject>>,
+    /// Saved arguments
+    pub arguments: Vec<JsValue>,
+    /// Saved new.target
+    pub new_target: JsValue,
+    /// Saved current constructor
+    pub current_constructor: Option<Gc<JsObject>>,
+    /// Register to store the return value in
+    pub return_register: Register,
+    /// Saved interpreter environment
+    pub saved_interp_env: Gc<JsObject>,
+    /// For construct calls: the new object to fall back to if constructor doesn't return an object
+    pub construct_new_obj: Option<Gc<JsObject>>,
+    /// For async function calls: wrap result in a Promise when returning
+    pub is_async: bool,
 }
 
 /// A saved VM frame for the trampoline call stack
@@ -593,6 +641,17 @@ impl BytecodeVM {
                         ));
                     }
                 }
+                Ok(OpResult::SuspendForOrder {
+                    order_id,
+                    resume_register,
+                }) => {
+                    // Suspend waiting for host to provide order response
+                    return VmResult::SuspendForOrder(VmOrderSuspension {
+                        order_id,
+                        state: self.save_state(interp),
+                        resume_register,
+                    });
+                }
                 Ok(OpResult::Yield {
                     value,
                     resume_register,
@@ -632,7 +691,8 @@ impl BytecodeVM {
                         new_target,
                         is_super_call,
                     ) {
-                        Ok(()) => continue,
+                        Ok(None) => continue,
+                        Ok(Some(vm_result)) => return vm_result,
                         Err(e) => {
                             // Try to find an exception handler, unwinding trampoline if needed
                             if let Err(e) = self.handle_error_with_trampoline_unwind(interp, e) {
@@ -684,6 +744,11 @@ impl BytecodeVM {
 
     /// Set up a trampoline call - save current state and switch to the called function
     /// If `is_super_call` is true, the callee will be set as the current constructor for proper super() lookup
+    ///
+    /// Returns:
+    /// - `Ok(None)` - continue execution (trampoline set up or native function completed)
+    /// - `Ok(Some(VmResult))` - return this VmResult immediately (e.g., for suspension)
+    /// - `Err(e)` - error occurred
     fn setup_trampoline_call(
         &mut self,
         interp: &mut Interpreter,
@@ -693,7 +758,7 @@ impl BytecodeVM {
         return_register: Register,
         new_target: JsValue,
         is_super_call: bool,
-    ) -> Result<(), JsError> {
+    ) -> Result<Option<VmResult>, JsError> {
         use crate::value::{ExoticObject, JsFunction};
 
         // Check call stack depth limit
@@ -722,7 +787,7 @@ impl BytecodeVM {
                 args,
             )?;
             self.set_reg(return_register, result.value);
-            return Ok(());
+            return Ok(None);
         }
 
         let func = {
@@ -747,13 +812,26 @@ impl BytecodeVM {
                     false, // not async
                     is_super_call,
                 )?;
-                Ok(())
+                Ok(None)
             }
             JsFunction::Native(native) => {
                 // Native functions are quick, call directly
                 let result = (native.func)(interp, this_value, &args)?;
+
+                // Check if result is a PendingOrder - if so, suspend immediately
+                if let JsValue::Object(ref obj) = result.value {
+                    if let ExoticObject::PendingOrder { id, .. } = &obj.borrow().exotic {
+                        let order_id = crate::OrderId(*id);
+                        return Ok(Some(VmResult::SuspendForOrder(VmOrderSuspension {
+                            order_id,
+                            state: self.save_state(interp),
+                            resume_register: return_register,
+                        })));
+                    }
+                }
+
                 self.set_reg(return_register, result.value);
-                Ok(())
+                Ok(None)
             }
             JsFunction::Bound(bound) => {
                 // Unwrap bound function and trampoline to target
@@ -806,7 +884,7 @@ impl BytecodeVM {
                     state,
                 );
                 self.set_reg(return_register, JsValue::Object(gen_obj));
-                Ok(())
+                Ok(None)
             }
             JsFunction::BytecodeAsyncGenerator(bc_func) => {
                 // Async generators just create an async generator object without running the body.
@@ -843,7 +921,7 @@ impl BytecodeVM {
                     state,
                 );
                 self.set_reg(return_register, JsValue::Object(gen_obj));
-                Ok(())
+                Ok(None)
             }
             JsFunction::BytecodeAsync(bc_func) => {
                 // Async functions run their body and wrap result in Promise.
@@ -860,7 +938,7 @@ impl BytecodeVM {
                     true,          // is_async - wrap result in Promise
                     is_super_call, // pass through super call flag
                 )?;
-                Ok(())
+                Ok(None)
             }
             // For all other function types, fall back to the interpreter's call_function
             // This includes PromiseResolve, PromiseReject, PromiseAllFulfill, AccessorGetter, etc.
@@ -868,7 +946,7 @@ impl BytecodeVM {
                 let result =
                     interp.call_function_with_new_target(callee, this_value, &args, new_target)?;
                 self.set_reg(return_register, result.value);
-                Ok(())
+                Ok(None)
             }
         }
     }
@@ -1608,6 +1686,50 @@ impl BytecodeVM {
             guard.guard(env.cheap_clone());
         }
 
+        // Guard all objects in trampoline stack and convert to SavedTrampolineFrame
+        let saved_trampoline_stack: Vec<SavedTrampolineFrame> = self
+            .trampoline_stack
+            .iter()
+            .map(|frame| {
+                // Guard all objects in this frame
+                for val in &frame.registers {
+                    if let JsValue::Object(obj) = val {
+                        guard.guard(obj.cheap_clone());
+                    }
+                }
+                if let JsValue::Object(obj) = &frame.this_value {
+                    guard.guard(obj.cheap_clone());
+                }
+                for env in &frame.saved_env_stack {
+                    guard.guard(env.cheap_clone());
+                }
+                guard.guard(frame.saved_interp_env.cheap_clone());
+                if let Some(ref ctor) = frame.current_constructor {
+                    guard.guard(ctor.cheap_clone());
+                }
+                if let Some(ref obj) = frame.construct_new_obj {
+                    guard.guard(obj.cheap_clone());
+                }
+
+                SavedTrampolineFrame {
+                    ip: frame.ip,
+                    chunk: frame.chunk.clone(),
+                    registers: frame.registers.clone(),
+                    this_value: frame.this_value.clone(),
+                    vm_call_stack: frame.vm_call_stack.clone(),
+                    try_stack: frame.try_stack.clone(),
+                    saved_env_stack: frame.saved_env_stack.clone(),
+                    arguments: frame.arguments.clone(),
+                    new_target: frame.new_target.clone(),
+                    current_constructor: frame.current_constructor.clone(),
+                    return_register: frame.return_register,
+                    saved_interp_env: frame.saved_interp_env.cheap_clone(),
+                    construct_new_obj: frame.construct_new_obj.clone(),
+                    is_async: frame.is_async,
+                }
+            })
+            .collect();
+
         SavedVmState {
             frames: self.call_stack.clone(),
             ip: self.ip,
@@ -1617,6 +1739,7 @@ impl BytecodeVM {
             guard: Some(guard),
             arguments: self.arguments.clone(),
             new_target: self.new_target.clone(),
+            trampoline_stack: saved_trampoline_stack,
         }
     }
 
@@ -1626,6 +1749,7 @@ impl BytecodeVM {
         state: SavedVmState,
         this_value: JsValue,
         guard: Guard<JsObject>,
+        heap: &crate::gc::Heap<JsObject>,
     ) -> Self {
         // Guard this_value if it's an object
         if let JsValue::Object(obj) = &this_value {
@@ -1646,6 +1770,59 @@ impl BytecodeVM {
             }
         }
 
+        // Guard all objects in trampoline stack
+        for frame in &state.trampoline_stack {
+            for val in &frame.registers {
+                if let JsValue::Object(obj) = val {
+                    guard.guard(obj.cheap_clone());
+                }
+            }
+            if let JsValue::Object(obj) = &frame.this_value {
+                guard.guard(obj.cheap_clone());
+            }
+            for env in &frame.saved_env_stack {
+                guard.guard(env.cheap_clone());
+            }
+            guard.guard(frame.saved_interp_env.cheap_clone());
+            if let Some(ref ctor) = frame.current_constructor {
+                guard.guard(ctor.cheap_clone());
+            }
+        }
+
+        // Convert SavedTrampolineFrame back to TrampolineFrame with new guards
+        let trampoline_stack: Vec<TrampolineFrame> = state
+            .trampoline_stack
+            .into_iter()
+            .map(|saved| {
+                let frame_guard = heap.create_guard();
+                // Guard all objects in this frame
+                for val in &saved.registers {
+                    if let JsValue::Object(obj) = val {
+                        frame_guard.guard(obj.cheap_clone());
+                    }
+                }
+                TrampolineFrame {
+                    ip: saved.ip,
+                    chunk: saved.chunk,
+                    registers: saved.registers,
+                    this_value: saved.this_value,
+                    vm_call_stack: saved.vm_call_stack,
+                    try_stack: saved.try_stack,
+                    exception_value: None, // Lost during save, but we handle exceptions differently on resume
+                    saved_env_stack: saved.saved_env_stack,
+                    arguments: saved.arguments,
+                    new_target: saved.new_target,
+                    current_constructor: saved.current_constructor,
+                    pending_completion: None, // Lost during save
+                    return_register: saved.return_register,
+                    saved_interp_env: saved.saved_interp_env,
+                    register_guard: frame_guard,
+                    construct_new_obj: saved.construct_new_obj,
+                    is_async: saved.is_async,
+                }
+            })
+            .collect();
+
         Self {
             ip: state.ip,
             chunk: state.chunk,
@@ -1660,7 +1837,7 @@ impl BytecodeVM {
             new_target: state.new_target,
             current_constructor: None,
             pending_completion: None,
-            trampoline_stack: Vec::new(),
+            trampoline_stack,
             register_pool: Vec::new(),
             arguments_pool: Vec::new(),
         }
@@ -2943,9 +3120,21 @@ impl BytecodeVM {
 
                 let promise_val = self.get_reg(promise);
 
-                // Check if it's a promise
+                // Check if it's an object with special async behavior
                 if let JsValue::Object(obj) = promise_val {
                     let obj_ref = obj.borrow();
+
+                    // Check for PendingOrder first - these suspend immediately for host response
+                    if let ExoticObject::PendingOrder { id, .. } = &obj_ref.exotic {
+                        let order_id = crate::OrderId(*id);
+                        drop(obj_ref);
+                        return Ok(OpResult::SuspendForOrder {
+                            order_id,
+                            resume_register: dst,
+                        });
+                    }
+
+                    // Check for Promise
                     if let ExoticObject::Promise(state) = &obj_ref.exotic {
                         let state_ref = state.borrow();
                         match state_ref.status {
@@ -2978,7 +3167,7 @@ impl BytecodeVM {
                     }
                 }
 
-                // Not a promise - treat as resolved value (await 42 === 42)
+                // Not a promise or pending order - treat as resolved value (await 42 === 42)
                 self.set_reg(dst, promise_val.clone());
                 Ok(OpResult::Continue)
             }
@@ -5743,9 +5932,14 @@ enum OpResult {
     Continue,
     /// Halt with a value
     Halt(Guarded),
-    /// Suspend execution (for await)
+    /// Suspend execution (for await on Promise)
     Suspend {
         promise: Guarded,
+        resume_register: Register,
+    },
+    /// Suspend for order fulfillment from host
+    SuspendForOrder {
+        order_id: crate::OrderId,
         resume_register: Register,
     },
     /// Yield a value (for generators)

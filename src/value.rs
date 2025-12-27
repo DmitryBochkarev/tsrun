@@ -584,6 +584,7 @@ impl fmt::Debug for JsValue {
                         None => write!(f, "[Symbol: Symbol()]"),
                     },
                     ExoticObject::RawJSON(raw) => write!(f, "[RawJSON: {}]", raw),
+                    ExoticObject::PendingOrder { id, .. } => write!(f, "[PendingOrder: {}]", id),
                 }
             }
         }
@@ -1074,7 +1075,8 @@ impl Traceable for JsObject {
             | ExoticObject::Number(_)
             | ExoticObject::StringObj(_)
             | ExoticObject::Symbol(_)
-            | ExoticObject::RawJSON(_) => {
+            | ExoticObject::RawJSON(_)
+            | ExoticObject::PendingOrder { .. } => {
                 // These exotic types don't contain object references that need tracing
             }
             ExoticObject::Proxy(proxy_data) => {
@@ -2371,6 +2373,10 @@ pub enum ExoticObject {
     Proxy(ProxyData),
     /// Raw JSON exotic object - stores a JSON string for literal insertion in JSON.stringify
     RawJSON(JsString),
+    /// Pending order marker - triggers immediate VM suspension
+    /// The id is the OrderId that will be used to match the response from host
+    /// When detected, VM suspends and waits for host to provide a value via fulfill_orders()
+    PendingOrder { id: u64 },
 }
 
 /// Proxy internal state

@@ -24,6 +24,7 @@ use crate::value::{
     ModuleExport, NativeFn, NativeFunction, PromiseStatus, Property, PropertyKey, VarKey,
 };
 use rustc_hash::FxHashMap;
+use std::collections::VecDeque;
 
 use self::builtins::symbol::WellKnownSymbols;
 
@@ -37,6 +38,98 @@ pub struct StackFrame {
     /// Source location if available
     pub location: Option<(u32, u32)>, // (line, column)
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Async Context Management Types
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Unique identifier for a suspended async context
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ContextId(pub u64);
+
+/// Unique identifier for tracking Promises in the wait graph
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct PromiseId(pub u64);
+
+/// A suspended async execution context
+pub struct SuspendedContext {
+    /// Unique identifier for this context
+    pub id: ContextId,
+    /// Saved VM state (registers, call frames, etc.)
+    pub state: bytecode_vm::SavedVmState,
+    /// The Promise this context is waiting on
+    pub waiting_on: Gc<JsObject>,
+    /// Promise ID for quick lookup in the wait graph
+    pub waiting_on_id: PromiseId,
+    /// Register to store the resolved value when resumed
+    pub resume_register: crate::compiler::Register,
+}
+
+/// Tracks all suspended async contexts and their Promise dependencies
+#[derive(Default)]
+pub struct WaitGraph {
+    /// All suspended contexts, indexed by ContextId
+    pub contexts: FxHashMap<ContextId, SuspendedContext>,
+
+    /// Promise → contexts waiting on it
+    /// When a Promise resolves, we look up all waiters here
+    pub promise_waiters: FxHashMap<PromiseId, Vec<ContextId>>,
+
+    /// Contexts ready to resume (their Promise has resolved)
+    pub ready_queue: VecDeque<ContextId>,
+}
+
+impl WaitGraph {
+    /// Create an empty wait graph
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Add a suspended context to the graph
+    pub fn add_context(&mut self, ctx: SuspendedContext) {
+        let ctx_id = ctx.id;
+        let promise_id = ctx.waiting_on_id;
+
+        self.promise_waiters
+            .entry(promise_id)
+            .or_default()
+            .push(ctx_id);
+
+        self.contexts.insert(ctx_id, ctx);
+    }
+
+    /// Called when a Promise is resolved - moves waiters to ready queue
+    pub fn promise_resolved(&mut self, promise_id: PromiseId) {
+        if let Some(waiter_ids) = self.promise_waiters.remove(&promise_id) {
+            for ctx_id in waiter_ids {
+                self.ready_queue.push_back(ctx_id);
+            }
+        }
+    }
+
+    /// Take the next ready context for execution
+    pub fn take_ready(&mut self) -> Option<SuspendedContext> {
+        while let Some(ctx_id) = self.ready_queue.pop_front() {
+            if let Some(ctx) = self.contexts.remove(&ctx_id) {
+                return Some(ctx);
+            }
+            // Context was cancelled/removed, skip it
+        }
+        None
+    }
+
+    /// Check if any contexts are waiting
+    pub fn has_waiting_contexts(&self) -> bool {
+        !self.contexts.is_empty()
+    }
+
+    /// Check if any contexts are ready to resume
+    pub fn has_ready_contexts(&self) -> bool {
+        !self.ready_queue.is_empty()
+    }
+}
+
+// OrderSuspension is now VmOrderSuspension in bytecode_vm.rs
 
 /// The interpreter state
 pub struct Interpreter {
@@ -201,15 +294,34 @@ pub struct Interpreter {
     /// Each Order contains a RuntimeValue that keeps the payload alive.
     pub(crate) pending_orders: Vec<crate::Order>,
 
-    /// Map from OrderId -> (resolve_fn, reject_fn) for pending promises
-    pub(crate) order_callbacks: FxHashMap<crate::OrderId, (Gc<JsObject>, Gc<JsObject>)>,
+    /// Order responses from host, waiting to be consumed on resume
+    pub(crate) order_responses: FxHashMap<crate::OrderId, Result<crate::RuntimeValue, JsError>>,
 
-    /// Cancelled order IDs (from Promise.race losing, etc.)
+    /// Cancelled order IDs
     pub(crate) cancelled_orders: Vec<crate::OrderId>,
 
-    /// Suspended bytecode VM state (if any)
-    pub(crate) suspended_vm_state: Option<bytecode_vm::VmSuspension>,
+    /// Suspended VM state waiting for order response from host
+    pub(crate) suspended_for_order: Option<bytecode_vm::VmOrderSuspension>,
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Async Context Management
+    // ═══════════════════════════════════════════════════════════════════════════
+    /// Wait graph tracking all suspended async contexts
+    pub(crate) wait_graph: WaitGraph,
+
+    /// Counter for generating unique context IDs
+    pub(crate) next_context_id: u64,
+
+    /// Counter for generating unique promise IDs
+    pub(crate) next_promise_id: u64,
+
+    /// Map from promise object to PromiseId for quick lookup
+    /// Uses Gc identity (pointer comparison via Hash impl)
+    pub(crate) promise_ids: FxHashMap<Gc<JsObject>, PromiseId>,
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Program State
+    // ═══════════════════════════════════════════════════════════════════════════
     /// Pending program waiting for imports to be provided
     pub(crate) pending_program: Option<crate::ast::Program>,
 
@@ -335,9 +447,15 @@ impl Interpreter {
             // Order system
             next_order_id: 1,
             pending_orders: Vec::new(),
-            order_callbacks: FxHashMap::default(),
+            order_responses: FxHashMap::default(),
             cancelled_orders: Vec::new(),
-            suspended_vm_state: None,
+            suspended_for_order: None,
+            // Async context management
+            wait_graph: WaitGraph::new(),
+            next_context_id: 1,
+            next_promise_id: 1,
+            promise_ids: FxHashMap::default(),
+            // Program state
             pending_program: None,
             pending_module_sources: FxHashMap::default(),
         };
@@ -687,8 +805,8 @@ impl Interpreter {
                     let cancelled = std::mem::take(&mut self.cancelled_orders);
                     return Ok(crate::RuntimeResult::Suspended { pending, cancelled });
                 }
-                // Check for unfulfilled orders from previous suspension
-                if !self.order_callbacks.is_empty() {
+                // Check for suspended order awaits or waiting async contexts
+                if self.suspended_for_order.is_some() || self.wait_graph.has_waiting_contexts() {
                     let cancelled = std::mem::take(&mut self.cancelled_orders);
                     return Ok(crate::RuntimeResult::Suspended {
                         pending: Vec::new(),
@@ -701,8 +819,39 @@ impl Interpreter {
             }
             VmResult::Error(err) => Err(self.materialize_thrown_error(err)),
             VmResult::Suspend(suspension) => {
-                // Save VM state for resumption
-                self.suspended_vm_state = Some(suspension);
+                // Promise await suspension - add to wait graph
+                let ctx_id = ContextId(self.next_context_id);
+                self.next_context_id += 1;
+
+                // Get or create PromiseId for this promise
+                let promise_key = suspension.waiting_on.cheap_clone();
+                let promise_id = *self
+                    .promise_ids
+                    .entry(promise_key)
+                    .or_insert_with(|| {
+                        let id = PromiseId(self.next_promise_id);
+                        self.next_promise_id += 1;
+                        id
+                    });
+
+                // Create suspended context
+                let suspended_ctx = SuspendedContext {
+                    id: ctx_id,
+                    state: suspension.state,
+                    waiting_on: suspension.waiting_on,
+                    waiting_on_id: promise_id,
+                    resume_register: suspension.resume_register,
+                };
+
+                self.wait_graph.add_context(suspended_ctx);
+
+                let pending = std::mem::take(&mut self.pending_orders);
+                let cancelled = std::mem::take(&mut self.cancelled_orders);
+                Ok(crate::RuntimeResult::Suspended { pending, cancelled })
+            }
+            VmResult::SuspendForOrder(order_suspension) => {
+                // Order suspension - waiting for host to provide a value
+                self.suspended_for_order = Some(order_suspension);
                 let pending = std::mem::take(&mut self.pending_orders);
                 let cancelled = std::mem::take(&mut self.cancelled_orders);
                 Ok(crate::RuntimeResult::Suspended { pending, cancelled })
@@ -953,11 +1102,68 @@ impl Interpreter {
         use crate::compiler::Compiler;
         use bytecode_vm::BytecodeVM;
 
-        // If we have a suspended VM state, resume it
-        if let Some(suspension) = self.suspended_vm_state.take() {
-            // Check if the promise was resolved
+        // Check for order suspension first (waiting for host to provide a value)
+        if let Some(order_suspension) = self.suspended_for_order.take() {
+            // Look up the response for this order
+            if let Some(result) = self.order_responses.remove(&order_suspension.order_id) {
+                match result {
+                    Ok(runtime_value) => {
+                        let value = runtime_value.value().clone();
+                        let vm_guard = self.heap.create_guard();
+                        if let JsValue::Object(ref obj) = value {
+                            vm_guard.guard(obj.cheap_clone());
+                        }
+
+                        let mut vm = BytecodeVM::from_saved_state(
+                            order_suspension.state,
+                            JsValue::Object(self.global.clone()),
+                            vm_guard,
+                            &self.heap,
+                        );
+
+                        // Set response value directly in resume register
+                        vm.set_resume_value(order_suspension.resume_register, value);
+
+                        // Run VM - if value is a Promise, Op::Await will handle it
+                        return self.run_vm_to_completion(vm);
+                    }
+                    Err(error) => {
+                        // Inject error as exception
+                        let vm_guard = self.heap.create_guard();
+                        let mut vm = BytecodeVM::from_saved_state(
+                            order_suspension.state,
+                            JsValue::Object(self.global.clone()),
+                            vm_guard,
+                            &self.heap,
+                        );
+
+                        let error_msg = JsValue::String(JsString::from(error.to_string()));
+                        if vm.inject_exception(self, error_msg.clone()) {
+                            return self.run_vm_to_completion(vm);
+                        } else {
+                            let guarded = Guarded::from_value(error_msg, &self.heap);
+                            return Err(JsError::thrown(guarded));
+                        }
+                    }
+                }
+            } else {
+                // Order not yet fulfilled - re-suspend
+                self.suspended_for_order = Some(order_suspension);
+                let pending = std::mem::take(&mut self.pending_orders);
+                let cancelled = std::mem::take(&mut self.cancelled_orders);
+                return Ok(crate::RuntimeResult::Suspended { pending, cancelled });
+            }
+        }
+
+        // Process any contexts in the wait graph that are ready
+        // First, check all waiting contexts for resolved promises
+        self.check_resolved_promises();
+
+        // Now try to resume any ready context
+        if let Some(ctx) = self.wait_graph.take_ready() {
+            // Check the promise status
             let promise_status = {
-                let obj_ref = suspension.waiting_on.borrow();
+                let obj_ref = ctx.waiting_on.borrow();
                 if let ExoticObject::Promise(promise_state) = &obj_ref.exotic {
                     let status = promise_state.borrow().status.clone();
                     let result = promise_state.borrow().result.clone();
@@ -971,62 +1177,48 @@ impl Interpreter {
                 match status {
                     PromiseStatus::Fulfilled => {
                         let value = result.unwrap_or(JsValue::Undefined);
-                        // Guard the value to prevent GC during execution
                         let vm_guard = self.heap.create_guard();
                         if let JsValue::Object(ref obj) = value {
                             vm_guard.guard(obj.cheap_clone());
                         }
 
-                        // Create VM from saved state and resume
                         let mut vm = BytecodeVM::from_saved_state(
-                            suspension.state,
+                            ctx.state,
                             JsValue::Object(self.global.clone()),
                             vm_guard,
+                            &self.heap,
                         );
 
-                        // Set the resolved value in the resume register
-                        vm.set_resume_value(suspension.resume_register, value);
-
+                        vm.set_resume_value(ctx.resume_register, value);
                         return self.run_vm_to_completion(vm);
                     }
                     PromiseStatus::Rejected => {
                         let reason = result.unwrap_or(JsValue::Undefined);
-                        // Guard the reason to prevent GC during execution
                         let vm_guard = self.heap.create_guard();
                         if let JsValue::Object(ref obj) = reason {
                             vm_guard.guard(obj.cheap_clone());
                         }
 
-                        // Create VM from saved state and inject the exception
                         let mut vm = BytecodeVM::from_saved_state(
-                            suspension.state,
+                            ctx.state,
                             JsValue::Object(self.global.clone()),
                             vm_guard,
+                            &self.heap,
                         );
 
-                        // Inject the exception - this finds a try/catch handler if present
                         if vm.inject_exception(self, reason.clone()) {
-                            // Handler found - run VM to handle the exception
                             return self.run_vm_to_completion(vm);
                         } else {
-                            // No handler - propagate as error
                             let guarded = Guarded::from_value(reason, &self.heap);
                             return Err(JsError::thrown(guarded));
                         }
                     }
                     PromiseStatus::Pending => {
-                        // Still pending - re-suspend
-                        self.suspended_vm_state = Some(suspension);
-                        let pending = std::mem::take(&mut self.pending_orders);
-                        let cancelled = std::mem::take(&mut self.cancelled_orders);
-                        return Ok(crate::RuntimeResult::Suspended { pending, cancelled });
+                        // Should not happen if we just took from ready queue
+                        // Put it back
+                        self.wait_graph.add_context(ctx);
                     }
                 }
-            } else {
-                // Not a promise - should not happen
-                return Err(JsError::internal_error(
-                    "Suspended VM was waiting on non-promise",
-                ));
             }
         }
 
@@ -1124,8 +1316,8 @@ impl Interpreter {
             return Ok(crate::RuntimeResult::Suspended { pending, cancelled });
         }
 
-        // Also check for unfulfilled orders from previous suspension
-        if !self.order_callbacks.is_empty() {
+        // Check for suspended order awaits or waiting async contexts
+        if self.suspended_for_order.is_some() || self.wait_graph.has_waiting_contexts() {
             let cancelled = std::mem::take(&mut self.cancelled_orders);
             return Ok(crate::RuntimeResult::Suspended {
                 pending: Vec::new(),
@@ -1140,35 +1332,49 @@ impl Interpreter {
     }
 
     /// Fulfill orders with responses from the host
-    pub fn fulfill_orders(&mut self, responses: Vec<crate::OrderResponse>) -> Result<(), JsError> {
-        // Process each response, keeping its RuntimeValue alive while we resolve
+    ///
+    /// Stores responses for later consumption when VM resumes via continue_eval.
+    /// The response value becomes the return value of __order__().
+    pub fn fulfill_orders(&mut self, responses: Vec<crate::OrderResponse>) {
         for response in responses {
-            if let Some((resolve_fn, reject_fn)) = self.order_callbacks.remove(&response.id) {
-                match response.result {
-                    Ok(runtime_value) => {
-                        // Clone the value while runtime_value (and its guard) is still in scope.
-                        // The guard keeps the object alive during call_function.
-                        let value = runtime_value.value().clone();
-                        self.call_function(
-                            JsValue::Object(resolve_fn),
-                            JsValue::Undefined,
-                            &[value],
-                        )?;
-                        // runtime_value dropped here after call_function stores the value
-                    }
-                    Err(error) => {
-                        let error_msg = JsValue::String(JsString::from(error.to_string()));
-                        self.call_function(
-                            JsValue::Object(reject_fn),
-                            JsValue::Undefined,
-                            &[error_msg],
-                        )?;
+            self.order_responses.insert(response.id, response.result);
+        }
+    }
+
+    /// Check all waiting contexts for resolved promises and move them to ready queue
+    fn check_resolved_promises(&mut self) {
+        // Collect promise IDs that are now resolved
+        let mut resolved: Vec<PromiseId> = Vec::new();
+
+        for (&promise_id, waiter_ids) in &self.wait_graph.promise_waiters {
+            // Check if any waiter's promise is resolved
+            for &ctx_id in waiter_ids {
+                if let Some(ctx) = self.wait_graph.contexts.get(&ctx_id) {
+                    let is_resolved = {
+                        let obj_ref = ctx.waiting_on.borrow();
+                        if let ExoticObject::Promise(promise_state) = &obj_ref.exotic {
+                            !matches!(promise_state.borrow().status, PromiseStatus::Pending)
+                        } else {
+                            false
+                        }
+                    };
+                    if is_resolved {
+                        resolved.push(promise_id);
+                        break; // One resolved waiter is enough to mark this promise_id
                     }
                 }
             }
         }
 
-        Ok(())
+        // Move resolved promise waiters to ready queue
+        for promise_id in resolved {
+            self.wait_graph.promise_resolved(promise_id);
+        }
+    }
+
+    /// Public wrapper for check_resolved_promises
+    pub(crate) fn check_resolved_promises_public(&mut self) {
+        self.check_resolved_promises();
     }
 
     /// Create a module environment (for executing modules)
@@ -2165,7 +2371,7 @@ impl Interpreter {
                         saved_env,
                     )
                 }
-                VmResult::Suspend(_) => {
+                VmResult::Suspend(_) | VmResult::SuspendForOrder(_) => {
                     // Should not happen for generators
                     gen_state.borrow_mut().status = GeneratorStatus::Completed;
                     self.env = saved_env;
@@ -2207,11 +2413,13 @@ impl Interpreter {
                 guard: Some(state_guard),
                 arguments: args.clone(),
                 new_target: JsValue::Undefined,
+                trampoline_stack: Vec::new(), // Generators run at top level
             };
 
             // Create guard for the VM registers
             let vm_guard = self.heap.create_guard();
-            let mut vm = BytecodeVM::from_saved_state(saved_state, this_value.clone(), vm_guard);
+            let mut vm =
+                BytecodeVM::from_saved_state(saved_state, this_value.clone(), vm_guard, &self.heap);
 
             // Check if we need to throw an exception (generator.throw())
             let throw_value = gen_state.borrow_mut().throw_value.take();
@@ -2276,7 +2484,7 @@ impl Interpreter {
                         saved_env,
                     )
                 }
-                VmResult::Suspend(_) => {
+                VmResult::Suspend(_) | VmResult::SuspendForOrder(_) => {
                     gen_state.borrow_mut().status = GeneratorStatus::Completed;
                     self.env = saved_env;
                     Err(JsError::internal_error(
@@ -2482,7 +2690,7 @@ impl Interpreter {
         match vm.run(self) {
             VmResult::Complete(guarded) => Ok(guarded),
             VmResult::Error(err) => Err(err),
-            VmResult::Suspend(_) => Err(JsError::internal_error(
+            VmResult::Suspend(_) | VmResult::SuspendForOrder(_) => Err(JsError::internal_error(
                 "Bytecode execution cannot suspend at top level",
             )),
             VmResult::Yield(_) | VmResult::YieldStar(_) => Err(JsError::internal_error(
@@ -3290,7 +3498,7 @@ impl Interpreter {
         match result {
             VmResult::Complete(guarded) => Ok(guarded),
             VmResult::Error(e) => Err(e),
-            VmResult::Suspend(_) => Err(JsError::internal_error(
+            VmResult::Suspend(_) | VmResult::SuspendForOrder(_) => Err(JsError::internal_error(
                 "Bytecode function suspended unexpectedly",
             )),
             VmResult::Yield(_) | VmResult::YieldStar(_) => Err(JsError::internal_error(

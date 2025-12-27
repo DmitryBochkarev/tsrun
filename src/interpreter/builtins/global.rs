@@ -990,5 +990,10 @@ fn clone_object(
             }
             Ok(JsValue::Object(sym_obj))
         }
+
+        // PendingOrder markers cannot be cloned
+        ExoticObject::PendingOrder { .. } => Err(JsError::type_error(
+            "PendingOrder cannot be cloned with structuredClone",
+        )),
     }
 }

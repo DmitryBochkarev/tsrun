@@ -1,13 +1,11 @@
 //! eval:internal built-in module
 //!
-//! Provides the core order system functions for async operations.
+//! Provides the core order system functions for blocking host operations.
 
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
-use crate::value::{CheapClone, Guarded, JsFunction, JsValue};
+use crate::value::{ExoticObject, Guarded, JsValue};
 use crate::{InternalModule, Order, OrderId, RuntimeValue};
-
-use super::promise::create_promise;
 
 /// Create the eval:internal module
 pub fn create_eval_internal_module() -> InternalModule {
@@ -20,10 +18,18 @@ pub fn create_eval_internal_module() -> InternalModule {
 
 /// Native implementation of __order__
 ///
-/// Creates an order and returns a Promise that will be resolved when the host
-/// fulfills the order.
+/// Suspends the VM immediately and creates a pending order. The host provides
+/// a response value (any JsValue) via fulfill_orders(). The VM resumes and
+/// __order__() returns that value directly.
 ///
-/// Usage: const result = await __order__({ type: "readFile", path: "/foo" });
+/// This is a blocking operation - the VM suspends at the call site.
+/// If host wants to defer the actual value, host can return a Promise
+/// and the script can await it.
+///
+/// Usage:
+///   const result = __order__({ type: "readFile", path: "/foo" });
+///   // If host returns a Promise that needs unwrapping:
+///   const result = await __order__({ type: "getAsyncValue" });
 fn order_syscall(
     interp: &mut Interpreter,
     _this: JsValue,
@@ -35,45 +41,27 @@ fn order_syscall(
     let id = OrderId(interp.next_order_id);
     interp.next_order_id += 1;
 
-    // Create a pending promise
-    let promise_guard = interp.heap.create_guard();
-    let promise = create_promise(interp, &promise_guard);
-
-    // Create resolve/reject functions for this promise
-    let resolve_fn = interp.create_js_function(
-        &promise_guard,
-        JsFunction::PromiseResolve(promise.cheap_clone()),
-    );
-    let reject_fn = interp.create_js_function(
-        &promise_guard,
-        JsFunction::PromiseReject(promise.cheap_clone()),
-    );
-
-    // Root the callback functions so they survive until order is fulfilled.
-    // These are stored in order_callbacks and will be removed when the order is fulfilled.
-    interp.root_guard.guard(resolve_fn.clone());
-    interp.root_guard.guard(reject_fn.clone());
-
-    // Store callbacks for order fulfillment
-    interp.order_callbacks.insert(id, (resolve_fn, reject_fn));
-
     // Create payload RuntimeValue with guard if it's an object
     let payload_rv = if let JsValue::Object(ref obj) = payload {
-        let guard = interp.heap.create_guard();
-        guard.guard(obj.clone());
-        RuntimeValue::with_guard(payload, guard)
+        let payload_guard = interp.heap.create_guard();
+        payload_guard.guard(obj.clone());
+        RuntimeValue::with_guard(payload, payload_guard)
     } else {
         RuntimeValue::unguarded(payload)
     };
 
-    // Record the pending order - RuntimeValue keeps payload alive
+    // Record the pending order
     interp.pending_orders.push(Order {
         id,
         payload: payload_rv,
     });
 
-    // Return the promise with its guard
-    Ok(Guarded::with_guard(JsValue::Object(promise), promise_guard))
+    // Return PendingOrder marker - VM will suspend when this is detected
+    let marker_guard = interp.heap.create_guard();
+    let marker = marker_guard.alloc();
+    marker.borrow_mut().exotic = ExoticObject::PendingOrder { id: id.0 };
+
+    Ok(Guarded::with_guard(JsValue::Object(marker), marker_guard))
 }
 
 /// Native implementation of __cancelOrder__
@@ -97,8 +85,8 @@ fn cancel_order_syscall(
     // Remove from pending
     interp.pending_orders.retain(|o| o.id != id);
 
-    // Remove from callbacks if registered
-    interp.order_callbacks.remove(&id);
+    // Remove any pending response (in case host already provided one)
+    interp.order_responses.remove(&id);
 
     Ok(Guarded::unguarded(JsValue::Undefined))
 }

@@ -279,6 +279,10 @@ fn js_value_to_json_with_visited(
                             // Symbol wrapper objects serialize to undefined (null in JSON)
                             serde_json::Value::Null
                         }
+                        ExoticObject::PendingOrder { .. } => {
+                            // PendingOrder markers serialize to null
+                            serde_json::Value::Null
+                        }
                     }
                 }
             };
