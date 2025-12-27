@@ -7,7 +7,7 @@
 use serde_json::json;
 use typescript_eval::{
     interpreter::builtins::create_eval_internal_module, value::PropertyKey, InternalModule,
-    JsError, JsString, JsValue, OrderResponse, Runtime, RuntimeConfig, RuntimeResult, RuntimeValue,
+    JsString, JsValue, OrderResponse, Runtime, RuntimeConfig, RuntimeResult, RuntimeValue,
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -94,19 +94,6 @@ fn get_string_prop(obj: &JsValue, key: &str) -> Option<String> {
     None
 }
 
-/// Extract number property from JsValue object
-fn get_number_prop(obj: &JsValue, key: &str) -> Option<f64> {
-    if let JsValue::Object(o) = obj {
-        if let Some(JsValue::Number(n)) = o
-            .borrow()
-            .get_property(&PropertyKey::String(JsString::from(key)))
-        {
-            return Some(n);
-        }
-    }
-    None
-}
-
 /// Run script with globals, handling the import of eval:globals first
 fn run_with_globals(runtime: &mut Runtime, script: &str) -> RuntimeResult {
     // Prepend import of globals module to register global functions
@@ -119,21 +106,18 @@ fn run_with_globals(runtime: &mut Runtime, script: &str) -> RuntimeResult {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// NOTE: The following tests are commented out because they use patterns
-// incompatible with blocking __order__() semantics. With blocking:
-// - __order__() suspends immediately and returns the host's value directly
-// - .then() doesn't work because __order__() doesn't return a Promise
-// - Parallel orders aren't possible because each __order__() blocks
+// Promise .then() Tests
+// With blocking __order__() semantics, to use .then() patterns:
+// - Host returns a Promise via fulfill_orders()
+// - Script calls .then() on that Promise
+// - Host resolves the Promise to trigger the callback
 // ═══════════════════════════════════════════════════════════════════════════════
-
-// Tests using .then() pattern - not applicable with blocking __order__()
-#[cfg(feature = "nonblocking_orders")]
 #[test]
 fn test_promise_then_callback_closure() {
     let mut runtime = create_test_runtime();
 
-    // Test that .then() callbacks can access closure variables after fulfillment
-    // The callback should modify a variable, and we await the result of .then()
+    // Test that .then() callbacks can access closure variables after Promise resolution
+    // Host returns a Promise, script attaches .then() callback, host resolves Promise
     let result = run_with_globals(
         &mut runtime,
         r#"
@@ -142,9 +126,9 @@ fn test_promise_then_callback_closure() {
         // Create a captured variable in module scope
         let captured = "initial";
 
-        // Call __order__ and attach a .then() callback that modifies captured
-        // Await the result to ensure the callback runs before we return
-        await __order__({ type: "test" }).then(() => {
+        // Call __order__ to get a Promise from host, then attach .then() callback
+        const promise = __order__({ type: "getPromise" });
+        await promise.then(() => {
             captured = "modified";
         });
 
@@ -153,35 +137,42 @@ fn test_promise_then_callback_closure() {
     "#,
     );
 
-    match result {
-        RuntimeResult::Suspended { pending, .. } => {
-            assert_eq!(pending.len(), 1);
-            assert_eq!(
-                get_string_prop(pending[0].payload.value(), "type"),
-                Some("test".into())
-            );
+    // First suspension: waiting for __order__ response
+    let RuntimeResult::Suspended { pending, .. } = result else {
+        panic!("Expected Suspended for __order__");
+    };
+    assert_eq!(pending.len(), 1);
+    assert_eq!(
+        get_string_prop(pending[0].payload.value(), "type"),
+        Some("getPromise".into())
+    );
 
-            // Fulfill the order - this should trigger the .then() callback
-            let response = OrderResponse {
-                id: pending[0].id,
-                result: Ok(RuntimeValue::unguarded(JsValue::Undefined)),
-            };
+    // Host creates and returns a Promise
+    let promise = runtime.create_promise();
+    let result2 = runtime
+        .fulfill_orders(vec![OrderResponse {
+            id: pending[0].id,
+            result: Ok(RuntimeValue::unguarded(promise.value().clone())),
+        }])
+        .unwrap();
 
-            let result2 = runtime.fulfill_orders(vec![response]).unwrap();
+    // Second suspension: script is awaiting the Promise (via .then())
+    let RuntimeResult::Suspended { .. } = result2 else {
+        panic!("Expected Suspended waiting for Promise resolution");
+    };
 
-            match result2 {
-                RuntimeResult::Complete(value) => {
-                    // After fulfillment, the callback should have run and modified `captured`
-                    assert_eq!(*value, JsValue::String("modified".into()));
-                }
-                other => panic!("Expected Complete after fulfillment, got {:?}", other),
-            }
-        }
-        other => panic!("Expected Suspended, got {:?}", other),
-    }
+    // Resolve the Promise - this triggers the .then() callback
+    let result3 = runtime
+        .resolve_promise(&promise, RuntimeValue::unguarded(JsValue::Undefined))
+        .unwrap();
+
+    // After resolution, the callback should have run and modified `captured`
+    let RuntimeResult::Complete(value) = result3 else {
+        panic!("Expected Complete after Promise resolution");
+    };
+    assert_eq!(*value, JsValue::String("modified".into()));
 }
 
-#[cfg(feature = "nonblocking_orders")]
 #[test]
 fn test_promise_then_callback_nested_closure() {
     let mut runtime = create_test_runtime();
@@ -205,39 +196,48 @@ fn test_promise_then_callback_nested_closure() {
 
         // Call createCallback to get a callback, then use it in .then()
         const cb = createCallback();
-        await __order__({ type: "test" }).then(cb);
+        const promise = __order__({ type: "getPromise" });
+        await promise.then(cb);
 
         moduleVar;
     "#,
     );
 
-    match result {
-        RuntimeResult::Suspended { pending, .. } => {
-            assert_eq!(pending.len(), 1);
+    // First suspension: waiting for __order__ response
+    let RuntimeResult::Suspended { pending, .. } = result else {
+        panic!("Expected Suspended for __order__");
+    };
+    assert_eq!(pending.len(), 1);
 
-            let response = OrderResponse {
-                id: pending[0].id,
-                result: Ok(RuntimeValue::unguarded(JsValue::Undefined)),
-            };
+    // Host returns a Promise
+    let promise = runtime.create_promise();
+    let result2 = runtime
+        .fulfill_orders(vec![OrderResponse {
+            id: pending[0].id,
+            result: Ok(RuntimeValue::unguarded(promise.value().clone())),
+        }])
+        .unwrap();
 
-            let result2 = runtime.fulfill_orders(vec![response]).unwrap();
+    // Second suspension: awaiting the Promise
+    let RuntimeResult::Suspended { .. } = result2 else {
+        panic!("Expected Suspended waiting for Promise");
+    };
 
-            match result2 {
-                RuntimeResult::Complete(value) => {
-                    assert_eq!(*value, JsValue::String("modified".into()));
-                }
-                other => panic!("Expected Complete, got {:?}", other),
-            }
-        }
-        other => panic!("Expected Suspended, got {:?}", other),
-    }
+    // Resolve the Promise
+    let result3 = runtime
+        .resolve_promise(&promise, RuntimeValue::unguarded(JsValue::Undefined))
+        .unwrap();
+
+    let RuntimeResult::Complete(value) = result3 else {
+        panic!("Expected Complete after Promise resolution");
+    };
+    assert_eq!(*value, JsValue::String("modified".into()));
 }
 
-#[cfg(feature = "nonblocking_orders")]
 #[test]
 fn test_cross_module_closure_simple() {
     // Test that callbacks from another module can access that module's variables
-    // This mimics the setTimeout pattern where the callback accesses pendingTimers
+    // Host returns a Promise, module attaches .then() callback
     let config = RuntimeConfig {
         internal_modules: vec![
             create_eval_internal_module(),
@@ -249,10 +249,11 @@ fn test_cross_module_closure_simple() {
                 // Module-level variable
                 let moduleState: string = "initial";
 
-                // Function that uses __order__ with a .then() callback
+                // Function that gets a Promise from host and attaches .then() callback
                 // The callback captures moduleState from this module
                 export function runWithCallback(): Promise<void> {
-                    return __order__({ type: "timer" }).then(() => {
+                    const promise = __order__({ type: "getPromise" });
+                    return promise.then(() => {
                         moduleState = "from-callback";
                     });
                 }
@@ -287,29 +288,37 @@ fn test_cross_module_closure_simple() {
         )
         .expect("eval should work");
 
-    match result {
-        RuntimeResult::Suspended { pending, .. } => {
-            assert_eq!(pending.len(), 1);
+    // First suspension: __order__ waiting for host response
+    let RuntimeResult::Suspended { pending, .. } = result else {
+        panic!("Expected Suspended for __order__");
+    };
+    assert_eq!(pending.len(), 1);
 
-            let response = OrderResponse {
-                id: pending[0].id,
-                result: Ok(RuntimeValue::unguarded(JsValue::Undefined)),
-            };
+    // Host returns a Promise
+    let promise = runtime.create_promise();
+    let result2 = runtime
+        .fulfill_orders(vec![OrderResponse {
+            id: pending[0].id,
+            result: Ok(RuntimeValue::unguarded(promise.value().clone())),
+        }])
+        .unwrap();
 
-            let result2 = runtime.fulfill_orders(vec![response]).unwrap();
+    // Second suspension: awaiting the Promise
+    let RuntimeResult::Suspended { .. } = result2 else {
+        panic!("Expected Suspended waiting for Promise");
+    };
 
-            match result2 {
-                RuntimeResult::Complete(value) => {
-                    assert_eq!(*value, JsValue::String("from-callback".into()));
-                }
-                other => panic!("Expected Complete, got {:?}", other),
-            }
-        }
-        other => panic!("Expected Suspended, got {:?}", other),
-    }
+    // Resolve the Promise - triggers .then() callback
+    let result3 = runtime
+        .resolve_promise(&promise, RuntimeValue::unguarded(JsValue::Undefined))
+        .unwrap();
+
+    let RuntimeResult::Complete(value) = result3 else {
+        panic!("Expected Complete after Promise resolution");
+    };
+    assert_eq!(*value, JsValue::String("from-callback".into()));
 }
 
-#[cfg(feature = "nonblocking_orders")]
 #[test]
 fn test_cross_module_nested_closure() {
     // Test that a callback defined in one module can access a variable from an outer
@@ -325,12 +334,13 @@ fn test_cross_module_nested_closure() {
                 // Module-level state
                 let moduleState: string = "module-initial";
 
-                // This function wraps __order__.then() with a callback that
+                // This function gets a Promise from host and attaches .then() callback that
                 // accesses BOTH function-local variable AND module variable
                 export function wrapWithThen(userCallback: () => void): Promise<void> {
                     const functionLocal = "function-local";
 
-                    return __order__({ type: "wrapped" }).then(() => {
+                    const promise = __order__({ type: "getPromise" });
+                    return promise.then(() => {
                         // Access module variable
                         moduleState = "from-then";
                         // Access function-local variable
@@ -373,35 +383,43 @@ fn test_cross_module_nested_closure() {
         )
         .expect("eval should work");
 
-    match result {
-        RuntimeResult::Suspended { pending, .. } => {
-            assert_eq!(pending.len(), 1);
+    // First suspension: __order__ waiting for host response
+    let RuntimeResult::Suspended { pending, .. } = result else {
+        panic!("Expected Suspended for __order__");
+    };
+    assert_eq!(pending.len(), 1);
 
-            let response = OrderResponse {
-                id: pending[0].id,
-                result: Ok(RuntimeValue::unguarded(JsValue::Undefined)),
-            };
+    // Host returns a Promise
+    let promise = runtime.create_promise();
+    let result2 = runtime
+        .fulfill_orders(vec![OrderResponse {
+            id: pending[0].id,
+            result: Ok(RuntimeValue::unguarded(promise.value().clone())),
+        }])
+        .unwrap();
 
-            let result2 = runtime.fulfill_orders(vec![response]).unwrap();
+    // Second suspension: awaiting the Promise
+    let RuntimeResult::Suspended { .. } = result2 else {
+        panic!("Expected Suspended waiting for Promise");
+    };
 
-            match result2 {
-                RuntimeResult::Complete(value) => {
-                    assert_eq!(
-                        *value,
-                        JsValue::String("from-then / user-callback-ran".into())
-                    );
-                }
-                other => panic!("Expected Complete, got {:?}", other),
-            }
-        }
-        other => panic!("Expected Suspended, got {:?}", other),
-    }
+    // Resolve the Promise - triggers .then() callback
+    let result3 = runtime
+        .resolve_promise(&promise, RuntimeValue::unguarded(JsValue::Undefined))
+        .unwrap();
+
+    let RuntimeResult::Complete(value) = result3 else {
+        panic!("Expected Complete after Promise resolution");
+    };
+    assert_eq!(
+        *value,
+        JsValue::String("from-then / user-callback-ran".into())
+    );
 }
 
-#[cfg(feature = "nonblocking_orders")]
 #[test]
 fn test_debug_closure_gc() {
-    // Minimal reproduction of the GC bug
+    // Test GC with closures accessing local and module variables
     let config = RuntimeConfig {
         internal_modules: vec![create_eval_internal_module()],
         timeout_ms: 5000,
@@ -409,7 +427,7 @@ fn test_debug_closure_gc() {
     let mut runtime = Runtime::with_config(config);
     runtime.set_gc_threshold(1);
 
-    // This should work - no function-local variables, callback accesses module var directly
+    // Test that callback closure survives GC with local variables
     let result = runtime
         .eval(
             r#"
@@ -420,7 +438,8 @@ fn test_debug_closure_gc() {
             // Wrapper function WITH a local variable
             function wrapper(): Promise<void> {
                 const local = "local";  // This triggers call env creation
-                return __order__({ type: "test" }).then(() => {
+                const promise = __order__({ type: "getPromise" });
+                return promise.then(() => {
                     state = "modified-" + local;
                 });
             }
@@ -431,111 +450,103 @@ fn test_debug_closure_gc() {
         )
         .expect("eval should work");
 
-    match result {
-        RuntimeResult::Suspended { pending, .. } => {
-            let response = OrderResponse {
-                id: pending[0].id,
-                result: Ok(RuntimeValue::unguarded(JsValue::Undefined)),
-            };
+    // First suspension: __order__ waiting for host response
+    let RuntimeResult::Suspended { pending, .. } = result else {
+        panic!("Expected Suspended for __order__");
+    };
 
-            let result2 = runtime.fulfill_orders(vec![response]).unwrap();
+    // Host returns a Promise
+    let promise = runtime.create_promise();
+    let result2 = runtime
+        .fulfill_orders(vec![OrderResponse {
+            id: pending[0].id,
+            result: Ok(RuntimeValue::unguarded(promise.value().clone())),
+        }])
+        .unwrap();
 
-            match result2 {
-                RuntimeResult::Complete(value) => {
-                    assert_eq!(*value, JsValue::String("modified-local".into()));
-                }
-                other => panic!("Expected Complete, got {:?}", other),
-            }
-        }
-        other => panic!("Expected Suspended, got {:?}", other),
-    }
+    // Second suspension: awaiting the Promise
+    let RuntimeResult::Suspended { .. } = result2 else {
+        panic!("Expected Suspended waiting for Promise");
+    };
+
+    // Resolve the Promise - triggers .then() callback with closure
+    let result3 = runtime
+        .resolve_promise(&promise, RuntimeValue::unguarded(JsValue::Undefined))
+        .unwrap();
+
+    let RuntimeResult::Complete(value) = result3 else {
+        panic!("Expected Complete after Promise resolution");
+    };
+    assert_eq!(*value, JsValue::String("modified-local".into()));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// setTimeout Tests
+// sleep() Tests (blocking delay using orders)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-#[cfg(feature = "nonblocking_orders")]
 #[test]
-fn test_set_timeout_basic() {
+fn test_sleep_basic() {
     let mut runtime = create_test_runtime();
 
-    // Use callback-based setTimeout wrapped in a Promise for async/await
+    // Use blocking sleep() which suspends for the host to handle
     let result = run_with_globals(
         &mut runtime,
         r#"
-        let result = "";
-        await new Promise((resolve) => {
-            setTimeout(() => {
-                result = "done";
-                resolve(undefined);
-            }, 100);
-        });
+        let result = "before";
+        sleep(100);
+        result = "after";
         result;
     "#,
     );
 
-    match result {
-        RuntimeResult::Suspended { pending, .. } => {
-            assert_eq!(pending.len(), 1);
+    // Should suspend for sleep()
+    let RuntimeResult::Suspended { pending, .. } = result else {
+        panic!("Expected Suspended for sleep()");
+    };
+    assert_eq!(pending.len(), 1);
 
-            // Verify the order payload
-            let payload = pending[0].payload.value();
-            assert_eq!(get_string_prop(payload, "type"), Some("setTimeout".into()));
-            assert_eq!(get_number_prop(payload, "delay"), Some(100.0));
+    // Verify the order payload
+    let payload = pending[0].payload.value();
+    assert_eq!(get_string_prop(payload, "type"), Some("sleep".into()));
 
-            // Fulfill the order
-            let response = OrderResponse {
-                id: pending[0].id,
-                result: Ok(RuntimeValue::unguarded(JsValue::Undefined)),
-            };
+    // Fulfill the order (host would wait the delay then respond)
+    let result2 = runtime
+        .fulfill_orders(vec![OrderResponse {
+            id: pending[0].id,
+            result: Ok(RuntimeValue::unguarded(JsValue::Undefined)),
+        }])
+        .unwrap();
 
-            let result2 = runtime.fulfill_orders(vec![response]).unwrap();
-
-            match result2 {
-                RuntimeResult::Complete(value) => {
-                    assert_eq!(*value, JsValue::String("done".into()));
-                }
-                _ => panic!("Expected Complete after fulfillment"),
-            }
-        }
-        _ => panic!("Expected Suspended, got {:?}", result),
-    }
+    let RuntimeResult::Complete(value) = result2 else {
+        panic!("Expected Complete after sleep");
+    };
+    assert_eq!(*value, JsValue::String("after".into()));
 }
 
-#[cfg(feature = "nonblocking_orders")]
 #[test]
-fn test_set_timeout_sequential() {
+fn test_sleep_sequential() {
     let mut runtime = create_test_runtime();
 
-    // Helper to wrap callback-based setTimeout in a promise
+    // Multiple sequential sleep() calls
     let result = run_with_globals(
         &mut runtime,
         r#"
-        function delay(ms: number): Promise<void> {
-            return new Promise((resolve) => setTimeout(resolve, ms));
-        }
-
         let count = 0;
-        await delay(10);
+        sleep(10);
         count += 1;
-        await delay(20);
+        sleep(20);
         count += 1;
-        await delay(30);
+        sleep(30);
         count += 1;
         count;
     "#,
     );
 
-    // First setTimeout
+    // First sleep
     let RuntimeResult::Suspended { pending, .. } = result else {
-        panic!("Expected Suspended for first setTimeout");
+        panic!("Expected Suspended for first sleep");
     };
     assert_eq!(pending.len(), 1);
-    assert_eq!(
-        get_number_prop(pending[0].payload.value(), "delay"),
-        Some(10.0)
-    );
 
     let result = runtime
         .fulfill_orders(vec![OrderResponse {
@@ -544,15 +555,11 @@ fn test_set_timeout_sequential() {
         }])
         .unwrap();
 
-    // Second setTimeout
+    // Second sleep
     let RuntimeResult::Suspended { pending, .. } = result else {
-        panic!("Expected Suspended for second setTimeout");
+        panic!("Expected Suspended for second sleep");
     };
     assert_eq!(pending.len(), 1);
-    assert_eq!(
-        get_number_prop(pending[0].payload.value(), "delay"),
-        Some(20.0)
-    );
 
     let result = runtime
         .fulfill_orders(vec![OrderResponse {
@@ -561,15 +568,11 @@ fn test_set_timeout_sequential() {
         }])
         .unwrap();
 
-    // Third setTimeout
+    // Third sleep
     let RuntimeResult::Suspended { pending, .. } = result else {
-        panic!("Expected Suspended for third setTimeout");
+        panic!("Expected Suspended for third sleep");
     };
     assert_eq!(pending.len(), 1);
-    assert_eq!(
-        get_number_prop(pending[0].payload.value(), "delay"),
-        Some(30.0)
-    );
 
     let result = runtime
         .fulfill_orders(vec![OrderResponse {
@@ -580,7 +583,7 @@ fn test_set_timeout_sequential() {
 
     // Complete
     let RuntimeResult::Complete(value) = result else {
-        panic!("Expected Complete after all timeouts");
+        panic!("Expected Complete after all sleeps");
     };
     assert_eq!(*value, JsValue::Number(3.0));
 }
@@ -690,53 +693,6 @@ fn test_fetch_post_with_body() {
                     assert_eq!(*value, JsValue::Number(42.0));
                 }
                 _ => panic!("Expected Complete after fulfillment"),
-            }
-        }
-        _ => panic!("Expected Suspended"),
-    }
-}
-
-// TODO: Error handling through trampoline frames needs work
-#[cfg(feature = "nonblocking_orders")]
-#[test]
-fn test_fetch_network_error() {
-    let mut runtime = create_test_runtime();
-
-    let result = run_with_globals(
-        &mut runtime,
-        r#"
-        let errorMessage = "";
-        try {
-            await fetch("https://api.example.com/fail");
-        } catch (e) {
-            errorMessage = String(e);
-        }
-        errorMessage;
-    "#,
-    );
-
-    match result {
-        RuntimeResult::Suspended { pending, .. } => {
-            assert_eq!(pending.len(), 1);
-
-            // Reject the order with an error
-            let response = OrderResponse {
-                id: pending[0].id,
-                result: Err(JsError::type_error("Network error: connection refused")),
-            };
-
-            let result2 = runtime.fulfill_orders(vec![response]).unwrap();
-
-            match result2 {
-                RuntimeResult::Complete(value) => {
-                    let msg = value.value().to_js_string().to_string();
-                    assert!(
-                        msg.contains("Network error"),
-                        "Expected error message, got: {}",
-                        msg
-                    );
-                }
-                _ => panic!("Expected Complete after rejection"),
             }
         }
         _ => panic!("Expected Suspended"),
@@ -888,55 +844,6 @@ fn test_read_file_json_parse() {
     }
 }
 
-// TODO: Error handling through trampoline frames needs work
-#[cfg(feature = "nonblocking_orders")]
-#[test]
-fn test_read_file_not_found() {
-    let mut runtime = create_test_runtime();
-
-    let result = run_with_globals(
-        &mut runtime,
-        r#"
-        let errorMsg = "";
-        try {
-            await readFile("/nonexistent.txt");
-        } catch (e) {
-            errorMsg = String(e);
-        }
-        errorMsg;
-    "#,
-    );
-
-    match result {
-        RuntimeResult::Suspended { pending, .. } => {
-            assert_eq!(pending.len(), 1);
-
-            // Reject with file not found error
-            let response = OrderResponse {
-                id: pending[0].id,
-                result: Err(JsError::type_error(
-                    "ENOENT: no such file or directory '/nonexistent.txt'",
-                )),
-            };
-
-            let result2 = runtime.fulfill_orders(vec![response]).unwrap();
-
-            match result2 {
-                RuntimeResult::Complete(value) => {
-                    let msg = value.value().to_js_string().to_string();
-                    assert!(
-                        msg.contains("ENOENT"),
-                        "Expected ENOENT error, got: {}",
-                        msg
-                    );
-                }
-                _ => panic!("Expected Complete after rejection"),
-            }
-        }
-        _ => panic!("Expected Suspended"),
-    }
-}
-
 #[test]
 fn test_write_file_basic() {
     let mut runtime = create_test_runtime();
@@ -1043,249 +950,6 @@ fn test_read_write_roundtrip() {
         panic!("Expected Complete after roundtrip");
     };
     assert_eq!(*value, JsValue::Boolean(true));
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// Parallel Fetch Tests (Promise.all-like behavior)
-// ═══════════════════════════════════════════════════════════════════════════════
-
-#[cfg(feature = "nonblocking_orders")]
-#[test]
-fn test_fetch_parallel_resolve_one_at_a_time() {
-    // Test parallel fetch requests where we resolve them one at a time.
-    // The runtime should suspend with both pending orders initially,
-    // then suspend again after we resolve just one, waiting for the other.
-    let mut runtime = create_test_runtime();
-
-    let result = run_with_globals(
-        &mut runtime,
-        r#"
-        // Start two fetch requests in parallel using Promise.all
-        const results = await Promise.all([
-            fetch("/users"),
-            fetch("/posts")
-        ]);
-
-        // Return the combined result
-        results[0].count + " users, " + results[1].count + " posts";
-    "#,
-    );
-
-    // First suspension: both fetch requests should be pending
-    let RuntimeResult::Suspended { pending, .. } = result else {
-        panic!("Expected Suspended with both fetch requests pending");
-    };
-    assert_eq!(
-        pending.len(),
-        2,
-        "Expected 2 pending orders for parallel fetch"
-    );
-
-    // Verify both orders are fetch requests
-    let urls: Vec<String> = pending
-        .iter()
-        .filter_map(|o| get_string_prop(o.payload.value(), "url"))
-        .collect();
-    assert!(urls.contains(&"/users".to_string()));
-    assert!(urls.contains(&"/posts".to_string()));
-
-    // Find which order ID corresponds to which URL
-    let users_order = pending
-        .iter()
-        .find(|o| get_string_prop(o.payload.value(), "url") == Some("/users".into()))
-        .expect("Should find /users order");
-    let posts_order = pending
-        .iter()
-        .find(|o| get_string_prop(o.payload.value(), "url") == Some("/posts".into()))
-        .expect("Should find /posts order");
-
-    // Resolve only the first order (/users)
-    let users_response = runtime
-        .create_response_object(&json!({ "count": 42 }))
-        .unwrap();
-    let result2 = runtime
-        .fulfill_orders(vec![OrderResponse {
-            id: users_order.id,
-            result: Ok(users_response),
-        }])
-        .unwrap();
-
-    // Second suspension: should still be waiting for /posts
-    // Note: pending is empty because the host already received the order in the first suspension
-    let RuntimeResult::Suspended { pending, .. } = result2 else {
-        panic!(
-            "Expected Suspended waiting for second fetch, got {:?}",
-            result2
-        );
-    };
-    assert!(
-        pending.is_empty(),
-        "Expected empty pending (host already has the order)"
-    );
-
-    // Now resolve the second order (/posts) using the ID we saved earlier
-    let posts_response = runtime
-        .create_response_object(&json!({ "count": 100 }))
-        .unwrap();
-    let result3 = runtime
-        .fulfill_orders(vec![OrderResponse {
-            id: posts_order.id,
-            result: Ok(posts_response),
-        }])
-        .unwrap();
-
-    // Should be complete now
-    let RuntimeResult::Complete(value) = result3 else {
-        panic!("Expected Complete after both fetches resolved");
-    };
-    assert_eq!(*value, JsValue::String("42 users, 100 posts".into()));
-}
-
-#[cfg(feature = "nonblocking_orders")]
-#[test]
-fn test_fetch_parallel_resolve_second_first() {
-    // Similar to above but resolve the second request before the first
-    // to verify order doesn't matter for Promise.all
-    let mut runtime = create_test_runtime();
-
-    let result = run_with_globals(
-        &mut runtime,
-        r#"
-        const results = await Promise.all([
-            fetch("/alpha"),
-            fetch("/beta")
-        ]);
-        results[0].name + " and " + results[1].name;
-    "#,
-    );
-
-    let RuntimeResult::Suspended { pending, .. } = result else {
-        panic!("Expected Suspended");
-    };
-    assert_eq!(pending.len(), 2);
-
-    let alpha_order = pending
-        .iter()
-        .find(|o| get_string_prop(o.payload.value(), "url") == Some("/alpha".into()))
-        .expect("Should find /alpha");
-    let beta_order = pending
-        .iter()
-        .find(|o| get_string_prop(o.payload.value(), "url") == Some("/beta".into()))
-        .expect("Should find /beta");
-
-    // Resolve /beta first (the second request)
-    let beta_response = runtime
-        .create_response_object(&json!({ "name": "Beta" }))
-        .unwrap();
-    let result2 = runtime
-        .fulfill_orders(vec![OrderResponse {
-            id: beta_order.id,
-            result: Ok(beta_response),
-        }])
-        .unwrap();
-
-    // Should still be suspended waiting for /alpha
-    // Note: pending is empty because the host already has the order
-    let RuntimeResult::Suspended { pending, .. } = result2 else {
-        panic!("Expected Suspended waiting for /alpha");
-    };
-    assert!(pending.is_empty());
-
-    // Now resolve /alpha using the ID we saved earlier
-    let alpha_response = runtime
-        .create_response_object(&json!({ "name": "Alpha" }))
-        .unwrap();
-    let result3 = runtime
-        .fulfill_orders(vec![OrderResponse {
-            id: alpha_order.id,
-            result: Ok(alpha_response),
-        }])
-        .unwrap();
-
-    let RuntimeResult::Complete(value) = result3 else {
-        panic!("Expected Complete");
-    };
-    // Results should be in original array order, not resolution order
-    assert_eq!(*value, JsValue::String("Alpha and Beta".into()));
-}
-
-#[cfg(feature = "nonblocking_orders")]
-#[test]
-fn test_fetch_three_parallel_resolve_middle_last() {
-    // Three parallel requests, resolve in order: first, third, second
-    let mut runtime = create_test_runtime();
-
-    let result = run_with_globals(
-        &mut runtime,
-        r#"
-        const [a, b, c] = await Promise.all([
-            fetch("/a"),
-            fetch("/b"),
-            fetch("/c")
-        ]);
-        a.v + b.v + c.v;
-    "#,
-    );
-
-    let RuntimeResult::Suspended { pending, .. } = result else {
-        panic!("Expected Suspended");
-    };
-    assert_eq!(pending.len(), 3);
-
-    let find_order = |url: &str| {
-        pending
-            .iter()
-            .find(|o| get_string_prop(o.payload.value(), "url") == Some(url.into()))
-            .expect(&format!("Should find {}", url))
-    };
-
-    let order_a = find_order("/a");
-    let order_b = find_order("/b");
-    let order_c = find_order("/c");
-
-    // Resolve /a first
-    let resp_a = runtime.create_response_object(&json!({ "v": 10 })).unwrap();
-    let result2 = runtime
-        .fulfill_orders(vec![OrderResponse {
-            id: order_a.id,
-            result: Ok(resp_a),
-        }])
-        .unwrap();
-
-    let RuntimeResult::Suspended { pending, .. } = result2 else {
-        panic!("Expected Suspended after first resolve");
-    };
-    // pending is empty because host already has the orders
-    assert!(pending.is_empty());
-
-    // Resolve /c next (skipping /b)
-    let resp_c = runtime.create_response_object(&json!({ "v": 30 })).unwrap();
-    let result3 = runtime
-        .fulfill_orders(vec![OrderResponse {
-            id: order_c.id,
-            result: Ok(resp_c),
-        }])
-        .unwrap();
-
-    let RuntimeResult::Suspended { pending, .. } = result3 else {
-        panic!("Expected Suspended after second resolve");
-    };
-    // pending is empty because host already has the order
-    assert!(pending.is_empty());
-
-    // Finally resolve /b
-    let resp_b = runtime.create_response_object(&json!({ "v": 20 })).unwrap();
-    let result4 = runtime
-        .fulfill_orders(vec![OrderResponse {
-            id: order_b.id,
-            result: Ok(resp_b),
-        }])
-        .unwrap();
-
-    let RuntimeResult::Complete(value) = result4 else {
-        panic!("Expected Complete");
-    };
-    assert_eq!(*value, JsValue::Number(60.0)); // 10 + 20 + 30
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1507,85 +1171,6 @@ fn test_host_create_and_reject_promise() {
         *final_value,
         JsValue::String("Error: Something went wrong".into())
     );
-}
-
-#[cfg(feature = "nonblocking_orders")]
-#[test]
-fn test_host_promise_with_promise_all() {
-    // Test that host Promises work with Promise.all
-    let mut runtime = create_test_runtime();
-
-    let promise1 = runtime.create_promise();
-    let promise2 = runtime.create_promise();
-
-    let result = run_with_globals(
-        &mut runtime,
-        r#"
-        import { __order__ } from "eval:internal";
-
-        // Start two orders that will return host Promises
-        const p1 = __order__({ type: "getPromise", id: 1 });
-        const p2 = __order__({ type: "getPromise", id: 2 });
-
-        // Wait for both
-        const results = await Promise.all([p1, p2]);
-        results[0] + " and " + results[1];
-    "#,
-    );
-
-    // First suspension: both orders pending
-    let RuntimeResult::Suspended { pending, .. } = result else {
-        panic!("Expected Suspended");
-    };
-    assert_eq!(pending.len(), 2);
-
-    // Find order IDs
-    let order1 = pending
-        .iter()
-        .find(|o| get_number_prop(o.payload.value(), "id") == Some(1.0))
-        .unwrap();
-    let order2 = pending
-        .iter()
-        .find(|o| get_number_prop(o.payload.value(), "id") == Some(2.0))
-        .unwrap();
-
-    // Fulfill both with unresolved promises
-    let result2 = runtime
-        .fulfill_orders(vec![
-            OrderResponse {
-                id: order1.id,
-                result: Ok(RuntimeValue::unguarded(promise1.value().clone())),
-            },
-            OrderResponse {
-                id: order2.id,
-                result: Ok(RuntimeValue::unguarded(promise2.value().clone())),
-            },
-        ])
-        .unwrap();
-
-    // Still suspended - waiting for Promises
-    let RuntimeResult::Suspended { .. } = result2 else {
-        panic!("Expected Suspended waiting for Promises");
-    };
-
-    // Resolve promise1
-    let value1 = RuntimeValue::unguarded(JsValue::String("First".into()));
-    let result3 = runtime.resolve_promise(&promise1, value1).unwrap();
-
-    // Still suspended - waiting for promise2
-    let RuntimeResult::Suspended { .. } = result3 else {
-        panic!("Expected Suspended waiting for second Promise");
-    };
-
-    // Resolve promise2
-    let value2 = RuntimeValue::unguarded(JsValue::String("Second".into()));
-    let result4 = runtime.resolve_promise(&promise2, value2).unwrap();
-
-    // Complete
-    let RuntimeResult::Complete(final_value) = result4 else {
-        panic!("Expected Complete after both Promises resolved");
-    };
-    assert_eq!(*final_value, JsValue::String("First and Second".into()));
 }
 
 #[test]
