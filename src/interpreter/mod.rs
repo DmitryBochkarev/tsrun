@@ -3293,6 +3293,12 @@ impl Interpreter {
                 Ok(Guarded::unguarded(JsValue::Undefined))
             }
 
+            JsFunction::PromiseRaceSettle { state, is_fulfill } => {
+                let value = args.first().cloned().unwrap_or(JsValue::Undefined);
+                builtins::promise::handle_promise_race_settle(self, &state, value, is_fulfill)?;
+                Ok(Guarded::unguarded(JsValue::Undefined))
+            }
+
             JsFunction::AccessorGetter => {
                 // Auto-accessor getter - read from storage slot on `this`
                 let storage_key_prop = self.intern("__accessor_storage_key__");

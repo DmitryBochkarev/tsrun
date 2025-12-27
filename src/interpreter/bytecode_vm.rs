@@ -5193,6 +5193,7 @@ impl BytecodeVM {
                                 | JsFunction::PromiseReject(_)
                                 | JsFunction::PromiseAllFulfill { .. }
                                 | JsFunction::PromiseAllReject(_)
+                                | JsFunction::PromiseRaceSettle { .. }
                                 | JsFunction::AccessorGetter
                                 | JsFunction::AccessorSetter
                                 | JsFunction::ModuleExportGetter { .. }

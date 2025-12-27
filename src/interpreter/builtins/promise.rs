@@ -10,7 +10,7 @@ use crate::gc::{Gc, Guard};
 use crate::interpreter::Interpreter;
 use crate::value::{
     CheapClone, ExoticObject, Guarded, JsFunction, JsObject, JsValue, PromiseAllSharedState,
-    PromiseHandler, PromiseState, PromiseStatus, PropertyKey,
+    PromiseHandler, PromiseRaceSharedState, PromiseState, PromiseStatus, PropertyKey,
 };
 
 /// Initialize Promise.prototype with then, catch, finally methods
@@ -808,16 +808,52 @@ pub fn handle_promise_all_reject(
     Ok(())
 }
 
+/// Handle Promise.race settle - called when one of the input promises settles
+pub fn handle_promise_race_settle(
+    interp: &mut Interpreter,
+    state: &Rc<PromiseRaceSharedState>,
+    value: JsValue,
+    is_fulfill: bool,
+) -> Result<(), JsError> {
+    if state.settled.get() {
+        // Already settled by another promise, ignore
+        return Ok(());
+    }
+
+    // First one wins - mark as settled
+    state.settled.set(true);
+    let result_promise = state.result_promise.cheap_clone();
+
+    if is_fulfill {
+        fulfill_promise(interp, &result_promise, value)?;
+    } else {
+        reject_promise(interp, &result_promise, value)?;
+    }
+
+    Ok(())
+}
+
 /// Promise.race(iterable)
 pub fn promise_race(
     interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
+    use crate::value::PromiseRaceSharedState;
+
     let iterable = args.first().cloned().unwrap_or(JsValue::Undefined);
     let promises = extract_iterable(&iterable)?;
 
-    let mut first_result: Option<(PromiseStatus, JsValue)> = None;
+    let guard = interp.heap.create_guard();
+
+    // Empty iterable: return forever-pending Promise
+    if promises.is_empty() {
+        let promise = create_promise(interp, &guard);
+        return Ok(Guarded::with_guard(JsValue::Object(promise), guard));
+    }
+
+    // Collect pending Promises and check for already-settled ones
+    let mut pending_promises: Vec<Gc<JsObject>> = Vec::new();
 
     for promise_value in &promises {
         let (status, result) = if let JsValue::Object(obj) = promise_value {
@@ -826,37 +862,80 @@ pub fn promise_race(
                 let state_ref = state.borrow();
                 (state_ref.status.clone(), state_ref.result.clone())
             } else {
+                // Non-promise object is treated as fulfilled with that value
                 (PromiseStatus::Fulfilled, Some(promise_value.clone()))
             }
         } else {
+            // Non-object value is treated as fulfilled with that value
             (PromiseStatus::Fulfilled, Some(promise_value.clone()))
         };
 
         match status {
-            PromiseStatus::Fulfilled | PromiseStatus::Rejected => {
-                first_result = Some((status, result.unwrap_or(JsValue::Undefined)));
-                break;
+            PromiseStatus::Fulfilled => {
+                // First settled wins - return fulfilled Promise immediately
+                let value = result.unwrap_or(JsValue::Undefined);
+                let promise = create_fulfilled_promise(interp, &guard, value);
+                return Ok(Guarded::with_guard(JsValue::Object(promise), guard));
             }
-            PromiseStatus::Pending => {}
+            PromiseStatus::Rejected => {
+                // First settled wins - return rejected Promise immediately
+                let reason = result.unwrap_or(JsValue::Undefined);
+                let promise = create_rejected_promise(interp, &guard, reason);
+                return Ok(Guarded::with_guard(JsValue::Object(promise), guard));
+            }
+            PromiseStatus::Pending => {
+                if let JsValue::Object(obj) = promise_value {
+                    pending_promises.push(obj.cheap_clone());
+                }
+            }
         }
     }
 
-    let guard = interp.heap.create_guard();
-    match first_result {
-        Some((PromiseStatus::Fulfilled, value)) => {
-            let promise = create_fulfilled_promise(interp, &guard, value);
-            Ok(Guarded::with_guard(JsValue::Object(promise), guard))
-        }
-        Some((PromiseStatus::Rejected, reason)) => {
-            let promise = create_rejected_promise(interp, &guard, reason);
-            Ok(Guarded::with_guard(JsValue::Object(promise), guard))
-        }
-        _ => {
-            // No settled promise found - return pending
-            let promise = create_promise(interp, &guard);
-            Ok(Guarded::with_guard(JsValue::Object(promise), guard))
+    // All Promises are pending - create result Promise and attach handlers
+    let result_promise = create_promise(interp, &guard);
+
+    let shared_state = Rc::new(PromiseRaceSharedState {
+        result_promise: result_promise.cheap_clone(),
+        settled: std::cell::Cell::new(false),
+    });
+
+    // Attach handlers to each pending Promise
+    for promise_obj in &pending_promises {
+        let promise_obj_ref = promise_obj.borrow();
+        if let ExoticObject::Promise(ref state) = promise_obj_ref.exotic {
+            // Create on_fulfilled callback
+            let on_fulfilled = interp.create_object(&guard);
+            {
+                let mut f = on_fulfilled.borrow_mut();
+                f.prototype = Some(interp.function_prototype.cheap_clone());
+                f.exotic = ExoticObject::Function(JsFunction::PromiseRaceSettle {
+                    state: shared_state.clone(),
+                    is_fulfill: true,
+                });
+            }
+
+            // Create on_rejected callback
+            let on_rejected = interp.create_object(&guard);
+            {
+                let mut f = on_rejected.borrow_mut();
+                f.prototype = Some(interp.function_prototype.cheap_clone());
+                f.exotic = ExoticObject::Function(JsFunction::PromiseRaceSettle {
+                    state: shared_state.clone(),
+                    is_fulfill: false,
+                });
+            }
+
+            // Add handler to the pending Promise
+            let mut state_mut = state.borrow_mut();
+            state_mut.handlers.push(PromiseHandler {
+                on_fulfilled: Some(JsValue::Object(on_fulfilled)),
+                on_rejected: Some(JsValue::Object(on_rejected)),
+                result_promise: result_promise.cheap_clone(),
+            });
         }
     }
+
+    Ok(Guarded::with_guard(JsValue::Object(result_promise), guard))
 }
 
 /// Promise.allSettled(iterable)

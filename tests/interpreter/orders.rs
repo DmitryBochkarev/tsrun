@@ -1216,3 +1216,448 @@ fn test_host_promise_immediate_resolve() {
     };
     assert_eq!(*final_value, JsValue::String("Result: 42".into()));
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Concurrency Tests (via host-returned Promises)
+// With blocking __order__(), concurrency is achieved by:
+// 1. Script requests multiple Promises from host via sequential __order__() calls
+// 2. Host returns unresolved Promises for each
+// 3. Script combines them with Promise.all/race/allSettled
+// 4. Host resolves Promises in any order
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_concurrent_fetch_with_promise_all() {
+    // Simulate concurrent fetching: script gets Promises, uses Promise.all
+    let mut runtime = create_test_runtime();
+
+    // Create host Promises before running script
+    let promise_users = runtime.create_promise();
+    let promise_posts = runtime.create_promise();
+
+    let result = run_with_globals(
+        &mut runtime,
+        r#"
+        import { __order__ } from "eval:internal";
+
+        // Get Promises for two different resources
+        const usersPromise = __order__({ type: "fetch", url: "/users" });
+        const postsPromise = __order__({ type: "fetch", url: "/posts" });
+
+        // Wait for both concurrently
+        const [users, posts] = await Promise.all([usersPromise, postsPromise]);
+
+        `${users.count} users, ${posts.count} posts`;
+    "#,
+    );
+
+    // First order: /users
+    let RuntimeResult::Suspended { pending, .. } = result else {
+        panic!("Expected Suspended for first fetch");
+    };
+    assert_eq!(pending.len(), 1);
+    assert_eq!(
+        get_string_prop(pending[0].payload.value(), "url"),
+        Some("/users".into())
+    );
+
+    let result = runtime
+        .fulfill_orders(vec![OrderResponse {
+            id: pending[0].id,
+            result: Ok(RuntimeValue::unguarded(promise_users.value().clone())),
+        }])
+        .unwrap();
+
+    // Second order: /posts
+    let RuntimeResult::Suspended { pending, .. } = result else {
+        panic!("Expected Suspended for second fetch");
+    };
+    assert_eq!(pending.len(), 1);
+    assert_eq!(
+        get_string_prop(pending[0].payload.value(), "url"),
+        Some("/posts".into())
+    );
+
+    let result = runtime
+        .fulfill_orders(vec![OrderResponse {
+            id: pending[0].id,
+            result: Ok(RuntimeValue::unguarded(promise_posts.value().clone())),
+        }])
+        .unwrap();
+
+    // Now awaiting Promise.all - both Promises are pending
+    let RuntimeResult::Suspended { .. } = result else {
+        panic!("Expected Suspended waiting for Promise.all");
+    };
+
+    // Resolve /posts first (out of order!)
+    let posts_data = runtime
+        .create_response_object(&json!({ "count": 100 }))
+        .unwrap();
+    let result = runtime.resolve_promise(&promise_posts, posts_data).unwrap();
+
+    // Still waiting for /users
+    let RuntimeResult::Suspended { .. } = result else {
+        panic!("Expected Suspended still waiting for users");
+    };
+
+    // Resolve /users
+    let users_data = runtime
+        .create_response_object(&json!({ "count": 42 }))
+        .unwrap();
+    let result = runtime.resolve_promise(&promise_users, users_data).unwrap();
+
+    // Complete - results in original order despite resolution order
+    let RuntimeResult::Complete(value) = result else {
+        panic!("Expected Complete after both resolved");
+    };
+    assert_eq!(*value, JsValue::String("42 users, 100 posts".into()));
+}
+
+#[test]
+fn test_promise_race_first_wins() {
+    // Promise.race: first to resolve determines the result
+    let mut runtime = create_test_runtime();
+
+    let promise_fast = runtime.create_promise();
+    let promise_slow = runtime.create_promise();
+
+    let result = run_with_globals(
+        &mut runtime,
+        r#"
+        import { __order__ } from "eval:internal";
+
+        const fast = __order__({ type: "fetch", server: "fast" });
+        const slow = __order__({ type: "fetch", server: "slow" });
+
+        // Race: first to resolve wins
+        const winner = await Promise.race([fast, slow]);
+        winner.server;
+    "#,
+    );
+
+    // Get first Promise
+    let RuntimeResult::Suspended { pending, .. } = result else {
+        panic!("Expected Suspended");
+    };
+    let result = runtime
+        .fulfill_orders(vec![OrderResponse {
+            id: pending[0].id,
+            result: Ok(RuntimeValue::unguarded(promise_fast.value().clone())),
+        }])
+        .unwrap();
+
+    // Get second Promise
+    let RuntimeResult::Suspended { pending, .. } = result else {
+        panic!("Expected Suspended");
+    };
+    let result = runtime
+        .fulfill_orders(vec![OrderResponse {
+            id: pending[0].id,
+            result: Ok(RuntimeValue::unguarded(promise_slow.value().clone())),
+        }])
+        .unwrap();
+
+    // Awaiting Promise.race
+    let RuntimeResult::Suspended { .. } = result else {
+        panic!("Expected Suspended for Promise.race");
+    };
+
+    // Resolve "fast" first - this should win the race
+    let fast_data = runtime
+        .create_response_object(&json!({ "server": "fast" }))
+        .unwrap();
+    let result = runtime.resolve_promise(&promise_fast, fast_data).unwrap();
+
+    // Race completes immediately when first Promise resolves
+    let RuntimeResult::Complete(value) = result else {
+        panic!("Expected Complete after first resolve");
+    };
+    assert_eq!(*value, JsValue::String("fast".into()));
+}
+
+#[test]
+fn test_promise_race_second_wins() {
+    // Verify race works when second Promise resolves first
+    let mut runtime = create_test_runtime();
+
+    let promise_a = runtime.create_promise();
+    let promise_b = runtime.create_promise();
+
+    let result = run_with_globals(
+        &mut runtime,
+        r#"
+        import { __order__ } from "eval:internal";
+
+        const a = __order__({ type: "fetch", id: "a" });
+        const b = __order__({ type: "fetch", id: "b" });
+
+        const winner = await Promise.race([a, b]);
+        winner.winner;
+    "#,
+    );
+
+    // Get both Promises
+    let RuntimeResult::Suspended { pending, .. } = result else {
+        panic!("Expected Suspended");
+    };
+    let result = runtime
+        .fulfill_orders(vec![OrderResponse {
+            id: pending[0].id,
+            result: Ok(RuntimeValue::unguarded(promise_a.value().clone())),
+        }])
+        .unwrap();
+
+    let RuntimeResult::Suspended { pending, .. } = result else {
+        panic!("Expected Suspended");
+    };
+    let result = runtime
+        .fulfill_orders(vec![OrderResponse {
+            id: pending[0].id,
+            result: Ok(RuntimeValue::unguarded(promise_b.value().clone())),
+        }])
+        .unwrap();
+
+    let RuntimeResult::Suspended { .. } = result else {
+        panic!("Expected Suspended for Promise.race");
+    };
+
+    // Resolve B first - B wins even though it was second in array
+    let b_data = runtime
+        .create_response_object(&json!({ "winner": "B" }))
+        .unwrap();
+    let result = runtime.resolve_promise(&promise_b, b_data).unwrap();
+
+    let RuntimeResult::Complete(value) = result else {
+        panic!("Expected Complete");
+    };
+    assert_eq!(*value, JsValue::String("B".into()));
+}
+
+#[test]
+fn test_concurrent_with_partial_failure() {
+    // One Promise resolves, one rejects - test error handling with Promise.all
+    let mut runtime = create_test_runtime();
+
+    let promise_ok = runtime.create_promise();
+    let promise_fail = runtime.create_promise();
+
+    let result = run_with_globals(
+        &mut runtime,
+        r#"
+        import { __order__ } from "eval:internal";
+
+        const ok = __order__({ type: "fetch", url: "/ok" });
+        const fail = __order__({ type: "fetch", url: "/fail" });
+
+        try {
+            const results = await Promise.all([ok, fail]);
+            "Success: " + JSON.stringify(results);
+        } catch (e) {
+            "Error: " + e;
+        }
+    "#,
+    );
+
+    // Get both Promises
+    let RuntimeResult::Suspended { pending, .. } = result else {
+        panic!("Expected Suspended");
+    };
+    let result = runtime
+        .fulfill_orders(vec![OrderResponse {
+            id: pending[0].id,
+            result: Ok(RuntimeValue::unguarded(promise_ok.value().clone())),
+        }])
+        .unwrap();
+
+    let RuntimeResult::Suspended { pending, .. } = result else {
+        panic!("Expected Suspended");
+    };
+    let result = runtime
+        .fulfill_orders(vec![OrderResponse {
+            id: pending[0].id,
+            result: Ok(RuntimeValue::unguarded(promise_fail.value().clone())),
+        }])
+        .unwrap();
+
+    let RuntimeResult::Suspended { .. } = result else {
+        panic!("Expected Suspended for Promise.all");
+    };
+
+    // Resolve the first one successfully
+    let ok_data = RuntimeValue::unguarded(JsValue::String("OK".into()));
+    let result = runtime.resolve_promise(&promise_ok, ok_data).unwrap();
+
+    // Still waiting for second
+    let RuntimeResult::Suspended { .. } = result else {
+        panic!("Expected Suspended waiting for second");
+    };
+
+    // Reject the second one
+    let error = RuntimeValue::unguarded(JsValue::String("Network error".into()));
+    let result = runtime.reject_promise(&promise_fail, error).unwrap();
+
+    // Promise.all rejects if any Promise rejects
+    let RuntimeResult::Complete(value) = result else {
+        panic!("Expected Complete with error");
+    };
+    assert_eq!(*value, JsValue::String("Error: Network error".into()));
+}
+
+#[test]
+fn test_concurrent_three_way_race() {
+    // Race with three Promises, middle one wins
+    // Note: Script gets each Promise sequentially, then races them
+    let mut runtime = create_test_runtime();
+
+    let promise1 = runtime.create_promise();
+    let promise2 = runtime.create_promise();
+    let promise3 = runtime.create_promise();
+
+    let result = run_with_globals(
+        &mut runtime,
+        r#"
+        import { __order__ } from "eval:internal";
+
+        // Get three Promises from host
+        const p1 = __order__({ id: 1 });
+        const p2 = __order__({ id: 2 });
+        const p3 = __order__({ id: 3 });
+
+        // Race: first to resolve wins
+        const winner = await Promise.race([p1, p2, p3]);
+        "Winner: " + winner;
+    "#,
+    );
+
+    // Get all three Promises via sequential orders
+    let RuntimeResult::Suspended { pending, .. } = result else {
+        panic!("Expected Suspended for order 1");
+    };
+    let result = runtime
+        .fulfill_orders(vec![OrderResponse {
+            id: pending[0].id,
+            result: Ok(RuntimeValue::unguarded(promise1.value().clone())),
+        }])
+        .unwrap();
+
+    let RuntimeResult::Suspended { pending, .. } = result else {
+        panic!("Expected Suspended for order 2");
+    };
+    let result = runtime
+        .fulfill_orders(vec![OrderResponse {
+            id: pending[0].id,
+            result: Ok(RuntimeValue::unguarded(promise2.value().clone())),
+        }])
+        .unwrap();
+
+    let RuntimeResult::Suspended { pending, .. } = result else {
+        panic!("Expected Suspended for order 3");
+    };
+    let result = runtime
+        .fulfill_orders(vec![OrderResponse {
+            id: pending[0].id,
+            result: Ok(RuntimeValue::unguarded(promise3.value().clone())),
+        }])
+        .unwrap();
+
+    // Now awaiting Promise.race with three unresolved Promises
+    let RuntimeResult::Suspended { .. } = result else {
+        panic!("Expected Suspended for Promise.race");
+    };
+
+    // Resolve promise2 first (should win the race)
+    let result = runtime
+        .resolve_promise(&promise2, RuntimeValue::unguarded(JsValue::Number(2.0)))
+        .unwrap();
+
+    // If still suspended, try continue_eval to process microtasks
+    let result = match result {
+        RuntimeResult::Suspended { .. } => runtime.continue_eval().unwrap(),
+        other => other,
+    };
+
+    let RuntimeResult::Complete(value) = result else {
+        panic!("Expected Complete after resolving winner, got {:?}", result);
+    };
+    assert_eq!(*value, JsValue::String("Winner: 2".into()));
+}
+
+#[test]
+fn test_concurrent_chained_operations() {
+    // Start concurrent fetches, then chain more operations on results
+    let mut runtime = create_test_runtime();
+
+    let promise_user = runtime.create_promise();
+    let promise_profile = runtime.create_promise();
+
+    let result = run_with_globals(
+        &mut runtime,
+        r#"
+        import { __order__ } from "eval:internal";
+
+        // Get user and profile concurrently
+        const userPromise = __order__({ type: "getUser" });
+        const profilePromise = __order__({ type: "getProfile" });
+
+        // Chain transformations on each
+        const user = userPromise.then(u => ({ ...u, type: "user" }));
+        const profile = profilePromise.then(p => ({ ...p, type: "profile" }));
+
+        // Wait for both transformed results
+        const [u, p] = await Promise.all([user, profile]);
+        `${u.name} (${u.type}), ${p.bio} (${p.type})`;
+    "#,
+    );
+
+    // Get both Promises
+    let RuntimeResult::Suspended { pending, .. } = result else {
+        panic!("Expected Suspended");
+    };
+    let result = runtime
+        .fulfill_orders(vec![OrderResponse {
+            id: pending[0].id,
+            result: Ok(RuntimeValue::unguarded(promise_user.value().clone())),
+        }])
+        .unwrap();
+
+    let RuntimeResult::Suspended { pending, .. } = result else {
+        panic!("Expected Suspended");
+    };
+    let result = runtime
+        .fulfill_orders(vec![OrderResponse {
+            id: pending[0].id,
+            result: Ok(RuntimeValue::unguarded(promise_profile.value().clone())),
+        }])
+        .unwrap();
+
+    let RuntimeResult::Suspended { .. } = result else {
+        panic!("Expected Suspended for Promise.all");
+    };
+
+    // Resolve user
+    let user_data = runtime
+        .create_response_object(&json!({ "name": "Alice" }))
+        .unwrap();
+    let result = runtime.resolve_promise(&promise_user, user_data).unwrap();
+
+    let RuntimeResult::Suspended { .. } = result else {
+        panic!("Expected Suspended waiting for profile");
+    };
+
+    // Resolve profile
+    let profile_data = runtime
+        .create_response_object(&json!({ "bio": "Developer" }))
+        .unwrap();
+    let result = runtime
+        .resolve_promise(&promise_profile, profile_data)
+        .unwrap();
+
+    let RuntimeResult::Complete(value) = result else {
+        panic!("Expected Complete");
+    };
+    assert_eq!(
+        *value,
+        JsValue::String("Alice (user), Developer (profile)".into())
+    );
+}

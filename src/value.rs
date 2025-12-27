@@ -926,6 +926,10 @@ impl Traceable for JsObject {
                             }
                         }
                     }
+                    JsFunction::PromiseRaceSettle { state, .. } => {
+                        // Trace the result promise
+                        visitor(state.result_promise.copy_ref());
+                    }
                     JsFunction::Bytecode(bc)
                     | JsFunction::BytecodeGenerator(bc)
                     | JsFunction::BytecodeAsync(bc)
@@ -2689,6 +2693,12 @@ pub enum JsFunction {
     },
     /// Promise.all reject handler (rejects on first failure)
     PromiseAllReject(std::rc::Rc<PromiseAllSharedState>),
+    /// Promise.race settle handler (settles on first settlement, either fulfill or reject)
+    PromiseRaceSettle {
+        state: std::rc::Rc<PromiseRaceSharedState>,
+        /// true = on_fulfilled handler, false = on_rejected handler
+        is_fulfill: bool,
+    },
     /// Auto-accessor getter (metadata stored in object properties)
     AccessorGetter,
     /// Auto-accessor setter (metadata stored in object properties)
@@ -2724,6 +2734,16 @@ pub struct PromiseAllSharedState {
     pub rejected: std::cell::Cell<bool>,
 }
 
+/// Shared state for Promise.race tracking
+/// First promise to settle wins
+#[derive(Debug)]
+pub struct PromiseRaceSharedState {
+    /// The result promise to settle
+    pub result_promise: JsObjectRef,
+    /// Whether the race has already been settled
+    pub settled: std::cell::Cell<bool>,
+}
+
 /// Data for a bound function
 #[derive(Debug, Clone)]
 pub struct BoundFunctionData {
@@ -2753,6 +2773,7 @@ impl JsFunction {
             JsFunction::PromiseReject(_) => Some("reject"),
             JsFunction::PromiseAllFulfill { .. } => Some("promiseAllFulfill"),
             JsFunction::PromiseAllReject(_) => Some("promiseAllReject"),
+            JsFunction::PromiseRaceSettle { .. } => Some("promiseRaceSettle"),
             JsFunction::AccessorGetter => Some("get"),
             JsFunction::AccessorSetter => Some("set"),
             JsFunction::ModuleExportGetter { .. } => Some("get"),
