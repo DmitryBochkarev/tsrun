@@ -605,6 +605,38 @@ impl Runtime {
         RuntimeValue::with_guard(JsValue::Object(promise), guard)
     }
 
+    /// Create an unresolved Promise linked to an order for cancellation tracking.
+    ///
+    /// Similar to `create_promise()`, but the Promise is associated with the given
+    /// order ID. When this Promise "loses" in a `Promise.race()`, the order ID will
+    /// be included in the `cancelled` list of `RuntimeResult::Suspended`.
+    ///
+    /// Use this when returning a Promise as an order response to enable automatic
+    /// cancellation notification when the Promise is no longer needed.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let order_id = order.id;
+    /// let promise = runtime.create_order_promise(order_id);
+    ///
+    /// runtime.fulfill_orders(vec![OrderResponse {
+    ///     id: order_id,
+    ///     result: Ok(promise.clone()),
+    /// }])?;
+    ///
+    /// // If this Promise loses in a Promise.race(), order_id will be in
+    /// // RuntimeResult::Suspended { cancelled: vec![order_id], ... }
+    /// ```
+    pub fn create_order_promise(&mut self, order_id: OrderId) -> RuntimeValue {
+        let guard = self.interpreter.heap.create_guard();
+        let promise = interpreter::builtins::promise::create_order_promise(
+            &mut self.interpreter,
+            &guard,
+            order_id,
+        );
+        RuntimeValue::with_guard(JsValue::Object(promise), guard)
+    }
+
     /// Resolve a Promise that was created with `create_promise`.
     ///
     /// This will fulfill the Promise with the given value and trigger any

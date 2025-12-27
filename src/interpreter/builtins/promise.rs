@@ -58,6 +58,29 @@ pub fn create_promise(interp: &mut Interpreter, guard: &Guard<JsObject>) -> Gc<J
         status: PromiseStatus::Pending,
         result: None,
         handlers: Vec::new(),
+        order_id: None,
+    }));
+
+    let obj = interp.create_object(guard);
+    {
+        let mut o = obj.borrow_mut();
+        o.prototype = Some(interp.promise_prototype.cheap_clone());
+        o.exotic = ExoticObject::Promise(state);
+    }
+    obj
+}
+
+/// Create a new pending promise object linked to an order (for cancellation tracking)
+pub fn create_order_promise(
+    interp: &mut Interpreter,
+    guard: &Guard<JsObject>,
+    order_id: crate::OrderId,
+) -> Gc<JsObject> {
+    let state = Rc::new(RefCell::new(PromiseState {
+        status: PromiseStatus::Pending,
+        result: None,
+        handlers: Vec::new(),
+        order_id: Some(order_id),
     }));
 
     let obj = interp.create_object(guard);
@@ -83,6 +106,7 @@ pub fn create_fulfilled_promise(
         status: PromiseStatus::Fulfilled,
         result: Some(value),
         handlers: Vec::new(),
+        order_id: None,
     }));
 
     let obj = interp.create_object(guard);
@@ -108,6 +132,7 @@ pub fn create_rejected_promise(
         status: PromiseStatus::Rejected,
         result: Some(reason),
         handlers: Vec::new(),
+        order_id: None,
     }));
 
     let obj = interp.create_object(guard);
@@ -197,7 +222,7 @@ fn reject_promise(
     promise: &Gc<JsObject>,
     reason: JsValue,
 ) -> Result<(), JsError> {
-    let handlers = {
+    let (handlers, order_id) = {
         let obj = promise.borrow();
         let ExoticObject::Promise(ref state) = obj.exotic else {
             return Err(JsError::type_error("Not a promise"));
@@ -210,8 +235,14 @@ fn reject_promise(
 
         state_mut.status = PromiseStatus::Rejected;
         state_mut.result = Some(reason.clone());
-        std::mem::take(&mut state_mut.handlers)
+        let order_id = state_mut.order_id;
+        (std::mem::take(&mut state_mut.handlers), order_id)
     };
+
+    // Signal cancelled order if this was a host Promise
+    if let Some(id) = order_id {
+        interp.cancelled_orders.push(id);
+    }
 
     // Trigger handlers synchronously
     for handler in handlers {
@@ -814,6 +845,7 @@ pub fn handle_promise_race_settle(
     state: &Rc<PromiseRaceSharedState>,
     value: JsValue,
     is_fulfill: bool,
+    winner_index: usize,
 ) -> Result<(), JsError> {
     if state.settled.get() {
         // Already settled by another promise, ignore
@@ -822,6 +854,16 @@ pub fn handle_promise_race_settle(
 
     // First one wins - mark as settled
     state.settled.set(true);
+
+    // Cancel all losing orders (all order_ids except the winner's)
+    for (i, order_id) in state.input_order_ids.iter().enumerate() {
+        if i != winner_index {
+            if let Some(id) = order_id {
+                interp.cancelled_orders.push(*id);
+            }
+        }
+    }
+
     let result_promise = state.result_promise.cheap_clone();
 
     if is_fulfill {
@@ -852,22 +894,26 @@ pub fn promise_race(
         return Ok(Guarded::with_guard(JsValue::Object(promise), guard));
     }
 
-    // Collect pending Promises and check for already-settled ones
-    let mut pending_promises: Vec<Gc<JsObject>> = Vec::new();
+    // Collect pending Promises with their order_ids and check for already-settled ones
+    let mut pending_promises: Vec<(Gc<JsObject>, Option<crate::OrderId>)> = Vec::new();
 
     for promise_value in &promises {
-        let (status, result) = if let JsValue::Object(obj) = promise_value {
+        let (status, result, order_id) = if let JsValue::Object(obj) = promise_value {
             let obj_ref = obj.borrow();
             if let ExoticObject::Promise(ref state) = obj_ref.exotic {
                 let state_ref = state.borrow();
-                (state_ref.status.clone(), state_ref.result.clone())
+                (
+                    state_ref.status.clone(),
+                    state_ref.result.clone(),
+                    state_ref.order_id,
+                )
             } else {
                 // Non-promise object is treated as fulfilled with that value
-                (PromiseStatus::Fulfilled, Some(promise_value.clone()))
+                (PromiseStatus::Fulfilled, Some(promise_value.clone()), None)
             }
         } else {
             // Non-object value is treated as fulfilled with that value
-            (PromiseStatus::Fulfilled, Some(promise_value.clone()))
+            (PromiseStatus::Fulfilled, Some(promise_value.clone()), None)
         };
 
         match status {
@@ -885,7 +931,7 @@ pub fn promise_race(
             }
             PromiseStatus::Pending => {
                 if let JsValue::Object(obj) = promise_value {
-                    pending_promises.push(obj.cheap_clone());
+                    pending_promises.push((obj.cheap_clone(), order_id));
                 }
             }
         }
@@ -894,13 +940,18 @@ pub fn promise_race(
     // All Promises are pending - create result Promise and attach handlers
     let result_promise = create_promise(interp, &guard);
 
+    // Collect order_ids for cancellation tracking
+    let input_order_ids: Vec<Option<crate::OrderId>> =
+        pending_promises.iter().map(|(_, id)| *id).collect();
+
     let shared_state = Rc::new(PromiseRaceSharedState {
         result_promise: result_promise.cheap_clone(),
         settled: std::cell::Cell::new(false),
+        input_order_ids,
     });
 
-    // Attach handlers to each pending Promise
-    for promise_obj in &pending_promises {
+    // Attach handlers to each pending Promise with their index
+    for (index, (promise_obj, _)) in pending_promises.iter().enumerate() {
         let promise_obj_ref = promise_obj.borrow();
         if let ExoticObject::Promise(ref state) = promise_obj_ref.exotic {
             // Create on_fulfilled callback
@@ -911,6 +962,7 @@ pub fn promise_race(
                 f.exotic = ExoticObject::Function(JsFunction::PromiseRaceSettle {
                     state: shared_state.clone(),
                     is_fulfill: true,
+                    index,
                 });
             }
 
@@ -922,6 +974,7 @@ pub fn promise_race(
                 f.exotic = ExoticObject::Function(JsFunction::PromiseRaceSettle {
                     state: shared_state.clone(),
                     is_fulfill: false,
+                    index,
                 });
             }
 

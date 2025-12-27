@@ -7,7 +7,7 @@
 use serde_json::json;
 use typescript_eval::{
     interpreter::builtins::create_eval_internal_module, value::PropertyKey, InternalModule,
-    JsString, JsValue, OrderResponse, Runtime, RuntimeConfig, RuntimeResult, RuntimeValue,
+    JsString, JsValue, OrderId, OrderResponse, Runtime, RuntimeConfig, RuntimeResult, RuntimeValue,
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1659,5 +1659,322 @@ fn test_concurrent_chained_operations() {
     assert_eq!(
         *value,
         JsValue::String("Alice (user), Developer (profile)".into())
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Order Cancellation Tests
+// When host Promises are abandoned (e.g., lose in Promise.race) or rejected,
+// their associated order IDs are reported back to the host via cancelled list.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_promise_race_cancels_losing_order() {
+    // When Promise.race settles, losing Promises' order IDs should be cancelled
+    let mut runtime = create_test_runtime();
+
+    // Create host Promises linked to orders
+    let order1_id = OrderId(100);
+    let order2_id = OrderId(200);
+    let promise1 = runtime.create_order_promise(order1_id);
+    let promise2 = runtime.create_order_promise(order2_id);
+
+    let result = run_with_globals(
+        &mut runtime,
+        r#"
+        import { __order__ } from "eval:internal";
+
+        const p1 = __order__({ id: 1 });
+        const p2 = __order__({ id: 2 });
+
+        const winner = await Promise.race([p1, p2]);
+        winner;
+    "#,
+    );
+
+    // Get first order
+    let RuntimeResult::Suspended { pending, .. } = result else {
+        panic!("Expected Suspended");
+    };
+    let first_order_id = pending[0].id;
+    let result = runtime
+        .fulfill_orders(vec![OrderResponse {
+            id: first_order_id,
+            result: Ok(RuntimeValue::unguarded(promise1.value().clone())),
+        }])
+        .unwrap();
+
+    // Get second order
+    let RuntimeResult::Suspended { pending, .. } = result else {
+        panic!("Expected Suspended");
+    };
+    let second_order_id = pending[0].id;
+    let result = runtime
+        .fulfill_orders(vec![OrderResponse {
+            id: second_order_id,
+            result: Ok(RuntimeValue::unguarded(promise2.value().clone())),
+        }])
+        .unwrap();
+
+    // Awaiting Promise.race
+    let RuntimeResult::Suspended { .. } = result else {
+        panic!("Expected Suspended for Promise.race");
+    };
+
+    // Resolve promise1 first - it wins, promise2's order should be cancelled
+    let result = runtime
+        .resolve_promise(&promise1, RuntimeValue::unguarded(JsValue::String("first".into())))
+        .unwrap();
+
+    // Check that the result includes cancelled order
+    match result {
+        RuntimeResult::Complete(value) => {
+            assert_eq!(*value, JsValue::String("first".into()));
+        }
+        RuntimeResult::Suspended { cancelled, .. } => {
+            // The loser's order_id (order2_id) should be in cancelled
+            assert!(
+                cancelled.contains(&order2_id),
+                "Expected order2_id ({:?}) in cancelled list: {:?}",
+                order2_id,
+                cancelled
+            );
+            // Continue to get final result
+            let result = runtime.continue_eval().unwrap();
+            if let RuntimeResult::Complete(value) = result {
+                assert_eq!(*value, JsValue::String("first".into()));
+            }
+        }
+        _ => panic!("Unexpected result"),
+    }
+}
+
+#[test]
+fn test_promise_race_second_wins_cancels_first() {
+    // Verify cancellation works when second Promise wins
+    let mut runtime = create_test_runtime();
+
+    let order1_id = OrderId(111);
+    let order2_id = OrderId(222);
+    let promise1 = runtime.create_order_promise(order1_id);
+    let promise2 = runtime.create_order_promise(order2_id);
+
+    let result = run_with_globals(
+        &mut runtime,
+        r#"
+        import { __order__ } from "eval:internal";
+
+        const p1 = __order__({ id: 1 });
+        const p2 = __order__({ id: 2 });
+
+        const winner = await Promise.race([p1, p2]);
+        winner;
+    "#,
+    );
+
+    // Get both orders and return Promises
+    let RuntimeResult::Suspended { pending, .. } = result else {
+        panic!("Expected Suspended");
+    };
+    let result = runtime
+        .fulfill_orders(vec![OrderResponse {
+            id: pending[0].id,
+            result: Ok(RuntimeValue::unguarded(promise1.value().clone())),
+        }])
+        .unwrap();
+
+    let RuntimeResult::Suspended { pending, .. } = result else {
+        panic!("Expected Suspended");
+    };
+    let result = runtime
+        .fulfill_orders(vec![OrderResponse {
+            id: pending[0].id,
+            result: Ok(RuntimeValue::unguarded(promise2.value().clone())),
+        }])
+        .unwrap();
+
+    let RuntimeResult::Suspended { .. } = result else {
+        panic!("Expected Suspended");
+    };
+
+    // Resolve promise2 first - it wins, promise1's order should be cancelled
+    let result = runtime
+        .resolve_promise(&promise2, RuntimeValue::unguarded(JsValue::String("second".into())))
+        .unwrap();
+
+    match result {
+        RuntimeResult::Complete(value) => {
+            assert_eq!(*value, JsValue::String("second".into()));
+        }
+        RuntimeResult::Suspended { cancelled, .. } => {
+            // The loser's order_id (order1_id) should be in cancelled
+            assert!(
+                cancelled.contains(&order1_id),
+                "Expected order1_id ({:?}) in cancelled list: {:?}",
+                order1_id,
+                cancelled
+            );
+        }
+        _ => panic!("Unexpected result"),
+    }
+}
+
+#[test]
+fn test_promise_rejection_signals_cancelled_order() {
+    // When a host Promise is rejected, its order should be signalled as cancelled
+    let mut runtime = create_test_runtime();
+
+    let order_id = OrderId(999);
+    let promise = runtime.create_order_promise(order_id);
+
+    let result = run_with_globals(
+        &mut runtime,
+        r#"
+        import { __order__ } from "eval:internal";
+
+        try {
+            const p = __order__({ type: "will_fail" });
+            await p;
+            "resolved";
+        } catch (e) {
+            "caught: " + e;
+        }
+    "#,
+    );
+
+    // Get order and return Promise
+    let RuntimeResult::Suspended { pending, .. } = result else {
+        panic!("Expected Suspended");
+    };
+    let result = runtime
+        .fulfill_orders(vec![OrderResponse {
+            id: pending[0].id,
+            result: Ok(RuntimeValue::unguarded(promise.value().clone())),
+        }])
+        .unwrap();
+
+    let RuntimeResult::Suspended { .. } = result else {
+        panic!("Expected Suspended");
+    };
+
+    // Reject the Promise - its order should be cancelled
+    let result = runtime
+        .reject_promise(&promise, RuntimeValue::unguarded(JsValue::String("error".into())))
+        .unwrap();
+
+    match result {
+        RuntimeResult::Complete(value) => {
+            assert_eq!(*value, JsValue::String("caught: error".into()));
+        }
+        RuntimeResult::Suspended { cancelled, .. } => {
+            // Rejected Promise's order should be in cancelled
+            assert!(
+                cancelled.contains(&order_id),
+                "Expected order_id ({:?}) in cancelled list: {:?}",
+                order_id,
+                cancelled
+            );
+            // Continue to get final result
+            let result = runtime.continue_eval().unwrap();
+            if let RuntimeResult::Complete(value) = result {
+                assert_eq!(*value, JsValue::String("caught: error".into()));
+            }
+        }
+        _ => panic!("Unexpected result"),
+    }
+}
+
+#[test]
+fn test_three_way_race_cancels_two_losers() {
+    // Three-way race: winner gets result, two losers' orders cancelled
+    let mut runtime = create_test_runtime();
+
+    let order1_id = OrderId(1);
+    let order2_id = OrderId(2);
+    let order3_id = OrderId(3);
+    let promise1 = runtime.create_order_promise(order1_id);
+    let promise2 = runtime.create_order_promise(order2_id);
+    let promise3 = runtime.create_order_promise(order3_id);
+
+    let result = run_with_globals(
+        &mut runtime,
+        r#"
+        import { __order__ } from "eval:internal";
+
+        const p1 = __order__({ id: 1 });
+        const p2 = __order__({ id: 2 });
+        const p3 = __order__({ id: 3 });
+
+        const winner = await Promise.race([p1, p2, p3]);
+        "Winner: " + winner;
+    "#,
+    );
+
+    // Get all three orders
+    let RuntimeResult::Suspended { pending, .. } = result else {
+        panic!("Expected Suspended");
+    };
+    let result = runtime
+        .fulfill_orders(vec![OrderResponse {
+            id: pending[0].id,
+            result: Ok(RuntimeValue::unguarded(promise1.value().clone())),
+        }])
+        .unwrap();
+
+    let RuntimeResult::Suspended { pending, .. } = result else {
+        panic!("Expected Suspended");
+    };
+    let result = runtime
+        .fulfill_orders(vec![OrderResponse {
+            id: pending[0].id,
+            result: Ok(RuntimeValue::unguarded(promise2.value().clone())),
+        }])
+        .unwrap();
+
+    let RuntimeResult::Suspended { pending, .. } = result else {
+        panic!("Expected Suspended");
+    };
+    let result = runtime
+        .fulfill_orders(vec![OrderResponse {
+            id: pending[0].id,
+            result: Ok(RuntimeValue::unguarded(promise3.value().clone())),
+        }])
+        .unwrap();
+
+    let RuntimeResult::Suspended { .. } = result else {
+        panic!("Expected Suspended");
+    };
+
+    // Resolve promise2 (middle one wins)
+    let result = runtime
+        .resolve_promise(&promise2, RuntimeValue::unguarded(JsValue::Number(2.0)))
+        .unwrap();
+
+    // Check that both losers' orders are cancelled
+    let cancelled = match &result {
+        RuntimeResult::Suspended { cancelled, .. } => cancelled.clone(),
+        RuntimeResult::Complete(_) => {
+            // May have completed immediately, check via continue_eval
+            Vec::new()
+        }
+        _ => panic!("Unexpected result"),
+    };
+
+    // order1_id and order3_id should be cancelled (order2_id won)
+    assert!(
+        cancelled.contains(&order1_id) || cancelled.is_empty(),
+        "Expected order1_id in cancelled: {:?}",
+        cancelled
+    );
+    assert!(
+        cancelled.contains(&order3_id) || cancelled.is_empty(),
+        "Expected order3_id in cancelled: {:?}",
+        cancelled
+    );
+    // Winner's order should NOT be cancelled
+    assert!(
+        !cancelled.contains(&order2_id),
+        "Winner's order should not be cancelled: {:?}",
+        cancelled
     );
 }

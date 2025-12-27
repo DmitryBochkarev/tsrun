@@ -2534,6 +2534,8 @@ pub struct PromiseState {
     pub result: Option<JsValue>,
     /// Handlers to call when promise settles
     pub handlers: Vec<PromiseHandler>,
+    /// Order ID if this is a host-created Promise (for cancellation tracking)
+    pub order_id: Option<crate::OrderId>,
 }
 
 /// Promise status
@@ -2698,6 +2700,8 @@ pub enum JsFunction {
         state: std::rc::Rc<PromiseRaceSharedState>,
         /// true = on_fulfilled handler, false = on_rejected handler
         is_fulfill: bool,
+        /// Index of this Promise in the race inputs (for identifying winner)
+        index: usize,
     },
     /// Auto-accessor getter (metadata stored in object properties)
     AccessorGetter,
@@ -2742,6 +2746,8 @@ pub struct PromiseRaceSharedState {
     pub result_promise: JsObjectRef,
     /// Whether the race has already been settled
     pub settled: std::cell::Cell<bool>,
+    /// Order IDs of input Promises (indexed by position, None for non-host Promises)
+    pub input_order_ids: Vec<Option<crate::OrderId>>,
 }
 
 /// Data for a bound function

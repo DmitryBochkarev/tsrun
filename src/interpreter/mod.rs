@@ -3293,9 +3293,15 @@ impl Interpreter {
                 Ok(Guarded::unguarded(JsValue::Undefined))
             }
 
-            JsFunction::PromiseRaceSettle { state, is_fulfill } => {
+            JsFunction::PromiseRaceSettle {
+                state,
+                is_fulfill,
+                index,
+            } => {
                 let value = args.first().cloned().unwrap_or(JsValue::Undefined);
-                builtins::promise::handle_promise_race_settle(self, &state, value, is_fulfill)?;
+                builtins::promise::handle_promise_race_settle(
+                    self, &state, value, is_fulfill, index,
+                )?;
                 Ok(Guarded::unguarded(JsValue::Undefined))
             }
 
