@@ -5,7 +5,7 @@ edition = "2021"
 description = "A TypeScript interpreter designed for embedding in applications"
 license = "MIT"
 keywords = ["typescript", "javascript", "interpreter", "embedding"]
-categories = ["programming-languages", "interpreters"]
+categories = ["parser-implementations", "interpreters"]
 
 [[bin]]
 name = "tsrun"
