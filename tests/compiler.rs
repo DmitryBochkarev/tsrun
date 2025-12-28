@@ -8,6 +8,7 @@ use tsrun::parser::Parser;
 use tsrun::string_dict::StringDict;
 
 /// Parse source and compile to bytecode
+#[allow(clippy::expect_used)]
 fn compile(source: &str) -> BytecodeChunk {
     let mut dict = StringDict::new();
     let mut parser = Parser::new(source, &mut dict);
@@ -384,7 +385,7 @@ fn test_compile_return() {
     // For now just test that Return opcode exists in our enum
     let chunk = compile("42");
     // This is a placeholder - actual return compilation needs function context
-    assert!(chunk.code.len() > 0);
+    assert!(!chunk.code.is_empty());
 }
 
 #[test]

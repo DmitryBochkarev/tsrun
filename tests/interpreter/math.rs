@@ -59,7 +59,7 @@ fn test_math_random() {
     // Random should return a number between 0 and 1
     let result = eval("Math.random()");
     if let JsValue::Number(n) = *result {
-        assert!(n >= 0.0 && n < 1.0);
+        assert!((0.0..1.0).contains(&n));
     } else {
         panic!("Math.random() should return a number");
     }

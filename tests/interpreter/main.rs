@@ -87,6 +87,7 @@ fn create_test_runtime() -> Runtime {
 /// Helper function to evaluate TypeScript source code
 /// Uses the full eval() API which properly handles async/await
 /// Returns RuntimeValue which keeps the result guarded from GC
+#[allow(clippy::expect_used)]
 pub fn eval(source: &str) -> RuntimeValue {
     eval_result(source).expect("eval failed")
 }

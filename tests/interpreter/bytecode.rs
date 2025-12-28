@@ -6,6 +6,7 @@
 use tsrun::{Interpreter, JsValue};
 
 /// Helper to evaluate using bytecode VM
+#[allow(clippy::expect_used)]
 fn eval_bytecode(source: &str) -> JsValue {
     let mut interp = Interpreter::new();
     interp.eval_bytecode(source).expect("bytecode eval failed")
@@ -18,7 +19,7 @@ fn eval_bytecode(source: &str) -> JsValue {
 #[test]
 fn test_bytecode_number_literal() {
     assert_eq!(eval_bytecode("42"), JsValue::Number(42.0));
-    assert_eq!(eval_bytecode("3.14"), JsValue::Number(3.14));
+    assert_eq!(eval_bytecode("3.15"), JsValue::Number(3.15));
     assert_eq!(eval_bytecode("-17"), JsValue::Number(-17.0));
 }
 

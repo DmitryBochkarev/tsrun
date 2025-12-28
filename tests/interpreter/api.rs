@@ -84,7 +84,7 @@ fn test_as_bool() {
 fn test_as_number() {
     assert_eq!(JsValue::Number(42.0).as_number(), Some(42.0));
     assert_eq!(JsValue::Number(0.0).as_number(), Some(0.0));
-    assert_eq!(JsValue::Number(-3.14).as_number(), Some(-3.14));
+    assert_eq!(JsValue::Number(-3.15).as_number(), Some(-3.15));
     assert_eq!(JsValue::Boolean(true).as_number(), None);
     assert_eq!(JsValue::from("42").as_number(), None);
 
@@ -131,7 +131,7 @@ fn test_from_bool() {
 fn test_from_f64() {
     assert_eq!(JsValue::from(42.0f64), JsValue::Number(42.0));
     assert_eq!(JsValue::from(0.0f64), JsValue::Number(0.0));
-    assert_eq!(JsValue::from(-3.14f64), JsValue::Number(-3.14));
+    assert_eq!(JsValue::from(-3.15f64), JsValue::Number(-3.15));
 
     let v: JsValue = 42.0f64.into();
     assert_eq!(v, JsValue::Number(42.0));
@@ -202,9 +202,9 @@ fn test_create_value_number() {
 
 #[test]
 fn test_create_value_f64() {
-    let v = api::create_value(3.14f64);
+    let v = api::create_value(3.15f64);
     assert!(v.is_number());
-    assert_eq!(v.as_number(), Some(3.14));
+    assert_eq!(v.as_number(), Some(3.15));
 }
 
 #[test]
@@ -380,7 +380,7 @@ fn test_display_boolean() {
 #[test]
 fn test_display_number() {
     assert_eq!(format!("{}", JsValue::Number(42.0)), "42");
-    assert_eq!(format!("{}", JsValue::Number(3.14)), "3.14");
+    assert_eq!(format!("{}", JsValue::Number(3.15)), "3.15");
     assert_eq!(format!("{}", JsValue::Number(0.0)), "0");
     assert_eq!(format!("{}", JsValue::Number(-1.0)), "-1");
     assert_eq!(format!("{}", JsValue::Number(f64::INFINITY)), "Infinity");

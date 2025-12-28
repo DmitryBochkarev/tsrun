@@ -28,7 +28,7 @@ fn lex(source: &str) -> Vec<TokenKind> {
 #[test]
 fn test_numbers() {
     assert_eq!(lex("42"), vec![TokenKind::Number(42.0)]);
-    assert_eq!(lex("3.14"), vec![TokenKind::Number(3.14)]);
+    assert_eq!(lex("3.15"), vec![TokenKind::Number(3.15)]);
     assert_eq!(lex("1e10"), vec![TokenKind::Number(1e10)]);
     assert_eq!(lex("0xff"), vec![TokenKind::Number(255.0)]);
     assert_eq!(lex("0b1010"), vec![TokenKind::Number(10.0)]);

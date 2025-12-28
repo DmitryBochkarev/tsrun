@@ -261,8 +261,10 @@ fn generate_large_source(size: usize) -> String {
 
     let mut i = 0;
     while source.len() < size {
-        source.push_str(patterns[i % patterns.len()]);
-        source.push_str("\n\n");
+        if let Some(pattern) = patterns.get(i % patterns.len()) {
+            source.push_str(pattern);
+            source.push_str("\n\n");
+        }
         i += 1;
     }
     source

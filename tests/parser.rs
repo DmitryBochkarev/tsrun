@@ -8,6 +8,7 @@ use tsrun::ast::{
 use tsrun::parser::Parser;
 use tsrun::string_dict::StringDict;
 
+#[allow(clippy::unwrap_used)]
 fn parse(source: &str) -> Program {
     let mut dict = StringDict::new();
     Parser::new(source, &mut dict).parse_program().unwrap()
@@ -903,7 +904,7 @@ fn test_parse_formatter_file() {
     // Test parsing the full formatter.ts file
     let prog = parse(include_str!("../examples/text-processing/formatter.ts"));
     // Check it parses without error
-    assert!(prog.body.len() > 0);
+    assert!(!prog.body.is_empty());
 }
 
 #[test]
@@ -911,7 +912,7 @@ fn test_parse_validator_file() {
     // Test parsing the full validator.ts file
     let prog = parse(include_str!("../examples/text-processing/validator.ts"));
     // Check it parses without error
-    assert!(prog.body.len() > 0);
+    assert!(!prog.body.is_empty());
 }
 
 #[test]

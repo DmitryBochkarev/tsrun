@@ -102,7 +102,7 @@ fn test_internal_module_registered() {
     let _runtime = Runtime::with_config(config);
 
     // Internal module is registered (we can't test import yet, but we verify setup)
-    assert!(true); // Basic smoke test that config works
+    // Basic smoke test that config works - if we got here without panic, it works
 }
 
 #[test]

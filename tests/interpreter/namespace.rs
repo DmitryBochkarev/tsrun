@@ -352,12 +352,12 @@ fn test_namespace_exported_const() {
         eval(
             r#"
             namespace Geometry {
-                export const PI: number = 3.14159;
+                export const PI: number = 3.14160;
             }
             Geometry.PI
         "#
         ),
-        JsValue::Number(3.14159)
+        JsValue::Number(3.14160)
     );
 }
 
@@ -368,11 +368,11 @@ fn test_export_namespace_const() {
         eval(
             r#"
             export namespace Geometry {
-                export const PI: number = 3.14159;
+                export const PI: number = 3.14160;
             }
             Geometry.PI
         "#
         ),
-        JsValue::Number(3.14159)
+        JsValue::Number(3.14160)
     );
 }

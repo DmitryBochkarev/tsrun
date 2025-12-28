@@ -400,13 +400,13 @@ fn test_static_field_decorator() {
 
             class Constants {
                 @constant
-                static PI: number = 3.14;
+                static PI: number = 3.15;
             }
 
             Constants.PI
         "#
         ),
-        JsValue::Number(3.14)
+        JsValue::Number(3.15)
     );
 }
 

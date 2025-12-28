@@ -14,9 +14,9 @@ fn test_parseint() {
 
 #[test]
 fn test_parsefloat() {
-    assert_eq!(eval("parseFloat('3.14')"), JsValue::Number(3.14));
-    assert_eq!(eval("parseFloat('  3.14  ')"), JsValue::Number(3.14));
-    assert_eq!(eval("parseFloat('3.14abc')"), JsValue::Number(3.14));
+    assert_eq!(eval("parseFloat('3.15')"), JsValue::Number(3.15));
+    assert_eq!(eval("parseFloat('  3.15  ')"), JsValue::Number(3.15));
+    assert_eq!(eval("parseFloat('3.15abc')"), JsValue::Number(3.15));
 }
 
 #[test]
@@ -167,7 +167,7 @@ fn test_btoa_atob_roundtrip() {
 fn test_structured_clone_primitives() {
     // Numbers
     assert_eq!(eval("structuredClone(42)"), JsValue::Number(42.0));
-    assert_eq!(eval("structuredClone(3.14)"), JsValue::Number(3.14));
+    assert_eq!(eval("structuredClone(3.15)"), JsValue::Number(3.15));
     assert_eq!(
         eval("Object.is(structuredClone(NaN), NaN)"),
         JsValue::Boolean(true)

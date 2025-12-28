@@ -84,18 +84,18 @@ fn create_test_runtime() -> Runtime {
 
 /// Extract string property from JsValue object
 fn get_string_prop(obj: &JsValue, key: &str) -> Option<String> {
-    if let JsValue::Object(o) = obj {
-        if let Some(JsValue::String(s)) = o
+    if let JsValue::Object(o) = obj
+        && let Some(JsValue::String(s)) = o
             .borrow()
             .get_property(&PropertyKey::String(JsString::from(key)))
-        {
-            return Some(s.to_string());
-        }
+    {
+        return Some(s.to_string());
     }
     None
 }
 
 /// Run script with globals, handling the import of eval:globals first
+#[allow(clippy::expect_used)]
 fn run_with_globals(runtime: &mut Runtime, script: &str) -> RuntimeResult {
     // Prepend import of globals module to register global functions
     let full_script = format!(
@@ -892,9 +892,6 @@ fn test_write_file_basic() {
 fn test_read_write_roundtrip() {
     let mut runtime = create_test_runtime();
 
-    // Simulated file storage for this test
-    let file_content: String;
-
     let result = run_with_globals(
         &mut runtime,
         r#"
@@ -916,7 +913,8 @@ fn test_read_write_roundtrip() {
     );
 
     // Capture the written content
-    file_content = get_string_prop(pending[0].payload.value(), "content").unwrap_or_default();
+    let file_content =
+        get_string_prop(pending[0].payload.value(), "content").unwrap_or_default();
     assert_eq!(file_content, "test data 12345");
 
     let result = runtime

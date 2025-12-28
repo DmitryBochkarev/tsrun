@@ -9,6 +9,7 @@ fn get_baseline_live_count() -> usize {
     runtime.gc_stats().live_objects
 }
 
+#[allow(clippy::unwrap_used, clippy::panic)]
 fn eval_with_gc_stats(source: &str) -> (RuntimeValue, GcStats) {
     let mut runtime = Runtime::new();
     let result = match runtime.eval(source).unwrap() {
@@ -550,6 +551,7 @@ results
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// Helper to evaluate with gc_threshold=1 (most aggressive GC)
+#[allow(clippy::unwrap_used, clippy::panic)]
 fn eval_with_threshold_1(source: &str) -> RuntimeValue {
     let mut runtime = Runtime::new();
     runtime.set_gc_threshold(1);
