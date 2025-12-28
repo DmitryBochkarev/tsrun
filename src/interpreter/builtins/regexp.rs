@@ -100,8 +100,79 @@ pub fn get_regexp_data(this: &JsValue) -> Result<(String, String), JsError> {
     }
 }
 
-pub fn build_regex(pattern: &str, flags: &str) -> Result<regex::Regex, JsError> {
-    let mut regex_pattern = pattern.to_string();
+/// Convert a JavaScript regex pattern to a Rust regex pattern.
+/// Handles differences between JS and Rust regex syntax:
+/// - In JS, `[` inside a character class is a literal character
+/// - In Rust, `[` inside a character class needs to be escaped as `\[`
+fn js_regex_to_rust(pattern: &str) -> String {
+    let mut result = String::with_capacity(pattern.len() + 16);
+    let chars: Vec<char> = pattern.chars().collect();
+    let len = chars.len();
+    let mut i = 0;
+    let mut in_char_class = false;
+    let mut char_class_start = false; // True right after [ or [^
+
+    while i < len {
+        let c = chars[i];
+
+        if c == '\\' && i + 1 < len {
+            // Escaped character - copy both chars and skip
+            result.push(c);
+            result.push(chars[i + 1]);
+            i += 2;
+            char_class_start = false;
+            continue;
+        }
+
+        if !in_char_class {
+            if c == '[' {
+                in_char_class = true;
+                char_class_start = true;
+                result.push(c);
+            } else {
+                result.push(c);
+            }
+        } else {
+            // Inside character class
+            if char_class_start {
+                // First char(s) after [ have special meaning
+                if c == '^' {
+                    result.push(c);
+                    // Still in char_class_start mode - next char could be ]
+                } else if c == ']' {
+                    // ] right after [ or [^ is a literal ]
+                    result.push(c);
+                    char_class_start = false;
+                } else if c == '[' {
+                    // [ at start of class - needs escaping for Rust
+                    result.push('\\');
+                    result.push('[');
+                    char_class_start = false;
+                } else {
+                    result.push(c);
+                    char_class_start = false;
+                }
+            } else if c == ']' {
+                // End of character class
+                in_char_class = false;
+                result.push(c);
+            } else if c == '[' {
+                // Unescaped [ inside character class - escape it for Rust
+                result.push('\\');
+                result.push('[');
+            } else {
+                result.push(c);
+            }
+        }
+        i += 1;
+    }
+
+    result
+}
+
+pub fn build_regex(pattern: &str, flags: &str) -> Result<fancy_regex::Regex, JsError> {
+    // Convert JS regex syntax to Rust regex syntax
+    let mut regex_pattern = js_regex_to_rust(pattern);
 
     // Build flags prefix
     let mut prefix = String::new();
@@ -125,7 +196,7 @@ pub fn build_regex(pattern: &str, flags: &str) -> Result<regex::Regex, JsError> 
         regex_pattern = format!("(?{}){}", prefix, regex_pattern);
     }
 
-    regex::Regex::new(&regex_pattern)
+    fancy_regex::Regex::new(&regex_pattern)
         .map_err(|e| JsError::syntax_error(format!("Invalid regular expression: {}", e), 0, 0))
 }
 
@@ -141,7 +212,10 @@ pub fn regexp_test(
     let input = interp.coerce_to_string(&input_arg)?.to_string();
 
     let re = build_regex(&pattern, &flags)?;
-    Ok(Guarded::unguarded(JsValue::Boolean(re.is_match(&input))))
+    let is_match = re
+        .is_match(&input)
+        .map_err(|e| JsError::syntax_error(format!("Regex execution error: {}", e), 0, 0))?;
+    Ok(Guarded::unguarded(JsValue::Boolean(is_match)))
 }
 
 pub fn regexp_exec(
@@ -202,7 +276,11 @@ pub fn regexp_exec(
         input.as_str()
     };
 
-    match re.captures(search_str) {
+    let captures_result = re
+        .captures(search_str)
+        .map_err(|e| JsError::syntax_error(format!("Regex execution error: {}", e), 0, 0))?;
+
+    match captures_result {
         Some(caps) => {
             let mut result = Vec::new();
             for cap in caps.iter() {

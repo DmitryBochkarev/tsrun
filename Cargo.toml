@@ -27,6 +27,7 @@ indexmap = { version = "2.0", features = ["serde"] }
 unicode-xid = "0.2"
 unicode-normalization = "0.1"
 regex = { version = "1.10", default-features = false, features = ["std", "unicode-perl", "unicode-case"] }
+fancy-regex = "0.14"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 rustc-hash = "2.1"
 

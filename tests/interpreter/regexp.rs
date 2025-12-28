@@ -212,3 +212,13 @@ fn test_regexp_while_exec_loop() {
     );
     assert_eq!(result, JsValue::String("1,23,456".into()));
 }
+
+#[test]
+fn test_regex_escape_pattern() {
+    // This is the pattern from lodash that was failing
+    let result = eval(r#"
+        let re = /[\\^$.*+?()[\]{}|]/g;
+        re.test('$');
+    "#);
+    assert_eq!(result, JsValue::Boolean(true));
+}

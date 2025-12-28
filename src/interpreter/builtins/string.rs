@@ -608,6 +608,7 @@ pub fn string_split(
                     let re = build_regex(&pattern, &flags)?;
                     let split: Vec<JsValue> = re
                         .split(s.as_str())
+                        .filter_map(|r| r.ok())
                         .map(|p| JsValue::String(JsString::from(p)))
                         .collect();
                     return match limit {
@@ -712,9 +713,15 @@ pub fn string_replace(
                 let mut last_end = 0;
 
                 let captures_iter: Vec<_> = if is_global {
-                    re.captures_iter(&s).collect()
+                    re.captures_iter(&s)
+                        .filter_map(|r| r.ok())
+                        .collect()
                 } else {
-                    re.captures(&s).into_iter().collect()
+                    re.captures(&s)
+                        .ok()
+                        .flatten()
+                        .into_iter()
+                        .collect()
                 };
 
                 for caps in captures_iter {
@@ -752,9 +759,15 @@ pub fn string_replace(
                 let mut last_end = 0;
 
                 let captures_iter: Vec<_> = if is_global {
-                    re.captures_iter(&s).collect()
+                    re.captures_iter(&s)
+                        .filter_map(|r| r.ok())
+                        .collect()
                 } else {
-                    re.captures(&s).into_iter().collect()
+                    re.captures(&s)
+                        .ok()
+                        .flatten()
+                        .into_iter()
+                        .collect()
                 };
 
                 for caps in captures_iter {
@@ -1072,6 +1085,7 @@ pub fn string_match(
         // Global flag: return array of all matches
         let matches: Vec<JsValue> = re
             .find_iter(&s)
+            .filter_map(|r| r.ok())
             .map(|m| JsValue::String(JsString::from(m.as_str())))
             .collect();
 
@@ -1084,7 +1098,8 @@ pub fn string_match(
         }
     } else {
         // Non-global: return first match with capture groups
-        match re.captures(&s) {
+        let captures_result = re.captures(&s).ok().flatten();
+        match captures_result {
             Some(caps) => {
                 let mut result = Vec::new();
                 for cap in caps.iter() {
@@ -1158,7 +1173,7 @@ pub fn string_match_all(
     // Use single guard for all match arrays
     let guard = interp.heap.create_guard();
     let mut all_matches = Vec::new();
-    for caps in re.captures_iter(&s) {
+    for caps in re.captures_iter(&s).filter_map(|r| r.ok()) {
         let mut match_result = Vec::new();
         for cap in caps.iter() {
             match cap {
@@ -1218,7 +1233,7 @@ pub fn string_search(
 
     let re = build_regex(&pattern, &flags)?;
 
-    match re.find(&s) {
+    match re.find(&s).ok().flatten() {
         Some(m) => Ok(Guarded::unguarded(JsValue::Number(m.start() as f64))),
         None => Ok(Guarded::unguarded(JsValue::Number(-1.0))),
     }
@@ -1268,7 +1283,7 @@ fn expand_replacement_pattern(
     matched: &str,
     before_match: &str,
     after_match: &str,
-    captures: Option<&regex::Captures>,
+    captures: Option<&fancy_regex::Captures>,
 ) -> String {
     let mut result = String::with_capacity(replacement.len());
     let chars: Vec<char> = replacement.chars().collect();
