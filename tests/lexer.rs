@@ -2,9 +2,9 @@
 //!
 //! These tests verify that the lexer correctly tokenizes TypeScript/JavaScript source.
 
+use tsrun::JsString;
 use tsrun::lexer::{Lexer, TokenKind};
 use tsrun::string_dict::StringDict;
-use tsrun::JsString;
 
 /// Helper to create JsString from &str in tests
 fn s(value: &str) -> JsString {

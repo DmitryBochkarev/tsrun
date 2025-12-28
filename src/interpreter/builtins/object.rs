@@ -1,11 +1,11 @@
 //! Object built-in methods
 
 use crate::error::JsError;
+use crate::interpreter::Interpreter;
 use crate::interpreter::builtins::proxy::{
     is_proxy, proxy_define_property, proxy_get_own_property_descriptor, proxy_get_prototype_of,
     proxy_is_extensible, proxy_own_keys, proxy_prevent_extensions, proxy_set_prototype_of,
 };
-use crate::interpreter::Interpreter;
 use crate::value::{
     CheapClone, ExoticObject, Guarded, JsObjectRef, JsString, JsValue, Property, PropertyKey,
 };
@@ -467,89 +467,89 @@ pub fn object_create(
         _ => {
             return Err(JsError::type_error(
                 "Object prototype may only be an Object or null",
-            ))
+            ));
         }
     }
 
     // If properties argument is provided and not undefined, define properties
-    if let Some(props) = properties {
-        if !matches!(props, JsValue::Undefined) {
-            let JsValue::Object(props_ref) = props else {
-                return Err(JsError::type_error(
-                    "Property descriptors must be an object",
-                ));
-            };
+    if let Some(props) = properties
+        && !matches!(props, JsValue::Undefined)
+    {
+        let JsValue::Object(props_ref) = props else {
+            return Err(JsError::type_error(
+                "Property descriptors must be an object",
+            ));
+        };
 
-            // Pre-intern descriptor property keys
-            let value_key = PropertyKey::String(interp.intern("value"));
-            let writable_key = PropertyKey::String(interp.intern("writable"));
-            let enumerable_key = PropertyKey::String(interp.intern("enumerable"));
-            let configurable_key = PropertyKey::String(interp.intern("configurable"));
-            let get_key = PropertyKey::String(interp.intern("get"));
-            let set_key = PropertyKey::String(interp.intern("set"));
+        // Pre-intern descriptor property keys
+        let value_key = PropertyKey::String(interp.intern("value"));
+        let writable_key = PropertyKey::String(interp.intern("writable"));
+        let enumerable_key = PropertyKey::String(interp.intern("enumerable"));
+        let configurable_key = PropertyKey::String(interp.intern("configurable"));
+        let get_key = PropertyKey::String(interp.intern("get"));
+        let set_key = PropertyKey::String(interp.intern("set"));
 
-            // Iterate over all properties in the descriptor object
-            let prop_keys: Vec<PropertyKey> = {
+        // Iterate over all properties in the descriptor object
+        let prop_keys: Vec<PropertyKey> = {
+            let props_borrowed = props_ref.borrow();
+            props_borrowed.properties.keys().cloned().collect()
+        };
+
+        for key in prop_keys {
+            let descriptor = {
                 let props_borrowed = props_ref.borrow();
-                props_borrowed.properties.keys().cloned().collect()
+                props_borrowed
+                    .get_property(&key)
+                    .unwrap_or(JsValue::Undefined)
             };
 
-            for key in prop_keys {
-                let descriptor = {
-                    let props_borrowed = props_ref.borrow();
-                    props_borrowed
-                        .get_property(&key)
-                        .unwrap_or(JsValue::Undefined)
+            let JsValue::Object(desc_ref) = descriptor else {
+                continue; // Skip non-object descriptors
+            };
+
+            // Get descriptor properties
+            let desc_borrowed = desc_ref.borrow();
+            let value = desc_borrowed
+                .get_property(&value_key)
+                .unwrap_or(JsValue::Undefined);
+            let writable = desc_borrowed
+                .get_property(&writable_key)
+                .map(|v| v.to_boolean())
+                .unwrap_or(false);
+            let enumerable = desc_borrowed
+                .get_property(&enumerable_key)
+                .map(|v| v.to_boolean())
+                .unwrap_or(false);
+            let configurable = desc_borrowed
+                .get_property(&configurable_key)
+                .map(|v| v.to_boolean())
+                .unwrap_or(false);
+
+            // Check for getter/setter
+            let getter = desc_borrowed.get_property(&get_key);
+            let setter = desc_borrowed.get_property(&set_key);
+            drop(desc_borrowed);
+
+            let is_accessor = getter.is_some() || setter.is_some();
+
+            if is_accessor {
+                // Accessor descriptor
+                let getter_ref = match getter {
+                    Some(JsValue::Object(g)) => Some(g),
+                    _ => None,
                 };
-
-                let JsValue::Object(desc_ref) = descriptor else {
-                    continue; // Skip non-object descriptors
+                let setter_ref = match setter {
+                    Some(JsValue::Object(s)) => Some(s),
+                    _ => None,
                 };
-
-                // Get descriptor properties
-                let desc_borrowed = desc_ref.borrow();
-                let value = desc_borrowed
-                    .get_property(&value_key)
-                    .unwrap_or(JsValue::Undefined);
-                let writable = desc_borrowed
-                    .get_property(&writable_key)
-                    .map(|v| v.to_boolean())
-                    .unwrap_or(false);
-                let enumerable = desc_borrowed
-                    .get_property(&enumerable_key)
-                    .map(|v| v.to_boolean())
-                    .unwrap_or(false);
-                let configurable = desc_borrowed
-                    .get_property(&configurable_key)
-                    .map(|v| v.to_boolean())
-                    .unwrap_or(false);
-
-                // Check for getter/setter
-                let getter = desc_borrowed.get_property(&get_key);
-                let setter = desc_borrowed.get_property(&set_key);
-                drop(desc_borrowed);
-
-                let is_accessor = getter.is_some() || setter.is_some();
-
-                if is_accessor {
-                    // Accessor descriptor
-                    let getter_ref = match getter {
-                        Some(JsValue::Object(g)) => Some(g),
-                        _ => None,
-                    };
-                    let setter_ref = match setter {
-                        Some(JsValue::Object(s)) => Some(s),
-                        _ => None,
-                    };
-                    let mut prop = Property::accessor(getter_ref, setter_ref);
-                    prop.set_enumerable(enumerable);
-                    prop.set_configurable(configurable);
-                    result.borrow_mut().define_property(key, prop);
-                } else {
-                    // Data descriptor
-                    let prop = Property::with_attributes(value, writable, enumerable, configurable);
-                    result.borrow_mut().define_property(key, prop);
-                }
+                let mut prop = Property::accessor(getter_ref, setter_ref);
+                prop.set_enumerable(enumerable);
+                prop.set_configurable(configurable);
+                result.borrow_mut().define_property(key, prop);
+            } else {
+                // Data descriptor
+                let prop = Property::with_attributes(value, writable, enumerable, configurable);
+                result.borrow_mut().define_property(key, prop);
             }
         }
     }
@@ -568,7 +568,7 @@ pub fn object_freeze(
         let mut obj_mut = obj_ref.borrow_mut();
         obj_mut.frozen = true;
         obj_mut.extensible = false; // Frozen objects are not extensible
-                                    // Mark all properties as non-writable and non-configurable
+        // Mark all properties as non-writable and non-configurable
         for (_, prop) in obj_mut.properties.iter_mut() {
             prop.set_writable(false);
             prop.set_configurable(false);
@@ -609,7 +609,7 @@ pub fn object_seal(
         let mut obj_mut = obj_ref.borrow_mut();
         obj_mut.sealed = true;
         obj_mut.extensible = false; // Sealed objects are not extensible
-                                    // Mark all properties as non-configurable (but still writable)
+        // Mark all properties as non-configurable (but still writable)
         for (_, prop) in obj_mut.properties.iter_mut() {
             prop.set_configurable(false);
         }
@@ -1199,7 +1199,7 @@ pub fn object_set_prototype_of(
         _ => {
             return Err(JsError::type_error(
                 "Object prototype may only be an Object or null",
-            ))
+            ));
         }
     };
 

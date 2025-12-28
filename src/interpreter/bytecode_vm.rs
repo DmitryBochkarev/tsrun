@@ -14,6 +14,16 @@ use std::rc::Rc;
 
 use super::Interpreter;
 
+/// Parameters for a trampoline function call
+struct CallParams {
+    callee: JsValue,
+    this_value: JsValue,
+    args: Vec<JsValue>,
+    return_register: Register,
+    new_target: JsValue,
+    is_super_call: bool,
+}
+
 /// Result of VM execution
 pub enum VmResult {
     /// Execution completed with a value
@@ -304,13 +314,13 @@ impl BytecodeVM {
 
         // Pre-populate registers with arguments
         for (i, arg) in args.iter().enumerate() {
-            if i < registers.len() {
-                if let Some(slot) = registers.get_mut(i) {
-                    if let JsValue::Object(obj) = arg {
-                        guard.guard(obj.cheap_clone());
-                    }
-                    *slot = arg.clone();
+            if i < registers.len()
+                && let Some(slot) = registers.get_mut(i)
+            {
+                if let JsValue::Object(obj) = arg {
+                    guard.guard(obj.cheap_clone());
                 }
+                *slot = arg.clone();
             }
         }
 
@@ -357,13 +367,13 @@ impl BytecodeVM {
 
         // Pre-populate registers with arguments
         for (i, arg) in args.iter().enumerate() {
-            if i < registers.len() {
-                if let Some(slot) = registers.get_mut(i) {
-                    if let JsValue::Object(obj) = arg {
-                        guard.guard(obj.cheap_clone());
-                    }
-                    *slot = arg.clone();
+            if i < registers.len()
+                && let Some(slot) = registers.get_mut(i)
+            {
+                if let JsValue::Object(obj) = arg {
+                    guard.guard(obj.cheap_clone());
                 }
+                *slot = arg.clone();
             }
         }
 
@@ -498,20 +508,25 @@ impl BytecodeVM {
         match &error {
             JsError::RuntimeError { .. } => error, // Already has stack
             JsError::Thrown | JsError::ThrownValue { .. } => error, // User-thrown, handled separately
-            JsError::GeneratorYield { .. } => error, // Not a real error
-            JsError::OptionalChainShortCircuit => error, // Not a real error
+            JsError::GeneratorYield { .. } => error,                // Not a real error
+            JsError::OptionalChainShortCircuit => error,            // Not a real error
             _ => {
                 let stack = self.build_stack_trace();
                 let (kind, message) = match &error {
-                    JsError::TypeError { message, .. } => ("TypeError".to_string(), message.clone()),
-                    JsError::ReferenceError { name } => {
-                        ("ReferenceError".to_string(), format!("{} is not defined", name))
+                    JsError::TypeError { message, .. } => {
+                        ("TypeError".to_string(), message.clone())
                     }
+                    JsError::ReferenceError { name } => (
+                        "ReferenceError".to_string(),
+                        format!("{} is not defined", name),
+                    ),
                     JsError::RangeError { message } => ("RangeError".to_string(), message.clone()),
                     JsError::SyntaxError { message, .. } => {
                         ("SyntaxError".to_string(), message.clone())
                     }
-                    JsError::ModuleError { message } => ("ModuleError".to_string(), message.clone()),
+                    JsError::ModuleError { message } => {
+                        ("ModuleError".to_string(), message.clone())
+                    }
                     JsError::Internal(msg) => ("InternalError".to_string(), msg.clone()),
                     JsError::Timeout {
                         timeout_ms,
@@ -553,16 +568,16 @@ impl BytecodeVM {
             idx,
             self.registers.len()
         );
-        if idx < self.registers.len() {
-            if let Some(slot) = self.registers.get_mut(idx) {
-                if let JsValue::Object(obj) = &value {
-                    self.register_guard.guard(obj.clone());
-                }
-                if let JsValue::Object(obj) = &slot {
-                    self.register_guard.unguard(obj);
-                }
-                *slot = value;
+        if idx < self.registers.len()
+            && let Some(slot) = self.registers.get_mut(idx)
+        {
+            if let JsValue::Object(obj) = &value {
+                self.register_guard.guard(obj.clone());
             }
+            if let JsValue::Object(obj) = &slot {
+                self.register_guard.unguard(obj);
+            }
+            *slot = value;
         }
     }
 
@@ -596,10 +611,10 @@ impl BytecodeVM {
 
         // First, check if we have a current_constructor set (for construct calls)
         // This is the most reliable way to find super() in derived class constructors
-        if let Some(ref ctor) = self.current_constructor {
-            if let Some(super_val) = ctor.borrow().get_property(&super_key) {
-                return Ok(super_val);
-            }
+        if let Some(ref ctor) = self.current_constructor
+            && let Some(super_val) = ctor.borrow().get_property(&super_key)
+        {
+            return Ok(super_val);
         }
 
         if let JsValue::Object(this_obj) = &self.this_value {
@@ -609,15 +624,13 @@ impl BytecodeVM {
             }
 
             // For instance methods: look up constructor from prototype chain
-            if let Some(proto) = &this_obj.borrow().prototype {
-                if let Some(JsValue::Object(ctor_obj)) = proto
+            if let Some(proto) = &this_obj.borrow().prototype
+                && let Some(JsValue::Object(ctor_obj)) = proto
                     .borrow()
                     .get_property(&PropertyKey::String(interp.intern("constructor")))
-                {
-                    if let Some(super_val) = ctor_obj.borrow().get_property(&super_key) {
-                        return Ok(super_val);
-                    }
-                }
+                && let Some(super_val) = ctor_obj.borrow().get_property(&super_key)
+            {
+                return Ok(super_val);
             }
         }
 
@@ -652,15 +665,13 @@ impl BytecodeVM {
 
             // For instance methods: look up constructor from prototype chain
             // and use __super_target__ (parent prototype) for property access
-            if let Some(proto) = &this_obj.borrow().prototype {
-                if let Some(JsValue::Object(ctor_obj)) = proto
+            if let Some(proto) = &this_obj.borrow().prototype
+                && let Some(JsValue::Object(ctor_obj)) = proto
                     .borrow()
                     .get_property(&PropertyKey::String(interp.intern("constructor")))
-                {
-                    if let Some(target) = ctor_obj.borrow().get_property(&super_target_key) {
-                        return Ok(target);
-                    }
-                }
+                && let Some(target) = ctor_obj.borrow().get_property(&super_target_key)
+            {
+                return Ok(target);
             }
         }
 
@@ -726,9 +737,9 @@ impl BytecodeVM {
                             resume_register,
                         });
                     } else {
-                        return VmResult::Error(self.wrap_error_with_trace(JsError::internal_error(
-                            "Suspend expects an object",
-                        )));
+                        return VmResult::Error(self.wrap_error_with_trace(
+                            JsError::internal_error("Suspend expects an object"),
+                        ));
                     }
                 }
                 Ok(OpResult::SuspendForOrder {
@@ -774,12 +785,14 @@ impl BytecodeVM {
                     // Trampoline: save current state and switch to called function
                     match self.setup_trampoline_call(
                         interp,
-                        callee,
-                        this_value,
-                        args,
-                        return_register,
-                        new_target,
-                        is_super_call,
+                        CallParams {
+                            callee,
+                            this_value,
+                            args,
+                            return_register,
+                            new_target,
+                            is_super_call,
+                        },
                     ) {
                         Ok(None) => continue,
                         Ok(Some(vm_result)) => return vm_result,
@@ -842,14 +855,18 @@ impl BytecodeVM {
     fn setup_trampoline_call(
         &mut self,
         interp: &mut Interpreter,
-        callee: JsValue,
-        this_value: JsValue,
-        args: Vec<JsValue>,
-        return_register: Register,
-        new_target: JsValue,
-        is_super_call: bool,
+        params: CallParams,
     ) -> Result<Option<VmResult>, JsError> {
         use crate::value::{ExoticObject, JsFunction};
+
+        let CallParams {
+            callee,
+            this_value,
+            args,
+            return_register,
+            new_target,
+            is_super_call,
+        } = params;
 
         // Check call stack depth limit
         // Use only trampoline_stack.len() since that represents actual JS call depth
@@ -909,15 +926,15 @@ impl BytecodeVM {
                 let result = (native.func)(interp, this_value, &args)?;
 
                 // Check if result is a PendingOrder - if so, suspend immediately
-                if let JsValue::Object(ref obj) = result.value {
-                    if let ExoticObject::PendingOrder { id, .. } = &obj.borrow().exotic {
-                        let order_id = crate::OrderId(*id);
-                        return Ok(Some(VmResult::SuspendForOrder(VmOrderSuspension {
-                            order_id,
-                            state: self.save_state(interp),
-                            resume_register: return_register,
-                        })));
-                    }
+                if let JsValue::Object(ref obj) = result.value
+                    && let ExoticObject::PendingOrder { id, .. } = &obj.borrow().exotic
+                {
+                    let order_id = crate::OrderId(*id);
+                    return Ok(Some(VmResult::SuspendForOrder(VmOrderSuspension {
+                        order_id,
+                        state: self.save_state(interp),
+                        resume_register: return_register,
+                    })));
                 }
 
                 self.set_reg(return_register, result.value);
@@ -931,12 +948,14 @@ impl BytecodeVM {
                 full_args.extend(args);
                 self.setup_trampoline_call(
                     interp,
-                    target,
-                    bound_this,
-                    full_args,
-                    return_register,
-                    new_target,
-                    is_super_call, // pass through super call flag
+                    CallParams {
+                        callee: target,
+                        this_value: bound_this,
+                        args: full_args,
+                        return_register,
+                        new_target,
+                        is_super_call,
+                    },
                 )
             }
             JsFunction::BytecodeGenerator(bc_func) => {
@@ -1139,7 +1158,7 @@ impl BytecodeVM {
         is_async: bool,
         is_super_call: bool,
     ) -> Result<(), JsError> {
-        use crate::interpreter::{create_environment_unrooted_with_capacity, Binding, VarKey};
+        use crate::interpreter::{Binding, VarKey, create_environment_unrooted_with_capacity};
 
         // Get function info from the chunk
         let func_info = bc_func.chunk.function_info.as_ref();
@@ -1201,18 +1220,18 @@ impl BytecodeVM {
         {
             let super_name = interp.intern("__super__");
             let super_key = PropertyKey::String(super_name.cheap_clone());
-            if let Some(super_val) = func_obj.borrow().get_property(&super_key) {
-                if let Some(data) = func_env.borrow_mut().as_environment_mut() {
-                    data.bindings.insert(
-                        VarKey(super_name),
-                        Binding {
-                            value: super_val,
-                            mutable: false,
-                            initialized: true,
-                            import_binding: None,
-                        },
-                    );
-                }
+            if let Some(super_val) = func_obj.borrow().get_property(&super_key)
+                && let Some(data) = func_env.borrow_mut().as_environment_mut()
+            {
+                data.bindings.insert(
+                    VarKey(super_name),
+                    Binding {
+                        value: super_val,
+                        mutable: false,
+                        initialized: true,
+                        import_binding: None,
+                    },
+                );
             }
         }
 
@@ -1220,18 +1239,18 @@ impl BytecodeVM {
         {
             let super_target_name = interp.intern("__super_target__");
             let super_target_key = PropertyKey::String(super_target_name.cheap_clone());
-            if let Some(super_target_val) = func_obj.borrow().get_property(&super_target_key) {
-                if let Some(data) = func_env.borrow_mut().as_environment_mut() {
-                    data.bindings.insert(
-                        VarKey(super_target_name),
-                        Binding {
-                            value: super_target_val,
-                            mutable: false,
-                            initialized: true,
-                            import_binding: None,
-                        },
-                    );
-                }
+            if let Some(super_target_val) = func_obj.borrow().get_property(&super_target_key)
+                && let Some(data) = func_env.borrow_mut().as_environment_mut()
+            {
+                data.bindings.insert(
+                    VarKey(super_target_name),
+                    Binding {
+                        value: super_target_val,
+                        mutable: false,
+                        initialized: true,
+                        import_binding: None,
+                    },
+                );
             }
         }
 
@@ -1277,10 +1296,10 @@ impl BytecodeVM {
         let register_count = bc_func.chunk.register_count as usize;
         let mut new_registers = self.acquire_registers(register_count);
         for (i, arg) in register_args.iter().enumerate() {
-            if i < new_registers.len() {
-                if let Some(slot) = new_registers.get_mut(i) {
-                    *slot = arg.clone();
-                }
+            if i < new_registers.len()
+                && let Some(slot) = new_registers.get_mut(i)
+            {
+                *slot = arg.clone();
             }
         }
 
@@ -1335,7 +1354,7 @@ impl BytecodeVM {
         new_target: JsValue,
         construct_new_obj: Gc<JsObject>,
     ) -> Result<(), JsError> {
-        use crate::interpreter::{create_environment_unrooted_with_capacity, Binding, VarKey};
+        use crate::interpreter::{Binding, VarKey, create_environment_unrooted_with_capacity};
 
         // Get function info from the chunk
         let func_info = bc_func.chunk.function_info.as_ref();
@@ -1397,18 +1416,18 @@ impl BytecodeVM {
         {
             let super_name = interp.intern("__super__");
             let super_key = PropertyKey::String(super_name.cheap_clone());
-            if let Some(super_val) = func_obj.borrow().get_property(&super_key) {
-                if let Some(data) = func_env.borrow_mut().as_environment_mut() {
-                    data.bindings.insert(
-                        VarKey(super_name),
-                        Binding {
-                            value: super_val,
-                            mutable: false,
-                            initialized: true,
-                            import_binding: None,
-                        },
-                    );
-                }
+            if let Some(super_val) = func_obj.borrow().get_property(&super_key)
+                && let Some(data) = func_env.borrow_mut().as_environment_mut()
+            {
+                data.bindings.insert(
+                    VarKey(super_name),
+                    Binding {
+                        value: super_val,
+                        mutable: false,
+                        initialized: true,
+                        import_binding: None,
+                    },
+                );
             }
         }
 
@@ -1416,18 +1435,18 @@ impl BytecodeVM {
         {
             let super_target_name = interp.intern("__super_target__");
             let super_target_key = PropertyKey::String(super_target_name.cheap_clone());
-            if let Some(super_target_val) = func_obj.borrow().get_property(&super_target_key) {
-                if let Some(data) = func_env.borrow_mut().as_environment_mut() {
-                    data.bindings.insert(
-                        VarKey(super_target_name),
-                        Binding {
-                            value: super_target_val,
-                            mutable: false,
-                            initialized: true,
-                            import_binding: None,
-                        },
-                    );
-                }
+            if let Some(super_target_val) = func_obj.borrow().get_property(&super_target_key)
+                && let Some(data) = func_env.borrow_mut().as_environment_mut()
+            {
+                data.bindings.insert(
+                    VarKey(super_target_name),
+                    Binding {
+                        value: super_target_val,
+                        mutable: false,
+                        initialized: true,
+                        import_binding: None,
+                    },
+                );
             }
         }
 
@@ -1475,10 +1494,10 @@ impl BytecodeVM {
         let register_count = bc_func.chunk.register_count as usize;
         let mut new_registers = self.acquire_registers(register_count);
         for (i, arg) in register_args.iter().enumerate() {
-            if i < new_registers.len() {
-                if let Some(slot) = new_registers.get_mut(i) {
-                    *slot = arg.clone();
-                }
+            if i < new_registers.len()
+                && let Some(slot) = new_registers.get_mut(i)
+            {
+                *slot = arg.clone();
             }
         }
 
@@ -1565,7 +1584,7 @@ impl BytecodeVM {
         let final_value = if frame.is_async {
             use crate::value::ExoticObject;
             // Promise assimilation: if result is already a Promise, return it directly
-            if let JsValue::Object(ref obj) = &intermediate_value {
+            if let JsValue::Object(obj) = &intermediate_value {
                 if matches!(obj.borrow().exotic, ExoticObject::Promise(_)) {
                     intermediate_value
                 } else {
@@ -2248,18 +2267,18 @@ impl BytecodeVM {
                 // Look up Symbol.hasInstance on right object (and its prototype chain)
                 let has_instance_method = right_obj.borrow().get_property(&has_instance_key);
 
-                if let Some(JsValue::Object(method_obj)) = has_instance_method {
-                    if method_obj.borrow().is_callable() {
-                        // Call the custom Symbol.hasInstance method
-                        let result = interp.call_function(
-                            JsValue::Object(method_obj),
-                            right_val.clone(),
-                            std::slice::from_ref(left_val),
-                        )?;
-                        // Convert result to boolean
-                        self.set_reg(dst, JsValue::Boolean(result.value.to_boolean()));
-                        return Ok(OpResult::Continue);
-                    }
+                if let Some(JsValue::Object(method_obj)) = has_instance_method
+                    && method_obj.borrow().is_callable()
+                {
+                    // Call the custom Symbol.hasInstance method
+                    let result = interp.call_function(
+                        JsValue::Object(method_obj),
+                        right_val.clone(),
+                        std::slice::from_ref(left_val),
+                    )?;
+                    // Convert result to boolean
+                    self.set_reg(dst, JsValue::Boolean(result.value.to_boolean()));
+                    return Ok(OpResult::Continue);
                 }
 
                 // Step 2: Fall back to OrdinaryHasInstance
@@ -2563,27 +2582,27 @@ impl BytecodeVM {
                             // Check if property is configurable before deleting
                             {
                                 let obj_borrowed = obj_ref.borrow();
-                                if let Some(prop) = obj_borrowed.properties.get(&prop_key) {
-                                    if !prop.configurable() {
-                                        return Err(JsError::type_error(format!(
-                                            "Cannot delete property '{}' of object",
-                                            prop_key
-                                        )));
-                                    }
+                                if let Some(prop) = obj_borrowed.properties.get(&prop_key)
+                                    && !prop.configurable()
+                                {
+                                    return Err(JsError::type_error(format!(
+                                        "Cannot delete property '{}' of object",
+                                        prop_key
+                                    )));
                                 }
                             }
 
                             // For arrays, handle index deletion specially
                             {
                                 let mut obj_borrowed = obj_ref.borrow_mut();
-                                if let PropertyKey::Index(idx) = &prop_key {
-                                    if let Some(elements) = obj_borrowed.array_elements_mut() {
-                                        let idx = *idx as usize;
-                                        if idx < elements.len() {
-                                            // Set to undefined (creating a hole)
-                                            if let Some(elem) = elements.get_mut(idx) {
-                                                *elem = JsValue::Undefined;
-                                            }
+                                if let PropertyKey::Index(idx) = &prop_key
+                                    && let Some(elements) = obj_borrowed.array_elements_mut()
+                                {
+                                    let idx = *idx as usize;
+                                    if idx < elements.len() {
+                                        // Set to undefined (creating a hole)
+                                        if let Some(elem) = elements.get_mut(idx) {
+                                            *elem = JsValue::Undefined;
                                         }
                                     }
                                 }
@@ -2633,13 +2652,13 @@ impl BytecodeVM {
                             // Check if property is configurable before deleting
                             {
                                 let obj_borrowed = obj_ref.borrow();
-                                if let Some(prop) = obj_borrowed.properties.get(&prop_key) {
-                                    if !prop.configurable() {
-                                        return Err(JsError::type_error(format!(
-                                            "Cannot delete property '{}' of object",
-                                            prop_key
-                                        )));
-                                    }
+                                if let Some(prop) = obj_borrowed.properties.get(&prop_key)
+                                    && !prop.configurable()
+                                {
+                                    return Err(JsError::type_error(format!(
+                                        "Cannot delete property '{}' of object",
+                                        prop_key
+                                    )));
                                 }
                             }
 
@@ -2867,10 +2886,10 @@ impl BytecodeVM {
                 }
 
                 // Check if this is `new eval()` - eval is not a constructor
-                if let ExoticObject::Function(JsFunction::Native(native)) = &ctor.borrow().exotic {
-                    if native.name.as_str() == "eval" {
-                        return Err(JsError::type_error("eval is not a constructor"));
-                    }
+                if let ExoticObject::Function(JsFunction::Native(native)) = &ctor.borrow().exotic
+                    && native.name.as_str() == "eval"
+                {
+                    return Err(JsError::type_error("eval is not a constructor"));
                 }
 
                 // Create guard for OpResult values
@@ -2945,10 +2964,10 @@ impl BytecodeVM {
                 }
 
                 // Check if this is `new eval()` - eval is not a constructor
-                if let ExoticObject::Function(JsFunction::Native(native)) = &ctor.borrow().exotic {
-                    if native.name.as_str() == "eval" {
-                        return Err(JsError::type_error("eval is not a constructor"));
-                    }
+                if let ExoticObject::Function(JsFunction::Native(native)) = &ctor.borrow().exotic
+                    && native.name.as_str() == "eval"
+                {
+                    return Err(JsError::type_error("eval is not a constructor"));
                 }
 
                 // Create guard for OpResult values
@@ -3070,7 +3089,7 @@ impl BytecodeVM {
                     _ => {
                         return Err(JsError::internal_error(
                             "Invalid async function chunk index",
-                        ))
+                        ));
                     }
                 };
 
@@ -3095,7 +3114,7 @@ impl BytecodeVM {
                     _ => {
                         return Err(JsError::internal_error(
                             "Invalid async generator chunk index",
-                        ))
+                        ));
                     }
                 };
 
@@ -4592,13 +4611,13 @@ impl BytecodeVM {
                 );
 
                 // Set context.name (parameter name)
-                if let Some(n) = param_name_str {
-                    if !n.is_empty() {
-                        ctx.borrow_mut().set_property(
-                            PropertyKey::String(interp.intern("name")),
-                            JsValue::String(n),
-                        );
-                    }
+                if let Some(n) = param_name_str
+                    && !n.is_empty()
+                {
+                    ctx.borrow_mut().set_property(
+                        PropertyKey::String(interp.intern("name")),
+                        JsValue::String(n),
+                    );
                 }
 
                 // Set context.function (method name)
@@ -4749,13 +4768,11 @@ impl BytecodeVM {
                     let borrowed = class_obj.borrow();
                     if let Some(JsValue::Object(inits)) =
                         borrowed.get_property(&PropertyKey::String(init_key))
-                    {
-                        if let Some(init) = inits
+                        && let Some(init) = inits
                             .borrow()
                             .get_property(&PropertyKey::String(field_name))
-                        {
-                            initializer = init.clone();
-                        }
+                    {
+                        initializer = init.clone();
                     }
                 }
 
@@ -5026,10 +5043,10 @@ impl BytecodeVM {
                 };
 
                 // Append elements to the destination array
-                if let JsValue::Object(dst_arr) = dst_val {
-                    if let Some(existing) = dst_arr.borrow_mut().array_elements_mut() {
-                        existing.extend(elements_to_add);
-                    }
+                if let JsValue::Object(dst_arr) = dst_val
+                    && let Some(existing) = dst_arr.borrow_mut().array_elements_mut()
+                {
+                    existing.extend(elements_to_add);
                 }
                 Ok(OpResult::Continue)
             }
@@ -5691,17 +5708,17 @@ impl BytecodeVM {
                 }
 
                 // Handle __proto__ special property - return prototype
-                if let JsValue::String(k) = key {
-                    if k.as_str() == "__proto__" {
-                        return Ok(Guarded::unguarded(
-                            obj_ref
-                                .borrow()
-                                .prototype
-                                .as_ref()
-                                .map(|p| JsValue::Object(p.clone()))
-                                .unwrap_or(JsValue::Null),
-                        ));
-                    }
+                if let JsValue::String(k) = key
+                    && k.as_str() == "__proto__"
+                {
+                    return Ok(Guarded::unguarded(
+                        obj_ref
+                            .borrow()
+                            .prototype
+                            .as_ref()
+                            .map(|p| JsValue::Object(p.clone()))
+                            .unwrap_or(JsValue::Null),
+                    ));
                 }
 
                 let prop_key = interp.property_key_from_value(key);
@@ -5763,15 +5780,15 @@ impl BytecodeVM {
             JsValue::Undefined => Err(JsError::type_error("Cannot read properties of undefined")),
             JsValue::Symbol(sym) => {
                 // Symbols have a description property
-                if let JsValue::String(k) = key {
-                    if k.as_str() == "description" {
-                        return Ok(Guarded::unguarded(
-                            sym.description
-                                .as_ref()
-                                .map(|d| JsValue::String(d.cheap_clone()))
-                                .unwrap_or(JsValue::Undefined),
-                        ));
-                    }
+                if let JsValue::String(k) = key
+                    && k.as_str() == "description"
+                {
+                    return Ok(Guarded::unguarded(
+                        sym.description
+                            .as_ref()
+                            .map(|d| JsValue::String(d.cheap_clone()))
+                            .unwrap_or(JsValue::Undefined),
+                    ));
                 }
                 // Other symbol prototype methods
                 let prop_key = interp.property_key_from_value(key);
@@ -5808,21 +5825,21 @@ impl BytecodeVM {
                 }
 
                 // Handle __proto__ special property - set prototype
-                if let JsValue::String(k) = key {
-                    if k.as_str() == "__proto__" {
-                        match &value {
-                            JsValue::Object(proto) => {
-                                obj_ref.borrow_mut().prototype = Some(proto.clone());
-                            }
-                            JsValue::Null => {
-                                obj_ref.borrow_mut().prototype = None;
-                            }
-                            _ => {
-                                // Non-object, non-null values are ignored for __proto__ set
-                            }
+                if let JsValue::String(k) = key
+                    && k.as_str() == "__proto__"
+                {
+                    match &value {
+                        JsValue::Object(proto) => {
+                            obj_ref.borrow_mut().prototype = Some(proto.clone());
                         }
-                        return Ok(());
+                        JsValue::Null => {
+                            obj_ref.borrow_mut().prototype = None;
+                        }
+                        _ => {
+                            // Non-object, non-null values are ignored for __proto__ set
+                        }
                     }
+                    return Ok(());
                 }
 
                 let prop_key = interp.property_key_from_value(key);

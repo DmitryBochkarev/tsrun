@@ -2,8 +2,8 @@
 //!
 //! Compiles AST statements to bytecode instructions.
 
-use super::bytecode::{ConstantIndex, Op, Register};
 use super::Compiler;
+use super::bytecode::{ConstantIndex, Op, Register};
 use crate::ast::{
     BlockStatement, BreakStatement, ClassConstructor, ClassDeclaration, ClassMember, ClassMethod,
     ClassProperty, ContinueStatement, DoWhileStatement, ExportDeclaration, ForInOfLeft,
@@ -277,15 +277,15 @@ impl Compiler {
 
     /// Get variable names that need per-iteration binding (let/const in for init)
     fn get_per_iteration_vars(&self, init: &Option<ForInit>) -> Vec<JsString> {
-        if let Some(ForInit::Variable(decl)) = init {
-            if decl.kind == VariableKind::Let || decl.kind == VariableKind::Const {
-                // Extract variable names from declarations
-                let mut names = Vec::new();
-                for declarator in decl.declarations.iter() {
-                    Self::collect_pattern_names(&declarator.id, &mut names);
-                }
-                return names;
+        if let Some(ForInit::Variable(decl)) = init
+            && (decl.kind == VariableKind::Let || decl.kind == VariableKind::Const)
+        {
+            // Extract variable names from declarations
+            let mut names = Vec::new();
+            for declarator in decl.declarations.iter() {
+                Self::collect_pattern_names(&declarator.id, &mut names);
             }
+            return names;
         }
         Vec::new()
     }
@@ -1509,15 +1509,13 @@ impl Compiler {
         // If decorators are present, the binding must be mutable so we can update it
         // after decorators are applied (since decorators can replace the class).
         let has_decorators = !decorator_regs.is_empty();
-        if has_explicit_name {
-            if let Some(ref name) = class_name {
-                let name_idx = self.builder.add_string(name.cheap_clone())?;
-                self.builder.emit(Op::DeclareVar {
-                    name: name_idx,
-                    init: dst,
-                    mutable: has_decorators, // mutable if decorators might replace the class
-                });
-            }
+        if has_explicit_name && let Some(ref name) = class_name {
+            let name_idx = self.builder.add_string(name.cheap_clone())?;
+            self.builder.emit(Op::DeclareVar {
+                name: name_idx,
+                init: dst,
+                mutable: has_decorators, // mutable if decorators might replace the class
+            });
         }
 
         // Execute static blocks with `this` bound to the class constructor
@@ -1580,14 +1578,12 @@ impl Compiler {
 
             // Update the class name binding with the final decorated class
             // (decorators may have replaced the class)
-            if has_explicit_name {
-                if let Some(ref name) = class_name {
-                    let name_idx = self.builder.add_string(name.cheap_clone())?;
-                    self.builder.emit(Op::SetVar {
-                        name: name_idx,
-                        src: dst,
-                    });
-                }
+            if has_explicit_name && let Some(ref name) = class_name {
+                let name_idx = self.builder.add_string(name.cheap_clone())?;
+                self.builder.emit(Op::SetVar {
+                    name: name_idx,
+                    src: dst,
+                });
             }
         }
 
@@ -2664,10 +2660,10 @@ impl Compiler {
 
                 // Try to compute the numeric value for auto-increment
                 // This is a simplified version - in reality, we'd need const evaluation
-                if let crate::ast::Expression::Literal(lit) = init {
-                    if let crate::ast::LiteralValue::Number(n) = &lit.value {
-                        current_value = *n as i64 + 1;
-                    }
+                if let crate::ast::Expression::Literal(lit) = init
+                    && let crate::ast::LiteralValue::Number(n) = &lit.value
+                {
+                    current_value = *n as i64 + 1;
                 }
             } else {
                 // Use auto-increment value
@@ -2784,10 +2780,10 @@ impl Compiler {
 
             // If the statement exports something, add it to the namespace object
             // For now, we handle exported declarations by adding them to the namespace
-            if let Statement::Export(export) = stmt {
-                if let Some(ref decl) = export.declaration {
-                    self.add_export_to_namespace(ns_obj, decl)?;
-                }
+            if let Statement::Export(export) = stmt
+                && let Some(ref decl) = export.declaration
+            {
+                self.add_export_to_namespace(ns_obj, decl)?;
             }
         }
 
@@ -3005,7 +3001,7 @@ impl Compiler {
                 return Err(JsError::internal_error(format!(
                     "Unsupported binary operator in enum initializer: {:?}",
                     operator
-                )))
+                )));
             }
         };
         Ok(())
@@ -3048,44 +3044,44 @@ impl Compiler {
         }
 
         // Handle default export: export default expr
-        if export.default {
-            if let Some(ref decl) = export.declaration {
-                // export default function/class/expression
-                // First compile the declaration to get the value
-                let value_reg = self.builder.alloc_register()?;
+        if export.default
+            && let Some(ref decl) = export.declaration
+        {
+            // export default function/class/expression
+            // First compile the declaration to get the value
+            let value_reg = self.builder.alloc_register()?;
 
-                match decl.as_ref() {
-                    Statement::FunctionDeclaration(func) => {
-                        // Compile function and store in value_reg
-                        self.compile_function_expression_for_export(func, value_reg)?;
-                    }
-                    Statement::ClassDeclaration(class) => {
-                        // Compile class and store in value_reg
-                        self.compile_class_expression_for_export(class, value_reg)?;
-                    }
-                    Statement::Expression(expr_stmt) => {
-                        // Compile expression
-                        self.compile_expression(&expr_stmt.expression, value_reg)?;
-                    }
-                    _ => {
-                        // Shouldn't happen - other statements can't be default exported
-                        return Err(JsError::syntax_error_simple(
-                            "Unexpected declaration in default export",
-                        ));
-                    }
+            match decl.as_ref() {
+                Statement::FunctionDeclaration(func) => {
+                    // Compile function and store in value_reg
+                    self.compile_function_expression_for_export(func, value_reg)?;
                 }
-
-                // Emit export binding for "default"
-                let default_str = self.builder.add_string(JsString::from("default"))?;
-                self.builder.emit(Op::ExportBinding {
-                    export_name: default_str,
-                    binding_name: default_str,
-                    value: value_reg,
-                });
-
-                self.builder.free_register(value_reg);
-                return Ok(());
+                Statement::ClassDeclaration(class) => {
+                    // Compile class and store in value_reg
+                    self.compile_class_expression_for_export(class, value_reg)?;
+                }
+                Statement::Expression(expr_stmt) => {
+                    // Compile expression
+                    self.compile_expression(&expr_stmt.expression, value_reg)?;
+                }
+                _ => {
+                    // Shouldn't happen - other statements can't be default exported
+                    return Err(JsError::syntax_error_simple(
+                        "Unexpected declaration in default export",
+                    ));
+                }
             }
+
+            // Emit export binding for "default"
+            let default_str = self.builder.add_string(JsString::from("default"))?;
+            self.builder.emit(Op::ExportBinding {
+                export_name: default_str,
+                binding_name: default_str,
+                value: value_reg,
+            });
+
+            self.builder.free_register(value_reg);
+            return Ok(());
         }
 
         // Handle named export declaration: export const/let/var/function/class

@@ -265,7 +265,9 @@ fn test_structured_clone_date() {
 
     // Verify it's a deep copy
     assert_eq!(
-        eval("let d = new Date(1234567890000); let clone = structuredClone(d); clone.setTime(0); d.getTime()"),
+        eval(
+            "let d = new Date(1234567890000); let clone = structuredClone(d); clone.setTime(0); d.getTime()"
+        ),
         JsValue::Number(1234567890000.0)
     );
 }
@@ -295,7 +297,9 @@ fn test_structured_clone_map() {
 
     // Verify it's a deep copy
     assert_eq!(
-        eval("let m = new Map([['a', 1]]); let clone = structuredClone(m); clone.set('a', 99); m.get('a')"),
+        eval(
+            "let m = new Map([['a', 1]]); let clone = structuredClone(m); clone.set('a', 99); m.get('a')"
+        ),
         JsValue::Number(1.0)
     );
 }

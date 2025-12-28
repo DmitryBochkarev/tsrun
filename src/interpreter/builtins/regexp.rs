@@ -113,12 +113,16 @@ fn js_regex_to_rust(pattern: &str) -> String {
     let mut char_class_start = false; // True right after [ or [^
 
     while i < len {
-        let c = chars[i];
+        let Some(c) = chars.get(i).copied() else {
+            break;
+        };
 
-        if c == '\\' && i + 1 < len {
+        if c == '\\'
+            && let Some(next) = chars.get(i + 1).copied()
+        {
             // Escaped character - copy both chars and skip
             result.push(c);
-            result.push(chars[i + 1]);
+            result.push(next);
             i += 2;
             char_class_start = false;
             continue;

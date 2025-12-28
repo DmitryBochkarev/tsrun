@@ -260,7 +260,7 @@ fn symbol_key_for(
         _ => {
             return Err(JsError::type_error(
                 "Symbol.keyFor requires a symbol argument",
-            ))
+            ));
         }
     };
 

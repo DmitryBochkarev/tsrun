@@ -4,8 +4,8 @@
 //! This module provides functions to collect var declarations and emit them at
 //! the beginning of the scope.
 
-use super::bytecode::Op;
 use super::Compiler;
+use super::bytecode::Op;
 use crate::ast::{ForInOfLeft, ForInit, Pattern, Statement, VariableDeclaration, VariableKind};
 use crate::error::JsError;
 use crate::value::{CheapClone, JsString};
@@ -87,28 +87,28 @@ fn collect_hoisted_vars_stmt(stmt: &Statement, names: &mut Vec<JsString>) {
 
         Statement::For(for_stmt) => {
             // var in for init hoists
-            if let Some(ForInit::Variable(decl)) = &for_stmt.init {
-                if decl.kind == VariableKind::Var {
-                    collect_hoisted_vars_decl(decl, names);
-                }
+            if let Some(ForInit::Variable(decl)) = &for_stmt.init
+                && decl.kind == VariableKind::Var
+            {
+                collect_hoisted_vars_decl(decl, names);
             }
             collect_hoisted_vars_stmt(&for_stmt.body, names);
         }
 
         Statement::ForIn(for_in) => {
-            if let ForInOfLeft::Variable(decl) = &for_in.left {
-                if decl.kind == VariableKind::Var {
-                    collect_hoisted_vars_decl(decl, names);
-                }
+            if let ForInOfLeft::Variable(decl) = &for_in.left
+                && decl.kind == VariableKind::Var
+            {
+                collect_hoisted_vars_decl(decl, names);
             }
             collect_hoisted_vars_stmt(&for_in.body, names);
         }
 
         Statement::ForOf(for_of) => {
-            if let ForInOfLeft::Variable(decl) = &for_of.left {
-                if decl.kind == VariableKind::Var {
-                    collect_hoisted_vars_decl(decl, names);
-                }
+            if let ForInOfLeft::Variable(decl) = &for_of.left
+                && decl.kind == VariableKind::Var
+            {
+                collect_hoisted_vars_decl(decl, names);
             }
             collect_hoisted_vars_stmt(&for_of.body, names);
         }
@@ -277,10 +277,10 @@ fn collect_function_decl_names_stmt(
 ) {
     match stmt {
         Statement::FunctionDeclaration(func) => {
-            if let Some(ref id) = func.id {
-                if seen.insert(id.name.cheap_clone()) {
-                    *count += 1;
-                }
+            if let Some(ref id) = func.id
+                && seen.insert(id.name.cheap_clone())
+            {
+                *count += 1;
             }
         }
         // Recurse into blocks and control flow (function declarations hoist from blocks)

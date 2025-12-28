@@ -601,18 +601,18 @@ pub fn proxy_set(
                 // Not a proxy, do normal property set
                 drop(obj_ref);
                 let prop_desc = obj.borrow().get_property_descriptor(&key);
-                if let Some((p, _)) = prop_desc {
-                    if p.is_accessor() {
-                        if let Some(setter) = p.setter() {
-                            interp.call_function(
-                                JsValue::Object(setter.clone()),
-                                receiver,
-                                &[value],
-                            )?;
-                            return Ok(true);
-                        }
-                        return Ok(false);
+                if let Some((p, _)) = prop_desc
+                    && p.is_accessor()
+                {
+                    if let Some(setter) = p.setter() {
+                        interp.call_function(
+                            JsValue::Object(setter.clone()),
+                            receiver,
+                            &[value],
+                        )?;
+                        return Ok(true);
                     }
+                    return Ok(false);
                 }
                 obj.borrow_mut().set_property(key, value);
                 return Ok(true);

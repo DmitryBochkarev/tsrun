@@ -1,8 +1,8 @@
 //! String-related tests
 
 use super::{eval, eval_result};
-use tsrun::value::JsString;
 use tsrun::JsValue;
+use tsrun::value::JsString;
 
 #[test]
 fn test_string_charat() {

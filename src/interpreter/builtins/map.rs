@@ -126,10 +126,10 @@ pub fn map_get(
     let key = args.first().cloned().unwrap_or(JsValue::Undefined);
     let map = map_obj.borrow();
 
-    if let ExoticObject::Map { ref entries } = map.exotic {
-        if let Some(value) = entries.get(&JsMapKey(key)) {
-            return Ok(Guarded::unguarded(value.clone()));
-        }
+    if let ExoticObject::Map { ref entries } = map.exotic
+        && let Some(value) = entries.get(&JsMapKey(key))
+    {
+        return Ok(Guarded::unguarded(value.clone()));
     }
 
     Ok(Guarded::unguarded(JsValue::Undefined))
@@ -202,12 +202,12 @@ pub fn map_delete(
     let key = args.first().cloned().unwrap_or(JsValue::Undefined);
     let mut map = map_obj.borrow_mut();
 
-    if let ExoticObject::Map { ref mut entries } = map.exotic {
-        if entries.shift_remove(&JsMapKey(key)).is_some() {
-            let len = entries.len();
-            map.set_property(size_key, JsValue::Number(len as f64));
-            return Ok(Guarded::unguarded(JsValue::Boolean(true)));
-        }
+    if let ExoticObject::Map { ref mut entries } = map.exotic
+        && entries.shift_remove(&JsMapKey(key)).is_some()
+    {
+        let len = entries.len();
+        map.set_property(size_key, JsValue::Number(len as f64));
+        return Ok(Guarded::unguarded(JsValue::Boolean(true)));
     }
 
     Ok(Guarded::unguarded(JsValue::Boolean(false)))

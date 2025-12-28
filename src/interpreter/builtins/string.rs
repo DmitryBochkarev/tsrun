@@ -433,11 +433,7 @@ pub fn string_substring(
         .first()
         .map(|v| {
             let n = v.to_number();
-            if n.is_nan() {
-                0
-            } else {
-                (n as usize).min(len)
-            }
+            if n.is_nan() { 0 } else { (n as usize).min(len) }
         })
         .unwrap_or(0);
 
@@ -445,11 +441,7 @@ pub fn string_substring(
         .get(1)
         .map(|v| {
             let n = v.to_number();
-            if n.is_nan() {
-                0
-            } else {
-                (n as usize).min(len)
-            }
+            if n.is_nan() { 0 } else { (n as usize).min(len) }
         })
         .unwrap_or(len);
 
@@ -502,11 +494,7 @@ pub fn string_substr(
         .get(1)
         .map(|v| {
             let n = v.to_number();
-            if n.is_nan() || n < 0.0 {
-                0
-            } else {
-                n as usize
-            }
+            if n.is_nan() || n < 0.0 { 0 } else { n as usize }
         })
         .unwrap_or((len - start) as usize);
 
@@ -713,15 +701,9 @@ pub fn string_replace(
                 let mut last_end = 0;
 
                 let captures_iter: Vec<_> = if is_global {
-                    re.captures_iter(&s)
-                        .filter_map(|r| r.ok())
-                        .collect()
+                    re.captures_iter(&s).filter_map(|r| r.ok()).collect()
                 } else {
-                    re.captures(&s)
-                        .ok()
-                        .flatten()
-                        .into_iter()
-                        .collect()
+                    re.captures(&s).ok().flatten().into_iter().collect()
                 };
 
                 for caps in captures_iter {
@@ -759,15 +741,9 @@ pub fn string_replace(
                 let mut last_end = 0;
 
                 let captures_iter: Vec<_> = if is_global {
-                    re.captures_iter(&s)
-                        .filter_map(|r| r.ok())
-                        .collect()
+                    re.captures_iter(&s).filter_map(|r| r.ok()).collect()
                 } else {
-                    re.captures(&s)
-                        .ok()
-                        .flatten()
-                        .into_iter()
-                        .collect()
+                    re.captures(&s).ok().flatten().into_iter().collect()
                 };
 
                 for caps in captures_iter {
@@ -1263,7 +1239,7 @@ pub fn string_normalize(
             return Err(JsError::range_error(format!(
                 "The normalization form should be one of NFC, NFD, NFKC, NFKD. Received: {}",
                 form.as_str()
-            )))
+            )));
         }
     };
 
@@ -1319,30 +1295,29 @@ fn expand_replacement_pattern(
                     let mut consumed = 2;
 
                     // Check for second digit (for $10-$99)
-                    if i + 2 < chars.len() {
-                        if let Some(second) = chars.get(i + 2) {
-                            if second.is_ascii_digit() {
-                                let two_digit =
-                                    group_num * 10 + (*second as u32 - '0' as u32) as usize;
-                                // Only use two-digit if it's a valid group reference
-                                if let Some(caps) = captures {
-                                    if two_digit <= caps.len().saturating_sub(1) && two_digit > 0 {
-                                        group_num = two_digit;
-                                        consumed = 3;
-                                    }
-                                }
-                            }
+                    if i + 2 < chars.len()
+                        && let Some(second) = chars.get(i + 2)
+                        && second.is_ascii_digit()
+                    {
+                        let two_digit = group_num * 10 + (*second as u32 - '0' as u32) as usize;
+                        // Only use two-digit if it's a valid group reference
+                        if let Some(caps) = captures
+                            && two_digit <= caps.len().saturating_sub(1)
+                            && two_digit > 0
+                        {
+                            group_num = two_digit;
+                            consumed = 3;
                         }
                     }
 
                     // Get the capture group (group 0 is the whole match, groups are 1-indexed in JS)
                     if group_num > 0 {
-                        if let Some(caps) = captures {
-                            if let Some(m) = caps.get(group_num) {
-                                result.push_str(m.as_str());
-                            }
-                            // Undefined group -> empty string (nothing to push)
+                        if let Some(caps) = captures
+                            && let Some(m) = caps.get(group_num)
+                        {
+                            result.push_str(m.as_str());
                         }
+                        // Undefined group -> empty string (nothing to push)
                     } else {
                         // $0 is not valid, treat as literal
                         result.push('$');

@@ -350,10 +350,10 @@ pub fn global_parse_float(
     let mut chars = s.chars().peekable();
 
     // Handle sign
-    if matches!(chars.peek(), Some('-') | Some('+')) {
-        if let Some(c) = chars.next() {
-            num_str.push(c);
-        }
+    if matches!(chars.peek(), Some('-') | Some('+'))
+        && let Some(c) = chars.next()
+    {
+        num_str.push(c);
     }
 
     // Parse digits and decimal point
@@ -373,10 +373,10 @@ pub fn global_parse_float(
                 num_str.push(c);
                 chars.next();
                 // Optional sign after exponent
-                if matches!(chars.peek(), Some('-') | Some('+')) {
-                    if let Some(sign) = chars.next() {
-                        num_str.push(sign);
-                    }
+                if matches!(chars.peek(), Some('-') | Some('+'))
+                    && let Some(sign) = chars.next()
+                {
+                    num_str.push(sign);
                 }
             }
             _ => break,

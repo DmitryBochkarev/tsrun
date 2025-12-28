@@ -790,10 +790,10 @@ impl<'a> Lexer<'a> {
                         }
                         Some((_, 'x')) => {
                             // Hex escape \xNN
-                            if let Some(hex) = self.scan_hex_escape(2) {
-                                if let Some(ch) = char::from_u32(hex) {
-                                    value.push(ch);
-                                }
+                            if let Some(hex) = self.scan_hex_escape(2)
+                                && let Some(ch) = char::from_u32(hex)
+                            {
+                                value.push(ch);
                             }
                         }
                         Some((_, 'u')) => {
@@ -813,15 +813,15 @@ impl<'a> Lexer<'a> {
                                         break;
                                     }
                                 }
-                                if let Ok(code) = u32::from_str_radix(&hex_str, 16) {
-                                    if let Some(ch) = char::from_u32(code) {
-                                        value.push(ch);
-                                    }
-                                }
-                            } else if let Some(hex) = self.scan_hex_escape(4) {
-                                if let Some(ch) = char::from_u32(hex) {
+                                if let Ok(code) = u32::from_str_radix(&hex_str, 16)
+                                    && let Some(ch) = char::from_u32(code)
+                                {
                                     value.push(ch);
                                 }
+                            } else if let Some(hex) = self.scan_hex_escape(4)
+                                && let Some(ch) = char::from_u32(hex)
+                            {
+                                value.push(ch);
                             }
                         }
                         Some((_, '\n')) => {
@@ -1286,10 +1286,10 @@ impl<'a> Lexer<'a> {
         if matches!(self.peek(), Some('e' | 'E')) {
             num_str.push('e');
             self.advance();
-            if matches!(self.peek(), Some('+' | '-')) {
-                if let Some((_, ch)) = self.advance() {
-                    num_str.push(ch);
-                }
+            if matches!(self.peek(), Some('+' | '-'))
+                && let Some((_, ch)) = self.advance()
+            {
+                num_str.push(ch);
             }
             while let Some(ch) = self.peek() {
                 if ch.is_ascii_digit() || ch == '_' {

@@ -2133,7 +2133,9 @@ fn test_lazy_initialization_debug() {
         "#
         ),
         // Empty string is returned as-is (not re-initialized) because it's !== undefined/null
-        JsValue::from("Lazy decorator called for: value; --- First access ---; get called, current value: '', type: string; Got: ''")
+        JsValue::from(
+            "Lazy decorator called for: value; --- First access ---; get called, current value: '', type: string; Got: ''"
+        )
     );
 }
 
@@ -2421,7 +2423,9 @@ fn test_fluent_interface_debug() {
             debugInfo.join("; ")
         "#
         ),
-        JsValue::from("Fluent decorator for: append; --- Calling append ---; Calling append with this=object; Returning this from append; Result type: object; Result === b: true; b.value: hello; --- Try chaining ---; Calling append with this=object; Returning this from append; Calling append with this=object; Returning this from append; After chain, b.value: hello world")
+        JsValue::from(
+            "Fluent decorator for: append; --- Calling append ---; Calling append with this=object; Returning this from append; Result type: object; Result === b: true; b.value: hello; --- Try chaining ---; Calling append with this=object; Returning this from append; Calling append with this=object; Returning this from append; After chain, b.value: hello world"
+        )
     );
 }
 
@@ -2528,7 +2532,9 @@ fn test_immutable_decorator_debug() {
         ),
         // First setter call sees initKey=undefined (false), allows the write, and marks as initialized
         // NOTE: Initial values bypass the setter, so the first setter call is the modification attempt
-        JsValue::from("Immutable decorator for: value; --- Reading value ---; get value; Value: initial; --- Try to modify ---; set value to modified, initKey exists: false; Marked value as initialized; Blocked: false")
+        JsValue::from(
+            "Immutable decorator for: value; --- Reading value ---; get value; Value: initial; --- Try to modify ---; set value to modified, initKey exists: false; Marked value as initialized; Blocked: false"
+        )
     );
 }
 
@@ -2586,7 +2592,9 @@ fn test_immutable_decorator_two_modifications() {
             debugInfo.join("; ")
         "#
         ),
-        JsValue::from("Value: initial; set value=first, initKey=false; ALLOWED; After first: first; set value=second, initKey=true; BLOCKED; Blocked: true; Final: first")
+        JsValue::from(
+            "Value: initial; set value=first, initKey=false; ALLOWED; After first: first; set value=second, initKey=true; BLOCKED; Blocked: true; Final: first"
+        )
     );
 }
 
@@ -2630,7 +2638,9 @@ fn test_accessor_this_property_persists() {
             log.join("; ")
         "#
         ),
-        JsValue::from("--- first write ---; before set: this[key]=undefined; after set: this[key]=was_set; --- second write ---; before set: this[key]=was_set; after set: this[key]=was_set; --- check marker directly ---; t.__marker_prop=was_set")
+        JsValue::from(
+            "--- first write ---; before set: this[key]=undefined; after set: this[key]=was_set; --- second write ---; before set: this[key]=was_set; after set: this[key]=was_set; --- check marker directly ---; t.__marker_prop=was_set"
+        )
     );
 }
 
@@ -2678,7 +2688,9 @@ fn test_accessor_this_boolean_tracking() {
             log.join("; ")
         "#
         ),
-        JsValue::from("--- write 1 ---; initKey=__init_prop; this[initKey]=undefined; !!this[initKey]=false; SET initKey to true; --- write 2 ---; initKey=__init_prop; this[initKey]=true; !!this[initKey]=true; BLOCK; t[\"__init_prop\"]=true")
+        JsValue::from(
+            "--- write 1 ---; initKey=__init_prop; this[initKey]=undefined; !!this[initKey]=false; SET initKey to true; --- write 2 ---; initKey=__init_prop; this[initKey]=true; !!this[initKey]=true; BLOCK; t[\"__init_prop\"]=true"
+        )
     );
 }
 
@@ -2767,7 +2779,9 @@ fn test_debug_field_decorator() {
             debug.join("|")
         "#
         ),
-        JsValue::from("decorator called, kind=field|returning function: function|has inits: true|timeout init: function|initializer called, value=undefined|timeout=100")
+        JsValue::from(
+            "decorator called, kind=field|returning function: function|has inits: true|timeout init: function|initializer called, value=undefined|timeout=100"
+        )
     );
 }
 

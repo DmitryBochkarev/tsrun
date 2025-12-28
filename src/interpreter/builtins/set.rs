@@ -156,12 +156,12 @@ pub fn set_delete(
     let value = args.first().cloned().unwrap_or(JsValue::Undefined);
     let mut set = set_obj.borrow_mut();
 
-    if let ExoticObject::Set { ref mut entries } = set.exotic {
-        if entries.shift_remove(&JsMapKey(value)) {
-            let len = entries.len();
-            set.set_property(size_key, JsValue::Number(len as f64));
-            return Ok(Guarded::unguarded(JsValue::Boolean(true)));
-        }
+    if let ExoticObject::Set { ref mut entries } = set.exotic
+        && entries.shift_remove(&JsMapKey(value))
+    {
+        let len = entries.len();
+        set.set_property(size_key, JsValue::Number(len as f64));
+        return Ok(Guarded::unguarded(JsValue::Boolean(true)));
     }
 
     Ok(Guarded::unguarded(JsValue::Boolean(false)))

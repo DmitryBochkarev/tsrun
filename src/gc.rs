@@ -623,16 +623,16 @@ impl<T: Default + Reset + Traceable> Space<T> {
         // With guard-based roots, if unmarked, object is unreachable regardless of ref_count
         for (chunk, bitmask) in self.chunks.iter().zip(self.marked_chunks.iter()) {
             for index_in_chunk in bitmask.iter_unmarked(chunk.len()) {
-                if let Some(gc_box) = chunk.get(index_in_chunk) {
-                    if !gc_box.pooled.get() {
-                        // Reset clears references (important for breaking cycles)
-                        gc_box.data.borrow_mut().reset();
-                        // Set ref_count to 0 to prevent stale Gc pointers from
-                        // triggering reset when they're dropped
-                        gc_box.ref_count.set(0);
-                        to_pool.push(NonNull::from(gc_box));
-                        collected += 1;
-                    }
+                if let Some(gc_box) = chunk.get(index_in_chunk)
+                    && !gc_box.pooled.get()
+                {
+                    // Reset clears references (important for breaking cycles)
+                    gc_box.data.borrow_mut().reset();
+                    // Set ref_count to 0 to prevent stale Gc pointers from
+                    // triggering reset when they're dropped
+                    gc_box.ref_count.set(0);
+                    to_pool.push(NonNull::from(gc_box));
+                    collected += 1;
                 }
             }
         }
@@ -963,7 +963,7 @@ mod tests {
         }
 
         heap.collect(); // Force collection
-                        // Object should be in pool now
+        // Object should be in pool now
         assert_eq!(heap.stats().pooled_objects, 1);
 
         // Allocate again - should reuse from pool

@@ -1547,7 +1547,8 @@ fn test_exception_unwind_registers_cleaned_up() {
     assert!(
         exception_overhead < 100,
         "Too many live objects: {} over baseline (normal path had {}). Exception unwind register cleanup may be broken.",
-        exception_overhead, normal_overhead
+        exception_overhead,
+        normal_overhead
     );
 }
 

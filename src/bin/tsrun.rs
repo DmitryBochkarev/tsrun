@@ -102,21 +102,22 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // Start evaluation - may return NeedImports
     let entry_file = entry_path.display().to_string();
-    let mut result = runtime.eval_with_path(&rewritten_source, entry_file.clone()).map_err(|e| {
-        format_error(&e.to_string(), &entry_file, &[])
-    })?;
+    let mut result = runtime
+        .eval_with_path(&rewritten_source, entry_file.clone())
+        .map_err(|e| format_error(&e.to_string(), &entry_file, &[]))?;
 
     // Helper to build import chain from a file back to entry
-    let build_chain = |file: &str, chain_map: &HashMap<String, (String, String)>| -> Vec<(String, String)> {
-        let mut chain = Vec::new();
-        let mut current = file.to_string();
-        while let Some((importer, specifier)) = chain_map.get(&current) {
-            chain.push((importer.clone(), specifier.clone()));
-            current = importer.clone();
-        }
-        chain.reverse();
-        chain
-    };
+    let build_chain =
+        |file: &str, chain_map: &HashMap<String, (String, String)>| -> Vec<(String, String)> {
+            let mut chain = Vec::new();
+            let mut current = file.to_string();
+            while let Some((importer, specifier)) = chain_map.get(&current) {
+                chain.push((importer.clone(), specifier.clone()));
+                current = importer.clone();
+            }
+            chain.reverse();
+            chain
+        };
 
     // Module loading loop
     loop {

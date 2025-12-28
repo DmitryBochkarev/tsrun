@@ -3,7 +3,7 @@
 //! Run with: cargo bench --bench lexer
 //! Profile with: cargo flamegraph --bench lexer -- --bench
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use tsrun::lexer::{Lexer, TokenKind};
 use tsrun::string_dict::StringDict;
 

@@ -2,8 +2,8 @@
 //!
 //! Compiles AST expressions to bytecode instructions.
 
-use super::bytecode::{ConstantIndex, Op, Register};
 use super::Compiler;
+use super::bytecode::{ConstantIndex, Op, Register};
 use crate::ast::{
     Argument, ArrayElement, AssignmentOp, AssignmentTarget, BinaryOp, Expression, LiteralValue,
     LogicalOp, MemberProperty, ObjectProperty, ObjectPropertyKey, PropertyKind, UnaryOp, UpdateOp,
@@ -1019,7 +1019,7 @@ impl Compiler {
             _ => {
                 return Err(JsError::internal_error(
                     "Invalid compound assignment operator",
-                ))
+                ));
             }
         })
     }
@@ -1734,66 +1734,64 @@ impl Compiler {
         }
 
         // Handle super.method() or super[expr]() call
-        if let Expression::Member(member) = call.callee.as_ref() {
-            if matches!(member.object.as_ref(), Expression::Super(_)) {
-                // Super method call
-                match &member.property {
-                    MemberProperty::Identifier(method_name) => {
-                        let method_idx = self.builder.add_string(method_name.name.cheap_clone())?;
+        if let Expression::Member(member) = call.callee.as_ref()
+            && matches!(member.object.as_ref(), Expression::Super(_))
+        {
+            // Super method call
+            match &member.property {
+                MemberProperty::Identifier(method_name) => {
+                    let method_idx = self.builder.add_string(method_name.name.cheap_clone())?;
 
-                        // Get super.method
-                        let method_reg = self.builder.alloc_register()?;
-                        self.builder.emit(Op::SuperGetConst {
-                            dst: method_reg,
-                            key: method_idx,
-                        });
+                    // Get super.method
+                    let method_reg = self.builder.alloc_register()?;
+                    self.builder.emit(Op::SuperGetConst {
+                        dst: method_reg,
+                        key: method_idx,
+                    });
 
-                        // Compile arguments
-                        let (args_start, argc, has_spread) =
-                            self.compile_arguments(&call.arguments)?;
+                    // Compile arguments
+                    let (args_start, argc, has_spread) = self.compile_arguments(&call.arguments)?;
 
-                        // Call with `this` as the receiver
-                        let this_reg = self.builder.alloc_register()?;
-                        self.builder.emit(Op::LoadThis { dst: this_reg });
+                    // Call with `this` as the receiver
+                    let this_reg = self.builder.alloc_register()?;
+                    self.builder.emit(Op::LoadThis { dst: this_reg });
 
-                        self.emit_call(dst, method_reg, this_reg, args_start, argc, has_spread);
+                    self.emit_call(dst, method_reg, this_reg, args_start, argc, has_spread);
 
-                        self.builder.free_register(this_reg);
-                        self.builder.free_register(method_reg);
-                        return Ok(());
-                    }
-                    MemberProperty::Expression(key_expr) => {
-                        // Computed super property access: super[name]()
-                        let key_reg = self.builder.alloc_register()?;
-                        self.compile_expression(key_expr, key_reg)?;
+                    self.builder.free_register(this_reg);
+                    self.builder.free_register(method_reg);
+                    return Ok(());
+                }
+                MemberProperty::Expression(key_expr) => {
+                    // Computed super property access: super[name]()
+                    let key_reg = self.builder.alloc_register()?;
+                    self.compile_expression(key_expr, key_reg)?;
 
-                        // Get super[key]
-                        let method_reg = self.builder.alloc_register()?;
-                        self.builder.emit(Op::SuperGet {
-                            dst: method_reg,
-                            key: key_reg,
-                        });
+                    // Get super[key]
+                    let method_reg = self.builder.alloc_register()?;
+                    self.builder.emit(Op::SuperGet {
+                        dst: method_reg,
+                        key: key_reg,
+                    });
 
-                        // Compile arguments
-                        let (args_start, argc, has_spread) =
-                            self.compile_arguments(&call.arguments)?;
+                    // Compile arguments
+                    let (args_start, argc, has_spread) = self.compile_arguments(&call.arguments)?;
 
-                        // Call with `this` as the receiver
-                        let this_reg = self.builder.alloc_register()?;
-                        self.builder.emit(Op::LoadThis { dst: this_reg });
+                    // Call with `this` as the receiver
+                    let this_reg = self.builder.alloc_register()?;
+                    self.builder.emit(Op::LoadThis { dst: this_reg });
 
-                        self.emit_call(dst, method_reg, this_reg, args_start, argc, has_spread);
+                    self.emit_call(dst, method_reg, this_reg, args_start, argc, has_spread);
 
-                        self.builder.free_register(this_reg);
-                        self.builder.free_register(method_reg);
-                        self.builder.free_register(key_reg);
-                        return Ok(());
-                    }
-                    MemberProperty::PrivateIdentifier(_) => {
-                        return Err(JsError::syntax_error_simple(
-                            "Private fields not supported on super",
-                        ));
-                    }
+                    self.builder.free_register(this_reg);
+                    self.builder.free_register(method_reg);
+                    self.builder.free_register(key_reg);
+                    return Ok(());
+                }
+                MemberProperty::PrivateIdentifier(_) => {
+                    return Err(JsError::syntax_error_simple(
+                        "Private fields not supported on super",
+                    ));
                 }
             }
         }
@@ -1892,23 +1890,22 @@ impl Compiler {
 
         // Check for direct eval call: eval(...)
         // Direct eval has access to the lexical scope, unlike indirect eval.
-        if let Expression::Identifier(id) = call.callee.as_ref() {
-            if id.name.as_str() == "eval"
-                && call.arguments.len() <= 1
-                && !self.has_spread_arguments(&call.arguments)
-            {
-                // Emit DirectEval opcode
-                let arg_reg = self.builder.alloc_register()?;
-                if let Some(Argument::Expression(arg_expr)) = call.arguments.first() {
-                    self.compile_expression(arg_expr, arg_reg)?;
-                } else {
-                    // No argument - eval() returns undefined
-                    self.builder.emit(Op::LoadUndefined { dst: arg_reg });
-                }
-                self.builder.emit(Op::DirectEval { dst, arg: arg_reg });
-                self.builder.free_register(arg_reg);
-                return Ok(());
+        if let Expression::Identifier(id) = call.callee.as_ref()
+            && id.name.as_str() == "eval"
+            && call.arguments.len() <= 1
+            && !self.has_spread_arguments(&call.arguments)
+        {
+            // Emit DirectEval opcode
+            let arg_reg = self.builder.alloc_register()?;
+            if let Some(Argument::Expression(arg_expr)) = call.arguments.first() {
+                self.compile_expression(arg_expr, arg_reg)?;
+            } else {
+                // No argument - eval() returns undefined
+                self.builder.emit(Op::LoadUndefined { dst: arg_reg });
             }
+            self.builder.emit(Op::DirectEval { dst, arg: arg_reg });
+            self.builder.free_register(arg_reg);
+            return Ok(());
         }
 
         // Handle parenthesized method call: (a?.b)() or (a.b)()
@@ -2623,10 +2620,10 @@ impl Compiler {
     ) -> Result<super::BytecodeChunk, JsError> {
         let mut chunk = self.compile_arrow_expression_body(params, expr, is_async)?;
         // Set the name if provided
-        if let Some(func_name) = name {
-            if let Some(ref mut info) = chunk.function_info {
-                info.name = Some(func_name);
-            }
+        if let Some(func_name) = name
+            && let Some(ref mut info) = chunk.function_info
+        {
+            info.name = Some(func_name);
         }
         Ok(chunk)
     }

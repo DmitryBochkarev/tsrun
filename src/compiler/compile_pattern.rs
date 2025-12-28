@@ -2,8 +2,8 @@
 //!
 //! Compiles destructuring patterns to bytecode.
 
-use super::bytecode::{Op, Register};
 use super::Compiler;
+use super::bytecode::{Op, Register};
 use crate::ast::{ObjectPatternProperty, ObjectPropertyKey, Pattern};
 use crate::error::JsError;
 use crate::value::CheapClone;

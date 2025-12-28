@@ -81,7 +81,9 @@ fn test_map_init_with_array() {
 #[test]
 fn test_map_foreach() {
     assert_eq!(
-        eval("let result = []; let m = new Map([['a', 1], ['b', 2]]); m.forEach((v, k) => result.push(k + ':' + v)); result.join(',')"),
+        eval(
+            "let result = []; let m = new Map([['a', 1], ['b', 2]]); m.forEach((v, k) => result.push(k + ':' + v)); result.join(',')"
+        ),
         JsValue::from("a:1,b:2")
     );
 }
@@ -114,7 +116,9 @@ fn test_map_values() {
 #[test]
 fn test_map_entries() {
     assert_eq!(
-        eval("let m = new Map([['a', 1], ['b', 2]]); let result = []; for (let e of m.entries()) { result.push(e[0] + ':' + e[1]); } result.join(',')"),
+        eval(
+            "let m = new Map([['a', 1], ['b', 2]]); let result = []; for (let e of m.entries()) { result.push(e[0] + ':' + e[1]); } result.join(',')"
+        ),
         JsValue::from("a:1,b:2")
     );
 }

@@ -429,7 +429,9 @@ fn test_bytecode_while_false() {
 #[test]
 fn test_bytecode_while_sum() {
     assert_eq!(
-        eval_bytecode("let sum: number = 0; let i: number = 1; while (i <= 10) { sum = sum + i; i = i + 1; } sum"),
+        eval_bytecode(
+            "let sum: number = 0; let i: number = 1; while (i <= 10) { sum = sum + i; i = i + 1; } sum"
+        ),
         JsValue::Number(55.0) // 1+2+3+4+5+6+7+8+9+10 = 55
     );
 }
@@ -501,7 +503,9 @@ fn test_bytecode_break() {
 fn test_bytecode_continue() {
     // Sum only even numbers up to 10
     assert_eq!(
-        eval_bytecode("let sum: number = 0; for (let i: number = 0; i < 10; i = i + 1) { if (i % 2 !== 0) continue; sum = sum + i; } sum"),
+        eval_bytecode(
+            "let sum: number = 0; for (let i: number = 0; i < 10; i = i + 1) { if (i % 2 !== 0) continue; sum = sum + i; } sum"
+        ),
         JsValue::Number(20.0) // 0+2+4+6+8 = 20
     );
 }
@@ -509,7 +513,9 @@ fn test_bytecode_continue() {
 #[test]
 fn test_bytecode_for_break() {
     assert_eq!(
-        eval_bytecode("let sum: number = 0; for (let i: number = 0; i < 100; i = i + 1) { if (i >= 5) break; sum = sum + i; } sum"),
+        eval_bytecode(
+            "let sum: number = 0; for (let i: number = 0; i < 100; i = i + 1) { if (i >= 5) break; sum = sum + i; } sum"
+        ),
         JsValue::Number(10.0) // 0+1+2+3+4 = 10
     );
 }
@@ -521,7 +527,9 @@ fn test_bytecode_for_break() {
 #[test]
 fn test_bytecode_switch_match() {
     assert_eq!(
-        eval_bytecode("let x: number = 2; let result: string = ''; switch (x) { case 1: result = 'one'; break; case 2: result = 'two'; break; case 3: result = 'three'; break; } result"),
+        eval_bytecode(
+            "let x: number = 2; let result: string = ''; switch (x) { case 1: result = 'one'; break; case 2: result = 'two'; break; case 3: result = 'three'; break; } result"
+        ),
         JsValue::String("two".into())
     );
 }
@@ -529,7 +537,9 @@ fn test_bytecode_switch_match() {
 #[test]
 fn test_bytecode_switch_default() {
     assert_eq!(
-        eval_bytecode("let x: number = 99; let result: string = ''; switch (x) { case 1: result = 'one'; break; default: result = 'other'; break; } result"),
+        eval_bytecode(
+            "let x: number = 99; let result: string = ''; switch (x) { case 1: result = 'one'; break; default: result = 'other'; break; } result"
+        ),
         JsValue::String("other".into())
     );
 }
@@ -537,7 +547,9 @@ fn test_bytecode_switch_default() {
 #[test]
 fn test_bytecode_switch_fallthrough() {
     assert_eq!(
-        eval_bytecode("let x: number = 1; let result: number = 0; switch (x) { case 1: result = result + 1; case 2: result = result + 2; break; case 3: result = result + 3; break; } result"),
+        eval_bytecode(
+            "let x: number = 1; let result: number = 0; switch (x) { case 1: result = result + 1; case 2: result = result + 2; break; case 3: result = result + 3; break; } result"
+        ),
         JsValue::Number(3.0) // Falls through from case 1 to case 2
     );
 }
@@ -559,7 +571,9 @@ fn test_bytecode_try_no_error() {
 #[test]
 fn test_bytecode_try_catch() {
     assert_eq!(
-        eval_bytecode("let result: string = ''; try { throw 'error'; result = 'try'; } catch (e) { result = 'catch'; } result"),
+        eval_bytecode(
+            "let result: string = ''; try { throw 'error'; result = 'try'; } catch (e) { result = 'catch'; } result"
+        ),
         JsValue::String("catch".into())
     );
 }
@@ -567,7 +581,9 @@ fn test_bytecode_try_catch() {
 #[test]
 fn test_bytecode_throw_and_catch() {
     assert_eq!(
-        eval_bytecode("let result: string = ''; try { throw 'test error'; } catch (e) { result = e as string; } result"),
+        eval_bytecode(
+            "let result: string = ''; try { throw 'test error'; } catch (e) { result = e as string; } result"
+        ),
         JsValue::String("test error".into())
     );
 }
@@ -585,7 +601,9 @@ fn test_bytecode_try_finally() {
 #[test]
 fn test_bytecode_try_catch_finally() {
     assert_eq!(
-        eval_bytecode("let result: number = 0; try { throw 'error'; } catch (e) { result = 1; } finally { result = result + 10; } result"),
+        eval_bytecode(
+            "let result: number = 0; try { throw 'error'; } catch (e) { result = 1; } finally { result = result + 10; } result"
+        ),
         JsValue::Number(11.0)
     );
 }

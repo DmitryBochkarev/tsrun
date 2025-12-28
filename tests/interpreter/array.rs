@@ -1,8 +1,8 @@
 //! Array-related tests
 
 use super::{eval, eval_result};
-use tsrun::value::JsString;
 use tsrun::JsValue;
+use tsrun::value::JsString;
 
 #[test]
 fn test_array() {
@@ -432,7 +432,9 @@ fn test_array_reduce_with_index() {
 #[test]
 fn test_array_reduce_to_object() {
     assert_eq!(
-        eval("const obj = [['a', 1], ['b', 2]].reduce((acc, [k, v]) => { acc[k] = v; return acc; }, {}); obj.a"),
+        eval(
+            "const obj = [['a', 1], ['b', 2]].reduce((acc, [k, v]) => { acc[k] = v; return acc; }, {}); obj.a"
+        ),
         JsValue::Number(1.0)
     );
 }

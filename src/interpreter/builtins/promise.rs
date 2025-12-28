@@ -151,33 +151,33 @@ fn resolve_promise(
     value: JsValue,
 ) -> Result<(), JsError> {
     // Check if value is a thenable (another promise)
-    if let JsValue::Object(obj) = &value {
-        if let ExoticObject::Promise(state) = &obj.borrow().exotic {
-            // If the value is a promise, adopt its state
-            let state_ref = state.borrow();
-            match state_ref.status {
-                PromiseStatus::Pending => {
-                    // Chain this promise to the other
-                    drop(state_ref);
-                    let promise_clone = promise.cheap_clone();
-                    let mut state_mut = state.borrow_mut();
-                    state_mut.handlers.push(PromiseHandler {
-                        on_fulfilled: None,
-                        on_rejected: None,
-                        result_promise: promise_clone,
-                    });
-                    return Ok(());
-                }
-                PromiseStatus::Fulfilled => {
-                    let result = state_ref.result.clone().unwrap_or(JsValue::Undefined);
-                    drop(state_ref);
-                    return fulfill_promise(interp, promise, result);
-                }
-                PromiseStatus::Rejected => {
-                    let result = state_ref.result.clone().unwrap_or(JsValue::Undefined);
-                    drop(state_ref);
-                    return reject_promise(interp, promise, result);
-                }
+    if let JsValue::Object(obj) = &value
+        && let ExoticObject::Promise(state) = &obj.borrow().exotic
+    {
+        // If the value is a promise, adopt its state
+        let state_ref = state.borrow();
+        match state_ref.status {
+            PromiseStatus::Pending => {
+                // Chain this promise to the other
+                drop(state_ref);
+                let promise_clone = promise.cheap_clone();
+                let mut state_mut = state.borrow_mut();
+                state_mut.handlers.push(PromiseHandler {
+                    on_fulfilled: None,
+                    on_rejected: None,
+                    result_promise: promise_clone,
+                });
+                return Ok(());
+            }
+            PromiseStatus::Fulfilled => {
+                let result = state_ref.result.clone().unwrap_or(JsValue::Undefined);
+                drop(state_ref);
+                return fulfill_promise(interp, promise, result);
+            }
+            PromiseStatus::Rejected => {
+                let result = state_ref.result.clone().unwrap_or(JsValue::Undefined);
+                drop(state_ref);
+                return reject_promise(interp, promise, result);
             }
         }
     }
@@ -560,10 +560,10 @@ pub fn promise_resolve_static(
     let value = args.first().cloned().unwrap_or(JsValue::Undefined);
 
     // If value is already a promise, return it as-is
-    if let JsValue::Object(obj) = &value {
-        if matches!(obj.borrow().exotic, ExoticObject::Promise(_)) {
-            return Ok(Guarded::unguarded(value));
-        }
+    if let JsValue::Object(obj) = &value
+        && matches!(obj.borrow().exotic, ExoticObject::Promise(_))
+    {
+        return Ok(Guarded::unguarded(value));
     }
 
     let guard = interp.heap.create_guard();
@@ -857,10 +857,10 @@ pub fn handle_promise_race_settle(
 
     // Cancel all losing orders (all order_ids except the winner's)
     for (i, order_id) in state.input_order_ids.iter().enumerate() {
-        if i != winner_index {
-            if let Some(id) = order_id {
-                interp.cancelled_orders.push(*id);
-            }
+        if i != winner_index
+            && let Some(id) = order_id
+        {
+            interp.cancelled_orders.push(*id);
         }
     }
 

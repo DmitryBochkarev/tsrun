@@ -6,8 +6,9 @@
 
 use serde_json::json;
 use tsrun::{
-    interpreter::builtins::create_eval_internal_module, value::PropertyKey, InternalModule,
-    JsString, JsValue, OrderId, OrderResponse, Runtime, RuntimeConfig, RuntimeResult, RuntimeValue,
+    InternalModule, JsString, JsValue, OrderId, OrderResponse, Runtime, RuntimeConfig,
+    RuntimeResult, RuntimeValue, interpreter::builtins::create_eval_internal_module,
+    value::PropertyKey,
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════

@@ -319,7 +319,7 @@ pub fn function_apply(
         _ => {
             return Err(JsError::type_error(
                 "Second argument to apply must be an array",
-            ))
+            ));
         }
     };
 

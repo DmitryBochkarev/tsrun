@@ -655,7 +655,7 @@ impl std::hash::Hash for VarKey {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         // Hash the pointer address, not the content
         // Use the data pointer from the fat pointer (Rc<str> is a fat pointer)
-        let ptr = Rc::as_ptr(&self.0 .0) as *const () as usize;
+        let ptr = Rc::as_ptr(&self.0.0) as *const () as usize;
         ptr.hash(state);
     }
 }
@@ -663,7 +663,7 @@ impl std::hash::Hash for VarKey {
 impl PartialEq for VarKey {
     fn eq(&self, other: &Self) -> bool {
         // Compare pointer addresses, not content
-        Rc::ptr_eq(&self.0 .0, &other.0 .0)
+        Rc::ptr_eq(&self.0.0, &other.0.0)
     }
 }
 
@@ -937,10 +937,10 @@ impl Traceable for JsObject {
                         // Trace the closure environment
                         visitor(bc.closure.copy_ref());
                         // Trace captured this (for arrow functions)
-                        if let Some(this) = &bc.captured_this {
-                            if let JsValue::Object(obj) = this.as_ref() {
-                                visitor(obj.copy_ref());
-                            }
+                        if let Some(this) = &bc.captured_this
+                            && let JsValue::Object(obj) = this.as_ref()
+                        {
+                            visitor(obj.copy_ref());
                         }
                     }
                     JsFunction::ModuleExportGetter { module_env, .. } => {
@@ -1218,97 +1218,93 @@ impl JsObject {
         }
 
         // For functions, handle name and length properties
-        if let ExoticObject::Function(ref func) = self.exotic {
-            if let PropertyKey::String(s) = key {
-                match s.as_str() {
-                    "name" => {
-                        // First check if there's an own property (for SetFunctionName override)
-                        if let Some(prop) = self.properties.get(key) {
-                            return Some(prop.value.clone());
-                        }
-                        let name = match func {
-                            JsFunction::Native(f) => Some(f.name.clone()),
-                            JsFunction::Bytecode(bc)
-                            | JsFunction::BytecodeGenerator(bc)
-                            | JsFunction::BytecodeAsync(bc)
-                            | JsFunction::BytecodeAsyncGenerator(bc) => bc
-                                .chunk
-                                .function_info
-                                .as_ref()
-                                .and_then(|info| info.name.clone()),
-                            JsFunction::Bound(b) => {
-                                // Bound functions have name "bound <target name>"
-                                if let ExoticObject::Function(target_func) =
-                                    &b.target.borrow().exotic
-                                {
-                                    match target_func {
-                                        JsFunction::Native(f) => {
-                                            Some(JsString::from(format!("bound {}", f.name)))
-                                        }
-                                        JsFunction::Bytecode(bc)
-                                        | JsFunction::BytecodeGenerator(bc)
-                                        | JsFunction::BytecodeAsync(bc)
-                                        | JsFunction::BytecodeAsyncGenerator(bc) => {
-                                            bc.chunk.function_info.as_ref().and_then(|info| {
-                                                info.name
-                                                    .as_ref()
-                                                    .map(|n| JsString::from(format!("bound {}", n)))
-                                            })
-                                        }
-                                        _ => Some(JsString::from("bound ")),
+        if let ExoticObject::Function(ref func) = self.exotic
+            && let PropertyKey::String(s) = key
+        {
+            match s.as_str() {
+                "name" => {
+                    // First check if there's an own property (for SetFunctionName override)
+                    if let Some(prop) = self.properties.get(key) {
+                        return Some(prop.value.clone());
+                    }
+                    let name = match func {
+                        JsFunction::Native(f) => Some(f.name.clone()),
+                        JsFunction::Bytecode(bc)
+                        | JsFunction::BytecodeGenerator(bc)
+                        | JsFunction::BytecodeAsync(bc)
+                        | JsFunction::BytecodeAsyncGenerator(bc) => bc
+                            .chunk
+                            .function_info
+                            .as_ref()
+                            .and_then(|info| info.name.clone()),
+                        JsFunction::Bound(b) => {
+                            // Bound functions have name "bound <target name>"
+                            if let ExoticObject::Function(target_func) = &b.target.borrow().exotic {
+                                match target_func {
+                                    JsFunction::Native(f) => {
+                                        Some(JsString::from(format!("bound {}", f.name)))
                                     }
-                                } else {
-                                    Some(JsString::from("bound "))
+                                    JsFunction::Bytecode(bc)
+                                    | JsFunction::BytecodeGenerator(bc)
+                                    | JsFunction::BytecodeAsync(bc)
+                                    | JsFunction::BytecodeAsyncGenerator(bc) => {
+                                        bc.chunk.function_info.as_ref().and_then(|info| {
+                                            info.name
+                                                .as_ref()
+                                                .map(|n| JsString::from(format!("bound {}", n)))
+                                        })
+                                    }
+                                    _ => Some(JsString::from("bound ")),
                                 }
+                            } else {
+                                Some(JsString::from("bound "))
                             }
-                            _ => None,
-                        };
-                        return Some(match name {
-                            Some(n) => JsValue::String(n),
-                            None => JsValue::String(JsString::from("")),
-                        });
-                    }
-                    "length" => {
-                        let arity = match func {
-                            JsFunction::Native(f) => f.arity,
-                            JsFunction::Bytecode(bc)
-                            | JsFunction::BytecodeGenerator(bc)
-                            | JsFunction::BytecodeAsync(bc)
-                            | JsFunction::BytecodeAsyncGenerator(bc) => bc
-                                .chunk
-                                .function_info
-                                .as_ref()
-                                .map(|info| info.param_count)
-                                .unwrap_or(0),
-                            JsFunction::Bound(b) => {
-                                // Bound functions have length = target.length - bound_args.length (min 0)
-                                if let ExoticObject::Function(target_func) =
-                                    &b.target.borrow().exotic
-                                {
-                                    let target_length = match target_func {
-                                        JsFunction::Native(f) => f.arity,
-                                        JsFunction::Bytecode(bc)
-                                        | JsFunction::BytecodeGenerator(bc)
-                                        | JsFunction::BytecodeAsync(bc)
-                                        | JsFunction::BytecodeAsyncGenerator(bc) => bc
-                                            .chunk
-                                            .function_info
-                                            .as_ref()
-                                            .map(|info| info.param_count)
-                                            .unwrap_or(0),
-                                        _ => 0,
-                                    };
-                                    target_length.saturating_sub(b.bound_args.len())
-                                } else {
-                                    0
-                                }
-                            }
-                            _ => 0,
-                        };
-                        return Some(JsValue::Number(arity as f64));
-                    }
-                    _ => {}
+                        }
+                        _ => None,
+                    };
+                    return Some(match name {
+                        Some(n) => JsValue::String(n),
+                        None => JsValue::String(JsString::from("")),
+                    });
                 }
+                "length" => {
+                    let arity = match func {
+                        JsFunction::Native(f) => f.arity,
+                        JsFunction::Bytecode(bc)
+                        | JsFunction::BytecodeGenerator(bc)
+                        | JsFunction::BytecodeAsync(bc)
+                        | JsFunction::BytecodeAsyncGenerator(bc) => bc
+                            .chunk
+                            .function_info
+                            .as_ref()
+                            .map(|info| info.param_count)
+                            .unwrap_or(0),
+                        JsFunction::Bound(b) => {
+                            // Bound functions have length = target.length - bound_args.length (min 0)
+                            if let ExoticObject::Function(target_func) = &b.target.borrow().exotic {
+                                let target_length = match target_func {
+                                    JsFunction::Native(f) => f.arity,
+                                    JsFunction::Bytecode(bc)
+                                    | JsFunction::BytecodeGenerator(bc)
+                                    | JsFunction::BytecodeAsync(bc)
+                                    | JsFunction::BytecodeAsyncGenerator(bc) => bc
+                                        .chunk
+                                        .function_info
+                                        .as_ref()
+                                        .map(|info| info.param_count)
+                                        .unwrap_or(0),
+                                    _ => 0,
+                                };
+                                target_length.saturating_sub(b.bound_args.len())
+                            } else {
+                                0
+                            }
+                        }
+                        _ => 0,
+                    };
+                    return Some(JsValue::Number(arity as f64));
+                }
+                _ => {}
             }
         }
 
@@ -1321,10 +1317,10 @@ impl JsObject {
                         return Some(val);
                     }
                     // Also check if this is a numeric string for reverse mapping
-                    if let Ok(n) = s.as_str().parse::<f64>() {
-                        if let Some(name) = data.get_by_value(n) {
-                            return Some(JsValue::String(name));
-                        }
+                    if let Ok(n) = s.as_str().parse::<f64>()
+                        && let Some(name) = data.get_by_value(n)
+                    {
+                        return Some(JsValue::String(name));
                     }
                 }
                 PropertyKey::Index(idx) => {
@@ -1371,129 +1367,123 @@ impl JsObject {
         }
 
         // For Maps, compute size from entries
-        if let ExoticObject::Map { ref entries } = self.exotic {
-            if let PropertyKey::String(s) = key {
-                if s.as_str() == "size" {
-                    return Some((Property::data(JsValue::Number(entries.len() as f64)), false));
-                }
-            }
+        if let ExoticObject::Map { ref entries } = self.exotic
+            && let PropertyKey::String(s) = key
+            && s.as_str() == "size"
+        {
+            return Some((Property::data(JsValue::Number(entries.len() as f64)), false));
         }
 
         // For Sets, compute size from entries
-        if let ExoticObject::Set { ref entries } = self.exotic {
-            if let PropertyKey::String(s) = key {
-                if s.as_str() == "size" {
-                    return Some((Property::data(JsValue::Number(entries.len() as f64)), false));
-                }
-            }
+        if let ExoticObject::Set { ref entries } = self.exotic
+            && let PropertyKey::String(s) = key
+            && s.as_str() == "size"
+        {
+            return Some((Property::data(JsValue::Number(entries.len() as f64)), false));
         }
 
         // For functions, handle name and length properties
-        if let ExoticObject::Function(ref func) = self.exotic {
-            if let PropertyKey::String(s) = key {
-                match s.as_str() {
-                    "name" => {
-                        let name = match func {
-                            JsFunction::Native(f) => Some(f.name.clone()),
-                            JsFunction::Bytecode(bc)
-                            | JsFunction::BytecodeGenerator(bc)
-                            | JsFunction::BytecodeAsync(bc)
-                            | JsFunction::BytecodeAsyncGenerator(bc) => bc
-                                .chunk
-                                .function_info
-                                .as_ref()
-                                .and_then(|info| info.name.clone()),
-                            JsFunction::Bound(b) => {
-                                // Bound functions have name "bound <target name>"
-                                if let ExoticObject::Function(target_func) =
-                                    &b.target.borrow().exotic
-                                {
-                                    match target_func {
-                                        JsFunction::Native(f) => {
-                                            Some(JsString::from(format!("bound {}", f.name)))
-                                        }
-                                        JsFunction::Bytecode(bc)
-                                        | JsFunction::BytecodeGenerator(bc)
-                                        | JsFunction::BytecodeAsync(bc)
-                                        | JsFunction::BytecodeAsyncGenerator(bc) => {
-                                            bc.chunk.function_info.as_ref().and_then(|info| {
-                                                info.name
-                                                    .as_ref()
-                                                    .map(|n| JsString::from(format!("bound {}", n)))
-                                            })
-                                        }
-                                        _ => Some(JsString::from("bound ")),
+        if let ExoticObject::Function(ref func) = self.exotic
+            && let PropertyKey::String(s) = key
+        {
+            match s.as_str() {
+                "name" => {
+                    let name = match func {
+                        JsFunction::Native(f) => Some(f.name.clone()),
+                        JsFunction::Bytecode(bc)
+                        | JsFunction::BytecodeGenerator(bc)
+                        | JsFunction::BytecodeAsync(bc)
+                        | JsFunction::BytecodeAsyncGenerator(bc) => bc
+                            .chunk
+                            .function_info
+                            .as_ref()
+                            .and_then(|info| info.name.clone()),
+                        JsFunction::Bound(b) => {
+                            // Bound functions have name "bound <target name>"
+                            if let ExoticObject::Function(target_func) = &b.target.borrow().exotic {
+                                match target_func {
+                                    JsFunction::Native(f) => {
+                                        Some(JsString::from(format!("bound {}", f.name)))
                                     }
-                                } else {
-                                    Some(JsString::from("bound "))
+                                    JsFunction::Bytecode(bc)
+                                    | JsFunction::BytecodeGenerator(bc)
+                                    | JsFunction::BytecodeAsync(bc)
+                                    | JsFunction::BytecodeAsyncGenerator(bc) => {
+                                        bc.chunk.function_info.as_ref().and_then(|info| {
+                                            info.name
+                                                .as_ref()
+                                                .map(|n| JsString::from(format!("bound {}", n)))
+                                        })
+                                    }
+                                    _ => Some(JsString::from("bound ")),
                                 }
+                            } else {
+                                Some(JsString::from("bound "))
                             }
-                            _ => None,
-                        };
-                        // Per ES spec, function name is: writable: false, enumerable: false, configurable: true
-                        return Some((
-                            Property::with_attributes(
-                                match name {
-                                    Some(n) => JsValue::String(n),
-                                    None => JsValue::String(JsString::from("")),
-                                },
-                                false, // writable
-                                false, // enumerable
-                                true,  // configurable
-                            ),
-                            false,
-                        ));
-                    }
-                    "length" => {
-                        let arity = match func {
-                            JsFunction::Native(f) => f.arity,
-                            JsFunction::Bytecode(bc)
-                            | JsFunction::BytecodeGenerator(bc)
-                            | JsFunction::BytecodeAsync(bc)
-                            | JsFunction::BytecodeAsyncGenerator(bc) => bc
-                                .chunk
-                                .function_info
-                                .as_ref()
-                                .map(|info| info.param_count)
-                                .unwrap_or(0),
-                            JsFunction::Bound(b) => {
-                                // Bound functions have length = target.length - bound_args.length (min 0)
-                                if let ExoticObject::Function(target_func) =
-                                    &b.target.borrow().exotic
-                                {
-                                    let target_length = match target_func {
-                                        JsFunction::Native(f) => f.arity,
-                                        JsFunction::Bytecode(bc)
-                                        | JsFunction::BytecodeGenerator(bc)
-                                        | JsFunction::BytecodeAsync(bc)
-                                        | JsFunction::BytecodeAsyncGenerator(bc) => bc
-                                            .chunk
-                                            .function_info
-                                            .as_ref()
-                                            .map(|info| info.param_count)
-                                            .unwrap_or(0),
-                                        _ => 0,
-                                    };
-                                    target_length.saturating_sub(b.bound_args.len())
-                                } else {
-                                    0
-                                }
-                            }
-                            _ => 0,
-                        };
-                        // Per ES spec, function length is: writable: false, enumerable: false, configurable: true
-                        return Some((
-                            Property::with_attributes(
-                                JsValue::Number(arity as f64),
-                                false, // writable
-                                false, // enumerable
-                                true,  // configurable
-                            ),
-                            false,
-                        ));
-                    }
-                    _ => {}
+                        }
+                        _ => None,
+                    };
+                    // Per ES spec, function name is: writable: false, enumerable: false, configurable: true
+                    return Some((
+                        Property::with_attributes(
+                            match name {
+                                Some(n) => JsValue::String(n),
+                                None => JsValue::String(JsString::from("")),
+                            },
+                            false, // writable
+                            false, // enumerable
+                            true,  // configurable
+                        ),
+                        false,
+                    ));
                 }
+                "length" => {
+                    let arity = match func {
+                        JsFunction::Native(f) => f.arity,
+                        JsFunction::Bytecode(bc)
+                        | JsFunction::BytecodeGenerator(bc)
+                        | JsFunction::BytecodeAsync(bc)
+                        | JsFunction::BytecodeAsyncGenerator(bc) => bc
+                            .chunk
+                            .function_info
+                            .as_ref()
+                            .map(|info| info.param_count)
+                            .unwrap_or(0),
+                        JsFunction::Bound(b) => {
+                            // Bound functions have length = target.length - bound_args.length (min 0)
+                            if let ExoticObject::Function(target_func) = &b.target.borrow().exotic {
+                                let target_length = match target_func {
+                                    JsFunction::Native(f) => f.arity,
+                                    JsFunction::Bytecode(bc)
+                                    | JsFunction::BytecodeGenerator(bc)
+                                    | JsFunction::BytecodeAsync(bc)
+                                    | JsFunction::BytecodeAsyncGenerator(bc) => bc
+                                        .chunk
+                                        .function_info
+                                        .as_ref()
+                                        .map(|info| info.param_count)
+                                        .unwrap_or(0),
+                                    _ => 0,
+                                };
+                                target_length.saturating_sub(b.bound_args.len())
+                            } else {
+                                0
+                            }
+                        }
+                        _ => 0,
+                    };
+                    // Per ES spec, function length is: writable: false, enumerable: false, configurable: true
+                    return Some((
+                        Property::with_attributes(
+                            JsValue::Number(arity as f64),
+                            false, // writable
+                            false, // enumerable
+                            true,  // configurable
+                        ),
+                        false,
+                    ));
+                }
+                _ => {}
             }
         }
 
@@ -1506,10 +1496,10 @@ impl JsObject {
                         return Some((Property::data(val), false));
                     }
                     // Also check if this is a numeric string for reverse mapping
-                    if let Ok(n) = s.as_str().parse::<f64>() {
-                        if let Some(name) = data.get_by_value(n) {
-                            return Some((Property::data(JsValue::String(name)), false));
-                        }
+                    if let Ok(n) = s.as_str().parse::<f64>()
+                        && let Some(name) = data.get_by_value(n)
+                    {
+                        return Some((Property::data(JsValue::String(name)), false));
                     }
                 }
                 PropertyKey::Index(idx) => {
@@ -1526,10 +1516,10 @@ impl JsObject {
             return Some((prop.clone(), false));
         }
 
-        if let Some(ref proto) = self.prototype {
-            if let Some((prop, _)) = proto.borrow().get_property_descriptor(key) {
-                return Some((prop, true));
-            }
+        if let Some(ref proto) = self.prototype
+            && let Some((prop, _)) = proto.borrow().get_property_descriptor(key)
+        {
+            return Some((prop, true));
         }
 
         None
@@ -1557,40 +1547,39 @@ impl JsObject {
                 return;
             }
             // Setting length truncates or extends the array
-            if let PropertyKey::String(ref s) = key {
-                if s.as_str() == "length" {
-                    if let JsValue::Number(n) = value {
-                        let new_len = n as usize;
-                        elements.resize(new_len, JsValue::Undefined);
-                    }
-                    return;
+            if let PropertyKey::String(ref s) = key
+                && s.as_str() == "length"
+            {
+                if let JsValue::Number(n) = value {
+                    let new_len = n as usize;
+                    elements.resize(new_len, JsValue::Undefined);
                 }
+                return;
             }
         }
 
         // For enums, handle member access via EnumData
-        if let ExoticObject::Enum(ref mut data) = self.exotic {
-            if let PropertyKey::String(ref s) = key {
-                // Update existing member or add new one
-                if data.set_by_name(s.as_str(), value.clone()) {
-                    // Also update reverse mapping if value is numeric
-                    if let JsValue::Number(n) = &value {
-                        // Find and update the reverse mapping entry
-                        let reverse_key = if n.fract() == 0.0 && *n >= 0.0 && *n <= u32::MAX as f64
-                        {
-                            PropertyKey::Index(*n as u32)
-                        } else {
-                            PropertyKey::String(JsString::from(n.to_string()))
-                        };
-                        self.properties.insert(
-                            reverse_key,
-                            Property::data(JsValue::String(s.cheap_clone())),
-                        );
-                    }
-                    return;
+        if let ExoticObject::Enum(ref mut data) = self.exotic
+            && let PropertyKey::String(ref s) = key
+        {
+            // Update existing member or add new one
+            if data.set_by_name(s.as_str(), value.clone()) {
+                // Also update reverse mapping if value is numeric
+                if let JsValue::Number(n) = &value {
+                    // Find and update the reverse mapping entry
+                    let reverse_key = if n.fract() == 0.0 && *n >= 0.0 && *n <= u32::MAX as f64 {
+                        PropertyKey::Index(*n as u32)
+                    } else {
+                        PropertyKey::String(JsString::from(n.to_string()))
+                    };
+                    self.properties.insert(
+                        reverse_key,
+                        Property::data(JsValue::String(s.cheap_clone())),
+                    );
                 }
-                // If not an existing member, allow adding new properties
+                return;
             }
+            // If not an existing member, allow adding new properties
         }
 
         if let Some(prop) = self.properties.get_mut(&key) {
@@ -1689,10 +1678,10 @@ impl PropertyKey {
             }
             JsValue::String(s) => {
                 // Check if it's a valid array index
-                if let Ok(idx) = s.parse::<u32>() {
-                    if idx.to_string() == s.as_str() {
-                        return PropertyKey::Index(idx);
-                    }
+                if let Ok(idx) = s.parse::<u32>()
+                    && idx.to_string() == s.as_str()
+                {
+                    return PropertyKey::Index(idx);
                 }
                 PropertyKey::String(s.cheap_clone())
             }
@@ -2434,10 +2423,10 @@ impl EnumData {
     /// Only works for numeric values, returns None for string values
     pub fn get_by_value(&self, value: f64) -> Option<JsString> {
         self.members.iter().find_map(|m| {
-            if let JsValue::Number(n) = &m.value {
-                if *n == value {
-                    return Some(m.name.cheap_clone());
-                }
+            if let JsValue::Number(n) = &m.value
+                && *n == value
+            {
+                return Some(m.name.cheap_clone());
             }
             None
         })
@@ -3020,9 +3009,11 @@ mod tests {
         assert_eq!(JsValue::Boolean(false).to_number(), 0.0);
         assert_eq!(JsValue::Number(42.0).to_number(), 42.0);
         assert_eq!(JsValue::String(JsString::from("42")).to_number(), 42.0);
-        assert!(JsValue::String(JsString::from("hello"))
-            .to_number()
-            .is_nan());
+        assert!(
+            JsValue::String(JsString::from("hello"))
+                .to_number()
+                .is_nan()
+        );
     }
 
     #[test]

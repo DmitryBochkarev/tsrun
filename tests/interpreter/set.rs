@@ -71,7 +71,9 @@ fn test_set_initialize_with_array() {
 fn test_set_foreach() {
     // forEach
     assert_eq!(
-        eval("let result = []; let s = new Set([1, 2, 3]); s.forEach(v => result.push(v)); result.join(',')"),
+        eval(
+            "let result = []; let s = new Set([1, 2, 3]); s.forEach(v => result.push(v)); result.join(',')"
+        ),
         JsValue::from("1,2,3")
     );
 }
@@ -106,7 +108,9 @@ fn test_set_values() {
 fn test_set_entries() {
     // For Set, entries() returns [value, value] pairs
     assert_eq!(
-        eval("let s = new Set([1, 2]); let result = []; for (let e of s.entries()) { result.push(e[0] + ':' + e[1]); } result.join(',')"),
+        eval(
+            "let s = new Set([1, 2]); let result = []; for (let e of s.entries()) { result.push(e[0] + ':' + e[1]); } result.join(',')"
+        ),
         JsValue::from("1:1,2:2")
     );
 }

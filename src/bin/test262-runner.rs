@@ -305,7 +305,7 @@ impl TestRunner {
                     mode,
                     error: Some(format!("Failed to load harness: {}", e)),
                     duration: start.elapsed(),
-                }
+                };
             }
         };
 
@@ -813,10 +813,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             // Show details for failures
             if !test_passed {
                 for outcome in &outcomes {
-                    if outcome.result == TestResult::Fail || outcome.result == TestResult::Timeout {
-                        if let Some(ref err) = outcome.error {
-                            println!("  [{}] {}", outcome.mode, err);
-                        }
+                    if (outcome.result == TestResult::Fail || outcome.result == TestResult::Timeout)
+                        && let Some(ref err) = outcome.error
+                    {
+                        println!("  [{}] {}", outcome.mode, err);
                     }
                 }
             }

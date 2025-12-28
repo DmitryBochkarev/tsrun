@@ -18,10 +18,10 @@ use crate::gc::{Gc, Guard, Heap};
 use crate::parser::Parser;
 use crate::string_dict::StringDict;
 use crate::value::{
-    create_environment_unrooted, create_environment_unrooted_with_capacity, Binding,
-    BytecodeFunction, BytecodeGeneratorState, CheapClone, EnvRef, EnvironmentData, ExoticObject,
-    GeneratorStatus, Guarded, ImportBinding, JsFunction, JsObject, JsString, JsSymbol, JsValue,
-    ModuleExport, NativeFn, NativeFunction, PromiseStatus, Property, PropertyKey, VarKey,
+    Binding, BytecodeFunction, BytecodeGeneratorState, CheapClone, EnvRef, EnvironmentData,
+    ExoticObject, GeneratorStatus, Guarded, ImportBinding, JsFunction, JsObject, JsString,
+    JsSymbol, JsValue, ModuleExport, NativeFn, NativeFunction, PromiseStatus, Property,
+    PropertyKey, VarKey, create_environment_unrooted, create_environment_unrooted_with_capacity,
 };
 use rustc_hash::FxHashMap;
 use std::collections::VecDeque;
@@ -539,11 +539,16 @@ impl Interpreter {
         builtins::init_object_prototype(self);
         let object_constructor = builtins::create_object_constructor(self);
         let object_name = self.intern("Object");
-        self.env_define(object_name.clone(), JsValue::Object(object_constructor.clone()), false);
+        self.env_define(
+            object_name.clone(),
+            JsValue::Object(object_constructor.clone()),
+            false,
+        );
         // Also set on global object for lodash/Node.js compatibility
-        self.global
-            .borrow_mut()
-            .set_property(PropertyKey::String(object_name), JsValue::Object(object_constructor));
+        self.global.borrow_mut().set_property(
+            PropertyKey::String(object_name),
+            JsValue::Object(object_constructor),
+        );
 
         // Initialize RegExp prototype and constructor
         builtins::init_regexp_prototype(self);
@@ -784,7 +789,10 @@ impl Interpreter {
 
         // Compile the program to bytecode (with source file for stack traces if available)
         let chunk = if let Some(ref path) = module_path {
-            Compiler::compile_program_with_source(&program, std::path::PathBuf::from(path.as_str()))?
+            Compiler::compile_program_with_source(
+                &program,
+                std::path::PathBuf::from(path.as_str()),
+            )?
         } else {
             Compiler::compile_program(&program)?
         };
@@ -1306,7 +1314,10 @@ impl Interpreter {
 
             // Compile the program to bytecode (with source file for stack traces if available)
             let chunk = if let Some(ref path) = self.main_module_path {
-                Compiler::compile_program_with_source(&program, std::path::PathBuf::from(path.as_str()))?
+                Compiler::compile_program_with_source(
+                    &program,
+                    std::path::PathBuf::from(path.as_str()),
+                )?
             } else {
                 Compiler::compile_program(&program)?
             };
@@ -2042,14 +2053,12 @@ impl Interpreter {
     /// Create a PropertyKey from a string, using interned strings.
     pub fn property_key(&mut self, s: &str) -> PropertyKey {
         // Fast path: check if it's an array index
-        if let Some(first) = s.bytes().next() {
-            if first.is_ascii_digit() {
-                if let Ok(idx) = s.parse::<u32>() {
-                    if idx.to_string() == s {
-                        return PropertyKey::Index(idx);
-                    }
-                }
-            }
+        if let Some(first) = s.bytes().next()
+            && first.is_ascii_digit()
+            && let Ok(idx) = s.parse::<u32>()
+            && idx.to_string() == s
+        {
+            return PropertyKey::Index(idx);
         }
         PropertyKey::String(self.intern(s))
     }
@@ -2057,14 +2066,12 @@ impl Interpreter {
     /// Create a PropertyKey from an already-interned JsString.
     pub fn property_key_from_js_string(&mut self, s: JsString) -> PropertyKey {
         // Fast path: check if it's an array index
-        if let Some(first) = s.as_str().bytes().next() {
-            if first.is_ascii_digit() {
-                if let Ok(idx) = s.parse::<u32>() {
-                    if idx.to_string() == s.as_str() {
-                        return PropertyKey::Index(idx);
-                    }
-                }
-            }
+        if let Some(first) = s.as_str().bytes().next()
+            && first.is_ascii_digit()
+            && let Ok(idx) = s.parse::<u32>()
+            && idx.to_string() == s.as_str()
+        {
+            return PropertyKey::Index(idx);
         }
         PropertyKey::String(s)
     }
@@ -2304,7 +2311,8 @@ impl Interpreter {
         let vm_guard = self.heap.create_guard();
 
         // Run the generator
-        let result = if !started {
+
+        if !started {
             // First call - create a new VM and run from the beginning
             gen_state.borrow_mut().started = true;
 
@@ -2506,9 +2514,7 @@ impl Interpreter {
                     Err(e)
                 }
             }
-        };
-
-        result
+        }
     }
 
     /// Start yield* delegation - get the first value from the iterable
@@ -3084,23 +3090,23 @@ impl Interpreter {
         // Try first method
         let first_key = PropertyKey::String(self.intern(first_method));
         let first_prop = obj.borrow().get_property(&first_key);
-        if let Some(JsValue::Object(method)) = first_prop {
-            if matches!(method.borrow().exotic, ExoticObject::Function(_)) {
-                let result = self.call_function(JsValue::Object(method), value.clone(), &[])?;
-                if !matches!(result.value, JsValue::Object(_)) {
-                    return Ok(result.value);
-                }
+        if let Some(JsValue::Object(method)) = first_prop
+            && matches!(method.borrow().exotic, ExoticObject::Function(_))
+        {
+            let result = self.call_function(JsValue::Object(method), value.clone(), &[])?;
+            if !matches!(result.value, JsValue::Object(_)) {
+                return Ok(result.value);
             }
         }
 
         // Try second method
         let second_key = PropertyKey::String(self.intern(second_method));
-        if let Some(JsValue::Object(method)) = obj.borrow().get_property(&second_key) {
-            if matches!(method.borrow().exotic, ExoticObject::Function(_)) {
-                let result = self.call_function(JsValue::Object(method), value.clone(), &[])?;
-                if !matches!(result.value, JsValue::Object(_)) {
-                    return Ok(result.value);
-                }
+        if let Some(JsValue::Object(method)) = obj.borrow().get_property(&second_key)
+            && matches!(method.borrow().exotic, ExoticObject::Function(_))
+        {
+            let result = self.call_function(JsValue::Object(method), value.clone(), &[])?;
+            if !matches!(result.value, JsValue::Object(_)) {
+                return Ok(result.value);
             }
         }
 
@@ -3369,12 +3375,12 @@ impl Interpreter {
                     });
                 drop(func_ref);
 
-                if let Some(key) = storage_key {
-                    if let JsValue::Object(this_obj) = &this_value {
-                        this_obj
-                            .borrow_mut()
-                            .set_property(PropertyKey::String(key), value);
-                    }
+                if let Some(key) = storage_key
+                    && let JsValue::Object(this_obj) = &this_value
+                {
+                    this_obj
+                        .borrow_mut()
+                        .set_property(PropertyKey::String(key), value);
                 }
                 Ok(Guarded::unguarded(JsValue::Undefined))
             }
@@ -3548,10 +3554,10 @@ impl Interpreter {
         match body_result {
             Ok(guarded) => {
                 // Promise assimilation: if result is already a Promise, return it directly
-                if let JsValue::Object(ref obj) = &guarded.value {
-                    if matches!(obj.borrow().exotic, ExoticObject::Promise(_)) {
-                        return Ok(guarded);
-                    }
+                if let JsValue::Object(obj) = &guarded.value
+                    && matches!(obj.borrow().exotic, ExoticObject::Promise(_))
+                {
+                    return Ok(guarded);
                 }
                 // Create fulfilled promise with the result
                 let result = guarded.value;

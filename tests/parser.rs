@@ -321,7 +321,9 @@ fn test_async_function() {
 
 #[test]
 fn test_getter_setter() {
-    let prog = parse("class Foo { get value(): number { return this._value; } set value(v: number) { this._value = v; } }");
+    let prog = parse(
+        "class Foo { get value(): number { return this._value; } set value(v: number) { this._value = v; } }",
+    );
     assert_eq!(prog.body.len(), 1);
 }
 
@@ -355,7 +357,9 @@ fn test_static_initialization_block() {
     assert_eq!(prog.body.len(), 1);
 
     // TypeScript style with type annotations
-    let prog_ts = parse("class Config { static initialized: boolean = false; static { Config.initialized = true; } }");
+    let prog_ts = parse(
+        "class Config { static initialized: boolean = false; static { Config.initialized = true; } }",
+    );
     assert_eq!(prog_ts.body.len(), 1);
 }
 
@@ -688,7 +692,9 @@ fn test_arrow_function_with_array_return_type() {
 #[test]
 fn test_arrow_function_with_generic_return_type() {
     // Test arrow function with generic return type
-    let prog = parse("const fn = (arr: Product[], cat: string): Product[] => arr.filter(p => p.category === cat);");
+    let prog = parse(
+        "const fn = (arr: Product[], cat: string): Product[] => arr.filter(p => p.category === cat);",
+    );
     assert_eq!(prog.body.len(), 1);
 }
 

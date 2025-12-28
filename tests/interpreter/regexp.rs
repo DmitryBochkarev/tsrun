@@ -216,9 +216,11 @@ fn test_regexp_while_exec_loop() {
 #[test]
 fn test_regex_escape_pattern() {
     // This is the pattern from lodash that was failing
-    let result = eval(r#"
+    let result = eval(
+        r#"
         let re = /[\\^$.*+?()[\]{}|]/g;
         re.test('$');
-    "#);
+    "#,
+    );
     assert_eq!(result, JsValue::Boolean(true));
 }

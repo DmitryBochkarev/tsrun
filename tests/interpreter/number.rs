@@ -1,8 +1,8 @@
 //! Number-related tests
 
 use super::eval;
-use tsrun::value::JsString;
 use tsrun::JsValue;
+use tsrun::value::JsString;
 
 #[test]
 fn test_number_isnan() {

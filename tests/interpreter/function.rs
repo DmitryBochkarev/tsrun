@@ -1,8 +1,8 @@
 //! Function-related tests
 
 use super::eval;
-use tsrun::value::JsString;
 use tsrun::JsValue;
+use tsrun::value::JsString;
 
 #[test]
 fn test_function_name_property() {
@@ -72,7 +72,12 @@ fn test_function_call() {
 
 #[test]
 fn test_function_apply() {
-    assert_eq!(eval("function greet(): string { return 'Hello ' + this.name; } greet.apply({name: 'World'})"), JsValue::from("Hello World"));
+    assert_eq!(
+        eval(
+            "function greet(): string { return 'Hello ' + this.name; } greet.apply({name: 'World'})"
+        ),
+        JsValue::from("Hello World")
+    );
     assert_eq!(
         eval(
             "function add(a: number, b: number): number { return a + b; } add.apply(null, [2, 3])"
@@ -83,8 +88,18 @@ fn test_function_apply() {
 
 #[test]
 fn test_function_bind() {
-    assert_eq!(eval("function greet(): string { return 'Hello ' + this.name; } const boundGreet: Function = greet.bind({name: 'World'}); boundGreet()"), JsValue::from("Hello World"));
-    assert_eq!(eval("function add(a: number, b: number): number { return a + b; } const add5: Function = add.bind(null, 5); add5(3)"), JsValue::Number(8.0));
+    assert_eq!(
+        eval(
+            "function greet(): string { return 'Hello ' + this.name; } const boundGreet: Function = greet.bind({name: 'World'}); boundGreet()"
+        ),
+        JsValue::from("Hello World")
+    );
+    assert_eq!(
+        eval(
+            "function add(a: number, b: number): number { return a + b; } const add5: Function = add.bind(null, 5); add5(3)"
+        ),
+        JsValue::Number(8.0)
+    );
 }
 
 #[test]
@@ -149,7 +164,9 @@ fn test_arguments_with_named_params() {
 fn test_arguments_in_nested_function() {
     // Each function has its own arguments object
     assert_eq!(
-        eval("function outer(): number { function inner(): number { return arguments[0]; } return inner(42); } outer(99)"),
+        eval(
+            "function outer(): number { function inner(): number { return arguments[0]; } return inner(42); } outer(99)"
+        ),
         JsValue::Number(42.0)
     );
 }
@@ -158,7 +175,9 @@ fn test_arguments_in_nested_function() {
 #[test]
 fn test_destructuring_object_param() {
     assert_eq!(
-        eval("function f({ x, y }: { x: number; y: number }): number { return x + y; } f({ x: 1, y: 2 })"),
+        eval(
+            "function f({ x, y }: { x: number; y: number }): number { return x + y; } f({ x: 1, y: 2 })"
+        ),
         JsValue::Number(3.0)
     );
 }
@@ -166,7 +185,9 @@ fn test_destructuring_object_param() {
 #[test]
 fn test_destructuring_object_param_with_default() {
     assert_eq!(
-        eval("function f({ x, y = 10 }: { x: number; y?: number }): number { return x + y; } f({ x: 1 })"),
+        eval(
+            "function f({ x, y = 10 }: { x: number; y?: number }): number { return x + y; } f({ x: 1 })"
+        ),
         JsValue::Number(11.0)
     );
 }
@@ -182,7 +203,9 @@ fn test_destructuring_array_param() {
 #[test]
 fn test_destructuring_array_param_with_rest() {
     assert_eq!(
-        eval("function f([first, ...rest]: number[]): number { return rest.length; } f([1, 2, 3, 4])"),
+        eval(
+            "function f([first, ...rest]: number[]): number { return rest.length; } f([1, 2, 3, 4])"
+        ),
         JsValue::Number(3.0)
     );
 }
@@ -190,7 +213,9 @@ fn test_destructuring_array_param_with_rest() {
 #[test]
 fn test_destructuring_nested_param() {
     assert_eq!(
-        eval("function f({ person: { name } }: { person: { name: string } }): string { return name; } f({ person: { name: 'John' } })"),
+        eval(
+            "function f({ person: { name } }: { person: { name: string } }): string { return name; } f({ person: { name: 'John' } })"
+        ),
         JsValue::from("John")
     );
 }

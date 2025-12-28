@@ -1,8 +1,8 @@
 //! Object-related tests
 
 use super::eval;
-use tsrun::value::JsString;
 use tsrun::JsValue;
+use tsrun::value::JsString;
 
 #[test]
 fn test_object_string_numeric_keys() {
@@ -144,11 +144,15 @@ fn test_object_prototype_tostring_call() {
 #[test]
 fn test_object_fromentries() {
     assert_eq!(
-        eval("const entries: Array<[string, number]> = [['a', 1], ['b', 2]]; Object.fromEntries(entries).a"),
+        eval(
+            "const entries: Array<[string, number]> = [['a', 1], ['b', 2]]; Object.fromEntries(entries).a"
+        ),
         JsValue::Number(1.0)
     );
     assert_eq!(
-        eval("const entries: Array<[string, number]> = [['a', 1], ['b', 2]]; Object.fromEntries(entries).b"),
+        eval(
+            "const entries: Array<[string, number]> = [['a', 1], ['b', 2]]; Object.fromEntries(entries).b"
+        ),
         JsValue::Number(2.0)
     );
 }
@@ -1731,7 +1735,9 @@ fn test_object_literal_null_property_name() {
 fn test_object_literal_reserved_words_as_properties() {
     // Various reserved words should work as property names
     assert_eq!(
-        eval("var obj = { if: 1, else: 2, for: 3, while: 4 }; obj.if + obj.else + obj.for + obj.while"),
+        eval(
+            "var obj = { if: 1, else: 2, for: 3, while: 4 }; obj.if + obj.else + obj.for + obj.while"
+        ),
         JsValue::Number(10.0)
     );
 }
@@ -1740,7 +1746,9 @@ fn test_object_literal_reserved_words_as_properties() {
 fn test_object_literal_mixed_properties() {
     // Mix of regular and reserved word properties
     assert_eq!(
-        eval("var obj = { true: 1, false: 0, null: -1, x: 10 }; obj.true + obj.false + obj.null + obj.x"),
+        eval(
+            "var obj = { true: 1, false: 0, null: -1, x: 10 }; obj.true + obj.false + obj.null + obj.x"
+        ),
         JsValue::Number(10.0)
     );
 }

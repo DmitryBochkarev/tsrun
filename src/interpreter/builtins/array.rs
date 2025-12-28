@@ -184,17 +184,17 @@ pub fn array_constructor_fn(
     _this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    if args.len() == 1 {
-        if let Some(JsValue::Number(n)) = args.first() {
-            let len = *n as u32;
-            let mut elements = Vec::with_capacity(len as usize);
-            for _ in 0..len {
-                elements.push(JsValue::Undefined);
-            }
-            let guard = interp.heap.create_guard();
-            let arr = interp.create_array_from(&guard, elements);
-            return Ok(Guarded::with_guard(JsValue::Object(arr), guard));
+    if args.len() == 1
+        && let Some(JsValue::Number(n)) = args.first()
+    {
+        let len = *n as u32;
+        let mut elements = Vec::with_capacity(len as usize);
+        for _ in 0..len {
+            elements.push(JsValue::Undefined);
         }
+        let guard = interp.heap.create_guard();
+        let arr = interp.create_array_from(&guard, elements);
+        return Ok(Guarded::with_guard(JsValue::Object(arr), guard));
     }
     let guard = interp.heap.create_guard();
     let arr = interp.create_array_from(&guard, args.to_vec());
@@ -1536,13 +1536,12 @@ pub fn array_flat(
 
         let mut result = Vec::new();
         for elem in elements {
-            if depth > 0 {
-                if let JsValue::Object(ref inner) = elem {
-                    if inner.borrow().is_array() {
-                        result.extend(flatten(inner, depth - 1));
-                        continue;
-                    }
-                }
+            if depth > 0
+                && let JsValue::Object(ref inner) = elem
+                && inner.borrow().is_array()
+            {
+                result.extend(flatten(inner, depth - 1));
+                continue;
             }
             result.push(elem);
         }

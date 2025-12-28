@@ -3,7 +3,7 @@
 //! Run with: cargo bench --bench parser
 //! Profile with: cargo flamegraph --bench parser -- --bench
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use tsrun::parser::Parser;
 use tsrun::string_dict::StringDict;
 

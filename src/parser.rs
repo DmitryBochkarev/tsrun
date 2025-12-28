@@ -104,10 +104,10 @@ impl<'a> Parser<'a> {
                 // or: @decorator export default class Foo {}
                 let mut export_decl = self.parse_export()?;
                 // If the export contains a class declaration, attach decorators to it
-                if let Some(ref mut decl) = export_decl.declaration {
-                    if let Statement::ClassDeclaration(ref mut class_decl) = **decl {
-                        class_decl.decorators = decorators;
-                    }
+                if let Some(ref mut decl) = export_decl.declaration
+                    && let Statement::ClassDeclaration(ref mut class_decl) = **decl
+                {
+                    class_decl.decorators = decorators;
                 }
                 return Ok(Statement::Export(Box::new(export_decl)));
             } else {
@@ -208,9 +208,9 @@ impl<'a> Parser<'a> {
                 self.current = saved;
 
                 if is_declaration {
-                    Ok(Statement::NamespaceDeclaration(
-                        Box::new(self.parse_namespace()?),
-                    ))
+                    Ok(Statement::NamespaceDeclaration(Box::new(
+                        self.parse_namespace()?,
+                    )))
                 } else {
                     // Parse as expression statement (module() or namespace.something)
                     let expr = self.parse_expression()?;
@@ -1888,17 +1888,17 @@ impl<'a> Parser<'a> {
             let argument = Rc::new(self.parse_unary_expression()?);
 
             // In strict mode, delete on unqualified identifier is a SyntaxError
-            if op == UnaryOp::Delete {
-                if let Expression::Identifier(id) = argument.as_ref() {
-                    return Err(JsError::syntax_error(
-                        format!(
-                            "Delete of an unqualified identifier '{}' in strict mode",
-                            id.name
-                        ),
-                        id.span.line,
-                        id.span.column,
-                    ));
-                }
+            if op == UnaryOp::Delete
+                && let Expression::Identifier(id) = argument.as_ref()
+            {
+                return Err(JsError::syntax_error(
+                    format!(
+                        "Delete of an unqualified identifier '{}' in strict mode",
+                        id.name
+                    ),
+                    id.span.line,
+                    id.span.column,
+                ));
             }
 
             let span = self.span_from(start);
@@ -1980,17 +1980,17 @@ impl<'a> Parser<'a> {
         let mut expr = self.parse_left_hand_side_expression()?;
 
         // Postfix update
-        if !self.lexer.had_newline_before() {
-            if let Some(op) = self.current_update_op() {
-                self.advance();
-                let span = self.span_from(start);
-                expr = Expression::Update(UpdateExpression {
-                    operator: op,
-                    argument: Rc::new(expr),
-                    prefix: false,
-                    span,
-                });
-            }
+        if !self.lexer.had_newline_before()
+            && let Some(op) = self.current_update_op()
+        {
+            self.advance();
+            let span = self.span_from(start);
+            expr = Expression::Update(UpdateExpression {
+                operator: op,
+                argument: Rc::new(expr),
+                prefix: false,
+                span,
+            });
         }
 
         Ok(expr)
@@ -2522,9 +2522,9 @@ impl<'a> Parser<'a> {
         let is_async = self.check(&TokenKind::Async) && self.peek_is_property_name();
         if is_async {
             self.advance(); // consume 'async'
-                            // async* is also allowed (async generator)
-                            // If we already parsed *, we have *async which is invalid - but that's handled above
-                            // Check if this is async *gen() { }
+            // async* is also allowed (async generator)
+            // If we already parsed *, we have *async which is invalid - but that's handled above
+            // Check if this is async *gen() { }
         }
 
         // Check for async generator (async *)
@@ -2643,13 +2643,13 @@ impl<'a> Parser<'a> {
                     let type_saved_current = self.current.clone();
 
                     self.advance(); // consume ':'
-                    if let Ok(_type_ann) = self.parse_type_annotation() {
-                        if self.check(&TokenKind::Arrow) {
-                            // Restore and let parse_arrow_function_from_params handle it
-                            self.lexer.restore(type_checkpoint);
-                            self.current = type_saved_current;
-                            return self.parse_arrow_function_from_params(params, start);
-                        }
+                    if let Ok(_type_ann) = self.parse_type_annotation()
+                        && self.check(&TokenKind::Arrow)
+                    {
+                        // Restore and let parse_arrow_function_from_params handle it
+                        self.lexer.restore(type_checkpoint);
+                        self.current = type_saved_current;
+                        return self.parse_arrow_function_from_params(params, start);
                     }
                     // Not an arrow function, rollback
                     self.lexer.restore(type_checkpoint);
@@ -2665,13 +2665,13 @@ impl<'a> Parser<'a> {
                 let type_saved_current = self.current.clone();
 
                 self.advance(); // consume ':'
-                if let Ok(_type_ann) = self.parse_type_annotation() {
-                    if self.check(&TokenKind::Arrow) {
-                        // Restore and let parse_arrow_function_from_params handle it
-                        self.lexer.restore(type_checkpoint);
-                        self.current = type_saved_current;
-                        return self.parse_arrow_function_from_params(params, start);
-                    }
+                if let Ok(_type_ann) = self.parse_type_annotation()
+                    && self.check(&TokenKind::Arrow)
+                {
+                    // Restore and let parse_arrow_function_from_params handle it
+                    self.lexer.restore(type_checkpoint);
+                    self.current = type_saved_current;
+                    return self.parse_arrow_function_from_params(params, start);
                 }
                 // Not an arrow function (could be ternary), rollback
                 self.lexer.restore(type_checkpoint);
@@ -2906,7 +2906,7 @@ impl<'a> Parser<'a> {
         // async () => or async (params) =>
         if self.check(&TokenKind::LParen) {
             self.advance(); // consume '('
-                            // Parse params and then arrow
+            // Parse params and then arrow
             let mut params = vec![];
             while !self.check(&TokenKind::RParen) && !self.is_at_end() {
                 if self.match_token(&TokenKind::DotDotDot) {
@@ -4796,34 +4796,34 @@ impl<'a> Parser<'a> {
         let span = expr.span();
 
         // Handle assignment pattern (default value)
-        if let Expression::Assignment(assign) = expr {
-            if assign.operator == AssignmentOp::Assign {
-                let left = match &assign.left {
-                    AssignmentTarget::Identifier(id) => Pattern::Identifier(id.clone()),
-                    AssignmentTarget::Pattern(p) => p.clone(),
-                    _ => {
-                        return Err(JsError::syntax_error(
-                            "Invalid parameter",
-                            span.line,
-                            span.column,
-                        ));
-                    }
-                };
+        if let Expression::Assignment(assign) = expr
+            && assign.operator == AssignmentOp::Assign
+        {
+            let left = match &assign.left {
+                AssignmentTarget::Identifier(id) => Pattern::Identifier(id.clone()),
+                AssignmentTarget::Pattern(p) => p.clone(),
+                _ => {
+                    return Err(JsError::syntax_error(
+                        "Invalid parameter",
+                        span.line,
+                        span.column,
+                    ));
+                }
+            };
 
-                return Ok(FunctionParam {
-                    pattern: Pattern::Assignment(AssignmentPattern {
-                        left: Box::new(left),
-                        right: assign.right.clone(),
-                        span,
-                    }),
-                    type_annotation: None,
-                    optional: false,
-                    decorators: vec![],
-                    accessibility: None,
-                    readonly: false,
+            return Ok(FunctionParam {
+                pattern: Pattern::Assignment(AssignmentPattern {
+                    left: Box::new(left),
+                    right: assign.right.clone(),
                     span,
-                });
-            }
+                }),
+                type_annotation: None,
+                optional: false,
+                decorators: vec![],
+                accessibility: None,
+                readonly: false,
+                span,
+            });
         }
 
         let pattern = self.expression_to_pattern(expr)?;

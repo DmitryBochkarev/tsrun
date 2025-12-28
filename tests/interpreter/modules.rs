@@ -1,8 +1,8 @@
 //! Tests for the module system and order API
 
 use tsrun::{
-    value::PropertyKey, Guarded, InternalModule, Interpreter, JsError, JsValue, ModulePath,
-    Runtime, RuntimeConfig, RuntimeResult, RuntimeValue,
+    Guarded, InternalModule, Interpreter, JsError, JsValue, ModulePath, Runtime, RuntimeConfig,
+    RuntimeResult, RuntimeValue, value::PropertyKey,
 };
 
 #[test]
