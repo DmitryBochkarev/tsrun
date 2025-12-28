@@ -2,7 +2,7 @@
 name = "tsrun"
 version = "0.1.0"
 edition = "2021"
-description = "A TypeScript interpreter in Rust for config/manifest generation"
+description = "A TypeScript interpreter designed for embedding in applications"
 license = "MIT"
 
 [[bin]]
