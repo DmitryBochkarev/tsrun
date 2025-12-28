@@ -944,11 +944,14 @@ pub struct TemplateLiteralType {
     pub span: Span,
 }
 
-/// Type predicate: `param is Type`
+/// Type predicate: `param is Type` or assertion predicate: `asserts param` / `asserts param is Type`
 #[derive(Debug, Clone)]
 pub struct TypePredicateType {
     pub parameter_name: Identifier,
-    pub type_annotation: Box<TypeAnnotation>,
+    /// The type annotation. Optional for `asserts param` (without `is Type`)
+    pub type_annotation: Option<Box<TypeAnnotation>>,
+    /// Whether this is an assertion predicate (`asserts param` or `asserts param is Type`)
+    pub asserts: bool,
     pub span: Span,
 }
 

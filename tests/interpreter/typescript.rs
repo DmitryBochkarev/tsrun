@@ -2097,3 +2097,249 @@ fn test_recursive_type() {
         JsValue::Number(10.0)
     );
 }
+
+// ============================================================================
+// Ambient Declarations (declare keyword)
+// ============================================================================
+
+#[test]
+fn test_declare_const() {
+    // declare const should be parsed but have no runtime effect
+    assert_eq!(
+        eval(
+            r#"
+            declare const globalThis: {
+                processor: { elementHeader: (el: any) => any };
+            };
+            42
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+#[test]
+fn test_declare_let() {
+    assert_eq!(
+        eval(
+            r#"
+            declare let myVar: string;
+            "success"
+        "#
+        ),
+        JsValue::from("success")
+    );
+}
+
+#[test]
+fn test_declare_var() {
+    assert_eq!(
+        eval(
+            r#"
+            declare var window: Window;
+            "success"
+        "#
+        ),
+        JsValue::from("success")
+    );
+}
+
+#[test]
+fn test_declare_function() {
+    assert_eq!(
+        eval(
+            r#"
+            declare function alert(message: string): void;
+            declare function fetch(url: string): Promise<any>;
+            42
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+#[test]
+fn test_declare_class() {
+    assert_eq!(
+        eval(
+            r#"
+            declare class Buffer {
+                static from(str: string): Buffer;
+                toString(): string;
+            }
+            "success"
+        "#
+        ),
+        JsValue::from("success")
+    );
+}
+
+#[test]
+fn test_declare_abstract_class() {
+    assert_eq!(
+        eval(
+            r#"
+            declare abstract class BaseService {
+                abstract process(): void;
+            }
+            "success"
+        "#
+        ),
+        JsValue::from("success")
+    );
+}
+
+#[test]
+fn test_declare_namespace() {
+    assert_eq!(
+        eval(
+            r#"
+            declare namespace NodeJS {
+                interface Process {
+                    env: Record<string, string>;
+                }
+            }
+            42
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+#[test]
+fn test_declare_module_string() {
+    assert_eq!(
+        eval(
+            r#"
+            declare module "express" {
+                export interface Request {}
+                export interface Response {}
+            }
+            "success"
+        "#
+        ),
+        JsValue::from("success")
+    );
+}
+
+#[test]
+fn test_declare_enum() {
+    assert_eq!(
+        eval(
+            r#"
+            declare enum LogLevel {
+                Debug,
+                Info,
+                Warn,
+                Error
+            }
+            42
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+#[test]
+fn test_declare_global() {
+    assert_eq!(
+        eval(
+            r#"
+            declare global {
+                interface Window {
+                    myCustomProp: string;
+                }
+            }
+            "success"
+        "#
+        ),
+        JsValue::from("success")
+    );
+}
+
+#[test]
+fn test_declare_multiple() {
+    // Multiple declare statements in sequence
+    assert_eq!(
+        eval(
+            r#"
+            declare const process: { env: Record<string, string> };
+            declare function require(id: string): any;
+            declare class EventEmitter {
+                on(event: string, listener: Function): void;
+            }
+            declare namespace fs {
+                function readFile(path: string): string;
+            }
+
+            let result = 42;
+            result
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+// ============================================================================
+// Assertion Functions (asserts keyword)
+// ============================================================================
+
+#[test]
+fn test_asserts_type_predicate() {
+    assert_eq!(
+        eval(
+            r#"
+            function assertNotNull<T>(value: T): asserts value is NonNullable<T> {
+                if (value === null || value === undefined) {
+                    throw new Error("Value is null or undefined");
+                }
+            }
+
+            let x: string | null = "hello";
+            assertNotNull(x);
+            x.length
+        "#
+        ),
+        JsValue::Number(5.0)
+    );
+}
+
+#[test]
+fn test_asserts_simple() {
+    assert_eq!(
+        eval(
+            r#"
+            function assert(condition: boolean): asserts condition {
+                if (!condition) {
+                    throw new Error("Assertion failed");
+                }
+            }
+
+            let value = 42;
+            assert(value > 0);
+            value
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+#[test]
+fn test_asserts_with_message() {
+    assert_eq!(
+        eval(
+            r#"
+            function assertDefined<T>(value: T, msg?: string): asserts value is NonNullable<T> {
+                if (value === undefined || value === null) {
+                    throw new Error(msg || "Value must be defined");
+                }
+            }
+
+            let obj = { name: "test" };
+            assertDefined(obj);
+            obj.name
+        "#
+        ),
+        JsValue::from("test")
+    );
+}

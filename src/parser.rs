@@ -182,6 +182,7 @@ impl<'a> Parser<'a> {
                 self.parse_interface()?,
             ))),
             TokenKind::Enum => Ok(Statement::EnumDeclaration(Box::new(self.parse_enum()?))),
+            TokenKind::Declare => self.parse_declare_statement(),
             // Module declarations
             TokenKind::Import => Ok(Statement::Import(Box::new(self.parse_import()?))),
             TokenKind::Export => Ok(Statement::Export(Box::new(self.parse_export()?))),
@@ -1407,6 +1408,354 @@ impl<'a> Parser<'a> {
             body: body.into(),
             span,
         })
+    }
+
+    /// Parse ambient declarations: declare const/let/var/function/class/namespace/module/global
+    /// These are TypeScript-only declarations with no runtime effect.
+    fn parse_declare_statement(&mut self) -> Result<Statement, JsError> {
+        self.require_token(&TokenKind::Declare)?;
+
+        match &self.current.kind {
+            TokenKind::Const | TokenKind::Let | TokenKind::Var => {
+                // declare const/let/var name: Type;
+                self.parse_ambient_variable_declaration()?;
+            }
+            TokenKind::Function => {
+                // declare function name(...): Type;
+                self.parse_ambient_function_declaration()?;
+            }
+            TokenKind::Class | TokenKind::Abstract => {
+                // declare class Name { ... } or declare abstract class Name { ... }
+                self.parse_ambient_class_declaration()?;
+            }
+            TokenKind::Namespace | TokenKind::Module => {
+                // declare namespace Name { ... } or declare module "name" { ... }
+                self.parse_ambient_namespace_declaration()?;
+            }
+            TokenKind::Enum => {
+                // declare enum Name { ... }
+                self.parse_ambient_enum_declaration()?;
+            }
+            TokenKind::Identifier(s) if s.as_ref() == "global" => {
+                // declare global { ... }
+                self.parse_ambient_global_declaration()?;
+            }
+            _ => {
+                return Err(JsError::syntax_error(
+                    format!(
+                        "Expected const, let, var, function, class, namespace, module, enum, or global after 'declare', got {:?}",
+                        self.current.kind
+                    ),
+                    self.current.span.line,
+                    self.current.span.column,
+                ));
+            }
+        }
+
+        // Ambient declarations have no runtime effect
+        Ok(Statement::Empty)
+    }
+
+    /// Parse ambient variable declaration: declare const/let/var name: Type;
+    fn parse_ambient_variable_declaration(&mut self) -> Result<(), JsError> {
+        // Skip const/let/var
+        self.advance();
+
+        // Parse variable name(s)
+        loop {
+            // Parse pattern (identifier or destructuring)
+            self.parse_binding_pattern()?;
+
+            // Optional type annotation
+            if self.match_token(&TokenKind::Colon) {
+                self.parse_type_annotation()?;
+            }
+
+            // Optional initializer (rare in declare, but allowed)
+            if self.match_token(&TokenKind::Eq) {
+                self.parse_assignment_expression()?;
+            }
+
+            if !self.match_token(&TokenKind::Comma) {
+                break;
+            }
+        }
+
+        self.expect_semicolon()?;
+        Ok(())
+    }
+
+    /// Parse ambient function declaration: declare function name(...): Type;
+    fn parse_ambient_function_declaration(&mut self) -> Result<(), JsError> {
+        self.require_token(&TokenKind::Function)?;
+
+        // Function name
+        self.parse_identifier()?;
+
+        // Optional type parameters
+        self.parse_optional_type_parameters()?;
+
+        // Parameters (parse_function_params handles ( and ) itself)
+        self.parse_function_params()?;
+
+        // Optional return type
+        if self.match_token(&TokenKind::Colon) {
+            self.parse_type_annotation()?;
+        }
+
+        self.expect_semicolon()?;
+        Ok(())
+    }
+
+    /// Parse ambient class declaration: declare class Name { ... }
+    fn parse_ambient_class_declaration(&mut self) -> Result<(), JsError> {
+        // Skip abstract if present
+        self.match_token(&TokenKind::Abstract);
+        self.require_token(&TokenKind::Class)?;
+
+        // Class name
+        self.parse_identifier()?;
+
+        // Optional type parameters
+        self.parse_optional_type_parameters()?;
+
+        // Optional extends
+        if self.match_token(&TokenKind::Extends) {
+            self.parse_type_reference()?;
+        }
+
+        // Optional implements
+        if self.match_token(&TokenKind::Implements) {
+            self.parse_type_reference()?;
+            while self.match_token(&TokenKind::Comma) {
+                self.parse_type_reference()?;
+            }
+        }
+
+        // Class body - skip everything inside braces
+        self.require_token(&TokenKind::LBrace)?;
+        self.skip_ambient_class_body()?;
+        self.require_token(&TokenKind::RBrace)?;
+
+        Ok(())
+    }
+
+    /// Check if current token can be used as a property/method name in ambient declarations.
+    /// This includes identifiers and contextual keywords that can be used as property names.
+    fn check_ambient_member_name(&self) -> bool {
+        matches!(
+            self.current.kind,
+            TokenKind::Identifier(_)
+                | TokenKind::String(_)
+                | TokenKind::Number(_)
+                // Contextual keywords that can be property names
+                | TokenKind::From
+                | TokenKind::As
+                | TokenKind::Type
+                | TokenKind::Of
+                | TokenKind::Async
+                | TokenKind::Await
+                | TokenKind::Yield
+                | TokenKind::Static
+                | TokenKind::Readonly
+                | TokenKind::Abstract
+                | TokenKind::Public
+                | TokenKind::Private
+                | TokenKind::Protected
+                | TokenKind::Module
+                | TokenKind::Namespace
+                | TokenKind::Interface
+                | TokenKind::Enum
+                | TokenKind::Declare
+                | TokenKind::Export
+                | TokenKind::Default
+                | TokenKind::Infer
+        )
+    }
+
+    /// Skip ambient class body members
+    fn skip_ambient_class_body(&mut self) -> Result<(), JsError> {
+        while !self.check(&TokenKind::RBrace) && !self.is_at_end() {
+            // Skip modifiers: public, private, protected, static, readonly, abstract
+            while matches!(
+                &self.current.kind,
+                TokenKind::Public
+                    | TokenKind::Private
+                    | TokenKind::Protected
+                    | TokenKind::Static
+                    | TokenKind::Readonly
+                    | TokenKind::Abstract
+            ) {
+                self.advance();
+            }
+
+            // Handle constructor signature
+            if self.check_keyword("constructor") {
+                self.advance();
+                self.parse_function_params()?;
+                self.expect_semicolon()?;
+                continue;
+            }
+
+            // Skip member name (could be identifier, string, computed, or contextual keyword)
+            if self.check(&TokenKind::LBracket) {
+                // Computed property name
+                self.advance();
+                self.parse_expression()?;
+                self.require_token(&TokenKind::RBracket)?;
+            } else if self.check_ambient_member_name() {
+                self.advance();
+            } else if self.match_token(&TokenKind::New) {
+                // Constructor type signature (new (): Type)
+                if self.check(&TokenKind::LParen) || self.check(&TokenKind::Lt) {
+                    self.parse_optional_type_parameters()?;
+                    self.parse_function_params()?;
+                    if self.match_token(&TokenKind::Colon) {
+                        self.parse_type_annotation()?;
+                    }
+                    self.expect_semicolon()?;
+                }
+                continue;
+            } else {
+                // Unknown member, try to skip to next semicolon or break
+                break;
+            }
+
+            // Optional question mark for optional members
+            self.match_token(&TokenKind::Question);
+
+            // Check for method signature vs property
+            if self.check(&TokenKind::LParen) || self.check(&TokenKind::Lt) {
+                // Method signature (parse_function_params handles parens)
+                self.parse_optional_type_parameters()?;
+                self.parse_function_params()?;
+            }
+
+            // Optional type annotation
+            if self.match_token(&TokenKind::Colon) {
+                self.parse_type_annotation()?;
+            }
+
+            // Skip semicolon or comma
+            if !self.match_token(&TokenKind::Semicolon) {
+                self.match_token(&TokenKind::Comma);
+            }
+        }
+        Ok(())
+    }
+
+    /// Parse ambient namespace/module declaration
+    fn parse_ambient_namespace_declaration(&mut self) -> Result<(), JsError> {
+        // Skip namespace/module
+        self.advance();
+
+        // Module name - can be identifier or string literal
+        if let TokenKind::String(_) = &self.current.kind {
+            self.advance();
+        } else {
+            self.parse_identifier()?;
+            // Handle dotted names: namespace A.B.C { }
+            while self.match_token(&TokenKind::Dot) {
+                self.parse_identifier()?;
+            }
+        }
+
+        // Body
+        self.require_token(&TokenKind::LBrace)?;
+        while !self.check(&TokenKind::RBrace) && !self.is_at_end() {
+            // Parse ambient namespace body - different from regular statements
+            self.parse_ambient_namespace_member()?;
+        }
+        self.require_token(&TokenKind::RBrace)?;
+
+        Ok(())
+    }
+
+    /// Parse a member of an ambient namespace body
+    fn parse_ambient_namespace_member(&mut self) -> Result<(), JsError> {
+        // Skip export if present
+        self.match_token(&TokenKind::Export);
+
+        match &self.current.kind {
+            TokenKind::Function => {
+                // Ambient function: function name(...): Type;
+                self.parse_ambient_function_declaration()?;
+            }
+            TokenKind::Const | TokenKind::Let | TokenKind::Var => {
+                // Ambient variable
+                self.parse_ambient_variable_declaration()?;
+            }
+            TokenKind::Class | TokenKind::Abstract => {
+                // Ambient class
+                self.parse_ambient_class_declaration()?;
+            }
+            TokenKind::Interface => {
+                // Interface (parse normally - it's already a type-only declaration)
+                self.parse_interface()?;
+            }
+            TokenKind::Type => {
+                // Type alias
+                self.parse_type_alias()?;
+            }
+            TokenKind::Enum => {
+                // Ambient enum
+                self.parse_ambient_enum_declaration()?;
+            }
+            TokenKind::Namespace | TokenKind::Module => {
+                // Nested namespace
+                self.parse_ambient_namespace_declaration()?;
+            }
+            _ => {
+                // Unknown, try to skip to semicolon
+                while !self.check(&TokenKind::Semicolon)
+                    && !self.check(&TokenKind::RBrace)
+                    && !self.is_at_end()
+                {
+                    self.advance();
+                }
+                self.match_token(&TokenKind::Semicolon);
+            }
+        }
+        Ok(())
+    }
+
+    /// Parse ambient enum declaration: declare enum Name { ... }
+    fn parse_ambient_enum_declaration(&mut self) -> Result<(), JsError> {
+        self.require_token(&TokenKind::Enum)?;
+        self.parse_identifier()?;
+        self.require_token(&TokenKind::LBrace)?;
+
+        while !self.check(&TokenKind::RBrace) && !self.is_at_end() {
+            // Member name
+            self.parse_identifier()?;
+
+            // Optional initializer
+            if self.match_token(&TokenKind::Eq) {
+                self.parse_assignment_expression()?;
+            }
+
+            if !self.match_token(&TokenKind::Comma) {
+                break;
+            }
+        }
+
+        self.require_token(&TokenKind::RBrace)?;
+        Ok(())
+    }
+
+    /// Parse ambient global declaration: declare global { ... }
+    fn parse_ambient_global_declaration(&mut self) -> Result<(), JsError> {
+        // Skip 'global'
+        self.advance();
+
+        // Body
+        self.require_token(&TokenKind::LBrace)?;
+        while !self.check(&TokenKind::RBrace) && !self.is_at_end() {
+            self.parse_statement()?;
+        }
+        self.require_token(&TokenKind::RBrace)?;
+
+        Ok(())
     }
 
     // Module declarations (stubs)
@@ -4053,6 +4402,29 @@ impl<'a> Parser<'a> {
 
     fn parse_optional_return_type(&mut self) -> Result<Option<Box<TypeAnnotation>>, JsError> {
         if self.match_token(&TokenKind::Colon) {
+            // Check for assertion predicate: asserts param or asserts param is Type
+            if self.check(&TokenKind::Asserts) {
+                let start = self.current.span;
+                self.advance(); // consume 'asserts'
+                let param_name = self.parse_identifier()?;
+
+                // Check for optional 'is Type'
+                let type_annotation = if self.match_token(&TokenKind::Is) {
+                    Some(Box::new(self.parse_type_annotation()?))
+                } else {
+                    None
+                };
+
+                return Ok(Some(Box::new(TypeAnnotation::TypePredicate(
+                    TypePredicateType {
+                        parameter_name: param_name,
+                        type_annotation,
+                        asserts: true,
+                        span: self.span_from(start),
+                    },
+                ))));
+            }
+
             // Check for type predicate: param is Type
             // This is an identifier followed by 'is' keyword
             if self.check_identifier() && self.peek_is(&TokenKind::Is) {
@@ -4063,7 +4435,8 @@ impl<'a> Parser<'a> {
                 Ok(Some(Box::new(TypeAnnotation::TypePredicate(
                     TypePredicateType {
                         parameter_name: param_name,
-                        type_annotation,
+                        type_annotation: Some(type_annotation),
+                        asserts: false,
                         span: self.span_from(start),
                     },
                 ))))
