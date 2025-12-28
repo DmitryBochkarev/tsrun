@@ -11,6 +11,15 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use tsrun::{JsValue, ModulePath, Runtime, RuntimeResult};
 
+/// Minimal package.json representation for module resolution
+#[derive(serde::Deserialize)]
+struct PackageJson {
+    /// ESM entry point (preferred)
+    module: Option<String>,
+    /// CommonJS entry point
+    main: Option<String>,
+}
+
 fn main() {
     if let Err(e) = run() {
         eprintln!("Error: {}", e);
@@ -73,14 +82,32 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                         continue;
                     }
 
-                    // Load module from filesystem using the resolved path
-                    // (which is the canonical filesystem path in this runner)
-                    let (module_source, module_dir) = load_module(req.resolved_path.as_str())?;
+                    // Determine the canonical filesystem path
+                    let canonical_path = if ModulePath::is_bare(&req.specifier) {
+                        // Bare specifier (e.g., "lodash", "@scope/pkg") - resolve from node_modules
+                        let start_dir = req
+                            .importer
+                            .as_ref()
+                            .and_then(|p| {
+                                PathBuf::from(p.as_str()).parent().map(|p| p.to_path_buf())
+                            })
+                            .unwrap_or_else(|| entry_dir.clone());
+
+                        resolve_node_module(&req.specifier, &start_dir)?
+                    } else {
+                        // Relative/absolute path - already resolved
+                        PathBuf::from(req.resolved_path.as_str())
+                    };
+
+                    // Load module from filesystem
+                    let canonical_str = canonical_path.to_string_lossy();
+                    let (module_source, module_dir) = load_module(&canonical_str)?;
 
                     // Rewrite imports in this module to use canonical paths
                     let rewritten_module = rewrite_imports(&module_source, &module_dir)?;
 
-                    // Provide to runtime using the resolved path
+                    // Provide to runtime using the resolved_path the runtime expects
+                    // (for bare specifiers, this is the bare specifier itself)
                     runtime.provide_module(req.resolved_path.clone(), &rewritten_module)?;
                     provided.insert(req.resolved_path, module_dir);
                 }
@@ -192,6 +219,177 @@ fn resolve_path(path: &Path) -> PathBuf {
     }
 
     result
+}
+
+/// Parse a bare specifier into package name and optional subpath.
+///
+/// Examples:
+/// - "lodash" -> ("lodash", None)
+/// - "lodash/fp" -> ("lodash", Some("fp"))
+/// - "@scope/pkg" -> ("@scope/pkg", None)
+/// - "@scope/pkg/utils" -> ("@scope/pkg", Some("utils"))
+fn parse_bare_specifier(
+    specifier: &str,
+) -> Result<(String, Option<String>), Box<dyn std::error::Error>> {
+    if specifier.starts_with('@') {
+        // Scoped package: @scope/name or @scope/name/subpath
+        let parts: Vec<&str> = specifier.splitn(3, '/').collect();
+
+        let scope = parts
+            .first()
+            .ok_or_else(|| format!("Invalid scoped package specifier: {}", specifier))?;
+        let name = parts
+            .get(1)
+            .ok_or_else(|| format!("Invalid scoped package specifier: {}", specifier))?;
+
+        let package_name = format!("{}/{}", scope, name);
+        let subpath = parts.get(2).map(|s| s.to_string());
+
+        Ok((package_name, subpath))
+    } else {
+        // Regular package: name or name/subpath
+        let parts: Vec<&str> = specifier.splitn(2, '/').collect();
+        let package_name = parts
+            .first()
+            .ok_or_else(|| format!("Invalid package specifier: {}", specifier))?
+            .to_string();
+        let subpath = parts.get(1).map(|s| s.to_string());
+
+        Ok((package_name, subpath))
+    }
+}
+
+/// Resolve a file path, trying TypeScript extensions first, then JavaScript.
+///
+/// Tries in order:
+/// 1. Exact path (if has extension and exists)
+/// 2. path.ts
+/// 3. path.tsx
+/// 4. path.js
+/// 5. path.mjs
+/// 6. path/index.ts
+/// 7. path/index.tsx
+/// 8. path/index.js
+fn resolve_file_with_extensions(path: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    // If path already has an extension and exists, use it
+    if path.extension().is_some() && path.exists() {
+        return Ok(path.to_path_buf());
+    }
+
+    // Try TypeScript extensions first (project preference)
+    let extensions = ["ts", "tsx", "js", "mjs"];
+
+    for ext in &extensions {
+        let with_ext = path.with_extension(ext);
+        if with_ext.exists() {
+            return Ok(with_ext);
+        }
+    }
+
+    // Try as directory with index file
+    let index_files = ["index.ts", "index.tsx", "index.js"];
+    for index in &index_files {
+        let index_path = path.join(index);
+        if index_path.exists() {
+            return Ok(index_path);
+        }
+    }
+
+    Err(format!("Cannot resolve module path: {}", path.display()).into())
+}
+
+/// Resolve the entry point for a package directory.
+///
+/// # Arguments
+/// * `package_dir` - Path to the package directory (e.g., node_modules/lodash)
+/// * `subpath` - Optional subpath within the package (e.g., "fp" for "lodash/fp")
+fn resolve_package_entry(
+    package_dir: &Path,
+    subpath: Option<&str>,
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    if let Some(sub) = subpath {
+        // Subpath import: resolve the subpath with extension/directory handling
+        let target = package_dir.join(sub);
+        return resolve_file_with_extensions(&target);
+    }
+
+    // Root import: read package.json for entry point
+    let package_json_path = package_dir.join("package.json");
+
+    if package_json_path.exists() {
+        let content = fs::read_to_string(&package_json_path)?;
+        let pkg: PackageJson = serde_json::from_str(&content)
+            .map_err(|e| format!("Failed to parse {}: {}", package_json_path.display(), e))?;
+
+        // Try entry points in order: module (ESM) > main (CJS) > index.js
+        let entry = pkg
+            .module
+            .or(pkg.main)
+            .unwrap_or_else(|| "index.js".to_string());
+
+        let entry_path = package_dir.join(&entry);
+        return resolve_file_with_extensions(&entry_path);
+    }
+
+    // No package.json - try index files
+    resolve_file_with_extensions(&package_dir.join("index"))
+}
+
+/// Resolve a bare specifier (e.g., "lodash", "@scope/pkg") to an absolute path
+/// following Node.js resolution algorithm.
+///
+/// # Arguments
+/// * `specifier` - The bare specifier (e.g., "lodash", "@scope/pkg", "lodash/fp")
+/// * `start_dir` - Directory to start searching from (importer's directory or cwd)
+///
+/// # Returns
+/// * `Ok(PathBuf)` - Resolved absolute path to the module entry point
+/// * `Err` - Module not found with details about searched paths
+fn resolve_node_module(
+    specifier: &str,
+    start_dir: &Path,
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    // 1. Parse the specifier to extract package name and subpath
+    let (package_name, subpath) = parse_bare_specifier(specifier)?;
+
+    // 2. Walk up directory tree looking for node_modules/<package>
+    let mut current_dir = start_dir.to_path_buf();
+    let mut searched_dirs = Vec::new();
+
+    loop {
+        let node_modules = current_dir.join("node_modules");
+        let package_dir = node_modules.join(&package_name);
+
+        if package_dir.is_dir() {
+            // Found package directory - resolve the entry point
+            return resolve_package_entry(&package_dir, subpath.as_deref());
+        }
+
+        searched_dirs.push(node_modules);
+
+        // Move to parent directory
+        if let Some(parent) = current_dir.parent() {
+            if parent == current_dir {
+                // Reached filesystem root
+                break;
+            }
+            current_dir = parent.to_path_buf();
+        } else {
+            break;
+        }
+    }
+
+    // Module not found - provide helpful error
+    Err(format!(
+        "Cannot find module '{}'\nSearched in:\n{}",
+        specifier,
+        searched_dirs
+            .iter()
+            .map(|p| format!("  - {}", p.display()))
+            .collect::<Vec<_>>()
+            .join("\n")
+    )
+    .into())
 }
 
 /// Load a module from a canonical path
