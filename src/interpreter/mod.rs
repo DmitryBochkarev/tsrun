@@ -781,6 +781,19 @@ impl Interpreter {
             return Ok(crate::RuntimeResult::NeedImports(missing));
         }
 
+        // Create module environment for main module (if module_path is provided)
+        // This is needed to support exports and live bindings
+        let (saved_env, module_env) = if module_path.is_some() {
+            let saved = self.env.cheap_clone();
+            let module_env = self.create_module_environment();
+            // Root the module environment - it must persist for live bindings
+            self.root_guard.guard(module_env.clone());
+            self.env = module_env.cheap_clone();
+            (Some(saved), Some(module_env))
+        } else {
+            (None, None)
+        };
+
         // All imports satisfied - set up import bindings first
         self.setup_import_bindings(&program)?;
 
@@ -801,7 +814,107 @@ impl Interpreter {
         let vm_guard = self.heap.create_guard();
         let vm = BytecodeVM::with_guard(chunk, JsValue::Object(self.global.clone()), vm_guard);
 
-        self.run_vm_to_completion(vm)
+        let result = self.run_vm_to_completion(vm);
+
+        // Restore environment and finalize exports if we used a module environment
+        if let (Some(saved), Some(module_env)) = (saved_env, module_env) {
+            self.env = saved;
+
+            // If execution completed successfully, store the main module exports
+            if let Ok(crate::RuntimeResult::Complete(_)) = &result
+                && let Some(ref path) = module_path
+            {
+                self.finalize_module_exports(path.clone(), module_env);
+            }
+        }
+
+        result
+    }
+
+    /// Create a module namespace object from current exports and store in loaded_modules
+    fn finalize_module_exports(
+        &mut self,
+        module_path: crate::ModulePath,
+        module_env: Gc<JsObject>,
+    ) {
+        let guard = self.heap.create_guard();
+        let module_obj = self.create_object(&guard);
+
+        // Drain exports to a vector to avoid borrow conflict
+        let exports: Vec<_> = self.exports.drain().collect();
+
+        // Create properties for exports with proper live binding support
+        for (export_name, module_export) in exports {
+            match module_export {
+                ModuleExport::Direct { name, value } => {
+                    // Check if there's a binding in the module environment
+                    let has_binding = {
+                        let env_ref = module_env.borrow();
+                        if let Some(env_data) = env_ref.as_environment() {
+                            let var_key = VarKey(name.cheap_clone());
+                            env_data.bindings.contains_key(&var_key)
+                        } else {
+                            false
+                        }
+                    };
+
+                    if has_binding {
+                        // Direct export with binding: create getter for live binding
+                        let getter_obj = guard.alloc();
+                        {
+                            let mut getter_ref = getter_obj.borrow_mut();
+                            getter_ref.prototype = Some(self.function_prototype.cheap_clone());
+                            getter_ref.exotic =
+                                ExoticObject::Function(JsFunction::ModuleExportGetter {
+                                    module_env: module_env.cheap_clone(),
+                                    binding_name: name,
+                                });
+                        }
+
+                        // Set as accessor property (getter only, no setter)
+                        module_obj.borrow_mut().properties.insert(
+                            PropertyKey::String(export_name),
+                            Property::accessor(Some(getter_obj), None),
+                        );
+                    } else {
+                        // Direct export without binding (e.g., namespace re-export: export * as ns)
+                        // Use the stored value directly
+                        module_obj
+                            .borrow_mut()
+                            .set_property(PropertyKey::String(export_name), value);
+                    }
+                }
+                ModuleExport::ReExport {
+                    source_module,
+                    source_key,
+                } => {
+                    // Re-export: create getter that delegates to source module's property
+                    // This enables live bindings through re-exports
+                    let getter_obj = guard.alloc();
+                    {
+                        let mut getter_ref = getter_obj.borrow_mut();
+                        getter_ref.prototype = Some(self.function_prototype.cheap_clone());
+                        getter_ref.exotic =
+                            ExoticObject::Function(JsFunction::ModuleReExportGetter {
+                                source_module,
+                                source_key,
+                            });
+                    }
+
+                    // Set as accessor property (getter only, no setter)
+                    module_obj.borrow_mut().properties.insert(
+                        PropertyKey::String(export_name),
+                        Property::accessor(Some(getter_obj), None),
+                    );
+                }
+            }
+        }
+
+        // Root the module namespace object (lives forever)
+        self.root_guard.guard(module_obj.clone());
+
+        // Cache it by normalized path
+        self.loaded_modules.insert(module_path, module_obj);
     }
 
     /// Run a bytecode VM to completion or suspension
@@ -1630,6 +1743,55 @@ impl Interpreter {
             Some((prop, _)) => Ok(prop.value.clone()),
             None => Ok(JsValue::Undefined),
         }
+    }
+
+    /// Get an exported value from the main module by name.
+    ///
+    /// This resolves the export through the module namespace object, handling
+    /// live bindings correctly. Returns `None` if no main module has been evaluated
+    /// or if the export doesn't exist.
+    ///
+    /// # Example
+    /// ```ignore
+    /// // After evaluating: export const processor = { ... }
+    /// let processor = interp.get_export("processor");
+    /// ```
+    pub fn get_export(&self, name: &str) -> Option<JsValue> {
+        // Get the main module path
+        let main_path = self.main_module_path.as_ref()?;
+
+        // Get the module namespace object
+        let module_obj = self.loaded_modules.get(main_path)?;
+
+        // Resolve the property (handles live bindings)
+        let prop_key = PropertyKey::String(JsString::from(name));
+        match self.resolve_module_property(module_obj, &prop_key) {
+            Ok(value) if !value.is_undefined() => Some(value),
+            _ => None,
+        }
+    }
+
+    /// Get all export names from the main module.
+    ///
+    /// Returns an empty vector if no main module has been evaluated.
+    pub fn get_export_names(&self) -> Vec<String> {
+        let Some(main_path) = self.main_module_path.as_ref() else {
+            return Vec::new();
+        };
+
+        let Some(module_obj) = self.loaded_modules.get(main_path) else {
+            return Vec::new();
+        };
+
+        let borrowed = module_obj.borrow();
+        borrowed
+            .properties
+            .keys()
+            .filter_map(|k| match k {
+                PropertyKey::String(s) => Some(s.to_string()),
+                _ => None,
+            })
+            .collect()
     }
 
     /// Set a variable in the environment chain

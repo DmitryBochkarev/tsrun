@@ -512,3 +512,77 @@ pub fn keys(obj: &JsValue) -> Vec<String> {
 pub fn as_object(value: &JsValue) -> Option<Gc<JsObject>> {
     value.as_object().map(|o| o.cheap_clone())
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Module Export Access
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Get an exported value from the main module by name.
+///
+/// This resolves the export through the module namespace object, handling
+/// live bindings correctly. Returns `None` if no main module has been evaluated
+/// or if the export doesn't exist.
+///
+/// Note: If the export is an object, you should guard it to prevent GC collection.
+///
+/// # Example
+/// ```ignore
+/// use tsrun::{Runtime, RuntimeResult, api};
+///
+/// let mut runtime = Runtime::new();
+///
+/// // Evaluate a module with exports
+/// let result = runtime.eval_with_path(r#"
+///     export interface Processor {
+///         elementHeader: (element: JsElement) => JsElement;
+///     }
+///
+///     export const processor: Processor = {
+///         elementHeader: function(element) {
+///             return element;
+///         }
+///     };
+///
+///     export const VERSION = "1.0.0";
+/// "#, "/main.ts").unwrap();
+///
+/// // After completion, get exports
+/// if let RuntimeResult::Complete(_) = result {
+///     let guard = api::create_guard(&runtime);
+///
+///     // Get a simple export
+///     let version = api::get_export(&runtime, "VERSION");
+///     assert_eq!(version.unwrap().as_str(), Some("1.0.0"));
+///
+///     // Get an object export and guard it
+///     if let Some(processor) = api::get_export(&runtime, "processor") {
+///         api::guard_value(&guard, &processor);
+///         // Now you can call methods on processor
+///     }
+/// }
+/// ```
+pub fn get_export(runtime: &Runtime, name: &str) -> Option<JsValue> {
+    runtime.interpreter.get_export(name)
+}
+
+/// Get all export names from the main module.
+///
+/// Returns an empty vector if no main module has been evaluated.
+///
+/// # Example
+/// ```ignore
+/// use tsrun::{Runtime, RuntimeResult, api};
+///
+/// let mut runtime = Runtime::new();
+/// runtime.eval_with_path(r#"
+///     export const a = 1;
+///     export const b = 2;
+///     export function c() {}
+/// "#, "/main.ts").unwrap();
+///
+/// let exports = api::get_export_names(&runtime);
+/// // exports contains ["a", "b", "c"]
+/// ```
+pub fn get_export_names(runtime: &Runtime) -> Vec<String> {
+    runtime.interpreter.get_export_names()
+}

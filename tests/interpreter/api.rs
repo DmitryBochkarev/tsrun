@@ -1545,3 +1545,282 @@ fn test_guard_value() {
     let value = api::get_property(&nested, "value").unwrap();
     assert_eq!(value.as_number(), Some(42.0));
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Module Export Access Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_get_export_const() {
+    let mut runtime = Runtime::new();
+
+    let result = runtime
+        .eval_with_path(
+            r#"
+        export const VERSION = "1.0.0";
+        export const COUNT = 42;
+    "#,
+            "/main.ts",
+        )
+        .unwrap();
+
+    match result {
+        RuntimeResult::Complete(_) => {
+            // Get string export
+            let version = api::get_export(&runtime, "VERSION");
+            assert!(version.is_some());
+            assert_eq!(version.unwrap().as_str(), Some("1.0.0"));
+
+            // Get number export
+            let count = api::get_export(&runtime, "COUNT");
+            assert!(count.is_some());
+            assert_eq!(count.unwrap().as_number(), Some(42.0));
+
+            // Non-existent export returns None
+            let missing = api::get_export(&runtime, "MISSING");
+            assert!(missing.is_none());
+        }
+        _ => panic!("Expected Complete"),
+    }
+}
+
+#[test]
+fn test_get_export_function() {
+    let mut runtime = Runtime::new();
+
+    let result = runtime
+        .eval_with_path(
+            r#"
+        export function add(a: number, b: number): number {
+            return a + b;
+        }
+    "#,
+            "/main.ts",
+        )
+        .unwrap();
+
+    match result {
+        RuntimeResult::Complete(_) => {
+            let guard = api::create_guard(&runtime);
+
+            // Get exported function
+            let add_fn = api::get_export(&runtime, "add");
+            assert!(add_fn.is_some());
+
+            let add_fn = add_fn.unwrap();
+            assert!(add_fn.is_callable());
+
+            // Call the function
+            let result =
+                api::call_function(&mut runtime, &guard, &add_fn, None, &[10.into(), 32.into()])
+                    .unwrap();
+            assert_eq!(result.as_number(), Some(42.0));
+        }
+        _ => panic!("Expected Complete"),
+    }
+}
+
+#[test]
+fn test_get_export_object() {
+    let mut runtime = Runtime::new();
+
+    let result = runtime
+        .eval_with_path(
+            r#"
+        export interface Processor {
+            process: (x: number) => number;
+        }
+
+        export const processor: Processor = {
+            process: function(x: number): number {
+                return x * 2;
+            }
+        };
+    "#,
+            "/main.ts",
+        )
+        .unwrap();
+
+    match result {
+        RuntimeResult::Complete(_) => {
+            let guard = api::create_guard(&runtime);
+
+            // Get exported object
+            let processor = api::get_export(&runtime, "processor");
+            assert!(processor.is_some());
+
+            let processor = processor.unwrap();
+            api::guard_value(&guard, &processor);
+
+            // Call method on the exported object
+            let result =
+                api::call_method(&mut runtime, &guard, &processor, "process", &[21.into()])
+                    .unwrap();
+            assert_eq!(result.as_number(), Some(42.0));
+        }
+        _ => panic!("Expected Complete"),
+    }
+}
+
+#[test]
+fn test_get_export_class() {
+    let mut runtime = Runtime::new();
+
+    let result = runtime
+        .eval_with_path(
+            r#"
+        export class Calculator {
+            value: number;
+
+            constructor(initial: number) {
+                this.value = initial;
+            }
+
+            add(x: number): number {
+                this.value += x;
+                return this.value;
+            }
+        }
+    "#,
+            "/main.ts",
+        )
+        .unwrap();
+
+    match result {
+        RuntimeResult::Complete(_) => {
+            let guard = api::create_guard(&runtime);
+
+            // Get exported class
+            let calculator_class = api::get_export(&runtime, "Calculator");
+            assert!(calculator_class.is_some());
+
+            let calculator_class = calculator_class.unwrap();
+            api::guard_value(&guard, &calculator_class);
+
+            // The class should be callable (as a constructor)
+            assert!(calculator_class.is_callable());
+        }
+        _ => panic!("Expected Complete"),
+    }
+}
+
+#[test]
+fn test_get_export_names() {
+    let mut runtime = Runtime::new();
+
+    let result = runtime
+        .eval_with_path(
+            r#"
+        export const a = 1;
+        export const b = 2;
+        export function c() {}
+        export class D {}
+    "#,
+            "/main.ts",
+        )
+        .unwrap();
+
+    match result {
+        RuntimeResult::Complete(_) => {
+            let exports = api::get_export_names(&runtime);
+
+            assert!(exports.contains(&"a".to_string()));
+            assert!(exports.contains(&"b".to_string()));
+            assert!(exports.contains(&"c".to_string()));
+            assert!(exports.contains(&"D".to_string()));
+            assert_eq!(exports.len(), 4);
+        }
+        _ => panic!("Expected Complete"),
+    }
+}
+
+#[test]
+fn test_get_export_no_module() {
+    let runtime = Runtime::new();
+
+    // No module evaluated yet
+    let result = api::get_export(&runtime, "anything");
+    assert!(result.is_none());
+
+    let names = api::get_export_names(&runtime);
+    assert!(names.is_empty());
+}
+
+#[test]
+fn test_get_export_with_default() {
+    let mut runtime = Runtime::new();
+
+    let result = runtime
+        .eval_with_path(
+            r#"
+        export default function greet(name: string): string {
+            return "Hello, " + name + "!";
+        }
+    "#,
+            "/main.ts",
+        )
+        .unwrap();
+
+    match result {
+        RuntimeResult::Complete(_) => {
+            let guard = api::create_guard(&runtime);
+
+            // Get default export
+            let greet_fn = api::get_export(&runtime, "default");
+            assert!(greet_fn.is_some());
+
+            let greet_fn = greet_fn.unwrap();
+            let result = api::call_function(
+                &mut runtime,
+                &guard,
+                &greet_fn,
+                None,
+                &[JsValue::from("World")],
+            )
+            .unwrap();
+            assert_eq!(result.as_str(), Some("Hello, World!"));
+        }
+        _ => panic!("Expected Complete"),
+    }
+}
+
+#[test]
+fn test_get_export_live_binding() {
+    let mut runtime = Runtime::new();
+
+    let result = runtime
+        .eval_with_path(
+            r#"
+        export let counter = 0;
+        export function increment(): void {
+            counter++;
+        }
+    "#,
+            "/main.ts",
+        )
+        .unwrap();
+
+    match result {
+        RuntimeResult::Complete(_) => {
+            let guard = api::create_guard(&runtime);
+
+            // Get initial value
+            let counter = api::get_export(&runtime, "counter");
+            assert_eq!(counter.unwrap().as_number(), Some(0.0));
+
+            // Call increment
+            let increment_fn = api::get_export(&runtime, "increment").unwrap();
+            api::call_function(&mut runtime, &guard, &increment_fn, None, &[]).unwrap();
+
+            // Get updated value (live binding)
+            let counter = api::get_export(&runtime, "counter");
+            assert_eq!(counter.unwrap().as_number(), Some(1.0));
+
+            // Increment again
+            api::call_function(&mut runtime, &guard, &increment_fn, None, &[]).unwrap();
+            let counter = api::get_export(&runtime, "counter");
+            assert_eq!(counter.unwrap().as_number(), Some(2.0));
+        }
+        _ => panic!("Expected Complete"),
+    }
+}

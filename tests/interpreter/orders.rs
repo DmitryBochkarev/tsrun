@@ -913,8 +913,7 @@ fn test_read_write_roundtrip() {
     );
 
     // Capture the written content
-    let file_content =
-        get_string_prop(pending[0].payload.value(), "content").unwrap_or_default();
+    let file_content = get_string_prop(pending[0].payload.value(), "content").unwrap_or_default();
     assert_eq!(file_content, "test data 12345");
 
     let result = runtime
