@@ -3,7 +3,7 @@
 //! The interpreter always runs in strict mode (like ES modules).
 
 use super::{eval, eval_result};
-use typescript_eval::JsValue;
+use tsrun::JsValue;
 
 // ============================================================================
 // Assignment to read-only globals (Infinity, NaN, undefined)

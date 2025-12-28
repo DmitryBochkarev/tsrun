@@ -1,6 +1,6 @@
 //! Tests for garbage collection of JavaScript objects
 
-use typescript_eval::{GcStats, JsString, JsValue, Runtime, RuntimeResult, RuntimeValue};
+use tsrun::{GcStats, JsString, JsValue, Runtime, RuntimeResult, RuntimeValue};
 
 /// Get baseline object count (builtins only, no user code)
 fn get_baseline_live_count() -> usize {
@@ -518,7 +518,7 @@ results
         let arr_ref = arr.borrow();
         let get = |i: usize| -> f64 {
             if let Some(JsValue::Number(n)) =
-                arr_ref.get_property(&typescript_eval::value::PropertyKey::Index(i as u32))
+                arr_ref.get_property(&tsrun::value::PropertyKey::Index(i as u32))
             {
                 n
             } else {
@@ -1558,7 +1558,7 @@ fn test_exception_unwind_registers_cleaned_up() {
 #[test]
 fn test_type_sizes() {
     use std::mem::size_of;
-    use typescript_eval::value::{JsObject, JsValue, Property, PropertyKey, PropertyStorage};
+    use tsrun::value::{JsObject, JsValue, Property, PropertyKey, PropertyStorage};
 
     // Print sizes for debugging/optimization
     println!("JsValue: {} bytes", size_of::<JsValue>());

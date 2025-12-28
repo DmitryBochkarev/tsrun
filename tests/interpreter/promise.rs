@@ -1,7 +1,7 @@
 // Tests for Promise implementation
 
 use super::eval;
-use typescript_eval::JsValue;
+use tsrun::JsValue;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Promise constructor and basic state

@@ -4,8 +4,8 @@
 //! Profile with: cargo flamegraph --bench lexer -- --bench
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use typescript_eval::lexer::{Lexer, TokenKind};
-use typescript_eval::string_dict::StringDict;
+use tsrun::lexer::{Lexer, TokenKind};
+use tsrun::string_dict::StringDict;
 
 /// Simple expression
 const SIMPLE_EXPR: &str = "1 + 2 * 3 - 4 / 5";

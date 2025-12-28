@@ -52,7 +52,7 @@ mod string;
 mod symbol;
 mod typescript;
 
-use typescript_eval::{JsError, Runtime, RuntimeResult, RuntimeValue};
+use tsrun::{JsError, Runtime, RuntimeResult, RuntimeValue};
 
 /// Create a new runtime with aggressive defaults for testing:
 /// - GC_THRESHOLD=1 (GC on every allocation) to catch GC bugs

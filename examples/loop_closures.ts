@@ -1,5 +1,5 @@
 // # Should show no leaks at exit
-// valgrind --leak-check=full ./target/debug/typescript-eval-runner examples/algorithms/main.ts
+// valgrind --leak-check=full ./target/debug/tsrun examples/algorithms/main.ts
 
 // # Should show stable memory during execution (no accumulation)
 let sum = 0;
@@ -10,7 +10,7 @@ for (let i = 0; i < 10000; i++) {
 sum
 
 /*
- cargo build --bin typescript-eval-runner
- /usr/bin/time -v ./target/debug/typescript-eval-runner examples/loop_closures.ts
- valgrind ./target/debug/typescript-eval-runner examples/loop_closures.ts
+ cargo build --bin tsrun
+ /usr/bin/time -v ./target/debug/tsrun examples/loop_closures.ts
+ valgrind ./target/debug/tsrun examples/loop_closures.ts
 */

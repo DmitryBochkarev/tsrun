@@ -1,17 +1,17 @@
-# typescript-eval-runner Examples Plan
+# tsrun Examples Plan
 
-This document outlines proposed example projects to demonstrate the capabilities of the `typescript-eval` Rust library for evaluating TypeScript code.
+This document outlines proposed example projects to demonstrate the capabilities of the `tsrun` Rust library for evaluating TypeScript code.
 
 ## CLI Tool Overview
 
-**Name:** `typescript-eval-runner`
+**Name:** `tsrun`
 
-A simple CLI that executes TypeScript files using the `typescript-eval` library. Each example project demonstrates different language features and use cases.
+A simple CLI that executes TypeScript files using the `tsrun` library. Each example project demonstrates different language features and use cases.
 
 ```bash
 # Usage
-typescript-eval-runner <entry-point.ts>
-typescript-eval-runner examples/config-generator/main.ts
+tsrun <entry-point.ts>
+tsrun examples/config-generator/main.ts
 ```
 
 ---
@@ -326,7 +326,7 @@ examples/json-processing/
 
 ## CLI Implementation Notes
 
-The `typescript-eval-runner` CLI needs to:
+The `tsrun` CLI needs to:
 
 1. **Parse command-line arguments** - Entry point file path
 2. **Read the entry file** - Load TypeScript source
@@ -373,7 +373,7 @@ loop {
 ## Directory Structure
 
 ```
-typescript-eval-runner/
+tsrun/
 ├── Cargo.toml
 ├── src/
 │   └── main.rs
@@ -397,7 +397,7 @@ typescript-eval-runner/
 ## Success Criteria
 
 Each example should:
-1. Run successfully with `typescript-eval-runner examples/<name>/main.ts`
+1. Run successfully with `tsrun examples/<name>/main.ts`
 2. Produce meaningful output demonstrating the features
 3. Use idiomatic TypeScript patterns
 4. Include type annotations for documentation

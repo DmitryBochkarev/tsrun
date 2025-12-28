@@ -1,7 +1,7 @@
 // Tests for async/await implementation
 
 use super::eval;
-use typescript_eval::JsValue;
+use tsrun::JsValue;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Async function declaration

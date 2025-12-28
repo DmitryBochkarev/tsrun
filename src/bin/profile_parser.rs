@@ -5,8 +5,8 @@
 //!                    perf report
 //! Or with flamegraph: cargo flamegraph --bin profile_parser
 
-use typescript_eval::parser::Parser;
-use typescript_eval::string_dict::StringDict;
+use tsrun::parser::Parser;
+use tsrun::string_dict::StringDict;
 
 /// Large realistic TypeScript source for profiling
 fn generate_source(size: usize) -> String {

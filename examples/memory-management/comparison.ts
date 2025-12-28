@@ -4,7 +4,7 @@
 // 2. Objects kept in an array (memory retained)
 //
 // Run this and compare the memory behavior:
-//   /usr/bin/time -v ./target/debug/typescript-eval-runner examples/memory-management/comparison.ts
+//   /usr/bin/time -v ./target/debug/tsrun examples/memory-management/comparison.ts
 
 const ITERATIONS: number = 1000;
 

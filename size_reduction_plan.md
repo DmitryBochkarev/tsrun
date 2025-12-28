@@ -1,6 +1,6 @@
 # Binary Size Reduction Plan
 
-This document outlines code changes to further reduce the binary size of typescript-eval beyond the Cargo.toml optimizations already applied.
+This document outlines code changes to further reduce the binary size of tsrun beyond the Cargo.toml optimizations already applied.
 
 ## Current State (After Tier 2)
 
@@ -13,7 +13,7 @@ This document outlines code changes to further reduce the binary size of typescr
 
 | Component | Size | Notes |
 |-----------|------|-------|
-| typescript_eval | 252 KB | Parser, interpreter, builtins |
+| tsrun | 252 KB | Parser, interpreter, builtins |
 | std | 273 KB | Rust standard library |
 | regex_syntax | 72 KB | Regex parsing |
 | regex_automata | 60 KB | Regex execution |
@@ -109,8 +109,8 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 
 **Current problem** (from cargo-bloat):
 ```
-<typescript_eval::ast::Expression as core::clone::Clone>::clone  ~30 KB total (multiple monomorphizations)
-<typescript_eval::ast::Statement as core::clone::Clone>::clone   ~12 KB total
+<tsrun::ast::Expression as core::clone::Clone>::clone  ~30 KB total (multiple monomorphizations)
+<tsrun::ast::Statement as core::clone::Clone>::clone   ~12 KB total
 ```
 
 **Implementation**:
@@ -252,11 +252,11 @@ impl Interpreter {
 
 **Estimated savings**: Build-time optimization, better dead code elimination
 
-**Rationale**: Splitting into `typescript-eval-parser`, `typescript-eval-runtime`, `typescript-eval-builtins` allows users to depend only on what they need.
+**Rationale**: Splitting into `tsrun-parser`, `tsrun-runtime`, `tsrun-builtins` allows users to depend only on what they need.
 
 **Structure**:
 ```
-typescript-eval/
+tsrun/
 ├── crates/
 │   ├── parser/      # Lexer, Parser, AST
 │   ├── runtime/     # Interpreter core, values
@@ -290,15 +290,15 @@ typescript-eval/
 
 After each change:
 1. Run full test suite: `cargo test`
-2. Verify binary size: `ls -lh target/release/typescript-eval-runner`
-3. Run examples: `cargo run --release --bin typescript-eval-runner -- examples/*.ts`
+2. Verify binary size: `ls -lh target/release/tsrun`
+3. Run examples: `cargo run --release --bin tsrun -- examples/*.ts`
 4. Benchmark if performance-sensitive: `cargo bench`
 
 ---
 
 ## Internal Code Optimizations (No External Dependencies)
 
-These optimizations focus on reducing code size within the typescript-eval crate itself, without changing external dependencies.
+These optimizations focus on reducing code size within the tsrun crate itself, without changing external dependencies.
 
 ### Current Internal Size Breakdown
 

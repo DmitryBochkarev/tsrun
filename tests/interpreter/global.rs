@@ -1,7 +1,7 @@
 //! Global function tests (parseInt, parseFloat, isNaN, isFinite, URI functions)
 
 use super::eval;
-use typescript_eval::JsValue;
+use tsrun::JsValue;
 
 #[test]
 fn test_parseint() {

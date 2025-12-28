@@ -1,6 +1,6 @@
 //! Tests for the module system and order API
 
-use typescript_eval::{
+use tsrun::{
     value::PropertyKey, Guarded, InternalModule, Interpreter, JsError, JsValue, ModulePath,
     Runtime, RuntimeConfig, RuntimeResult, RuntimeValue,
 };
@@ -278,7 +278,7 @@ fn test_import_namespace() {
 
 #[test]
 fn test_order_syscall() {
-    use typescript_eval::interpreter::builtins::create_eval_internal_module;
+    use tsrun::interpreter::builtins::create_eval_internal_module;
 
     // Create the eval:internal module
     let eval_internal = create_eval_internal_module();
@@ -321,7 +321,7 @@ fn test_order_syscall() {
 
 #[test]
 fn test_order_syscall_returns_promise() {
-    use typescript_eval::interpreter::builtins::create_eval_internal_module;
+    use tsrun::interpreter::builtins::create_eval_internal_module;
 
     let eval_internal = create_eval_internal_module();
 
@@ -355,7 +355,7 @@ fn test_order_syscall_returns_promise() {
 
 #[test]
 fn test_await_pending_promise_suspends_and_resumes() {
-    use typescript_eval::interpreter::builtins::create_eval_internal_module;
+    use tsrun::interpreter::builtins::create_eval_internal_module;
 
     let eval_internal = create_eval_internal_module();
 
@@ -385,7 +385,7 @@ fn test_await_pending_promise_suspends_and_resumes() {
             assert_eq!(pending[0].id.0, 1);
 
             // Fulfill the order with value 21
-            let response = typescript_eval::OrderResponse {
+            let response = tsrun::OrderResponse {
                 id: pending[0].id,
                 result: Ok(RuntimeValue::unguarded(JsValue::Number(21.0))),
             };
@@ -409,7 +409,7 @@ fn test_await_pending_promise_suspends_and_resumes() {
 
 #[test]
 fn test_await_suspension_with_multiple_awaits() {
-    use typescript_eval::interpreter::builtins::create_eval_internal_module;
+    use tsrun::interpreter::builtins::create_eval_internal_module;
 
     let eval_internal = create_eval_internal_module();
 
@@ -438,7 +438,7 @@ fn test_await_suspension_with_multiple_awaits() {
             assert_eq!(pending.len(), 1);
 
             // Fulfill first order
-            let response = typescript_eval::OrderResponse {
+            let response = tsrun::OrderResponse {
                 id: pending[0].id,
                 result: Ok(RuntimeValue::unguarded(JsValue::Number(10.0))),
             };
@@ -453,7 +453,7 @@ fn test_await_suspension_with_multiple_awaits() {
                     assert_eq!(pending2.len(), 1);
 
                     // Fulfill second order
-                    let response2 = typescript_eval::OrderResponse {
+                    let response2 = tsrun::OrderResponse {
                         id: pending2[0].id,
                         result: Ok(RuntimeValue::unguarded(JsValue::Number(32.0))),
                     };
@@ -750,7 +750,7 @@ fn test_module_namespace_import() {
 #[test]
 fn test_module_with_internal_imports() {
     // External module that also imports from internal module
-    use typescript_eval::interpreter::builtins::create_eval_internal_module;
+    use tsrun::interpreter::builtins::create_eval_internal_module;
 
     let eval_internal = create_eval_internal_module();
 

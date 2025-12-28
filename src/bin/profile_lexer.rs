@@ -5,8 +5,8 @@
 //!                    perf report
 //! Or with flamegraph: cargo flamegraph --bin profile_lexer
 
-use typescript_eval::lexer::{Lexer, TokenKind};
-use typescript_eval::string_dict::StringDict;
+use tsrun::lexer::{Lexer, TokenKind};
+use tsrun::string_dict::StringDict;
 
 /// Large realistic TypeScript source for profiling
 fn generate_source(size: usize) -> String {

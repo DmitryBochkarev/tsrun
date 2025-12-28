@@ -114,14 +114,14 @@ pub fn try_free(&mut self, id: EnvId) -> bool {
 
 ```bash
 # Memory usage with closures
-/usr/bin/time -v ./target/debug/typescript-eval-runner examples/loop_closures.ts
+/usr/bin/time -v ./target/debug/tsrun examples/loop_closures.ts
 # Result: 6.2 MB (was 22.5 MB)
 
 # Memory usage without closures
-/usr/bin/time -v ./target/debug/typescript-eval-runner examples/loop_no_closures.ts
+/usr/bin/time -v ./target/debug/tsrun examples/loop_no_closures.ts
 # Result: 5.7 MB
 
 # No leaks
-valgrind --leak-check=full ./target/debug/typescript-eval-runner examples/loop_closures.ts
+valgrind --leak-check=full ./target/debug/tsrun examples/loop_closures.ts
 # Result: 0 bytes lost
 ```

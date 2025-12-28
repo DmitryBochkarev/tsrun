@@ -1,5 +1,5 @@
 // Simple test to verify GC is working
-// Run with: cargo run --release --bin typescript-eval-runner -- examples/memory-management/gc-debug-simple.ts
+// Run with: cargo run --release --bin tsrun -- examples/memory-management/gc-debug-simple.ts
 
 console.log("Starting GC debug test...");
 

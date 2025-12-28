@@ -3,7 +3,7 @@
 //! # Example
 //!
 //! ```
-//! use typescript_eval::{Runtime, JsValue};
+//! use tsrun::{Runtime, JsValue};
 //!
 //! let mut runtime = Runtime::new();
 //! let result = runtime.eval_simple("1 + 2 * 3").unwrap();

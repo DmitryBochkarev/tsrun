@@ -1,4 +1,4 @@
-//! Test262 conformance test runner for typescript-eval
+//! Test262 conformance test runner for tsrun
 //!
 //! Usage:
 //!   test262-runner [OPTIONS] [PATTERN]
@@ -25,7 +25,7 @@ use std::fs;
 use std::io::{self, Write as IoWrite};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
-use typescript_eval::{JsError, Runtime, RuntimeResult};
+use tsrun::{JsError, Runtime, RuntimeResult};
 
 /// Test metadata parsed from YAML frontmatter
 #[derive(Debug, Default)]
@@ -582,7 +582,7 @@ fn print_usage(program: &str) {
     eprintln!(
         "Usage: {} [OPTIONS] <TEST_PATH>
 
-Test262 conformance test runner for typescript-eval
+Test262 conformance test runner for tsrun
 
 Arguments:
   <TEST_PATH>  Path to test file or directory (relative to test262/test/)

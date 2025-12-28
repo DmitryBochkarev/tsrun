@@ -1,7 +1,7 @@
 //! Tests for async iteration (for await...of, async generators, Symbol.asyncIterator)
 
 use super::eval;
-use typescript_eval::JsValue;
+use tsrun::JsValue;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Debug tests for isolating issues

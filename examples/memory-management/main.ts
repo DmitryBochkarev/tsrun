@@ -2,11 +2,11 @@
 // Demonstrates that objects are properly collected when they go out of scope
 //
 // Run with valgrind to verify no memory leaks:
-//   cargo build --bin typescript-eval-runner
-//   valgrind --leak-check=full ./target/debug/typescript-eval-runner examples/memory-management/main.ts
+//   cargo build --bin tsrun
+//   valgrind --leak-check=full ./target/debug/tsrun examples/memory-management/main.ts
 //
 // Run with time to observe stable memory:
-//   /usr/bin/time -v ./target/debug/typescript-eval-runner examples/memory-management/main.ts
+//   /usr/bin/time -v ./target/debug/tsrun examples/memory-management/main.ts
 
 import { testScopeCleanup } from "./scope-cleanup";
 import { testClosureLifetime } from "./closure-lifetime";

@@ -2,7 +2,7 @@
 // Tests various scenarios to verify garbage collection is working properly
 //
 // Run with:
-//   /usr/bin/time -v ./target/release/typescript-eval-runner examples/memory-management/gc-stress.ts
+//   /usr/bin/time -v ./target/release/tsrun examples/memory-management/gc-stress.ts
 //
 // Key metrics to watch:
 // - Maximum resident set size: should stay bounded (< 10MB typical)

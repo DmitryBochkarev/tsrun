@@ -4,7 +4,7 @@
 //! and Proxy.revocable().
 
 use super::{eval, eval_result, throws_error};
-use typescript_eval::JsValue;
+use tsrun::JsValue;
 
 // =============================================================================
 // Proxy Basic Tests

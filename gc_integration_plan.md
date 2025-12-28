@@ -1,4 +1,4 @@
-# GC Integration Plan for typescript-eval
+# GC Integration Plan for tsrun
 
 This document details the plan for integrating the cycle-breaking garbage collector from `src/gc.rs` into the TypeScript interpreter.
 
@@ -902,7 +902,7 @@ The gc.rs already contains tests for:
 **File: `tests/interpreter/gc.rs` (new)**
 
 ```rust
-use typescript_eval::{Runtime, JsValue};
+use tsrun::{Runtime, JsValue};
 
 fn eval(code: &str) -> JsValue {
     Runtime::new().eval(code).unwrap()

@@ -1,7 +1,7 @@
 //! Boolean tests
 
 use super::eval;
-use typescript_eval::JsValue;
+use tsrun::JsValue;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Boolean Constructor

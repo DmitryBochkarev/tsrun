@@ -1,7 +1,7 @@
 //! Basic language feature tests: arithmetic, precedence, comparison, variables, conditionals
 
 use super::{eval, throws_error};
-use typescript_eval::JsValue;
+use tsrun::JsValue;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Whitespace Tests

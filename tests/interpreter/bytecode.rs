@@ -3,7 +3,7 @@
 //! These tests verify that the bytecode VM produces the same results
 //! as the stack-based interpreter.
 
-use typescript_eval::{Interpreter, JsValue};
+use tsrun::{Interpreter, JsValue};
 
 /// Helper to evaluate using bytecode VM
 fn eval_bytecode(source: &str) -> JsValue {

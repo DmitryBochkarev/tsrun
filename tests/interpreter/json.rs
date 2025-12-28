@@ -1,7 +1,7 @@
 //! Tests for JSON object (parse and stringify)
 
 use super::eval;
-use typescript_eval::JsValue;
+use tsrun::JsValue;
 
 #[test]
 fn test_json_stringify_simple_object() {

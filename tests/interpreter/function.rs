@@ -1,8 +1,8 @@
 //! Function-related tests
 
 use super::eval;
-use typescript_eval::value::JsString;
-use typescript_eval::JsValue;
+use tsrun::value::JsString;
+use tsrun::JsValue;
 
 #[test]
 fn test_function_name_property() {
@@ -346,7 +346,7 @@ fn test_fibonacci_iterative() {
 #[test]
 fn test_call_stack_depth_limit() {
     // Create a runtime with very low depth limit (10) to test without stack overflow
-    let mut runtime = typescript_eval::Runtime::new();
+    let mut runtime = tsrun::Runtime::new();
     runtime.set_max_call_depth(10);
 
     // Test that recursion to depth 5 works (well under limit)
@@ -360,10 +360,10 @@ fn test_call_stack_depth_limit() {
     "#,
     );
     assert!(result.is_ok(), "countDown(5) should work");
-    assert_eq!(result.unwrap(), typescript_eval::JsValue::Number(5.0));
+    assert_eq!(result.unwrap(), tsrun::JsValue::Number(5.0));
 
     // Test that depth 15 should fail (over 10 limit)
-    let mut runtime2 = typescript_eval::Runtime::new();
+    let mut runtime2 = tsrun::Runtime::new();
     runtime2.set_max_call_depth(10);
     let result2 = runtime2.eval_simple(
         r#"
@@ -392,7 +392,7 @@ fn test_call_stack_depth_limit() {
 #[test]
 fn test_infinite_recursion_caught() {
     // Use a low depth limit to ensure we catch it without Rust stack overflow
-    let mut runtime = typescript_eval::Runtime::new();
+    let mut runtime = tsrun::Runtime::new();
     runtime.set_max_call_depth(10);
 
     let result = runtime.eval_simple(
@@ -424,7 +424,7 @@ fn test_infinite_recursion_caught() {
 #[test]
 fn test_array_map_callback_depth() {
     // Basic map with callback - should work fine
-    let mut runtime = typescript_eval::Runtime::new();
+    let mut runtime = tsrun::Runtime::new();
     runtime.set_max_call_depth(100);
 
     let result = runtime.eval_simple(
@@ -438,7 +438,7 @@ fn test_array_map_callback_depth() {
 /// Test nested array callbacks - map inside map
 #[test]
 fn test_nested_array_callbacks() {
-    let mut runtime = typescript_eval::Runtime::new();
+    let mut runtime = tsrun::Runtime::new();
     runtime.set_max_call_depth(100);
 
     let result = runtime.eval_simple(
@@ -456,7 +456,7 @@ fn test_nested_array_callbacks() {
 /// This is the stress test for stack depth
 #[test]
 fn test_array_callback_with_recursion() {
-    let mut runtime = typescript_eval::Runtime::new();
+    let mut runtime = tsrun::Runtime::new();
     runtime.set_max_call_depth(50);
 
     // The callback itself has recursion depth 5
@@ -479,7 +479,7 @@ fn test_array_callback_with_recursion() {
         "forEach with recursive callback should work: {:?}",
         result
     );
-    assert_eq!(result.unwrap(), typescript_eval::JsValue::Number(9.0));
+    assert_eq!(result.unwrap(), tsrun::JsValue::Number(9.0));
 }
 
 // ============================================================

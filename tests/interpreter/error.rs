@@ -1,7 +1,7 @@
 //! Error-related tests
 
 use super::eval;
-use typescript_eval::JsValue;
+use tsrun::JsValue;
 
 #[test]
 fn test_reference_error_message_format() {

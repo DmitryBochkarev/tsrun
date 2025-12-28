@@ -3,9 +3,9 @@
 //! These tests verify that the compiler correctly generates bytecode
 //! from AST nodes.
 
-use typescript_eval::compiler::{BytecodeChunk, Compiler, Op};
-use typescript_eval::parser::Parser;
-use typescript_eval::string_dict::StringDict;
+use tsrun::compiler::{BytecodeChunk, Compiler, Op};
+use tsrun::parser::Parser;
+use tsrun::string_dict::StringDict;
 
 /// Parse source and compile to bytecode
 fn compile(source: &str) -> BytecodeChunk {
@@ -47,7 +47,7 @@ fn test_compile_string_literal() {
     // Should have the string in constants
     assert!(
         chunk.constants.iter().any(|c| {
-            matches!(c, typescript_eval::compiler::Constant::String(s) if s.as_ref() == "hello")
+            matches!(c, tsrun::compiler::Constant::String(s) if s.as_ref() == "hello")
         }),
         "Expected 'hello' in constants"
     );

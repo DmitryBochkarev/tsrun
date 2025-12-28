@@ -2,7 +2,7 @@
 // Tests memory behavior at different scales to verify GC is collecting cycles
 //
 // Run and compare memory usage:
-//   /usr/bin/time -v ./target/release/typescript-eval-runner examples/memory-management/gc-scale-test.ts
+//   /usr/bin/time -v ./target/release/tsrun examples/memory-management/gc-scale-test.ts
 //
 // Key question: Does memory grow proportionally with TOTAL_CYCLES?
 // If GC works: Memory stays ~constant regardless of TOTAL_CYCLES

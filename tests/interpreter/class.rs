@@ -5,7 +5,7 @@
 //! desired behavior for when classes are fully implemented.
 
 use super::eval;
-use typescript_eval::JsValue;
+use tsrun::JsValue;
 
 // Basic class test to verify class functionality
 #[test]

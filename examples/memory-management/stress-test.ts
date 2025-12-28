@@ -2,7 +2,7 @@
 // This test creates and discards many objects to verify memory doesn't grow unbounded
 //
 // Run multiple times and compare memory usage:
-//   /usr/bin/time -v ./target/debug/typescript-eval-runner examples/memory-management/stress-test.ts
+//   /usr/bin/time -v ./target/debug/tsrun examples/memory-management/stress-test.ts
 //
 // If objects are being collected properly:
 // - Memory usage should remain stable regardless of iteration count

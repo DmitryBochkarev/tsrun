@@ -1,13 +1,13 @@
 [package]
-name = "typescript-eval"
+name = "tsrun"
 version = "0.1.0"
 edition = "2021"
 description = "A TypeScript interpreter in Rust for config/manifest generation"
 license = "MIT"
 
 [[bin]]
-name = "typescript-eval-runner"
-path = "src/bin/typescript-eval-runner.rs"
+name = "tsrun"
+path = "src/bin/tsrun.rs"
 
 [[bin]]
 name = "profile_lexer"

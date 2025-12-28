@@ -2,7 +2,7 @@
 
 ## Overview
 
-**Project:** `typescript-eval`
+**Project:** `tsrun`
 **Purpose:** Execute TypeScript for config/manifest generation from Rust
 **Status:** Milestone 11 Complete (Generators & Async Iteration, 1023 tests passing)
 

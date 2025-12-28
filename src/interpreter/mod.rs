@@ -825,14 +825,11 @@ impl Interpreter {
 
                 // Get or create PromiseId for this promise
                 let promise_key = suspension.waiting_on.cheap_clone();
-                let promise_id = *self
-                    .promise_ids
-                    .entry(promise_key)
-                    .or_insert_with(|| {
-                        let id = PromiseId(self.next_promise_id);
-                        self.next_promise_id += 1;
-                        id
-                    });
+                let promise_id = *self.promise_ids.entry(promise_key).or_insert_with(|| {
+                    let id = PromiseId(self.next_promise_id);
+                    self.next_promise_id += 1;
+                    id
+                });
 
                 // Create suspended context
                 let suspended_ctx = SuspendedContext {

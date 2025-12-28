@@ -1,7 +1,7 @@
 //! Tests for Symbol primitive
 
 use super::eval;
-use typescript_eval::JsValue;
+use tsrun::JsValue;
 
 #[test]
 fn test_symbol_typeof() {

@@ -4,7 +4,7 @@
 //! See: https://github.com/tc39/proposal-decorators
 
 use super::{eval, throws_error};
-use typescript_eval::JsValue;
+use tsrun::JsValue;
 
 // ============================================================================
 // Class Decorators

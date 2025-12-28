@@ -1,7 +1,7 @@
 //! Generator function tests
 
 use super::eval;
-use typescript_eval::JsValue;
+use tsrun::JsValue;
 
 // Basic generator tests
 #[test]

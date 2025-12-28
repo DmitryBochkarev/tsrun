@@ -6,7 +6,7 @@
 
 ```bash
 cargo build --profile=profiling
-valgrind --leak-check=full ./target/profiling/typescript-eval-runner examples/memory-management/gc-cycles.ts
+valgrind --leak-check=full ./target/profiling/tsrun examples/memory-management/gc-cycles.ts
 ```
 
 ### Valgrind Output Summary
@@ -31,10 +31,10 @@ The largest leak (50.7MB direct + indirect) comes from object allocation:
 
 ```
 50,711,012 (6,008,352 direct, 44,702,660 indirect) bytes in 35,764 blocks are definitely lost
-   at typescript_eval::gc::Space<T>::alloc (gc.rs:220)
-   at typescript_eval::value::create_object (value.rs:1441)
-   at typescript_eval::interpreter::Interpreter::create_object (mod.rs:506)
-   at typescript_eval::interpreter::Interpreter::evaluate (mod.rs:3111)
+   at tsrun::gc::Space<T>::alloc (gc.rs:220)
+   at tsrun::value::create_object (value.rs:1441)
+   at tsrun::interpreter::Interpreter::create_object (mod.rs:506)
+   at tsrun::interpreter::Interpreter::evaluate (mod.rs:3111)
 ```
 
 Objects are allocated in the GC space but never collected because:

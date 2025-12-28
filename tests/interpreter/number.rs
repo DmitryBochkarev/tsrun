@@ -1,8 +1,8 @@
 //! Number-related tests
 
 use super::eval;
-use typescript_eval::value::JsString;
-use typescript_eval::JsValue;
+use tsrun::value::JsString;
+use tsrun::JsValue;
 
 #[test]
 fn test_number_isnan() {

@@ -4,7 +4,7 @@
 //! Unlike the Function constructor, eval() has access to the current scope.
 
 use super::{eval, throws_error};
-use typescript_eval::JsValue;
+use tsrun::JsValue;
 
 // ============================================================================
 // Basic eval() behavior

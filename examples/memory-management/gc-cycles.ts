@@ -2,7 +2,7 @@
 // Specifically tests that circular references are properly collected
 //
 // Run with different scales to verify memory doesn't grow proportionally:
-//   /usr/bin/time -v ./target/release/typescript-eval-runner examples/memory-management/gc-cycles.ts
+//   /usr/bin/time -v ./target/release/tsrun examples/memory-management/gc-cycles.ts
 //
 // Memory should stay roughly constant regardless of SCALE multiplier
 

@@ -4,8 +4,8 @@
 //! Profile with: cargo flamegraph --bench parser -- --bench
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use typescript_eval::parser::Parser;
-use typescript_eval::string_dict::StringDict;
+use tsrun::parser::Parser;
+use tsrun::string_dict::StringDict;
 
 /// Simple expressions
 const SIMPLE_EXPR: &str = "1 + 2 * 3 - 4 / 5";

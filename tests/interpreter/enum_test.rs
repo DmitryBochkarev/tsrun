@@ -1,7 +1,7 @@
 //! Tests exploring enum behavior and comparing with TypeScript semantics
 
 use super::eval;
-use typescript_eval::JsValue;
+use tsrun::JsValue;
 
 // =============================================================================
 // BASIC ENUM FUNCTIONALITY

@@ -1,6 +1,6 @@
 # Test262 Conformance Testing
 
-This document describes how to run the [Test262](https://github.com/tc39/test262) ECMAScript conformance test suite against the typescript-eval interpreter.
+This document describes how to run the [Test262](https://github.com/tc39/test262) ECMAScript conformance test suite against the tsrun interpreter.
 
 ## Setup
 
@@ -59,7 +59,7 @@ cargo build --release --bin test262-runner
 
 ### Strict Mode Only
 
-**Important:** The typescript-eval interpreter runs all code in strict mode. This means:
+**Important:** The tsrun interpreter runs all code in strict mode. This means:
 
 - Tests marked `noStrict` will fail (they rely on sloppy mode behavior)
 - Tests marked `onlyStrict` are the most relevant for this interpreter

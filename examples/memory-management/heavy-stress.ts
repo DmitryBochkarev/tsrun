@@ -2,7 +2,7 @@
 // This creates a much larger workload suitable for perf profiling
 //
 // Run with:
-//   perf record -g ./target/profiling/typescript-eval-runner examples/memory-management/heavy-stress.ts
+//   perf record -g ./target/profiling/tsrun examples/memory-management/heavy-stress.ts
 //   perf report --stdio --sort=symbol --no-children | head -50
 
 const ROUNDS: number = 100;

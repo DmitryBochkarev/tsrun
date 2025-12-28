@@ -2,11 +2,11 @@
 //!
 //! These tests verify that the parser correctly parses TypeScript/JavaScript source into AST.
 
-use typescript_eval::ast::{
+use tsrun::ast::{
     ClassMember, Expression, MemberProperty, MethodKind, ObjectPropertyKey, Program, Statement,
 };
-use typescript_eval::parser::Parser;
-use typescript_eval::string_dict::StringDict;
+use tsrun::parser::Parser;
+use tsrun::string_dict::StringDict;
 
 fn parse(source: &str) -> Program {
     let mut dict = StringDict::new();
@@ -568,7 +568,7 @@ fn test_catch_with_unknown_type() {
 #[test]
 fn test_parse_logical_and() {
     // Test that && is parsed as LogicalExpression, not BinaryExpression
-    use typescript_eval::ast::{Expression, LogicalOp};
+    use tsrun::ast::{Expression, LogicalOp};
 
     let prog = parse("true && false");
     assert_eq!(prog.body.len(), 1);
@@ -588,7 +588,7 @@ fn test_parse_logical_and() {
 #[test]
 fn test_parse_logical_or() {
     // Test that || is parsed as LogicalExpression, not BinaryExpression
-    use typescript_eval::ast::{Expression, LogicalOp};
+    use tsrun::ast::{Expression, LogicalOp};
 
     let prog = parse("false || true");
     assert_eq!(prog.body.len(), 1);
@@ -608,7 +608,7 @@ fn test_parse_logical_or() {
 fn test_parse_logical_and_complex_expression() {
     // Test && with complex expressions (this caught a bug where self.previous
     // was checked after parsing the right side)
-    use typescript_eval::ast::{Expression, LogicalOp};
+    use tsrun::ast::{Expression, LogicalOp};
 
     let prog = parse("x < 10 && !done");
     assert_eq!(prog.body.len(), 1);
@@ -1570,7 +1570,7 @@ fn test_parse_export_star_without_as() {
 
 #[test]
 fn test_parse_optional_chain_parenthesized() {
-    use typescript_eval::ast::Expression;
+    use tsrun::ast::Expression;
 
     // a?.b?.() - direct optional chain call
     let prog1 = parse("a?.b?.()");

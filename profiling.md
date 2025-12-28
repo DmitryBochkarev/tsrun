@@ -1,6 +1,6 @@
-# Profiling typescript-eval
+# Profiling tsrun
 
-This document describes how to profile the typescript-eval interpreter to identify performance bottlenecks.
+This document describes how to profile the tsrun interpreter to identify performance bottlenecks.
 
 ## Build Profiles
 
@@ -23,7 +23,7 @@ Use `/usr/bin/time -v` for a quick overview of execution time and memory usage:
 cargo build --release
 
 # Run with timing
-/usr/bin/time -v ./target/release/typescript-eval-runner examples/memory-management/gc-no-cycles.ts
+/usr/bin/time -v ./target/release/tsrun examples/memory-management/gc-no-cycles.ts
 ```
 
 Example output:
@@ -47,7 +47,7 @@ Key metrics to watch:
 cargo build --profile profiling
 
 # Record performance data
-perf record -g ./target/profiling/typescript-eval-runner examples/memory-management/gc-no-cycles.ts
+perf record -g ./target/profiling/tsrun examples/memory-management/gc-no-cycles.ts
 
 # View flat profile (top functions by self time)
 perf report --stdio --sort=symbol --no-children | head -50
@@ -61,7 +61,7 @@ perf report --stdio --sort=symbol | head -80
 ```bash
 # Get detailed CPU statistics
 perf stat -e cycles,instructions,cache-references,cache-misses \
-    ./target/profiling/typescript-eval-runner examples/memory-management/gc-no-cycles.ts
+    ./target/profiling/tsrun examples/memory-management/gc-no-cycles.ts
 ```
 
 Example output:
@@ -85,7 +85,7 @@ Flamegraphs provide a visual representation of where time is spent:
 cargo install flamegraph
 
 # Generate flamegraph (requires profiling build for good symbols)
-cargo flamegraph --profile profiling --bin typescript-eval-runner \
+cargo flamegraph --profile profiling --bin tsrun \
     -o flamegraph.svg -- examples/memory-management/gc-no-cycles.ts
 
 # Open in browser
@@ -101,12 +101,12 @@ From profiling `gc-no-cycles.ts` (50K iterations, 150K objects):
 ```
 # Overhead  Symbol
 # ........  .......................................
-    20.82%  typescript_eval::interpreter::bytecode_vm::BytecodeVM::run
-     8.79%  typescript_eval::interpreter::bytecode_vm::BytecodeVM::execute_op
-     8.67%  typescript_eval::interpreter::Interpreter::env_get
-     5.10%  typescript_eval::gc::Guard<T>::alloc
-     4.41%  typescript_eval::value::PropertyStorage::iter
-     4.12%  typescript_eval::interpreter::bytecode_vm::BytecodeVM::set_reg
+    20.82%  tsrun::interpreter::bytecode_vm::BytecodeVM::run
+     8.79%  tsrun::interpreter::bytecode_vm::BytecodeVM::execute_op
+     8.67%  tsrun::interpreter::Interpreter::env_get
+     5.10%  tsrun::gc::Guard<T>::alloc
+     4.41%  tsrun::value::PropertyStorage::iter
+     4.12%  tsrun::interpreter::bytecode_vm::BytecodeVM::set_reg
      3.58%  core::ptr::drop_in_place<Rc<RefCell<Space>>>
      2.83%  <PropertyStorageIter as Iterator>::next
      2.38%  alloc::vec::Vec<T,A>::push
@@ -138,7 +138,7 @@ sudo cpupower frequency-set --governor performance
 
 # Run multiple times and take the median
 for i in {1..5}; do
-    /usr/bin/time -f "%e" ./target/release/typescript-eval-runner \
+    /usr/bin/time -f "%e" ./target/release/tsrun \
         examples/memory-management/gc-no-cycles.ts 2>&1 | tail -1
 done
 ```
@@ -149,13 +149,13 @@ done
 # Save baseline
 git stash  # or checkout baseline commit
 cargo build --release
-/usr/bin/time -v ./target/release/typescript-eval-runner \
+/usr/bin/time -v ./target/release/tsrun \
     examples/memory-management/gc-no-cycles.ts 2>&1 | tee baseline.txt
 
 # Apply changes
 git stash pop  # or checkout new commit
 cargo build --release
-/usr/bin/time -v ./target/release/typescript-eval-runner \
+/usr/bin/time -v ./target/release/tsrun \
     examples/memory-management/gc-no-cycles.ts 2>&1 | tee optimized.txt
 
 # Compare
@@ -185,11 +185,11 @@ cargo build
 
 # Check for memory leaks
 valgrind --leak-check=full \
-    ./target/debug/typescript-eval-runner examples/memory-management/gc-no-cycles.ts
+    ./target/debug/tsrun examples/memory-management/gc-no-cycles.ts
 
 # Profile memory allocation patterns
 valgrind --tool=massif \
-    ./target/debug/typescript-eval-runner examples/memory-management/gc-no-cycles.ts
+    ./target/debug/tsrun examples/memory-management/gc-no-cycles.ts
 
 # View massif output
 ms_print massif.out.*
@@ -235,7 +235,7 @@ The flat memory profile confirms GC is working - 150K objects created but peak s
 ```bash
 # Create a test that only parses (no execution)
 cat > /tmp/parse-only.rs << 'EOF'
-use typescript_eval::parser::parse;
+use tsrun::parser::parse;
 use std::fs;
 
 fn main() {
@@ -260,7 +260,7 @@ for (let i = 0; i < 100000; i++) {
 EOF
 
 cargo build --profile profiling
-perf record -g ./target/profiling/typescript-eval-runner /tmp/test.ts
+perf record -g ./target/profiling/tsrun /tmp/test.ts
 perf report --stdio
 ```
 
@@ -295,7 +295,7 @@ Add performance tests to CI:
 # In CI script
 cargo build --release
 BASELINE=0.10  # seconds (gc-no-cycles.ts baseline)
-ACTUAL=$(/usr/bin/time -f "%e" ./target/release/typescript-eval-runner \
+ACTUAL=$(/usr/bin/time -f "%e" ./target/release/tsrun \
     examples/memory-management/gc-no-cycles.ts 2>&1)
 
 if (( $(echo "$ACTUAL > $BASELINE * 1.2" | bc -l) )); then
@@ -470,13 +470,13 @@ cargo install hyperfine
 # Compare two versions
 git stash
 cargo build --release
-cp target/release/typescript-eval-runner /tmp/baseline
+cp target/release/tsrun /tmp/baseline
 
 git stash pop
 cargo build --release
 
 hyperfine \
     '/tmp/baseline examples/memory-management/gc-no-cycles.ts' \
-    './target/release/typescript-eval-runner examples/memory-management/gc-no-cycles.ts' \
+    './target/release/tsrun examples/memory-management/gc-no-cycles.ts' \
     --warmup 3
 ```

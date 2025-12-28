@@ -5,7 +5,7 @@
 //! using the __order__ syscall from eval:internal.
 
 use serde_json::json;
-use typescript_eval::{
+use tsrun::{
     interpreter::builtins::create_eval_internal_module, value::PropertyKey, InternalModule,
     JsString, JsValue, OrderId, OrderResponse, Runtime, RuntimeConfig, RuntimeResult, RuntimeValue,
 };
@@ -1118,7 +1118,10 @@ fn test_host_create_and_resolve_promise() {
     let RuntimeResult::Complete(final_value) = result3 else {
         panic!("Expected Complete after resolving Promise");
     };
-    assert_eq!(*final_value, JsValue::String("Got: Hello from host!".into()));
+    assert_eq!(
+        *final_value,
+        JsValue::String("Got: Hello from host!".into())
+    );
 }
 
 #[test]
@@ -1723,7 +1726,10 @@ fn test_promise_race_cancels_losing_order() {
 
     // Resolve promise1 first - it wins, promise2's order should be cancelled
     let result = runtime
-        .resolve_promise(&promise1, RuntimeValue::unguarded(JsValue::String("first".into())))
+        .resolve_promise(
+            &promise1,
+            RuntimeValue::unguarded(JsValue::String("first".into())),
+        )
         .unwrap();
 
     // Check that the result includes cancelled order
@@ -1799,7 +1805,10 @@ fn test_promise_race_second_wins_cancels_first() {
 
     // Resolve promise2 first - it wins, promise1's order should be cancelled
     let result = runtime
-        .resolve_promise(&promise2, RuntimeValue::unguarded(JsValue::String("second".into())))
+        .resolve_promise(
+            &promise2,
+            RuntimeValue::unguarded(JsValue::String("second".into())),
+        )
         .unwrap();
 
     match result {
@@ -1859,7 +1868,10 @@ fn test_promise_rejection_signals_cancelled_order() {
 
     // Reject the Promise - its order should be cancelled
     let result = runtime
-        .reject_promise(&promise, RuntimeValue::unguarded(JsValue::String("error".into())))
+        .reject_promise(
+            &promise,
+            RuntimeValue::unguarded(JsValue::String("error".into())),
+        )
         .unwrap();
 
     match result {

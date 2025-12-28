@@ -1,7 +1,7 @@
 //! Date-related tests
 
 use super::eval;
-use typescript_eval::JsValue;
+use tsrun::JsValue;
 
 #[test]
 fn test_date_now() {

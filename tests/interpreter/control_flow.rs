@@ -1,7 +1,7 @@
 //! Control flow tests: if/else, switch, loops, break/continue, try/catch, throw
 
 use super::{eval, eval_result, throws_error};
-use typescript_eval::JsValue;
+use tsrun::JsValue;
 
 // =============================================================================
 // PHASE 1: Basic Control Flow
@@ -2839,7 +2839,7 @@ fn test_nested_blocks_outer_var_visible_after() {
 #[test]
 fn test_block_var_not_visible_after() {
     // Block-scoped var should throw ReferenceError after block
-    use typescript_eval::Runtime;
+    use tsrun::Runtime;
     let mut runtime = Runtime::new();
     let result = runtime.eval(
         r#"
@@ -2858,7 +2858,7 @@ fn test_block_var_not_visible_after() {
 #[test]
 fn test_nested_block_outer_var_not_visible_after_both() {
     // After nested blocks, outer block var should NOT be visible
-    use typescript_eval::Runtime;
+    use tsrun::Runtime;
     let mut runtime = Runtime::new();
     let result = runtime.eval(
         r#"

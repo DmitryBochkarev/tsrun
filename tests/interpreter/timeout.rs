@@ -1,6 +1,6 @@
 //! Tests for execution timeout functionality
 
-use typescript_eval::{JsError, Runtime, RuntimeResult};
+use tsrun::{JsError, Runtime, RuntimeResult};
 
 #[test]
 fn test_timeout_while_loop() {

@@ -1,6 +1,6 @@
-//! CLI tool for running TypeScript files using typescript-eval
+//! CLI tool for running TypeScript files using tsrun
 //!
-//! Usage: typescript-eval-runner <entry-point.ts>
+//! Usage: tsrun <entry-point.ts>
 //!
 //! Supports static imports - modules are resolved relative to the importing file.
 //! Nested imports are supported.
@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
-use typescript_eval::{JsValue, ModulePath, Runtime, RuntimeResult};
+use tsrun::{JsValue, ModulePath, Runtime, RuntimeResult};
 
 fn main() {
     if let Err(e) = run() {
@@ -26,8 +26,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         None => {
             eprintln!(
                 "Usage: {} <entry-point.ts>",
-                args.first()
-                    .map_or("typescript-eval-runner", |s| s.as_str())
+                args.first().map_or("tsrun", |s| s.as_str())
             );
             std::process::exit(1);
         }
@@ -266,7 +265,7 @@ fn value_to_json(value: &JsValue) -> Result<serde_json::Value, &'static str> {
             // Regular object
             let mut map = serde_json::Map::new();
             for (key, prop) in borrowed.properties.iter() {
-                if let typescript_eval::value::PropertyKey::String(s) = key {
+                if let tsrun::value::PropertyKey::String(s) = key {
                     map.insert(s.to_string(), value_to_json(&prop.value)?);
                 }
             }

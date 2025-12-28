@@ -5,7 +5,7 @@
 //! Types are parsed but stripped at runtime (not type-checked).
 
 use super::eval;
-use typescript_eval::JsValue;
+use tsrun::JsValue;
 
 // ============================================================================
 // Type Annotations - Basic Types
