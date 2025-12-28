@@ -10,6 +10,7 @@
 //! assert_eq!(result, JsValue::Number(7.0));
 //! ```
 
+pub mod api;
 pub mod ast;
 pub mod compiler;
 pub mod error;
@@ -132,6 +133,141 @@ impl RuntimeValue {
     // extract the value without the guard. The guard must stay alive as long
     // as the value is in use. If you need to pass the value somewhere, pass
     // the entire RuntimeValue and let the receiver access it via .value().
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // Type Check Delegation Methods
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    /// Check if this is undefined
+    pub fn is_undefined(&self) -> bool {
+        self.value.is_undefined()
+    }
+
+    /// Check if this is null
+    pub fn is_null(&self) -> bool {
+        self.value.is_null()
+    }
+
+    /// Check if this is null or undefined
+    pub fn is_nullish(&self) -> bool {
+        self.value.is_nullish()
+    }
+
+    /// Check if this is a boolean
+    pub fn is_boolean(&self) -> bool {
+        self.value.is_boolean()
+    }
+
+    /// Check if this is a number
+    pub fn is_number(&self) -> bool {
+        self.value.is_number()
+    }
+
+    /// Check if this is a string
+    pub fn is_string(&self) -> bool {
+        self.value.is_string()
+    }
+
+    /// Check if this is an object
+    pub fn is_object(&self) -> bool {
+        self.value.is_object()
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // Value Extraction Delegation Methods
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    /// Returns the boolean value if this is a Boolean, otherwise None
+    pub fn as_bool(&self) -> Option<bool> {
+        self.value.as_bool()
+    }
+
+    /// Returns the numeric value if this is a Number, otherwise None
+    pub fn as_number(&self) -> Option<f64> {
+        self.value.as_number()
+    }
+
+    /// Returns the string slice if this is a String, otherwise None
+    pub fn as_str(&self) -> Option<&str> {
+        self.value.as_str()
+    }
+
+    /// Returns a string describing the type of this value
+    pub fn type_name(&self) -> &'static str {
+        self.value.type_name()
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // Array Inspection Methods (primitives only - complex values go through Runtime)
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    /// Get the length of an array.
+    ///
+    /// Returns `None` if this is not an array.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let arr = runtime.create_from_json(&json!([1, 2, 3, 4, 5]))?;
+    /// assert_eq!(arr.len(), Some(5));
+    /// ```
+    pub fn len(&self) -> Option<usize> {
+        let obj = self.value.as_object()?;
+        let borrowed = obj.borrow();
+        borrowed.array_length().map(|l| l as usize)
+    }
+
+    /// Check if the array is empty.
+    ///
+    /// Returns `None` if this is not an array.
+    pub fn is_empty(&self) -> Option<bool> {
+        self.len().map(|l| l == 0)
+    }
+
+    /// Check if this value is an array.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let arr = runtime.create_from_json(&json!([1, 2, 3]))?;
+    /// let obj = runtime.create_from_json(&json!({"x": 1}))?;
+    /// assert!(arr.is_array());
+    /// assert!(!obj.is_array());
+    /// ```
+    pub fn is_array(&self) -> bool {
+        if let Some(obj) = self.value.as_object() {
+            let borrowed = obj.borrow();
+            borrowed.array_length().is_some()
+        } else {
+            false
+        }
+    }
+
+    /// Get all property keys of an object.
+    ///
+    /// Returns an empty vector if this is not an object.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let obj = runtime.create_from_json(&json!({"a": 1, "b": 2}))?;
+    /// let keys = obj.keys();
+    /// assert!(keys.contains(&"a".to_string()));
+    /// assert!(keys.contains(&"b".to_string()));
+    /// ```
+    pub fn keys(&self) -> Vec<String> {
+        if let Some(obj) = self.value.as_object() {
+            let borrowed = obj.borrow();
+            borrowed
+                .properties
+                .keys()
+                .filter_map(|k| match k {
+                    value::PropertyKey::String(s) => Some(s.to_string()),
+                    value::PropertyKey::Index(i) => Some(i.to_string()),
+                    value::PropertyKey::Symbol(_) => None,
+                })
+                .collect()
+        } else {
+            Vec::new()
+        }
+    }
 }
 
 impl std::ops::Deref for RuntimeValue {
@@ -148,6 +284,12 @@ impl std::fmt::Debug for RuntimeValue {
             .field("value", &self.value)
             .field("guarded", &self._guard.is_some())
             .finish()
+    }
+}
+
+impl std::fmt::Display for RuntimeValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&self.value, f)
     }
 }
 

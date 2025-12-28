@@ -365,6 +365,97 @@ impl JsValue {
         matches!(self, JsValue::String(_))
     }
 
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // Type Check Methods
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    /// Check if this is undefined
+    pub fn is_undefined(&self) -> bool {
+        matches!(self, JsValue::Undefined)
+    }
+
+    /// Check if this is null
+    pub fn is_null(&self) -> bool {
+        matches!(self, JsValue::Null)
+    }
+
+    /// Check if this is null or undefined (alias for is_null_or_undefined)
+    pub fn is_nullish(&self) -> bool {
+        matches!(self, JsValue::Null | JsValue::Undefined)
+    }
+
+    /// Check if this is a boolean
+    pub fn is_boolean(&self) -> bool {
+        matches!(self, JsValue::Boolean(_))
+    }
+
+    /// Check if this is a number
+    pub fn is_number(&self) -> bool {
+        matches!(self, JsValue::Number(_))
+    }
+
+    /// Check if this is an object
+    pub fn is_object(&self) -> bool {
+        matches!(self, JsValue::Object(_))
+    }
+
+    /// Check if this is a symbol
+    pub fn is_symbol(&self) -> bool {
+        matches!(self, JsValue::Symbol(_))
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // Value Extraction Methods
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    /// Returns the boolean value if this is a Boolean, otherwise None
+    pub fn as_bool(&self) -> Option<bool> {
+        match self {
+            JsValue::Boolean(b) => Some(*b),
+            _ => None,
+        }
+    }
+
+    /// Returns the numeric value if this is a Number, otherwise None
+    pub fn as_number(&self) -> Option<f64> {
+        match self {
+            JsValue::Number(n) => Some(*n),
+            _ => None,
+        }
+    }
+
+    /// Returns the string slice if this is a String, otherwise None
+    pub fn as_str(&self) -> Option<&str> {
+        match self {
+            JsValue::String(s) => Some(s.as_str()),
+            _ => None,
+        }
+    }
+
+    /// Returns a reference to the JsString if this is a String, otherwise None
+    pub fn as_js_string(&self) -> Option<&JsString> {
+        match self {
+            JsValue::String(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    /// Returns a reference to the object if this is an Object, otherwise None
+    pub fn as_object(&self) -> Option<&Gc<JsObject>> {
+        match self {
+            JsValue::Object(obj) => Some(obj),
+            _ => None,
+        }
+    }
+
+    /// Returns a reference to the symbol if this is a Symbol, otherwise None
+    pub fn as_symbol(&self) -> Option<&JsSymbol> {
+        match self {
+            JsValue::Symbol(s) => Some(s),
+            _ => None,
+        }
+    }
+
     /// If this value is an object, add it to the guard.
     /// This keeps the object alive as long as the guard exists.
     pub fn guard_by(&self, guard: &Guard<JsObject>) {
@@ -513,6 +604,23 @@ fn format_value_for_debug(value: &JsValue) -> String {
     }
 }
 
+impl fmt::Display for JsValue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            JsValue::Undefined => write!(f, "undefined"),
+            JsValue::Null => write!(f, "null"),
+            JsValue::Boolean(b) => write!(f, "{}", b),
+            JsValue::Number(n) => write!(f, "{}", number_to_string(*n)),
+            JsValue::String(s) => write!(f, "{}", s.as_str()),
+            JsValue::Symbol(s) => match &s.description {
+                Some(desc) => write!(f, "Symbol({})", desc.as_str()),
+                None => write!(f, "Symbol()"),
+            },
+            JsValue::Object(_) => write!(f, "[object Object]"),
+        }
+    }
+}
+
 impl fmt::Debug for JsValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -617,6 +725,36 @@ impl From<i32> for JsValue {
     }
 }
 
+impl From<i64> for JsValue {
+    fn from(n: i64) -> Self {
+        JsValue::Number(n as f64)
+    }
+}
+
+impl From<u32> for JsValue {
+    fn from(n: u32) -> Self {
+        JsValue::Number(n as f64)
+    }
+}
+
+impl From<u64> for JsValue {
+    fn from(n: u64) -> Self {
+        JsValue::Number(n as f64)
+    }
+}
+
+impl From<usize> for JsValue {
+    fn from(n: usize) -> Self {
+        JsValue::Number(n as f64)
+    }
+}
+
+impl From<()> for JsValue {
+    fn from(_: ()) -> Self {
+        JsValue::Undefined
+    }
+}
+
 impl From<&str> for JsValue {
     fn from(s: &str) -> Self {
         JsValue::String(JsString::from(s))
@@ -632,6 +770,21 @@ impl From<String> for JsValue {
 impl From<JsString> for JsValue {
     fn from(s: JsString) -> Self {
         JsValue::String(s)
+    }
+}
+
+impl JsValue {
+    /// Returns a string describing the type of this value
+    pub fn type_name(&self) -> &'static str {
+        match self {
+            JsValue::Undefined => "undefined",
+            JsValue::Null => "null",
+            JsValue::Boolean(_) => "boolean",
+            JsValue::Number(_) => "number",
+            JsValue::String(_) => "string",
+            JsValue::Symbol(_) => "symbol",
+            JsValue::Object(_) => "object",
+        }
     }
 }
 

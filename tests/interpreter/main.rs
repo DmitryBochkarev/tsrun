@@ -16,6 +16,7 @@
 //! MAX_CALL_DEPTH=256 cargo test        # Higher recursion limit
 //! ```
 
+mod api;
 mod array;
 mod async_await;
 mod async_iter;
