@@ -1071,6 +1071,12 @@ impl Compiler {
         // Create a new compiler for the function body
         let mut func_compiler = Compiler::new();
 
+        // Propagate source file for stack traces
+        func_compiler.source_file = self.source_file.clone();
+        if let Some(ref path) = self.source_file {
+            func_compiler.builder.set_source_file(path.clone());
+        }
+
         // Copy class context so private members can be accessed inside nested functions
         func_compiler.class_context_stack = self.class_context_stack.clone();
 

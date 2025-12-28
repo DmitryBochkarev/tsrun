@@ -59,8 +59,11 @@ pub enum JsError {
         location: SourceLocation,
     },
 
-    #[error("TypeError: {message}")]
-    TypeError { message: String },
+    #[error("TypeError: {message}{}", format_location(.location))]
+    TypeError {
+        message: String,
+        location: Option<SourceLocation>,
+    },
 
     #[error("ReferenceError: {name} is not defined")]
     ReferenceError { name: String },
@@ -112,6 +115,13 @@ fn format_stack(stack: &[StackFrame]) -> String {
         .join("\n")
 }
 
+fn format_location(location: &Option<SourceLocation>) -> String {
+    match location {
+        Some(loc) => format!(" at {}", loc),
+        None => String::new(),
+    }
+}
+
 impl JsError {
     pub fn syntax_error(message: impl Into<String>, line: u32, column: u32) -> Self {
         JsError::SyntaxError {
@@ -141,6 +151,19 @@ impl JsError {
     pub fn type_error(message: impl Into<String>) -> Self {
         JsError::TypeError {
             message: message.into(),
+            location: None,
+        }
+    }
+
+    pub fn type_error_at(message: impl Into<String>, line: u32, column: u32) -> Self {
+        JsError::TypeError {
+            message: message.into(),
+            location: Some(SourceLocation {
+                file: None,
+                line,
+                column,
+                length: 1,
+            }),
         }
     }
 
@@ -174,6 +197,7 @@ impl JsError {
     pub fn internal_error(message: impl Into<String>) -> Self {
         JsError::TypeError {
             message: format!("Internal error: {}", message.into()),
+            location: None,
         }
     }
 
@@ -187,7 +211,7 @@ impl JsError {
         match self {
             JsError::ThrownValue { guarded } => guarded.value.clone(),
             JsError::GeneratorYield { guarded } => guarded.value.clone(),
-            JsError::TypeError { message } => crate::value::JsValue::String(
+            JsError::TypeError { message, .. } => crate::value::JsValue::String(
                 crate::value::JsString::from(format!("TypeError: {}", message)),
             ),
             JsError::ReferenceError { name } => crate::value::JsValue::String(

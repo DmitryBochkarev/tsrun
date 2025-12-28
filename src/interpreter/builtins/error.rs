@@ -373,7 +373,7 @@ pub fn create_error_object(
     let guard = interp.heap.create_guard();
 
     let (prototype, name, message) = match error {
-        JsError::TypeError { message } => (
+        JsError::TypeError { message, .. } => (
             interp.type_error_prototype.clone(),
             "TypeError",
             message.clone(),

@@ -18,6 +18,13 @@ pub fn init_global_functions(interp: &mut Interpreter) {
     interp
         .global
         .borrow_mut()
+        .set_property(key, JsValue::Object(global_clone.clone()));
+
+    // global - Node.js-style alias for globalThis (needed for lodash compatibility)
+    let key = PropertyKey::String(interp.intern("global"));
+    interp
+        .global
+        .borrow_mut()
         .set_property(key, JsValue::Object(global_clone));
 
     // parseInt

@@ -185,9 +185,43 @@ impl<'a> Parser<'a> {
             // Module declarations
             TokenKind::Import => Ok(Statement::Import(Box::new(self.parse_import()?))),
             TokenKind::Export => Ok(Statement::Export(Box::new(self.parse_export()?))),
-            TokenKind::Namespace | TokenKind::Module => Ok(Statement::NamespaceDeclaration(
-                Box::new(self.parse_namespace()?),
-            )),
+            TokenKind::Namespace | TokenKind::Module => {
+                // Check if this is a namespace declaration or an expression
+                // namespace Foo { ... } vs module(arg) or namespace.prop
+                let checkpoint = self.lexer.checkpoint();
+                let saved = self.current.clone();
+                self.advance(); // consume namespace/module
+
+                let is_declaration = if self.check_identifier() {
+                    // Check if next is { (namespace declaration) or something else
+                    let saved2 = self.current.clone();
+                    self.advance();
+                    let result = self.check(&TokenKind::LBrace);
+                    self.current = saved2;
+                    result
+                } else {
+                    false
+                };
+
+                // Restore position
+                self.lexer.restore(checkpoint);
+                self.current = saved;
+
+                if is_declaration {
+                    Ok(Statement::NamespaceDeclaration(
+                        Box::new(self.parse_namespace()?),
+                    ))
+                } else {
+                    // Parse as expression statement (module() or namespace.something)
+                    let expr = self.parse_expression()?;
+                    self.expect_semicolon()?;
+                    let span = expr.span();
+                    Ok(Statement::Expression(ExpressionStatement {
+                        expression: Rc::new(expr),
+                        span,
+                    }))
+                }
+            }
             _ => {
                 // Expression statement
                 let expr = self.parse_expression()?;
@@ -266,6 +300,8 @@ impl<'a> Parser<'a> {
             | TokenKind::From
             | TokenKind::As
             | TokenKind::Of
+            | TokenKind::Namespace
+            | TokenKind::Module
             | TokenKind::Any
             | TokenKind::Unknown
             | TokenKind::Never
@@ -1568,9 +1604,10 @@ impl<'a> Parser<'a> {
 
             while !self.check(&TokenKind::RBrace) && !self.is_at_end() {
                 let spec_start = self.current.span;
-                let local = self.parse_identifier()?;
+                // In export specifiers, 'default' is allowed as a name
+                let local = self.parse_module_export_name()?;
                 let exported = if self.match_token(&TokenKind::As) {
-                    self.parse_identifier()?
+                    self.parse_module_export_name()?
                 } else {
                     local.clone()
                 };
@@ -2279,6 +2316,8 @@ impl<'a> Parser<'a> {
             | TokenKind::From
             | TokenKind::As
             | TokenKind::Of
+            | TokenKind::Namespace
+            | TokenKind::Module
             | TokenKind::Any
             | TokenKind::Unknown
             | TokenKind::Never
@@ -2589,15 +2628,54 @@ impl<'a> Parser<'a> {
 
         // Try to parse as arrow function params (with type annotations)
         if let Ok(params) = self.try_parse_arrow_params() {
-            // Check for return type annotation or arrow
-            if self.check(&TokenKind::Colon) || self.check(&TokenKind::Arrow) {
+            // Arrow immediately after ) -> definitely arrow function
+            if self.check(&TokenKind::Arrow) {
                 return self.parse_arrow_function_from_params(params, start);
             }
 
             // If we have type annotations in params, it must be an arrow function
             let has_type_annotations = params.iter().any(|p| p.type_annotation.is_some());
             if has_type_annotations {
+                // Try to parse return type annotation
+                if self.check(&TokenKind::Colon) {
+                    // Save position to rollback if this isn't an arrow function
+                    let type_checkpoint = self.lexer.checkpoint();
+                    let type_saved_current = self.current.clone();
+
+                    self.advance(); // consume ':'
+                    if let Ok(_type_ann) = self.parse_type_annotation() {
+                        if self.check(&TokenKind::Arrow) {
+                            // Restore and let parse_arrow_function_from_params handle it
+                            self.lexer.restore(type_checkpoint);
+                            self.current = type_saved_current;
+                            return self.parse_arrow_function_from_params(params, start);
+                        }
+                    }
+                    // Not an arrow function, rollback
+                    self.lexer.restore(type_checkpoint);
+                    self.current = type_saved_current;
+                }
                 return Err(self.unexpected_token("'=>'"));
+            }
+
+            // Colon after ) could be return type or ternary operator
+            // Only treat as arrow function if we see => after the type
+            if self.check(&TokenKind::Colon) {
+                let type_checkpoint = self.lexer.checkpoint();
+                let type_saved_current = self.current.clone();
+
+                self.advance(); // consume ':'
+                if let Ok(_type_ann) = self.parse_type_annotation() {
+                    if self.check(&TokenKind::Arrow) {
+                        // Restore and let parse_arrow_function_from_params handle it
+                        self.lexer.restore(type_checkpoint);
+                        self.current = type_saved_current;
+                        return self.parse_arrow_function_from_params(params, start);
+                    }
+                }
+                // Not an arrow function (could be ternary), rollback
+                self.lexer.restore(type_checkpoint);
+                self.current = type_saved_current;
             }
 
             // No arrow - might be parenthesized expression, rollback and re-parse
@@ -4012,6 +4090,8 @@ impl<'a> Parser<'a> {
             | TokenKind::From
             | TokenKind::As
             | TokenKind::Of
+            | TokenKind::Namespace
+            | TokenKind::Module
             // TypeScript type keywords (valid as property names)
             | TokenKind::Any
             | TokenKind::Unknown
@@ -4028,6 +4108,20 @@ impl<'a> Parser<'a> {
             }
             _ => Err(self.unexpected_token("identifier")),
         }
+    }
+
+    /// Parse a ModuleExportName - used in import/export specifiers.
+    /// This allows 'default' as a valid name (e.g., `export { default as foo }`)
+    fn parse_module_export_name(&mut self) -> Result<Identifier, JsError> {
+        // 'default' is allowed as a module export name
+        if self.check(&TokenKind::Default) {
+            let name = self.intern("default");
+            let span = self.current.span;
+            self.advance();
+            return Ok(Identifier { name, span });
+        }
+        // Otherwise, parse as a regular identifier
+        self.parse_identifier()
     }
 
     /// Parse a private identifier (after `#` token has been consumed).
@@ -4063,6 +4157,8 @@ impl<'a> Parser<'a> {
                 | TokenKind::From
                 | TokenKind::As
                 | TokenKind::Of
+                | TokenKind::Namespace
+                | TokenKind::Module
                 | TokenKind::Any
                 | TokenKind::Unknown
                 | TokenKind::Never
@@ -4308,6 +4404,21 @@ impl<'a> Parser<'a> {
                 | TokenKind::Interface
                 | TokenKind::Enum
                 | TokenKind::Accessor
+                | TokenKind::Namespace
+                | TokenKind::Module
+                | TokenKind::Private
+                | TokenKind::Public
+                | TokenKind::Protected
+                | TokenKind::Readonly
+                | TokenKind::Declare
+                | TokenKind::Implements
+                | TokenKind::Any
+                | TokenKind::Unknown
+                | TokenKind::Never
+                | TokenKind::Keyof
+                | TokenKind::Infer
+                | TokenKind::Is
+                | TokenKind::Asserts
                 // Literals that can be used as property names
                 | TokenKind::True
                 | TokenKind::False
@@ -4383,6 +4494,7 @@ impl<'a> Parser<'a> {
             TokenKind::Super => "super",
             TokenKind::Async => "async",
             TokenKind::Namespace => "namespace",
+            TokenKind::Module => "module",
             TokenKind::Private => "private",
             TokenKind::Public => "public",
             TokenKind::Protected => "protected",

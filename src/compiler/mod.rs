@@ -54,6 +54,9 @@ pub struct Compiler {
     /// Whether to track completion values (for eval)
     /// When true, register 0 is reserved for the completion value
     track_completion: bool,
+
+    /// Source file path for stack traces (propagated to all nested chunks)
+    source_file: Option<std::path::PathBuf>,
 }
 
 /// Context for a class being compiled (for private field handling)
@@ -105,7 +108,16 @@ impl Compiler {
             class_context_stack: Vec::new(),
             next_class_brand: 0,
             track_completion: false,
+            source_file: None,
         }
+    }
+
+    /// Create a new compiler with a source file path for stack traces
+    pub fn with_source_file(source_file: std::path::PathBuf) -> Self {
+        let mut compiler = Self::new();
+        compiler.source_file = Some(source_file.clone());
+        compiler.builder.set_source_file(source_file);
+        compiler
     }
 
     /// Create a new compiler with completion value tracking enabled (for eval)
@@ -146,6 +158,22 @@ impl Compiler {
     /// Compile a program to bytecode
     pub fn compile_program(program: &Program) -> Result<Rc<BytecodeChunk>, JsError> {
         let mut compiler = Compiler::new();
+
+        // First, hoist all var declarations and function declarations to the top
+        compiler.emit_hoisted_declarations(&program.body)?;
+
+        // Then compile the statements
+        compiler.compile_statements(&program.body)?;
+        compiler.builder.emit_halt();
+        Ok(Rc::new(compiler.builder.finish()))
+    }
+
+    /// Compile a program to bytecode with source file path for stack traces
+    pub fn compile_program_with_source(
+        program: &Program,
+        source_file: std::path::PathBuf,
+    ) -> Result<Rc<BytecodeChunk>, JsError> {
+        let mut compiler = Compiler::with_source_file(source_file);
 
         // First, hoist all var declarations and function declarations to the top
         compiler.emit_hoisted_declarations(&program.body)?;

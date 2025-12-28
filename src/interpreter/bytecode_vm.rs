@@ -4,7 +4,7 @@
 //! It uses a register-based design with up to 256 virtual registers per call frame.
 
 use crate::compiler::{BytecodeChunk, Constant, Op, Register};
-use crate::error::JsError;
+use crate::error::{JsError, StackFrame};
 use crate::gc::{Gc, Guard};
 use crate::value::{
     BytecodeFunction, CheapClone, ExoticObject, Guarded, JsFunction, JsObject, JsString, JsValue,
@@ -445,6 +445,96 @@ impl BytecodeVM {
         }
     }
 
+    /// Build a stack trace from the current VM state.
+    /// Returns a vector of StackFrame entries from innermost to outermost.
+    pub fn build_stack_trace(&self) -> Vec<StackFrame> {
+        let mut frames = Vec::new();
+
+        // Current frame (where the error occurred)
+        let current_ip = if self.ip > 0 { self.ip - 1 } else { 0 };
+        if let Some(span) = self.chunk.get_source_location(current_ip) {
+            let function_name = self
+                .chunk
+                .function_info
+                .as_ref()
+                .and_then(|info| info.name.as_ref().map(|s| s.to_string()));
+            frames.push(StackFrame {
+                function_name,
+                file: self.chunk.source_file.clone(),
+                line: span.line,
+                column: span.column,
+            });
+        }
+
+        // Frames from the trampoline stack (outer call frames)
+        for tramp_frame in self.trampoline_stack.iter().rev() {
+            let frame_ip = if tramp_frame.ip > 0 {
+                tramp_frame.ip - 1
+            } else {
+                0
+            };
+            if let Some(span) = tramp_frame.chunk.get_source_location(frame_ip) {
+                let function_name = tramp_frame
+                    .chunk
+                    .function_info
+                    .as_ref()
+                    .and_then(|info| info.name.as_ref().map(|s| s.to_string()));
+                frames.push(StackFrame {
+                    function_name,
+                    file: tramp_frame.chunk.source_file.clone(),
+                    line: span.line,
+                    column: span.column,
+                });
+            }
+        }
+
+        frames
+    }
+
+    /// Wrap a JsError with stack trace information.
+    /// Converts simple errors (TypeError, ReferenceError, etc.) into RuntimeError with backtrace.
+    pub fn wrap_error_with_trace(&self, error: JsError) -> JsError {
+        // Only wrap errors that don't already have a stack trace
+        match &error {
+            JsError::RuntimeError { .. } => error, // Already has stack
+            JsError::Thrown | JsError::ThrownValue { .. } => error, // User-thrown, handled separately
+            JsError::GeneratorYield { .. } => error, // Not a real error
+            JsError::OptionalChainShortCircuit => error, // Not a real error
+            _ => {
+                let stack = self.build_stack_trace();
+                let (kind, message) = match &error {
+                    JsError::TypeError { message, .. } => ("TypeError".to_string(), message.clone()),
+                    JsError::ReferenceError { name } => {
+                        ("ReferenceError".to_string(), format!("{} is not defined", name))
+                    }
+                    JsError::RangeError { message } => ("RangeError".to_string(), message.clone()),
+                    JsError::SyntaxError { message, .. } => {
+                        ("SyntaxError".to_string(), message.clone())
+                    }
+                    JsError::ModuleError { message } => ("ModuleError".to_string(), message.clone()),
+                    JsError::Internal(msg) => ("InternalError".to_string(), msg.clone()),
+                    JsError::Timeout {
+                        timeout_ms,
+                        elapsed_ms,
+                    } => (
+                        "TimeoutError".to_string(),
+                        format!(
+                            "execution exceeded {}ms timeout (limit: {}ms)",
+                            elapsed_ms, timeout_ms
+                        ),
+                    ),
+                    // Already handled above
+                    _ => return error,
+                };
+                JsError::RuntimeError {
+                    kind,
+                    message,
+                    stack,
+                }
+            }
+        }
+    }
+
     /// Get register value
     #[inline]
     fn get_reg(&self, r: Register) -> &JsValue {
@@ -585,7 +675,7 @@ impl BytecodeVM {
         loop {
             // Check timeout periodically
             if let Err(e) = interp.check_timeout() {
-                return VmResult::Error(e);
+                return VmResult::Error(self.wrap_error_with_trace(e));
             }
 
             let Some(op) = self.fetch() else {
@@ -636,9 +726,9 @@ impl BytecodeVM {
                             resume_register,
                         });
                     } else {
-                        return VmResult::Error(JsError::internal_error(
+                        return VmResult::Error(self.wrap_error_with_trace(JsError::internal_error(
                             "Suspend expects an object",
-                        ));
+                        )));
                     }
                 }
                 Ok(OpResult::SuspendForOrder {
@@ -1573,10 +1663,14 @@ impl BytecodeVM {
         interp: &mut Interpreter,
         e: JsError,
     ) -> Result<(), JsError> {
+        // Capture stack trace BEFORE unwinding the trampoline stack
+        // This gives us the full call stack at the point of error
+        let wrapped_error = self.wrap_error_with_trace(e);
+
         // First check for handler in current frame
         if let Some(handler_ip) = self.find_exception_handler(interp) {
             self.ip = handler_ip;
-            self.exception_value = Some(self.error_to_guarded(interp, e));
+            self.exception_value = Some(self.error_to_guarded(interp, wrapped_error));
             return Ok(());
         }
 
@@ -1621,7 +1715,7 @@ impl BytecodeVM {
 
             // For async frames: convert error to rejected Promise instead of propagating
             if is_async_frame {
-                let error_guarded = self.error_to_guarded(interp, e);
+                let error_guarded = self.error_to_guarded(interp, wrapped_error);
                 let promise = super::builtins::promise::create_rejected_promise(
                     interp,
                     &self.register_guard,
@@ -1637,13 +1731,13 @@ impl BytecodeVM {
             // Check for exception handler in this frame
             if let Some(handler_ip) = self.find_exception_handler(interp) {
                 self.ip = handler_ip;
-                self.exception_value = Some(self.error_to_guarded(interp, e));
+                self.exception_value = Some(self.error_to_guarded(interp, wrapped_error));
                 return Ok(());
             }
         }
 
-        // No handler found - return the error back to caller
-        Err(e)
+        // No handler found - return the error back to caller with stack trace
+        Err(wrapped_error)
     }
 
     /// Save VM state for suspension

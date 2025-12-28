@@ -539,7 +539,11 @@ impl Interpreter {
         builtins::init_object_prototype(self);
         let object_constructor = builtins::create_object_constructor(self);
         let object_name = self.intern("Object");
-        self.env_define(object_name, JsValue::Object(object_constructor), false);
+        self.env_define(object_name.clone(), JsValue::Object(object_constructor.clone()), false);
+        // Also set on global object for lodash/Node.js compatibility
+        self.global
+            .borrow_mut()
+            .set_property(PropertyKey::String(object_name), JsValue::Object(object_constructor));
 
         // Initialize RegExp prototype and constructor
         builtins::init_regexp_prototype(self);
@@ -778,8 +782,12 @@ impl Interpreter {
         // Now compile to bytecode and execute
         self.start_execution();
 
-        // Compile the program to bytecode
-        let chunk = Compiler::compile_program(&program)?;
+        // Compile the program to bytecode (with source file for stack traces if available)
+        let chunk = if let Some(ref path) = module_path {
+            Compiler::compile_program_with_source(&program, std::path::PathBuf::from(path.as_str()))?
+        } else {
+            Compiler::compile_program(&program)?
+        };
 
         // Run the bytecode VM
         let vm_guard = self.heap.create_guard();
@@ -1296,8 +1304,12 @@ impl Interpreter {
             // Now compile to bytecode and execute
             self.start_execution();
 
-            // Compile the program to bytecode
-            let chunk = Compiler::compile_program(&program)?;
+            // Compile the program to bytecode (with source file for stack traces if available)
+            let chunk = if let Some(ref path) = self.main_module_path {
+                Compiler::compile_program_with_source(&program, std::path::PathBuf::from(path.as_str()))?
+            } else {
+                Compiler::compile_program(&program)?
+            };
 
             // Run the bytecode VM
             let vm_guard = self.heap.create_guard();
@@ -2714,7 +2726,12 @@ impl Interpreter {
     ) -> Result<JsValue, JsError> {
         use crate::compiler::Compiler;
 
-        let chunk = Compiler::compile_program(program)?;
+        // Use current module path for source file in stack traces
+        let chunk = if let Some(ref path) = self.current_module_path {
+            Compiler::compile_program_with_source(program, std::path::PathBuf::from(path.as_str()))?
+        } else {
+            Compiler::compile_program(program)?
+        };
         let result = self.run_bytecode(chunk)?;
         Ok(result.value)
     }

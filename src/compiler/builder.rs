@@ -148,6 +148,9 @@ pub struct BytecodeBuilder {
 
     /// Function info (if compiling a function)
     function_info: Option<FunctionInfo>,
+
+    /// Source file path (for stack traces)
+    source_file: Option<std::path::PathBuf>,
 }
 
 impl BytecodeBuilder {
@@ -162,6 +165,7 @@ impl BytecodeBuilder {
             registers: RegisterAllocator::new(),
             current_span: None,
             function_info: None,
+            source_file: None,
         }
     }
 
@@ -170,6 +174,16 @@ impl BytecodeBuilder {
         let mut builder = Self::new();
         builder.function_info = Some(info);
         builder
+    }
+
+    /// Set the source file path for stack traces
+    pub fn set_source_file(&mut self, path: std::path::PathBuf) {
+        self.source_file = Some(path);
+    }
+
+    /// Get the current source file path
+    pub fn source_file(&self) -> Option<&std::path::PathBuf> {
+        self.source_file.as_ref()
     }
 
     /// Get access to the register allocator
@@ -526,6 +540,7 @@ impl BytecodeBuilder {
             source_map: self.source_map,
             register_count: self.registers.max_used(),
             function_info: self.function_info,
+            source_file: self.source_file,
         }
     }
 

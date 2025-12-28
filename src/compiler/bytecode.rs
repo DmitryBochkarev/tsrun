@@ -861,6 +861,9 @@ pub struct BytecodeChunk {
 
     /// Function metadata (if this is a function body)
     pub function_info: Option<FunctionInfo>,
+
+    /// Source file path (for stack traces)
+    pub source_file: Option<std::path::PathBuf>,
 }
 
 /// Source map entry for debugging
@@ -941,6 +944,7 @@ impl BytecodeChunk {
             source_map: Vec::new(),
             register_count: 0,
             function_info: None,
+            source_file: None,
         }
     }
 

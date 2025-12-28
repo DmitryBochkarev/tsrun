@@ -27,6 +27,29 @@ fn main() {
     }
 }
 
+/// Format an error with file context and import chain
+fn format_error(
+    error: &str,
+    file: &str,
+    import_chain: &[(String, String)], // (importer, specifier)
+) -> String {
+    let mut msg = format!("{}\n\n  File: {}", error, file);
+
+    if !import_chain.is_empty() {
+        msg.push_str("\n\n  Import chain:");
+        for (i, (importer, specifier)) in import_chain.iter().enumerate() {
+            msg.push_str(&format!(
+                "\n    {}. {} imported '{}'",
+                i + 1,
+                importer,
+                specifier
+            ));
+        }
+    }
+
+    msg
+}
+
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
 
@@ -42,13 +65,22 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let entry_path = PathBuf::from(entry_arg);
+    // Make entry_path absolute for consistent path resolution
+    let entry_path = if entry_path.is_absolute() {
+        entry_path
+    } else {
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join(entry_path)
+    };
     let entry_dir = entry_path
         .parent()
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| PathBuf::from("."));
 
     // Rewrite imports in entry file to use canonical paths
-    let source = fs::read_to_string(&entry_path)?;
+    let source = fs::read_to_string(&entry_path)
+        .map_err(|e| format!("Cannot read {}: {}", entry_path.display(), e))?;
     let rewritten_source = rewrite_imports(&source, &entry_dir)?;
 
     let mut runtime = Runtime::new();
@@ -65,8 +97,26 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     // Track provided modules by resolved path to avoid reloading
     let mut provided: HashMap<ModulePath, PathBuf> = HashMap::new();
 
+    // Track import chain for error reporting: maps resolved_path -> (importer, specifier)
+    let mut import_chain: HashMap<String, (String, String)> = HashMap::new();
+
     // Start evaluation - may return NeedImports
-    let mut result = runtime.eval(&rewritten_source)?;
+    let entry_file = entry_path.display().to_string();
+    let mut result = runtime.eval_with_path(&rewritten_source, entry_file.clone()).map_err(|e| {
+        format_error(&e.to_string(), &entry_file, &[])
+    })?;
+
+    // Helper to build import chain from a file back to entry
+    let build_chain = |file: &str, chain_map: &HashMap<String, (String, String)>| -> Vec<(String, String)> {
+        let mut chain = Vec::new();
+        let mut current = file.to_string();
+        while let Some((importer, specifier)) = chain_map.get(&current) {
+            chain.push((importer.clone(), specifier.clone()));
+            current = importer.clone();
+        }
+        chain.reverse();
+        chain
+    };
 
     // Module loading loop
     loop {
@@ -82,6 +132,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                         continue;
                     }
 
+                    // Track the import chain
+                    let importer = req
+                        .importer
+                        .as_ref()
+                        .map(|p| p.as_str().to_string())
+                        .unwrap_or_else(|| entry_file.clone());
+
                     // Determine the canonical filesystem path
                     let canonical_path = if ModulePath::is_bare(&req.specifier) {
                         // Bare specifier (e.g., "lodash", "@scope/pkg") - resolve from node_modules
@@ -93,26 +150,46 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                             })
                             .unwrap_or_else(|| entry_dir.clone());
 
-                        resolve_node_module(&req.specifier, &start_dir)?
+                        resolve_node_module(&req.specifier, &start_dir).map_err(|e| {
+                            let chain = build_chain(&importer, &import_chain);
+                            format_error(&e.to_string(), &importer, &chain)
+                        })?
                     } else {
                         // Relative/absolute path - already resolved
                         PathBuf::from(req.resolved_path.as_str())
                     };
 
+                    let canonical_str = canonical_path.to_string_lossy().to_string();
+
+                    // Record this import for chain tracking
+                    import_chain.insert(
+                        canonical_str.clone(),
+                        (importer.clone(), req.specifier.clone()),
+                    );
+
                     // Load module from filesystem
-                    let canonical_str = canonical_path.to_string_lossy();
-                    let (module_source, module_dir) = load_module(&canonical_str)?;
+                    let (module_source, module_dir) = load_module(&canonical_str).map_err(|e| {
+                        let chain = build_chain(&canonical_str, &import_chain);
+                        format_error(&e.to_string(), &canonical_str, &chain)
+                    })?;
 
                     // Rewrite imports in this module to use canonical paths
                     let rewritten_module = rewrite_imports(&module_source, &module_dir)?;
 
                     // Provide to runtime using the resolved_path the runtime expects
-                    // (for bare specifiers, this is the bare specifier itself)
-                    runtime.provide_module(req.resolved_path.clone(), &rewritten_module)?;
+                    runtime
+                        .provide_module(req.resolved_path.clone(), &rewritten_module)
+                        .map_err(|e| {
+                            let chain = build_chain(&canonical_str, &import_chain);
+                            format_error(&e.to_string(), &canonical_str, &chain)
+                        })?;
                     provided.insert(req.resolved_path, module_dir);
                 }
                 // continue_eval will check for nested imports and return NeedImports again if needed
-                result = runtime.continue_eval()?;
+                result = runtime.continue_eval().map_err(|e| {
+                    // Runtime error - try to identify which module
+                    format!("{}", e)
+                })?;
             }
             RuntimeResult::Suspended { pending, .. } => {
                 // For now, we don't support async operations in the CLI
@@ -420,7 +497,12 @@ fn print_value(value: &JsValue) {
             }
         }
         JsValue::String(s) => println!("{}", s),
-        JsValue::Object(_) => {
+        JsValue::Object(obj) => {
+            // Check if it's a function
+            if obj.borrow().is_callable() {
+                println!("[Function]");
+                return;
+            }
             // Try to convert to JSON for pretty printing
             if let Ok(json) = value_to_json(value) {
                 println!(
@@ -436,39 +518,68 @@ fn print_value(value: &JsValue) {
 }
 
 fn value_to_json(value: &JsValue) -> Result<serde_json::Value, &'static str> {
-    match value {
-        JsValue::Undefined => Ok(serde_json::Value::Null),
-        JsValue::Null => Ok(serde_json::Value::Null),
-        JsValue::Boolean(b) => Ok(serde_json::Value::Bool(*b)),
-        JsValue::Number(n) => {
-            if n.is_nan() || n.is_infinite() {
-                Ok(serde_json::Value::Null)
-            } else {
-                Ok(serde_json::json!(*n))
-            }
-        }
-        JsValue::String(s) => Ok(serde_json::Value::String(s.to_string())),
-        JsValue::Object(obj) => {
-            let borrowed = obj.borrow();
+    use std::collections::HashSet;
+    use tsrun::Gc;
+    use tsrun::value::JsObject;
 
-            // Check if it's an array
-            if let Some(elements) = borrowed.array_elements() {
-                let mut arr = Vec::with_capacity(elements.len());
-                for elem in elements {
-                    arr.push(value_to_json(elem)?);
-                }
-                return Ok(serde_json::Value::Array(arr));
-            }
-
-            // Regular object
-            let mut map = serde_json::Map::new();
-            for (key, prop) in borrowed.properties.iter() {
-                if let tsrun::value::PropertyKey::String(s) = key {
-                    map.insert(s.to_string(), value_to_json(&prop.value)?);
+    fn to_json_inner(
+        value: &JsValue,
+        visited: &mut HashSet<Gc<JsObject>>,
+    ) -> Result<serde_json::Value, &'static str> {
+        match value {
+            JsValue::Undefined => Ok(serde_json::Value::Null),
+            JsValue::Null => Ok(serde_json::Value::Null),
+            JsValue::Boolean(b) => Ok(serde_json::Value::Bool(*b)),
+            JsValue::Number(n) => {
+                if n.is_nan() || n.is_infinite() {
+                    Ok(serde_json::Value::Null)
+                } else {
+                    Ok(serde_json::json!(*n))
                 }
             }
-            Ok(serde_json::Value::Object(map))
+            JsValue::String(s) => Ok(serde_json::Value::String(s.to_string())),
+            JsValue::Object(obj) => {
+                // Check for circular references
+                if visited.contains(obj) {
+                    return Err("Circular reference detected");
+                }
+                visited.insert(obj.clone());
+
+                let borrowed = obj.borrow();
+
+                // Functions can't be serialized to JSON
+                if borrowed.is_callable() {
+                    visited.remove(obj);
+                    return Err("Cannot convert function to JSON");
+                }
+
+                // Check if it's an array
+                if let Some(elements) = borrowed.array_elements() {
+                    let mut arr = Vec::with_capacity(elements.len());
+                    for elem in elements {
+                        arr.push(to_json_inner(elem, visited)?);
+                    }
+                    visited.remove(obj);
+                    return Ok(serde_json::Value::Array(arr));
+                }
+
+                // Regular object
+                let mut map = serde_json::Map::new();
+                for (key, prop) in borrowed.properties.iter() {
+                    if let tsrun::value::PropertyKey::String(s) = key {
+                        // Skip non-serializable values (functions, symbols)
+                        if let Ok(json_val) = to_json_inner(&prop.value, visited) {
+                            map.insert(s.to_string(), json_val);
+                        }
+                    }
+                }
+                visited.remove(obj);
+                Ok(serde_json::Value::Object(map))
+            }
+            JsValue::Symbol(_) => Err("Cannot convert symbol to JSON"),
         }
-        JsValue::Symbol(_) => Err("Cannot convert symbol to JSON"),
     }
+
+    let mut visited = HashSet::new();
+    to_json_inner(value, &mut visited)
 }

@@ -508,7 +508,13 @@ fn format_error(err: &JsError) -> String {
         JsError::SyntaxError { message, location } => {
             format!("SyntaxError: {} at {}", message, location)
         }
-        JsError::TypeError { message } => format!("TypeError: {}", message),
+        JsError::TypeError { message, location } => {
+            if let Some(loc) = location {
+                format!("TypeError: {} at {}", message, loc)
+            } else {
+                format!("TypeError: {}", message)
+            }
+        }
         JsError::ReferenceError { name } => format!("ReferenceError: {} is not defined", name),
         JsError::RangeError { message } => format!("RangeError: {}", message),
         JsError::RuntimeError { kind, message, .. } => format!("{}: {}", kind, message),

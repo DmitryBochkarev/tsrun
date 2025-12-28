@@ -1613,3 +1613,104 @@ fn test_parse_optional_chain_parenthesized() {
         }
     }
 }
+
+// Tests for contextual keywords (namespace, module) as property names and identifiers
+#[test]
+fn test_namespace_as_property_name() {
+    // 'namespace' should be valid as a property name in object literals
+    let prog = parse(r#"const obj = { namespace: "production" };"#);
+    assert_eq!(prog.body.len(), 1);
+}
+
+#[test]
+fn test_module_as_property_name() {
+    // 'module' should be valid as a property name in object literals
+    let prog = parse(r#"const obj = { module: "esm" };"#);
+    assert_eq!(prog.body.len(), 1);
+}
+
+#[test]
+fn test_namespace_as_identifier() {
+    // 'namespace' can be used as a variable name
+    let prog = parse("const namespace = 'test';");
+    assert_eq!(prog.body.len(), 1);
+}
+
+#[test]
+fn test_module_as_identifier() {
+    // 'module' can be used as a variable name
+    let prog = parse("const module = {};");
+    assert_eq!(prog.body.len(), 1);
+}
+
+#[test]
+fn test_typeof_module() {
+    // typeof module should parse correctly (module as identifier after typeof)
+    let prog = parse("typeof module;");
+    assert_eq!(prog.body.len(), 1);
+}
+
+#[test]
+fn test_typeof_namespace() {
+    // typeof namespace should parse correctly
+    let prog = parse("typeof namespace;");
+    assert_eq!(prog.body.len(), 1);
+}
+
+#[test]
+fn test_module_in_expression() {
+    // module should be usable in expressions
+    let prog = parse("module && module.exports;");
+    assert_eq!(prog.body.len(), 1);
+}
+
+#[test]
+fn test_ternary_with_function_call() {
+    // Ternary with function call in alternate - the colon should not be confused with type annotation
+    let prog = parse("const x = true ? 1 : foo(2);");
+    assert_eq!(prog.body.len(), 1);
+}
+
+#[test]
+fn test_ternary_with_identifier_function_call() {
+    // More complex ternary - the pattern that was failing in lodash
+    // Simplified first:
+    let prog = parse("const result = cond ? x : iteratee(acc);");
+    assert_eq!(prog.body.len(), 1);
+}
+
+#[test]
+fn test_ternary_with_comma_sequence() {
+    // Comma sequence in ternary consequent
+    let prog = parse("const result = cond ? (val = false, x) : y;");
+    assert_eq!(prog.body.len(), 1);
+}
+
+#[test]
+fn test_ternary_with_comma_and_function_call() {
+    // Full pattern from lodash
+    let prog = parse("const result = cond ? (val = false, x) : iteratee(acc, val);");
+    assert_eq!(prog.body.len(), 1);
+}
+
+#[test]
+fn test_contextual_keyword_function_call() {
+    // Calling a function named 'module' or 'namespace'
+    let prog = parse("module(arg1, arg2);");
+    assert_eq!(prog.body.len(), 1);
+}
+
+#[test]
+fn test_object_with_multiple_contextual_keywords() {
+    // Object with multiple contextual keywords as property names
+    let prog = parse(
+        r#"const config = {
+            namespace: "prod",
+            module: "esm",
+            type: "config",
+            readonly: false,
+            declare: true
+        };"#,
+    );
+    assert_eq!(prog.body.len(), 1);
+}
