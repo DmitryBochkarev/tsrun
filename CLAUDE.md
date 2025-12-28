@@ -329,12 +329,8 @@ The interpreter runs all code in strict mode - use `--strict-only` for meaningfu
 
 ## Implementation Status
 
-**1550+ passing tests**
-
 **Language Features:** variables, functions, closures, control flow, classes with inheritance/static blocks, destructuring, spread, template literals, all operators, generators, async/await, Promises.
 
 **Built-in Objects:** Array, String, Object, Number, Math, JSON, Map, Set, WeakMap, WeakSet, Date, RegExp, Function, Error types, Symbol, Proxy, Reflect, console.
 
-**Not yet implemented:** ES Modules (import/export), for-await-of, private class members (#fields), BigInt, some decorator edge cases.
-
-See design.md for complete feature checklist, profiling.md for performance notes.
+See profiling.md for performance notes.
