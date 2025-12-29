@@ -142,9 +142,7 @@ pub struct TryHandler {
 pub enum PendingCompletion {
     /// Return this value after finally completes
     Return(Guarded),
-    /// Rethrow this exception after finally completes.
-    /// FIXME: Implement exception rethrowing after finally blocks.
-    #[allow(dead_code)]
+    /// Rethrow this exception after finally completes
     Throw(Guarded),
     /// Break to target after finally completes
     Break { target: usize, try_depth: u8 },
@@ -1634,9 +1632,11 @@ impl BytecodeVM {
         }
     }
 
-    /// Find an exception handler for the current position
-    /// Returns (handler_ip, scope_depth) where scope_depth is the number of scopes to unwind
-    fn find_exception_handler(&mut self, interp: &mut Interpreter) -> Option<usize> {
+    /// Find an exception handler for the current position.
+    /// Returns `Some((handler_ip, is_catch))` where:
+    /// - `is_catch = true`: handler_ip is a catch block (store error in exception_value)
+    /// - `is_catch = false`: handler_ip is a finally-only block (store error in pending_completion)
+    fn find_exception_handler(&mut self, interp: &mut Interpreter) -> Option<(usize, bool)> {
         while let Some(handler) = self.try_stack.pop() {
             // Unwind to this handler's frame depth
             while self.call_stack.len() > handler.frame_depth {
@@ -1663,7 +1663,7 @@ impl BytecodeVM {
                         interp.pop_scope(saved_env);
                     }
                 }
-                return Some(handler.catch_ip);
+                return Some((handler.catch_ip, true));
             }
             if handler.finally_ip > 0 {
                 // Also unwind scopes for finally handlers
@@ -1672,7 +1672,7 @@ impl BytecodeVM {
                         interp.pop_scope(saved_env);
                     }
                 }
-                return Some(handler.finally_ip);
+                return Some((handler.finally_ip, false));
             }
         }
         None
@@ -1691,9 +1691,16 @@ impl BytecodeVM {
         let wrapped_error = self.wrap_error_with_trace(e);
 
         // First check for handler in current frame
-        if let Some(handler_ip) = self.find_exception_handler(interp) {
+        if let Some((handler_ip, is_catch)) = self.find_exception_handler(interp) {
             self.ip = handler_ip;
-            self.exception_value = Some(self.error_to_guarded(interp, wrapped_error));
+            let guarded = self.error_to_guarded(interp, wrapped_error);
+            if is_catch {
+                // Catch handler: store in exception_value for GetException opcode
+                self.exception_value = Some(guarded);
+            } else {
+                // Finally-only handler: store in pending_completion for FinallyEnd to rethrow
+                self.pending_completion = Some(PendingCompletion::Throw(guarded));
+            }
             return Ok(());
         }
 
@@ -1752,9 +1759,14 @@ impl BytecodeVM {
             }
 
             // Check for exception handler in this frame
-            if let Some(handler_ip) = self.find_exception_handler(interp) {
+            if let Some((handler_ip, is_catch)) = self.find_exception_handler(interp) {
                 self.ip = handler_ip;
-                self.exception_value = Some(self.error_to_guarded(interp, wrapped_error));
+                let guarded = self.error_to_guarded(interp, wrapped_error);
+                if is_catch {
+                    self.exception_value = Some(guarded);
+                } else {
+                    self.pending_completion = Some(PendingCompletion::Throw(guarded));
+                }
                 return Ok(());
             }
         }
@@ -1978,9 +1990,13 @@ impl BytecodeVM {
         let guarded = Guarded::from_value(exception, &interp.heap);
 
         // Try to find an exception handler
-        if let Some(handler_ip) = self.find_exception_handler(interp) {
+        if let Some((handler_ip, is_catch)) = self.find_exception_handler(interp) {
             self.ip = handler_ip;
-            self.exception_value = Some(guarded);
+            if is_catch {
+                self.exception_value = Some(guarded);
+            } else {
+                self.pending_completion = Some(PendingCompletion::Throw(guarded));
+            }
             true
         } else {
             // No handler found - store exception for propagation

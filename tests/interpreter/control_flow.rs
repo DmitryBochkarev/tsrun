@@ -1454,6 +1454,57 @@ fn test_finally_break_overrides_try_exception() {
     );
 }
 
+#[test]
+fn test_try_finally_rethrows_exception() {
+    // try-finally without catch: exception is rethrown after finally runs
+    assert_eq!(
+        eval(
+            r#"
+            let result: string = "";
+            try {
+                try {
+                    result = result + "try-";
+                    throw "error";
+                } finally {
+                    result = result + "finally-";
+                }
+            } catch (e: any) {
+                result = result + "caught:" + e;
+            }
+            result
+        "#
+        ),
+        JsValue::String("try-finally-caught:error".into())
+    );
+}
+
+#[test]
+fn test_nested_try_finally_rethrows() {
+    // Nested try-finally blocks all run before exception propagates
+    assert_eq!(
+        eval(
+            r#"
+            let result: string = "";
+            try {
+                try {
+                    try {
+                        throw "error";
+                    } finally {
+                        result = result + "inner-";
+                    }
+                } finally {
+                    result = result + "middle-";
+                }
+            } catch (e: any) {
+                result = result + "caught:" + e;
+            }
+            result
+        "#
+        ),
+        JsValue::String("inner-middle-caught:error".into())
+    );
+}
+
 // -----------------------------------------------------------------------------
 // Throw Statement
 // -----------------------------------------------------------------------------
