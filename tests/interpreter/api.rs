@@ -405,7 +405,7 @@ fn test_display_string() {
 #[test]
 fn test_runtime_value_is_number() {
     let mut runtime = Runtime::new();
-    let result = runtime.eval("42").unwrap();
+    let result = runtime.eval("42", None).unwrap();
 
     if let RuntimeResult::Complete(rv) = result {
         assert!(rv.is_number());
@@ -419,7 +419,7 @@ fn test_runtime_value_is_number() {
 #[test]
 fn test_runtime_value_as_number() {
     let mut runtime = Runtime::new();
-    let result = runtime.eval("42").unwrap();
+    let result = runtime.eval("42", None).unwrap();
 
     if let RuntimeResult::Complete(rv) = result {
         assert_eq!(rv.as_number(), Some(42.0));
@@ -431,7 +431,7 @@ fn test_runtime_value_as_number() {
 #[test]
 fn test_runtime_value_is_string() {
     let mut runtime = Runtime::new();
-    let result = runtime.eval("'hello'").unwrap();
+    let result = runtime.eval("'hello'", None).unwrap();
 
     if let RuntimeResult::Complete(rv) = result {
         assert!(rv.is_string());
@@ -444,7 +444,7 @@ fn test_runtime_value_is_string() {
 #[test]
 fn test_runtime_value_is_boolean() {
     let mut runtime = Runtime::new();
-    let result = runtime.eval("true").unwrap();
+    let result = runtime.eval("true", None).unwrap();
 
     if let RuntimeResult::Complete(rv) = result {
         assert!(rv.is_boolean());
@@ -457,7 +457,7 @@ fn test_runtime_value_is_boolean() {
 #[test]
 fn test_runtime_value_is_undefined() {
     let mut runtime = Runtime::new();
-    let result = runtime.eval("undefined").unwrap();
+    let result = runtime.eval("undefined", None).unwrap();
 
     if let RuntimeResult::Complete(rv) = result {
         assert!(rv.is_undefined());
@@ -470,7 +470,7 @@ fn test_runtime_value_is_undefined() {
 #[test]
 fn test_runtime_value_is_null() {
     let mut runtime = Runtime::new();
-    let result = runtime.eval("null").unwrap();
+    let result = runtime.eval("null", None).unwrap();
 
     if let RuntimeResult::Complete(rv) = result {
         assert!(rv.is_null());
@@ -485,7 +485,7 @@ fn test_runtime_value_type_name() {
     let mut runtime = Runtime::new();
 
     let mut check = |code: &str, expected: &str| {
-        let result = runtime.eval(code).unwrap();
+        let result = runtime.eval(code, None).unwrap();
         if let RuntimeResult::Complete(rv) = result {
             assert_eq!(rv.type_name(), expected, "for code: {}", code);
         } else {
@@ -507,7 +507,7 @@ fn test_runtime_value_display() {
     let mut runtime = Runtime::new();
 
     let mut check = |code: &str, expected: &str| {
-        let result = runtime.eval(code).unwrap();
+        let result = runtime.eval(code, None).unwrap();
         if let RuntimeResult::Complete(rv) = result {
             assert_eq!(format!("{}", rv), expected, "for code: {}", code);
         } else {
@@ -529,7 +529,7 @@ fn test_runtime_value_display() {
 #[test]
 fn test_runtime_value_is_object() {
     let mut runtime = Runtime::new();
-    let result = runtime.eval("({})").unwrap(); // Parentheses force object literal
+    let result = runtime.eval("({})", None).unwrap(); // Parentheses force object literal
 
     if let RuntimeResult::Complete(rv) = result {
         assert!(rv.is_object());
@@ -578,7 +578,7 @@ fn test_from_integer_precision() {
 #[test]
 fn test_object_property_access() {
     let mut runtime = Runtime::new();
-    let result = runtime.eval("({ name: 'Alice', age: 30 })").unwrap();
+    let result = runtime.eval("({ name: 'Alice', age: 30 })", None).unwrap();
 
     if let RuntimeResult::Complete(rv) = result {
         assert!(rv.is_object());
@@ -611,7 +611,7 @@ fn test_object_property_access() {
 fn test_nested_object() {
     let mut runtime = Runtime::new();
     let result = runtime
-        .eval("({ user: { name: 'Bob', settings: { theme: 'dark' } } })")
+        .eval("({ user: { name: 'Bob', settings: { theme: 'dark' } } })", None)
         .unwrap();
 
     if let RuntimeResult::Complete(rv) = result {
@@ -660,7 +660,7 @@ fn test_nested_object() {
 #[test]
 fn test_array_access() {
     let mut runtime = Runtime::new();
-    let result = runtime.eval("[1, 2, 3, 4, 5]").unwrap();
+    let result = runtime.eval("[1, 2, 3, 4, 5]", None).unwrap();
 
     if let RuntimeResult::Complete(rv) = result {
         assert!(rv.is_object()); // Arrays are objects in JS
@@ -691,7 +691,7 @@ fn test_array_access() {
 #[test]
 fn test_array_of_strings() {
     let mut runtime = Runtime::new();
-    let result = runtime.eval("['apple', 'banana', 'cherry']").unwrap();
+    let result = runtime.eval("['apple', 'banana', 'cherry']", None).unwrap();
 
     if let RuntimeResult::Complete(rv) = result {
         if let Some(obj) = rv.as_object() {
@@ -713,7 +713,7 @@ fn test_array_of_strings() {
 fn test_array_of_objects() {
     let mut runtime = Runtime::new();
     let result = runtime
-        .eval("[{ id: 1, name: 'Alice' }, { id: 2, name: 'Bob' }]")
+        .eval("[{ id: 1, name: 'Alice' }, { id: 2, name: 'Bob' }]", None)
         .unwrap();
 
     if let RuntimeResult::Complete(rv) = result {
@@ -766,7 +766,7 @@ fn test_array_of_objects() {
 fn test_mixed_array() {
     let mut runtime = Runtime::new();
     let result = runtime
-        .eval("[1, 'two', true, null, undefined, { x: 3 }]")
+        .eval("[1, 'two', true, null, undefined, { x: 3 }]", None)
         .unwrap();
 
     if let RuntimeResult::Complete(rv) = result {
@@ -802,6 +802,7 @@ fn test_function_result() {
         }
         add(10, 20)
     "#,
+            None,
         )
         .unwrap();
 
@@ -825,6 +826,7 @@ fn test_function_returning_object() {
         }
         createUser('Charlie', 25)
     "#,
+            None,
         )
         .unwrap();
 
@@ -879,6 +881,7 @@ fn test_class_instance() {
 
         new Person('David', 35)
     "#,
+            None,
         )
         .unwrap();
 
@@ -917,6 +920,7 @@ fn test_map_object() {
         map.set('key2', 42);
         map.size
     "#,
+            None,
         )
         .unwrap();
 
@@ -938,6 +942,7 @@ fn test_date_object() {
         const d = new Date(2024, 0, 15); // Jan 15, 2024
         d.getFullYear()
     "#,
+            None,
         )
         .unwrap();
 
@@ -959,6 +964,7 @@ fn test_json_parse_result() {
         const data = JSON.parse('{"name":"Eve","scores":[95,87,92]}');
         data
     "#,
+            None,
         )
         .unwrap();
 
@@ -998,7 +1004,7 @@ fn test_json_stringify() {
     let mut runtime = Runtime::new();
 
     let result = runtime
-        .eval(r#"JSON.stringify({ a: 1, b: "hello", c: true })"#)
+        .eval(r#"JSON.stringify({ a: 1, b: "hello", c: true })"#, None)
         .unwrap();
 
     if let RuntimeResult::Complete(rv) = result {
@@ -1031,7 +1037,7 @@ fn get_property(value: &JsValue, key: &str) -> Option<JsValue> {
 #[test]
 fn test_helper_get_property() {
     let mut runtime = Runtime::new();
-    let result = runtime.eval("({ foo: 42, bar: 'baz' })").unwrap();
+    let result = runtime.eval("({ foo: 42, bar: 'baz' })", None).unwrap();
 
     if let RuntimeResult::Complete(rv) = result {
         let foo = get_property(rv.value(), "foo");
@@ -1066,6 +1072,7 @@ fn test_deeply_nested_structure() {
             }
         })
     "#,
+            None,
         )
         .unwrap();
 
@@ -1096,6 +1103,7 @@ fn test_array_with_computed_values() {
         }
         arr
     "#,
+            None,
         )
         .unwrap();
 
@@ -1132,6 +1140,7 @@ fn test_object_with_methods() {
         };
         obj.double()
     "#,
+            None,
         )
         .unwrap();
 
@@ -1154,6 +1163,7 @@ fn test_spread_operator_result() {
         const b = [3, 4];
         [...a, ...b]
     "#,
+            None,
         )
         .unwrap();
 
@@ -1184,6 +1194,7 @@ fn test_object_spread() {
         const b = { y: 3, z: 4 };
         ({ ...a, ...b })
     "#,
+            None,
         )
         .unwrap();
 
@@ -1441,6 +1452,7 @@ fn test_call_method_map() {
         const arr = [1, 2, 3];
         arr.map(x => x * 2)
     "#,
+            None,
         )
         .unwrap();
 
@@ -1459,7 +1471,7 @@ fn test_call_function() {
 
     // Define a function
     let result = runtime
-        .eval("function add(a, b) { return a + b; } add")
+        .eval("function add(a, b) { return a + b; } add", None)
         .unwrap();
 
     if let RuntimeResult::Complete(add_fn) = result {
@@ -1485,7 +1497,7 @@ fn test_call_function_with_this() {
 
     // Define a function that uses `this`
     let result = runtime
-        .eval("function getX() { return this.x; } getX")
+        .eval("function getX() { return this.x; } getX", None)
         .unwrap();
 
     if let RuntimeResult::Complete(get_x) = result {
@@ -1555,12 +1567,12 @@ fn test_get_export_const() {
     let mut runtime = Runtime::new();
 
     let result = runtime
-        .eval_with_path(
+        .eval(
             r#"
         export const VERSION = "1.0.0";
         export const COUNT = 42;
     "#,
-            "/main.ts",
+            Some("/main.ts"),
         )
         .unwrap();
 
@@ -1589,13 +1601,13 @@ fn test_get_export_function() {
     let mut runtime = Runtime::new();
 
     let result = runtime
-        .eval_with_path(
+        .eval(
             r#"
         export function add(a: number, b: number): number {
             return a + b;
         }
     "#,
-            "/main.ts",
+            Some("/main.ts"),
         )
         .unwrap();
 
@@ -1625,7 +1637,7 @@ fn test_get_export_object() {
     let mut runtime = Runtime::new();
 
     let result = runtime
-        .eval_with_path(
+        .eval(
             r#"
         export interface Processor {
             process: (x: number) => number;
@@ -1637,7 +1649,7 @@ fn test_get_export_object() {
             }
         };
     "#,
-            "/main.ts",
+            Some("/main.ts"),
         )
         .unwrap();
 
@@ -1667,7 +1679,7 @@ fn test_get_export_class() {
     let mut runtime = Runtime::new();
 
     let result = runtime
-        .eval_with_path(
+        .eval(
             r#"
         export class Calculator {
             value: number;
@@ -1682,7 +1694,7 @@ fn test_get_export_class() {
             }
         }
     "#,
-            "/main.ts",
+            Some("/main.ts"),
         )
         .unwrap();
 
@@ -1709,14 +1721,14 @@ fn test_get_export_names() {
     let mut runtime = Runtime::new();
 
     let result = runtime
-        .eval_with_path(
+        .eval(
             r#"
         export const a = 1;
         export const b = 2;
         export function c() {}
         export class D {}
     "#,
-            "/main.ts",
+            Some("/main.ts"),
         )
         .unwrap();
 
@@ -1751,13 +1763,13 @@ fn test_get_export_with_default() {
     let mut runtime = Runtime::new();
 
     let result = runtime
-        .eval_with_path(
+        .eval(
             r#"
         export default function greet(name: string): string {
             return "Hello, " + name + "!";
         }
     "#,
-            "/main.ts",
+            Some("/main.ts"),
         )
         .unwrap();
 
@@ -1789,14 +1801,14 @@ fn test_get_export_live_binding() {
     let mut runtime = Runtime::new();
 
     let result = runtime
-        .eval_with_path(
+        .eval(
             r#"
         export let counter = 0;
         export function increment(): void {
             counter++;
         }
     "#,
-            "/main.ts",
+            Some("/main.ts"),
         )
         .unwrap();
 

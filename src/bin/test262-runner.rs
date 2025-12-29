@@ -324,7 +324,7 @@ impl TestRunner {
         runtime.set_timeout_ms(10_000); // 10 second timeout per test
 
         // Execute test
-        let result = runtime.eval(&full_source);
+        let result = runtime.eval(&full_source, None);
         let duration = start.elapsed();
 
         // Check result against expectations

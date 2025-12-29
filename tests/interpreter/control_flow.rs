@@ -2848,6 +2848,7 @@ fn test_block_var_not_visible_after() {
         }
         x  // Should throw ReferenceError
     "#,
+        None,
     );
     assert!(
         result.is_err(),
@@ -2870,6 +2871,7 @@ fn test_nested_block_outer_var_not_visible_after_both() {
         }
         a  // Should throw ReferenceError - 'a' was in outer block
     "#,
+        None,
     );
     assert!(
         result.is_err(),

@@ -29,7 +29,7 @@ fn test_cycle_leak_detailed() {
 
     let mut runtime = Runtime::new();
     runtime.set_gc_threshold(50); // Trigger GC frequently
-    let result = match runtime.eval(source).unwrap() {
+    let result = match runtime.eval(source, None).unwrap() {
         RuntimeResult::Complete(value) => value,
         other => panic!("Expected Complete, got {:?}", other),
     };

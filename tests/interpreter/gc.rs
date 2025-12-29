@@ -12,7 +12,7 @@ fn get_baseline_live_count() -> usize {
 #[allow(clippy::unwrap_used, clippy::panic)]
 fn eval_with_gc_stats(source: &str) -> (RuntimeValue, GcStats) {
     let mut runtime = Runtime::new();
-    let result = match runtime.eval(source).unwrap() {
+    let result = match runtime.eval(source, None).unwrap() {
         RuntimeResult::Complete(rv) => rv,
         other => panic!("Expected Complete, got {:?}", other),
     };
@@ -90,7 +90,7 @@ fn test_cycle_detection_simple() {
     runtime.set_gc_threshold(50);
     runtime.set_timeout_ms(0);
 
-    let result = match runtime.eval(source).unwrap() {
+    let result = match runtime.eval(source, None).unwrap() {
         RuntimeResult::Complete(value) => value,
         other => panic!("Expected Complete, got {:?}", other),
     };
@@ -119,7 +119,7 @@ fn test_self_referencing_collected() {
     runtime.set_gc_threshold(50);
     runtime.set_timeout_ms(0);
 
-    let result = match runtime.eval(source).unwrap() {
+    let result = match runtime.eval(source, None).unwrap() {
         RuntimeResult::Complete(value) => value,
         other => panic!("Expected Complete, got {:?}", other),
     };
@@ -145,7 +145,7 @@ fn test_reachable_objects_preserved() {
     "#;
 
     let mut runtime = Runtime::new();
-    let result = match runtime.eval(source).unwrap() {
+    let result = match runtime.eval(source, None).unwrap() {
         RuntimeResult::Complete(value) => value,
         other => panic!("Expected Complete, got {:?}", other),
     };
@@ -155,7 +155,7 @@ fn test_reachable_objects_preserved() {
 
     // Verify global objects are still accessible
     let check = match runtime
-        .eval("global_obj.a + global_obj.b + global_arr[0]")
+        .eval("global_obj.a + global_obj.b + global_arr[0]", None)
         .unwrap()
     {
         RuntimeResult::Complete(value) => value,
@@ -211,7 +211,7 @@ fn test_many_cycles_memory_bounded() {
     runtime.set_gc_threshold(100);
     runtime.set_timeout_ms(0);
 
-    let result = match runtime.eval(source).unwrap() {
+    let result = match runtime.eval(source, None).unwrap() {
         RuntimeResult::Complete(value) => value,
         other => panic!("Expected Complete, got {:?}", other),
     };
@@ -273,7 +273,7 @@ fn test_gc_cycles_graph_with_push_multiple() {
     // Test with low GC threshold to trigger the bug
     let mut runtime = Runtime::new();
     runtime.set_gc_threshold(100);
-    let result = match runtime.eval(source).unwrap() {
+    let result = match runtime.eval(source, None).unwrap() {
         RuntimeResult::Complete(value) => value,
         other => panic!("Expected Complete, got {:?}", other),
     };
@@ -308,7 +308,7 @@ fn test_gc_cycles_array_refs_with_push_multiple() {
 
     let mut runtime = Runtime::new();
     runtime.set_gc_threshold(100);
-    let result = match runtime.eval(source).unwrap() {
+    let result = match runtime.eval(source, None).unwrap() {
         RuntimeResult::Complete(value) => value,
         other => panic!("Expected Complete, got {:?}", other),
     };
@@ -338,7 +338,7 @@ fn test_gc_object_cycle_with_property_assignment() {
 
     let mut runtime = Runtime::new();
     runtime.set_gc_threshold(50); // Low threshold to trigger GC often
-    let result = match runtime.eval(source).unwrap() {
+    let result = match runtime.eval(source, None).unwrap() {
         RuntimeResult::Complete(value) => value,
         other => panic!("Expected Complete, got {:?}", other),
     };
@@ -370,7 +370,7 @@ fn test_gc_object_cycle_with_array_push() {
 
     let mut runtime = Runtime::new();
     runtime.set_gc_threshold(50); // Low threshold to trigger GC often
-    let result = match runtime.eval(source).unwrap() {
+    let result = match runtime.eval(source, None).unwrap() {
         RuntimeResult::Complete(value) => value,
         other => panic!("Expected Complete, got {:?}", other),
     };
@@ -510,7 +510,7 @@ results
     runtime.set_gc_threshold(100);
     // Disable timeout for this long-running test
     runtime.set_timeout_ms(0);
-    let result = match runtime.eval(source).unwrap() {
+    let result = match runtime.eval(source, None).unwrap() {
         RuntimeResult::Complete(rv) => rv,
         other => panic!("Expected Complete, got {:?}", other),
     };
@@ -556,7 +556,7 @@ fn eval_with_threshold_1(source: &str) -> RuntimeValue {
     let mut runtime = Runtime::new();
     runtime.set_gc_threshold(1);
     runtime.set_timeout_ms(0); // Disable timeout for GC stress tests
-    match runtime.eval(source).unwrap() {
+    match runtime.eval(source, None).unwrap() {
         RuntimeResult::Complete(rv) => rv,
         other => panic!("Expected Complete, got {:?}", other),
     }
@@ -1364,7 +1364,7 @@ fn test_function_call_registers_cleaned_up() {
     runtime.set_gc_threshold(100); // Trigger GC frequently during execution
     runtime.set_timeout_ms(0);
 
-    let result = match runtime.eval(source).unwrap() {
+    let result = match runtime.eval(source, None).unwrap() {
         RuntimeResult::Complete(value) => value,
         other => panic!("Expected Complete, got {:?}", other),
     };
@@ -1418,7 +1418,7 @@ fn test_nested_function_calls_registers_cleaned_up() {
     runtime.set_gc_threshold(50); // Very aggressive GC
     runtime.set_timeout_ms(0);
 
-    let result = match runtime.eval(source).unwrap() {
+    let result = match runtime.eval(source, None).unwrap() {
         RuntimeResult::Complete(value) => value,
         other => panic!("Expected Complete, got {:?}", other),
     };
@@ -1470,7 +1470,7 @@ fn test_exception_unwind_registers_cleaned_up() {
     runtime.set_gc_threshold(50);
     runtime.set_timeout_ms(0);
 
-    let result = match runtime.eval(source_normal).unwrap() {
+    let result = match runtime.eval(source_normal, None).unwrap() {
         RuntimeResult::Complete(value) => value,
         other => panic!("Expected Complete, got {:?}", other),
     };
@@ -1521,7 +1521,7 @@ fn test_exception_unwind_registers_cleaned_up() {
     runtime.set_gc_threshold(50);
     runtime.set_timeout_ms(0);
 
-    let result = match runtime.eval(source_throws).unwrap() {
+    let result = match runtime.eval(source_throws, None).unwrap() {
         RuntimeResult::Complete(value) => value,
         other => panic!("Expected Complete, got {:?}", other),
     };

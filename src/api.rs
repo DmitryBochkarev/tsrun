@@ -532,7 +532,7 @@ pub fn as_object(value: &JsValue) -> Option<Gc<JsObject>> {
 /// let mut runtime = Runtime::new();
 ///
 /// // Evaluate a module with exports
-/// let result = runtime.eval_with_path(r#"
+/// let result = runtime.eval(r#"
 ///     export interface Processor {
 ///         elementHeader: (element: JsElement) => JsElement;
 ///     }
@@ -544,7 +544,7 @@ pub fn as_object(value: &JsValue) -> Option<Gc<JsObject>> {
 ///     };
 ///
 ///     export const VERSION = "1.0.0";
-/// "#, "/main.ts").unwrap();
+/// "#, Some("/main.ts")).unwrap();
 ///
 /// // After completion, get exports
 /// if let RuntimeResult::Complete(_) = result {
@@ -574,11 +574,11 @@ pub fn get_export(runtime: &Runtime, name: &str) -> Option<JsValue> {
 /// use tsrun::{Runtime, RuntimeResult, api};
 ///
 /// let mut runtime = Runtime::new();
-/// runtime.eval_with_path(r#"
+/// runtime.eval(r#"
 ///     export const a = 1;
 ///     export const b = 2;
 ///     export function c() {}
-/// "#, "/main.ts").unwrap();
+/// "#, Some("/main.ts")).unwrap();
 ///
 /// let exports = api::get_export_names(&runtime);
 /// // exports contains ["a", "b", "c"]

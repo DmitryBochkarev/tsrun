@@ -375,7 +375,7 @@ fn test_call_stack_depth_limit() {
     runtime.set_max_call_depth(10);
 
     // Test that recursion to depth 5 works (well under limit)
-    let result = runtime.eval_simple(
+    let result = runtime.eval(
         r#"
         function countDown(n) {
             if (n <= 0) return 0;
@@ -383,14 +383,19 @@ fn test_call_stack_depth_limit() {
         }
         countDown(5)
     "#,
+        None,
     );
     assert!(result.is_ok(), "countDown(5) should work");
-    assert_eq!(result.unwrap(), tsrun::JsValue::Number(5.0));
+    let result_value = match result.unwrap() {
+        tsrun::RuntimeResult::Complete(rv) => rv.value().clone(),
+        _ => panic!("Expected Complete result"),
+    };
+    assert_eq!(result_value, tsrun::JsValue::Number(5.0));
 
     // Test that depth 15 should fail (over 10 limit)
     let mut runtime2 = tsrun::Runtime::new();
     runtime2.set_max_call_depth(10);
-    let result2 = runtime2.eval_simple(
+    let result2 = runtime2.eval(
         r#"
         function countDown(n) {
             if (n <= 0) return 0;
@@ -398,6 +403,7 @@ fn test_call_stack_depth_limit() {
         }
         countDown(15)
     "#,
+        None,
     );
 
     assert!(
@@ -420,13 +426,14 @@ fn test_infinite_recursion_caught() {
     let mut runtime = tsrun::Runtime::new();
     runtime.set_max_call_depth(10);
 
-    let result = runtime.eval_simple(
+    let result = runtime.eval(
         r#"
         function infinite() {
             return infinite();
         }
         infinite()
     "#,
+        None,
     );
 
     assert!(result.is_err(), "Infinite recursion should error");
@@ -452,10 +459,11 @@ fn test_array_map_callback_depth() {
     let mut runtime = tsrun::Runtime::new();
     runtime.set_max_call_depth(100);
 
-    let result = runtime.eval_simple(
+    let result = runtime.eval(
         r#"
         [1, 2, 3].map(function(x) { return x * 2; })
     "#,
+        None,
     );
     assert!(result.is_ok(), "Simple map should work: {:?}", result);
 }
@@ -466,13 +474,14 @@ fn test_nested_array_callbacks() {
     let mut runtime = tsrun::Runtime::new();
     runtime.set_max_call_depth(100);
 
-    let result = runtime.eval_simple(
+    let result = runtime.eval(
         r#"
         const arr = [[1, 2], [3, 4]];
         arr.map(function(inner) {
             return inner.map(function(x) { return x * 2; });
         })
     "#,
+        None,
     );
     assert!(result.is_ok(), "Nested map should work: {:?}", result);
 }
@@ -486,7 +495,7 @@ fn test_array_callback_with_recursion() {
 
     // The callback itself has recursion depth 5
     // forEach has 3 elements, each calling a recursive function
-    let result = runtime.eval_simple(
+    let result = runtime.eval(
         r#"
         let sum = 0;
         function countDown(n) {
@@ -498,13 +507,18 @@ fn test_array_callback_with_recursion() {
         });
         sum
     "#,
+        None,
     );
     assert!(
         result.is_ok(),
         "forEach with recursive callback should work: {:?}",
         result
     );
-    assert_eq!(result.unwrap(), tsrun::JsValue::Number(9.0));
+    let result_value = match result.unwrap() {
+        tsrun::RuntimeResult::Complete(rv) => rv.value().clone(),
+        _ => panic!("Expected Complete result"),
+    };
+    assert_eq!(result_value, tsrun::JsValue::Number(9.0));
 }
 
 // ============================================================

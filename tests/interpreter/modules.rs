@@ -8,7 +8,7 @@ use tsrun::{
 #[test]
 fn test_runtime_result_complete() {
     let mut runtime = Runtime::new();
-    let result = runtime.eval("1 + 2").unwrap();
+    let result = runtime.eval("1 + 2", None).unwrap();
 
     match result {
         RuntimeResult::Complete(value) => {
@@ -21,7 +21,7 @@ fn test_runtime_result_complete() {
 #[test]
 fn test_runtime_result_need_imports() {
     let mut runtime = Runtime::new();
-    let result = runtime.eval(r#"import { foo } from "./utils";"#).unwrap();
+    let result = runtime.eval(r#"import { foo } from "./utils";"#, None).unwrap();
 
     match result {
         RuntimeResult::NeedImports(imports) => {
@@ -45,6 +45,7 @@ fn test_provide_module() {
         import { add } from "./math";
         add(2, 3);
     "#,
+            None,
         )
         .unwrap();
 
@@ -126,6 +127,7 @@ fn test_internal_module_not_in_need_imports() {
         import { foo } from "./external";
         42
     "#,
+            None,
         )
         .unwrap();
 
@@ -189,6 +191,7 @@ fn test_native_internal_module() {
         import { add, getValue } from "eval:test";
         add(getValue(), 8);
     "#,
+            None,
         )
         .unwrap();
 
@@ -232,6 +235,7 @@ fn test_source_internal_module() {
         import { double, square, PI } from "eval:math";
         double(5) + square(3) + Math.floor(PI);
     "#,
+            None,
         )
         .unwrap();
 
@@ -265,6 +269,7 @@ fn test_import_namespace() {
         import * as testMod from "eval:test";
         testMod.getValue();
     "#,
+            None,
         )
         .unwrap();
 
@@ -298,6 +303,7 @@ fn test_order_syscall() {
         const orderId = __order__({ type: "test", data: 42 });
         orderId;
     "#,
+            None,
         )
         .unwrap();
 
@@ -340,6 +346,7 @@ fn test_order_syscall_returns_promise() {
         const p = __order__({ type: "test" });
         typeof p === "object" && p !== null
     "#,
+            None,
         )
         .unwrap();
 
@@ -375,6 +382,7 @@ fn test_await_pending_promise_suspends_and_resumes() {
         const result = await __order__({ type: "getData" });
         result * 2  // This should run after resume with the resolved value
     "#,
+            None,
         )
         .unwrap();
 
@@ -429,6 +437,7 @@ fn test_await_suspension_with_multiple_awaits() {
         const b = await __order__({ type: "second" });
         a + b
     "#,
+            None,
         )
         .unwrap();
 
@@ -490,6 +499,7 @@ fn test_external_module_named_exports() {
         import { add, multiply } from "./math";
         add(2, 3) + multiply(4, 5);
     "#,
+            None,
         )
         .unwrap();
 
@@ -539,6 +549,7 @@ fn test_external_module_default_export() {
         import greet from "./greeting";
         greet("World");
     "#,
+            None,
         )
         .unwrap();
 
@@ -581,6 +592,7 @@ fn test_external_module_mixed_exports() {
         const calc = new Calculator();
         calc.add(PI, E);
     "#,
+            None,
         )
         .unwrap();
 
@@ -631,6 +643,7 @@ fn test_external_module_aliased_imports() {
         import { value as myValue, compute as calculate } from "./utils";
         calculate(myValue);
     "#,
+            None,
         )
         .unwrap();
 
@@ -673,6 +686,7 @@ fn test_multiple_external_modules() {
         import { b } from "./moduleB";
         a + b;
     "#,
+            None,
         )
         .unwrap();
 
@@ -717,6 +731,7 @@ fn test_module_namespace_import() {
         import * as utils from "./utils";
         utils.double(utils.BASE);
     "#,
+            None,
         )
         .unwrap();
 
@@ -767,6 +782,7 @@ fn test_module_with_internal_imports() {
         import { helper } from "./myModule";
         helper(5);
     "#,
+            None,
         )
         .unwrap();
 
@@ -811,6 +827,7 @@ fn test_export_const_variable() {
         import { CONFIG } from "./config";
         CONFIG.name + " v" + CONFIG.version;
     "#,
+            None,
         )
         .unwrap();
 
@@ -852,6 +869,7 @@ fn test_export_class() {
         const p = new Point(3, 4);
         p.distance();
     "#,
+            None,
         )
         .unwrap();
 
@@ -955,7 +973,7 @@ fn test_eval_with_path_resolves_imports() {
 
     // Eval with a base path
     let result = runtime
-        .eval_with_path(r#"import { foo } from "./utils";"#, "/project/src/main.ts")
+        .eval(r#"import { foo } from "./utils";"#, Some("/project/src/main.ts"))
         .unwrap();
 
     match result {
@@ -977,9 +995,9 @@ fn test_nested_module_imports_resolve_correctly() {
 
     // Main module at /project/src/main.ts imports ./lib/helpers
     let result = runtime
-        .eval_with_path(
+        .eval(
             r#"import { helper } from "./lib/helpers";"#,
-            "/project/src/main.ts",
+            Some("/project/src/main.ts"),
         )
         .unwrap();
 
@@ -1029,13 +1047,13 @@ fn test_same_module_different_paths_deduplicated() {
 
     // Main module imports the same logical module via different relative paths
     let result = runtime
-        .eval_with_path(
+        .eval(
             r#"
             import { a } from "./utils";
             import { b } from "./lib/../utils";
             a + b;
         "#,
-            "/project/main.ts",
+            Some("/project/main.ts"),
         )
         .unwrap();
 
@@ -1063,6 +1081,7 @@ fn test_export_star_as_namespace_basic() {
         import { utils } from "./reexport";
         utils.add(2, 3) + utils.BASE;
     "#,
+            None,
         )
         .unwrap();
 
@@ -1127,6 +1146,7 @@ fn test_export_star_as_namespace_multiple() {
         import { math, str } from "./combined";
         math.double(3) + str.len("hello");
     "#,
+            None,
         )
         .unwrap();
 
@@ -1195,6 +1215,7 @@ fn test_export_star_as_namespace_with_other_exports() {
         import { helpers, VERSION } from "./api";
         helpers.greet() + " v" + VERSION;
     "#,
+            None,
         )
         .unwrap();
 
@@ -1248,6 +1269,7 @@ fn test_export_star_as_namespace_nested() {
         import { nested } from "./level1";
         nested.inner.value;
     "#,
+            None,
         )
         .unwrap();
 
@@ -1319,6 +1341,7 @@ fn test_live_binding_let_variable() {
         const after = count;
         [before, after];
     "#,
+            None,
         )
         .unwrap();
 
@@ -1381,6 +1404,7 @@ fn test_live_binding_multiple_increments() {
         add(12);
         value;
     "#,
+            None,
         )
         .unwrap();
 
@@ -1427,6 +1451,7 @@ fn test_live_binding_object_mutation() {
         const after = state.value;
         [before, after];
     "#,
+            None,
         )
         .unwrap();
 
@@ -1483,6 +1508,7 @@ fn test_live_binding_reassignment() {
         const after = config;
         [before.name, after.name, after.value];
     "#,
+            None,
         )
         .unwrap();
 
@@ -1544,6 +1570,7 @@ fn test_live_binding_namespace_import() {
         const after = counter.count;
         [before, after];
     "#,
+            None,
         )
         .unwrap();
 
@@ -1602,6 +1629,7 @@ fn test_live_binding_through_reexport() {
         const after = count;
         [before, after];
     "#,
+            None,
         )
         .unwrap();
 
@@ -1678,6 +1706,7 @@ fn test_live_binding_aliased_import() {
         const after = myCount;
         [before, after];
     "#,
+            None,
         )
         .unwrap();
 
@@ -1731,6 +1760,7 @@ fn test_live_binding_namespace_simple() {
         import * as counter from "./counter";
         counter.count;
     "#,
+            None,
         )
         .unwrap();
 
@@ -1767,6 +1797,7 @@ fn test_live_binding_namespace_call() {
         import * as counter from "./counter";
         counter.getValue();
     "#,
+            None,
         )
         .unwrap();
 
@@ -1808,6 +1839,7 @@ fn test_live_binding_reexport_debug() {
         import { getValue } from "./reexport";
         getValue();
     "#,
+            None,
         )
         .unwrap();
 
@@ -1862,6 +1894,7 @@ fn test_live_binding_imported_value_is_readonly() {
         import { count } from "./counter";
         count = 100;  // Should error - imports are read-only
     "#,
+            None,
         )
         .unwrap();
 

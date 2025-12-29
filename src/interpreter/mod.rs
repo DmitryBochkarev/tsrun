@@ -278,7 +278,7 @@ pub struct Interpreter {
     /// Loaded external modules (normalized path -> module namespace)
     loaded_modules: FxHashMap<crate::ModulePath, Gc<JsObject>>,
 
-    /// The path of the main module (set by eval_with_path)
+    /// The path of the main module (set by eval with a path)
     main_module_path: Option<crate::ModulePath>,
 
     /// The path of the currently executing module (for resolving relative imports)
@@ -727,29 +727,18 @@ impl Interpreter {
 
     /// Evaluate TypeScript/JavaScript code with full runtime support.
     ///
-    /// This is equivalent to `eval_with_path(source, None)` - relative imports
-    /// will be resolved without a base path (treated as bare specifiers).
-    ///
-    /// Returns RuntimeResult which may indicate:
-    /// - Complete: execution finished with a value
-    /// - NeedImports: modules need to be provided before continuing
-    /// - Suspended: waiting for orders to be fulfilled
-    pub fn eval(&mut self, source: &str) -> Result<crate::RuntimeResult, JsError> {
-        self.eval_with_path(source, None)
-    }
-
-    /// Evaluate TypeScript/JavaScript code with a known module path.
-    ///
-    /// The `module_path` is used as the base for resolving relative imports.
+    /// The optional `module_path` is used as the base for resolving relative imports.
     /// For example, if `module_path` is `/project/src/main.ts` and the code
     /// contains `import { foo } from "./utils"`, it will resolve to
     /// `/project/src/utils`.
     ///
+    /// If no path is provided, relative imports will be treated as bare specifiers.
+    ///
     /// Returns RuntimeResult which may indicate:
     /// - Complete: execution finished with a value
     /// - NeedImports: modules need to be provided before continuing
     /// - Suspended: waiting for orders to be fulfilled
-    pub fn eval_with_path(
+    pub fn eval(
         &mut self,
         source: &str,
         module_path: Option<crate::ModulePath>,

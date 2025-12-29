@@ -8,7 +8,7 @@ fn test_timeout_while_loop() {
     // Set a very short timeout for testing
     runtime.set_timeout_ms(50);
 
-    let result = runtime.eval("while (true) {}");
+    let result = runtime.eval("while (true) {}", None);
     assert!(matches!(result, Err(JsError::Timeout { .. })));
 }
 
@@ -17,7 +17,7 @@ fn test_timeout_do_while_loop() {
     let mut runtime = Runtime::new();
     runtime.set_timeout_ms(50);
 
-    let result = runtime.eval("do {} while (true)");
+    let result = runtime.eval("do {} while (true)", None);
     assert!(matches!(result, Err(JsError::Timeout { .. })));
 }
 
@@ -26,7 +26,7 @@ fn test_timeout_for_loop() {
     let mut runtime = Runtime::new();
     runtime.set_timeout_ms(50);
 
-    let result = runtime.eval("for (;;) {}");
+    let result = runtime.eval("for (;;) {}", None);
     assert!(matches!(result, Err(JsError::Timeout { .. })));
 }
 
@@ -36,7 +36,7 @@ fn test_timeout_disabled_with_zero() {
     runtime.set_timeout_ms(0);
 
     // With timeout disabled, a non-infinite loop should complete fine
-    let result = runtime.eval("let x = 0; for (let i = 0; i < 1000; i++) { x += i; } x");
+    let result = runtime.eval("let x = 0; for (let i = 0; i < 1000; i++) { x += i; } x", None);
     assert!(matches!(result, Ok(RuntimeResult::Complete(_))));
 }
 
@@ -61,7 +61,7 @@ fn test_timeout_error_message() {
     let mut runtime = Runtime::new();
     runtime.set_timeout_ms(50);
 
-    let result = runtime.eval("while (true) {}");
+    let result = runtime.eval("while (true) {}", None);
     if let Err(JsError::Timeout {
         timeout_ms,
         elapsed_ms,
@@ -80,7 +80,7 @@ fn test_normal_execution_within_timeout() {
     runtime.set_timeout_ms(1000);
 
     // A simple computation should complete well within 1 second
-    let result = runtime.eval("1 + 2 + 3");
+    let result = runtime.eval("1 + 2 + 3", None);
     assert!(matches!(result, Ok(RuntimeResult::Complete(_))));
 }
 
@@ -94,7 +94,7 @@ fn test_timeout_labeled_while_loop() {
     let mut runtime = Runtime::new();
     runtime.set_timeout_ms(50);
 
-    let result = runtime.eval("outer: while (true) {}");
+    let result = runtime.eval("outer: while (true) {}", None);
     assert!(matches!(result, Err(JsError::Timeout { .. })));
 }
 
@@ -103,6 +103,6 @@ fn test_timeout_nested_loops() {
     let mut runtime = Runtime::new();
     runtime.set_timeout_ms(50);
 
-    let result = runtime.eval("while (true) { for (;;) {} }");
+    let result = runtime.eval("while (true) { for (;;) {} }", None);
     assert!(matches!(result, Err(JsError::Timeout { .. })));
 }

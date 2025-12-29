@@ -103,7 +103,7 @@ fn run_with_globals(runtime: &mut Runtime, script: &str) -> RuntimeResult {
 {}"#,
         script
     );
-    runtime.eval(&full_script).expect("eval should not fail")
+    runtime.eval(&full_script, None).expect("eval should not fail")
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -286,6 +286,7 @@ fn test_cross_module_closure_simple() {
             // Check the state
             getState();
         "#,
+            None,
         )
         .expect("eval should work");
 
@@ -381,6 +382,7 @@ fn test_cross_module_nested_closure() {
             // Return both the module state and user result
             getState() + " / " + userResult;
         "#,
+            None,
         )
         .expect("eval should work");
 
@@ -448,6 +450,7 @@ fn test_debug_closure_gc() {
             await wrapper();
             state;
         "#,
+            None,
         )
         .expect("eval should work");
 

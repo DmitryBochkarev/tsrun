@@ -100,7 +100,7 @@ pub fn eval_result(source: &str) -> Result<RuntimeValue, JsError> {
 
     // Use the full eval() API instead of eval_simple()
     // This properly handles promise resolution via run_to_completion_or_suspend()
-    let result = runtime.eval(source)?;
+    let result = runtime.eval(source, None)?;
 
     // Handle the RuntimeResult
     match result {

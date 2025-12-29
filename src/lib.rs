@@ -590,42 +590,29 @@ impl Runtime {
         self.interpreter.register_internal_module(module);
     }
 
-    /// Evaluate simple TypeScript/JavaScript code (no imports, no async)
-    pub fn eval_simple(&mut self, source: &str) -> Result<JsValue, JsError> {
-        self.interpreter.eval_simple(source)
-    }
-
     /// Evaluate TypeScript/JavaScript code with full runtime support.
     ///
-    /// This is equivalent to `eval_with_path(source, None)` - relative imports
-    /// will be resolved without a base path (treated as bare specifiers).
+    /// The optional `path` parameter is used as the base for resolving relative imports.
+    /// For example, if `path` is `/project/src/main.ts` and the code contains
+    /// `import { foo } from "./utils"`, it will resolve to `/project/src/utils`.
+    ///
+    /// If no path is provided, relative imports will be treated as bare specifiers.
     ///
     /// Returns RuntimeResult which may indicate:
     /// - Complete: execution finished with a value
     /// - NeedImports: modules need to be provided before continuing
     /// - Suspended: waiting for orders to be fulfilled
-    pub fn eval(&mut self, source: &str) -> Result<RuntimeResult, JsError> {
-        self.interpreter.eval(source)
-    }
-
-    /// Evaluate TypeScript/JavaScript code with a known module path.
     ///
-    /// The `module_path` is used as the base for resolving relative imports.
-    /// For example, if `module_path` is `/project/src/main.ts` and the code
-    /// contains `import { foo } from "./utils"`, it will resolve to
-    /// `/project/src/utils`.
+    /// # Examples
+    /// ```ignore
+    /// // Without a path
+    /// let result = runtime.eval("1 + 2", None)?;
     ///
-    /// Returns RuntimeResult which may indicate:
-    /// - Complete: execution finished with a value
-    /// - NeedImports: modules need to be provided before continuing
-    /// - Suspended: waiting for orders to be fulfilled
-    pub fn eval_with_path(
-        &mut self,
-        source: &str,
-        module_path: impl Into<ModulePath>,
-    ) -> Result<RuntimeResult, JsError> {
-        self.interpreter
-            .eval_with_path(source, Some(module_path.into()))
+    /// // With a path
+    /// let result = runtime.eval("import { foo } from './utils'", Some("/src/main.ts"))?;
+    /// ```
+    pub fn eval(&mut self, source: &str, path: Option<&str>) -> Result<RuntimeResult, JsError> {
+        self.interpreter.eval(source, path.map(ModulePath::new))
     }
 
     /// Provide a module source for a pending import.

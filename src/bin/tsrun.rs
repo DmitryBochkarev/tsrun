@@ -103,7 +103,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     // Start evaluation - may return NeedImports
     let entry_file = entry_path.display().to_string();
     let mut result = runtime
-        .eval_with_path(&rewritten_source, entry_file.clone())
+        .eval(&rewritten_source, Some(entry_file.as_str()))
         .map_err(|e| format_error(&e.to_string(), &entry_file, &[]))?;
 
     // Helper to build import chain from a file back to entry
