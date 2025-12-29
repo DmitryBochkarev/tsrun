@@ -21,7 +21,9 @@ fn test_runtime_result_complete() {
 #[test]
 fn test_runtime_result_need_imports() {
     let mut runtime = Runtime::new();
-    let result = runtime.eval(r#"import { foo } from "./utils";"#, None).unwrap();
+    let result = runtime
+        .eval(r#"import { foo } from "./utils";"#, None)
+        .unwrap();
 
     match result {
         RuntimeResult::NeedImports(imports) => {
@@ -973,7 +975,10 @@ fn test_eval_with_path_resolves_imports() {
 
     // Eval with a base path
     let result = runtime
-        .eval(r#"import { foo } from "./utils";"#, Some("/project/src/main.ts"))
+        .eval(
+            r#"import { foo } from "./utils";"#,
+            Some("/project/src/main.ts"),
+        )
         .unwrap();
 
     match result {

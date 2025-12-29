@@ -122,11 +122,6 @@ impl WaitGraph {
     pub fn has_waiting_contexts(&self) -> bool {
         !self.contexts.is_empty()
     }
-
-    /// Check if any contexts are ready to resume
-    pub fn has_ready_contexts(&self) -> bool {
-        !self.ready_queue.is_empty()
-    }
 }
 
 // OrderSuspension is now VmOrderSuspension in bytecode_vm.rs
@@ -3958,8 +3953,14 @@ mod tests {
     fn test_basic_arithmetic() {
         let mut interp = Interpreter::new();
         assert_eq!(interp.eval_bytecode("1 + 2").unwrap(), JsValue::Number(3.0));
-        assert_eq!(interp.eval_bytecode("3 * 4").unwrap(), JsValue::Number(12.0));
-        assert_eq!(interp.eval_bytecode("10 / 2").unwrap(), JsValue::Number(5.0));
+        assert_eq!(
+            interp.eval_bytecode("3 * 4").unwrap(),
+            JsValue::Number(12.0)
+        );
+        assert_eq!(
+            interp.eval_bytecode("10 / 2").unwrap(),
+            JsValue::Number(5.0)
+        );
     }
 
     #[test]

@@ -677,7 +677,6 @@ impl Runtime {
     pub fn gc_stats(&self) -> gc::GcStats {
         self.interpreter.heap.stats()
     }
-
 }
 
 impl Default for Runtime {

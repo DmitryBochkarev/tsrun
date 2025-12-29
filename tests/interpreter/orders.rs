@@ -6,9 +6,8 @@
 
 use serde_json::json;
 use tsrun::{
-    api, InternalModule, JsString, JsValue, OrderId, OrderResponse, Runtime, RuntimeConfig,
-    RuntimeResult, RuntimeValue, create_eval_internal_module,
-    value::PropertyKey,
+    InternalModule, JsString, JsValue, OrderId, OrderResponse, Runtime, RuntimeConfig,
+    RuntimeResult, RuntimeValue, api, create_eval_internal_module, value::PropertyKey,
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -103,7 +102,9 @@ fn run_with_globals(runtime: &mut Runtime, script: &str) -> RuntimeResult {
 {}"#,
         script
     );
-    runtime.eval(&full_script, None).expect("eval should not fail")
+    runtime
+        .eval(&full_script, None)
+        .expect("eval should not fail")
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -163,7 +164,12 @@ fn test_promise_then_callback_closure() {
     };
 
     // Resolve the Promise - this triggers the .then() callback
-    api::resolve_promise(&mut runtime, &promise, RuntimeValue::unguarded(JsValue::Undefined)).unwrap();
+    api::resolve_promise(
+        &mut runtime,
+        &promise,
+        RuntimeValue::unguarded(JsValue::Undefined),
+    )
+    .unwrap();
     let result3 = runtime.continue_eval().unwrap();
 
     // After resolution, the callback should have run and modified `captured`
@@ -224,7 +230,12 @@ fn test_promise_then_callback_nested_closure() {
     };
 
     // Resolve the Promise
-    api::resolve_promise(&mut runtime, &promise, RuntimeValue::unguarded(JsValue::Undefined)).unwrap();
+    api::resolve_promise(
+        &mut runtime,
+        &promise,
+        RuntimeValue::unguarded(JsValue::Undefined),
+    )
+    .unwrap();
     let result3 = runtime.continue_eval().unwrap();
 
     let RuntimeResult::Complete(value) = result3 else {
@@ -309,7 +320,12 @@ fn test_cross_module_closure_simple() {
     };
 
     // Resolve the Promise - triggers .then() callback
-    api::resolve_promise(&mut runtime, &promise, RuntimeValue::unguarded(JsValue::Undefined)).unwrap();
+    api::resolve_promise(
+        &mut runtime,
+        &promise,
+        RuntimeValue::unguarded(JsValue::Undefined),
+    )
+    .unwrap();
     let result3 = runtime.continue_eval().unwrap();
 
     let RuntimeResult::Complete(value) = result3 else {
@@ -404,7 +420,12 @@ fn test_cross_module_nested_closure() {
     };
 
     // Resolve the Promise - triggers .then() callback
-    api::resolve_promise(&mut runtime, &promise, RuntimeValue::unguarded(JsValue::Undefined)).unwrap();
+    api::resolve_promise(
+        &mut runtime,
+        &promise,
+        RuntimeValue::unguarded(JsValue::Undefined),
+    )
+    .unwrap();
     let result3 = runtime.continue_eval().unwrap();
 
     let RuntimeResult::Complete(value) = result3 else {
@@ -470,7 +491,12 @@ fn test_debug_closure_gc() {
     };
 
     // Resolve the Promise - triggers .then() callback with closure
-    api::resolve_promise(&mut runtime, &promise, RuntimeValue::unguarded(JsValue::Undefined)).unwrap();
+    api::resolve_promise(
+        &mut runtime,
+        &promise,
+        RuntimeValue::unguarded(JsValue::Undefined),
+    )
+    .unwrap();
     let result3 = runtime.continue_eval().unwrap();
 
     let RuntimeResult::Complete(value) = result3 else {
@@ -617,12 +643,15 @@ fn test_fetch_get_basic() {
             assert_eq!(get_string_prop(payload, "method"), Some("GET".into()));
 
             // Return mock response using create_response_object
-            let mock_response = api::create_response_object(&mut runtime,&json!({
+            let mock_response = api::create_response_object(
+                &mut runtime,
+                &json!({
                     "id": 1,
                     "name": "John",
                     "email": "john@example.com"
-                }))
-                .unwrap();
+                }),
+            )
+            .unwrap();
 
             let response = OrderResponse {
                 id: pending[0].id,
@@ -675,8 +704,9 @@ fn test_fetch_post_with_body() {
             );
 
             // Return mock created response
-            let mock_response = api::create_response_object(&mut runtime,&json!({ "id": 42, "name": "Jane" }))
-                .unwrap();
+            let mock_response =
+                api::create_response_object(&mut runtime, &json!({ "id": 42, "name": "Jane" }))
+                    .unwrap();
 
             let response = OrderResponse {
                 id: pending[0].id,
@@ -720,8 +750,8 @@ fn test_fetch_parallel() {
         Some("/users/1".into())
     );
 
-    let user_response = api::create_response_object(&mut runtime,&json!({ "name": "John" }))
-        .unwrap();
+    let user_response =
+        api::create_response_object(&mut runtime, &json!({ "name": "John" })).unwrap();
     let result2 = runtime
         .fulfill_orders(vec![OrderResponse {
             id: pending[0].id,
@@ -739,8 +769,11 @@ fn test_fetch_parallel() {
         Some("/posts?userId=1".into())
     );
 
-    let posts_response = api::create_response_object(&mut runtime,&json!([{ "id": 1 }, { "id": 2 }, { "id": 3 }]))
-        .unwrap();
+    let posts_response = api::create_response_object(
+        &mut runtime,
+        &json!([{ "id": 1 }, { "id": 2 }, { "id": 3 }]),
+    )
+    .unwrap();
     let result3 = runtime
         .fulfill_orders(vec![OrderResponse {
             id: pending[0].id,
@@ -1009,8 +1042,9 @@ fn test_config_generation_workflow() {
         Some("https://api.example.com/settings".into())
     );
 
-    let api_response = api::create_response_object(&mut runtime,&json!({ "theme": "dark", "language": "en" }))
-        .unwrap();
+    let api_response =
+        api::create_response_object(&mut runtime, &json!({ "theme": "dark", "language": "en" }))
+            .unwrap();
     let result = runtime
         .fulfill_orders(vec![OrderResponse {
             id: pending[0].id,
@@ -1358,7 +1392,8 @@ fn test_promise_race_first_wins() {
     };
 
     // Resolve "fast" first - this should win the race
-    let fast_data = api::create_response_object(&mut runtime, &json!({ "server": "fast" })).unwrap();
+    let fast_data =
+        api::create_response_object(&mut runtime, &json!({ "server": "fast" })).unwrap();
     api::resolve_promise(&mut runtime, &promise_fast, fast_data).unwrap();
     let result = runtime.continue_eval().unwrap();
 
@@ -1561,7 +1596,12 @@ fn test_concurrent_three_way_race() {
     };
 
     // Resolve promise2 first (should win the race)
-    api::resolve_promise(&mut runtime, &promise2, RuntimeValue::unguarded(JsValue::Number(2.0))).unwrap();
+    api::resolve_promise(
+        &mut runtime,
+        &promise2,
+        RuntimeValue::unguarded(JsValue::Number(2.0)),
+    )
+    .unwrap();
     let result = runtime.continue_eval().unwrap();
 
     let RuntimeResult::Complete(value) = result else {
@@ -1632,7 +1672,8 @@ fn test_concurrent_chained_operations() {
     };
 
     // Resolve profile
-    let profile_data = api::create_response_object(&mut runtime, &json!({ "bio": "Developer" })).unwrap();
+    let profile_data =
+        api::create_response_object(&mut runtime, &json!({ "bio": "Developer" })).unwrap();
     api::resolve_promise(&mut runtime, &promise_profile, profile_data).unwrap();
     let result = runtime.continue_eval().unwrap();
 
@@ -1659,8 +1700,8 @@ fn test_promise_race_cancels_losing_order() {
     // Create host Promises linked to orders
     let order1_id = OrderId(100);
     let order2_id = OrderId(200);
-    let promise1 = api::create_order_promise(&mut runtime,order1_id);
-    let promise2 = api::create_order_promise(&mut runtime,order2_id);
+    let promise1 = api::create_order_promise(&mut runtime, order1_id);
+    let promise2 = api::create_order_promise(&mut runtime, order2_id);
 
     let result = run_with_globals(
         &mut runtime,
@@ -1743,8 +1784,8 @@ fn test_promise_race_second_wins_cancels_first() {
 
     let order1_id = OrderId(111);
     let order2_id = OrderId(222);
-    let promise1 = api::create_order_promise(&mut runtime,order1_id);
-    let promise2 = api::create_order_promise(&mut runtime,order2_id);
+    let promise1 = api::create_order_promise(&mut runtime, order1_id);
+    let promise2 = api::create_order_promise(&mut runtime, order2_id);
 
     let result = run_with_globals(
         &mut runtime,
@@ -1816,7 +1857,7 @@ fn test_promise_rejection_signals_cancelled_order() {
     let mut runtime = create_test_runtime();
 
     let order_id = OrderId(999);
-    let promise = api::create_order_promise(&mut runtime,order_id);
+    let promise = api::create_order_promise(&mut runtime, order_id);
 
     let result = run_with_globals(
         &mut runtime,
@@ -1887,9 +1928,9 @@ fn test_three_way_race_cancels_two_losers() {
     let order1_id = OrderId(1);
     let order2_id = OrderId(2);
     let order3_id = OrderId(3);
-    let promise1 = api::create_order_promise(&mut runtime,order1_id);
-    let promise2 = api::create_order_promise(&mut runtime,order2_id);
-    let promise3 = api::create_order_promise(&mut runtime,order3_id);
+    let promise1 = api::create_order_promise(&mut runtime, order1_id);
+    let promise2 = api::create_order_promise(&mut runtime, order2_id);
+    let promise3 = api::create_order_promise(&mut runtime, order3_id);
 
     let result = run_with_globals(
         &mut runtime,
@@ -1941,7 +1982,12 @@ fn test_three_way_race_cancels_two_losers() {
     };
 
     // Resolve promise2 (middle one wins)
-    api::resolve_promise(&mut runtime, &promise2, RuntimeValue::unguarded(JsValue::Number(2.0))).unwrap();
+    api::resolve_promise(
+        &mut runtime,
+        &promise2,
+        RuntimeValue::unguarded(JsValue::Number(2.0)),
+    )
+    .unwrap();
     let result = runtime.continue_eval().unwrap();
 
     // Check that both losers' orders are cancelled

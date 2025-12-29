@@ -1,7 +1,7 @@
 //! JSON built-in methods
 
 use crate::error::JsError;
-use crate::gc::{Gc, Guard};
+use crate::gc::Guard;
 use crate::interpreter::Interpreter;
 use crate::value::{ExoticObject, Guarded, JsObject, JsString, JsValue, PropertyKey};
 use std::collections::HashSet;
@@ -22,18 +22,6 @@ pub fn init_json(interp: &mut Interpreter) {
         .global
         .borrow_mut()
         .set_property(json_key, JsValue::Object(json));
-}
-
-/// Create JSON object with stringify and parse methods (for compatibility)
-pub fn create_json_object(interp: &mut Interpreter) -> Gc<JsObject> {
-    // Use root_guard for permanent objects
-    let json = interp.root_guard.alloc();
-    json.borrow_mut().prototype = Some(interp.object_prototype.clone());
-
-    interp.register_method(&json, "stringify", json_stringify, 3);
-    interp.register_method(&json, "parse", json_parse, 2);
-
-    json
 }
 
 pub fn json_stringify(

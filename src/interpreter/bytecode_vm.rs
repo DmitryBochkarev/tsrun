@@ -92,7 +92,9 @@ pub struct SavedVmState {
     pub registers: Vec<JsValue>,
     /// Exception handlers
     pub try_stack: Vec<TryHandler>,
-    /// Guard to keep all objects in registers alive during suspension
+    /// Guard to keep all objects in registers alive during suspension.
+    /// The field is never read but exists for its drop semantics.
+    #[allow(dead_code)]
     pub guard: Option<Guard<JsObject>>,
     /// Original arguments for `arguments` object
     pub arguments: Vec<JsValue>,
@@ -140,7 +142,9 @@ pub struct TryHandler {
 pub enum PendingCompletion {
     /// Return this value after finally completes
     Return(Guarded),
-    /// Rethrow this exception after finally completes
+    /// Rethrow this exception after finally completes.
+    /// FIXME: Implement exception rethrowing after finally blocks.
+    #[allow(dead_code)]
     Throw(Guarded),
     /// Break to target after finally completes
     Break { target: usize, try_depth: u8 },

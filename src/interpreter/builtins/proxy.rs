@@ -1239,12 +1239,3 @@ fn get_own_keys(interp: &mut Interpreter, obj: &JsObjectRef) -> Result<Guarded, 
 pub fn is_proxy(obj: &JsObjectRef) -> bool {
     matches!(obj.borrow().exotic, ExoticObject::Proxy(_))
 }
-
-/// Get the target of a proxy (for internal use)
-pub fn get_proxy_target(obj: &JsObjectRef) -> Option<JsObjectRef> {
-    if let ExoticObject::Proxy(ref data) = obj.borrow().exotic {
-        Some(data.target.clone())
-    } else {
-        None
-    }
-}

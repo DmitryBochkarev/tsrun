@@ -591,7 +591,7 @@ pub fn get_export_names(runtime: &Runtime) -> Vec<String> {
 // Promise Creation and Resolution
 // ═══════════════════════════════════════════════════════════════════════════════
 
-use crate::{OrderId, RuntimeResult, RuntimeValue};
+use crate::{OrderId, RuntimeValue};
 
 /// Create a RuntimeValue from a serde_json value for use in OrderResponse.
 ///
@@ -650,8 +650,7 @@ pub fn create_response_object(
 /// ```
 pub fn create_promise(runtime: &mut Runtime) -> RuntimeValue {
     let guard = runtime.interpreter.heap.create_guard();
-    let promise =
-        interpreter::builtins::promise::create_promise(&mut runtime.interpreter, &guard);
+    let promise = interpreter::builtins::promise::create_promise(&mut runtime.interpreter, &guard);
     RuntimeValue::with_guard(JsValue::Object(promise), guard)
 }
 

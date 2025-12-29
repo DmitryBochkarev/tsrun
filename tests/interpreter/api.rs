@@ -611,7 +611,10 @@ fn test_object_property_access() {
 fn test_nested_object() {
     let mut runtime = Runtime::new();
     let result = runtime
-        .eval("({ user: { name: 'Bob', settings: { theme: 'dark' } } })", None)
+        .eval(
+            "({ user: { name: 'Bob', settings: { theme: 'dark' } } })",
+            None,
+        )
         .unwrap();
 
     if let RuntimeResult::Complete(rv) = result {
