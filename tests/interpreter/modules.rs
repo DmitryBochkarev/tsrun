@@ -283,7 +283,7 @@ fn test_import_namespace() {
 
 #[test]
 fn test_order_syscall() {
-    use tsrun::interpreter::builtins::create_eval_internal_module;
+    use tsrun::create_eval_internal_module;
 
     // Create the eval:internal module
     let eval_internal = create_eval_internal_module();
@@ -327,7 +327,7 @@ fn test_order_syscall() {
 
 #[test]
 fn test_order_syscall_returns_promise() {
-    use tsrun::interpreter::builtins::create_eval_internal_module;
+    use tsrun::create_eval_internal_module;
 
     let eval_internal = create_eval_internal_module();
 
@@ -362,7 +362,7 @@ fn test_order_syscall_returns_promise() {
 
 #[test]
 fn test_await_pending_promise_suspends_and_resumes() {
-    use tsrun::interpreter::builtins::create_eval_internal_module;
+    use tsrun::create_eval_internal_module;
 
     let eval_internal = create_eval_internal_module();
 
@@ -417,7 +417,7 @@ fn test_await_pending_promise_suspends_and_resumes() {
 
 #[test]
 fn test_await_suspension_with_multiple_awaits() {
-    use tsrun::interpreter::builtins::create_eval_internal_module;
+    use tsrun::create_eval_internal_module;
 
     let eval_internal = create_eval_internal_module();
 
@@ -765,7 +765,7 @@ fn test_module_namespace_import() {
 #[test]
 fn test_module_with_internal_imports() {
     // External module that also imports from internal module
-    use tsrun::interpreter::builtins::create_eval_internal_module;
+    use tsrun::create_eval_internal_module;
 
     let eval_internal = create_eval_internal_module();
 

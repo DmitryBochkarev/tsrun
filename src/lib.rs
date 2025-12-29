@@ -3,11 +3,13 @@
 //! # Example
 //!
 //! ```
-//! use tsrun::{Runtime, JsValue};
+//! use tsrun::{Runtime, RuntimeResult};
 //!
 //! let mut runtime = Runtime::new();
-//! let result = runtime.eval_simple("1 + 2 * 3").unwrap();
-//! assert_eq!(result, JsValue::Number(7.0));
+//! let result = runtime.eval("1 + 2 * 3", None).unwrap();
+//! if let RuntimeResult::Complete(value) = result {
+//!     assert_eq!(value.as_number(), Some(7.0));
+//! }
 //! ```
 
 pub mod api;
@@ -15,7 +17,7 @@ pub mod ast;
 pub mod compiler;
 pub mod error;
 pub mod gc;
-pub mod interpreter;
+pub(crate) mod interpreter;
 pub mod lexer;
 pub mod parser;
 pub mod string_dict;
@@ -36,6 +38,9 @@ pub use value::JsValue;
 pub use interpreter::builtins::json::{
     js_value_to_json, json_to_js_value_with_guard, json_to_js_value_with_interp,
 };
+
+// Re-export internal module builder for the order system
+pub use interpreter::builtins::internal::create_eval_internal_module;
 
 // Re-export order system types
 // Note: Order, OrderId, OrderResponse, RuntimeResult, ModulePath, ImportRequest are defined in this module
@@ -673,164 +678,6 @@ impl Runtime {
         self.interpreter.heap.stats()
     }
 
-    /// Create a RuntimeValue from a serde_json value for use in OrderResponse.
-    ///
-    /// This is the recommended way to create object responses for orders.
-    /// The returned RuntimeValue keeps the object alive until it is consumed.
-    ///
-    /// # Example
-    /// ```ignore
-    /// use serde_json::json;
-    ///
-    /// let response_value = runtime.create_response_object(&json!({
-    ///     "id": 1,
-    ///     "name": "John",
-    ///     "items": [1, 2, 3]
-    /// }))?;
-    ///
-    /// let response = OrderResponse {
-    ///     id: order.id,
-    ///     result: Ok(response_value),
-    /// };
-    /// ```
-    pub fn create_response_object(
-        &mut self,
-        json: &serde_json::Value,
-    ) -> Result<RuntimeValue, JsError> {
-        let guard = self.interpreter.heap.create_guard();
-        let value = interpreter::builtins::json::json_to_js_value_with_guard(
-            &mut self.interpreter,
-            json,
-            &guard,
-        )?;
-        Ok(RuntimeValue::with_guard(value, guard))
-    }
-
-    /// Create an unresolved Promise that can be resolved or rejected later.
-    ///
-    /// This is useful when the host wants to return a Promise from `fulfill_orders`
-    /// that will be resolved asynchronously (e.g., when a network request completes).
-    ///
-    /// The returned `RuntimeValue` contains the Promise and keeps it alive.
-    /// Store it and later call `resolve_promise` or `reject_promise` to settle it.
-    ///
-    /// # Example
-    /// ```ignore
-    /// // Create an unresolved promise
-    /// let promise = runtime.create_promise();
-    ///
-    /// // Return it as the response to an order
-    /// runtime.fulfill_orders(vec![OrderResponse {
-    ///     id: order.id,
-    ///     result: Ok(promise.clone()),
-    /// }])?;
-    ///
-    /// // Later, when the async operation completes:
-    /// runtime.resolve_promise(&promise, result_value)?;
-    /// ```
-    pub fn create_promise(&mut self) -> RuntimeValue {
-        let guard = self.interpreter.heap.create_guard();
-        let promise = interpreter::builtins::promise::create_promise(&mut self.interpreter, &guard);
-        RuntimeValue::with_guard(JsValue::Object(promise), guard)
-    }
-
-    /// Create an unresolved Promise linked to an order for cancellation tracking.
-    ///
-    /// Similar to `create_promise()`, but the Promise is associated with the given
-    /// order ID. When this Promise "loses" in a `Promise.race()`, the order ID will
-    /// be included in the `cancelled` list of `RuntimeResult::Suspended`.
-    ///
-    /// Use this when returning a Promise as an order response to enable automatic
-    /// cancellation notification when the Promise is no longer needed.
-    ///
-    /// # Example
-    /// ```ignore
-    /// let order_id = order.id;
-    /// let promise = runtime.create_order_promise(order_id);
-    ///
-    /// runtime.fulfill_orders(vec![OrderResponse {
-    ///     id: order_id,
-    ///     result: Ok(promise.clone()),
-    /// }])?;
-    ///
-    /// // If this Promise loses in a Promise.race(), order_id will be in
-    /// // RuntimeResult::Suspended { cancelled: vec![order_id], ... }
-    /// ```
-    pub fn create_order_promise(&mut self, order_id: OrderId) -> RuntimeValue {
-        let guard = self.interpreter.heap.create_guard();
-        let promise = interpreter::builtins::promise::create_order_promise(
-            &mut self.interpreter,
-            &guard,
-            order_id,
-        );
-        RuntimeValue::with_guard(JsValue::Object(promise), guard)
-    }
-
-    /// Resolve a Promise that was created with `create_promise`.
-    ///
-    /// This will fulfill the Promise with the given value and trigger any
-    /// `.then()` handlers. Any async contexts waiting on this Promise will
-    /// be moved to the ready queue.
-    ///
-    /// Returns `RuntimeResult` which may be:
-    /// - `Complete`: all execution finished
-    /// - `Suspended`: still waiting for other Promises or orders
-    ///
-    /// # Errors
-    /// Returns an error if the value is not a Promise.
-    pub fn resolve_promise(
-        &mut self,
-        promise: &RuntimeValue,
-        value: RuntimeValue,
-    ) -> Result<RuntimeResult, JsError> {
-        let JsValue::Object(promise_obj) = promise.value() else {
-            return Err(JsError::type_error("Expected a Promise object"));
-        };
-
-        interpreter::builtins::promise::resolve_promise_value(
-            &mut self.interpreter,
-            promise_obj,
-            value.value().clone(),
-        )?;
-
-        // Check if any waiting contexts are now ready
-        self.interpreter.check_resolved_promises_public();
-
-        self.continue_eval()
-    }
-
-    /// Reject a Promise that was created with `create_promise`.
-    ///
-    /// This will reject the Promise with the given reason and trigger any
-    /// `.catch()` or rejection handlers. Any async contexts waiting on this
-    /// Promise will be moved to the ready queue with an error.
-    ///
-    /// Returns `RuntimeResult` which may be:
-    /// - `Complete`: all execution finished
-    /// - `Suspended`: still waiting for other Promises or orders
-    ///
-    /// # Errors
-    /// Returns an error if the value is not a Promise.
-    pub fn reject_promise(
-        &mut self,
-        promise: &RuntimeValue,
-        reason: RuntimeValue,
-    ) -> Result<RuntimeResult, JsError> {
-        let JsValue::Object(promise_obj) = promise.value() else {
-            return Err(JsError::type_error("Expected a Promise object"));
-        };
-
-        interpreter::builtins::promise::reject_promise_value(
-            &mut self.interpreter,
-            promise_obj,
-            reason.value().clone(),
-        )?;
-
-        // Check if any waiting contexts are now ready
-        self.interpreter.check_resolved_promises_public();
-
-        self.continue_eval()
-    }
 }
 
 impl Default for Runtime {

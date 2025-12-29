@@ -6,8 +6,8 @@
 
 use serde_json::json;
 use tsrun::{
-    InternalModule, JsString, JsValue, OrderId, OrderResponse, Runtime, RuntimeConfig,
-    RuntimeResult, RuntimeValue, interpreter::builtins::create_eval_internal_module,
+    api, InternalModule, JsString, JsValue, OrderId, OrderResponse, Runtime, RuntimeConfig,
+    RuntimeResult, RuntimeValue, create_eval_internal_module,
     value::PropertyKey,
 };
 
@@ -149,7 +149,7 @@ fn test_promise_then_callback_closure() {
     );
 
     // Host creates and returns a Promise
-    let promise = runtime.create_promise();
+    let promise = api::create_promise(&mut runtime);
     let result2 = runtime
         .fulfill_orders(vec![OrderResponse {
             id: pending[0].id,
@@ -163,9 +163,8 @@ fn test_promise_then_callback_closure() {
     };
 
     // Resolve the Promise - this triggers the .then() callback
-    let result3 = runtime
-        .resolve_promise(&promise, RuntimeValue::unguarded(JsValue::Undefined))
-        .unwrap();
+    api::resolve_promise(&mut runtime, &promise, RuntimeValue::unguarded(JsValue::Undefined)).unwrap();
+    let result3 = runtime.continue_eval().unwrap();
 
     // After resolution, the callback should have run and modified `captured`
     let RuntimeResult::Complete(value) = result3 else {
@@ -211,7 +210,7 @@ fn test_promise_then_callback_nested_closure() {
     assert_eq!(pending.len(), 1);
 
     // Host returns a Promise
-    let promise = runtime.create_promise();
+    let promise = api::create_promise(&mut runtime);
     let result2 = runtime
         .fulfill_orders(vec![OrderResponse {
             id: pending[0].id,
@@ -225,9 +224,8 @@ fn test_promise_then_callback_nested_closure() {
     };
 
     // Resolve the Promise
-    let result3 = runtime
-        .resolve_promise(&promise, RuntimeValue::unguarded(JsValue::Undefined))
-        .unwrap();
+    api::resolve_promise(&mut runtime, &promise, RuntimeValue::unguarded(JsValue::Undefined)).unwrap();
+    let result3 = runtime.continue_eval().unwrap();
 
     let RuntimeResult::Complete(value) = result3 else {
         panic!("Expected Complete after Promise resolution");
@@ -297,7 +295,7 @@ fn test_cross_module_closure_simple() {
     assert_eq!(pending.len(), 1);
 
     // Host returns a Promise
-    let promise = runtime.create_promise();
+    let promise = api::create_promise(&mut runtime);
     let result2 = runtime
         .fulfill_orders(vec![OrderResponse {
             id: pending[0].id,
@@ -311,9 +309,8 @@ fn test_cross_module_closure_simple() {
     };
 
     // Resolve the Promise - triggers .then() callback
-    let result3 = runtime
-        .resolve_promise(&promise, RuntimeValue::unguarded(JsValue::Undefined))
-        .unwrap();
+    api::resolve_promise(&mut runtime, &promise, RuntimeValue::unguarded(JsValue::Undefined)).unwrap();
+    let result3 = runtime.continue_eval().unwrap();
 
     let RuntimeResult::Complete(value) = result3 else {
         panic!("Expected Complete after Promise resolution");
@@ -393,7 +390,7 @@ fn test_cross_module_nested_closure() {
     assert_eq!(pending.len(), 1);
 
     // Host returns a Promise
-    let promise = runtime.create_promise();
+    let promise = api::create_promise(&mut runtime);
     let result2 = runtime
         .fulfill_orders(vec![OrderResponse {
             id: pending[0].id,
@@ -407,9 +404,8 @@ fn test_cross_module_nested_closure() {
     };
 
     // Resolve the Promise - triggers .then() callback
-    let result3 = runtime
-        .resolve_promise(&promise, RuntimeValue::unguarded(JsValue::Undefined))
-        .unwrap();
+    api::resolve_promise(&mut runtime, &promise, RuntimeValue::unguarded(JsValue::Undefined)).unwrap();
+    let result3 = runtime.continue_eval().unwrap();
 
     let RuntimeResult::Complete(value) = result3 else {
         panic!("Expected Complete after Promise resolution");
@@ -460,7 +456,7 @@ fn test_debug_closure_gc() {
     };
 
     // Host returns a Promise
-    let promise = runtime.create_promise();
+    let promise = api::create_promise(&mut runtime);
     let result2 = runtime
         .fulfill_orders(vec![OrderResponse {
             id: pending[0].id,
@@ -474,9 +470,8 @@ fn test_debug_closure_gc() {
     };
 
     // Resolve the Promise - triggers .then() callback with closure
-    let result3 = runtime
-        .resolve_promise(&promise, RuntimeValue::unguarded(JsValue::Undefined))
-        .unwrap();
+    api::resolve_promise(&mut runtime, &promise, RuntimeValue::unguarded(JsValue::Undefined)).unwrap();
+    let result3 = runtime.continue_eval().unwrap();
 
     let RuntimeResult::Complete(value) = result3 else {
         panic!("Expected Complete after Promise resolution");
@@ -622,8 +617,7 @@ fn test_fetch_get_basic() {
             assert_eq!(get_string_prop(payload, "method"), Some("GET".into()));
 
             // Return mock response using create_response_object
-            let mock_response = runtime
-                .create_response_object(&json!({
+            let mock_response = api::create_response_object(&mut runtime,&json!({
                     "id": 1,
                     "name": "John",
                     "email": "john@example.com"
@@ -681,8 +675,7 @@ fn test_fetch_post_with_body() {
             );
 
             // Return mock created response
-            let mock_response = runtime
-                .create_response_object(&json!({ "id": 42, "name": "Jane" }))
+            let mock_response = api::create_response_object(&mut runtime,&json!({ "id": 42, "name": "Jane" }))
                 .unwrap();
 
             let response = OrderResponse {
@@ -727,8 +720,7 @@ fn test_fetch_parallel() {
         Some("/users/1".into())
     );
 
-    let user_response = runtime
-        .create_response_object(&json!({ "name": "John" }))
+    let user_response = api::create_response_object(&mut runtime,&json!({ "name": "John" }))
         .unwrap();
     let result2 = runtime
         .fulfill_orders(vec![OrderResponse {
@@ -747,8 +739,7 @@ fn test_fetch_parallel() {
         Some("/posts?userId=1".into())
     );
 
-    let posts_response = runtime
-        .create_response_object(&json!([{ "id": 1 }, { "id": 2 }, { "id": 3 }]))
+    let posts_response = api::create_response_object(&mut runtime,&json!([{ "id": 1 }, { "id": 2 }, { "id": 3 }]))
         .unwrap();
     let result3 = runtime
         .fulfill_orders(vec![OrderResponse {
@@ -1018,8 +1009,7 @@ fn test_config_generation_workflow() {
         Some("https://api.example.com/settings".into())
     );
 
-    let api_response = runtime
-        .create_response_object(&json!({ "theme": "dark", "language": "en" }))
+    let api_response = api::create_response_object(&mut runtime,&json!({ "theme": "dark", "language": "en" }))
         .unwrap();
     let result = runtime
         .fulfill_orders(vec![OrderResponse {
@@ -1072,7 +1062,7 @@ fn test_host_create_and_resolve_promise() {
     let mut runtime = create_test_runtime();
 
     // Create an unresolved promise from the host
-    let host_promise = runtime.create_promise();
+    let host_promise = api::create_promise(&mut runtime);
 
     // The script must await the returned Promise separately
     let result = run_with_globals(
@@ -1113,7 +1103,8 @@ fn test_host_create_and_resolve_promise() {
 
     // Now resolve the promise with a value
     let value = RuntimeValue::unguarded(JsValue::String("Hello from host!".into()));
-    let result3 = runtime.resolve_promise(&host_promise, value).unwrap();
+    api::resolve_promise(&mut runtime, &host_promise, value).unwrap();
+    let result3 = runtime.continue_eval().unwrap();
 
     // Should complete now
     let RuntimeResult::Complete(final_value) = result3 else {
@@ -1130,7 +1121,7 @@ fn test_host_create_and_reject_promise() {
     // Test that host can create a Promise and reject it later
     let mut runtime = create_test_runtime();
 
-    let host_promise = runtime.create_promise();
+    let host_promise = api::create_promise(&mut runtime);
 
     let result = run_with_globals(
         &mut runtime,
@@ -1166,7 +1157,8 @@ fn test_host_create_and_reject_promise() {
 
     // Reject the promise
     let reason = RuntimeValue::unguarded(JsValue::String("Something went wrong".into()));
-    let result3 = runtime.reject_promise(&host_promise, reason).unwrap();
+    api::reject_promise(&mut runtime, &host_promise, reason).unwrap();
+    let result3 = runtime.continue_eval().unwrap();
 
     let RuntimeResult::Complete(final_value) = result3 else {
         panic!("Expected Complete after rejecting Promise");
@@ -1199,12 +1191,12 @@ fn test_host_promise_immediate_resolve() {
     };
 
     // Create promise and resolve it first
-    let promise = runtime.create_promise();
+    let promise = api::create_promise(&mut runtime);
     let value = RuntimeValue::unguarded(JsValue::Number(42.0));
 
     // Resolve the promise BEFORE returning it to the script
     // This is valid - the Promise is already fulfilled when returned
-    let _ = runtime.resolve_promise(&promise, value);
+    api::resolve_promise(&mut runtime, &promise, value).unwrap();
 
     // Now fulfill the order with the already-resolved promise
     let result2 = runtime
@@ -1236,8 +1228,8 @@ fn test_concurrent_fetch_with_promise_all() {
     let mut runtime = create_test_runtime();
 
     // Create host Promises before running script
-    let promise_users = runtime.create_promise();
-    let promise_posts = runtime.create_promise();
+    let promise_users = api::create_promise(&mut runtime);
+    let promise_posts = api::create_promise(&mut runtime);
 
     let result = run_with_globals(
         &mut runtime,
@@ -1295,10 +1287,9 @@ fn test_concurrent_fetch_with_promise_all() {
     };
 
     // Resolve /posts first (out of order!)
-    let posts_data = runtime
-        .create_response_object(&json!({ "count": 100 }))
-        .unwrap();
-    let result = runtime.resolve_promise(&promise_posts, posts_data).unwrap();
+    let posts_data = api::create_response_object(&mut runtime, &json!({ "count": 100 })).unwrap();
+    api::resolve_promise(&mut runtime, &promise_posts, posts_data).unwrap();
+    let result = runtime.continue_eval().unwrap();
 
     // Still waiting for /users
     let RuntimeResult::Suspended { .. } = result else {
@@ -1306,10 +1297,9 @@ fn test_concurrent_fetch_with_promise_all() {
     };
 
     // Resolve /users
-    let users_data = runtime
-        .create_response_object(&json!({ "count": 42 }))
-        .unwrap();
-    let result = runtime.resolve_promise(&promise_users, users_data).unwrap();
+    let users_data = api::create_response_object(&mut runtime, &json!({ "count": 42 })).unwrap();
+    api::resolve_promise(&mut runtime, &promise_users, users_data).unwrap();
+    let result = runtime.continue_eval().unwrap();
 
     // Complete - results in original order despite resolution order
     let RuntimeResult::Complete(value) = result else {
@@ -1323,8 +1313,8 @@ fn test_promise_race_first_wins() {
     // Promise.race: first to resolve determines the result
     let mut runtime = create_test_runtime();
 
-    let promise_fast = runtime.create_promise();
-    let promise_slow = runtime.create_promise();
+    let promise_fast = api::create_promise(&mut runtime);
+    let promise_slow = api::create_promise(&mut runtime);
 
     let result = run_with_globals(
         &mut runtime,
@@ -1368,10 +1358,9 @@ fn test_promise_race_first_wins() {
     };
 
     // Resolve "fast" first - this should win the race
-    let fast_data = runtime
-        .create_response_object(&json!({ "server": "fast" }))
-        .unwrap();
-    let result = runtime.resolve_promise(&promise_fast, fast_data).unwrap();
+    let fast_data = api::create_response_object(&mut runtime, &json!({ "server": "fast" })).unwrap();
+    api::resolve_promise(&mut runtime, &promise_fast, fast_data).unwrap();
+    let result = runtime.continue_eval().unwrap();
 
     // Race completes immediately when first Promise resolves
     let RuntimeResult::Complete(value) = result else {
@@ -1385,8 +1374,8 @@ fn test_promise_race_second_wins() {
     // Verify race works when second Promise resolves first
     let mut runtime = create_test_runtime();
 
-    let promise_a = runtime.create_promise();
-    let promise_b = runtime.create_promise();
+    let promise_a = api::create_promise(&mut runtime);
+    let promise_b = api::create_promise(&mut runtime);
 
     let result = run_with_globals(
         &mut runtime,
@@ -1427,10 +1416,9 @@ fn test_promise_race_second_wins() {
     };
 
     // Resolve B first - B wins even though it was second in array
-    let b_data = runtime
-        .create_response_object(&json!({ "winner": "B" }))
-        .unwrap();
-    let result = runtime.resolve_promise(&promise_b, b_data).unwrap();
+    let b_data = api::create_response_object(&mut runtime, &json!({ "winner": "B" })).unwrap();
+    api::resolve_promise(&mut runtime, &promise_b, b_data).unwrap();
+    let result = runtime.continue_eval().unwrap();
 
     let RuntimeResult::Complete(value) = result else {
         panic!("Expected Complete");
@@ -1443,8 +1431,8 @@ fn test_concurrent_with_partial_failure() {
     // One Promise resolves, one rejects - test error handling with Promise.all
     let mut runtime = create_test_runtime();
 
-    let promise_ok = runtime.create_promise();
-    let promise_fail = runtime.create_promise();
+    let promise_ok = api::create_promise(&mut runtime);
+    let promise_fail = api::create_promise(&mut runtime);
 
     let result = run_with_globals(
         &mut runtime,
@@ -1490,7 +1478,8 @@ fn test_concurrent_with_partial_failure() {
 
     // Resolve the first one successfully
     let ok_data = RuntimeValue::unguarded(JsValue::String("OK".into()));
-    let result = runtime.resolve_promise(&promise_ok, ok_data).unwrap();
+    api::resolve_promise(&mut runtime, &promise_ok, ok_data).unwrap();
+    let result = runtime.continue_eval().unwrap();
 
     // Still waiting for second
     let RuntimeResult::Suspended { .. } = result else {
@@ -1499,7 +1488,8 @@ fn test_concurrent_with_partial_failure() {
 
     // Reject the second one
     let error = RuntimeValue::unguarded(JsValue::String("Network error".into()));
-    let result = runtime.reject_promise(&promise_fail, error).unwrap();
+    api::reject_promise(&mut runtime, &promise_fail, error).unwrap();
+    let result = runtime.continue_eval().unwrap();
 
     // Promise.all rejects if any Promise rejects
     let RuntimeResult::Complete(value) = result else {
@@ -1514,9 +1504,9 @@ fn test_concurrent_three_way_race() {
     // Note: Script gets each Promise sequentially, then races them
     let mut runtime = create_test_runtime();
 
-    let promise1 = runtime.create_promise();
-    let promise2 = runtime.create_promise();
-    let promise3 = runtime.create_promise();
+    let promise1 = api::create_promise(&mut runtime);
+    let promise2 = api::create_promise(&mut runtime);
+    let promise3 = api::create_promise(&mut runtime);
 
     let result = run_with_globals(
         &mut runtime,
@@ -1571,15 +1561,8 @@ fn test_concurrent_three_way_race() {
     };
 
     // Resolve promise2 first (should win the race)
-    let result = runtime
-        .resolve_promise(&promise2, RuntimeValue::unguarded(JsValue::Number(2.0)))
-        .unwrap();
-
-    // If still suspended, try continue_eval to process microtasks
-    let result = match result {
-        RuntimeResult::Suspended { .. } => runtime.continue_eval().unwrap(),
-        other => other,
-    };
+    api::resolve_promise(&mut runtime, &promise2, RuntimeValue::unguarded(JsValue::Number(2.0))).unwrap();
+    let result = runtime.continue_eval().unwrap();
 
     let RuntimeResult::Complete(value) = result else {
         panic!("Expected Complete after resolving winner, got {:?}", result);
@@ -1592,8 +1575,8 @@ fn test_concurrent_chained_operations() {
     // Start concurrent fetches, then chain more operations on results
     let mut runtime = create_test_runtime();
 
-    let promise_user = runtime.create_promise();
-    let promise_profile = runtime.create_promise();
+    let promise_user = api::create_promise(&mut runtime);
+    let promise_profile = api::create_promise(&mut runtime);
 
     let result = run_with_globals(
         &mut runtime,
@@ -1640,22 +1623,18 @@ fn test_concurrent_chained_operations() {
     };
 
     // Resolve user
-    let user_data = runtime
-        .create_response_object(&json!({ "name": "Alice" }))
-        .unwrap();
-    let result = runtime.resolve_promise(&promise_user, user_data).unwrap();
+    let user_data = api::create_response_object(&mut runtime, &json!({ "name": "Alice" })).unwrap();
+    api::resolve_promise(&mut runtime, &promise_user, user_data).unwrap();
+    let result = runtime.continue_eval().unwrap();
 
     let RuntimeResult::Suspended { .. } = result else {
         panic!("Expected Suspended waiting for profile");
     };
 
     // Resolve profile
-    let profile_data = runtime
-        .create_response_object(&json!({ "bio": "Developer" }))
-        .unwrap();
-    let result = runtime
-        .resolve_promise(&promise_profile, profile_data)
-        .unwrap();
+    let profile_data = api::create_response_object(&mut runtime, &json!({ "bio": "Developer" })).unwrap();
+    api::resolve_promise(&mut runtime, &promise_profile, profile_data).unwrap();
+    let result = runtime.continue_eval().unwrap();
 
     let RuntimeResult::Complete(value) = result else {
         panic!("Expected Complete");
@@ -1680,8 +1659,8 @@ fn test_promise_race_cancels_losing_order() {
     // Create host Promises linked to orders
     let order1_id = OrderId(100);
     let order2_id = OrderId(200);
-    let promise1 = runtime.create_order_promise(order1_id);
-    let promise2 = runtime.create_order_promise(order2_id);
+    let promise1 = api::create_order_promise(&mut runtime,order1_id);
+    let promise2 = api::create_order_promise(&mut runtime,order2_id);
 
     let result = run_with_globals(
         &mut runtime,
@@ -1726,12 +1705,13 @@ fn test_promise_race_cancels_losing_order() {
     };
 
     // Resolve promise1 first - it wins, promise2's order should be cancelled
-    let result = runtime
-        .resolve_promise(
-            &promise1,
-            RuntimeValue::unguarded(JsValue::String("first".into())),
-        )
-        .unwrap();
+    api::resolve_promise(
+        &mut runtime,
+        &promise1,
+        RuntimeValue::unguarded(JsValue::String("first".into())),
+    )
+    .unwrap();
+    let result = runtime.continue_eval().unwrap();
 
     // Check that the result includes cancelled order
     match result {
@@ -1763,8 +1743,8 @@ fn test_promise_race_second_wins_cancels_first() {
 
     let order1_id = OrderId(111);
     let order2_id = OrderId(222);
-    let promise1 = runtime.create_order_promise(order1_id);
-    let promise2 = runtime.create_order_promise(order2_id);
+    let promise1 = api::create_order_promise(&mut runtime,order1_id);
+    let promise2 = api::create_order_promise(&mut runtime,order2_id);
 
     let result = run_with_globals(
         &mut runtime,
@@ -1805,12 +1785,13 @@ fn test_promise_race_second_wins_cancels_first() {
     };
 
     // Resolve promise2 first - it wins, promise1's order should be cancelled
-    let result = runtime
-        .resolve_promise(
-            &promise2,
-            RuntimeValue::unguarded(JsValue::String("second".into())),
-        )
-        .unwrap();
+    api::resolve_promise(
+        &mut runtime,
+        &promise2,
+        RuntimeValue::unguarded(JsValue::String("second".into())),
+    )
+    .unwrap();
+    let result = runtime.continue_eval().unwrap();
 
     match result {
         RuntimeResult::Complete(value) => {
@@ -1835,7 +1816,7 @@ fn test_promise_rejection_signals_cancelled_order() {
     let mut runtime = create_test_runtime();
 
     let order_id = OrderId(999);
-    let promise = runtime.create_order_promise(order_id);
+    let promise = api::create_order_promise(&mut runtime,order_id);
 
     let result = run_with_globals(
         &mut runtime,
@@ -1868,12 +1849,13 @@ fn test_promise_rejection_signals_cancelled_order() {
     };
 
     // Reject the Promise - its order should be cancelled
-    let result = runtime
-        .reject_promise(
-            &promise,
-            RuntimeValue::unguarded(JsValue::String("error".into())),
-        )
-        .unwrap();
+    api::reject_promise(
+        &mut runtime,
+        &promise,
+        RuntimeValue::unguarded(JsValue::String("error".into())),
+    )
+    .unwrap();
+    let result = runtime.continue_eval().unwrap();
 
     match result {
         RuntimeResult::Complete(value) => {
@@ -1905,9 +1887,9 @@ fn test_three_way_race_cancels_two_losers() {
     let order1_id = OrderId(1);
     let order2_id = OrderId(2);
     let order3_id = OrderId(3);
-    let promise1 = runtime.create_order_promise(order1_id);
-    let promise2 = runtime.create_order_promise(order2_id);
-    let promise3 = runtime.create_order_promise(order3_id);
+    let promise1 = api::create_order_promise(&mut runtime,order1_id);
+    let promise2 = api::create_order_promise(&mut runtime,order2_id);
+    let promise3 = api::create_order_promise(&mut runtime,order3_id);
 
     let result = run_with_globals(
         &mut runtime,
@@ -1959,9 +1941,8 @@ fn test_three_way_race_cancels_two_losers() {
     };
 
     // Resolve promise2 (middle one wins)
-    let result = runtime
-        .resolve_promise(&promise2, RuntimeValue::unguarded(JsValue::Number(2.0)))
-        .unwrap();
+    api::resolve_promise(&mut runtime, &promise2, RuntimeValue::unguarded(JsValue::Number(2.0))).unwrap();
+    let result = runtime.continue_eval().unwrap();
 
     // Check that both losers' orders are cancelled
     let cancelled = match &result {

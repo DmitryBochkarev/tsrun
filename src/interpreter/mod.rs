@@ -2824,13 +2824,6 @@ impl Interpreter {
     // Evaluation Entry Point
     // ═══════════════════════════════════════════════════════════════════════════
 
-    /// Evaluate simple TypeScript/JavaScript code (no imports, no async orders).
-    ///
-    /// This uses the bytecode VM for execution.
-    pub fn eval_simple(&mut self, source: &str) -> Result<JsValue, JsError> {
-        self.eval_bytecode(source)
-    }
-
     /// Run bytecode using the bytecode VM
     ///
     /// This is the bytecode execution entry point. It compiles the program
@@ -3948,7 +3941,7 @@ mod tests {
     #[test]
     fn test_unsigned_right_shift_basic() {
         let mut interp = Interpreter::new();
-        let result = interp.eval_simple("32 >>> 2").unwrap();
+        let result = interp.eval_bytecode("32 >>> 2").unwrap();
         assert_eq!(result, JsValue::Number(8.0));
     }
 
@@ -3956,7 +3949,7 @@ mod tests {
     fn test_unsigned_right_shift_negative() {
         let mut interp = Interpreter::new();
         assert_eq!(
-            interp.eval_simple("-1 >>> 0").unwrap(),
+            interp.eval_bytecode("-1 >>> 0").unwrap(),
             JsValue::Number(4294967295.0)
         );
     }
@@ -3964,15 +3957,15 @@ mod tests {
     #[test]
     fn test_basic_arithmetic() {
         let mut interp = Interpreter::new();
-        assert_eq!(interp.eval_simple("1 + 2").unwrap(), JsValue::Number(3.0));
-        assert_eq!(interp.eval_simple("3 * 4").unwrap(), JsValue::Number(12.0));
-        assert_eq!(interp.eval_simple("10 / 2").unwrap(), JsValue::Number(5.0));
+        assert_eq!(interp.eval_bytecode("1 + 2").unwrap(), JsValue::Number(3.0));
+        assert_eq!(interp.eval_bytecode("3 * 4").unwrap(), JsValue::Number(12.0));
+        assert_eq!(interp.eval_bytecode("10 / 2").unwrap(), JsValue::Number(5.0));
     }
 
     #[test]
     fn test_continue_outside_loop_error() {
         let mut interp = Interpreter::new();
-        let result = interp.eval_simple("continue;");
+        let result = interp.eval_bytecode("continue;");
         assert!(result.is_err(), "continue outside loop should error");
         let err = result.unwrap_err();
         let err_str = format!("{:?}", err);
@@ -3988,7 +3981,7 @@ mod tests {
     #[test]
     fn test_break_outside_loop_error() {
         let mut interp = Interpreter::new();
-        let result = interp.eval_simple("break;");
+        let result = interp.eval_bytecode("break;");
         assert!(result.is_err(), "break outside loop should error");
         let err = result.unwrap_err();
         let err_str = format!("{:?}", err);
