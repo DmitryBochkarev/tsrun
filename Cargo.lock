@@ -501,7 +501,6 @@ dependencies = [
  "criterion",
  "fancy-regex",
  "indexmap",
- "regex",
  "rustc-hash",
  "serde",
  "serde_json",

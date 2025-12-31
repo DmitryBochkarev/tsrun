@@ -336,17 +336,17 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
 /// Rewrite import specifiers in source to use canonical paths
 fn rewrite_imports(source: &str, base_dir: &Path) -> Result<String, Box<dyn std::error::Error>> {
-    use regex::Regex;
-
     // Match import statements: import ... from "specifier" or import ... from 'specifier'
     // Also match export ... from "specifier"
     // Handle double quotes
-    let double_quote_re = Regex::new(r#"((?:import|export)\s+(?:[^;]*?\s+)?from\s+)"([^"]+)""#)?;
+    let double_quote_re =
+        fancy_regex::Regex::new(r#"((?:import|export)\s+(?:[^;]*?\s+)?from\s+)"([^"]+)""#)?;
     // Handle single quotes
-    let single_quote_re = Regex::new(r#"((?:import|export)\s+(?:[^;]*?\s+)?from\s+)'([^']+)'"#)?;
+    let single_quote_re =
+        fancy_regex::Regex::new(r#"((?:import|export)\s+(?:[^;]*?\s+)?from\s+)'([^']+)'"#)?;
 
     // First pass: double quotes
-    let result = double_quote_re.replace_all(source, |caps: &regex::Captures| {
+    let result = replace_all_with(&double_quote_re, source, |caps| {
         let prefix = caps.get(1).map_or("", |m| m.as_str());
         let specifier = caps.get(2).map_or("", |m| m.as_str());
 
@@ -357,10 +357,10 @@ fn rewrite_imports(source: &str, base_dir: &Path) -> Result<String, Box<dyn std:
             caps.get(0)
                 .map_or(String::new(), |m| m.as_str().to_string())
         }
-    });
+    })?;
 
     // Second pass: single quotes
-    let result = single_quote_re.replace_all(&result, |caps: &regex::Captures| {
+    let result = replace_all_with(&single_quote_re, &result, |caps| {
         let prefix = caps.get(1).map_or("", |m| m.as_str());
         let specifier = caps.get(2).map_or("", |m| m.as_str());
 
@@ -371,9 +371,34 @@ fn rewrite_imports(source: &str, base_dir: &Path) -> Result<String, Box<dyn std:
             caps.get(0)
                 .map_or(String::new(), |m| m.as_str().to_string())
         }
-    });
+    })?;
 
-    Ok(result.into_owned())
+    Ok(result)
+}
+
+/// Replace all matches in text using a callback function
+fn replace_all_with<F>(
+    re: &fancy_regex::Regex,
+    text: &str,
+    replacer: F,
+) -> Result<String, fancy_regex::Error>
+where
+    F: Fn(&fancy_regex::Captures) -> String,
+{
+    let mut result = String::with_capacity(text.len());
+    let mut last_end = 0;
+
+    for caps_result in re.captures_iter(text) {
+        let caps = caps_result?;
+        if let Some(m) = caps.get(0) {
+            result.push_str(text.get(last_end..m.start()).unwrap_or(""));
+            result.push_str(&replacer(&caps));
+            last_end = m.end();
+        }
+    }
+    result.push_str(text.get(last_end..).unwrap_or(""));
+
+    Ok(result)
 }
 
 /// Resolve a specifier to a canonical path string
