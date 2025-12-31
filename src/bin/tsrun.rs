@@ -135,10 +135,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| PathBuf::from("."));
 
-    // Rewrite imports in entry file to use canonical paths
     let source = fs::read_to_string(&entry_path)
         .map_err(|e| format!("Cannot read {}: {}", entry_path.display(), e))?;
-    let rewritten_source = rewrite_imports(&source, &entry_dir)?;
 
     let mut runtime = Runtime::new();
     // Allow overriding GC threshold via environment variable for stress testing
@@ -204,8 +202,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 format_error(&e.to_string(), &importer, &chain)
             })?
         } else {
-            // Relative/absolute path - already resolved
-            PathBuf::from(req.resolved_path.as_str())
+            // Relative/absolute path - resolve with file extension
+            let base_path = PathBuf::from(req.resolved_path.as_str());
+            resolve_file_with_extensions(&base_path).map_err(|e| {
+                let chain = build_chain(&importer, import_chain);
+                format_error(&e.to_string(), &importer, &chain)
+            })?
         };
 
         let canonical_str = canonical_path.to_string_lossy().to_string();
@@ -222,12 +224,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             format_error(&e.to_string(), &canonical_str, &chain)
         })?;
 
-        // Rewrite imports in this module to use canonical paths
-        let rewritten_module = rewrite_imports(&module_source, &module_dir)?;
-
         // Provide to runtime using the resolved_path the runtime expects
         runtime
-            .provide_module(req.resolved_path.clone(), &rewritten_module)
+            .provide_module(req.resolved_path.clone(), &module_source)
             .map_err(|e| {
                 let chain = build_chain(&canonical_str, import_chain);
                 format_error(&e.to_string(), &canonical_str, &chain)
@@ -242,7 +241,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     if has_limits {
         // Step-based execution with limit checking
         let initial_result = runtime
-            .prepare(&rewritten_source, Some(entry_file.as_str()))
+            .prepare(&source, Some(entry_file.as_str()))
             .map_err(|e| format_error(&e.to_string(), &entry_file, &[]))?;
 
         let start_time = Instant::now();
@@ -299,7 +298,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         // Fast path: no limits, step-based execution
         runtime
-            .prepare(&rewritten_source, Some(entry_file.as_str()))
+            .prepare(&source, Some(entry_file.as_str()))
             .map_err(|e| format_error(&e.to_string(), &entry_file, &[]))?;
 
         loop {
@@ -332,126 +331,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
-}
-
-/// Rewrite import specifiers in source to use canonical paths
-fn rewrite_imports(source: &str, base_dir: &Path) -> Result<String, Box<dyn std::error::Error>> {
-    // Match import statements: import ... from "specifier" or import ... from 'specifier'
-    // Also match export ... from "specifier"
-    // Handle double quotes
-    let double_quote_re =
-        fancy_regex::Regex::new(r#"((?:import|export)\s+(?:[^;]*?\s+)?from\s+)"([^"]+)""#)?;
-    // Handle single quotes
-    let single_quote_re =
-        fancy_regex::Regex::new(r#"((?:import|export)\s+(?:[^;]*?\s+)?from\s+)'([^']+)'"#)?;
-
-    // First pass: double quotes
-    let result = replace_all_with(&double_quote_re, source, |caps| {
-        let prefix = caps.get(1).map_or("", |m| m.as_str());
-        let specifier = caps.get(2).map_or("", |m| m.as_str());
-
-        if specifier.starts_with("./") || specifier.starts_with("../") {
-            let canonical = resolve_to_canonical(base_dir, specifier);
-            format!("{prefix}\"{canonical}\"")
-        } else {
-            caps.get(0)
-                .map_or(String::new(), |m| m.as_str().to_string())
-        }
-    })?;
-
-    // Second pass: single quotes
-    let result = replace_all_with(&single_quote_re, &result, |caps| {
-        let prefix = caps.get(1).map_or("", |m| m.as_str());
-        let specifier = caps.get(2).map_or("", |m| m.as_str());
-
-        if specifier.starts_with("./") || specifier.starts_with("../") {
-            let canonical = resolve_to_canonical(base_dir, specifier);
-            format!("{prefix}'{canonical}'")
-        } else {
-            caps.get(0)
-                .map_or(String::new(), |m| m.as_str().to_string())
-        }
-    })?;
-
-    Ok(result)
-}
-
-/// Replace all matches in text using a callback function
-fn replace_all_with<F>(
-    re: &fancy_regex::Regex,
-    text: &str,
-    replacer: F,
-) -> Result<String, fancy_regex::Error>
-where
-    F: Fn(&fancy_regex::Captures) -> String,
-{
-    let mut result = String::with_capacity(text.len());
-    let mut last_end = 0;
-
-    for caps_result in re.captures_iter(text) {
-        let caps = caps_result?;
-        if let Some(m) = caps.get(0) {
-            result.push_str(text.get(last_end..m.start()).unwrap_or(""));
-            result.push_str(&replacer(&caps));
-            last_end = m.end();
-        }
-    }
-    result.push_str(text.get(last_end..).unwrap_or(""));
-
-    Ok(result)
-}
-
-/// Resolve a specifier to a canonical path string
-fn resolve_to_canonical(base_dir: &Path, specifier: &str) -> String {
-    let module_path = base_dir.join(specifier);
-
-    // Resolve the path (handles ./ and ../)
-    let resolved = resolve_path(&module_path);
-
-    // Add extension if needed
-    let with_ext = if resolved.extension().is_some() {
-        resolved
-    } else {
-        let ts_path = resolved.with_extension("ts");
-        if ts_path.exists() {
-            ts_path
-        } else {
-            let js_path = resolved.with_extension("js");
-            if js_path.exists() {
-                js_path
-            } else {
-                let index_path = resolved.join("index.ts");
-                if index_path.exists() {
-                    index_path
-                } else {
-                    ts_path // Default to .ts for error handling
-                }
-            }
-        }
-    };
-
-    with_ext.to_string_lossy().into_owned()
-}
-
-/// Resolve a path, handling . and .. components without requiring the path to exist
-fn resolve_path(path: &Path) -> PathBuf {
-    let mut result = PathBuf::new();
-
-    for component in path.components() {
-        match component {
-            std::path::Component::ParentDir => {
-                result.pop();
-            }
-            std::path::Component::CurDir => {
-                // Skip
-            }
-            c => {
-                result.push(c);
-            }
-        }
-    }
-
-    result
 }
 
 /// Parse a bare specifier into package name and optional subpath.
