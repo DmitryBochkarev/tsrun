@@ -3146,6 +3146,21 @@ impl Compiler {
                     });
                     self.builder.free_register(value_reg);
                 }
+                Statement::NamespaceDeclaration(ns_decl) => {
+                    // Export the namespace
+                    let value_reg = self.builder.alloc_register()?;
+                    let name_idx = self.builder.add_string(ns_decl.id.name.cheap_clone())?;
+                    self.builder.emit(Op::GetVar {
+                        dst: value_reg,
+                        name: name_idx,
+                    });
+                    self.builder.emit(Op::ExportBinding {
+                        export_name: name_idx,
+                        binding_name: name_idx,
+                        value: value_reg,
+                    });
+                    self.builder.free_register(value_reg);
+                }
                 _ => {}
             }
             return Ok(());
