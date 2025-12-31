@@ -3,15 +3,16 @@
 //! These tests verify that the bytecode VM produces the same results
 //! as the stack-based interpreter.
 
-use tsrun::{JsValue, Runtime, RuntimeResult};
+use super::{create_test_runtime, run};
+use tsrun::{JsValue, Runtime, StepResult};
 
 /// Helper to evaluate using bytecode VM
 #[allow(clippy::expect_used)]
 fn eval_bytecode(source: &str) -> JsValue {
-    let mut runtime = Runtime::new();
-    let result = runtime.eval(source, None).expect("eval failed");
+    let mut runtime = create_test_runtime();
+    let result = run(&mut runtime, source, None).expect("eval failed");
     match result {
-        RuntimeResult::Complete(rv) => rv.value().clone(),
+        StepResult::Complete(rv) => rv.value().clone(),
         _ => panic!("Expected Complete result"),
     }
 }

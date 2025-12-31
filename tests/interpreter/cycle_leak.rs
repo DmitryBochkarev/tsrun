@@ -1,6 +1,7 @@
 //! Test for cycle memory leak
 
-use tsrun::{Runtime, RuntimeResult};
+use super::run;
+use tsrun::Runtime;
 
 /// Get baseline object count (builtins only, no user code)
 fn get_baseline_live_count() -> usize {
@@ -29,9 +30,11 @@ fn test_cycle_leak_detailed() {
 
     let mut runtime = Runtime::new();
     runtime.set_gc_threshold(50); // Trigger GC frequently
-    let result = match runtime.eval(source, None).unwrap() {
-        RuntimeResult::Complete(value) => value,
-        other => panic!("Expected Complete, got {:?}", other),
+    let result_step = run(&mut runtime, source, None).unwrap();
+    let result = if let tsrun::StepResult::Complete(rv) = result_step {
+        rv
+    } else {
+        panic!("Expected Complete, got {:?}", result_step);
     };
 
     // Force final GC

@@ -6,14 +6,12 @@
 //!
 //! Tests use aggressive defaults to catch bugs early:
 //! - `GC_THRESHOLD=1` - GC on every allocation to catch GC bugs
-//! - `MAX_CALL_DEPTH=50` - Low recursion limit to catch infinite loops before Rust stack overflow
 //!
 //! Override via environment variables:
 //!
 //! ```bash
 //! cargo test                           # Default: aggressive settings
 //! GC_THRESHOLD=100 cargo test          # Less aggressive GC for faster runs
-//! MAX_CALL_DEPTH=256 cargo test        # Higher recursion limit
 //! ```
 
 mod api;
@@ -48,18 +46,18 @@ mod promise;
 mod proxy;
 mod regexp;
 mod set;
+mod step;
 mod strict;
 mod string;
 mod symbol;
 mod typescript;
 
-use tsrun::{JsError, Runtime, RuntimeResult, RuntimeValue};
+use tsrun::{JsError, JsValue, Runtime, RuntimeValue, StepResult};
 
 /// Create a new runtime with aggressive defaults for testing:
 /// - GC_THRESHOLD=1 (GC on every allocation) to catch GC bugs
-/// - MAX_CALL_DEPTH=50 to catch infinite recursion before Rust stack overflow
-fn create_test_runtime() -> Runtime {
-    let mut runtime = Runtime::new();
+pub fn create_test_runtime() -> Runtime {
+    let runtime = Runtime::new();
 
     // Default to GC_THRESHOLD=1 (most aggressive) to catch GC bugs early
     // Override via environment variable if needed:
@@ -71,45 +69,52 @@ fn create_test_runtime() -> Runtime {
         .unwrap_or(1);
     runtime.set_gc_threshold(gc_threshold);
 
-    // Default to MAX_CALL_DEPTH=50 to catch infinite recursion early
-    // Override via environment variable if needed:
-    // MAX_CALL_DEPTH=256 cargo test  # Default production limit
-    // MAX_CALL_DEPTH=0 cargo test    # Disable limit (not recommended)
-    let max_call_depth = std::env::var("MAX_CALL_DEPTH")
-        .ok()
-        .and_then(|s| s.parse::<usize>().ok())
-        .unwrap_or(50);
-    runtime.set_max_call_depth(max_call_depth);
-
     runtime
 }
 
-/// Helper function to evaluate TypeScript source code
-/// Uses the full eval() API which properly handles async/await
-/// Returns RuntimeValue which keeps the result guarded from GC
+/// Run a runtime to completion using the step-based API.
+/// Returns the final StepResult (Complete, NeedImports, or Suspended).
+pub fn run_to_completion(runtime: &mut Runtime) -> Result<StepResult, JsError> {
+    loop {
+        match runtime.step()? {
+            StepResult::Continue => continue,
+            result => return Ok(result),
+        }
+    }
+}
+
+/// Run code in a runtime using prepare() + step loop.
+/// This is a test helper equivalent to the old runtime.run() method.
+pub fn run(runtime: &mut Runtime, source: &str, path: Option<&str>) -> Result<StepResult, JsError> {
+    runtime.prepare(source, path)?;
+    run_to_completion(runtime)
+}
+
+/// Helper function to evaluate TypeScript source code.
+/// Uses the step-based API which properly handles async/await.
+/// Returns RuntimeValue which keeps the result guarded from GC.
 #[allow(clippy::expect_used)]
 pub fn eval(source: &str) -> RuntimeValue {
     eval_result(source).expect("eval failed")
 }
 
-/// Helper function to evaluate and return Result for error testing
-/// Uses the full eval() API which properly handles async/await
-/// Returns RuntimeValue which keeps the result guarded from GC
+/// Helper function to evaluate and return Result for error testing.
+/// Uses the step-based API which properly handles async/await.
+/// Returns RuntimeValue which keeps the result guarded from GC.
 pub fn eval_result(source: &str) -> Result<RuntimeValue, JsError> {
     let mut runtime = create_test_runtime();
 
-    // Use the full eval() API instead of eval_simple()
-    // This properly handles promise resolution via run_to_completion_or_suspend()
-    let result = runtime.eval(source, None)?;
+    // Prepare the source
+    runtime.prepare(source, None)?;
 
-    // Handle the RuntimeResult
-    match result {
-        RuntimeResult::Complete(rv) => Ok(rv),
-        RuntimeResult::NeedImports(specifiers) => Err(JsError::type_error(format!(
+    // Run to completion using step-based API
+    match run_to_completion(&mut runtime)? {
+        StepResult::Complete(rv) => Ok(rv),
+        StepResult::NeedImports(specifiers) => Err(JsError::type_error(format!(
             "Missing imports in test: {:?}",
             specifiers
         ))),
-        RuntimeResult::Suspended { pending, .. } => {
+        StepResult::Suspended { pending, .. } => {
             // For tests without external dependencies, this shouldn't happen
             // If it does, treat as error
             Err(JsError::type_error(format!(
@@ -117,6 +122,10 @@ pub fn eval_result(source: &str) -> Result<RuntimeValue, JsError> {
                 pending.len()
             )))
         }
+        StepResult::Continue => Err(JsError::internal_error(
+            "Unexpected Continue from run_to_completion",
+        )),
+        StepResult::Done => Ok(RuntimeValue::unguarded(JsValue::Undefined)),
     }
 }
 

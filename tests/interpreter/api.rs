@@ -1,6 +1,7 @@
 //! Tests for the public API ergonomics
 
-use tsrun::{JsValue, Runtime, RuntimeResult, api};
+use super::{create_test_runtime, run, run_to_completion};
+use tsrun::{JsValue, StepResult, api};
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // JsValue Type Check Tests
@@ -242,7 +243,7 @@ fn test_create_null() {
 
 #[test]
 fn test_create_from_json_object() {
-    let mut runtime = Runtime::new();
+    let mut runtime = create_test_runtime();
     let guard = api::create_guard(&runtime);
     let v = api::create_from_json(
         &mut runtime,
@@ -274,7 +275,7 @@ fn test_create_from_json_object() {
 
 #[test]
 fn test_create_from_json_array() {
-    let mut runtime = Runtime::new();
+    let mut runtime = create_test_runtime();
     let guard = api::create_guard(&runtime);
     let v =
         api::create_from_json(&mut runtime, &guard, &serde_json::json!([1, 2, 3, 4, 5])).unwrap();
@@ -293,7 +294,7 @@ fn test_create_from_json_array() {
 
 #[test]
 fn test_create_from_json_nested() {
-    let mut runtime = Runtime::new();
+    let mut runtime = create_test_runtime();
     let guard = api::create_guard(&runtime);
     let v = api::create_from_json(
         &mut runtime,
@@ -313,7 +314,7 @@ fn test_create_from_json_nested() {
 
 #[test]
 fn test_create_object_empty() {
-    let mut runtime = Runtime::new();
+    let mut runtime = create_test_runtime();
     let guard = api::create_guard(&runtime);
     let v = api::create_object(&mut runtime, &guard).unwrap();
     assert!(v.is_object());
@@ -321,7 +322,7 @@ fn test_create_object_empty() {
 
 #[test]
 fn test_create_array_empty() {
-    let mut runtime = Runtime::new();
+    let mut runtime = create_test_runtime();
     let guard = api::create_guard(&runtime);
     let v = api::create_array(&mut runtime, &guard).unwrap();
     assert!(v.is_object());
@@ -334,7 +335,7 @@ fn test_create_array_empty() {
 
 #[test]
 fn test_create_from_json_primitives() {
-    let mut runtime = Runtime::new();
+    let mut runtime = create_test_runtime();
     let guard = api::create_guard(&runtime);
 
     // JSON null becomes JsValue::Null
@@ -404,10 +405,10 @@ fn test_display_string() {
 
 #[test]
 fn test_runtime_value_is_number() {
-    let mut runtime = Runtime::new();
-    let result = runtime.eval("42", None).unwrap();
+    let mut runtime = create_test_runtime();
+    let result = run(&mut runtime, "42", None).unwrap();
 
-    if let RuntimeResult::Complete(rv) = result {
+    if let StepResult::Complete(rv) = result {
         assert!(rv.is_number());
         assert!(!rv.is_string());
         assert!(!rv.is_undefined());
@@ -418,10 +419,10 @@ fn test_runtime_value_is_number() {
 
 #[test]
 fn test_runtime_value_as_number() {
-    let mut runtime = Runtime::new();
-    let result = runtime.eval("42", None).unwrap();
+    let mut runtime = create_test_runtime();
+    let result = run(&mut runtime, "42", None).unwrap();
 
-    if let RuntimeResult::Complete(rv) = result {
+    if let StepResult::Complete(rv) = result {
         assert_eq!(rv.as_number(), Some(42.0));
     } else {
         panic!("Expected Complete");
@@ -430,10 +431,10 @@ fn test_runtime_value_as_number() {
 
 #[test]
 fn test_runtime_value_is_string() {
-    let mut runtime = Runtime::new();
-    let result = runtime.eval("'hello'", None).unwrap();
+    let mut runtime = create_test_runtime();
+    let result = run(&mut runtime, "'hello'", None).unwrap();
 
-    if let RuntimeResult::Complete(rv) = result {
+    if let StepResult::Complete(rv) = result {
         assert!(rv.is_string());
         assert_eq!(rv.as_str(), Some("hello"));
     } else {
@@ -443,10 +444,10 @@ fn test_runtime_value_is_string() {
 
 #[test]
 fn test_runtime_value_is_boolean() {
-    let mut runtime = Runtime::new();
-    let result = runtime.eval("true", None).unwrap();
+    let mut runtime = create_test_runtime();
+    let result = run(&mut runtime, "true", None).unwrap();
 
-    if let RuntimeResult::Complete(rv) = result {
+    if let StepResult::Complete(rv) = result {
         assert!(rv.is_boolean());
         assert_eq!(rv.as_bool(), Some(true));
     } else {
@@ -456,10 +457,10 @@ fn test_runtime_value_is_boolean() {
 
 #[test]
 fn test_runtime_value_is_undefined() {
-    let mut runtime = Runtime::new();
-    let result = runtime.eval("undefined", None).unwrap();
+    let mut runtime = create_test_runtime();
+    let result = run(&mut runtime, "undefined", None).unwrap();
 
-    if let RuntimeResult::Complete(rv) = result {
+    if let StepResult::Complete(rv) = result {
         assert!(rv.is_undefined());
         assert!(rv.is_nullish());
     } else {
@@ -469,10 +470,10 @@ fn test_runtime_value_is_undefined() {
 
 #[test]
 fn test_runtime_value_is_null() {
-    let mut runtime = Runtime::new();
-    let result = runtime.eval("null", None).unwrap();
+    let mut runtime = create_test_runtime();
+    let result = run(&mut runtime, "null", None).unwrap();
 
-    if let RuntimeResult::Complete(rv) = result {
+    if let StepResult::Complete(rv) = result {
         assert!(rv.is_null());
         assert!(rv.is_nullish());
     } else {
@@ -482,11 +483,11 @@ fn test_runtime_value_is_null() {
 
 #[test]
 fn test_runtime_value_type_name() {
-    let mut runtime = Runtime::new();
+    let mut runtime = create_test_runtime();
 
     let mut check = |code: &str, expected: &str| {
-        let result = runtime.eval(code, None).unwrap();
-        if let RuntimeResult::Complete(rv) = result {
+        let result = run(&mut runtime, code, None).unwrap();
+        if let StepResult::Complete(rv) = result {
             assert_eq!(rv.type_name(), expected, "for code: {}", code);
         } else {
             panic!("Expected Complete for: {}", code);
@@ -504,11 +505,11 @@ fn test_runtime_value_type_name() {
 
 #[test]
 fn test_runtime_value_display() {
-    let mut runtime = Runtime::new();
+    let mut runtime = create_test_runtime();
 
     let mut check = |code: &str, expected: &str| {
-        let result = runtime.eval(code, None).unwrap();
-        if let RuntimeResult::Complete(rv) = result {
+        let result = run(&mut runtime, code, None).unwrap();
+        if let StepResult::Complete(rv) = result {
             assert_eq!(format!("{}", rv), expected, "for code: {}", code);
         } else {
             panic!("Expected Complete for: {}", code);
@@ -528,10 +529,10 @@ fn test_runtime_value_display() {
 
 #[test]
 fn test_runtime_value_is_object() {
-    let mut runtime = Runtime::new();
-    let result = runtime.eval("({})", None).unwrap(); // Parentheses force object literal
+    let mut runtime = create_test_runtime();
+    let result = run(&mut runtime, "({})", None).unwrap(); // Parentheses force object literal
 
-    if let RuntimeResult::Complete(rv) = result {
+    if let StepResult::Complete(rv) = result {
         assert!(rv.is_object());
         assert!(!rv.is_number());
         assert!(!rv.is_string());
@@ -577,10 +578,10 @@ fn test_from_integer_precision() {
 
 #[test]
 fn test_object_property_access() {
-    let mut runtime = Runtime::new();
-    let result = runtime.eval("({ name: 'Alice', age: 30 })", None).unwrap();
+    let mut runtime = create_test_runtime();
+    let result = run(&mut runtime, "({ name: 'Alice', age: 30 })", None).unwrap();
 
-    if let RuntimeResult::Complete(rv) = result {
+    if let StepResult::Complete(rv) = result {
         assert!(rv.is_object());
         assert_eq!(rv.type_name(), "object");
 
@@ -609,15 +610,15 @@ fn test_object_property_access() {
 
 #[test]
 fn test_nested_object() {
-    let mut runtime = Runtime::new();
-    let result = runtime
-        .eval(
-            "({ user: { name: 'Bob', settings: { theme: 'dark' } } })",
-            None,
-        )
-        .unwrap();
+    let mut runtime = create_test_runtime();
+    let result = run(
+        &mut runtime,
+        "({ user: { name: 'Bob', settings: { theme: 'dark' } } })",
+        None,
+    )
+    .unwrap();
 
-    if let RuntimeResult::Complete(rv) = result {
+    if let StepResult::Complete(rv) = result {
         assert!(rv.is_object());
 
         if let Some(obj) = rv.as_object() {
@@ -662,10 +663,10 @@ fn test_nested_object() {
 
 #[test]
 fn test_array_access() {
-    let mut runtime = Runtime::new();
-    let result = runtime.eval("[1, 2, 3, 4, 5]", None).unwrap();
+    let mut runtime = create_test_runtime();
+    let result = run(&mut runtime, "[1, 2, 3, 4, 5]", None).unwrap();
 
-    if let RuntimeResult::Complete(rv) = result {
+    if let StepResult::Complete(rv) = result {
         assert!(rv.is_object()); // Arrays are objects in JS
 
         if let Some(obj) = rv.as_object() {
@@ -693,10 +694,10 @@ fn test_array_access() {
 
 #[test]
 fn test_array_of_strings() {
-    let mut runtime = Runtime::new();
-    let result = runtime.eval("['apple', 'banana', 'cherry']", None).unwrap();
+    let mut runtime = create_test_runtime();
+    let result = run(&mut runtime, "['apple', 'banana', 'cherry']", None).unwrap();
 
-    if let RuntimeResult::Complete(rv) = result {
+    if let StepResult::Complete(rv) = result {
         if let Some(obj) = rv.as_object() {
             let borrowed = obj.borrow();
 
@@ -714,12 +715,15 @@ fn test_array_of_strings() {
 
 #[test]
 fn test_array_of_objects() {
-    let mut runtime = Runtime::new();
-    let result = runtime
-        .eval("[{ id: 1, name: 'Alice' }, { id: 2, name: 'Bob' }]", None)
-        .unwrap();
+    let mut runtime = create_test_runtime();
+    let result = run(
+        &mut runtime,
+        "[{ id: 1, name: 'Alice' }, { id: 2, name: 'Bob' }]",
+        None,
+    )
+    .unwrap();
 
-    if let RuntimeResult::Complete(rv) = result {
+    if let StepResult::Complete(rv) = result {
         if let Some(obj) = rv.as_object() {
             let borrowed = obj.borrow();
 
@@ -767,12 +771,15 @@ fn test_array_of_objects() {
 
 #[test]
 fn test_mixed_array() {
-    let mut runtime = Runtime::new();
-    let result = runtime
-        .eval("[1, 'two', true, null, undefined, { x: 3 }]", None)
-        .unwrap();
+    let mut runtime = create_test_runtime();
+    let result = run(
+        &mut runtime,
+        "[1, 'two', true, null, undefined, { x: 3 }]",
+        None,
+    )
+    .unwrap();
 
-    if let RuntimeResult::Complete(rv) = result {
+    if let StepResult::Complete(rv) = result {
         if let Some(obj) = rv.as_object() {
             let borrowed = obj.borrow();
 
@@ -794,22 +801,22 @@ fn test_mixed_array() {
 
 #[test]
 fn test_function_result() {
-    let mut runtime = Runtime::new();
+    let mut runtime = create_test_runtime();
 
     // Define and call a function
-    let result = runtime
-        .eval(
-            r#"
+    let result = run(
+        &mut runtime,
+        r#"
         function add(a, b) {
             return a + b;
         }
         add(10, 20)
     "#,
-            None,
-        )
-        .unwrap();
+        None,
+    )
+    .unwrap();
 
-    if let RuntimeResult::Complete(rv) = result {
+    if let StepResult::Complete(rv) = result {
         assert!(rv.is_number());
         assert_eq!(rv.as_number(), Some(30.0));
     } else {
@@ -819,21 +826,21 @@ fn test_function_result() {
 
 #[test]
 fn test_function_returning_object() {
-    let mut runtime = Runtime::new();
+    let mut runtime = create_test_runtime();
 
-    let result = runtime
-        .eval(
-            r#"
+    let result = run(
+        &mut runtime,
+        r#"
         function createUser(name, age) {
             return { name, age, active: true };
         }
         createUser('Charlie', 25)
     "#,
-            None,
-        )
-        .unwrap();
+        None,
+    )
+    .unwrap();
 
-    if let RuntimeResult::Complete(rv) = result {
+    if let StepResult::Complete(rv) = result {
         assert!(rv.is_object());
 
         if let Some(obj) = rv.as_object() {
@@ -863,11 +870,11 @@ fn test_function_returning_object() {
 
 #[test]
 fn test_class_instance() {
-    let mut runtime = Runtime::new();
+    let mut runtime = create_test_runtime();
 
-    let result = runtime
-        .eval(
-            r#"
+    let result = run(
+        &mut runtime,
+        r#"
         class Person {
             name: string;
             age: number;
@@ -884,11 +891,11 @@ fn test_class_instance() {
 
         new Person('David', 35)
     "#,
-            None,
-        )
-        .unwrap();
+        None,
+    )
+    .unwrap();
 
-    if let RuntimeResult::Complete(rv) = result {
+    if let StepResult::Complete(rv) = result {
         assert!(rv.is_object());
 
         if let Some(obj) = rv.as_object() {
@@ -913,21 +920,21 @@ fn test_class_instance() {
 
 #[test]
 fn test_map_object() {
-    let mut runtime = Runtime::new();
+    let mut runtime = create_test_runtime();
 
-    let result = runtime
-        .eval(
-            r#"
+    let result = run(
+        &mut runtime,
+        r#"
         const map = new Map();
         map.set('key1', 'value1');
         map.set('key2', 42);
         map.size
     "#,
-            None,
-        )
-        .unwrap();
+        None,
+    )
+    .unwrap();
 
-    if let RuntimeResult::Complete(rv) = result {
+    if let StepResult::Complete(rv) = result {
         assert!(rv.is_number());
         assert_eq!(rv.as_number(), Some(2.0));
     } else {
@@ -937,19 +944,19 @@ fn test_map_object() {
 
 #[test]
 fn test_date_object() {
-    let mut runtime = Runtime::new();
+    let mut runtime = create_test_runtime();
 
-    let result = runtime
-        .eval(
-            r#"
+    let result = run(
+        &mut runtime,
+        r#"
         const d = new Date(2024, 0, 15); // Jan 15, 2024
         d.getFullYear()
     "#,
-            None,
-        )
-        .unwrap();
+        None,
+    )
+    .unwrap();
 
-    if let RuntimeResult::Complete(rv) = result {
+    if let StepResult::Complete(rv) = result {
         assert!(rv.is_number());
         assert_eq!(rv.as_number(), Some(2024.0));
     } else {
@@ -959,19 +966,19 @@ fn test_date_object() {
 
 #[test]
 fn test_json_parse_result() {
-    let mut runtime = Runtime::new();
+    let mut runtime = create_test_runtime();
 
-    let result = runtime
-        .eval(
-            r#"
+    let result = run(
+        &mut runtime,
+        r#"
         const data = JSON.parse('{"name":"Eve","scores":[95,87,92]}');
         data
     "#,
-            None,
-        )
-        .unwrap();
+        None,
+    )
+    .unwrap();
 
-    if let RuntimeResult::Complete(rv) = result {
+    if let StepResult::Complete(rv) = result {
         assert!(rv.is_object());
 
         if let Some(obj) = rv.as_object() {
@@ -1004,13 +1011,16 @@ fn test_json_parse_result() {
 
 #[test]
 fn test_json_stringify() {
-    let mut runtime = Runtime::new();
+    let mut runtime = create_test_runtime();
 
-    let result = runtime
-        .eval(r#"JSON.stringify({ a: 1, b: "hello", c: true })"#, None)
-        .unwrap();
+    let result = run(
+        &mut runtime,
+        r#"JSON.stringify({ a: 1, b: "hello", c: true })"#,
+        None,
+    )
+    .unwrap();
 
-    if let RuntimeResult::Complete(rv) = result {
+    if let StepResult::Complete(rv) = result {
         assert!(rv.is_string());
         let s = rv.as_str().unwrap();
         // The order might vary, so just check it contains the expected parts
@@ -1039,10 +1049,10 @@ fn get_property(value: &JsValue, key: &str) -> Option<JsValue> {
 
 #[test]
 fn test_helper_get_property() {
-    let mut runtime = Runtime::new();
-    let result = runtime.eval("({ foo: 42, bar: 'baz' })", None).unwrap();
+    let mut runtime = create_test_runtime();
+    let result = run(&mut runtime, "({ foo: 42, bar: 'baz' })", None).unwrap();
 
-    if let RuntimeResult::Complete(rv) = result {
+    if let StepResult::Complete(rv) = result {
         let foo = get_property(rv.value(), "foo");
         assert_eq!(foo.unwrap().as_number(), Some(42.0));
 
@@ -1058,11 +1068,11 @@ fn test_helper_get_property() {
 
 #[test]
 fn test_deeply_nested_structure() {
-    let mut runtime = Runtime::new();
+    let mut runtime = create_test_runtime();
 
-    let result = runtime
-        .eval(
-            r#"
+    let result = run(
+        &mut runtime,
+        r#"
         ({
             level1: {
                 level2: {
@@ -1075,11 +1085,11 @@ fn test_deeply_nested_structure() {
             }
         })
     "#,
-            None,
-        )
-        .unwrap();
+        None,
+    )
+    .unwrap();
 
-    if let RuntimeResult::Complete(rv) = result {
+    if let StepResult::Complete(rv) = result {
         // Navigate down the chain
         let l1 = get_property(rv.value(), "level1").unwrap();
         let l2 = get_property(&l1, "level2").unwrap();
@@ -1095,22 +1105,22 @@ fn test_deeply_nested_structure() {
 
 #[test]
 fn test_array_with_computed_values() {
-    let mut runtime = Runtime::new();
+    let mut runtime = create_test_runtime();
 
-    let result = runtime
-        .eval(
-            r#"
+    let result = run(
+        &mut runtime,
+        r#"
         const arr = [];
         for (let i = 0; i < 5; i++) {
             arr.push(i * i);
         }
         arr
     "#,
-            None,
-        )
-        .unwrap();
+        None,
+    )
+    .unwrap();
 
-    if let RuntimeResult::Complete(rv) = result {
+    if let StepResult::Complete(rv) = result {
         if let Some(obj) = rv.as_object() {
             let borrowed = obj.borrow();
             if let Some(elements) = borrowed.array_elements() {
@@ -1129,12 +1139,12 @@ fn test_array_with_computed_values() {
 
 #[test]
 fn test_object_with_methods() {
-    let mut runtime = Runtime::new();
+    let mut runtime = create_test_runtime();
 
     // Create object with method and call it
-    let result = runtime
-        .eval(
-            r#"
+    let result = run(
+        &mut runtime,
+        r#"
         const obj = {
             value: 10,
             double() {
@@ -1143,11 +1153,11 @@ fn test_object_with_methods() {
         };
         obj.double()
     "#,
-            None,
-        )
-        .unwrap();
+        None,
+    )
+    .unwrap();
 
-    if let RuntimeResult::Complete(rv) = result {
+    if let StepResult::Complete(rv) = result {
         assert!(rv.is_number());
         assert_eq!(rv.as_number(), Some(20.0));
     } else {
@@ -1157,20 +1167,20 @@ fn test_object_with_methods() {
 
 #[test]
 fn test_spread_operator_result() {
-    let mut runtime = Runtime::new();
+    let mut runtime = create_test_runtime();
 
-    let result = runtime
-        .eval(
-            r#"
+    let result = run(
+        &mut runtime,
+        r#"
         const a = [1, 2];
         const b = [3, 4];
         [...a, ...b]
     "#,
-            None,
-        )
-        .unwrap();
+        None,
+    )
+    .unwrap();
 
-    if let RuntimeResult::Complete(rv) = result {
+    if let StepResult::Complete(rv) = result {
         if let Some(obj) = rv.as_object() {
             let borrowed = obj.borrow();
             if let Some(elements) = borrowed.array_elements() {
@@ -1188,20 +1198,20 @@ fn test_spread_operator_result() {
 
 #[test]
 fn test_object_spread() {
-    let mut runtime = Runtime::new();
+    let mut runtime = create_test_runtime();
 
-    let result = runtime
-        .eval(
-            r#"
+    let result = run(
+        &mut runtime,
+        r#"
         const a = { x: 1, y: 2 };
         const b = { y: 3, z: 4 };
         ({ ...a, ...b })
     "#,
-            None,
-        )
-        .unwrap();
+        None,
+    )
+    .unwrap();
 
-    if let RuntimeResult::Complete(rv) = result {
+    if let StepResult::Complete(rv) = result {
         // y should be 3 (b overwrites a)
         let x = get_property(rv.value(), "x");
         let y = get_property(rv.value(), "y");
@@ -1221,7 +1231,7 @@ fn test_object_spread() {
 
 #[test]
 fn test_api_get_property() {
-    let mut runtime = Runtime::new();
+    let mut runtime = create_test_runtime();
     let guard = api::create_guard(&runtime);
     let user = api::create_from_json(
         &mut runtime,
@@ -1240,7 +1250,7 @@ fn test_api_get_property() {
 
 #[test]
 fn test_api_get_index() {
-    let mut runtime = Runtime::new();
+    let mut runtime = create_test_runtime();
     let guard = api::create_guard(&runtime);
     let arr =
         api::create_from_json(&mut runtime, &guard, &serde_json::json!([10, 20, 30])).unwrap();
@@ -1253,7 +1263,7 @@ fn test_api_get_index() {
 
 #[test]
 fn test_api_len() {
-    let mut runtime = Runtime::new();
+    let mut runtime = create_test_runtime();
     let guard = api::create_guard(&runtime);
     let arr =
         api::create_from_json(&mut runtime, &guard, &serde_json::json!([1, 2, 3, 4, 5])).unwrap();
@@ -1267,7 +1277,7 @@ fn test_api_len() {
 
 #[test]
 fn test_api_is_empty() {
-    let mut runtime = Runtime::new();
+    let mut runtime = create_test_runtime();
     let guard = api::create_guard(&runtime);
 
     let empty = api::create_array(&mut runtime, &guard).unwrap();
@@ -1279,7 +1289,7 @@ fn test_api_is_empty() {
 
 #[test]
 fn test_api_is_array() {
-    let mut runtime = Runtime::new();
+    let mut runtime = create_test_runtime();
     let guard = api::create_guard(&runtime);
 
     let arr = api::create_from_json(&mut runtime, &guard, &serde_json::json!([1, 2, 3])).unwrap();
@@ -1294,7 +1304,7 @@ fn test_api_is_array() {
 
 #[test]
 fn test_api_keys() {
-    let mut runtime = Runtime::new();
+    let mut runtime = create_test_runtime();
     let guard = api::create_guard(&runtime);
     let obj = api::create_from_json(
         &mut runtime,
@@ -1312,7 +1322,7 @@ fn test_api_keys() {
 
 #[test]
 fn test_api_elements() {
-    let mut runtime = Runtime::new();
+    let mut runtime = create_test_runtime();
     let guard = api::create_guard(&runtime);
     let arr =
         api::create_from_json(&mut runtime, &guard, &serde_json::json!(["a", "b", "c"])).unwrap();
@@ -1330,7 +1340,7 @@ fn test_api_elements() {
 
 #[test]
 fn test_set_property() {
-    let mut runtime = Runtime::new();
+    let mut runtime = create_test_runtime();
     let guard = api::create_guard(&runtime);
     let obj = api::create_object(&mut runtime, &guard).unwrap();
 
@@ -1345,7 +1355,7 @@ fn test_set_property() {
 
 #[test]
 fn test_set_index() {
-    let mut runtime = Runtime::new();
+    let mut runtime = create_test_runtime();
     let guard = api::create_guard(&runtime);
     let arr = api::create_from_json(&mut runtime, &guard, &serde_json::json!([1, 2, 3])).unwrap();
 
@@ -1358,7 +1368,7 @@ fn test_set_index() {
 
 #[test]
 fn test_set_index_extends() {
-    let mut runtime = Runtime::new();
+    let mut runtime = create_test_runtime();
     let guard = api::create_guard(&runtime);
     let arr = api::create_array(&mut runtime, &guard).unwrap();
 
@@ -1373,7 +1383,7 @@ fn test_set_index_extends() {
 
 #[test]
 fn test_push() {
-    let mut runtime = Runtime::new();
+    let mut runtime = create_test_runtime();
     let guard = api::create_guard(&runtime);
     let arr = api::create_array(&mut runtime, &guard).unwrap();
 
@@ -1389,7 +1399,7 @@ fn test_push() {
 
 #[test]
 fn test_push_mixed_types() {
-    let mut runtime = Runtime::new();
+    let mut runtime = create_test_runtime();
     let guard = api::create_guard(&runtime);
     let arr = api::create_array(&mut runtime, &guard).unwrap();
 
@@ -1409,7 +1419,7 @@ fn test_push_mixed_types() {
 
 #[test]
 fn test_call_method_join() {
-    let mut runtime = Runtime::new();
+    let mut runtime = create_test_runtime();
     let guard = api::create_guard(&runtime);
     let arr =
         api::create_from_json(&mut runtime, &guard, &serde_json::json!(["a", "b", "c"])).unwrap();
@@ -1422,7 +1432,7 @@ fn test_call_method_join() {
 
 #[test]
 fn test_call_method_push() {
-    let mut runtime = Runtime::new();
+    let mut runtime = create_test_runtime();
     let guard = api::create_guard(&runtime);
     let arr = api::create_from_json(&mut runtime, &guard, &serde_json::json!([1, 2])).unwrap();
 
@@ -1435,7 +1445,7 @@ fn test_call_method_push() {
 
 #[test]
 fn test_call_method_tostring() {
-    let mut runtime = Runtime::new();
+    let mut runtime = create_test_runtime();
     let guard = api::create_guard(&runtime);
     let arr = api::create_from_json(&mut runtime, &guard, &serde_json::json!([1, 2, 3])).unwrap();
 
@@ -1446,20 +1456,20 @@ fn test_call_method_tostring() {
 
 #[test]
 fn test_call_method_map() {
-    let mut runtime = Runtime::new();
+    let mut runtime = create_test_runtime();
 
     // First, define a function in JS
-    let result = runtime
-        .eval(
-            r#"
+    let result = run(
+        &mut runtime,
+        r#"
         const arr = [1, 2, 3];
         arr.map(x => x * 2)
     "#,
-            None,
-        )
-        .unwrap();
+        None,
+    )
+    .unwrap();
 
-    if let RuntimeResult::Complete(rv) = result {
+    if let StepResult::Complete(rv) = result {
         let elements = api::get_elements(rv.value()).unwrap();
         assert_eq!(elements[0].as_number(), Some(2.0));
         assert_eq!(elements[1].as_number(), Some(4.0));
@@ -1469,15 +1479,18 @@ fn test_call_method_map() {
 
 #[test]
 fn test_call_function() {
-    let mut runtime = Runtime::new();
+    let mut runtime = create_test_runtime();
     let guard = api::create_guard(&runtime);
 
     // Define a function
-    let result = runtime
-        .eval("function add(a, b) { return a + b; } add", None)
-        .unwrap();
+    let result = run(
+        &mut runtime,
+        "function add(a, b) { return a + b; } add",
+        None,
+    )
+    .unwrap();
 
-    if let RuntimeResult::Complete(add_fn) = result {
+    if let StepResult::Complete(add_fn) = result {
         let sum = api::call_function(
             &mut runtime,
             &guard,
@@ -1495,15 +1508,18 @@ fn test_call_function() {
 
 #[test]
 fn test_call_function_with_this() {
-    let mut runtime = Runtime::new();
+    let mut runtime = create_test_runtime();
     let guard = api::create_guard(&runtime);
 
     // Define a function that uses `this`
-    let result = runtime
-        .eval("function getX() { return this.x; } getX", None)
-        .unwrap();
+    let result = run(
+        &mut runtime,
+        "function getX() { return this.x; } getX",
+        None,
+    )
+    .unwrap();
 
-    if let RuntimeResult::Complete(get_x) = result {
+    if let StepResult::Complete(get_x) = result {
         let obj =
             api::create_from_json(&mut runtime, &guard, &serde_json::json!({"x": 42})).unwrap();
 
@@ -1517,7 +1533,7 @@ fn test_call_function_with_this() {
 
 #[test]
 fn test_call_method_error_on_missing() {
-    let mut runtime = Runtime::new();
+    let mut runtime = create_test_runtime();
     let guard = api::create_guard(&runtime);
     let obj = api::create_object(&mut runtime, &guard).unwrap();
 
@@ -1527,7 +1543,7 @@ fn test_call_method_error_on_missing() {
 
 #[test]
 fn test_call_function_error_on_non_function() {
-    let mut runtime = Runtime::new();
+    let mut runtime = create_test_runtime();
     let guard = api::create_guard(&runtime);
     let num = api::create_value(42);
 
@@ -1541,7 +1557,7 @@ fn test_call_function_error_on_non_function() {
 
 #[test]
 fn test_guard_value() {
-    let mut runtime = Runtime::new();
+    let mut runtime = create_test_runtime();
     let guard = api::create_guard(&runtime);
     let obj = api::create_from_json(
         &mut runtime,
@@ -1567,20 +1583,20 @@ fn test_guard_value() {
 
 #[test]
 fn test_get_export_const() {
-    let mut runtime = Runtime::new();
+    let mut runtime = create_test_runtime();
 
-    let result = runtime
-        .eval(
-            r#"
+    let result = run(
+        &mut runtime,
+        r#"
         export const VERSION = "1.0.0";
         export const COUNT = 42;
     "#,
-            Some("/main.ts"),
-        )
-        .unwrap();
+        Some("/main.ts"),
+    )
+    .unwrap();
 
     match result {
-        RuntimeResult::Complete(_) => {
+        StepResult::Complete(_) => {
             // Get string export
             let version = api::get_export(&runtime, "VERSION");
             assert!(version.is_some());
@@ -1601,21 +1617,21 @@ fn test_get_export_const() {
 
 #[test]
 fn test_get_export_function() {
-    let mut runtime = Runtime::new();
+    let mut runtime = create_test_runtime();
 
-    let result = runtime
-        .eval(
-            r#"
+    let result = run(
+        &mut runtime,
+        r#"
         export function add(a: number, b: number): number {
             return a + b;
         }
     "#,
-            Some("/main.ts"),
-        )
-        .unwrap();
+        Some("/main.ts"),
+    )
+    .unwrap();
 
     match result {
-        RuntimeResult::Complete(_) => {
+        StepResult::Complete(_) => {
             let guard = api::create_guard(&runtime);
 
             // Get exported function
@@ -1637,11 +1653,11 @@ fn test_get_export_function() {
 
 #[test]
 fn test_get_export_object() {
-    let mut runtime = Runtime::new();
+    let mut runtime = create_test_runtime();
 
-    let result = runtime
-        .eval(
-            r#"
+    let result = run(
+        &mut runtime,
+        r#"
         export interface Processor {
             process: (x: number) => number;
         }
@@ -1652,12 +1668,12 @@ fn test_get_export_object() {
             }
         };
     "#,
-            Some("/main.ts"),
-        )
-        .unwrap();
+        Some("/main.ts"),
+    )
+    .unwrap();
 
     match result {
-        RuntimeResult::Complete(_) => {
+        StepResult::Complete(_) => {
             let guard = api::create_guard(&runtime);
 
             // Get exported object
@@ -1679,11 +1695,11 @@ fn test_get_export_object() {
 
 #[test]
 fn test_get_export_class() {
-    let mut runtime = Runtime::new();
+    let mut runtime = create_test_runtime();
 
-    let result = runtime
-        .eval(
-            r#"
+    let result = run(
+        &mut runtime,
+        r#"
         export class Calculator {
             value: number;
 
@@ -1697,12 +1713,12 @@ fn test_get_export_class() {
             }
         }
     "#,
-            Some("/main.ts"),
-        )
-        .unwrap();
+        Some("/main.ts"),
+    )
+    .unwrap();
 
     match result {
-        RuntimeResult::Complete(_) => {
+        StepResult::Complete(_) => {
             let guard = api::create_guard(&runtime);
 
             // Get exported class
@@ -1721,22 +1737,22 @@ fn test_get_export_class() {
 
 #[test]
 fn test_get_export_names() {
-    let mut runtime = Runtime::new();
+    let mut runtime = create_test_runtime();
 
-    let result = runtime
-        .eval(
-            r#"
+    let result = run(
+        &mut runtime,
+        r#"
         export const a = 1;
         export const b = 2;
         export function c() {}
         export class D {}
     "#,
-            Some("/main.ts"),
-        )
-        .unwrap();
+        Some("/main.ts"),
+    )
+    .unwrap();
 
     match result {
-        RuntimeResult::Complete(_) => {
+        StepResult::Complete(_) => {
             let exports = api::get_export_names(&runtime);
 
             assert!(exports.contains(&"a".to_string()));
@@ -1751,7 +1767,7 @@ fn test_get_export_names() {
 
 #[test]
 fn test_get_export_no_module() {
-    let runtime = Runtime::new();
+    let mut runtime = create_test_runtime();
 
     // No module evaluated yet
     let result = api::get_export(&runtime, "anything");
@@ -1763,21 +1779,21 @@ fn test_get_export_no_module() {
 
 #[test]
 fn test_get_export_with_default() {
-    let mut runtime = Runtime::new();
+    let mut runtime = create_test_runtime();
 
-    let result = runtime
-        .eval(
-            r#"
+    let result = run(
+        &mut runtime,
+        r#"
         export default function greet(name: string): string {
             return "Hello, " + name + "!";
         }
     "#,
-            Some("/main.ts"),
-        )
-        .unwrap();
+        Some("/main.ts"),
+    )
+    .unwrap();
 
     match result {
-        RuntimeResult::Complete(_) => {
+        StepResult::Complete(_) => {
             let guard = api::create_guard(&runtime);
 
             // Get default export
@@ -1801,22 +1817,22 @@ fn test_get_export_with_default() {
 
 #[test]
 fn test_get_export_live_binding() {
-    let mut runtime = Runtime::new();
+    let mut runtime = create_test_runtime();
 
-    let result = runtime
-        .eval(
-            r#"
+    let result = run(
+        &mut runtime,
+        r#"
         export let counter = 0;
         export function increment(): void {
             counter++;
         }
     "#,
-            Some("/main.ts"),
-        )
-        .unwrap();
+        Some("/main.ts"),
+    )
+    .unwrap();
 
     match result {
-        RuntimeResult::Complete(_) => {
+        StepResult::Complete(_) => {
             let guard = api::create_guard(&runtime);
 
             // Get initial value

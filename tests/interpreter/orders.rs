@@ -4,10 +4,11 @@
 //! like fetch(), setTimeout(), and file I/O. The global functions are implemented in TypeScript
 //! using the __order__ syscall from eval:internal.
 
+use super::{run, run_to_completion};
 use serde_json::json;
 use tsrun::{
     InternalModule, JsString, JsValue, OrderId, OrderResponse, Runtime, RuntimeConfig,
-    RuntimeResult, RuntimeValue, api, create_eval_internal_module, value::PropertyKey,
+    RuntimeValue, StepResult, api, create_eval_internal_module, value::PropertyKey,
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -67,7 +68,6 @@ fn create_test_runtime() -> Runtime {
             create_eval_internal_module(),
             InternalModule::source("eval:globals", GLOBALS_SOURCE),
         ],
-        timeout_ms: 5000,
     };
     let runtime = Runtime::with_config(config);
 
@@ -95,16 +95,14 @@ fn get_string_prop(obj: &JsValue, key: &str) -> Option<String> {
 
 /// Run script with globals, handling the import of eval:globals first
 #[allow(clippy::expect_used)]
-fn run_with_globals(runtime: &mut Runtime, script: &str) -> RuntimeResult {
+fn run_with_globals(runtime: &mut Runtime, script: &str) -> StepResult {
     // Prepend import of globals module to register global functions
     let full_script = format!(
         r#"import "eval:globals";
 {}"#,
         script
     );
-    runtime
-        .eval(&full_script, None)
-        .expect("eval should not fail")
+    run(runtime, &full_script, None).expect("eval should not fail")
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -140,7 +138,7 @@ fn test_promise_then_callback_closure() {
     );
 
     // First suspension: waiting for __order__ response
-    let RuntimeResult::Suspended { pending, .. } = result else {
+    let StepResult::Suspended { pending, .. } = result else {
         panic!("Expected Suspended for __order__");
     };
     assert_eq!(pending.len(), 1);
@@ -151,15 +149,14 @@ fn test_promise_then_callback_closure() {
 
     // Host creates and returns a Promise
     let promise = api::create_promise(&mut runtime);
-    let result2 = runtime
-        .fulfill_orders(vec![OrderResponse {
-            id: pending[0].id,
-            result: Ok(RuntimeValue::unguarded(promise.value().clone())),
-        }])
-        .unwrap();
+    runtime.fulfill_orders(vec![OrderResponse {
+        id: pending[0].id,
+        result: Ok(RuntimeValue::unguarded(promise.value().clone())),
+    }]);
+    let result2 = run_to_completion(&mut runtime).unwrap();
 
     // Second suspension: script is awaiting the Promise (via .then())
-    let RuntimeResult::Suspended { .. } = result2 else {
+    let StepResult::Suspended { .. } = result2 else {
         panic!("Expected Suspended waiting for Promise resolution");
     };
 
@@ -170,10 +167,10 @@ fn test_promise_then_callback_closure() {
         RuntimeValue::unguarded(JsValue::Undefined),
     )
     .unwrap();
-    let result3 = runtime.continue_eval().unwrap();
+    let result3 = run_to_completion(&mut runtime).unwrap();
 
     // After resolution, the callback should have run and modified `captured`
-    let RuntimeResult::Complete(value) = result3 else {
+    let StepResult::Complete(value) = result3 else {
         panic!("Expected Complete after Promise resolution");
     };
     assert_eq!(*value, JsValue::String("modified".into()));
@@ -210,22 +207,21 @@ fn test_promise_then_callback_nested_closure() {
     );
 
     // First suspension: waiting for __order__ response
-    let RuntimeResult::Suspended { pending, .. } = result else {
+    let StepResult::Suspended { pending, .. } = result else {
         panic!("Expected Suspended for __order__");
     };
     assert_eq!(pending.len(), 1);
 
     // Host returns a Promise
     let promise = api::create_promise(&mut runtime);
-    let result2 = runtime
-        .fulfill_orders(vec![OrderResponse {
-            id: pending[0].id,
-            result: Ok(RuntimeValue::unguarded(promise.value().clone())),
-        }])
-        .unwrap();
+    runtime.fulfill_orders(vec![OrderResponse {
+        id: pending[0].id,
+        result: Ok(RuntimeValue::unguarded(promise.value().clone())),
+    }]);
+    let result2 = run_to_completion(&mut runtime).unwrap();
 
     // Second suspension: awaiting the Promise
-    let RuntimeResult::Suspended { .. } = result2 else {
+    let StepResult::Suspended { .. } = result2 else {
         panic!("Expected Suspended waiting for Promise");
     };
 
@@ -236,9 +232,9 @@ fn test_promise_then_callback_nested_closure() {
         RuntimeValue::unguarded(JsValue::Undefined),
     )
     .unwrap();
-    let result3 = runtime.continue_eval().unwrap();
+    let result3 = run_to_completion(&mut runtime).unwrap();
 
-    let RuntimeResult::Complete(value) = result3 else {
+    let StepResult::Complete(value) = result3 else {
         panic!("Expected Complete after Promise resolution");
     };
     assert_eq!(*value, JsValue::String("modified".into()));
@@ -274,7 +270,6 @@ fn test_cross_module_closure_simple() {
             "#,
             ),
         ],
-        timeout_ms: 5000,
     };
     let mut runtime = Runtime::with_config(config);
 
@@ -284,9 +279,9 @@ fn test_cross_module_closure_simple() {
         .unwrap_or(1);
     runtime.set_gc_threshold(gc_threshold);
 
-    let result = runtime
-        .eval(
-            r#"
+    let result = run(
+        &mut runtime,
+        r#"
             import { runWithCallback, getState } from "eval:timer-module";
 
             // Call the function that uses .then()
@@ -295,27 +290,26 @@ fn test_cross_module_closure_simple() {
             // Check the state
             getState();
         "#,
-            None,
-        )
-        .expect("eval should work");
+        None,
+    )
+    .expect("eval should work");
 
     // First suspension: __order__ waiting for host response
-    let RuntimeResult::Suspended { pending, .. } = result else {
+    let StepResult::Suspended { pending, .. } = result else {
         panic!("Expected Suspended for __order__");
     };
     assert_eq!(pending.len(), 1);
 
     // Host returns a Promise
     let promise = api::create_promise(&mut runtime);
-    let result2 = runtime
-        .fulfill_orders(vec![OrderResponse {
-            id: pending[0].id,
-            result: Ok(RuntimeValue::unguarded(promise.value().clone())),
-        }])
-        .unwrap();
+    runtime.fulfill_orders(vec![OrderResponse {
+        id: pending[0].id,
+        result: Ok(RuntimeValue::unguarded(promise.value().clone())),
+    }]);
+    let result2 = run_to_completion(&mut runtime).unwrap();
 
     // Second suspension: awaiting the Promise
-    let RuntimeResult::Suspended { .. } = result2 else {
+    let StepResult::Suspended { .. } = result2 else {
         panic!("Expected Suspended waiting for Promise");
     };
 
@@ -326,9 +320,9 @@ fn test_cross_module_closure_simple() {
         RuntimeValue::unguarded(JsValue::Undefined),
     )
     .unwrap();
-    let result3 = runtime.continue_eval().unwrap();
+    let result3 = run_to_completion(&mut runtime).unwrap();
 
-    let RuntimeResult::Complete(value) = result3 else {
+    let StepResult::Complete(value) = result3 else {
         panic!("Expected Complete after Promise resolution");
     };
     assert_eq!(*value, JsValue::String("from-callback".into()));
@@ -371,7 +365,6 @@ fn test_cross_module_nested_closure() {
             "#,
             ),
         ],
-        timeout_ms: 5000,
     };
     let mut runtime = Runtime::with_config(config);
 
@@ -381,9 +374,9 @@ fn test_cross_module_nested_closure() {
         .unwrap_or(1);
     runtime.set_gc_threshold(gc_threshold);
 
-    let result = runtime
-        .eval(
-            r#"
+    let result = run(
+        &mut runtime,
+        r#"
             import { wrapWithThen, getState } from "eval:helper-module";
 
             let userResult = "not-called";
@@ -395,27 +388,26 @@ fn test_cross_module_nested_closure() {
             // Return both the module state and user result
             getState() + " / " + userResult;
         "#,
-            None,
-        )
-        .expect("eval should work");
+        None,
+    )
+    .expect("eval should work");
 
     // First suspension: __order__ waiting for host response
-    let RuntimeResult::Suspended { pending, .. } = result else {
+    let StepResult::Suspended { pending, .. } = result else {
         panic!("Expected Suspended for __order__");
     };
     assert_eq!(pending.len(), 1);
 
     // Host returns a Promise
     let promise = api::create_promise(&mut runtime);
-    let result2 = runtime
-        .fulfill_orders(vec![OrderResponse {
-            id: pending[0].id,
-            result: Ok(RuntimeValue::unguarded(promise.value().clone())),
-        }])
-        .unwrap();
+    runtime.fulfill_orders(vec![OrderResponse {
+        id: pending[0].id,
+        result: Ok(RuntimeValue::unguarded(promise.value().clone())),
+    }]);
+    let result2 = run_to_completion(&mut runtime).unwrap();
 
     // Second suspension: awaiting the Promise
-    let RuntimeResult::Suspended { .. } = result2 else {
+    let StepResult::Suspended { .. } = result2 else {
         panic!("Expected Suspended waiting for Promise");
     };
 
@@ -426,9 +418,9 @@ fn test_cross_module_nested_closure() {
         RuntimeValue::unguarded(JsValue::Undefined),
     )
     .unwrap();
-    let result3 = runtime.continue_eval().unwrap();
+    let result3 = run_to_completion(&mut runtime).unwrap();
 
-    let RuntimeResult::Complete(value) = result3 else {
+    let StepResult::Complete(value) = result3 else {
         panic!("Expected Complete after Promise resolution");
     };
     assert_eq!(
@@ -442,15 +434,14 @@ fn test_debug_closure_gc() {
     // Test GC with closures accessing local and module variables
     let config = RuntimeConfig {
         internal_modules: vec![create_eval_internal_module()],
-        timeout_ms: 5000,
     };
     let mut runtime = Runtime::with_config(config);
     runtime.set_gc_threshold(1);
 
     // Test that callback closure survives GC with local variables
-    let result = runtime
-        .eval(
-            r#"
+    let result = run(
+        &mut runtime,
+        r#"
             import { __order__ } from "eval:internal";
 
             let state: string = "initial";
@@ -467,26 +458,25 @@ fn test_debug_closure_gc() {
             await wrapper();
             state;
         "#,
-            None,
-        )
-        .expect("eval should work");
+        None,
+    )
+    .expect("eval should work");
 
     // First suspension: __order__ waiting for host response
-    let RuntimeResult::Suspended { pending, .. } = result else {
+    let StepResult::Suspended { pending, .. } = result else {
         panic!("Expected Suspended for __order__");
     };
 
     // Host returns a Promise
     let promise = api::create_promise(&mut runtime);
-    let result2 = runtime
-        .fulfill_orders(vec![OrderResponse {
-            id: pending[0].id,
-            result: Ok(RuntimeValue::unguarded(promise.value().clone())),
-        }])
-        .unwrap();
+    runtime.fulfill_orders(vec![OrderResponse {
+        id: pending[0].id,
+        result: Ok(RuntimeValue::unguarded(promise.value().clone())),
+    }]);
+    let result2 = run_to_completion(&mut runtime).unwrap();
 
     // Second suspension: awaiting the Promise
-    let RuntimeResult::Suspended { .. } = result2 else {
+    let StepResult::Suspended { .. } = result2 else {
         panic!("Expected Suspended waiting for Promise");
     };
 
@@ -497,9 +487,9 @@ fn test_debug_closure_gc() {
         RuntimeValue::unguarded(JsValue::Undefined),
     )
     .unwrap();
-    let result3 = runtime.continue_eval().unwrap();
+    let result3 = run_to_completion(&mut runtime).unwrap();
 
-    let RuntimeResult::Complete(value) = result3 else {
+    let StepResult::Complete(value) = result3 else {
         panic!("Expected Complete after Promise resolution");
     };
     assert_eq!(*value, JsValue::String("modified-local".into()));
@@ -525,7 +515,7 @@ fn test_sleep_basic() {
     );
 
     // Should suspend for sleep()
-    let RuntimeResult::Suspended { pending, .. } = result else {
+    let StepResult::Suspended { pending, .. } = result else {
         panic!("Expected Suspended for sleep()");
     };
     assert_eq!(pending.len(), 1);
@@ -535,14 +525,13 @@ fn test_sleep_basic() {
     assert_eq!(get_string_prop(payload, "type"), Some("sleep".into()));
 
     // Fulfill the order (host would wait the delay then respond)
-    let result2 = runtime
-        .fulfill_orders(vec![OrderResponse {
-            id: pending[0].id,
-            result: Ok(RuntimeValue::unguarded(JsValue::Undefined)),
-        }])
-        .unwrap();
+    runtime.fulfill_orders(vec![OrderResponse {
+        id: pending[0].id,
+        result: Ok(RuntimeValue::unguarded(JsValue::Undefined)),
+    }]);
+    let result2 = run_to_completion(&mut runtime).unwrap();
 
-    let RuntimeResult::Complete(value) = result2 else {
+    let StepResult::Complete(value) = result2 else {
         panic!("Expected Complete after sleep");
     };
     assert_eq!(*value, JsValue::String("after".into()));
@@ -568,46 +557,43 @@ fn test_sleep_sequential() {
     );
 
     // First sleep
-    let RuntimeResult::Suspended { pending, .. } = result else {
+    let StepResult::Suspended { pending, .. } = result else {
         panic!("Expected Suspended for first sleep");
     };
     assert_eq!(pending.len(), 1);
 
-    let result = runtime
-        .fulfill_orders(vec![OrderResponse {
-            id: pending[0].id,
-            result: Ok(RuntimeValue::unguarded(JsValue::Undefined)),
-        }])
-        .unwrap();
+    runtime.fulfill_orders(vec![OrderResponse {
+        id: pending[0].id,
+        result: Ok(RuntimeValue::unguarded(JsValue::Undefined)),
+    }]);
+    let result = run_to_completion(&mut runtime).unwrap();
 
     // Second sleep
-    let RuntimeResult::Suspended { pending, .. } = result else {
+    let StepResult::Suspended { pending, .. } = result else {
         panic!("Expected Suspended for second sleep");
     };
     assert_eq!(pending.len(), 1);
 
-    let result = runtime
-        .fulfill_orders(vec![OrderResponse {
-            id: pending[0].id,
-            result: Ok(RuntimeValue::unguarded(JsValue::Undefined)),
-        }])
-        .unwrap();
+    runtime.fulfill_orders(vec![OrderResponse {
+        id: pending[0].id,
+        result: Ok(RuntimeValue::unguarded(JsValue::Undefined)),
+    }]);
+    let result = run_to_completion(&mut runtime).unwrap();
 
     // Third sleep
-    let RuntimeResult::Suspended { pending, .. } = result else {
+    let StepResult::Suspended { pending, .. } = result else {
         panic!("Expected Suspended for third sleep");
     };
     assert_eq!(pending.len(), 1);
 
-    let result = runtime
-        .fulfill_orders(vec![OrderResponse {
-            id: pending[0].id,
-            result: Ok(RuntimeValue::unguarded(JsValue::Undefined)),
-        }])
-        .unwrap();
+    runtime.fulfill_orders(vec![OrderResponse {
+        id: pending[0].id,
+        result: Ok(RuntimeValue::unguarded(JsValue::Undefined)),
+    }]);
+    let result = run_to_completion(&mut runtime).unwrap();
 
     // Complete
-    let RuntimeResult::Complete(value) = result else {
+    let StepResult::Complete(value) = result else {
         panic!("Expected Complete after all sleeps");
     };
     assert_eq!(*value, JsValue::Number(3.0));
@@ -630,7 +616,7 @@ fn test_fetch_get_basic() {
     );
 
     match result {
-        RuntimeResult::Suspended { pending, .. } => {
+        StepResult::Suspended { pending, .. } => {
             assert_eq!(pending.len(), 1);
 
             // Verify the order payload
@@ -658,10 +644,11 @@ fn test_fetch_get_basic() {
                 result: Ok(mock_response),
             };
 
-            let result2 = runtime.fulfill_orders(vec![response]).unwrap();
+            runtime.fulfill_orders(vec![response]);
+            let result2 = run_to_completion(&mut runtime).unwrap();
 
             match result2 {
-                RuntimeResult::Complete(value) => {
+                StepResult::Complete(value) => {
                     assert_eq!(*value, JsValue::String("John".into()));
                 }
                 _ => panic!("Expected Complete after fulfillment"),
@@ -688,7 +675,7 @@ fn test_fetch_post_with_body() {
     );
 
     match result {
-        RuntimeResult::Suspended { pending, .. } => {
+        StepResult::Suspended { pending, .. } => {
             assert_eq!(pending.len(), 1);
 
             let payload = pending[0].payload.value();
@@ -713,10 +700,11 @@ fn test_fetch_post_with_body() {
                 result: Ok(mock_response),
             };
 
-            let result2 = runtime.fulfill_orders(vec![response]).unwrap();
+            runtime.fulfill_orders(vec![response]);
+            let result2 = run_to_completion(&mut runtime).unwrap();
 
             match result2 {
-                RuntimeResult::Complete(value) => {
+                StepResult::Complete(value) => {
                     assert_eq!(*value, JsValue::Number(42.0));
                 }
                 _ => panic!("Expected Complete after fulfillment"),
@@ -741,7 +729,7 @@ fn test_fetch_parallel() {
     );
 
     // First suspension: fetch("/users/1")
-    let RuntimeResult::Suspended { pending, .. } = result else {
+    let StepResult::Suspended { pending, .. } = result else {
         panic!("Expected Suspended for first fetch");
     };
     assert_eq!(pending.len(), 1);
@@ -752,15 +740,14 @@ fn test_fetch_parallel() {
 
     let user_response =
         api::create_response_object(&mut runtime, &json!({ "name": "John" })).unwrap();
-    let result2 = runtime
-        .fulfill_orders(vec![OrderResponse {
-            id: pending[0].id,
-            result: Ok(user_response),
-        }])
-        .unwrap();
+    runtime.fulfill_orders(vec![OrderResponse {
+        id: pending[0].id,
+        result: Ok(user_response),
+    }]);
+    let result2 = run_to_completion(&mut runtime).unwrap();
 
     // Second suspension: fetch("/posts?userId=1")
-    let RuntimeResult::Suspended { pending, .. } = result2 else {
+    let StepResult::Suspended { pending, .. } = result2 else {
         panic!("Expected Suspended for second fetch, got {:?}", result2);
     };
     assert_eq!(pending.len(), 1);
@@ -774,15 +761,14 @@ fn test_fetch_parallel() {
         &json!([{ "id": 1 }, { "id": 2 }, { "id": 3 }]),
     )
     .unwrap();
-    let result3 = runtime
-        .fulfill_orders(vec![OrderResponse {
-            id: pending[0].id,
-            result: Ok(posts_response),
-        }])
-        .unwrap();
+    runtime.fulfill_orders(vec![OrderResponse {
+        id: pending[0].id,
+        result: Ok(posts_response),
+    }]);
+    let result3 = run_to_completion(&mut runtime).unwrap();
 
     // Final result
-    let RuntimeResult::Complete(value) = result3 else {
+    let StepResult::Complete(value) = result3 else {
         panic!("Expected Complete after fulfillment, got {:?}", result3);
     };
     assert_eq!(*value, JsValue::String("John has 3 posts".into()));
@@ -805,7 +791,7 @@ fn test_read_file_basic() {
     );
 
     match result {
-        RuntimeResult::Suspended { pending, .. } => {
+        StepResult::Suspended { pending, .. } => {
             assert_eq!(pending.len(), 1);
 
             let payload = pending[0].payload.value();
@@ -820,10 +806,11 @@ fn test_read_file_basic() {
                 ))),
             };
 
-            let result2 = runtime.fulfill_orders(vec![response]).unwrap();
+            runtime.fulfill_orders(vec![response]);
+            let result2 = run_to_completion(&mut runtime).unwrap();
 
             match result2 {
-                RuntimeResult::Complete(value) => {
+                StepResult::Complete(value) => {
                     assert_eq!(*value, JsValue::String("Hello, World!".into()));
                 }
                 _ => panic!("Expected Complete after fulfillment"),
@@ -847,7 +834,7 @@ fn test_read_file_json_parse() {
     );
 
     match result {
-        RuntimeResult::Suspended { pending, .. } => {
+        StepResult::Suspended { pending, .. } => {
             assert_eq!(pending.len(), 1);
 
             // Return mock JSON content
@@ -859,10 +846,11 @@ fn test_read_file_json_parse() {
                 ))),
             };
 
-            let result2 = runtime.fulfill_orders(vec![response]).unwrap();
+            runtime.fulfill_orders(vec![response]);
+            let result2 = run_to_completion(&mut runtime).unwrap();
 
             match result2 {
-                RuntimeResult::Complete(value) => {
+                StepResult::Complete(value) => {
                     assert_eq!(*value, JsValue::String("localhost".into()));
                 }
                 _ => panic!("Expected Complete after fulfillment"),
@@ -885,7 +873,7 @@ fn test_write_file_basic() {
     );
 
     match result {
-        RuntimeResult::Suspended { pending, .. } => {
+        StepResult::Suspended { pending, .. } => {
             assert_eq!(pending.len(), 1);
 
             let payload = pending[0].payload.value();
@@ -902,10 +890,11 @@ fn test_write_file_basic() {
                 result: Ok(RuntimeValue::unguarded(JsValue::Undefined)),
             };
 
-            let result2 = runtime.fulfill_orders(vec![response]).unwrap();
+            runtime.fulfill_orders(vec![response]);
+            let result2 = run_to_completion(&mut runtime).unwrap();
 
             match result2 {
-                RuntimeResult::Complete(value) => {
+                StepResult::Complete(value) => {
                     assert_eq!(*value, JsValue::String("written".into()));
                 }
                 _ => panic!("Expected Complete after fulfillment"),
@@ -930,7 +919,7 @@ fn test_read_write_roundtrip() {
     );
 
     // First: writeFile
-    let RuntimeResult::Suspended { pending, .. } = result else {
+    let StepResult::Suspended { pending, .. } = result else {
         panic!("Expected Suspended for writeFile");
     };
     assert_eq!(pending.len(), 1);
@@ -943,15 +932,14 @@ fn test_read_write_roundtrip() {
     let file_content = get_string_prop(pending[0].payload.value(), "content").unwrap_or_default();
     assert_eq!(file_content, "test data 12345");
 
-    let result = runtime
-        .fulfill_orders(vec![OrderResponse {
-            id: pending[0].id,
-            result: Ok(RuntimeValue::unguarded(JsValue::Undefined)),
-        }])
-        .unwrap();
+    runtime.fulfill_orders(vec![OrderResponse {
+        id: pending[0].id,
+        result: Ok(RuntimeValue::unguarded(JsValue::Undefined)),
+    }]);
+    let result = run_to_completion(&mut runtime).unwrap();
 
     // Second: readFile
-    let RuntimeResult::Suspended { pending, .. } = result else {
+    let StepResult::Suspended { pending, .. } = result else {
         panic!("Expected Suspended for readFile");
     };
     assert_eq!(pending.len(), 1);
@@ -961,17 +949,16 @@ fn test_read_write_roundtrip() {
     );
 
     // Return the "stored" content
-    let result = runtime
-        .fulfill_orders(vec![OrderResponse {
-            id: pending[0].id,
-            result: Ok(RuntimeValue::unguarded(JsValue::String(
-                file_content.into(),
-            ))),
-        }])
-        .unwrap();
+    runtime.fulfill_orders(vec![OrderResponse {
+        id: pending[0].id,
+        result: Ok(RuntimeValue::unguarded(JsValue::String(
+            file_content.into(),
+        ))),
+    }]);
+    let result = run_to_completion(&mut runtime).unwrap();
 
     // Complete
-    let RuntimeResult::Complete(value) = result else {
+    let StepResult::Complete(value) = result else {
         panic!("Expected Complete after roundtrip");
     };
     assert_eq!(*value, JsValue::Boolean(true));
@@ -1010,7 +997,7 @@ fn test_config_generation_workflow() {
     );
 
     // Step 1: readFile /app.json
-    let RuntimeResult::Suspended { pending, .. } = result else {
+    let StepResult::Suspended { pending, .. } = result else {
         panic!("Expected Suspended for readFile");
     };
     assert_eq!(pending.len(), 1);
@@ -1021,15 +1008,14 @@ fn test_config_generation_workflow() {
 
     let config_json =
         r#"{"name": "MyApp", "version": "1.0.0", "apiUrl": "https://api.example.com"}"#;
-    let result = runtime
-        .fulfill_orders(vec![OrderResponse {
-            id: pending[0].id,
-            result: Ok(RuntimeValue::unguarded(JsValue::String(config_json.into()))),
-        }])
-        .unwrap();
+    runtime.fulfill_orders(vec![OrderResponse {
+        id: pending[0].id,
+        result: Ok(RuntimeValue::unguarded(JsValue::String(config_json.into()))),
+    }]);
+    let result = run_to_completion(&mut runtime).unwrap();
 
     // Step 2: fetch api settings
-    let RuntimeResult::Suspended { pending, .. } = result else {
+    let StepResult::Suspended { pending, .. } = result else {
         panic!("Expected Suspended for fetch");
     };
     assert_eq!(pending.len(), 1);
@@ -1045,15 +1031,14 @@ fn test_config_generation_workflow() {
     let api_response =
         api::create_response_object(&mut runtime, &json!({ "theme": "dark", "language": "en" }))
             .unwrap();
-    let result = runtime
-        .fulfill_orders(vec![OrderResponse {
-            id: pending[0].id,
-            result: Ok(api_response),
-        }])
-        .unwrap();
+    runtime.fulfill_orders(vec![OrderResponse {
+        id: pending[0].id,
+        result: Ok(api_response),
+    }]);
+    let result = run_to_completion(&mut runtime).unwrap();
 
     // Step 3: writeFile /manifest.json
-    let RuntimeResult::Suspended { pending, .. } = result else {
+    let StepResult::Suspended { pending, .. } = result else {
         panic!("Expected Suspended for writeFile");
     };
     assert_eq!(pending.len(), 1);
@@ -1072,15 +1057,14 @@ fn test_config_generation_workflow() {
     assert!(manifest_content.contains("1.0.0"));
     assert!(manifest_content.contains("dark"));
 
-    let result = runtime
-        .fulfill_orders(vec![OrderResponse {
-            id: pending[0].id,
-            result: Ok(RuntimeValue::unguarded(JsValue::Undefined)),
-        }])
-        .unwrap();
+    runtime.fulfill_orders(vec![OrderResponse {
+        id: pending[0].id,
+        result: Ok(RuntimeValue::unguarded(JsValue::Undefined)),
+    }]);
+    let result = run_to_completion(&mut runtime).unwrap();
 
     // Complete
-    let RuntimeResult::Complete(value) = result else {
+    let StepResult::Complete(value) = result else {
         panic!("Expected Complete after workflow");
     };
     assert_eq!(*value, JsValue::String("MyApp v1.0.0".into()));
@@ -1113,7 +1097,7 @@ fn test_host_create_and_resolve_promise() {
     );
 
     // First suspension: waiting for order
-    let RuntimeResult::Suspended { pending, .. } = result else {
+    let StepResult::Suspended { pending, .. } = result else {
         panic!("Expected Suspended waiting for order");
     };
     assert_eq!(pending.len(), 1);
@@ -1123,25 +1107,24 @@ fn test_host_create_and_resolve_promise() {
     );
 
     // Fulfill with the unresolved promise - use the value directly
-    let result2 = runtime
-        .fulfill_orders(vec![OrderResponse {
-            id: pending[0].id,
-            result: Ok(RuntimeValue::unguarded(host_promise.value().clone())),
-        }])
-        .unwrap();
+    runtime.fulfill_orders(vec![OrderResponse {
+        id: pending[0].id,
+        result: Ok(RuntimeValue::unguarded(host_promise.value().clone())),
+    }]);
+    let result2 = run_to_completion(&mut runtime).unwrap();
 
     // Still suspended - waiting for the Promise to be resolved
-    let RuntimeResult::Suspended { .. } = result2 else {
+    let StepResult::Suspended { .. } = result2 else {
         panic!("Expected Suspended waiting for Promise to be resolved");
     };
 
     // Now resolve the promise with a value
     let value = RuntimeValue::unguarded(JsValue::String("Hello from host!".into()));
     api::resolve_promise(&mut runtime, &host_promise, value).unwrap();
-    let result3 = runtime.continue_eval().unwrap();
+    let result3 = run_to_completion(&mut runtime).unwrap();
 
     // Should complete now
-    let RuntimeResult::Complete(final_value) = result3 else {
+    let StepResult::Complete(final_value) = result3 else {
         panic!("Expected Complete after resolving Promise");
     };
     assert_eq!(
@@ -1173,28 +1156,27 @@ fn test_host_create_and_reject_promise() {
     "#,
     );
 
-    let RuntimeResult::Suspended { pending, .. } = result else {
+    let StepResult::Suspended { pending, .. } = result else {
         panic!("Expected Suspended");
     };
 
     // Fulfill with the unresolved promise
-    let result2 = runtime
-        .fulfill_orders(vec![OrderResponse {
-            id: pending[0].id,
-            result: Ok(RuntimeValue::unguarded(host_promise.value().clone())),
-        }])
-        .unwrap();
+    runtime.fulfill_orders(vec![OrderResponse {
+        id: pending[0].id,
+        result: Ok(RuntimeValue::unguarded(host_promise.value().clone())),
+    }]);
+    let result2 = run_to_completion(&mut runtime).unwrap();
 
-    let RuntimeResult::Suspended { .. } = result2 else {
+    let StepResult::Suspended { .. } = result2 else {
         panic!("Expected Suspended waiting for Promise");
     };
 
     // Reject the promise
     let reason = RuntimeValue::unguarded(JsValue::String("Something went wrong".into()));
     api::reject_promise(&mut runtime, &host_promise, reason).unwrap();
-    let result3 = runtime.continue_eval().unwrap();
+    let result3 = run_to_completion(&mut runtime).unwrap();
 
-    let RuntimeResult::Complete(final_value) = result3 else {
+    let StepResult::Complete(final_value) = result3 else {
         panic!("Expected Complete after rejecting Promise");
     };
     assert_eq!(
@@ -1220,7 +1202,7 @@ fn test_host_promise_immediate_resolve() {
     "#,
     );
 
-    let RuntimeResult::Suspended { pending, .. } = result else {
+    let StepResult::Suspended { pending, .. } = result else {
         panic!("Expected Suspended");
     };
 
@@ -1233,15 +1215,14 @@ fn test_host_promise_immediate_resolve() {
     api::resolve_promise(&mut runtime, &promise, value).unwrap();
 
     // Now fulfill the order with the already-resolved promise
-    let result2 = runtime
-        .fulfill_orders(vec![OrderResponse {
-            id: pending[0].id,
-            result: Ok(RuntimeValue::unguarded(promise.value().clone())),
-        }])
-        .unwrap();
+    runtime.fulfill_orders(vec![OrderResponse {
+        id: pending[0].id,
+        result: Ok(RuntimeValue::unguarded(promise.value().clone())),
+    }]);
+    let result2 = run_to_completion(&mut runtime).unwrap();
 
     // Since the Promise was already resolved, await should complete immediately
-    let RuntimeResult::Complete(final_value) = result2 else {
+    let StepResult::Complete(final_value) = result2 else {
         panic!("Expected Complete");
     };
     assert_eq!(*final_value, JsValue::String("Result: 42".into()));
@@ -1282,7 +1263,7 @@ fn test_concurrent_fetch_with_promise_all() {
     );
 
     // First order: /users
-    let RuntimeResult::Suspended { pending, .. } = result else {
+    let StepResult::Suspended { pending, .. } = result else {
         panic!("Expected Suspended for first fetch");
     };
     assert_eq!(pending.len(), 1);
@@ -1291,15 +1272,14 @@ fn test_concurrent_fetch_with_promise_all() {
         Some("/users".into())
     );
 
-    let result = runtime
-        .fulfill_orders(vec![OrderResponse {
-            id: pending[0].id,
-            result: Ok(RuntimeValue::unguarded(promise_users.value().clone())),
-        }])
-        .unwrap();
+    runtime.fulfill_orders(vec![OrderResponse {
+        id: pending[0].id,
+        result: Ok(RuntimeValue::unguarded(promise_users.value().clone())),
+    }]);
+    let result = run_to_completion(&mut runtime).unwrap();
 
     // Second order: /posts
-    let RuntimeResult::Suspended { pending, .. } = result else {
+    let StepResult::Suspended { pending, .. } = result else {
         panic!("Expected Suspended for second fetch");
     };
     assert_eq!(pending.len(), 1);
@@ -1308,35 +1288,34 @@ fn test_concurrent_fetch_with_promise_all() {
         Some("/posts".into())
     );
 
-    let result = runtime
-        .fulfill_orders(vec![OrderResponse {
-            id: pending[0].id,
-            result: Ok(RuntimeValue::unguarded(promise_posts.value().clone())),
-        }])
-        .unwrap();
+    runtime.fulfill_orders(vec![OrderResponse {
+        id: pending[0].id,
+        result: Ok(RuntimeValue::unguarded(promise_posts.value().clone())),
+    }]);
+    let result = run_to_completion(&mut runtime).unwrap();
 
     // Now awaiting Promise.all - both Promises are pending
-    let RuntimeResult::Suspended { .. } = result else {
+    let StepResult::Suspended { .. } = result else {
         panic!("Expected Suspended waiting for Promise.all");
     };
 
     // Resolve /posts first (out of order!)
     let posts_data = api::create_response_object(&mut runtime, &json!({ "count": 100 })).unwrap();
     api::resolve_promise(&mut runtime, &promise_posts, posts_data).unwrap();
-    let result = runtime.continue_eval().unwrap();
+    let result = run_to_completion(&mut runtime).unwrap();
 
     // Still waiting for /users
-    let RuntimeResult::Suspended { .. } = result else {
+    let StepResult::Suspended { .. } = result else {
         panic!("Expected Suspended still waiting for users");
     };
 
     // Resolve /users
     let users_data = api::create_response_object(&mut runtime, &json!({ "count": 42 })).unwrap();
     api::resolve_promise(&mut runtime, &promise_users, users_data).unwrap();
-    let result = runtime.continue_eval().unwrap();
+    let result = run_to_completion(&mut runtime).unwrap();
 
     // Complete - results in original order despite resolution order
-    let RuntimeResult::Complete(value) = result else {
+    let StepResult::Complete(value) = result else {
         panic!("Expected Complete after both resolved");
     };
     assert_eq!(*value, JsValue::String("42 users, 100 posts".into()));
@@ -1365,29 +1344,27 @@ fn test_promise_race_first_wins() {
     );
 
     // Get first Promise
-    let RuntimeResult::Suspended { pending, .. } = result else {
+    let StepResult::Suspended { pending, .. } = result else {
         panic!("Expected Suspended");
     };
-    let result = runtime
-        .fulfill_orders(vec![OrderResponse {
-            id: pending[0].id,
-            result: Ok(RuntimeValue::unguarded(promise_fast.value().clone())),
-        }])
-        .unwrap();
+    runtime.fulfill_orders(vec![OrderResponse {
+        id: pending[0].id,
+        result: Ok(RuntimeValue::unguarded(promise_fast.value().clone())),
+    }]);
+    let result = run_to_completion(&mut runtime).unwrap();
 
     // Get second Promise
-    let RuntimeResult::Suspended { pending, .. } = result else {
+    let StepResult::Suspended { pending, .. } = result else {
         panic!("Expected Suspended");
     };
-    let result = runtime
-        .fulfill_orders(vec![OrderResponse {
-            id: pending[0].id,
-            result: Ok(RuntimeValue::unguarded(promise_slow.value().clone())),
-        }])
-        .unwrap();
+    runtime.fulfill_orders(vec![OrderResponse {
+        id: pending[0].id,
+        result: Ok(RuntimeValue::unguarded(promise_slow.value().clone())),
+    }]);
+    let result = run_to_completion(&mut runtime).unwrap();
 
     // Awaiting Promise.race
-    let RuntimeResult::Suspended { .. } = result else {
+    let StepResult::Suspended { .. } = result else {
         panic!("Expected Suspended for Promise.race");
     };
 
@@ -1395,10 +1372,10 @@ fn test_promise_race_first_wins() {
     let fast_data =
         api::create_response_object(&mut runtime, &json!({ "server": "fast" })).unwrap();
     api::resolve_promise(&mut runtime, &promise_fast, fast_data).unwrap();
-    let result = runtime.continue_eval().unwrap();
+    let result = run_to_completion(&mut runtime).unwrap();
 
     // Race completes immediately when first Promise resolves
-    let RuntimeResult::Complete(value) = result else {
+    let StepResult::Complete(value) = result else {
         panic!("Expected Complete after first resolve");
     };
     assert_eq!(*value, JsValue::String("fast".into()));
@@ -1426,36 +1403,34 @@ fn test_promise_race_second_wins() {
     );
 
     // Get both Promises
-    let RuntimeResult::Suspended { pending, .. } = result else {
+    let StepResult::Suspended { pending, .. } = result else {
         panic!("Expected Suspended");
     };
-    let result = runtime
-        .fulfill_orders(vec![OrderResponse {
-            id: pending[0].id,
-            result: Ok(RuntimeValue::unguarded(promise_a.value().clone())),
-        }])
-        .unwrap();
+    runtime.fulfill_orders(vec![OrderResponse {
+        id: pending[0].id,
+        result: Ok(RuntimeValue::unguarded(promise_a.value().clone())),
+    }]);
+    let result = run_to_completion(&mut runtime).unwrap();
 
-    let RuntimeResult::Suspended { pending, .. } = result else {
+    let StepResult::Suspended { pending, .. } = result else {
         panic!("Expected Suspended");
     };
-    let result = runtime
-        .fulfill_orders(vec![OrderResponse {
-            id: pending[0].id,
-            result: Ok(RuntimeValue::unguarded(promise_b.value().clone())),
-        }])
-        .unwrap();
+    runtime.fulfill_orders(vec![OrderResponse {
+        id: pending[0].id,
+        result: Ok(RuntimeValue::unguarded(promise_b.value().clone())),
+    }]);
+    let result = run_to_completion(&mut runtime).unwrap();
 
-    let RuntimeResult::Suspended { .. } = result else {
+    let StepResult::Suspended { .. } = result else {
         panic!("Expected Suspended for Promise.race");
     };
 
     // Resolve B first - B wins even though it was second in array
     let b_data = api::create_response_object(&mut runtime, &json!({ "winner": "B" })).unwrap();
     api::resolve_promise(&mut runtime, &promise_b, b_data).unwrap();
-    let result = runtime.continue_eval().unwrap();
+    let result = run_to_completion(&mut runtime).unwrap();
 
-    let RuntimeResult::Complete(value) = result else {
+    let StepResult::Complete(value) = result else {
         panic!("Expected Complete");
     };
     assert_eq!(*value, JsValue::String("B".into()));
@@ -1487,47 +1462,45 @@ fn test_concurrent_with_partial_failure() {
     );
 
     // Get both Promises
-    let RuntimeResult::Suspended { pending, .. } = result else {
+    let StepResult::Suspended { pending, .. } = result else {
         panic!("Expected Suspended");
     };
-    let result = runtime
-        .fulfill_orders(vec![OrderResponse {
-            id: pending[0].id,
-            result: Ok(RuntimeValue::unguarded(promise_ok.value().clone())),
-        }])
-        .unwrap();
+    runtime.fulfill_orders(vec![OrderResponse {
+        id: pending[0].id,
+        result: Ok(RuntimeValue::unguarded(promise_ok.value().clone())),
+    }]);
+    let result = run_to_completion(&mut runtime).unwrap();
 
-    let RuntimeResult::Suspended { pending, .. } = result else {
+    let StepResult::Suspended { pending, .. } = result else {
         panic!("Expected Suspended");
     };
-    let result = runtime
-        .fulfill_orders(vec![OrderResponse {
-            id: pending[0].id,
-            result: Ok(RuntimeValue::unguarded(promise_fail.value().clone())),
-        }])
-        .unwrap();
+    runtime.fulfill_orders(vec![OrderResponse {
+        id: pending[0].id,
+        result: Ok(RuntimeValue::unguarded(promise_fail.value().clone())),
+    }]);
+    let result = run_to_completion(&mut runtime).unwrap();
 
-    let RuntimeResult::Suspended { .. } = result else {
+    let StepResult::Suspended { .. } = result else {
         panic!("Expected Suspended for Promise.all");
     };
 
     // Resolve the first one successfully
     let ok_data = RuntimeValue::unguarded(JsValue::String("OK".into()));
     api::resolve_promise(&mut runtime, &promise_ok, ok_data).unwrap();
-    let result = runtime.continue_eval().unwrap();
+    let result = run_to_completion(&mut runtime).unwrap();
 
     // Still waiting for second
-    let RuntimeResult::Suspended { .. } = result else {
+    let StepResult::Suspended { .. } = result else {
         panic!("Expected Suspended waiting for second");
     };
 
     // Reject the second one
     let error = RuntimeValue::unguarded(JsValue::String("Network error".into()));
     api::reject_promise(&mut runtime, &promise_fail, error).unwrap();
-    let result = runtime.continue_eval().unwrap();
+    let result = run_to_completion(&mut runtime).unwrap();
 
     // Promise.all rejects if any Promise rejects
-    let RuntimeResult::Complete(value) = result else {
+    let StepResult::Complete(value) = result else {
         panic!("Expected Complete with error");
     };
     assert_eq!(*value, JsValue::String("Error: Network error".into()));
@@ -1560,38 +1533,35 @@ fn test_concurrent_three_way_race() {
     );
 
     // Get all three Promises via sequential orders
-    let RuntimeResult::Suspended { pending, .. } = result else {
+    let StepResult::Suspended { pending, .. } = result else {
         panic!("Expected Suspended for order 1");
     };
-    let result = runtime
-        .fulfill_orders(vec![OrderResponse {
-            id: pending[0].id,
-            result: Ok(RuntimeValue::unguarded(promise1.value().clone())),
-        }])
-        .unwrap();
+    runtime.fulfill_orders(vec![OrderResponse {
+        id: pending[0].id,
+        result: Ok(RuntimeValue::unguarded(promise1.value().clone())),
+    }]);
+    let result = run_to_completion(&mut runtime).unwrap();
 
-    let RuntimeResult::Suspended { pending, .. } = result else {
+    let StepResult::Suspended { pending, .. } = result else {
         panic!("Expected Suspended for order 2");
     };
-    let result = runtime
-        .fulfill_orders(vec![OrderResponse {
-            id: pending[0].id,
-            result: Ok(RuntimeValue::unguarded(promise2.value().clone())),
-        }])
-        .unwrap();
+    runtime.fulfill_orders(vec![OrderResponse {
+        id: pending[0].id,
+        result: Ok(RuntimeValue::unguarded(promise2.value().clone())),
+    }]);
+    let result = run_to_completion(&mut runtime).unwrap();
 
-    let RuntimeResult::Suspended { pending, .. } = result else {
+    let StepResult::Suspended { pending, .. } = result else {
         panic!("Expected Suspended for order 3");
     };
-    let result = runtime
-        .fulfill_orders(vec![OrderResponse {
-            id: pending[0].id,
-            result: Ok(RuntimeValue::unguarded(promise3.value().clone())),
-        }])
-        .unwrap();
+    runtime.fulfill_orders(vec![OrderResponse {
+        id: pending[0].id,
+        result: Ok(RuntimeValue::unguarded(promise3.value().clone())),
+    }]);
+    let result = run_to_completion(&mut runtime).unwrap();
 
     // Now awaiting Promise.race with three unresolved Promises
-    let RuntimeResult::Suspended { .. } = result else {
+    let StepResult::Suspended { .. } = result else {
         panic!("Expected Suspended for Promise.race");
     };
 
@@ -1602,9 +1572,9 @@ fn test_concurrent_three_way_race() {
         RuntimeValue::unguarded(JsValue::Number(2.0)),
     )
     .unwrap();
-    let result = runtime.continue_eval().unwrap();
+    let result = run_to_completion(&mut runtime).unwrap();
 
-    let RuntimeResult::Complete(value) = result else {
+    let StepResult::Complete(value) = result else {
         panic!("Expected Complete after resolving winner, got {:?}", result);
     };
     assert_eq!(*value, JsValue::String("Winner: 2".into()));
@@ -1638,36 +1608,34 @@ fn test_concurrent_chained_operations() {
     );
 
     // Get both Promises
-    let RuntimeResult::Suspended { pending, .. } = result else {
+    let StepResult::Suspended { pending, .. } = result else {
         panic!("Expected Suspended");
     };
-    let result = runtime
-        .fulfill_orders(vec![OrderResponse {
-            id: pending[0].id,
-            result: Ok(RuntimeValue::unguarded(promise_user.value().clone())),
-        }])
-        .unwrap();
+    runtime.fulfill_orders(vec![OrderResponse {
+        id: pending[0].id,
+        result: Ok(RuntimeValue::unguarded(promise_user.value().clone())),
+    }]);
+    let result = run_to_completion(&mut runtime).unwrap();
 
-    let RuntimeResult::Suspended { pending, .. } = result else {
+    let StepResult::Suspended { pending, .. } = result else {
         panic!("Expected Suspended");
     };
-    let result = runtime
-        .fulfill_orders(vec![OrderResponse {
-            id: pending[0].id,
-            result: Ok(RuntimeValue::unguarded(promise_profile.value().clone())),
-        }])
-        .unwrap();
+    runtime.fulfill_orders(vec![OrderResponse {
+        id: pending[0].id,
+        result: Ok(RuntimeValue::unguarded(promise_profile.value().clone())),
+    }]);
+    let result = run_to_completion(&mut runtime).unwrap();
 
-    let RuntimeResult::Suspended { .. } = result else {
+    let StepResult::Suspended { .. } = result else {
         panic!("Expected Suspended for Promise.all");
     };
 
     // Resolve user
     let user_data = api::create_response_object(&mut runtime, &json!({ "name": "Alice" })).unwrap();
     api::resolve_promise(&mut runtime, &promise_user, user_data).unwrap();
-    let result = runtime.continue_eval().unwrap();
+    let result = run_to_completion(&mut runtime).unwrap();
 
-    let RuntimeResult::Suspended { .. } = result else {
+    let StepResult::Suspended { .. } = result else {
         panic!("Expected Suspended waiting for profile");
     };
 
@@ -1675,9 +1643,9 @@ fn test_concurrent_chained_operations() {
     let profile_data =
         api::create_response_object(&mut runtime, &json!({ "bio": "Developer" })).unwrap();
     api::resolve_promise(&mut runtime, &promise_profile, profile_data).unwrap();
-    let result = runtime.continue_eval().unwrap();
+    let result = run_to_completion(&mut runtime).unwrap();
 
-    let RuntimeResult::Complete(value) = result else {
+    let StepResult::Complete(value) = result else {
         panic!("Expected Complete");
     };
     assert_eq!(
@@ -1717,31 +1685,29 @@ fn test_promise_race_cancels_losing_order() {
     );
 
     // Get first order
-    let RuntimeResult::Suspended { pending, .. } = result else {
+    let StepResult::Suspended { pending, .. } = result else {
         panic!("Expected Suspended");
     };
     let first_order_id = pending[0].id;
-    let result = runtime
-        .fulfill_orders(vec![OrderResponse {
-            id: first_order_id,
-            result: Ok(RuntimeValue::unguarded(promise1.value().clone())),
-        }])
-        .unwrap();
+    runtime.fulfill_orders(vec![OrderResponse {
+        id: first_order_id,
+        result: Ok(RuntimeValue::unguarded(promise1.value().clone())),
+    }]);
+    let result = run_to_completion(&mut runtime).unwrap();
 
     // Get second order
-    let RuntimeResult::Suspended { pending, .. } = result else {
+    let StepResult::Suspended { pending, .. } = result else {
         panic!("Expected Suspended");
     };
     let second_order_id = pending[0].id;
-    let result = runtime
-        .fulfill_orders(vec![OrderResponse {
-            id: second_order_id,
-            result: Ok(RuntimeValue::unguarded(promise2.value().clone())),
-        }])
-        .unwrap();
+    runtime.fulfill_orders(vec![OrderResponse {
+        id: second_order_id,
+        result: Ok(RuntimeValue::unguarded(promise2.value().clone())),
+    }]);
+    let result = run_to_completion(&mut runtime).unwrap();
 
     // Awaiting Promise.race
-    let RuntimeResult::Suspended { .. } = result else {
+    let StepResult::Suspended { .. } = result else {
         panic!("Expected Suspended for Promise.race");
     };
 
@@ -1752,14 +1718,14 @@ fn test_promise_race_cancels_losing_order() {
         RuntimeValue::unguarded(JsValue::String("first".into())),
     )
     .unwrap();
-    let result = runtime.continue_eval().unwrap();
+    let result = run_to_completion(&mut runtime).unwrap();
 
     // Check that the result includes cancelled order
     match result {
-        RuntimeResult::Complete(value) => {
+        StepResult::Complete(value) => {
             assert_eq!(*value, JsValue::String("first".into()));
         }
-        RuntimeResult::Suspended { cancelled, .. } => {
+        StepResult::Suspended { cancelled, .. } => {
             // The loser's order_id (order2_id) should be in cancelled
             assert!(
                 cancelled.contains(&order2_id),
@@ -1768,8 +1734,8 @@ fn test_promise_race_cancels_losing_order() {
                 cancelled
             );
             // Continue to get final result
-            let result = runtime.continue_eval().unwrap();
-            if let RuntimeResult::Complete(value) = result {
+            let result = run_to_completion(&mut runtime).unwrap();
+            if let StepResult::Complete(value) = result {
                 assert_eq!(*value, JsValue::String("first".into()));
             }
         }
@@ -1801,27 +1767,25 @@ fn test_promise_race_second_wins_cancels_first() {
     );
 
     // Get both orders and return Promises
-    let RuntimeResult::Suspended { pending, .. } = result else {
+    let StepResult::Suspended { pending, .. } = result else {
         panic!("Expected Suspended");
     };
-    let result = runtime
-        .fulfill_orders(vec![OrderResponse {
-            id: pending[0].id,
-            result: Ok(RuntimeValue::unguarded(promise1.value().clone())),
-        }])
-        .unwrap();
+    runtime.fulfill_orders(vec![OrderResponse {
+        id: pending[0].id,
+        result: Ok(RuntimeValue::unguarded(promise1.value().clone())),
+    }]);
+    let result = run_to_completion(&mut runtime).unwrap();
 
-    let RuntimeResult::Suspended { pending, .. } = result else {
+    let StepResult::Suspended { pending, .. } = result else {
         panic!("Expected Suspended");
     };
-    let result = runtime
-        .fulfill_orders(vec![OrderResponse {
-            id: pending[0].id,
-            result: Ok(RuntimeValue::unguarded(promise2.value().clone())),
-        }])
-        .unwrap();
+    runtime.fulfill_orders(vec![OrderResponse {
+        id: pending[0].id,
+        result: Ok(RuntimeValue::unguarded(promise2.value().clone())),
+    }]);
+    let result = run_to_completion(&mut runtime).unwrap();
 
-    let RuntimeResult::Suspended { .. } = result else {
+    let StepResult::Suspended { .. } = result else {
         panic!("Expected Suspended");
     };
 
@@ -1832,13 +1796,13 @@ fn test_promise_race_second_wins_cancels_first() {
         RuntimeValue::unguarded(JsValue::String("second".into())),
     )
     .unwrap();
-    let result = runtime.continue_eval().unwrap();
+    let result = run_to_completion(&mut runtime).unwrap();
 
     match result {
-        RuntimeResult::Complete(value) => {
+        StepResult::Complete(value) => {
             assert_eq!(*value, JsValue::String("second".into()));
         }
-        RuntimeResult::Suspended { cancelled, .. } => {
+        StepResult::Suspended { cancelled, .. } => {
             // The loser's order_id (order1_id) should be in cancelled
             assert!(
                 cancelled.contains(&order1_id),
@@ -1875,17 +1839,16 @@ fn test_promise_rejection_signals_cancelled_order() {
     );
 
     // Get order and return Promise
-    let RuntimeResult::Suspended { pending, .. } = result else {
+    let StepResult::Suspended { pending, .. } = result else {
         panic!("Expected Suspended");
     };
-    let result = runtime
-        .fulfill_orders(vec![OrderResponse {
-            id: pending[0].id,
-            result: Ok(RuntimeValue::unguarded(promise.value().clone())),
-        }])
-        .unwrap();
+    runtime.fulfill_orders(vec![OrderResponse {
+        id: pending[0].id,
+        result: Ok(RuntimeValue::unguarded(promise.value().clone())),
+    }]);
+    let result = run_to_completion(&mut runtime).unwrap();
 
-    let RuntimeResult::Suspended { .. } = result else {
+    let StepResult::Suspended { .. } = result else {
         panic!("Expected Suspended");
     };
 
@@ -1896,13 +1859,13 @@ fn test_promise_rejection_signals_cancelled_order() {
         RuntimeValue::unguarded(JsValue::String("error".into())),
     )
     .unwrap();
-    let result = runtime.continue_eval().unwrap();
+    let result = run_to_completion(&mut runtime).unwrap();
 
     match result {
-        RuntimeResult::Complete(value) => {
+        StepResult::Complete(value) => {
             assert_eq!(*value, JsValue::String("caught: error".into()));
         }
-        RuntimeResult::Suspended { cancelled, .. } => {
+        StepResult::Suspended { cancelled, .. } => {
             // Rejected Promise's order should be in cancelled
             assert!(
                 cancelled.contains(&order_id),
@@ -1911,8 +1874,8 @@ fn test_promise_rejection_signals_cancelled_order() {
                 cancelled
             );
             // Continue to get final result
-            let result = runtime.continue_eval().unwrap();
-            if let RuntimeResult::Complete(value) = result {
+            let result = run_to_completion(&mut runtime).unwrap();
+            if let StepResult::Complete(value) = result {
                 assert_eq!(*value, JsValue::String("caught: error".into()));
             }
         }
@@ -1947,37 +1910,34 @@ fn test_three_way_race_cancels_two_losers() {
     );
 
     // Get all three orders
-    let RuntimeResult::Suspended { pending, .. } = result else {
+    let StepResult::Suspended { pending, .. } = result else {
         panic!("Expected Suspended");
     };
-    let result = runtime
-        .fulfill_orders(vec![OrderResponse {
-            id: pending[0].id,
-            result: Ok(RuntimeValue::unguarded(promise1.value().clone())),
-        }])
-        .unwrap();
+    runtime.fulfill_orders(vec![OrderResponse {
+        id: pending[0].id,
+        result: Ok(RuntimeValue::unguarded(promise1.value().clone())),
+    }]);
+    let result = run_to_completion(&mut runtime).unwrap();
 
-    let RuntimeResult::Suspended { pending, .. } = result else {
+    let StepResult::Suspended { pending, .. } = result else {
         panic!("Expected Suspended");
     };
-    let result = runtime
-        .fulfill_orders(vec![OrderResponse {
-            id: pending[0].id,
-            result: Ok(RuntimeValue::unguarded(promise2.value().clone())),
-        }])
-        .unwrap();
+    runtime.fulfill_orders(vec![OrderResponse {
+        id: pending[0].id,
+        result: Ok(RuntimeValue::unguarded(promise2.value().clone())),
+    }]);
+    let result = run_to_completion(&mut runtime).unwrap();
 
-    let RuntimeResult::Suspended { pending, .. } = result else {
+    let StepResult::Suspended { pending, .. } = result else {
         panic!("Expected Suspended");
     };
-    let result = runtime
-        .fulfill_orders(vec![OrderResponse {
-            id: pending[0].id,
-            result: Ok(RuntimeValue::unguarded(promise3.value().clone())),
-        }])
-        .unwrap();
+    runtime.fulfill_orders(vec![OrderResponse {
+        id: pending[0].id,
+        result: Ok(RuntimeValue::unguarded(promise3.value().clone())),
+    }]);
+    let result = run_to_completion(&mut runtime).unwrap();
 
-    let RuntimeResult::Suspended { .. } = result else {
+    let StepResult::Suspended { .. } = result else {
         panic!("Expected Suspended");
     };
 
@@ -1988,12 +1948,12 @@ fn test_three_way_race_cancels_two_losers() {
         RuntimeValue::unguarded(JsValue::Number(2.0)),
     )
     .unwrap();
-    let result = runtime.continue_eval().unwrap();
+    let result = run_to_completion(&mut runtime).unwrap();
 
     // Check that both losers' orders are cancelled
     let cancelled = match &result {
-        RuntimeResult::Suspended { cancelled, .. } => cancelled.clone(),
-        RuntimeResult::Complete(_) => {
+        StepResult::Suspended { cancelled, .. } => cancelled.clone(),
+        StepResult::Complete(_) => {
             // May have completed immediately, check via continue_eval
             Vec::new()
         }

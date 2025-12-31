@@ -25,7 +25,7 @@ use std::fs;
 use std::io::{self, Write as IoWrite};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
-use tsrun::{JsError, Runtime, RuntimeResult};
+use tsrun::{JsError, Runtime, StepResult};
 
 /// Test metadata parsed from YAML frontmatter
 #[derive(Debug, Default)]
@@ -321,10 +321,22 @@ impl TestRunner {
         // Create runtime
         let mut runtime = Runtime::new();
         runtime.set_gc_threshold(100);
-        runtime.set_timeout_ms(10_000); // 10 second timeout per test
 
-        // Execute test
-        let result = runtime.eval(&full_source, None);
+        // Execute test using step-based API
+        let result = runtime.prepare(&full_source, None);
+        let result = match result {
+            Ok(_) => {
+                // Run to completion
+                loop {
+                    match runtime.step() {
+                        Ok(StepResult::Continue) => continue,
+                        Ok(step_result) => break Ok(step_result),
+                        Err(e) => break Err(e),
+                    }
+                }
+            }
+            Err(e) => Err(e),
+        };
         let duration = start.elapsed();
 
         // Check result against expectations
@@ -373,7 +385,7 @@ impl TestRunner {
             },
 
             // Expected to pass, and it did
-            (None, Ok(RuntimeResult::Complete(_))) => TestOutcome {
+            (None, Ok(StepResult::Complete(_) | StepResult::Done)) => TestOutcome {
                 result: TestResult::Pass,
                 mode,
                 error: None,
@@ -381,7 +393,7 @@ impl TestRunner {
             },
 
             // Expected to pass, but needs imports (module test that slipped through)
-            (None, Ok(RuntimeResult::NeedImports(_))) => TestOutcome {
+            (None, Ok(StepResult::NeedImports(_))) => TestOutcome {
                 result: TestResult::Skip,
                 mode,
                 error: Some("Test requires module imports".to_string()),
@@ -389,10 +401,18 @@ impl TestRunner {
             },
 
             // Expected to pass, but suspended (async test that slipped through)
-            (None, Ok(RuntimeResult::Suspended { .. })) => TestOutcome {
+            (None, Ok(StepResult::Suspended { .. })) => TestOutcome {
                 result: TestResult::Skip,
                 mode,
                 error: Some("Test requires async support".to_string()),
+                duration,
+            },
+
+            // Continue should not be returned from loop, but handle anyway
+            (None, Ok(StepResult::Continue)) => TestOutcome {
+                result: TestResult::Fail,
+                mode,
+                error: Some("Unexpected Continue from step loop".to_string()),
                 duration,
             },
 
@@ -497,7 +517,6 @@ fn check_error_type(err: &JsError, expected: &str) -> bool {
         JsError::Thrown => expected == "Error",
         JsError::ThrownValue { .. } => expected == "Error",
         JsError::GeneratorYield { .. } => false,
-        JsError::Timeout { .. } => false,
         JsError::OptionalChainShortCircuit => false,
     }
 }
@@ -523,15 +542,6 @@ fn format_error(err: &JsError) -> String {
         JsError::Thrown => "Error: (thrown)".to_string(),
         JsError::ThrownValue { guarded } => format!("Error: {:?}", guarded.value),
         JsError::GeneratorYield { guarded } => format!("GeneratorYield: {:?}", guarded.value),
-        JsError::Timeout {
-            timeout_ms,
-            elapsed_ms,
-        } => {
-            format!(
-                "Timeout: exceeded {}ms limit (ran {}ms)",
-                timeout_ms, elapsed_ms
-            )
-        }
         JsError::OptionalChainShortCircuit => {
             "OptionalChainShortCircuit (internal error - should not reach here)".to_string()
         }

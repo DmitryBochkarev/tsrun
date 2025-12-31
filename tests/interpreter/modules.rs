@@ -1,17 +1,18 @@
 //! Tests for the module system and order API
 
+use super::{create_test_runtime, run, run_to_completion};
 use tsrun::{
     Guarded, InternalModule, Interpreter, JsError, JsValue, ModulePath, Runtime, RuntimeConfig,
-    RuntimeResult, RuntimeValue, value::PropertyKey,
+    RuntimeValue, StepResult, value::PropertyKey,
 };
 
 #[test]
 fn test_runtime_result_complete() {
     let mut runtime = Runtime::new();
-    let result = runtime.eval("1 + 2", None).unwrap();
+    let result = run(&mut runtime, "1 + 2", None).unwrap();
 
     match result {
-        RuntimeResult::Complete(value) => {
+        StepResult::Complete(value) => {
             assert_eq!(value, JsValue::Number(3.0));
         }
         _ => panic!("Expected Complete result"),
@@ -21,12 +22,10 @@ fn test_runtime_result_complete() {
 #[test]
 fn test_runtime_result_need_imports() {
     let mut runtime = Runtime::new();
-    let result = runtime
-        .eval(r#"import { foo } from "./utils";"#, None)
-        .unwrap();
+    let result = run(&mut runtime, r#"import { foo } from "./utils";"#, None).unwrap();
 
     match result {
-        RuntimeResult::NeedImports(imports) => {
+        StepResult::NeedImports(imports) => {
             assert_eq!(imports.len(), 1);
             assert_eq!(imports[0].specifier, "./utils");
             // Without a base path, ./utils normalizes to just "utils"
@@ -41,18 +40,18 @@ fn test_provide_module() {
     let mut runtime = Runtime::new();
 
     // First call returns NeedImports
-    let result = runtime
-        .eval(
-            r#"
+    let result = run(
+        &mut runtime,
+        r#"
         import { add } from "./math";
         add(2, 3);
     "#,
-            None,
-        )
-        .unwrap();
+        None,
+    )
+    .unwrap();
 
     match result {
-        RuntimeResult::NeedImports(imports) => {
+        StepResult::NeedImports(imports) => {
             assert_eq!(imports[0].specifier, "./math");
 
             // Provide the module using the resolved path
@@ -68,26 +67,32 @@ fn test_provide_module() {
                 .unwrap();
 
             // Continue evaluation
-            let result2 = runtime.continue_eval().unwrap();
+            let result2 = run_to_completion(&mut runtime).unwrap();
 
             match result2 {
-                RuntimeResult::Complete(_) => {
+                StepResult::Complete(_) | StepResult::Done => {
                     // Module was loaded, but we need to re-eval to use it
                     // For now, just verify we can provide modules
                 }
-                RuntimeResult::NeedImports(_) => {
+                StepResult::NeedImports(_) => {
                     panic!("Should not need more imports after providing module");
                 }
-                RuntimeResult::Suspended { .. } => {
+                StepResult::Suspended { .. } => {
                     panic!("Unexpected suspended state");
+                }
+                StepResult::Continue => {
+                    panic!("Unexpected Continue state");
                 }
             }
         }
-        RuntimeResult::Complete(_) => {
-            panic!("Expected NeedImports, got Complete");
+        StepResult::Complete(_) | StepResult::Done => {
+            panic!("Expected NeedImports, got Complete/Done");
         }
-        RuntimeResult::Suspended { .. } => {
+        StepResult::Suspended { .. } => {
             panic!("Expected NeedImports, got Suspended");
+        }
+        StepResult::Continue => {
+            panic!("Expected NeedImports, got Continue");
         }
     }
 }
@@ -99,7 +104,6 @@ fn test_internal_module_registered() {
 
     let config = RuntimeConfig {
         internal_modules: vec![eval_internal],
-        timeout_ms: 3000,
     };
 
     let _runtime = Runtime::with_config(config);
@@ -117,24 +121,23 @@ fn test_internal_module_not_in_need_imports() {
 
     let config = RuntimeConfig {
         internal_modules: vec![eval_internal],
-        timeout_ms: 3000,
     };
 
     let mut runtime = Runtime::with_config(config);
 
-    let result = runtime
-        .eval(
-            r#"
+    let result = run(
+        &mut runtime,
+        r#"
         import { __order__ } from "eval:internal";
         import { foo } from "./external";
         42
     "#,
-            None,
-        )
-        .unwrap();
+        None,
+    )
+    .unwrap();
 
     match result {
-        RuntimeResult::NeedImports(imports) => {
+        StepResult::NeedImports(imports) => {
             // Only external modules should be needed
             assert_eq!(imports.len(), 1);
             assert_eq!(imports[0].specifier, "./external");
@@ -181,24 +184,23 @@ fn test_native_internal_module() {
 
     let config = RuntimeConfig {
         internal_modules: vec![test_module],
-        timeout_ms: 3000,
     };
 
     let mut runtime = Runtime::with_config(config);
 
     // Test that functions are properly imported and callable
-    let result = runtime
-        .eval(
-            r#"
+    let result = run(
+        &mut runtime,
+        r#"
         import { add, getValue } from "eval:test";
         add(getValue(), 8);
     "#,
-            None,
-        )
-        .unwrap();
+        None,
+    )
+    .unwrap();
 
     match result {
-        RuntimeResult::Complete(value) => {
+        StepResult::Complete(value) => {
             assert_eq!(value, JsValue::Number(50.0)); // 42 + 8 = 50
         }
         _ => panic!("Expected Complete"),
@@ -225,24 +227,23 @@ fn test_source_internal_module() {
 
     let config = RuntimeConfig {
         internal_modules: vec![math_module],
-        timeout_ms: 3000,
     };
 
     let mut runtime = Runtime::with_config(config);
 
     // Test using the source module
-    let result = runtime
-        .eval(
-            r#"
+    let result = run(
+        &mut runtime,
+        r#"
         import { double, square, PI } from "eval:math";
         double(5) + square(3) + Math.floor(PI);
     "#,
-            None,
-        )
-        .unwrap();
+        None,
+    )
+    .unwrap();
 
     match result {
-        RuntimeResult::Complete(value) => {
+        StepResult::Complete(value) => {
             // double(5) = 10, square(3) = 9, floor(PI) = 3
             // 10 + 9 + 3 = 22
             assert_eq!(value, JsValue::Number(22.0));
@@ -260,23 +261,22 @@ fn test_import_namespace() {
 
     let config = RuntimeConfig {
         internal_modules: vec![test_module],
-        timeout_ms: 3000,
     };
 
     let mut runtime = Runtime::with_config(config);
 
-    let result = runtime
-        .eval(
-            r#"
+    let result = run(
+        &mut runtime,
+        r#"
         import * as testMod from "eval:test";
         testMod.getValue();
     "#,
-            None,
-        )
-        .unwrap();
+        None,
+    )
+    .unwrap();
 
     match result {
-        RuntimeResult::Complete(value) => {
+        StepResult::Complete(value) => {
             assert_eq!(value, JsValue::Number(42.0));
         }
         _ => panic!("Expected Complete"),
@@ -292,25 +292,24 @@ fn test_order_syscall() {
 
     let config = RuntimeConfig {
         internal_modules: vec![eval_internal],
-        timeout_ms: 3000,
     };
 
     let mut runtime = Runtime::with_config(config);
 
     // Test that __order__ creates an order and suspends
-    let result = runtime
-        .eval(
-            r#"
+    let result = run(
+        &mut runtime,
+        r#"
         import { __order__ } from "eval:internal";
         const orderId = __order__({ type: "test", data: 42 });
         orderId;
     "#,
-            None,
-        )
-        .unwrap();
+        None,
+    )
+    .unwrap();
 
     match result {
-        RuntimeResult::Suspended { pending, cancelled } => {
+        StepResult::Suspended { pending, cancelled } => {
             // Should have one pending order
             assert_eq!(pending.len(), 1);
             assert_eq!(cancelled.len(), 0);
@@ -319,7 +318,7 @@ fn test_order_syscall() {
             let order = &pending[0];
             assert_eq!(order.id.0, 1); // First order ID should be 1
         }
-        RuntimeResult::Complete(_) => {
+        StepResult::Complete(_) => {
             // Actually, since we don't await the order, it should complete with the order ID
             // Let me reconsider this test...
         }
@@ -335,26 +334,25 @@ fn test_order_syscall_returns_promise() {
 
     let config = RuntimeConfig {
         internal_modules: vec![eval_internal],
-        timeout_ms: 3000,
     };
 
     let mut runtime = Runtime::with_config(config);
 
     // Test that __order__ returns a Promise object
-    let result = runtime
-        .eval(
-            r#"
+    let result = run(
+        &mut runtime,
+        r#"
         import { __order__ } from "eval:internal";
         const p = __order__({ type: "test" });
         typeof p === "object" && p !== null
     "#,
-            None,
-        )
-        .unwrap();
+        None,
+    )
+    .unwrap();
 
     // Since we called __order__, we should have a pending order and get Suspended
     match result {
-        RuntimeResult::Suspended { pending, .. } => {
+        StepResult::Suspended { pending, .. } => {
             assert_eq!(pending.len(), 1);
             assert_eq!(pending[0].id.0, 1);
         }
@@ -370,27 +368,26 @@ fn test_await_pending_promise_suspends_and_resumes() {
 
     let config = RuntimeConfig {
         internal_modules: vec![eval_internal],
-        timeout_ms: 3000,
     };
 
     let mut runtime = Runtime::with_config(config);
 
     // Test that await on a pending promise suspends execution
-    let result = runtime
-        .eval(
-            r#"
+    let result = run(
+        &mut runtime,
+        r#"
         import { __order__ } from "eval:internal";
         // This will suspend when we await the pending promise
         const result = await __order__({ type: "getData" });
         result * 2  // This should run after resume with the resolved value
     "#,
-            None,
-        )
-        .unwrap();
+        None,
+    )
+    .unwrap();
 
     // Should suspend with one pending order
     match result {
-        RuntimeResult::Suspended { pending, .. } => {
+        StepResult::Suspended { pending, .. } => {
             assert_eq!(pending.len(), 1);
             assert_eq!(pending[0].id.0, 1);
 
@@ -400,17 +397,18 @@ fn test_await_pending_promise_suspends_and_resumes() {
                 result: Ok(RuntimeValue::unguarded(JsValue::Number(21.0))),
             };
 
-            let result2 = runtime.fulfill_orders(vec![response]).unwrap();
+            runtime.fulfill_orders(vec![response]);
+            let result2 = run_to_completion(&mut runtime).unwrap();
 
             // After fulfillment, should complete with 42 (21 * 2)
             match result2 {
-                RuntimeResult::Complete(value) => {
+                StepResult::Complete(value) => {
                     assert_eq!(value, JsValue::Number(42.0));
                 }
                 _ => panic!("Expected Complete after fulfillment, got {:?}", result2),
             }
         }
-        RuntimeResult::Complete(v) => {
+        StepResult::Complete(v) => {
             panic!("Expected Suspended, got Complete with {:?}", v);
         }
         _ => panic!("Expected Suspended"),
@@ -425,27 +423,26 @@ fn test_await_suspension_with_multiple_awaits() {
 
     let config = RuntimeConfig {
         internal_modules: vec![eval_internal],
-        timeout_ms: 3000,
     };
 
     let mut runtime = Runtime::with_config(config);
 
     // Test multiple sequential awaits
-    let result = runtime
-        .eval(
-            r#"
+    let result = run(
+        &mut runtime,
+        r#"
         import { __order__ } from "eval:internal";
         const a = await __order__({ type: "first" });
         const b = await __order__({ type: "second" });
         a + b
     "#,
-            None,
-        )
-        .unwrap();
+        None,
+    )
+    .unwrap();
 
     // Should suspend for first await
     match result {
-        RuntimeResult::Suspended { pending, .. } => {
+        StepResult::Suspended { pending, .. } => {
             assert_eq!(pending.len(), 1);
 
             // Fulfill first order
@@ -454,11 +451,12 @@ fn test_await_suspension_with_multiple_awaits() {
                 result: Ok(RuntimeValue::unguarded(JsValue::Number(10.0))),
             };
 
-            let result2 = runtime.fulfill_orders(vec![response]).unwrap();
+            runtime.fulfill_orders(vec![response]);
+            let result2 = run_to_completion(&mut runtime).unwrap();
 
             // Should suspend again for second await
             match result2 {
-                RuntimeResult::Suspended {
+                StepResult::Suspended {
                     pending: pending2, ..
                 } => {
                     assert_eq!(pending2.len(), 1);
@@ -469,11 +467,12 @@ fn test_await_suspension_with_multiple_awaits() {
                         result: Ok(RuntimeValue::unguarded(JsValue::Number(32.0))),
                     };
 
-                    let result3 = runtime.fulfill_orders(vec![response2]).unwrap();
+                    runtime.fulfill_orders(vec![response2]);
+                    let result3 = run_to_completion(&mut runtime).unwrap();
 
                     // Should complete with 42 (10 + 32)
                     match result3 {
-                        RuntimeResult::Complete(value) => {
+                        StepResult::Complete(value) => {
                             assert_eq!(value, JsValue::Number(42.0));
                         }
                         _ => panic!("Expected Complete after second fulfillment"),
@@ -495,19 +494,19 @@ fn test_external_module_named_exports() {
     let mut runtime = Runtime::new();
 
     // First, eval code that imports from external module
-    let result = runtime
-        .eval(
-            r#"
+    let result = run(
+        &mut runtime,
+        r#"
         import { add, multiply } from "./math";
         add(2, 3) + multiply(4, 5);
     "#,
-            None,
-        )
-        .unwrap();
+        None,
+    )
+    .unwrap();
 
     // Should need the import
     match result {
-        RuntimeResult::NeedImports(imports) => {
+        StepResult::NeedImports(imports) => {
             assert_eq!(imports.len(), 1);
             assert_eq!(imports[0].specifier, "./math");
 
@@ -527,10 +526,10 @@ fn test_external_module_named_exports() {
                 .unwrap();
 
             // Continue evaluation
-            let result2 = runtime.continue_eval().unwrap();
+            let result2 = run_to_completion(&mut runtime).unwrap();
 
             match result2 {
-                RuntimeResult::Complete(value) => {
+                StepResult::Complete(value) => {
                     // add(2,3) = 5, multiply(4,5) = 20, total = 25
                     assert_eq!(value, JsValue::Number(25.0));
                 }
@@ -545,18 +544,18 @@ fn test_external_module_named_exports() {
 fn test_external_module_default_export() {
     let mut runtime = Runtime::new();
 
-    let result = runtime
-        .eval(
-            r#"
+    let result = run(
+        &mut runtime,
+        r#"
         import greet from "./greeting";
         greet("World");
     "#,
-            None,
-        )
-        .unwrap();
+        None,
+    )
+    .unwrap();
 
     match result {
-        RuntimeResult::NeedImports(imports) => {
+        StepResult::NeedImports(imports) => {
             assert_eq!(imports[0].specifier, "./greeting");
 
             runtime
@@ -570,10 +569,10 @@ fn test_external_module_default_export() {
                 )
                 .unwrap();
 
-            let result2 = runtime.continue_eval().unwrap();
+            let result2 = run_to_completion(&mut runtime).unwrap();
 
             match result2 {
-                RuntimeResult::Complete(value) => {
+                StepResult::Complete(value) => {
                     assert_eq!(value, JsValue::String("Hello, World!".into()));
                 }
                 _ => panic!("Expected Complete"),
@@ -587,19 +586,19 @@ fn test_external_module_default_export() {
 fn test_external_module_mixed_exports() {
     let mut runtime = Runtime::new();
 
-    let result = runtime
-        .eval(
-            r#"
+    let result = run(
+        &mut runtime,
+        r#"
         import Calculator, { PI, E } from "./constants";
         const calc = new Calculator();
         calc.add(PI, E);
     "#,
-            None,
-        )
-        .unwrap();
+        None,
+    )
+    .unwrap();
 
     match result {
-        RuntimeResult::NeedImports(imports) => {
+        StepResult::NeedImports(imports) => {
             assert_eq!(imports[0].specifier, "./constants");
 
             runtime
@@ -618,10 +617,10 @@ fn test_external_module_mixed_exports() {
                 )
                 .unwrap();
 
-            let result2 = runtime.continue_eval().unwrap();
+            let result2 = run_to_completion(&mut runtime).unwrap();
 
             match result2 {
-                RuntimeResult::Complete(rv) => {
+                StepResult::Complete(rv) => {
                     if let JsValue::Number(n) = *rv {
                         assert!((n - 5.85987).abs() < 0.0001);
                     } else {
@@ -639,18 +638,18 @@ fn test_external_module_mixed_exports() {
 fn test_external_module_aliased_imports() {
     let mut runtime = Runtime::new();
 
-    let result = runtime
-        .eval(
-            r#"
+    let result = run(
+        &mut runtime,
+        r#"
         import { value as myValue, compute as calculate } from "./utils";
         calculate(myValue);
     "#,
-            None,
-        )
-        .unwrap();
+        None,
+    )
+    .unwrap();
 
     match result {
-        RuntimeResult::NeedImports(imports) => {
+        StepResult::NeedImports(imports) => {
             // Provide the module using the resolved path
             runtime
                 .provide_module(
@@ -664,10 +663,10 @@ fn test_external_module_aliased_imports() {
                 )
                 .unwrap();
 
-            let result2 = runtime.continue_eval().unwrap();
+            let result2 = run_to_completion(&mut runtime).unwrap();
 
             match result2 {
-                RuntimeResult::Complete(value) => {
+                StepResult::Complete(value) => {
                     assert_eq!(value, JsValue::Number(20.0));
                 }
                 _ => panic!("Expected Complete"),
@@ -681,19 +680,19 @@ fn test_external_module_aliased_imports() {
 fn test_multiple_external_modules() {
     let mut runtime = Runtime::new();
 
-    let result = runtime
-        .eval(
-            r#"
+    let result = run(
+        &mut runtime,
+        r#"
         import { a } from "./moduleA";
         import { b } from "./moduleB";
         a + b;
     "#,
-            None,
-        )
-        .unwrap();
+        None,
+    )
+    .unwrap();
 
     match result {
-        RuntimeResult::NeedImports(imports) => {
+        StepResult::NeedImports(imports) => {
             assert_eq!(imports.len(), 2);
             assert!(imports.iter().any(|i| i.specifier == "./moduleA"));
             assert!(imports.iter().any(|i| i.specifier == "./moduleB"));
@@ -710,10 +709,10 @@ fn test_multiple_external_modules() {
                     .unwrap();
             }
 
-            let result2 = runtime.continue_eval().unwrap();
+            let result2 = run_to_completion(&mut runtime).unwrap();
 
             match result2 {
-                RuntimeResult::Complete(value) => {
+                StepResult::Complete(value) => {
                     assert_eq!(value, JsValue::Number(30.0));
                 }
                 _ => panic!("Expected Complete"),
@@ -727,18 +726,18 @@ fn test_multiple_external_modules() {
 fn test_module_namespace_import() {
     let mut runtime = Runtime::new();
 
-    let result = runtime
-        .eval(
-            r#"
+    let result = run(
+        &mut runtime,
+        r#"
         import * as utils from "./utils";
         utils.double(utils.BASE);
     "#,
-            None,
-        )
-        .unwrap();
+        None,
+    )
+    .unwrap();
 
     match result {
-        RuntimeResult::NeedImports(imports) => {
+        StepResult::NeedImports(imports) => {
             runtime
                 .provide_module(
                     imports[0].resolved_path.clone(),
@@ -751,10 +750,10 @@ fn test_module_namespace_import() {
                 )
                 .unwrap();
 
-            let result2 = runtime.continue_eval().unwrap();
+            let result2 = run_to_completion(&mut runtime).unwrap();
 
             match result2 {
-                RuntimeResult::Complete(value) => {
+                StepResult::Complete(value) => {
                     assert_eq!(value, JsValue::Number(42.0));
                 }
                 _ => panic!("Expected Complete"),
@@ -773,23 +772,22 @@ fn test_module_with_internal_imports() {
 
     let config = RuntimeConfig {
         internal_modules: vec![eval_internal],
-        timeout_ms: 3000,
     };
 
     let mut runtime = Runtime::with_config(config);
 
-    let result = runtime
-        .eval(
-            r#"
+    let result = run(
+        &mut runtime,
+        r#"
         import { helper } from "./myModule";
         helper(5);
     "#,
-            None,
-        )
-        .unwrap();
+        None,
+    )
+    .unwrap();
 
     match result {
-        RuntimeResult::NeedImports(imports) => {
+        StepResult::NeedImports(imports) => {
             // Only external module should be requested, not eval:internal
             assert_eq!(imports.len(), 1);
             assert_eq!(imports[0].specifier, "./myModule");
@@ -806,10 +804,10 @@ fn test_module_with_internal_imports() {
                 )
                 .unwrap();
 
-            let result2 = runtime.continue_eval().unwrap();
+            let result2 = run_to_completion(&mut runtime).unwrap();
 
             match result2 {
-                RuntimeResult::Complete(value) => {
+                StepResult::Complete(value) => {
                     assert_eq!(value, JsValue::Number(50.0));
                 }
                 _ => panic!("Expected Complete"),
@@ -823,18 +821,18 @@ fn test_module_with_internal_imports() {
 fn test_export_const_variable() {
     let mut runtime = Runtime::new();
 
-    let result = runtime
-        .eval(
-            r#"
+    let result = run(
+        &mut runtime,
+        r#"
         import { CONFIG } from "./config";
         CONFIG.name + " v" + CONFIG.version;
     "#,
-            None,
-        )
-        .unwrap();
+        None,
+    )
+    .unwrap();
 
     match result {
-        RuntimeResult::NeedImports(imports) => {
+        StepResult::NeedImports(imports) => {
             runtime
                 .provide_module(
                     imports[0].resolved_path.clone(),
@@ -847,10 +845,10 @@ fn test_export_const_variable() {
                 )
                 .unwrap();
 
-            let result2 = runtime.continue_eval().unwrap();
+            let result2 = run_to_completion(&mut runtime).unwrap();
 
             match result2 {
-                RuntimeResult::Complete(value) => {
+                StepResult::Complete(value) => {
                     assert_eq!(value, JsValue::String("MyApp v1.0".into()));
                 }
                 _ => panic!("Expected Complete"),
@@ -864,19 +862,19 @@ fn test_export_const_variable() {
 fn test_export_class() {
     let mut runtime = Runtime::new();
 
-    let result = runtime
-        .eval(
-            r#"
+    let result = run(
+        &mut runtime,
+        r#"
         import { Point } from "./geometry";
         const p = new Point(3, 4);
         p.distance();
     "#,
-            None,
-        )
-        .unwrap();
+        None,
+    )
+    .unwrap();
 
     match result {
-        RuntimeResult::NeedImports(imports) => {
+        StepResult::NeedImports(imports) => {
             runtime
                 .provide_module(
                     imports[0].resolved_path.clone(),
@@ -896,10 +894,10 @@ fn test_export_class() {
                 )
                 .unwrap();
 
-            let result2 = runtime.continue_eval().unwrap();
+            let result2 = run_to_completion(&mut runtime).unwrap();
 
             match result2 {
-                RuntimeResult::Complete(value) => {
+                StepResult::Complete(value) => {
                     assert_eq!(value, JsValue::Number(5.0));
                 }
                 _ => panic!("Expected Complete"),
@@ -974,15 +972,15 @@ fn test_eval_with_path_resolves_imports() {
     let mut runtime = Runtime::new();
 
     // Eval with a base path
-    let result = runtime
-        .eval(
-            r#"import { foo } from "./utils";"#,
-            Some("/project/src/main.ts"),
-        )
-        .unwrap();
+    let result = run(
+        &mut runtime,
+        r#"import { foo } from "./utils";"#,
+        Some("/project/src/main.ts"),
+    )
+    .unwrap();
 
     match result {
-        RuntimeResult::NeedImports(imports) => {
+        StepResult::NeedImports(imports) => {
             assert_eq!(imports.len(), 1);
             assert_eq!(imports[0].specifier, "./utils");
             // Should resolve relative to the main module path
@@ -999,15 +997,15 @@ fn test_nested_module_imports_resolve_correctly() {
     let mut runtime = Runtime::new();
 
     // Main module at /project/src/main.ts imports ./lib/helpers
-    let result = runtime
-        .eval(
-            r#"import { helper } from "./lib/helpers";"#,
-            Some("/project/src/main.ts"),
-        )
-        .unwrap();
+    let result = run(
+        &mut runtime,
+        r#"import { helper } from "./lib/helpers";"#,
+        Some("/project/src/main.ts"),
+    )
+    .unwrap();
 
     match result {
-        RuntimeResult::NeedImports(imports) => {
+        StepResult::NeedImports(imports) => {
             assert_eq!(
                 imports[0].resolved_path.as_str(),
                 "/project/src/lib/helpers"
@@ -1025,10 +1023,10 @@ fn test_nested_module_imports_resolve_correctly() {
                 .unwrap();
 
             // Continue - should now need /project/src/shared
-            let result2 = runtime.continue_eval().unwrap();
+            let result2 = run_to_completion(&mut runtime).unwrap();
 
             match result2 {
-                RuntimeResult::NeedImports(imports2) => {
+                StepResult::NeedImports(imports2) => {
                     // The import "../shared" from /project/src/lib/helpers
                     // should resolve to /project/src/shared
                     assert_eq!(imports2[0].specifier, "../shared");
@@ -1051,19 +1049,19 @@ fn test_same_module_different_paths_deduplicated() {
     let mut runtime = Runtime::new();
 
     // Main module imports the same logical module via different relative paths
-    let result = runtime
-        .eval(
-            r#"
+    let result = run(
+        &mut runtime,
+        r#"
             import { a } from "./utils";
             import { b } from "./lib/../utils";
             a + b;
         "#,
-            Some("/project/main.ts"),
-        )
-        .unwrap();
+        Some("/project/main.ts"),
+    )
+    .unwrap();
 
     match result {
-        RuntimeResult::NeedImports(imports) => {
+        StepResult::NeedImports(imports) => {
             // Both should resolve to the same path, so only 1 import request
             assert_eq!(imports.len(), 1);
             assert_eq!(imports[0].resolved_path.as_str(), "/project/utils");
@@ -1080,18 +1078,18 @@ fn test_export_star_as_namespace_basic() {
     // The intermediate module re-exports everything from utils as a namespace
     let mut runtime = Runtime::new();
 
-    let result = runtime
-        .eval(
-            r#"
+    let result = run(
+        &mut runtime,
+        r#"
         import { utils } from "./reexport";
         utils.add(2, 3) + utils.BASE;
     "#,
-            None,
-        )
-        .unwrap();
+        None,
+    )
+    .unwrap();
 
     match result {
-        RuntimeResult::NeedImports(imports) => {
+        StepResult::NeedImports(imports) => {
             assert_eq!(imports.len(), 1);
             assert_eq!(imports[0].specifier, "./reexport");
 
@@ -1103,10 +1101,10 @@ fn test_export_star_as_namespace_basic() {
                 )
                 .unwrap();
 
-            let result2 = runtime.continue_eval().unwrap();
+            let result2 = run_to_completion(&mut runtime).unwrap();
 
             match result2 {
-                RuntimeResult::NeedImports(imports2) => {
+                StepResult::NeedImports(imports2) => {
                     // Now it needs the actual utils module
                     assert_eq!(imports2.len(), 1);
                     assert_eq!(imports2[0].specifier, "./utils");
@@ -1123,10 +1121,10 @@ fn test_export_star_as_namespace_basic() {
                         )
                         .unwrap();
 
-                    let result3 = runtime.continue_eval().unwrap();
+                    let result3 = run_to_completion(&mut runtime).unwrap();
 
                     match result3 {
-                        RuntimeResult::Complete(value) => {
+                        StepResult::Complete(value) => {
                             // add(2, 3) + BASE = 5 + 10 = 15
                             assert_eq!(value, JsValue::Number(15.0));
                         }
@@ -1145,18 +1143,18 @@ fn test_export_star_as_namespace_multiple() {
     // Test: multiple namespace re-exports in one module
     let mut runtime = Runtime::new();
 
-    let result = runtime
-        .eval(
-            r#"
+    let result = run(
+        &mut runtime,
+        r#"
         import { math, str } from "./combined";
         math.double(3) + str.len("hello");
     "#,
-            None,
-        )
-        .unwrap();
+        None,
+    )
+    .unwrap();
 
     match result {
-        RuntimeResult::NeedImports(imports) => {
+        StepResult::NeedImports(imports) => {
             runtime
                 .provide_module(
                     imports[0].resolved_path.clone(),
@@ -1167,10 +1165,10 @@ fn test_export_star_as_namespace_multiple() {
                 )
                 .unwrap();
 
-            let result2 = runtime.continue_eval().unwrap();
+            let result2 = run_to_completion(&mut runtime).unwrap();
 
             match result2 {
-                RuntimeResult::NeedImports(imports2) => {
+                StepResult::NeedImports(imports2) => {
                     // Should need both utility modules
                     assert_eq!(imports2.len(), 2);
 
@@ -1192,10 +1190,10 @@ fn test_export_star_as_namespace_multiple() {
                         }
                     }
 
-                    let result3 = runtime.continue_eval().unwrap();
+                    let result3 = run_to_completion(&mut runtime).unwrap();
 
                     match result3 {
-                        RuntimeResult::Complete(value) => {
+                        StepResult::Complete(value) => {
                             // double(3) + len("hello") = 6 + 5 = 11
                             assert_eq!(value, JsValue::Number(11.0));
                         }
@@ -1214,18 +1212,18 @@ fn test_export_star_as_namespace_with_other_exports() {
     // Test: namespace re-export alongside regular exports
     let mut runtime = Runtime::new();
 
-    let result = runtime
-        .eval(
-            r#"
+    let result = run(
+        &mut runtime,
+        r#"
         import { helpers, VERSION } from "./api";
         helpers.greet() + " v" + VERSION;
     "#,
-            None,
-        )
-        .unwrap();
+        None,
+    )
+    .unwrap();
 
     match result {
-        RuntimeResult::NeedImports(imports) => {
+        StepResult::NeedImports(imports) => {
             runtime
                 .provide_module(
                     imports[0].resolved_path.clone(),
@@ -1236,10 +1234,10 @@ fn test_export_star_as_namespace_with_other_exports() {
                 )
                 .unwrap();
 
-            let result2 = runtime.continue_eval().unwrap();
+            let result2 = run_to_completion(&mut runtime).unwrap();
 
             match result2 {
-                RuntimeResult::NeedImports(imports2) => {
+                StepResult::NeedImports(imports2) => {
                     runtime
                         .provide_module(
                             imports2[0].resolved_path.clone(),
@@ -1247,10 +1245,10 @@ fn test_export_star_as_namespace_with_other_exports() {
                         )
                         .unwrap();
 
-                    let result3 = runtime.continue_eval().unwrap();
+                    let result3 = run_to_completion(&mut runtime).unwrap();
 
                     match result3 {
-                        RuntimeResult::Complete(value) => {
+                        StepResult::Complete(value) => {
                             assert_eq!(value, JsValue::String("Hello v1.0".into()));
                         }
                         _ => panic!("Expected Complete"),
@@ -1268,18 +1266,18 @@ fn test_export_star_as_namespace_nested() {
     // Test: import a namespace that was re-exported as namespace
     let mut runtime = Runtime::new();
 
-    let result = runtime
-        .eval(
-            r#"
+    let result = run(
+        &mut runtime,
+        r#"
         import { nested } from "./level1";
         nested.inner.value;
     "#,
-            None,
-        )
-        .unwrap();
+        None,
+    )
+    .unwrap();
 
     match result {
-        RuntimeResult::NeedImports(imports) => {
+        StepResult::NeedImports(imports) => {
             runtime
                 .provide_module(
                     imports[0].resolved_path.clone(),
@@ -1287,10 +1285,10 @@ fn test_export_star_as_namespace_nested() {
                 )
                 .unwrap();
 
-            let result2 = runtime.continue_eval().unwrap();
+            let result2 = run_to_completion(&mut runtime).unwrap();
 
             match result2 {
-                RuntimeResult::NeedImports(imports2) => {
+                StepResult::NeedImports(imports2) => {
                     runtime
                         .provide_module(
                             imports2[0].resolved_path.clone(),
@@ -1298,10 +1296,10 @@ fn test_export_star_as_namespace_nested() {
                         )
                         .unwrap();
 
-                    let result3 = runtime.continue_eval().unwrap();
+                    let result3 = run_to_completion(&mut runtime).unwrap();
 
                     match result3 {
-                        RuntimeResult::NeedImports(imports3) => {
+                        StepResult::NeedImports(imports3) => {
                             runtime
                                 .provide_module(
                                     imports3[0].resolved_path.clone(),
@@ -1309,10 +1307,10 @@ fn test_export_star_as_namespace_nested() {
                                 )
                                 .unwrap();
 
-                            let result4 = runtime.continue_eval().unwrap();
+                            let result4 = run_to_completion(&mut runtime).unwrap();
 
                             match result4 {
-                                RuntimeResult::Complete(value) => {
+                                StepResult::Complete(value) => {
                                     assert_eq!(value, JsValue::Number(42.0));
                                 }
                                 _ => panic!("Expected Complete"),
@@ -1337,21 +1335,21 @@ fn test_live_binding_let_variable() {
     // Test: imported let variable reflects changes made by exported function
     let mut runtime = Runtime::new();
 
-    let result = runtime
-        .eval(
-            r#"
+    let result = run(
+        &mut runtime,
+        r#"
         import { count, increment } from "./counter";
         const before = count;
         increment();
         const after = count;
         [before, after];
     "#,
-            None,
-        )
-        .unwrap();
+        None,
+    )
+    .unwrap();
 
     match result {
-        RuntimeResult::NeedImports(imports) => {
+        StepResult::NeedImports(imports) => {
             runtime
                 .provide_module(
                     imports[0].resolved_path.clone(),
@@ -1364,10 +1362,10 @@ fn test_live_binding_let_variable() {
                 )
                 .unwrap();
 
-            let result2 = runtime.continue_eval().unwrap();
+            let result2 = run_to_completion(&mut runtime).unwrap();
 
             match result2 {
-                RuntimeResult::Complete(value) => {
+                StepResult::Complete(value) => {
                     // With live bindings: before=0, after=1
                     // Without live bindings (snapshot): before=0, after=0
                     if let JsValue::Object(arr) = &*value {
@@ -1400,21 +1398,21 @@ fn test_live_binding_multiple_increments() {
     // Test: multiple updates are all visible
     let mut runtime = Runtime::new();
 
-    let result = runtime
-        .eval(
-            r#"
+    let result = run(
+        &mut runtime,
+        r#"
         import { value, add } from "./accumulator";
         add(10);
         add(20);
         add(12);
         value;
     "#,
-            None,
-        )
-        .unwrap();
+        None,
+    )
+    .unwrap();
 
     match result {
-        RuntimeResult::NeedImports(imports) => {
+        StepResult::NeedImports(imports) => {
             runtime
                 .provide_module(
                     imports[0].resolved_path.clone(),
@@ -1427,10 +1425,10 @@ fn test_live_binding_multiple_increments() {
                 )
                 .unwrap();
 
-            let result2 = runtime.continue_eval().unwrap();
+            let result2 = run_to_completion(&mut runtime).unwrap();
 
             match result2 {
-                RuntimeResult::Complete(value) => {
+                StepResult::Complete(value) => {
                     // 0 + 10 + 20 + 12 = 42
                     assert_eq!(value, JsValue::Number(42.0));
                 }
@@ -1447,21 +1445,21 @@ fn test_live_binding_object_mutation() {
     // because objects are references, but let's verify)
     let mut runtime = Runtime::new();
 
-    let result = runtime
-        .eval(
-            r#"
+    let result = run(
+        &mut runtime,
+        r#"
         import { state, setState } from "./state";
         const before = state.value;
         setState(42);
         const after = state.value;
         [before, after];
     "#,
-            None,
-        )
-        .unwrap();
+        None,
+    )
+    .unwrap();
 
     match result {
-        RuntimeResult::NeedImports(imports) => {
+        StepResult::NeedImports(imports) => {
             runtime
                 .provide_module(
                     imports[0].resolved_path.clone(),
@@ -1474,10 +1472,10 @@ fn test_live_binding_object_mutation() {
                 )
                 .unwrap();
 
-            let result2 = runtime.continue_eval().unwrap();
+            let result2 = run_to_completion(&mut runtime).unwrap();
 
             match result2 {
-                RuntimeResult::Complete(value) => {
+                StepResult::Complete(value) => {
                     if let JsValue::Object(arr) = &*value {
                         let arr_ref = arr.borrow();
                         let before = arr_ref
@@ -1504,21 +1502,21 @@ fn test_live_binding_reassignment() {
     // Test: complete reassignment of exported variable is visible
     let mut runtime = Runtime::new();
 
-    let result = runtime
-        .eval(
-            r#"
+    let result = run(
+        &mut runtime,
+        r#"
         import { config, updateConfig } from "./config";
         const before = config;
         updateConfig({ name: "updated", value: 42 });
         const after = config;
         [before.name, after.name, after.value];
     "#,
-            None,
-        )
-        .unwrap();
+        None,
+    )
+    .unwrap();
 
     match result {
-        RuntimeResult::NeedImports(imports) => {
+        StepResult::NeedImports(imports) => {
             runtime
                 .provide_module(
                     imports[0].resolved_path.clone(),
@@ -1531,10 +1529,10 @@ fn test_live_binding_reassignment() {
                 )
                 .unwrap();
 
-            let result2 = runtime.continue_eval().unwrap();
+            let result2 = run_to_completion(&mut runtime).unwrap();
 
             match result2 {
-                RuntimeResult::Complete(value) => {
+                StepResult::Complete(value) => {
                     if let JsValue::Object(arr) = &*value {
                         let arr_ref = arr.borrow();
                         let before_name = arr_ref
@@ -1565,9 +1563,9 @@ fn test_live_binding_namespace_import() {
     // Test: namespace imports also see live updates
     let mut runtime = Runtime::new();
 
-    let result = runtime
-        .eval(
-            r#"
+    let result = run(
+        &mut runtime,
+        r#"
         import * as counter from "./counter";
         const before = counter.count;
         counter.increment();
@@ -1575,12 +1573,12 @@ fn test_live_binding_namespace_import() {
         const after = counter.count;
         [before, after];
     "#,
-            None,
-        )
-        .unwrap();
+        None,
+    )
+    .unwrap();
 
     match result {
-        RuntimeResult::NeedImports(imports) => {
+        StepResult::NeedImports(imports) => {
             runtime
                 .provide_module(
                     imports[0].resolved_path.clone(),
@@ -1593,10 +1591,10 @@ fn test_live_binding_namespace_import() {
                 )
                 .unwrap();
 
-            let result2 = runtime.continue_eval().unwrap();
+            let result2 = run_to_completion(&mut runtime).unwrap();
 
             match result2 {
-                RuntimeResult::Complete(value) => {
+                StepResult::Complete(value) => {
                     if let JsValue::Object(arr) = &*value {
                         let arr_ref = arr.borrow();
                         let before = arr_ref
@@ -1625,21 +1623,21 @@ fn test_live_binding_through_reexport() {
     // delegates to module B's live binding, so changes are visible.
     let mut runtime = Runtime::new();
 
-    let result = runtime
-        .eval(
-            r#"
+    let result = run(
+        &mut runtime,
+        r#"
         import { count, increment } from "./reexport";
         const before = count;
         increment();
         const after = count;
         [before, after];
     "#,
-            None,
-        )
-        .unwrap();
+        None,
+    )
+    .unwrap();
 
     match result {
-        RuntimeResult::NeedImports(imports) => {
+        StepResult::NeedImports(imports) => {
             runtime
                 .provide_module(
                     imports[0].resolved_path.clone(),
@@ -1649,10 +1647,10 @@ fn test_live_binding_through_reexport() {
                 )
                 .unwrap();
 
-            let result2 = runtime.continue_eval().unwrap();
+            let result2 = run_to_completion(&mut runtime).unwrap();
 
             match result2 {
-                RuntimeResult::NeedImports(imports2) => {
+                StepResult::NeedImports(imports2) => {
                     runtime
                         .provide_module(
                             imports2[0].resolved_path.clone(),
@@ -1665,10 +1663,10 @@ fn test_live_binding_through_reexport() {
                         )
                         .unwrap();
 
-                    let result3 = runtime.continue_eval().unwrap();
+                    let result3 = run_to_completion(&mut runtime).unwrap();
 
                     match result3 {
-                        RuntimeResult::Complete(value) => {
+                        StepResult::Complete(value) => {
                             if let JsValue::Object(arr) = &*value {
                                 let arr_ref = arr.borrow();
                                 let before = arr_ref
@@ -1700,9 +1698,9 @@ fn test_live_binding_aliased_import() {
     // Test: aliased imports also get live binding
     let mut runtime = Runtime::new();
 
-    let result = runtime
-        .eval(
-            r#"
+    let result = run(
+        &mut runtime,
+        r#"
         import { count as myCount, increment as inc } from "./counter";
         const before = myCount;
         inc();
@@ -1711,12 +1709,12 @@ fn test_live_binding_aliased_import() {
         const after = myCount;
         [before, after];
     "#,
-            None,
-        )
-        .unwrap();
+        None,
+    )
+    .unwrap();
 
     match result {
-        RuntimeResult::NeedImports(imports) => {
+        StepResult::NeedImports(imports) => {
             runtime
                 .provide_module(
                     imports[0].resolved_path.clone(),
@@ -1729,10 +1727,10 @@ fn test_live_binding_aliased_import() {
                 )
                 .unwrap();
 
-            let result2 = runtime.continue_eval().unwrap();
+            let result2 = run_to_completion(&mut runtime).unwrap();
 
             match result2 {
-                RuntimeResult::Complete(value) => {
+                StepResult::Complete(value) => {
                     if let JsValue::Object(arr) = &*value {
                         let arr_ref = arr.borrow();
                         let before = arr_ref
@@ -1759,18 +1757,18 @@ fn test_live_binding_aliased_import() {
 fn test_live_binding_namespace_simple() {
     let mut runtime = Runtime::new();
 
-    let result = runtime
-        .eval(
-            r#"
+    let result = run(
+        &mut runtime,
+        r#"
         import * as counter from "./counter";
         counter.count;
     "#,
-            None,
-        )
-        .unwrap();
+        None,
+    )
+    .unwrap();
 
     match result {
-        RuntimeResult::NeedImports(imports) => {
+        StepResult::NeedImports(imports) => {
             runtime
                 .provide_module(
                     imports[0].resolved_path.clone(),
@@ -1778,10 +1776,10 @@ fn test_live_binding_namespace_simple() {
                 )
                 .unwrap();
 
-            let result2 = runtime.continue_eval().unwrap();
+            let result2 = run_to_completion(&mut runtime).unwrap();
 
             match result2 {
-                RuntimeResult::Complete(value) => {
+                StepResult::Complete(value) => {
                     assert_eq!(value, JsValue::Number(42.0));
                 }
                 other => panic!("Expected Complete, got {:?}", other),
@@ -1796,18 +1794,18 @@ fn test_live_binding_namespace_simple() {
 fn test_live_binding_namespace_call() {
     let mut runtime = Runtime::new();
 
-    let result = runtime
-        .eval(
-            r#"
+    let result = run(
+        &mut runtime,
+        r#"
         import * as counter from "./counter";
         counter.getValue();
     "#,
-            None,
-        )
-        .unwrap();
+        None,
+    )
+    .unwrap();
 
     match result {
-        RuntimeResult::NeedImports(imports) => {
+        StepResult::NeedImports(imports) => {
             runtime
                 .provide_module(
                     imports[0].resolved_path.clone(),
@@ -1819,10 +1817,10 @@ fn test_live_binding_namespace_call() {
                 )
                 .unwrap();
 
-            let result2 = runtime.continue_eval().unwrap();
+            let result2 = run_to_completion(&mut runtime).unwrap();
 
             match result2 {
-                RuntimeResult::Complete(value) => {
+                StepResult::Complete(value) => {
                     assert_eq!(value, JsValue::Number(42.0));
                 }
                 other => panic!("Expected Complete, got {:?}", other),
@@ -1838,18 +1836,18 @@ fn test_live_binding_reexport_debug() {
     // Simpler test: just check if we can import through re-export and call a function
     let mut runtime = Runtime::new();
 
-    let result = runtime
-        .eval(
-            r#"
+    let result = run(
+        &mut runtime,
+        r#"
         import { getValue } from "./reexport";
         getValue();
     "#,
-            None,
-        )
-        .unwrap();
+        None,
+    )
+    .unwrap();
 
     match result {
-        RuntimeResult::NeedImports(imports) => {
+        StepResult::NeedImports(imports) => {
             runtime
                 .provide_module(
                     imports[0].resolved_path.clone(),
@@ -1857,10 +1855,10 @@ fn test_live_binding_reexport_debug() {
                 )
                 .unwrap();
 
-            let result2 = runtime.continue_eval().unwrap();
+            let result2 = run_to_completion(&mut runtime).unwrap();
 
             match result2 {
-                RuntimeResult::NeedImports(imports2) => {
+                StepResult::NeedImports(imports2) => {
                     runtime
                         .provide_module(
                             imports2[0].resolved_path.clone(),
@@ -1872,10 +1870,10 @@ fn test_live_binding_reexport_debug() {
                         )
                         .unwrap();
 
-                    let result3 = runtime.continue_eval().unwrap();
+                    let result3 = run_to_completion(&mut runtime).unwrap();
 
                     match result3 {
-                        RuntimeResult::Complete(value) => {
+                        StepResult::Complete(value) => {
                             assert_eq!(value, JsValue::Number(42.0));
                         }
                         _ => panic!("Expected Complete, got {:?}", result3),
@@ -1893,18 +1891,18 @@ fn test_live_binding_imported_value_is_readonly() {
     // Test: attempting to assign to imported binding should error
     let mut runtime = Runtime::new();
 
-    let result = runtime
-        .eval(
-            r#"
+    let result = run(
+        &mut runtime,
+        r#"
         import { count } from "./counter";
         count = 100;  // Should error - imports are read-only
     "#,
-            None,
-        )
-        .unwrap();
+        None,
+    )
+    .unwrap();
 
     match result {
-        RuntimeResult::NeedImports(imports) => {
+        StepResult::NeedImports(imports) => {
             runtime
                 .provide_module(
                     imports[0].resolved_path.clone(),
@@ -1914,7 +1912,7 @@ fn test_live_binding_imported_value_is_readonly() {
                 )
                 .unwrap();
 
-            let result2 = runtime.continue_eval();
+            let result2 = run_to_completion(&mut runtime);
 
             // Should be an error - cannot assign to import binding
             assert!(result2.is_err(), "Assigning to import should error");

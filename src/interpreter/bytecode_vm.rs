@@ -40,6 +40,14 @@ pub enum VmResult {
     Error(JsError),
 }
 
+/// Result of a single VM step
+pub enum VmStepResult {
+    /// Executed one instruction, more to go
+    Continue,
+    /// Reached a terminal state
+    Terminal(VmResult),
+}
+
 /// Generator yield result
 pub struct GeneratorYield {
     /// The yielded value (guarded to keep alive during suspension)
@@ -297,6 +305,11 @@ impl BytecodeVM {
         }
     }
 
+    /// Get the current trampoline call depth (number of pending function calls)
+    pub fn trampoline_depth(&self) -> usize {
+        self.trampoline_stack.len()
+    }
+
     /// Create a new VM with a guard and pre-populated function arguments.
     /// Arguments are placed in registers 0, 1, 2, ... before execution starts.
     /// The bytecode's DeclareVar ops will read from these registers.
@@ -530,16 +543,6 @@ impl BytecodeVM {
                         ("ModuleError".to_string(), message.clone())
                     }
                     JsError::Internal(msg) => ("InternalError".to_string(), msg.clone()),
-                    JsError::Timeout {
-                        timeout_ms,
-                        elapsed_ms,
-                    } => (
-                        "TimeoutError".to_string(),
-                        format!(
-                            "execution exceeded {}ms timeout (limit: {}ms)",
-                            elapsed_ms, timeout_ms
-                        ),
-                    ),
                     // Already handled above
                     _ => return error,
                 };
@@ -682,167 +685,174 @@ impl BytecodeVM {
         ))
     }
 
-    /// Execute bytecode until completion, suspension, or error
-    /// Uses a trampoline pattern to avoid Rust stack overflow on deep JS call chains
-    pub fn run(&mut self, interp: &mut Interpreter) -> VmResult {
-        loop {
-            // Check timeout periodically
-            if let Err(e) = interp.check_timeout() {
-                return VmResult::Error(self.wrap_error_with_trace(e));
+    /// Execute a single bytecode instruction.
+    ///
+    /// Returns `VmStepResult::Continue` if more instructions remain,
+    /// or `VmStepResult::Terminal(result)` if execution reached a terminal state.
+    ///
+    /// This method enables step-by-step execution for host-controlled interruption.
+    pub fn step(&mut self, interp: &mut Interpreter) -> VmStepResult {
+        let Some(op) = self.fetch() else {
+            // End of bytecode - return last result or undefined
+            let result = self
+                .registers
+                .first()
+                .cloned()
+                .unwrap_or(JsValue::Undefined);
+
+            // Check if we have a trampoline frame to return to
+            if let Some(frame) = self.trampoline_stack.pop() {
+                // Restore state from trampoline frame
+                self.restore_from_trampoline_frame(interp, frame, result);
+                return VmStepResult::Continue;
             }
 
-            let Some(op) = self.fetch() else {
-                // End of bytecode - return last result or undefined
-                let result = self
-                    .registers
-                    .first()
-                    .cloned()
-                    .unwrap_or(JsValue::Undefined);
+            let guard = interp.heap.create_guard();
+            if let JsValue::Object(obj) = &result {
+                guard.guard(obj.cheap_clone());
+            }
+            return VmStepResult::Terminal(VmResult::Complete(Guarded {
+                value: result,
+                guard: Some(guard),
+            }));
+        };
 
+        match self.execute_op(interp, op) {
+            Ok(OpResult::Continue) => VmStepResult::Continue,
+            Ok(OpResult::Halt(value)) => {
                 // Check if we have a trampoline frame to return to
                 if let Some(frame) = self.trampoline_stack.pop() {
                     // Restore state from trampoline frame
-                    self.restore_from_trampoline_frame(interp, frame, result);
-                    continue;
+                    self.restore_from_trampoline_frame(interp, frame, value.value);
+                    return VmStepResult::Continue;
                 }
-
-                let guard = interp.heap.create_guard();
-                if let JsValue::Object(obj) = &result {
-                    guard.guard(obj.cheap_clone());
+                VmStepResult::Terminal(VmResult::Complete(value))
+            }
+            Ok(OpResult::Suspend {
+                promise,
+                resume_register,
+            }) => {
+                // Extract the object from the guarded value
+                if let JsValue::Object(obj) = promise.value {
+                    VmStepResult::Terminal(VmResult::Suspend(VmSuspension {
+                        waiting_on: obj,
+                        state: self.save_state(interp),
+                        resume_register,
+                    }))
+                } else {
+                    VmStepResult::Terminal(VmResult::Error(self.wrap_error_with_trace(
+                        JsError::internal_error("Suspend expects an object"),
+                    )))
                 }
-                return VmResult::Complete(Guarded {
-                    value: result,
-                    guard: Some(guard),
-                });
-            };
-
-            match self.execute_op(interp, op) {
-                Ok(OpResult::Continue) => continue,
-                Ok(OpResult::Halt(value)) => {
-                    // Check if we have a trampoline frame to return to
-                    if let Some(frame) = self.trampoline_stack.pop() {
-                        // Restore state from trampoline frame
-                        self.restore_from_trampoline_frame(interp, frame, value.value);
-                        continue;
-                    }
-                    return VmResult::Complete(value);
-                }
-                Ok(OpResult::Suspend {
-                    promise,
-                    resume_register,
-                }) => {
-                    // Extract the object from the guarded value
-                    if let JsValue::Object(obj) = promise.value {
-                        return VmResult::Suspend(VmSuspension {
-                            waiting_on: obj,
-                            state: self.save_state(interp),
-                            resume_register,
-                        });
-                    } else {
-                        return VmResult::Error(self.wrap_error_with_trace(
-                            JsError::internal_error("Suspend expects an object"),
-                        ));
-                    }
-                }
-                Ok(OpResult::SuspendForOrder {
+            }
+            Ok(OpResult::SuspendForOrder {
+                order_id,
+                resume_register,
+            }) => {
+                // Suspend waiting for host to provide order response
+                VmStepResult::Terminal(VmResult::SuspendForOrder(VmOrderSuspension {
                     order_id,
+                    state: self.save_state(interp),
                     resume_register,
-                }) => {
-                    // Suspend waiting for host to provide order response
-                    return VmResult::SuspendForOrder(VmOrderSuspension {
-                        order_id,
-                        state: self.save_state(interp),
-                        resume_register,
-                    });
-                }
-                Ok(OpResult::Yield {
-                    value,
-                    resume_register,
-                }) => {
-                    return VmResult::Yield(GeneratorYield {
-                        value, // Pass Guarded directly
-                        resume_register,
-                        state: self.save_state(interp),
-                    });
-                }
-                Ok(OpResult::YieldStar {
-                    iterable,
-                    resume_register,
-                }) => {
-                    return VmResult::YieldStar(GeneratorYieldStar {
-                        iterable, // Pass Guarded directly
-                        resume_register,
-                        state: self.save_state(interp),
-                    });
-                }
-                Ok(OpResult::Call {
-                    callee,
-                    this_value,
-                    args,
-                    return_register,
-                    new_target,
-                    is_super_call,
-                    guard: _guard, // Guard keeps values alive until trampoline frame is pushed
-                }) => {
-                    // Trampoline: save current state and switch to called function
-                    match self.setup_trampoline_call(
-                        interp,
-                        CallParams {
-                            callee,
-                            this_value,
-                            args,
-                            return_register,
-                            new_target,
-                            is_super_call,
-                        },
-                    ) {
-                        Ok(None) => continue,
-                        Ok(Some(vm_result)) => return vm_result,
-                        Err(e) => {
-                            // Try to find an exception handler, unwinding trampoline if needed
-                            if let Err(e) = self.handle_error_with_trampoline_unwind(interp, e) {
-                                return VmResult::Error(e);
-                            }
-                            continue;
+                }))
+            }
+            Ok(OpResult::Yield {
+                value,
+                resume_register,
+            }) => VmStepResult::Terminal(VmResult::Yield(GeneratorYield {
+                value,
+                resume_register,
+                state: self.save_state(interp),
+            })),
+            Ok(OpResult::YieldStar {
+                iterable,
+                resume_register,
+            }) => VmStepResult::Terminal(VmResult::YieldStar(GeneratorYieldStar {
+                iterable,
+                resume_register,
+                state: self.save_state(interp),
+            })),
+            Ok(OpResult::Call {
+                callee,
+                this_value,
+                args,
+                return_register,
+                new_target,
+                is_super_call,
+                guard: _guard, // Guard keeps values alive until trampoline frame is pushed
+            }) => {
+                // Trampoline: save current state and switch to called function
+                match self.setup_trampoline_call(
+                    interp,
+                    CallParams {
+                        callee,
+                        this_value,
+                        args,
+                        return_register,
+                        new_target,
+                        is_super_call,
+                    },
+                ) {
+                    Ok(None) => VmStepResult::Continue,
+                    Ok(Some(vm_result)) => VmStepResult::Terminal(vm_result),
+                    Err(e) => {
+                        // Try to find an exception handler, unwinding trampoline if needed
+                        if let Err(e) = self.handle_error_with_trampoline_unwind(interp, e) {
+                            return VmStepResult::Terminal(VmResult::Error(e));
                         }
+                        VmStepResult::Continue
                     }
                 }
-                Ok(OpResult::Construct {
+            }
+            Ok(OpResult::Construct {
+                callee,
+                this_value,
+                args,
+                return_register,
+                new_target,
+                new_obj,
+                guard: _guard, // Guard keeps values alive until trampoline frame is pushed
+            }) => {
+                // Trampoline for construct: save current state and switch to constructor
+                match self.setup_trampoline_construct(
+                    interp,
                     callee,
                     this_value,
                     args,
                     return_register,
                     new_target,
                     new_obj,
-                    guard: _guard, // Guard keeps values alive until trampoline frame is pushed
-                }) => {
-                    // Trampoline for construct: save current state and switch to constructor
-                    match self.setup_trampoline_construct(
-                        interp,
-                        callee,
-                        this_value,
-                        args,
-                        return_register,
-                        new_target,
-                        new_obj,
-                    ) {
-                        Ok(()) => continue,
-                        Err(e) => {
-                            // Try to find an exception handler, unwinding trampoline if needed
-                            if let Err(e) = self.handle_error_with_trampoline_unwind(interp, e) {
-                                return VmResult::Error(e);
-                            }
-                            continue;
+                ) {
+                    Ok(()) => VmStepResult::Continue,
+                    Err(e) => {
+                        // Try to find an exception handler, unwinding trampoline if needed
+                        if let Err(e) = self.handle_error_with_trampoline_unwind(interp, e) {
+                            return VmStepResult::Terminal(VmResult::Error(e));
                         }
+                        VmStepResult::Continue
                     }
                 }
-                Err(e) => {
-                    // Try to find an exception handler, unwinding trampoline if needed
-                    if let Err(e) = self.handle_error_with_trampoline_unwind(interp, e) {
-                        return VmResult::Error(e);
-                    }
-                    continue;
+            }
+            Err(e) => {
+                // Try to find an exception handler, unwinding trampoline if needed
+                if let Err(e) = self.handle_error_with_trampoline_unwind(interp, e) {
+                    return VmStepResult::Terminal(VmResult::Error(e));
                 }
+                VmStepResult::Continue
+            }
+        }
+    }
+
+    /// Execute bytecode until completion, suspension, or error.
+    /// Uses a trampoline pattern to avoid Rust stack overflow on deep JS call chains.
+    ///
+    /// This method runs until a terminal state is reached. For step-by-step control,
+    /// use the `step()` method instead.
+    pub fn run(&mut self, interp: &mut Interpreter) -> VmResult {
+        loop {
+            match self.step(interp) {
+                VmStepResult::Continue => continue,
+                VmStepResult::Terminal(result) => return result,
             }
         }
     }
@@ -869,17 +879,6 @@ impl BytecodeVM {
             new_target,
             is_super_call,
         } = params;
-
-        // Check call stack depth limit
-        // Use only trampoline_stack.len() since that represents actual JS call depth
-        // (interp.call_stack is also updated but for stack traces, so counting both would double-count)
-        let total_depth = self.trampoline_stack.len();
-        if interp.max_call_depth > 0 && total_depth >= interp.max_call_depth {
-            return Err(JsError::range_error(format!(
-                "Maximum call stack size exceeded (depth {})",
-                total_depth
-            )));
-        }
 
         let JsValue::Object(func_obj) = &callee else {
             return Err(JsError::type_error("Not a function"));
@@ -1077,15 +1076,6 @@ impl BytecodeVM {
         new_obj: Gc<JsObject>,
     ) -> Result<(), JsError> {
         use crate::value::{ExoticObject, JsFunction};
-
-        // Check call stack depth limit
-        let total_depth = self.trampoline_stack.len();
-        if interp.max_call_depth > 0 && total_depth >= interp.max_call_depth {
-            return Err(JsError::range_error(format!(
-                "Maximum call stack size exceeded (depth {})",
-                total_depth
-            )));
-        }
 
         let JsValue::Object(func_obj) = &callee else {
             return Err(JsError::type_error("Not a constructor"));

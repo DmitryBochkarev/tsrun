@@ -1,6 +1,10 @@
 //! CLI tool for running TypeScript files using tsrun
 //!
-//! Usage: tsrun <entry-point.ts>
+//! Usage: tsrun [options] <entry-point.ts>
+//!
+//! Options:
+//!   --timeout <ms>     Maximum execution time in milliseconds (default: unlimited)
+//!   --max-depth <n>    Maximum call stack depth (default: unlimited)
 //!
 //! Supports static imports - modules are resolved relative to the importing file.
 //! Nested imports are supported.
@@ -9,7 +13,8 @@ use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
-use tsrun::{JsValue, ModulePath, Runtime, RuntimeResult};
+use std::time::Instant;
+use tsrun::{JsValue, ModulePath, Runtime, StepResult};
 
 /// Minimal package.json representation for module resolution
 #[derive(serde::Deserialize)]
@@ -50,19 +55,56 @@ fn format_error(
     msg
 }
 
-fn run() -> Result<(), Box<dyn std::error::Error>> {
-    let args: Vec<String> = env::args().collect();
+/// CLI configuration
+struct Config {
+    entry_path: PathBuf,
+    timeout_ms: Option<u64>,
+    max_depth: Option<usize>,
+}
 
-    let entry_arg = match args.get(1) {
-        Some(arg) => arg,
-        None => {
-            eprintln!(
-                "Usage: {} <entry-point.ts>",
-                args.first().map_or("tsrun", |s| s.as_str())
+fn parse_args() -> Result<Config, String> {
+    let args: Vec<String> = env::args().collect();
+    let program_name = args.first().map_or("tsrun", |s| s.as_str());
+
+    let mut timeout_ms: Option<u64> = None;
+    let mut max_depth: Option<usize> = None;
+    let mut entry_arg: Option<&str> = None;
+
+    let mut i = 1;
+    while i < args.len() {
+        let Some(arg) = args.get(i) else {
+            break;
+        };
+        if arg == "--timeout" {
+            i += 1;
+            timeout_ms = Some(
+                args.get(i)
+                    .ok_or_else(|| "--timeout requires a value".to_string())?
+                    .parse::<u64>()
+                    .map_err(|_| "--timeout must be a positive integer".to_string())?,
             );
-            std::process::exit(1);
+        } else if arg == "--max-depth" {
+            i += 1;
+            max_depth = Some(
+                args.get(i)
+                    .ok_or_else(|| "--max-depth requires a value".to_string())?
+                    .parse::<usize>()
+                    .map_err(|_| "--max-depth must be a positive integer".to_string())?,
+            );
+        } else if arg.starts_with('-') {
+            return Err(format!("Unknown option: {}", arg));
+        } else {
+            entry_arg = Some(arg);
         }
-    };
+        i += 1;
+    }
+
+    let entry_arg = entry_arg.ok_or_else(|| {
+        format!(
+            "Usage: {} [--timeout <ms>] [--max-depth <n>] <entry-point.ts>",
+            program_name
+        )
+    })?;
 
     let entry_path = PathBuf::from(entry_arg);
     // Make entry_path absolute for consistent path resolution
@@ -73,6 +115,21 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             .unwrap_or_else(|_| PathBuf::from("."))
             .join(entry_path)
     };
+
+    Ok(Config {
+        entry_path,
+        timeout_ms,
+        max_depth,
+    })
+}
+
+fn run() -> Result<(), Box<dyn std::error::Error>> {
+    let config = parse_args().map_err(|e| {
+        eprintln!("{}", e);
+        std::process::exit(1);
+    })?;
+
+    let entry_path = config.entry_path;
     let entry_dir = entry_path
         .parent()
         .map(|p| p.to_path_buf())
@@ -92,7 +149,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         runtime.set_gc_threshold(100);
     }
-    runtime.set_timeout_ms(300 * 1000);
 
     // Track provided modules by resolved path to avoid reloading
     let mut provided: HashMap<ModulePath, PathBuf> = HashMap::new();
@@ -102,9 +158,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // Start evaluation - may return NeedImports
     let entry_file = entry_path.display().to_string();
-    let mut result = runtime
-        .eval(&rewritten_source, Some(entry_file.as_str()))
-        .map_err(|e| format_error(&e.to_string(), &entry_file, &[]))?;
 
     // Helper to build import chain from a file back to entry
     let build_chain =
@@ -119,86 +172,163 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             chain
         };
 
-    // Module loading loop
-    loop {
-        match result {
-            RuntimeResult::Complete(runtime_value) => {
-                print_value(runtime_value.value());
-                return Ok(());
-            }
-            RuntimeResult::NeedImports(import_requests) => {
-                for req in import_requests {
-                    // Use resolved_path for deduplication
-                    if provided.contains_key(&req.resolved_path) {
-                        continue;
-                    }
+    // Helper to load and provide a module
+    let load_and_provide_module = |runtime: &mut Runtime,
+                                   req: &tsrun::ImportRequest,
+                                   provided: &mut HashMap<ModulePath, PathBuf>,
+                                   import_chain: &mut HashMap<String, (String, String)>|
+     -> Result<(), Box<dyn std::error::Error>> {
+        // Use resolved_path for deduplication
+        if provided.contains_key(&req.resolved_path) {
+            return Ok(());
+        }
 
-                    // Track the import chain
-                    let importer = req
-                        .importer
-                        .as_ref()
-                        .map(|p| p.as_str().to_string())
-                        .unwrap_or_else(|| entry_file.clone());
+        // Track the import chain
+        let importer = req
+            .importer
+            .as_ref()
+            .map(|p| p.as_str().to_string())
+            .unwrap_or_else(|| entry_file.clone());
 
-                    // Determine the canonical filesystem path
-                    let canonical_path = if ModulePath::is_bare(&req.specifier) {
-                        // Bare specifier (e.g., "lodash", "@scope/pkg") - resolve from node_modules
-                        let start_dir = req
-                            .importer
-                            .as_ref()
-                            .and_then(|p| {
-                                PathBuf::from(p.as_str()).parent().map(|p| p.to_path_buf())
-                            })
-                            .unwrap_or_else(|| entry_dir.clone());
+        // Determine the canonical filesystem path
+        let canonical_path = if ModulePath::is_bare(&req.specifier) {
+            // Bare specifier (e.g., "lodash", "@scope/pkg") - resolve from node_modules
+            let start_dir = req
+                .importer
+                .as_ref()
+                .and_then(|p| PathBuf::from(p.as_str()).parent().map(|p| p.to_path_buf()))
+                .unwrap_or_else(|| entry_dir.clone());
 
-                        resolve_node_module(&req.specifier, &start_dir).map_err(|e| {
-                            let chain = build_chain(&importer, &import_chain);
-                            format_error(&e.to_string(), &importer, &chain)
-                        })?
-                    } else {
-                        // Relative/absolute path - already resolved
-                        PathBuf::from(req.resolved_path.as_str())
-                    };
+            resolve_node_module(&req.specifier, &start_dir).map_err(|e| {
+                let chain = build_chain(&importer, import_chain);
+                format_error(&e.to_string(), &importer, &chain)
+            })?
+        } else {
+            // Relative/absolute path - already resolved
+            PathBuf::from(req.resolved_path.as_str())
+        };
 
-                    let canonical_str = canonical_path.to_string_lossy().to_string();
+        let canonical_str = canonical_path.to_string_lossy().to_string();
 
-                    // Record this import for chain tracking
-                    import_chain.insert(
-                        canonical_str.clone(),
-                        (importer.clone(), req.specifier.clone()),
-                    );
+        // Record this import for chain tracking
+        import_chain.insert(
+            canonical_str.clone(),
+            (importer.clone(), req.specifier.clone()),
+        );
 
-                    // Load module from filesystem
-                    let (module_source, module_dir) = load_module(&canonical_str).map_err(|e| {
-                        let chain = build_chain(&canonical_str, &import_chain);
-                        format_error(&e.to_string(), &canonical_str, &chain)
-                    })?;
+        // Load module from filesystem
+        let (module_source, module_dir) = load_module(&canonical_str).map_err(|e| {
+            let chain = build_chain(&canonical_str, import_chain);
+            format_error(&e.to_string(), &canonical_str, &chain)
+        })?;
 
-                    // Rewrite imports in this module to use canonical paths
-                    let rewritten_module = rewrite_imports(&module_source, &module_dir)?;
+        // Rewrite imports in this module to use canonical paths
+        let rewritten_module = rewrite_imports(&module_source, &module_dir)?;
 
-                    // Provide to runtime using the resolved_path the runtime expects
-                    runtime
-                        .provide_module(req.resolved_path.clone(), &rewritten_module)
-                        .map_err(|e| {
-                            let chain = build_chain(&canonical_str, &import_chain);
-                            format_error(&e.to_string(), &canonical_str, &chain)
-                        })?;
-                    provided.insert(req.resolved_path, module_dir);
+        // Provide to runtime using the resolved_path the runtime expects
+        runtime
+            .provide_module(req.resolved_path.clone(), &rewritten_module)
+            .map_err(|e| {
+                let chain = build_chain(&canonical_str, import_chain);
+                format_error(&e.to_string(), &canonical_str, &chain)
+            })?;
+        provided.insert(req.resolved_path.clone(), module_dir);
+        Ok(())
+    };
+
+    // Choose execution strategy based on whether limits are configured
+    let has_limits = config.timeout_ms.is_some() || config.max_depth.is_some();
+
+    if has_limits {
+        // Step-based execution with limit checking
+        let initial_result = runtime
+            .prepare(&rewritten_source, Some(entry_file.as_str()))
+            .map_err(|e| format_error(&e.to_string(), &entry_file, &[]))?;
+
+        let start_time = Instant::now();
+        let mut step_result = initial_result;
+
+        loop {
+            // Check limits before each step
+            if let Some(timeout) = config.timeout_ms {
+                let elapsed = start_time.elapsed().as_millis() as u64;
+                if elapsed >= timeout {
+                    return Err(format!("Execution timed out after {}ms", timeout).into());
                 }
-                // continue_eval will check for nested imports and return NeedImports again if needed
-                result = runtime.continue_eval().map_err(|e| {
-                    // Runtime error - try to identify which module
-                    format!("{}", e)
-                })?;
             }
-            RuntimeResult::Suspended { pending, .. } => {
-                // For now, we don't support async operations in the CLI
-                return Err(format!(
-                    "Async operations not supported in CLI (pending orders: {})",
-                    pending.len()
-                )
-                .into());
+            if let Some(max_depth) = config.max_depth {
+                let depth = runtime.call_depth();
+                if depth > max_depth {
+                    return Err(
+                        format!("Maximum call depth exceeded: {} > {}", depth, max_depth).into(),
+                    );
+                }
+            }
+
+            match step_result {
+                StepResult::Continue => {
+                    step_result = runtime.step().map_err(|e| format!("{}", e))?;
+                }
+                StepResult::Complete(runtime_value) => {
+                    print_value(runtime_value.value());
+                    return Ok(());
+                }
+                StepResult::Done => {
+                    return Ok(());
+                }
+                StepResult::NeedImports(import_requests) => {
+                    for req in &import_requests {
+                        load_and_provide_module(
+                            &mut runtime,
+                            req,
+                            &mut provided,
+                            &mut import_chain,
+                        )?;
+                    }
+                    step_result = runtime.step().map_err(|e| format!("{}", e))?;
+                }
+                StepResult::Suspended { pending, .. } => {
+                    return Err(format!(
+                        "Async operations not supported in CLI (pending orders: {})",
+                        pending.len()
+                    )
+                    .into());
+                }
+            }
+        }
+    } else {
+        // Fast path: no limits, step-based execution
+        runtime
+            .prepare(&rewritten_source, Some(entry_file.as_str()))
+            .map_err(|e| format_error(&e.to_string(), &entry_file, &[]))?;
+
+        loop {
+            match runtime.step().map_err(|e| format!("{}", e))? {
+                StepResult::Continue => continue,
+                StepResult::Complete(runtime_value) => {
+                    print_value(runtime_value.value());
+                    return Ok(());
+                }
+                StepResult::Done => {
+                    return Ok(());
+                }
+                StepResult::NeedImports(import_requests) => {
+                    for req in &import_requests {
+                        load_and_provide_module(
+                            &mut runtime,
+                            req,
+                            &mut provided,
+                            &mut import_chain,
+                        )?;
+                    }
+                }
+                StepResult::Suspended { pending, .. } => {
+                    return Err(format!(
+                        "Async operations not supported in CLI (pending orders: {})",
+                        pending.len()
+                    )
+                    .into());
+                }
             }
         }
     }

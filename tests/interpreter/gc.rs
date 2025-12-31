@@ -1,6 +1,7 @@
 //! Tests for garbage collection of JavaScript objects
 
-use tsrun::{GcStats, JsString, JsValue, Runtime, RuntimeResult, RuntimeValue};
+use super::run;
+use tsrun::{GcStats, JsString, JsValue, Runtime, RuntimeValue, StepResult};
 
 /// Get baseline object count (builtins only, no user code)
 fn get_baseline_live_count() -> usize {
@@ -12,9 +13,11 @@ fn get_baseline_live_count() -> usize {
 #[allow(clippy::unwrap_used, clippy::panic)]
 fn eval_with_gc_stats(source: &str) -> (RuntimeValue, GcStats) {
     let mut runtime = Runtime::new();
-    let result = match runtime.eval(source, None).unwrap() {
-        RuntimeResult::Complete(rv) => rv,
-        other => panic!("Expected Complete, got {:?}", other),
+    let result_step = run(&mut runtime, source, None).unwrap();
+    let result = if let StepResult::Complete(rv) = result_step {
+        rv
+    } else {
+        panic!("Expected Complete, got {:?}", result_step);
     };
     // Force GC to run
     runtime.collect();
@@ -88,11 +91,12 @@ fn test_cycle_detection_simple() {
     // Run with low gc_threshold to trigger GC during execution
     let mut runtime = Runtime::new();
     runtime.set_gc_threshold(50);
-    runtime.set_timeout_ms(0);
 
-    let result = match runtime.eval(source, None).unwrap() {
-        RuntimeResult::Complete(value) => value,
-        other => panic!("Expected Complete, got {:?}", other),
+    let result_step = run(&mut runtime, source, None).unwrap();
+    let result = if let StepResult::Complete(rv) = result_step {
+        rv
+    } else {
+        panic!("Expected Complete, got {:?}", result_step);
     };
 
     // Expected: 50 * 3 = 150
@@ -117,11 +121,12 @@ fn test_self_referencing_collected() {
     // Run with low gc_threshold to trigger GC during execution
     let mut runtime = Runtime::new();
     runtime.set_gc_threshold(50);
-    runtime.set_timeout_ms(0);
 
-    let result = match runtime.eval(source, None).unwrap() {
-        RuntimeResult::Complete(value) => value,
-        other => panic!("Expected Complete, got {:?}", other),
+    let result_step = run(&mut runtime, source, None).unwrap();
+    let result = if let StepResult::Complete(rv) = result_step {
+        rv
+    } else {
+        panic!("Expected Complete, got {:?}", result_step);
     };
 
     // sum = 0 + 1 + 2 + ... + 99 = 4950
@@ -145,21 +150,27 @@ fn test_reachable_objects_preserved() {
     "#;
 
     let mut runtime = Runtime::new();
-    let result = match runtime.eval(source, None).unwrap() {
-        RuntimeResult::Complete(value) => value,
-        other => panic!("Expected Complete, got {:?}", other),
+    let result_step = run(&mut runtime, source, None).unwrap();
+    let result = if let StepResult::Complete(rv) = result_step {
+        rv
+    } else {
+        panic!("Expected Complete, got {:?}", result_step);
     };
 
     // Run GC
     runtime.collect();
 
     // Verify global objects are still accessible
-    let check = match runtime
-        .eval("global_obj.a + global_obj.b + global_arr[0]", None)
-        .unwrap()
-    {
-        RuntimeResult::Complete(value) => value,
-        other => panic!("Expected Complete, got {:?}", other),
+    let check_step = run(
+        &mut runtime,
+        "global_obj.a + global_obj.b + global_arr[0]",
+        None,
+    )
+    .unwrap();
+    let check = if let StepResult::Complete(rv) = check_step {
+        rv
+    } else {
+        panic!("Expected Complete, got {:?}", check_step);
     };
 
     assert_eq!(result, JsValue::Number(4.0));
@@ -209,11 +220,12 @@ fn test_many_cycles_memory_bounded() {
     // This allows cycles to be broken while variables are still in scope
     let mut runtime = Runtime::new();
     runtime.set_gc_threshold(100);
-    runtime.set_timeout_ms(0);
 
-    let result = match runtime.eval(source, None).unwrap() {
-        RuntimeResult::Complete(value) => value,
-        other => panic!("Expected Complete, got {:?}", other),
+    let result_step = run(&mut runtime, source, None).unwrap();
+    let result = if let StepResult::Complete(rv) = result_step {
+        rv
+    } else {
+        panic!("Expected Complete, got {:?}", result_step);
     };
 
     // Final GC
@@ -273,9 +285,11 @@ fn test_gc_cycles_graph_with_push_multiple() {
     // Test with low GC threshold to trigger the bug
     let mut runtime = Runtime::new();
     runtime.set_gc_threshold(100);
-    let result = match runtime.eval(source, None).unwrap() {
-        RuntimeResult::Complete(value) => value,
-        other => panic!("Expected Complete, got {:?}", other),
+    let result_step = run(&mut runtime, source, None).unwrap();
+    let result = if let StepResult::Complete(rv) = result_step {
+        rv
+    } else {
+        panic!("Expected Complete, got {:?}", result_step);
     };
 
     // Expected: 100 * (1+2+3+4+5) = 100 * 15 = 1500
@@ -308,9 +322,11 @@ fn test_gc_cycles_array_refs_with_push_multiple() {
 
     let mut runtime = Runtime::new();
     runtime.set_gc_threshold(100);
-    let result = match runtime.eval(source, None).unwrap() {
-        RuntimeResult::Complete(value) => value,
-        other => panic!("Expected Complete, got {:?}", other),
+    let result_step = run(&mut runtime, source, None).unwrap();
+    let result = if let StepResult::Complete(rv) = result_step {
+        rv
+    } else {
+        panic!("Expected Complete, got {:?}", result_step);
     };
 
     // Expected: 50 * 6 = 300
@@ -338,9 +354,11 @@ fn test_gc_object_cycle_with_property_assignment() {
 
     let mut runtime = Runtime::new();
     runtime.set_gc_threshold(50); // Low threshold to trigger GC often
-    let result = match runtime.eval(source, None).unwrap() {
-        RuntimeResult::Complete(value) => value,
-        other => panic!("Expected Complete, got {:?}", other),
+    let result_step = run(&mut runtime, source, None).unwrap();
+    let result = if let StepResult::Complete(rv) = result_step {
+        rv
+    } else {
+        panic!("Expected Complete, got {:?}", result_step);
     };
 
     // Expected: 50 * 3 = 150
@@ -370,9 +388,11 @@ fn test_gc_object_cycle_with_array_push() {
 
     let mut runtime = Runtime::new();
     runtime.set_gc_threshold(50); // Low threshold to trigger GC often
-    let result = match runtime.eval(source, None).unwrap() {
-        RuntimeResult::Complete(value) => value,
-        other => panic!("Expected Complete, got {:?}", other),
+    let result_step = run(&mut runtime, source, None).unwrap();
+    let result = if let StepResult::Complete(rv) = result_step {
+        rv
+    } else {
+        panic!("Expected Complete, got {:?}", result_step);
     };
 
     // Expected: 50 * 3 = 150
@@ -508,11 +528,11 @@ results
     let mut runtime = Runtime::new();
     // Use lower GC threshold to trigger collection more frequently
     runtime.set_gc_threshold(100);
-    // Disable timeout for this long-running test
-    runtime.set_timeout_ms(0);
-    let result = match runtime.eval(source, None).unwrap() {
-        RuntimeResult::Complete(rv) => rv,
-        other => panic!("Expected Complete, got {:?}", other),
+    let result_step = run(&mut runtime, source, None).unwrap();
+    let result = if let StepResult::Complete(rv) = result_step {
+        rv
+    } else {
+        panic!("Expected Complete, got {:?}", result_step);
     };
 
     if let JsValue::Object(arr) = &*result {
@@ -555,9 +575,9 @@ results
 fn eval_with_threshold_1(source: &str) -> RuntimeValue {
     let mut runtime = Runtime::new();
     runtime.set_gc_threshold(1);
-    runtime.set_timeout_ms(0); // Disable timeout for GC stress tests
-    match runtime.eval(source, None).unwrap() {
-        RuntimeResult::Complete(rv) => rv,
+    let result_step = run(&mut runtime, source, None).unwrap();
+    match result_step {
+        StepResult::Complete(rv) => rv,
         other => panic!("Expected Complete, got {:?}", other),
     }
 }
@@ -1362,11 +1382,12 @@ fn test_function_call_registers_cleaned_up() {
 
     let mut runtime = Runtime::new();
     runtime.set_gc_threshold(100); // Trigger GC frequently during execution
-    runtime.set_timeout_ms(0);
 
-    let result = match runtime.eval(source, None).unwrap() {
-        RuntimeResult::Complete(value) => value,
-        other => panic!("Expected Complete, got {:?}", other),
+    let result_step = run(&mut runtime, source, None).unwrap();
+    let result = if let StepResult::Complete(rv) = result_step {
+        rv
+    } else {
+        panic!("Expected Complete, got {:?}", result_step);
     };
 
     runtime.collect();
@@ -1416,11 +1437,12 @@ fn test_nested_function_calls_registers_cleaned_up() {
 
     let mut runtime = Runtime::new();
     runtime.set_gc_threshold(50); // Very aggressive GC
-    runtime.set_timeout_ms(0);
 
-    let result = match runtime.eval(source, None).unwrap() {
-        RuntimeResult::Complete(value) => value,
-        other => panic!("Expected Complete, got {:?}", other),
+    let result_step = run(&mut runtime, source, None).unwrap();
+    let result = if let StepResult::Complete(rv) = result_step {
+        rv
+    } else {
+        panic!("Expected Complete, got {:?}", result_step);
     };
 
     runtime.collect();
@@ -1468,11 +1490,12 @@ fn test_exception_unwind_registers_cleaned_up() {
 
     let mut runtime = Runtime::new();
     runtime.set_gc_threshold(50);
-    runtime.set_timeout_ms(0);
 
-    let result = match runtime.eval(source_normal, None).unwrap() {
-        RuntimeResult::Complete(value) => value,
-        other => panic!("Expected Complete, got {:?}", other),
+    let result_step = run(&mut runtime, source_normal, None).unwrap();
+    let result = if let StepResult::Complete(rv) = result_step {
+        rv
+    } else {
+        panic!("Expected Complete, got {:?}", result_step);
     };
 
     runtime.collect();
@@ -1519,11 +1542,12 @@ fn test_exception_unwind_registers_cleaned_up() {
 
     let mut runtime = Runtime::new();
     runtime.set_gc_threshold(50);
-    runtime.set_timeout_ms(0);
 
-    let result = match runtime.eval(source_throws, None).unwrap() {
-        RuntimeResult::Complete(value) => value,
-        other => panic!("Expected Complete, got {:?}", other),
+    let result_step = run(&mut runtime, source_throws, None).unwrap();
+    let result = if let StepResult::Complete(rv) = result_step {
+        rv
+    } else {
+        panic!("Expected Complete, got {:?}", result_step);
     };
 
     runtime.collect();

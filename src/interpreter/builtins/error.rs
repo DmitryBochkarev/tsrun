@@ -408,17 +408,6 @@ pub fn create_error_object(
             (interp.error_prototype.clone(), "Error", message.clone())
         }
         JsError::Internal(msg) => (interp.error_prototype.clone(), "Error", msg.clone()),
-        JsError::Timeout {
-            timeout_ms,
-            elapsed_ms,
-        } => (
-            interp.error_prototype.clone(),
-            "Error",
-            format!(
-                "execution exceeded {}ms timeout (limit: {}ms)",
-                elapsed_ms, timeout_ms
-            ),
-        ),
         // These should not reach here, but handle them anyway
         JsError::Thrown
         | JsError::ThrownValue { .. }

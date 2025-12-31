@@ -101,10 +101,6 @@ pub enum JsError {
     /// the entire optional chain (a?.b.c.d should all return undefined)
     #[error("OptionalChainShortCircuit")]
     OptionalChainShortCircuit,
-
-    /// Execution exceeded the time limit
-    #[error("TimeoutError: execution exceeded {elapsed_ms}ms timeout (limit: {timeout_ms}ms)")]
-    Timeout { timeout_ms: u64, elapsed_ms: u64 },
 }
 
 fn format_stack(stack: &[StackFrame]) -> String {
@@ -233,13 +229,6 @@ impl JsError {
                 format!("InternalError: {}", msg),
             )),
             JsError::Thrown => crate::value::JsValue::Undefined,
-            JsError::Timeout {
-                timeout_ms,
-                elapsed_ms,
-            } => crate::value::JsValue::String(crate::value::JsString::from(format!(
-                "TimeoutError: execution exceeded {}ms timeout (limit: {}ms)",
-                elapsed_ms, timeout_ms
-            ))),
             // OptionalChainShortCircuit should never escape to user code - it's an internal marker
             JsError::OptionalChainShortCircuit => crate::value::JsValue::Undefined,
         }

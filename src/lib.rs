@@ -3,12 +3,21 @@
 //! # Example
 //!
 //! ```
-//! use tsrun::{Runtime, RuntimeResult};
+//! use tsrun::{Runtime, StepResult};
 //!
 //! let mut runtime = Runtime::new();
-//! let result = runtime.eval("1 + 2 * 3", None).unwrap();
-//! if let RuntimeResult::Complete(value) = result {
-//!     assert_eq!(value.as_number(), Some(7.0));
+//! runtime.prepare("1 + 2 * 3", None).unwrap();
+//!
+//! // Step until completion
+//! loop {
+//!     match runtime.step().unwrap() {
+//!         StepResult::Continue => continue,
+//!         StepResult::Complete(value) => {
+//!             assert_eq!(value.as_number(), Some(7.0));
+//!             break;
+//!         }
+//!         _ => panic!("Unexpected result"),
+//!     }
 //! }
 //! ```
 
@@ -43,7 +52,7 @@ pub use interpreter::builtins::json::{
 pub use interpreter::builtins::internal::create_eval_internal_module;
 
 // Re-export order system types
-// Note: Order, OrderId, OrderResponse, RuntimeResult, ModulePath, ImportRequest are defined in this module
+// Note: Order, OrderId, OrderResponse, ModulePath, ImportRequest, StepResult are defined in this module
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Order System Types
@@ -87,7 +96,7 @@ pub struct OrderResponse {
 ///
 /// # Example
 /// ```ignore
-/// let result = runtime.eval("{ foo: 42 }")?;
+/// let result = runtime.run("{ foo: 42 }", None)?;
 /// match result {
 ///     RuntimeResult::Complete(runtime_value) => {
 ///         // Value is guaranteed alive while runtime_value exists
@@ -438,27 +447,39 @@ pub struct ImportRequest {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Runtime Result
+// Step Result
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// Result of running the interpreter
+/// Result of executing a single step.
+///
+/// Step-based execution gives the host full control over when execution should stop.
+/// The host calls `step()` repeatedly until it receives a terminal result
+/// (`Complete`, `NeedImports`, `Suspended`), or decides to stop early.
 #[derive(Debug)]
-pub enum RuntimeResult {
+pub enum StepResult {
+    /// Executed one instruction, more to execute.
+    /// Call `step()` again to continue.
+    Continue,
+
     /// Execution completed with a final value.
-    /// The RuntimeValue keeps the result alive until dropped.
     Complete(RuntimeValue),
 
-    /// Need these modules before execution can start.
-    /// Contains import requests with resolved paths and importer context.
+    /// Need these modules before execution can continue.
+    /// Call `provide_module()` for each import, then call `step()` again.
     NeedImports(Vec<ImportRequest>),
 
-    /// Execution suspended waiting for orders to be fulfilled
+    /// Execution suspended waiting for orders to be fulfilled.
+    /// Call `fulfill_orders()` with responses, then call `step()` again.
     Suspended {
         /// Orders waiting for fulfillment
         pending: Vec<Order>,
         /// Orders that were cancelled (e.g., Promise.race loser)
         cancelled: Vec<OrderId>,
     },
+
+    /// No active execution to step.
+    /// Call `prepare()` first to start execution.
+    Done,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -561,8 +582,6 @@ impl NativeModuleBuilder {
 pub struct RuntimeConfig {
     /// Internal modules available for import
     pub internal_modules: Vec<InternalModule>,
-    /// Timeout in milliseconds (0 = no timeout)
-    pub timeout_ms: u64,
 }
 
 /// The main runtime for executing TypeScript code
@@ -584,9 +603,6 @@ impl Runtime {
         for module in config.internal_modules {
             runtime.register_internal_module(module);
         }
-        if config.timeout_ms > 0 {
-            runtime.interpreter.set_timeout_ms(config.timeout_ms);
-        }
         runtime
     }
 
@@ -595,36 +611,13 @@ impl Runtime {
         self.interpreter.register_internal_module(module);
     }
 
-    /// Evaluate TypeScript/JavaScript code with full runtime support.
-    ///
-    /// The optional `path` parameter is used as the base for resolving relative imports.
-    /// For example, if `path` is `/project/src/main.ts` and the code contains
-    /// `import { foo } from "./utils"`, it will resolve to `/project/src/utils`.
-    ///
-    /// If no path is provided, relative imports will be treated as bare specifiers.
-    ///
-    /// Returns RuntimeResult which may indicate:
-    /// - Complete: execution finished with a value
-    /// - NeedImports: modules need to be provided before continuing
-    /// - Suspended: waiting for orders to be fulfilled
-    ///
-    /// # Examples
-    /// ```ignore
-    /// // Without a path
-    /// let result = runtime.eval("1 + 2", None)?;
-    ///
-    /// // With a path
-    /// let result = runtime.eval("import { foo } from './utils'", Some("/src/main.ts"))?;
-    /// ```
-    pub fn eval(&mut self, source: &str, path: Option<&str>) -> Result<RuntimeResult, JsError> {
-        self.interpreter.eval(source, path.map(ModulePath::new))
-    }
-
     /// Provide a module source for a pending import.
     ///
     /// The `resolved_path` should be the `ImportRequest.resolved_path` from
     /// the `NeedImports` result. This ensures proper deduplication of modules
     /// even when they are imported with different relative paths.
+    ///
+    /// After providing all required modules, call `step()` to continue execution.
     pub fn provide_module(
         &mut self,
         resolved_path: impl Into<ModulePath>,
@@ -634,18 +627,12 @@ impl Runtime {
             .provide_module(resolved_path.into(), source)
     }
 
-    /// Continue evaluation after providing modules or fulfilling orders
-    pub fn continue_eval(&mut self) -> Result<RuntimeResult, JsError> {
-        self.interpreter.continue_eval()
-    }
-
-    /// Fulfill orders with responses from the host
-    pub fn fulfill_orders(
-        &mut self,
-        responses: Vec<OrderResponse>,
-    ) -> Result<RuntimeResult, JsError> {
+    /// Fulfill orders with responses from the host.
+    ///
+    /// Stores the responses for when execution resumes.
+    /// After calling this, call `step()` to continue execution.
+    pub fn fulfill_orders(&mut self, responses: Vec<OrderResponse>) {
         self.interpreter.fulfill_orders(responses);
-        self.continue_eval()
     }
 
     /// Set the GC threshold (0 = disable automatic collection)
@@ -656,16 +643,79 @@ impl Runtime {
         self.interpreter.heap.set_gc_threshold(threshold);
     }
 
-    pub fn set_timeout_ms(&mut self, timeout_ms: u64) {
-        self.interpreter.set_timeout_ms(timeout_ms);
+    /// Execute a single bytecode instruction.
+    ///
+    /// This method provides step-by-step execution for host-controlled interruption.
+    /// Call `prepare()` first to compile the code, then call `step()` repeatedly
+    /// until a terminal result is returned.
+    ///
+    /// # Returns
+    /// - `StepResult::Continue` - One instruction executed, more to go
+    /// - `StepResult::Complete(value)` - Execution finished
+    /// - `StepResult::NeedImports(...)` - Need modules before continuing
+    /// - `StepResult::Suspended(...)` - Waiting for order fulfillment
+    /// - `StepResult::Done` - No active execution (call `prepare()` first)
+    ///
+    /// # Example
+    /// ```ignore
+    /// let mut runtime = Runtime::new();
+    /// runtime.prepare("let x = 0; while (true) { x++; }", None)?;
+    ///
+    /// // Run for at most 1000 steps
+    /// for _ in 0..1000 {
+    ///     match runtime.step()? {
+    ///         StepResult::Continue => continue,
+    ///         StepResult::Complete(value) => {
+    ///             println!("Completed: {:?}", value);
+    ///             break;
+    ///         }
+    ///         StepResult::Done => break,
+    ///         _ => break,
+    ///     }
+    /// }
+    /// ```
+    pub fn step(&mut self) -> Result<StepResult, JsError> {
+        self.interpreter.step()
     }
 
-    /// Set the maximum call stack depth
+    /// Prepare code for step-based execution without running it.
     ///
-    /// Default is 256. Set to 0 to disable limit (not recommended).
-    /// Tests should use a lower value (e.g., 50) to catch infinite recursion early.
-    pub fn set_max_call_depth(&mut self, depth: usize) {
-        self.interpreter.set_max_call_depth(depth);
+    /// After calling this, use `step()` to execute one instruction at a time,
+    /// or `run_to_completion()` to run until a terminal result.
+    ///
+    /// # Returns
+    /// - `StepResult::Continue` - Ready to step
+    /// - `StepResult::NeedImports(...)` - Need modules before continuing
+    ///
+    /// # Example
+    /// ```ignore
+    /// let mut runtime = Runtime::new();
+    ///
+    /// // Prepare and run with step limit
+    /// runtime.prepare("let x = 0; while (true) { x++; }", None)?;
+    /// for _ in 0..1000 {
+    ///     match runtime.step()? {
+    ///         StepResult::Continue => continue,
+    ///         StepResult::Complete(value) => {
+    ///             println!("Completed: {:?}", value);
+    ///             break;
+    ///         }
+    ///         _ => break,
+    ///     }
+    /// }
+    /// ```
+    pub fn prepare(&mut self, source: &str, path: Option<&str>) -> Result<StepResult, JsError> {
+        self.interpreter.prepare(source, path.map(ModulePath::new))
+    }
+
+    /// Get the current call stack depth.
+    ///
+    /// Returns the depth of the JavaScript call stack (trampoline stack + interpreter call stack).
+    /// This can be used by the host to implement stack depth limits.
+    ///
+    /// Returns 0 if no execution is active.
+    pub fn call_depth(&self) -> usize {
+        self.interpreter.call_depth()
     }
 
     /// Force a garbage collection cycle

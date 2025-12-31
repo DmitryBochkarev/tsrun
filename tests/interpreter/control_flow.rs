@@ -2890,9 +2890,10 @@ fn test_nested_blocks_outer_var_visible_after() {
 #[test]
 fn test_block_var_not_visible_after() {
     // Block-scoped var should throw ReferenceError after block
-    use tsrun::Runtime;
-    let mut runtime = Runtime::new();
-    let result = runtime.eval(
+    use super::{create_test_runtime, run};
+    let mut runtime = create_test_runtime();
+    let result = run(
+        &mut runtime,
         r#"
         {
             let x = 10;
@@ -2910,9 +2911,10 @@ fn test_block_var_not_visible_after() {
 #[test]
 fn test_nested_block_outer_var_not_visible_after_both() {
     // After nested blocks, outer block var should NOT be visible
-    use tsrun::Runtime;
-    let mut runtime = Runtime::new();
-    let result = runtime.eval(
+    use super::{create_test_runtime, run};
+    let mut runtime = create_test_runtime();
+    let result = run(
+        &mut runtime,
         r#"
         {
             let a = 10;

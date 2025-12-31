@@ -377,7 +377,7 @@ pub fn call_method(
 /// # Example
 /// ```ignore
 /// let guard = runtime.create_guard();
-/// let result = runtime.eval("function add(a, b) { return a + b; } add")?;
+/// let result = runtime.run("function add(a, b) { return a + b; } add", None)?;
 /// if let RuntimeResult::Complete(add_fn) = result {
 ///     let sum = api::call_function(
 ///         &mut runtime,
@@ -532,7 +532,7 @@ pub fn as_object(value: &JsValue) -> Option<Gc<JsObject>> {
 /// let mut runtime = Runtime::new();
 ///
 /// // Evaluate a module with exports
-/// let result = runtime.eval(r#"
+/// let result = runtime.run(r#"
 ///     export interface Processor {
 ///         elementHeader: (element: JsElement) => JsElement;
 ///     }
@@ -574,7 +574,7 @@ pub fn get_export(runtime: &Runtime, name: &str) -> Option<JsValue> {
 /// use tsrun::{Runtime, RuntimeResult, api};
 ///
 /// let mut runtime = Runtime::new();
-/// runtime.eval(r#"
+/// runtime.run(r#"
 ///     export const a = 1;
 ///     export const b = 2;
 ///     export function c() {}
@@ -689,7 +689,7 @@ pub fn create_order_promise(runtime: &mut Runtime, order_id: OrderId) -> Runtime
 /// Resolve a Promise that was created with `create_promise`.
 ///
 /// This will fulfill the Promise with the given value and queue any
-/// `.then()` handlers. Call `runtime.continue_eval()` afterwards to
+/// `.then()` handlers. Call `runtime.run_to_completion()` afterwards to
 /// execute the queued handlers.
 ///
 /// # Errors
@@ -718,7 +718,7 @@ pub fn resolve_promise(
 /// Reject a Promise that was created with `create_promise`.
 ///
 /// This will reject the Promise with the given reason and queue any
-/// `.catch()` or rejection handlers. Call `runtime.continue_eval()` afterwards
+/// `.catch()` or rejection handlers. Call `runtime.run_to_completion()` afterwards
 /// to execute the queued handlers.
 ///
 /// # Errors

@@ -246,20 +246,21 @@ pub struct Interpreter {
     console_counters: FxHashMap<String, u64>,
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // Timeout and Limits
+    // Step-based Execution
     // ═══════════════════════════════════════════════════════════════════════════
-    /// Execution timeout in milliseconds (0 = no timeout)
-    timeout_ms: u64,
+    /// Active VM for step-based execution.
+    /// When set, step() will execute one instruction and return.
+    /// When None, there is no active execution.
+    pub(crate) active_vm: Option<bytecode_vm::BytecodeVM>,
 
-    /// When execution started (for timeout checking)
-    execution_start: Option<std::time::Instant>,
+    /// Module path for active execution (needed for finalizing exports on completion)
+    pub(crate) active_module_path: Option<crate::ModulePath>,
 
-    /// Step counter for batched timeout checking (only check every N steps)
-    step_counter: u32,
+    /// Saved environment for active execution (needed for restoration on completion)
+    pub(crate) active_saved_env: Option<Gc<JsObject>>,
 
-    /// Maximum call stack depth (0 = no limit)
-    /// Default is 256, but tests use a lower value (e.g., 50) to catch infinite recursion early
-    max_call_depth: usize,
+    /// Module environment for active execution (needed for finalizing exports on completion)
+    pub(crate) active_module_env: Option<Gc<JsObject>>,
 
     // ═══════════════════════════════════════════════════════════════════════════
     // Module System
@@ -429,10 +430,11 @@ impl Interpreter {
             well_known_symbols,
             console_timers: FxHashMap::default(),
             console_counters: FxHashMap::default(),
-            timeout_ms: 3000, // Default 3 second timeout
-            execution_start: None,
-            step_counter: 0,
-            max_call_depth: 256, // Default limit to prevent Rust stack overflow
+            // Step-based execution
+            active_vm: None,
+            active_module_path: None,
+            active_saved_env: None,
+            active_module_env: None,
             // Module system
             internal_modules: FxHashMap::default(),
             internal_module_cache: FxHashMap::default(),
@@ -576,70 +578,20 @@ impl Interpreter {
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // Timeout Control
+    // Call Stack Depth
     // ═══════════════════════════════════════════════════════════════════════════
 
-    /// Set the execution timeout in milliseconds
+    /// Get the current call stack depth.
     ///
-    /// Default is 3000ms (3 seconds). Set to 0 to disable timeout.
-    pub fn set_timeout_ms(&mut self, timeout_ms: u64) {
-        self.timeout_ms = timeout_ms;
-    }
-
-    /// Get the current execution timeout in milliseconds
-    pub fn timeout_ms(&self) -> u64 {
-        self.timeout_ms
-    }
-
-    /// Set the maximum call stack depth
-    ///
-    /// Default is 256. Set to 0 to disable limit (not recommended).
-    /// Tests should use a lower value (e.g., 50) to catch infinite recursion early.
-    pub fn set_max_call_depth(&mut self, depth: usize) {
-        self.max_call_depth = depth;
-    }
-
-    /// Get the current maximum call stack depth
-    pub fn max_call_depth(&self) -> usize {
-        self.max_call_depth
-    }
-
-    /// Start the execution timer
-    fn start_execution(&mut self) {
-        if self.timeout_ms > 0 && self.execution_start.is_none() {
-            self.execution_start = Some(std::time::Instant::now());
-        }
-    }
-
-    /// Check if execution has exceeded the timeout
-    ///
-    /// Returns an error if the timeout has been exceeded, otherwise Ok(()).
-    /// If timeout_ms is 0, the timeout is disabled.
-    /// Only performs the actual time check every 1000 steps for performance.
-    fn check_timeout(&mut self) -> Result<(), JsError> {
-        // Skip check if timeout is disabled
-        if self.timeout_ms == 0 {
-            return Ok(());
-        }
-
-        // Only check every 1000 steps
-        self.step_counter += 1;
-        if self.step_counter < 1000 {
-            return Ok(());
-        }
-        self.step_counter = 0;
-
-        if let Some(start) = self.execution_start {
-            let elapsed = start.elapsed();
-            let elapsed_ms = elapsed.as_millis() as u64;
-            if elapsed_ms > self.timeout_ms {
-                return Err(JsError::Timeout {
-                    timeout_ms: self.timeout_ms,
-                    elapsed_ms,
-                });
-            }
-        }
-        Ok(())
+    /// Returns the total depth combining the interpreter's call stack and
+    /// the active VM's trampoline stack (if any).
+    pub fn call_depth(&self) -> usize {
+        let vm_depth = self
+            .active_vm
+            .as_ref()
+            .map(|vm| vm.trampoline_depth())
+            .unwrap_or(0);
+        self.call_stack.len() + vm_depth
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -729,7 +681,7 @@ impl Interpreter {
     ///
     /// If no path is provided, relative imports will be treated as bare specifiers.
     ///
-    /// Returns RuntimeResult which may indicate:
+    /// Returns StepResult which may indicate:
     /// - Complete: execution finished with a value
     /// - NeedImports: modules need to be provided before continuing
     /// - Suspended: waiting for orders to be fulfilled
@@ -737,7 +689,7 @@ impl Interpreter {
         &mut self,
         source: &str,
         module_path: Option<crate::ModulePath>,
-    ) -> Result<crate::RuntimeResult, JsError> {
+    ) -> Result<crate::StepResult, JsError> {
         use crate::compiler::Compiler;
         use bytecode_vm::BytecodeVM;
 
@@ -762,7 +714,7 @@ impl Interpreter {
         if !missing.is_empty() {
             // Save the program for later execution when imports are provided
             self.pending_program = Some(program);
-            return Ok(crate::RuntimeResult::NeedImports(missing));
+            return Ok(crate::StepResult::NeedImports(missing));
         }
 
         // Create module environment for main module (if module_path is provided)
@@ -781,10 +733,7 @@ impl Interpreter {
         // All imports satisfied - set up import bindings first
         self.setup_import_bindings(&program)?;
 
-        // Now compile to bytecode and execute
-        self.start_execution();
-
-        // Compile the program to bytecode (with source file for stack traces if available)
+        // Compile the program to bytecode
         let chunk = if let Some(ref path) = module_path {
             Compiler::compile_program_with_source(
                 &program,
@@ -805,7 +754,7 @@ impl Interpreter {
             self.env = saved;
 
             // If execution completed successfully, store the main module exports
-            if let Ok(crate::RuntimeResult::Complete(_)) = &result
+            if let Ok(crate::StepResult::Complete(_)) = &result
                 && let Some(ref path) = module_path
             {
                 self.finalize_module_exports(path.clone(), module_env);
@@ -905,7 +854,7 @@ impl Interpreter {
     fn run_vm_to_completion(
         &mut self,
         mut vm: bytecode_vm::BytecodeVM,
-    ) -> Result<crate::RuntimeResult, JsError> {
+    ) -> Result<crate::StepResult, JsError> {
         use bytecode_vm::VmResult;
 
         let result = vm.run(self);
@@ -916,17 +865,17 @@ impl Interpreter {
                 if !self.pending_orders.is_empty() {
                     let pending = std::mem::take(&mut self.pending_orders);
                     let cancelled = std::mem::take(&mut self.cancelled_orders);
-                    return Ok(crate::RuntimeResult::Suspended { pending, cancelled });
+                    return Ok(crate::StepResult::Suspended { pending, cancelled });
                 }
                 // Check for suspended order awaits or waiting async contexts
                 if self.suspended_for_order.is_some() || self.wait_graph.has_waiting_contexts() {
                     let cancelled = std::mem::take(&mut self.cancelled_orders);
-                    return Ok(crate::RuntimeResult::Suspended {
+                    return Ok(crate::StepResult::Suspended {
                         pending: Vec::new(),
                         cancelled,
                     });
                 }
-                Ok(crate::RuntimeResult::Complete(
+                Ok(crate::StepResult::Complete(
                     crate::RuntimeValue::from_guarded(guarded),
                 ))
             }
@@ -957,19 +906,483 @@ impl Interpreter {
 
                 let pending = std::mem::take(&mut self.pending_orders);
                 let cancelled = std::mem::take(&mut self.cancelled_orders);
-                Ok(crate::RuntimeResult::Suspended { pending, cancelled })
+                Ok(crate::StepResult::Suspended { pending, cancelled })
             }
             VmResult::SuspendForOrder(order_suspension) => {
                 // Order suspension - waiting for host to provide a value
                 self.suspended_for_order = Some(order_suspension);
                 let pending = std::mem::take(&mut self.pending_orders);
                 let cancelled = std::mem::take(&mut self.cancelled_orders);
-                Ok(crate::RuntimeResult::Suspended { pending, cancelled })
+                Ok(crate::StepResult::Suspended { pending, cancelled })
             }
             VmResult::Yield(_) | VmResult::YieldStar(_) => Err(JsError::internal_error(
                 "Bytecode execution cannot yield at top level",
             )),
         }
+    }
+
+    /// Execute a single bytecode instruction.
+    ///
+    /// Returns `StepResult::Continue` if more instructions remain,
+    /// or a terminal result if execution completed or needs input.
+    ///
+    /// Call `prepare()` to set up execution before using `step()`.
+    pub fn step(&mut self) -> Result<crate::StepResult, JsError> {
+        use bytecode_vm::{BytecodeVM, VmStepResult};
+
+        // If there's no active VM, try to set one up from various sources
+        if self.active_vm.is_none() {
+            // 1. Check for order suspension with fulfilled response
+            if let Some(order_suspension) = self.suspended_for_order.take() {
+                if let Some(result) = self.order_responses.remove(&order_suspension.order_id) {
+                    match result {
+                        Ok(runtime_value) => {
+                            let value = runtime_value.value().clone();
+                            let vm_guard = self.heap.create_guard();
+                            if let JsValue::Object(ref obj) = value {
+                                vm_guard.guard(obj.cheap_clone());
+                            }
+
+                            let mut vm = BytecodeVM::from_saved_state(
+                                order_suspension.state,
+                                JsValue::Object(self.global.clone()),
+                                vm_guard,
+                                &self.heap,
+                            );
+
+                            // Set response value directly in resume register
+                            vm.set_resume_value(order_suspension.resume_register, value);
+                            self.active_vm = Some(vm);
+                        }
+                        Err(error) => {
+                            // Inject error as exception
+                            let vm_guard = self.heap.create_guard();
+                            let mut vm = BytecodeVM::from_saved_state(
+                                order_suspension.state,
+                                JsValue::Object(self.global.clone()),
+                                vm_guard,
+                                &self.heap,
+                            );
+
+                            let error_msg = JsValue::String(JsString::from(error.to_string()));
+                            if vm.inject_exception(self, error_msg.clone()) {
+                                self.active_vm = Some(vm);
+                            } else {
+                                let guarded = Guarded::from_value(error_msg, &self.heap);
+                                return Err(JsError::thrown(guarded));
+                            }
+                        }
+                    }
+                } else {
+                    // Order not yet fulfilled - re-suspend
+                    self.suspended_for_order = Some(order_suspension);
+                    let pending = std::mem::take(&mut self.pending_orders);
+                    let cancelled = std::mem::take(&mut self.cancelled_orders);
+                    return Ok(crate::StepResult::Suspended { pending, cancelled });
+                }
+            }
+
+            // 2. Check for waiting async contexts with resolved promises
+            if self.active_vm.is_none() {
+                self.check_resolved_promises();
+
+                if let Some(ctx) = self.wait_graph.take_ready() {
+                    let promise_status = {
+                        let obj_ref = ctx.waiting_on.borrow();
+                        if let ExoticObject::Promise(promise_state) = &obj_ref.exotic {
+                            let status = promise_state.borrow().status.clone();
+                            let result = promise_state.borrow().result.clone();
+                            Some((status, result))
+                        } else {
+                            None
+                        }
+                    };
+
+                    if let Some((status, result)) = promise_status {
+                        let result_value = result.unwrap_or(JsValue::Undefined);
+
+                        match status {
+                            PromiseStatus::Fulfilled => {
+                                let vm_guard = self.heap.create_guard();
+                                let mut vm = BytecodeVM::from_saved_state(
+                                    ctx.state,
+                                    JsValue::Object(self.global.clone()),
+                                    vm_guard,
+                                    &self.heap,
+                                );
+                                vm.set_resume_value(ctx.resume_register, result_value);
+                                self.active_vm = Some(vm);
+                            }
+                            PromiseStatus::Rejected => {
+                                let vm_guard = self.heap.create_guard();
+                                let mut vm = BytecodeVM::from_saved_state(
+                                    ctx.state,
+                                    JsValue::Object(self.global.clone()),
+                                    vm_guard,
+                                    &self.heap,
+                                );
+                                if vm.inject_exception(self, result_value.clone()) {
+                                    self.active_vm = Some(vm);
+                                } else {
+                                    let guarded = Guarded::from_value(result_value, &self.heap);
+                                    return Err(JsError::thrown(guarded));
+                                }
+                            }
+                            PromiseStatus::Pending => {
+                                // Re-add to wait graph (should not happen for ready contexts)
+                                self.wait_graph.add_context(ctx);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 3. Check for pending program that needs imports
+            if self.active_vm.is_none() {
+                if let Some(program) = self.pending_program.take() {
+                    // Try to set up the VM from the pending program
+                    let setup_result = self.setup_vm_from_program(program)?;
+                    if !matches!(setup_result, crate::StepResult::Continue) {
+                        // Still needs imports or other action
+                        return Ok(setup_result);
+                    }
+                }
+            }
+        }
+
+        // Take the VM out temporarily to work with it
+        let Some(mut vm) = self.active_vm.take() else {
+            // No VM and nothing to resume
+            // Check if there are waiting contexts (unresolved promises) or suspended orders
+            if self.suspended_for_order.is_some() || self.wait_graph.has_waiting_contexts() {
+                let pending = std::mem::take(&mut self.pending_orders);
+                let cancelled = std::mem::take(&mut self.cancelled_orders);
+                return Ok(crate::StepResult::Suspended { pending, cancelled });
+            }
+            // Truly done
+            return Ok(crate::StepResult::Done);
+        };
+
+        let step_result = vm.step(self);
+
+        match step_result {
+            VmStepResult::Continue => {
+                // Put VM back and return Continue
+                self.active_vm = Some(vm);
+                Ok(crate::StepResult::Continue)
+            }
+            VmStepResult::Terminal(vm_result) => {
+                // Terminal state - process and clear active execution state
+                let result = self.process_vm_result(vm_result)?;
+
+                // If not suspended (i.e., actually complete), finalize
+                if matches!(result, crate::StepResult::Complete(_)) {
+                    self.finalize_active_execution();
+                }
+
+                Ok(result)
+            }
+        }
+    }
+
+    /// Process a terminal VmResult and convert to StepResult
+    fn process_vm_result(
+        &mut self,
+        result: bytecode_vm::VmResult,
+    ) -> Result<crate::StepResult, JsError> {
+        use bytecode_vm::VmResult;
+
+        match result {
+            VmResult::Complete(guarded) => {
+                // Check if there are pending orders to return
+                if !self.pending_orders.is_empty() {
+                    let pending = std::mem::take(&mut self.pending_orders);
+                    let cancelled = std::mem::take(&mut self.cancelled_orders);
+                    return Ok(crate::StepResult::Suspended { pending, cancelled });
+                }
+                // Check for suspended order awaits or waiting async contexts
+                if self.suspended_for_order.is_some() || self.wait_graph.has_waiting_contexts() {
+                    let cancelled = std::mem::take(&mut self.cancelled_orders);
+                    return Ok(crate::StepResult::Suspended {
+                        pending: Vec::new(),
+                        cancelled,
+                    });
+                }
+                Ok(crate::StepResult::Complete(
+                    crate::RuntimeValue::from_guarded(guarded),
+                ))
+            }
+            VmResult::Error(err) => Err(self.materialize_thrown_error(err)),
+            VmResult::Suspend(suspension) => {
+                // Promise await suspension - add to wait graph
+                let ctx_id = ContextId(self.next_context_id);
+                self.next_context_id += 1;
+
+                // Get or create PromiseId for this promise
+                let promise_key = suspension.waiting_on.cheap_clone();
+                let promise_id = *self.promise_ids.entry(promise_key).or_insert_with(|| {
+                    let id = PromiseId(self.next_promise_id);
+                    self.next_promise_id += 1;
+                    id
+                });
+
+                // Create suspended context
+                let suspended_ctx = SuspendedContext {
+                    id: ctx_id,
+                    state: suspension.state,
+                    waiting_on: suspension.waiting_on,
+                    waiting_on_id: promise_id,
+                    resume_register: suspension.resume_register,
+                };
+
+                self.wait_graph.add_context(suspended_ctx);
+
+                let pending = std::mem::take(&mut self.pending_orders);
+                let cancelled = std::mem::take(&mut self.cancelled_orders);
+                Ok(crate::StepResult::Suspended { pending, cancelled })
+            }
+            VmResult::SuspendForOrder(order_suspension) => {
+                // Order suspension - waiting for host to provide a value
+                self.suspended_for_order = Some(order_suspension);
+                let pending = std::mem::take(&mut self.pending_orders);
+                let cancelled = std::mem::take(&mut self.cancelled_orders);
+                Ok(crate::StepResult::Suspended { pending, cancelled })
+            }
+            VmResult::Yield(_) | VmResult::YieldStar(_) => Err(JsError::internal_error(
+                "Bytecode execution cannot yield at top level",
+            )),
+        }
+    }
+
+    /// Finalize active execution (restore environment, finalize exports)
+    fn finalize_active_execution(&mut self) {
+        // Take state
+        let saved_env = self.active_saved_env.take();
+        let module_env = self.active_module_env.take();
+        let module_path = self.active_module_path.take();
+
+        // Restore environment and finalize exports if we used a module environment
+        if let (Some(saved), Some(env)) = (saved_env, module_env) {
+            self.env = saved;
+
+            // Store the main module exports
+            if let Some(path) = module_path {
+                self.finalize_module_exports(path, env);
+            }
+        }
+    }
+
+    /// Prepare code for step-based execution without running it.
+    ///
+    /// After calling this, use `step()` to execute one instruction at a time.
+    /// Returns `Ok(())` if setup succeeded, or an error if parsing/compilation failed
+    /// or if imports are needed.
+    pub fn prepare(
+        &mut self,
+        source: &str,
+        module_path: Option<crate::ModulePath>,
+    ) -> Result<crate::StepResult, JsError> {
+        use crate::compiler::Compiler;
+        use bytecode_vm::BytecodeVM;
+
+        // Set main module path if this is the entry point
+        if self.main_module_path.is_none() {
+            self.main_module_path = module_path.clone();
+        }
+        self.current_module_path = module_path.clone();
+
+        // Parse the source
+        let mut parser = Parser::new(source, &mut self.string_dict);
+        let program = parser.parse_program()?;
+
+        // Collect all import requests with resolved paths
+        let imports = self.collect_import_requests_internal(&program, module_path.as_ref(), None);
+
+        // Filter to only missing imports and deduplicate
+        let missing = self.filter_missing_imports(imports);
+        let missing = Self::dedupe_import_requests(missing);
+
+        if !missing.is_empty() {
+            // Save the program for later execution when imports are provided
+            self.pending_program = Some(program);
+            return Ok(crate::StepResult::NeedImports(missing));
+        }
+
+        // Create module environment for main module (if module_path is provided)
+        let (saved_env, module_env) = if module_path.is_some() {
+            let saved = self.env.cheap_clone();
+            let module_env = self.create_module_environment();
+            self.root_guard.guard(module_env.clone());
+            self.env = module_env.cheap_clone();
+            (Some(saved), Some(module_env))
+        } else {
+            (None, None)
+        };
+
+        // All imports satisfied - set up import bindings first
+        self.setup_import_bindings(&program)?;
+
+        // Compile the program to bytecode
+        let chunk = if let Some(ref path) = module_path {
+            Compiler::compile_program_with_source(
+                &program,
+                std::path::PathBuf::from(path.as_str()),
+            )?
+        } else {
+            Compiler::compile_program(&program)?
+        };
+
+        // Create VM but don't run it
+        let vm_guard = self.heap.create_guard();
+        let vm = BytecodeVM::with_guard(chunk, JsValue::Object(self.global.clone()), vm_guard);
+
+        // Store VM and state for step-based execution
+        self.active_vm = Some(vm);
+        self.active_module_path = module_path;
+        self.active_saved_env = saved_env;
+        self.active_module_env = module_env;
+
+        Ok(crate::StepResult::Continue)
+    }
+
+    /// Process any pending module sources that are ready to execute.
+    /// This executes modules in dependency order until all are executed
+    /// or some still have missing imports.
+    /// Process pending modules that have all their imports satisfied.
+    /// Returns a list of unprovided imports if some pending modules still need dependencies
+    /// that the host hasn't provided yet.
+    fn process_pending_modules(&mut self) -> Result<Vec<crate::ImportRequest>, JsError> {
+        loop {
+            // Collect all unprovided imports across all pending modules
+            // (imports that the host hasn't provided yet)
+            let mut all_unprovided: Vec<crate::ImportRequest> = Vec::new();
+            let mut ready_modules: Vec<crate::ModulePath> = Vec::new();
+
+            // Clone keys to avoid borrow issues
+            let pending_keys: Vec<crate::ModulePath> =
+                self.pending_module_sources.keys().cloned().collect();
+
+            for module_path in &pending_keys {
+                // Skip if already loaded
+                if self.loaded_modules.contains_key(module_path) {
+                    continue;
+                }
+
+                // Get the program to check its imports
+                if let Some(program) = self.pending_module_sources.get(module_path) {
+                    let imports = self.collect_import_requests(program, Some(module_path));
+                    // Check if all imports are LOADED (not just provided)
+                    let missing_from_loaded = self.filter_missing_imports(imports.clone());
+
+                    if missing_from_loaded.is_empty() {
+                        // All imports are loaded - this module is ready to execute
+                        ready_modules.push(module_path.clone());
+                    } else {
+                        // Check which imports the HOST still needs to provide
+                        let unprovided = self.filter_unprovided_imports(imports);
+                        for req in unprovided {
+                            let already_in_list = all_unprovided
+                                .iter()
+                                .any(|r| r.resolved_path == req.resolved_path);
+                            if !already_in_list {
+                                all_unprovided.push(req);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // If we have modules ready to execute, execute them
+            if !ready_modules.is_empty() {
+                for module_path in ready_modules {
+                    self.execute_pending_module(&module_path)?;
+                }
+                // Continue the loop to check if more modules are now ready
+                continue;
+            }
+
+            // Return any imports the host still needs to provide
+            return Ok(all_unprovided);
+        }
+    }
+
+    /// Set up VM from a pending program (called when imports have been provided)
+    fn setup_vm_from_program(
+        &mut self,
+        program: crate::ast::Program,
+    ) -> Result<crate::StepResult, JsError> {
+        use crate::compiler::Compiler;
+        use bytecode_vm::BytecodeVM;
+
+        let module_path = self.current_module_path.clone();
+
+        // Collect all import requests with resolved paths
+        let imports = self.collect_import_requests_internal(&program, module_path.as_ref(), None);
+
+        // Check what the HOST still needs to provide (not in loaded_modules OR pending_module_sources)
+        let unprovided = self.filter_unprovided_imports(imports.clone());
+        let unprovided = Self::dedupe_import_requests(unprovided);
+
+        if !unprovided.is_empty() {
+            // Host needs to provide these modules
+            self.pending_program = Some(program);
+            return Ok(crate::StepResult::NeedImports(unprovided));
+        }
+
+        // Execute any pending modules before setting up the main program
+        // This will execute in topological order (dependencies first)
+        let pending_module_unprovided = self.process_pending_modules()?;
+        if !pending_module_unprovided.is_empty() {
+            // Pending modules have dependencies the host hasn't provided yet
+            self.pending_program = Some(program);
+            return Ok(crate::StepResult::NeedImports(pending_module_unprovided));
+        }
+
+        // After processing, verify all main program imports are now loaded
+        let still_missing = self.filter_missing_imports(imports);
+        if !still_missing.is_empty() {
+            // This shouldn't happen if process_pending_modules worked correctly
+            // But handle it gracefully
+            self.pending_program = Some(program);
+            let unprovided = self.filter_unprovided_imports(still_missing);
+            return Ok(crate::StepResult::NeedImports(unprovided));
+        }
+
+        // Create module environment for main module (if module_path is provided)
+        let (saved_env, module_env) = if module_path.is_some() {
+            let saved = self.env.cheap_clone();
+            let module_env = self.create_module_environment();
+            self.root_guard.guard(module_env.clone());
+            self.env = module_env.cheap_clone();
+            (Some(saved), Some(module_env))
+        } else {
+            (None, None)
+        };
+
+        // All imports satisfied - set up import bindings first
+        self.setup_import_bindings(&program)?;
+
+        // Compile the program to bytecode
+        let chunk = if let Some(ref path) = module_path {
+            Compiler::compile_program_with_source(
+                &program,
+                std::path::PathBuf::from(path.as_str()),
+            )?
+        } else {
+            Compiler::compile_program(&program)?
+        };
+
+        // Create VM
+        let vm_guard = self.heap.create_guard();
+        let vm = BytecodeVM::with_guard(chunk, JsValue::Object(self.global.clone()), vm_guard);
+
+        // Store VM and state for step-based execution
+        self.active_vm = Some(vm);
+        self.active_module_path = module_path;
+        self.active_saved_env = saved_env;
+        self.active_module_env = module_env;
+
+        Ok(crate::StepResult::Continue)
     }
 
     /// Convert ThrownValue errors to RuntimeError with string data
@@ -1207,250 +1620,9 @@ impl Interpreter {
         Ok(())
     }
 
-    /// Continue evaluation after providing modules or fulfilling orders
-    pub fn continue_eval(&mut self) -> Result<crate::RuntimeResult, JsError> {
-        use crate::compiler::Compiler;
-        use bytecode_vm::BytecodeVM;
-
-        // Check for order suspension first (waiting for host to provide a value)
-        if let Some(order_suspension) = self.suspended_for_order.take() {
-            // Look up the response for this order
-            if let Some(result) = self.order_responses.remove(&order_suspension.order_id) {
-                match result {
-                    Ok(runtime_value) => {
-                        let value = runtime_value.value().clone();
-                        let vm_guard = self.heap.create_guard();
-                        if let JsValue::Object(ref obj) = value {
-                            vm_guard.guard(obj.cheap_clone());
-                        }
-
-                        let mut vm = BytecodeVM::from_saved_state(
-                            order_suspension.state,
-                            JsValue::Object(self.global.clone()),
-                            vm_guard,
-                            &self.heap,
-                        );
-
-                        // Set response value directly in resume register
-                        vm.set_resume_value(order_suspension.resume_register, value);
-
-                        // Run VM - if value is a Promise, Op::Await will handle it
-                        return self.run_vm_to_completion(vm);
-                    }
-                    Err(error) => {
-                        // Inject error as exception
-                        let vm_guard = self.heap.create_guard();
-                        let mut vm = BytecodeVM::from_saved_state(
-                            order_suspension.state,
-                            JsValue::Object(self.global.clone()),
-                            vm_guard,
-                            &self.heap,
-                        );
-
-                        let error_msg = JsValue::String(JsString::from(error.to_string()));
-                        if vm.inject_exception(self, error_msg.clone()) {
-                            return self.run_vm_to_completion(vm);
-                        } else {
-                            let guarded = Guarded::from_value(error_msg, &self.heap);
-                            return Err(JsError::thrown(guarded));
-                        }
-                    }
-                }
-            } else {
-                // Order not yet fulfilled - re-suspend
-                self.suspended_for_order = Some(order_suspension);
-                let pending = std::mem::take(&mut self.pending_orders);
-                let cancelled = std::mem::take(&mut self.cancelled_orders);
-                return Ok(crate::RuntimeResult::Suspended { pending, cancelled });
-            }
-        }
-
-        // Process any contexts in the wait graph that are ready
-        // First, check all waiting contexts for resolved promises
-        self.check_resolved_promises();
-
-        // Now try to resume any ready context
-        if let Some(ctx) = self.wait_graph.take_ready() {
-            // Check the promise status
-            let promise_status = {
-                let obj_ref = ctx.waiting_on.borrow();
-                if let ExoticObject::Promise(promise_state) = &obj_ref.exotic {
-                    let status = promise_state.borrow().status.clone();
-                    let result = promise_state.borrow().result.clone();
-                    Some((status, result))
-                } else {
-                    None
-                }
-            };
-
-            if let Some((status, result)) = promise_status {
-                match status {
-                    PromiseStatus::Fulfilled => {
-                        let value = result.unwrap_or(JsValue::Undefined);
-                        let vm_guard = self.heap.create_guard();
-                        if let JsValue::Object(ref obj) = value {
-                            vm_guard.guard(obj.cheap_clone());
-                        }
-
-                        let mut vm = BytecodeVM::from_saved_state(
-                            ctx.state,
-                            JsValue::Object(self.global.clone()),
-                            vm_guard,
-                            &self.heap,
-                        );
-
-                        vm.set_resume_value(ctx.resume_register, value);
-                        return self.run_vm_to_completion(vm);
-                    }
-                    PromiseStatus::Rejected => {
-                        let reason = result.unwrap_or(JsValue::Undefined);
-                        let vm_guard = self.heap.create_guard();
-                        if let JsValue::Object(ref obj) = reason {
-                            vm_guard.guard(obj.cheap_clone());
-                        }
-
-                        let mut vm = BytecodeVM::from_saved_state(
-                            ctx.state,
-                            JsValue::Object(self.global.clone()),
-                            vm_guard,
-                            &self.heap,
-                        );
-
-                        if vm.inject_exception(self, reason.clone()) {
-                            return self.run_vm_to_completion(vm);
-                        } else {
-                            let guarded = Guarded::from_value(reason, &self.heap);
-                            return Err(JsError::thrown(guarded));
-                        }
-                    }
-                    PromiseStatus::Pending => {
-                        // Should not happen if we just took from ready queue
-                        // Put it back
-                        self.wait_graph.add_context(ctx);
-                    }
-                }
-            }
-        }
-
-        // First, try to execute any pending modules that have all their imports
-        loop {
-            // Collect all missing imports across all pending modules
-            let mut all_missing: Vec<crate::ImportRequest> = Vec::new();
-            let mut ready_modules: Vec<crate::ModulePath> = Vec::new();
-
-            // Clone keys to avoid borrow issues
-            let pending_keys: Vec<crate::ModulePath> =
-                self.pending_module_sources.keys().cloned().collect();
-
-            for module_path in &pending_keys {
-                // Skip if already loaded
-                if self.loaded_modules.contains_key(module_path) {
-                    continue;
-                }
-
-                // Get the program to check its imports
-                if let Some(program) = self.pending_module_sources.get(module_path) {
-                    let imports = self.collect_import_requests(program, Some(module_path));
-                    let missing = self.filter_missing_imports(imports);
-
-                    if missing.is_empty() {
-                        // This module is ready to execute
-                        ready_modules.push(module_path.clone());
-                    } else {
-                        // Collect missing imports (dedupe by resolved path)
-                        for req in missing {
-                            let already_pending =
-                                self.pending_module_sources.contains_key(&req.resolved_path);
-                            let already_in_list = all_missing
-                                .iter()
-                                .any(|r| r.resolved_path == req.resolved_path);
-                            if !already_pending && !already_in_list {
-                                all_missing.push(req);
-                            }
-                        }
-                    }
-                }
-            }
-
-            // If we have modules ready to execute, execute them
-            if !ready_modules.is_empty() {
-                for module_path in ready_modules {
-                    self.execute_pending_module(&module_path)?;
-                }
-                // Continue the loop to check if more modules are now ready
-                continue;
-            }
-
-            // If we still have missing imports, return them
-            if !all_missing.is_empty() {
-                return Ok(crate::RuntimeResult::NeedImports(all_missing));
-            }
-
-            // No more pending modules to process
-            break;
-        }
-
-        // If we have a pending program waiting for imports, check if we can execute it now
-        if let Some(program) = self.pending_program.take() {
-            // Re-check imports using the main module path as base
-            let imports = self.collect_import_requests(&program, self.main_module_path.as_ref());
-            let missing = self.filter_missing_imports(imports);
-            let missing = Self::dedupe_import_requests(missing);
-
-            if !missing.is_empty() {
-                // Still missing imports - save program again and return
-                self.pending_program = Some(program);
-                return Ok(crate::RuntimeResult::NeedImports(missing));
-            }
-
-            // All imports satisfied - set up import bindings first
-            self.setup_import_bindings(&program)?;
-
-            // Now compile to bytecode and execute
-            self.start_execution();
-
-            // Compile the program to bytecode (with source file for stack traces if available)
-            let chunk = if let Some(ref path) = self.main_module_path {
-                Compiler::compile_program_with_source(
-                    &program,
-                    std::path::PathBuf::from(path.as_str()),
-                )?
-            } else {
-                Compiler::compile_program(&program)?
-            };
-
-            // Run the bytecode VM
-            let vm_guard = self.heap.create_guard();
-            let vm = BytecodeVM::with_guard(chunk, JsValue::Object(self.global.clone()), vm_guard);
-
-            return self.run_vm_to_completion(vm);
-        }
-
-        // Check if there are pending orders to return
-        if !self.pending_orders.is_empty() {
-            let pending = std::mem::take(&mut self.pending_orders);
-            let cancelled = std::mem::take(&mut self.cancelled_orders);
-            return Ok(crate::RuntimeResult::Suspended { pending, cancelled });
-        }
-
-        // Check for suspended order awaits or waiting async contexts
-        if self.suspended_for_order.is_some() || self.wait_graph.has_waiting_contexts() {
-            let cancelled = std::mem::take(&mut self.cancelled_orders);
-            return Ok(crate::RuntimeResult::Suspended {
-                pending: Vec::new(),
-                cancelled,
-            });
-        }
-
-        // No pending orders - execution is complete
-        Ok(crate::RuntimeResult::Complete(
-            crate::RuntimeValue::unguarded(JsValue::Undefined),
-        ))
-    }
-
     /// Fulfill orders with responses from the host
     ///
-    /// Stores responses for later consumption when VM resumes via continue_eval.
+    /// Stores responses for later consumption when VM resumes via step().
     /// The response value becomes the return value of __order__().
     pub fn fulfill_orders(&mut self, responses: Vec<crate::OrderResponse>) {
         for response in responses {
@@ -1569,6 +1741,7 @@ impl Interpreter {
     }
 
     /// Filter import requests to only those that are missing (not internal, not already loaded).
+    /// Note: pending_module_sources are NOT considered "available" - they must be loaded first.
     fn filter_missing_imports(
         &self,
         imports: Vec<crate::ImportRequest>,
@@ -1581,7 +1754,39 @@ impl Interpreter {
                     return false;
                 }
                 // Already loaded modules don't need to be requested
-                !self.loaded_modules.contains_key(&req.resolved_path)
+                if self.loaded_modules.contains_key(&req.resolved_path) {
+                    return false;
+                }
+                // Note: We do NOT check pending_module_sources here.
+                // A module is only truly available when it's in loaded_modules.
+                // Checking pending_module_sources would break topological ordering.
+                true
+            })
+            .collect()
+    }
+
+    /// Filter import requests, also considering pending module sources as "provided".
+    /// Use this when checking if the HOST needs to provide more modules.
+    fn filter_unprovided_imports(
+        &self,
+        imports: Vec<crate::ImportRequest>,
+    ) -> Vec<crate::ImportRequest> {
+        imports
+            .into_iter()
+            .filter(|req| {
+                // Internal modules are resolved automatically
+                if self.is_internal_module(&req.specifier) {
+                    return false;
+                }
+                // Already loaded modules don't need to be requested
+                if self.loaded_modules.contains_key(&req.resolved_path) {
+                    return false;
+                }
+                // Pending module sources (provided but not yet executed)
+                if self.pending_module_sources.contains_key(&req.resolved_path) {
+                    return false;
+                }
+                true
             })
             .collect()
     }
@@ -3365,14 +3570,6 @@ impl Interpreter {
         args: &[JsValue],
         new_target: JsValue,
     ) -> Result<Guarded, JsError> {
-        // Check call stack depth limit
-        if self.max_call_depth > 0 && self.call_stack.len() >= self.max_call_depth {
-            return Err(JsError::range_error(format!(
-                "Maximum call stack size exceeded (depth {})",
-                self.call_stack.len()
-            )));
-        }
-
         let JsValue::Object(func_obj) = callee else {
             return Err(JsError::type_error("Not a function"));
         };

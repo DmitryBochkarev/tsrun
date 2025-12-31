@@ -1,8 +1,8 @@
 //! Function-related tests
 
-use super::eval;
-use tsrun::JsValue;
+use super::{eval, run};
 use tsrun::value::JsString;
+use tsrun::{JsValue, Runtime, StepResult};
 
 #[test]
 fn test_function_name_property() {
@@ -367,99 +367,18 @@ fn test_fibonacci_iterative() {
     assert_eq!(result, JsValue::Number(55.0));
 }
 
-// Test that call stack depth limit works
-#[test]
-fn test_call_stack_depth_limit() {
-    // Create a runtime with very low depth limit (10) to test without stack overflow
-    let mut runtime = tsrun::Runtime::new();
-    runtime.set_max_call_depth(10);
-
-    // Test that recursion to depth 5 works (well under limit)
-    let result = runtime.eval(
-        r#"
-        function countDown(n) {
-            if (n <= 0) return 0;
-            return 1 + countDown(n - 1);
-        }
-        countDown(5)
-    "#,
-        None,
-    );
-    assert!(result.is_ok(), "countDown(5) should work");
-    let result_value = match result.unwrap() {
-        tsrun::RuntimeResult::Complete(rv) => rv.value().clone(),
-        _ => panic!("Expected Complete result"),
-    };
-    assert_eq!(result_value, tsrun::JsValue::Number(5.0));
-
-    // Test that depth 15 should fail (over 10 limit)
-    let mut runtime2 = tsrun::Runtime::new();
-    runtime2.set_max_call_depth(10);
-    let result2 = runtime2.eval(
-        r#"
-        function countDown(n) {
-            if (n <= 0) return 0;
-            return 1 + countDown(n - 1);
-        }
-        countDown(15)
-    "#,
-        None,
-    );
-
-    assert!(
-        result2.is_err(),
-        "Deep recursion should error: {:?}",
-        result2
-    );
-    let err = format!("{:?}", result2.unwrap_err());
-    assert!(
-        err.contains("Maximum call stack size exceeded"),
-        "Error should mention stack size: {}",
-        err
-    );
-}
-
-// Test infinite recursion is caught
-#[test]
-fn test_infinite_recursion_caught() {
-    // Use a low depth limit to ensure we catch it without Rust stack overflow
-    let mut runtime = tsrun::Runtime::new();
-    runtime.set_max_call_depth(10);
-
-    let result = runtime.eval(
-        r#"
-        function infinite() {
-            return infinite();
-        }
-        infinite()
-    "#,
-        None,
-    );
-
-    assert!(result.is_err(), "Infinite recursion should error");
-    let err = format!("{:?}", result.unwrap_err());
-    assert!(
-        err.contains("Maximum call stack size exceeded"),
-        "Error should mention stack size: {}",
-        err
-    );
-}
-
 // ============================================================
-// Array callback depth tests (for trampoline verification)
+// Array callback tests (for trampoline verification)
 // ============================================================
 
-/// Test that array callbacks don't blow the stack
-/// This tests the current behavior - callbacks go through interp.call_function
-/// which adds Rust stack frames. With trampoline migration, this would use
-/// less Rust stack.
+/// Test that array callbacks work correctly
 #[test]
-fn test_array_map_callback_depth() {
+fn test_array_map_callback() {
     // Basic map with callback - should work fine
-    let mut runtime = tsrun::Runtime::new();
-    runtime.set_max_call_depth(100);
+    let mut runtime = Runtime::new();
 
-    let result = runtime.eval(
+    let result = run(
+        &mut runtime,
         r#"
         [1, 2, 3].map(function(x) { return x * 2; })
     "#,
@@ -471,10 +390,10 @@ fn test_array_map_callback_depth() {
 /// Test nested array callbacks - map inside map
 #[test]
 fn test_nested_array_callbacks() {
-    let mut runtime = tsrun::Runtime::new();
-    runtime.set_max_call_depth(100);
+    let mut runtime = Runtime::new();
 
-    let result = runtime.eval(
+    let result = run(
+        &mut runtime,
         r#"
         const arr = [[1, 2], [3, 4]];
         arr.map(function(inner) {
@@ -487,15 +406,14 @@ fn test_nested_array_callbacks() {
 }
 
 /// Test array callback that itself recurses
-/// This is the stress test for stack depth
 #[test]
 fn test_array_callback_with_recursion() {
-    let mut runtime = tsrun::Runtime::new();
-    runtime.set_max_call_depth(50);
+    let mut runtime = Runtime::new();
 
     // The callback itself has recursion depth 5
     // forEach has 3 elements, each calling a recursive function
-    let result = runtime.eval(
+    let result = run(
+        &mut runtime,
         r#"
         let sum = 0;
         function countDown(n) {
@@ -514,11 +432,13 @@ fn test_array_callback_with_recursion() {
         "forEach with recursive callback should work: {:?}",
         result
     );
-    let result_value = match result.unwrap() {
-        tsrun::RuntimeResult::Complete(rv) => rv.value().clone(),
-        _ => panic!("Expected Complete result"),
+    let result_step = result.unwrap();
+    let result_value = if let StepResult::Complete(rv) = result_step {
+        rv
+    } else {
+        panic!("Expected Complete, got {:?}", result_step);
     };
-    assert_eq!(result_value, tsrun::JsValue::Number(9.0));
+    assert_eq!(result_value, JsValue::Number(9.0));
 }
 
 // ============================================================
