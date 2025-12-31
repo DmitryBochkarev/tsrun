@@ -12,6 +12,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Instant;
 
+use crate::StepResult;
 use crate::ast::{ImportSpecifier, Program, Statement};
 use crate::error::JsError;
 use crate::gc::{Gc, Guard, Heap};
@@ -251,7 +252,8 @@ pub struct Interpreter {
     /// Active VM for step-based execution.
     /// When set, step() will execute one instruction and return.
     /// When None, there is no active execution.
-    pub(crate) active_vm: Option<bytecode_vm::BytecodeVM>,
+    /// Boxed to make take/put-back cheap (pointer move instead of struct move).
+    pub(crate) active_vm: Option<Box<bytecode_vm::BytecodeVM>>,
 
     /// Module path for active execution (needed for finalizing exports on completion)
     pub(crate) active_module_path: Option<crate::ModulePath>,
@@ -689,7 +691,7 @@ impl Interpreter {
         &mut self,
         source: &str,
         module_path: Option<crate::ModulePath>,
-    ) -> Result<crate::StepResult, JsError> {
+    ) -> Result<StepResult, JsError> {
         use crate::compiler::Compiler;
         use bytecode_vm::BytecodeVM;
 
@@ -714,7 +716,7 @@ impl Interpreter {
         if !missing.is_empty() {
             // Save the program for later execution when imports are provided
             self.pending_program = Some(program);
-            return Ok(crate::StepResult::NeedImports(missing));
+            return Ok(StepResult::NeedImports(missing));
         }
 
         // Create module environment for main module (if module_path is provided)
@@ -754,7 +756,7 @@ impl Interpreter {
             self.env = saved;
 
             // If execution completed successfully, store the main module exports
-            if let Ok(crate::StepResult::Complete(_)) = &result
+            if let Ok(StepResult::Complete(_)) = &result
                 && let Some(ref path) = module_path
             {
                 self.finalize_module_exports(path.clone(), module_env);
@@ -854,7 +856,7 @@ impl Interpreter {
     fn run_vm_to_completion(
         &mut self,
         mut vm: bytecode_vm::BytecodeVM,
-    ) -> Result<crate::StepResult, JsError> {
+    ) -> Result<StepResult, JsError> {
         use bytecode_vm::VmResult;
 
         let result = vm.run(self);
@@ -865,17 +867,17 @@ impl Interpreter {
                 if !self.pending_orders.is_empty() {
                     let pending = std::mem::take(&mut self.pending_orders);
                     let cancelled = std::mem::take(&mut self.cancelled_orders);
-                    return Ok(crate::StepResult::Suspended { pending, cancelled });
+                    return Ok(StepResult::Suspended { pending, cancelled });
                 }
                 // Check for suspended order awaits or waiting async contexts
                 if self.suspended_for_order.is_some() || self.wait_graph.has_waiting_contexts() {
                     let cancelled = std::mem::take(&mut self.cancelled_orders);
-                    return Ok(crate::StepResult::Suspended {
+                    return Ok(StepResult::Suspended {
                         pending: Vec::new(),
                         cancelled,
                     });
                 }
-                Ok(crate::StepResult::Complete(
+                Ok(StepResult::Complete(
                     crate::RuntimeValue::from_guarded(guarded),
                 ))
             }
@@ -906,14 +908,14 @@ impl Interpreter {
 
                 let pending = std::mem::take(&mut self.pending_orders);
                 let cancelled = std::mem::take(&mut self.cancelled_orders);
-                Ok(crate::StepResult::Suspended { pending, cancelled })
+                Ok(StepResult::Suspended { pending, cancelled })
             }
             VmResult::SuspendForOrder(order_suspension) => {
                 // Order suspension - waiting for host to provide a value
                 self.suspended_for_order = Some(order_suspension);
                 let pending = std::mem::take(&mut self.pending_orders);
                 let cancelled = std::mem::take(&mut self.cancelled_orders);
-                Ok(crate::StepResult::Suspended { pending, cancelled })
+                Ok(StepResult::Suspended { pending, cancelled })
             }
             VmResult::Yield(_) | VmResult::YieldStar(_) => Err(JsError::internal_error(
                 "Bytecode execution cannot yield at top level",
@@ -927,7 +929,8 @@ impl Interpreter {
     /// or a terminal result if execution completed or needs input.
     ///
     /// Call `prepare()` to set up execution before using `step()`.
-    pub fn step(&mut self) -> Result<crate::StepResult, JsError> {
+    #[inline]
+    pub fn step(&mut self) -> Result<StepResult, JsError> {
         use bytecode_vm::{BytecodeVM, VmStepResult};
 
         // If there's no active VM, try to set one up from various sources
@@ -952,7 +955,7 @@ impl Interpreter {
 
                             // Set response value directly in resume register
                             vm.set_resume_value(order_suspension.resume_register, value);
-                            self.active_vm = Some(vm);
+                            self.active_vm = Some(Box::new(vm));
                         }
                         Err(error) => {
                             // Inject error as exception
@@ -966,7 +969,7 @@ impl Interpreter {
 
                             let error_msg = JsValue::String(JsString::from(error.to_string()));
                             if vm.inject_exception(self, error_msg.clone()) {
-                                self.active_vm = Some(vm);
+                                self.active_vm = Some(Box::new(vm));
                             } else {
                                 let guarded = Guarded::from_value(error_msg, &self.heap);
                                 return Err(JsError::thrown(guarded));
@@ -978,7 +981,7 @@ impl Interpreter {
                     self.suspended_for_order = Some(order_suspension);
                     let pending = std::mem::take(&mut self.pending_orders);
                     let cancelled = std::mem::take(&mut self.cancelled_orders);
-                    return Ok(crate::StepResult::Suspended { pending, cancelled });
+                    return Ok(StepResult::Suspended { pending, cancelled });
                 }
             }
 
@@ -1011,7 +1014,7 @@ impl Interpreter {
                                     &self.heap,
                                 );
                                 vm.set_resume_value(ctx.resume_register, result_value);
-                                self.active_vm = Some(vm);
+                                self.active_vm = Some(Box::new(vm));
                             }
                             PromiseStatus::Rejected => {
                                 let vm_guard = self.heap.create_guard();
@@ -1022,7 +1025,7 @@ impl Interpreter {
                                     &self.heap,
                                 );
                                 if vm.inject_exception(self, result_value.clone()) {
-                                    self.active_vm = Some(vm);
+                                    self.active_vm = Some(Box::new(vm));
                                 } else {
                                     let guarded = Guarded::from_value(result_value, &self.heap);
                                     return Err(JsError::thrown(guarded));
@@ -1042,7 +1045,7 @@ impl Interpreter {
                 if let Some(program) = self.pending_program.take() {
                     // Try to set up the VM from the pending program
                     let setup_result = self.setup_vm_from_program(program)?;
-                    if !matches!(setup_result, crate::StepResult::Continue) {
+                    if !matches!(setup_result, StepResult::Continue) {
                         // Still needs imports or other action
                         return Ok(setup_result);
                     }
@@ -1057,10 +1060,10 @@ impl Interpreter {
             if self.suspended_for_order.is_some() || self.wait_graph.has_waiting_contexts() {
                 let pending = std::mem::take(&mut self.pending_orders);
                 let cancelled = std::mem::take(&mut self.cancelled_orders);
-                return Ok(crate::StepResult::Suspended { pending, cancelled });
+                return Ok(StepResult::Suspended { pending, cancelled });
             }
             // Truly done
-            return Ok(crate::StepResult::Done);
+            return Ok(StepResult::Done);
         };
 
         let step_result = vm.step(self);
@@ -1069,7 +1072,7 @@ impl Interpreter {
             VmStepResult::Continue => {
                 // Put VM back and return Continue
                 self.active_vm = Some(vm);
-                Ok(crate::StepResult::Continue)
+                Ok(StepResult::Continue)
             }
             VmStepResult::Terminal(vm_result) => {
                 // Terminal state - process and clear active execution state
@@ -1089,7 +1092,7 @@ impl Interpreter {
     fn process_vm_result(
         &mut self,
         result: bytecode_vm::VmResult,
-    ) -> Result<crate::StepResult, JsError> {
+    ) -> Result<StepResult, JsError> {
         use bytecode_vm::VmResult;
 
         match result {
@@ -1098,17 +1101,17 @@ impl Interpreter {
                 if !self.pending_orders.is_empty() {
                     let pending = std::mem::take(&mut self.pending_orders);
                     let cancelled = std::mem::take(&mut self.cancelled_orders);
-                    return Ok(crate::StepResult::Suspended { pending, cancelled });
+                    return Ok(StepResult::Suspended { pending, cancelled });
                 }
                 // Check for suspended order awaits or waiting async contexts
                 if self.suspended_for_order.is_some() || self.wait_graph.has_waiting_contexts() {
                     let cancelled = std::mem::take(&mut self.cancelled_orders);
-                    return Ok(crate::StepResult::Suspended {
+                    return Ok(StepResult::Suspended {
                         pending: Vec::new(),
                         cancelled,
                     });
                 }
-                Ok(crate::StepResult::Complete(
+                Ok(StepResult::Complete(
                     crate::RuntimeValue::from_guarded(guarded),
                 ))
             }
@@ -1139,14 +1142,14 @@ impl Interpreter {
 
                 let pending = std::mem::take(&mut self.pending_orders);
                 let cancelled = std::mem::take(&mut self.cancelled_orders);
-                Ok(crate::StepResult::Suspended { pending, cancelled })
+                Ok(StepResult::Suspended { pending, cancelled })
             }
             VmResult::SuspendForOrder(order_suspension) => {
                 // Order suspension - waiting for host to provide a value
                 self.suspended_for_order = Some(order_suspension);
                 let pending = std::mem::take(&mut self.pending_orders);
                 let cancelled = std::mem::take(&mut self.cancelled_orders);
-                Ok(crate::StepResult::Suspended { pending, cancelled })
+                Ok(StepResult::Suspended { pending, cancelled })
             }
             VmResult::Yield(_) | VmResult::YieldStar(_) => Err(JsError::internal_error(
                 "Bytecode execution cannot yield at top level",
@@ -1181,7 +1184,7 @@ impl Interpreter {
         &mut self,
         source: &str,
         module_path: Option<crate::ModulePath>,
-    ) -> Result<crate::StepResult, JsError> {
+    ) -> Result<StepResult, JsError> {
         use crate::compiler::Compiler;
         use bytecode_vm::BytecodeVM;
 
@@ -1205,7 +1208,7 @@ impl Interpreter {
         if !missing.is_empty() {
             // Save the program for later execution when imports are provided
             self.pending_program = Some(program);
-            return Ok(crate::StepResult::NeedImports(missing));
+            return Ok(StepResult::NeedImports(missing));
         }
 
         // Create module environment for main module (if module_path is provided)
@@ -1237,12 +1240,12 @@ impl Interpreter {
         let vm = BytecodeVM::with_guard(chunk, JsValue::Object(self.global.clone()), vm_guard);
 
         // Store VM and state for step-based execution
-        self.active_vm = Some(vm);
+        self.active_vm = Some(Box::new(vm));
         self.active_module_path = module_path;
         self.active_saved_env = saved_env;
         self.active_module_env = module_env;
 
-        Ok(crate::StepResult::Continue)
+        Ok(StepResult::Continue)
     }
 
     /// Process any pending module sources that are ready to execute.
@@ -1310,7 +1313,7 @@ impl Interpreter {
     fn setup_vm_from_program(
         &mut self,
         program: crate::ast::Program,
-    ) -> Result<crate::StepResult, JsError> {
+    ) -> Result<StepResult, JsError> {
         use crate::compiler::Compiler;
         use bytecode_vm::BytecodeVM;
 
@@ -1326,7 +1329,7 @@ impl Interpreter {
         if !unprovided.is_empty() {
             // Host needs to provide these modules
             self.pending_program = Some(program);
-            return Ok(crate::StepResult::NeedImports(unprovided));
+            return Ok(StepResult::NeedImports(unprovided));
         }
 
         // Execute any pending modules before setting up the main program
@@ -1335,7 +1338,7 @@ impl Interpreter {
         if !pending_module_unprovided.is_empty() {
             // Pending modules have dependencies the host hasn't provided yet
             self.pending_program = Some(program);
-            return Ok(crate::StepResult::NeedImports(pending_module_unprovided));
+            return Ok(StepResult::NeedImports(pending_module_unprovided));
         }
 
         // After processing, verify all main program imports are now loaded
@@ -1345,7 +1348,7 @@ impl Interpreter {
             // But handle it gracefully
             self.pending_program = Some(program);
             let unprovided = self.filter_unprovided_imports(still_missing);
-            return Ok(crate::StepResult::NeedImports(unprovided));
+            return Ok(StepResult::NeedImports(unprovided));
         }
 
         // Create module environment for main module (if module_path is provided)
@@ -1377,12 +1380,12 @@ impl Interpreter {
         let vm = BytecodeVM::with_guard(chunk, JsValue::Object(self.global.clone()), vm_guard);
 
         // Store VM and state for step-based execution
-        self.active_vm = Some(vm);
+        self.active_vm = Some(Box::new(vm));
         self.active_module_path = module_path;
         self.active_saved_env = saved_env;
         self.active_module_env = module_env;
 
-        Ok(crate::StepResult::Continue)
+        Ok(StepResult::Continue)
     }
 
     /// Convert ThrownValue errors to RuntimeError with string data

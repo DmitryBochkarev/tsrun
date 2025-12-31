@@ -691,6 +691,7 @@ impl BytecodeVM {
     /// or `VmStepResult::Terminal(result)` if execution reached a terminal state.
     ///
     /// This method enables step-by-step execution for host-controlled interruption.
+    #[inline]
     pub fn step(&mut self, interp: &mut Interpreter) -> VmStepResult {
         let Some(op) = self.fetch() else {
             // End of bytecode - return last result or undefined

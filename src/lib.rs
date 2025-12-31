@@ -674,6 +674,7 @@ impl Runtime {
     ///     }
     /// }
     /// ```
+    #[inline(always)]
     pub fn step(&mut self) -> Result<StepResult, JsError> {
         self.interpreter.step()
     }
