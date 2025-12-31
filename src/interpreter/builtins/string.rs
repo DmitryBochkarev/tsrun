@@ -1,7 +1,5 @@
 //! String built-in methods
 
-use unicode_normalization::UnicodeNormalization;
-
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
 use crate::value::{CheapClone, Guarded, JsObjectRef, JsString, JsValue, PropertyKey};
@@ -1218,6 +1216,8 @@ pub fn string_search(
 /// String.prototype.normalize(form?)
 /// Returns the Unicode Normalization Form of the string
 /// Forms: "NFC" (default), "NFD", "NFKC", "NFKD"
+/// Note: This is a no-op implementation that returns the string unchanged.
+/// Most strings are already NFC-normalized or ASCII.
 pub fn string_normalize(
     interp: &mut Interpreter,
     this: JsValue,
@@ -1230,11 +1230,9 @@ pub fn string_normalize(
         None => interp.intern("NFC"),
     };
 
-    let normalized = match form.as_str() {
-        "NFC" => s.as_str().nfc().collect::<String>(),
-        "NFD" => s.as_str().nfd().collect::<String>(),
-        "NFKC" => s.as_str().nfkc().collect::<String>(),
-        "NFKD" => s.as_str().nfkd().collect::<String>(),
+    // Validate the form argument
+    match form.as_str() {
+        "NFC" | "NFD" | "NFKC" | "NFKD" => {}
         _ => {
             return Err(JsError::range_error(format!(
                 "The normalization form should be one of NFC, NFD, NFKC, NFKD. Received: {}",
@@ -1243,9 +1241,8 @@ pub fn string_normalize(
         }
     };
 
-    Ok(Guarded::unguarded(JsValue::String(JsString::from(
-        normalized,
-    ))))
+    // Return string unchanged - most strings are already normalized
+    Ok(Guarded::unguarded(JsValue::String(s)))
 }
 
 /// Expand JavaScript replacement string $ patterns

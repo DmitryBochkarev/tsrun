@@ -6,6 +6,47 @@ use crate::interpreter::Interpreter;
 use crate::value::{ExoticObject, Guarded, JsObject, JsString, JsValue, PropertyKey};
 use std::collections::HashSet;
 
+const MS_PER_SECOND: i64 = 1000;
+const MS_PER_MINUTE: i64 = 60 * MS_PER_SECOND;
+const MS_PER_HOUR: i64 = 60 * MS_PER_MINUTE;
+const MS_PER_DAY: i64 = 24 * MS_PER_HOUR;
+
+/// Convert days since Unix epoch to (year, month, day)
+fn days_to_ymd(days: i64) -> (i32, u32, u32) {
+    let z = days + 719468;
+    let era = if z >= 0 { z } else { z - 146096 } / 146097;
+    let doe = (z - era * 146097) as u32;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    (y as i32, m, d)
+}
+
+/// Format timestamp (ms since epoch) as ISO 8601 string
+fn format_timestamp_iso(ts: f64) -> String {
+    if ts.is_nan() || ts.is_infinite() {
+        return "Invalid Date".to_string();
+    }
+    let ts = ts as i64;
+    let days = ts.div_euclid(MS_PER_DAY);
+    let time_of_day = ts.rem_euclid(MS_PER_DAY);
+
+    let (year, month, day) = days_to_ymd(days);
+    let hour = (time_of_day / MS_PER_HOUR) as u32;
+    let minute = ((time_of_day % MS_PER_HOUR) / MS_PER_MINUTE) as u32;
+    let second = ((time_of_day % MS_PER_MINUTE) / MS_PER_SECOND) as u32;
+    let ms = (time_of_day % MS_PER_SECOND) as u32;
+
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
+        year, month, day, hour, minute, second, ms
+    )
+}
+
 /// Initialize JSON object and add it to globals
 pub fn init_json(interp: &mut Interpreter) {
     // Use root_guard for permanent objects
@@ -175,12 +216,7 @@ fn js_value_to_json_with_visited(
                         ExoticObject::Set { .. } => serde_json::Value::Null,
                         ExoticObject::Date { timestamp } => {
                             // Dates serialize as their ISO string
-                            let datetime =
-                                chrono::DateTime::from_timestamp_millis(*timestamp as i64)
-                                    .unwrap_or(chrono::DateTime::UNIX_EPOCH);
-                            serde_json::Value::String(
-                                datetime.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
-                            )
+                            serde_json::Value::String(format_timestamp_iso(*timestamp))
                         }
                         ExoticObject::RegExp { .. } => {
                             serde_json::Value::Object(serde_json::Map::new())

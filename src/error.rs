@@ -2,7 +2,6 @@
 
 use crate::value::Guarded;
 use std::path::PathBuf;
-use thiserror::Error;
 
 /// Source location information for error messages
 #[derive(Debug, Clone, PartialEq)]
@@ -51,55 +50,54 @@ impl std::fmt::Display for StackFrame {
 }
 
 /// Main error type for the interpreter
-#[derive(Debug, Error)]
+#[derive(Debug)]
 pub enum JsError {
-    #[error("SyntaxError: {message} at {location}")]
     SyntaxError {
         message: String,
         location: SourceLocation,
     },
 
-    #[error("TypeError: {message}{}", format_location(.location))]
     TypeError {
         message: String,
         location: Option<SourceLocation>,
     },
 
-    #[error("ReferenceError: {name} is not defined")]
-    ReferenceError { name: String },
+    ReferenceError {
+        name: String,
+    },
 
-    #[error("RangeError: {message}")]
-    RangeError { message: String },
+    RangeError {
+        message: String,
+    },
 
-    #[error("{kind}: {message}\n{}", format_stack(stack))]
     RuntimeError {
         kind: String,
         message: String,
         stack: Vec<StackFrame>,
     },
 
-    #[error("ModuleError: {message}")]
-    ModuleError { message: String },
+    ModuleError {
+        message: String,
+    },
 
-    #[error("Internal error: {0}")]
     Internal(String),
 
     /// Marker error indicating a value was thrown (actual value stored in interpreter)
-    #[error("Thrown")]
     Thrown,
 
     /// Error thrown with a JsValue (used for Promise rejection handling)
-    #[error("ThrownValue")]
-    ThrownValue { guarded: Guarded },
+    ThrownValue {
+        guarded: Guarded,
+    },
 
     /// Internal marker for generator yield (not a real error)
-    #[error("GeneratorYield")]
-    GeneratorYield { guarded: Guarded },
+    GeneratorYield {
+        guarded: Guarded,
+    },
 
     /// Internal marker for optional chain short-circuit (not a real error)
     /// When a?.b evaluates with a being null/undefined, we need to short-circuit
     /// the entire optional chain (a?.b.c.d should all return undefined)
-    #[error("OptionalChainShortCircuit")]
     OptionalChainShortCircuit,
 }
 
@@ -117,6 +115,52 @@ fn format_location(location: &Option<SourceLocation>) -> String {
         None => String::new(),
     }
 }
+
+impl std::fmt::Display for JsError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            JsError::SyntaxError { message, location } => {
+                write!(f, "SyntaxError: {} at {}", message, location)
+            }
+            JsError::TypeError { message, location } => {
+                write!(f, "TypeError: {}{}", message, format_location(location))
+            }
+            JsError::ReferenceError { name } => {
+                write!(f, "ReferenceError: {} is not defined", name)
+            }
+            JsError::RangeError { message } => {
+                write!(f, "RangeError: {}", message)
+            }
+            JsError::RuntimeError {
+                kind,
+                message,
+                stack,
+            } => {
+                write!(f, "{}: {}\n{}", kind, message, format_stack(stack))
+            }
+            JsError::ModuleError { message } => {
+                write!(f, "ModuleError: {}", message)
+            }
+            JsError::Internal(msg) => {
+                write!(f, "Internal error: {}", msg)
+            }
+            JsError::Thrown => {
+                write!(f, "Thrown")
+            }
+            JsError::ThrownValue { .. } => {
+                write!(f, "ThrownValue")
+            }
+            JsError::GeneratorYield { .. } => {
+                write!(f, "GeneratorYield")
+            }
+            JsError::OptionalChainShortCircuit => {
+                write!(f, "OptionalChainShortCircuit")
+            }
+        }
+    }
+}
+
+impl std::error::Error for JsError {}
 
 impl JsError {
     pub fn syntax_error(message: impl Into<String>, line: u32, column: u32) -> Self {

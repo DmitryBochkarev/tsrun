@@ -877,9 +877,9 @@ impl Interpreter {
                         cancelled,
                     });
                 }
-                Ok(StepResult::Complete(
-                    crate::RuntimeValue::from_guarded(guarded),
-                ))
+                Ok(StepResult::Complete(crate::RuntimeValue::from_guarded(
+                    guarded,
+                )))
             }
             VmResult::Error(err) => Err(self.materialize_thrown_error(err)),
             VmResult::Suspend(suspension) => {
@@ -1041,14 +1041,14 @@ impl Interpreter {
             }
 
             // 3. Check for pending program that needs imports
-            if self.active_vm.is_none() {
-                if let Some(program) = self.pending_program.take() {
-                    // Try to set up the VM from the pending program
-                    let setup_result = self.setup_vm_from_program(program)?;
-                    if !matches!(setup_result, StepResult::Continue) {
-                        // Still needs imports or other action
-                        return Ok(setup_result);
-                    }
+            if self.active_vm.is_none()
+                && let Some(program) = self.pending_program.take()
+            {
+                // Try to set up the VM from the pending program
+                let setup_result = self.setup_vm_from_program(program)?;
+                if !matches!(setup_result, StepResult::Continue) {
+                    // Still needs imports or other action
+                    return Ok(setup_result);
                 }
             }
         }
@@ -1076,7 +1076,7 @@ impl Interpreter {
             }
             VmStepResult::Terminal(vm_result) => {
                 // Terminal state - process and clear active execution state
-                let result = self.process_vm_result(vm_result)?;
+                let result = self.process_vm_result(*vm_result)?;
 
                 // If not suspended (i.e., actually complete), finalize
                 if matches!(result, crate::StepResult::Complete(_)) {
@@ -1089,10 +1089,7 @@ impl Interpreter {
     }
 
     /// Process a terminal VmResult and convert to StepResult
-    fn process_vm_result(
-        &mut self,
-        result: bytecode_vm::VmResult,
-    ) -> Result<StepResult, JsError> {
+    fn process_vm_result(&mut self, result: bytecode_vm::VmResult) -> Result<StepResult, JsError> {
         use bytecode_vm::VmResult;
 
         match result {
@@ -1111,9 +1108,9 @@ impl Interpreter {
                         cancelled,
                     });
                 }
-                Ok(StepResult::Complete(
-                    crate::RuntimeValue::from_guarded(guarded),
-                ))
+                Ok(StepResult::Complete(crate::RuntimeValue::from_guarded(
+                    guarded,
+                )))
             }
             VmResult::Error(err) => Err(self.materialize_thrown_error(err)),
             VmResult::Suspend(suspension) => {

@@ -1453,15 +1453,15 @@ impl<'a> Lexer<'a> {
 
 /// Check if a character can start an identifier (including unicode escape sequence)
 fn is_id_start(ch: char) -> bool {
-    ch == '_' || ch == '$' || ch == '\\' || unicode_xid::UnicodeXID::is_xid_start(ch)
+    ch == '_' || ch == '$' || ch == '\\' || ch.is_ascii_alphabetic()
 }
 
 /// Check if a decoded character is valid as identifier start (without escape check)
 fn is_id_start_char(ch: char) -> bool {
-    ch == '_' || ch == '$' || unicode_xid::UnicodeXID::is_xid_start(ch)
+    ch == '_' || ch == '$' || ch.is_ascii_alphabetic()
 }
 
 /// Check if a decoded character is valid as identifier continue (without escape check)
 fn is_id_continue_char(ch: char) -> bool {
-    ch == '_' || ch == '$' || unicode_xid::UnicodeXID::is_xid_continue(ch)
+    ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()
 }

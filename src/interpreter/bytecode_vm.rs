@@ -45,7 +45,7 @@ pub enum VmStepResult {
     /// Executed one instruction, more to go
     Continue,
     /// Reached a terminal state
-    Terminal(VmResult),
+    Terminal(Box<VmResult>),
 }
 
 /// Generator yield result
@@ -712,10 +712,10 @@ impl BytecodeVM {
             if let JsValue::Object(obj) = &result {
                 guard.guard(obj.cheap_clone());
             }
-            return VmStepResult::Terminal(VmResult::Complete(Guarded {
+            return VmStepResult::Terminal(Box::new(VmResult::Complete(Guarded {
                 value: result,
                 guard: Some(guard),
-            }));
+            })));
         };
 
         match self.execute_op(interp, op) {
@@ -727,7 +727,7 @@ impl BytecodeVM {
                     self.restore_from_trampoline_frame(interp, frame, value.value);
                     return VmStepResult::Continue;
                 }
-                VmStepResult::Terminal(VmResult::Complete(value))
+                VmStepResult::Terminal(Box::new(VmResult::Complete(value)))
             }
             Ok(OpResult::Suspend {
                 promise,
@@ -735,15 +735,15 @@ impl BytecodeVM {
             }) => {
                 // Extract the object from the guarded value
                 if let JsValue::Object(obj) = promise.value {
-                    VmStepResult::Terminal(VmResult::Suspend(VmSuspension {
+                    VmStepResult::Terminal(Box::new(VmResult::Suspend(VmSuspension {
                         waiting_on: obj,
                         state: self.save_state(interp),
                         resume_register,
-                    }))
+                    })))
                 } else {
-                    VmStepResult::Terminal(VmResult::Error(self.wrap_error_with_trace(
+                    VmStepResult::Terminal(Box::new(VmResult::Error(self.wrap_error_with_trace(
                         JsError::internal_error("Suspend expects an object"),
-                    )))
+                    ))))
                 }
             }
             Ok(OpResult::SuspendForOrder {
@@ -751,28 +751,28 @@ impl BytecodeVM {
                 resume_register,
             }) => {
                 // Suspend waiting for host to provide order response
-                VmStepResult::Terminal(VmResult::SuspendForOrder(VmOrderSuspension {
+                VmStepResult::Terminal(Box::new(VmResult::SuspendForOrder(VmOrderSuspension {
                     order_id,
                     state: self.save_state(interp),
                     resume_register,
-                }))
+                })))
             }
             Ok(OpResult::Yield {
                 value,
                 resume_register,
-            }) => VmStepResult::Terminal(VmResult::Yield(GeneratorYield {
+            }) => VmStepResult::Terminal(Box::new(VmResult::Yield(GeneratorYield {
                 value,
                 resume_register,
                 state: self.save_state(interp),
-            })),
+            }))),
             Ok(OpResult::YieldStar {
                 iterable,
                 resume_register,
-            }) => VmStepResult::Terminal(VmResult::YieldStar(GeneratorYieldStar {
+            }) => VmStepResult::Terminal(Box::new(VmResult::YieldStar(GeneratorYieldStar {
                 iterable,
                 resume_register,
                 state: self.save_state(interp),
-            })),
+            }))),
             Ok(OpResult::Call {
                 callee,
                 this_value,
@@ -795,11 +795,11 @@ impl BytecodeVM {
                     },
                 ) {
                     Ok(None) => VmStepResult::Continue,
-                    Ok(Some(vm_result)) => VmStepResult::Terminal(vm_result),
+                    Ok(Some(vm_result)) => VmStepResult::Terminal(Box::new(vm_result)),
                     Err(e) => {
                         // Try to find an exception handler, unwinding trampoline if needed
                         if let Err(e) = self.handle_error_with_trampoline_unwind(interp, e) {
-                            return VmStepResult::Terminal(VmResult::Error(e));
+                            return VmStepResult::Terminal(Box::new(VmResult::Error(e)));
                         }
                         VmStepResult::Continue
                     }
@@ -828,7 +828,7 @@ impl BytecodeVM {
                     Err(e) => {
                         // Try to find an exception handler, unwinding trampoline if needed
                         if let Err(e) = self.handle_error_with_trampoline_unwind(interp, e) {
-                            return VmStepResult::Terminal(VmResult::Error(e));
+                            return VmStepResult::Terminal(Box::new(VmResult::Error(e)));
                         }
                         VmStepResult::Continue
                     }
@@ -837,7 +837,7 @@ impl BytecodeVM {
             Err(e) => {
                 // Try to find an exception handler, unwinding trampoline if needed
                 if let Err(e) = self.handle_error_with_trampoline_unwind(interp, e) {
-                    return VmStepResult::Terminal(VmResult::Error(e));
+                    return VmStepResult::Terminal(Box::new(VmResult::Error(e)));
                 }
                 VmStepResult::Continue
             }
@@ -853,7 +853,7 @@ impl BytecodeVM {
         loop {
             match self.step(interp) {
                 VmStepResult::Continue => continue,
-                VmStepResult::Terminal(result) => return result,
+                VmStepResult::Terminal(result) => return *result,
             }
         }
     }
