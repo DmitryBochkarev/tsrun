@@ -23,10 +23,13 @@ timeout 30 cargo test -- --nocapture     # Show test output
 | File/Directory | Purpose |
 |----------------|---------|
 | `src/lib.rs` | Public API - `Runtime` struct |
+| `src/api.rs` | High-level API for stepping execution |
 | `src/lexer.rs` | Tokenizer |
 | `src/parser.rs` | Recursive descent + Pratt parsing |
 | `src/ast.rs` | AST node types |
-| `src/value.rs` | Runtime values, object model, GC |
+| `src/value.rs` | Runtime values, object model |
+| `src/gc.rs` | Garbage collector, Guard system, Heap |
+| `src/error.rs` | JsError types |
 | `src/compiler/` | Bytecode compiler |
 | `src/interpreter/` | VM and builtins |
 | `tests/interpreter/` | Integration tests by feature |
@@ -203,9 +206,10 @@ The VM uses registers instead of a stack:
 
 | Type | Description |
 |------|-------------|
-| `JsValue` | Enum: Undefined, Null, Boolean, Number, String, Object |
+| `JsValue` | Enum: Undefined, Null, Boolean, Number, String, Object, Symbol |
 | `Gc<JsObject>` | GC-managed object pointer |
 | `JsString` | `Rc<str>` reference-counted string |
+| `JsSymbol` | Symbol primitive with description |
 | `Op` | Bytecode instruction (100+ variants) |
 | `BytecodeChunk` | Compiled function with instructions + constants |
 | `Register` | Virtual register index (u8, 0-255 per frame) |
@@ -225,13 +229,21 @@ pub enum RuntimeResult {
 **Compiler** (`src/compiler/`):
 - `compile_stmt.rs` / `compile_expr.rs` - Statement/expression compilation
 - `compile_pattern.rs` - Destructuring patterns
+- `bytecode.rs` - Bytecode instruction definitions (Op enum)
 - `builder.rs` - Bytecode builder with register allocation
 - `hoist.rs` - Variable hoisting
+
+**Interpreter** (`src/interpreter/`):
+- `mod.rs` - Main interpreter, environment management
+- `bytecode_vm.rs` - Register-based bytecode VM execution engine
 
 **Builtins** (`src/interpreter/builtins/`):
 - `array.rs`, `string.rs`, `number.rs`, `object.rs` - Core types
 - `function.rs`, `math.rs`, `json.rs`, `date.rs` - Standard objects
 - `regexp.rs`, `map.rs`, `set.rs`, `error.rs` - Other builtins
+- `promise.rs`, `generator.rs` - Async primitives
+- `proxy.rs` - Proxy and Reflect objects
+- `symbol.rs`, `boolean.rs`, `console.rs` - Additional builtins
 - `global.rs` - Global functions (parseInt, parseFloat, etc.)
 
 ## Implementation Patterns
@@ -262,8 +274,6 @@ pub fn array_my_method(interp: &mut Interpreter, this: JsValue, args: Vec<JsValu
 let fn_obj = create_native_fn(&guard, "myMethod", array_my_method, 1);
 p.set_property(PropertyKey::from("myMethod"), JsValue::Object(fn_obj));
 ```
-
-4. **Update** design.md checklist
 
 ### Common Patterns
 
@@ -302,6 +312,9 @@ let result = interp.call_function(
 | Location | Contents |
 |----------|----------|
 | `tests/interpreter/*.rs` | Integration tests by feature |
+| `tests/compiler.rs` | Compiler integration tests |
+| `tests/parser.rs` | Parser integration tests |
+| `tests/lexer.rs` | Lexer integration tests |
 | `src/parser.rs` (bottom) | Parser unit tests |
 | `src/value.rs` (bottom) | Value type unit tests |
 
