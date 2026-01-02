@@ -5,7 +5,7 @@
 
 use crate::lexer::Span;
 use crate::value::JsString;
-use std::rc::Rc;
+use crate::prelude::*;
 
 /// Virtual register index (0-255)
 pub type Register = u8;
@@ -863,7 +863,7 @@ pub struct BytecodeChunk {
     pub function_info: Option<FunctionInfo>,
 
     /// Source file path (for stack traces)
-    pub source_file: Option<std::path::PathBuf>,
+    pub source_file: Option<String>,
 }
 
 /// Source map entry for debugging

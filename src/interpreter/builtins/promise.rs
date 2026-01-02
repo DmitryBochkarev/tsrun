@@ -2,8 +2,7 @@
 //!
 //! This module implements Promise using the new guard-based GC system.
 
-use std::cell::RefCell;
-use std::rc::Rc;
+use crate::prelude::{format, mem, vec, Cell, RefCell, Rc, Vec};
 
 use crate::error::JsError;
 use crate::gc::{Gc, Guard};
@@ -205,7 +204,7 @@ fn fulfill_promise(
 
         state_mut.status = PromiseStatus::Fulfilled;
         state_mut.result = Some(value.clone());
-        std::mem::take(&mut state_mut.handlers)
+        mem::take(&mut state_mut.handlers)
     };
 
     // Trigger handlers synchronously
@@ -236,7 +235,7 @@ fn reject_promise(
         state_mut.status = PromiseStatus::Rejected;
         state_mut.result = Some(reason.clone());
         let order_id = state_mut.order_id;
-        (std::mem::take(&mut state_mut.handlers), order_id)
+        (mem::take(&mut state_mut.handlers), order_id)
     };
 
     // Signal cancelled order if this was a host Promise
@@ -312,7 +311,7 @@ fn trigger_handler(
             };
 
             // Call the callback
-            match interp.call_function(cb, JsValue::Undefined, std::slice::from_ref(value)) {
+            match interp.call_function(cb, JsValue::Undefined, core::slice::from_ref(value)) {
                 Ok(Guarded { value: result, .. }) => {
                     // Promise.all handlers manage their own result promise resolution
                     if !is_promise_all_handler {
@@ -736,10 +735,10 @@ pub fn promise_all(
 
     // Create shared state for tracking - shared by all handlers
     let shared_state = Rc::new(PromiseAllSharedState {
-        remaining: std::cell::Cell::new(pending_count),
+        remaining: Cell::new(pending_count),
         results: RefCell::new(results),
         result_promise: result_promise.cheap_clone(),
-        rejected: std::cell::Cell::new(false),
+        rejected: Cell::new(false),
     });
 
     // Attach handlers to each pending promise
@@ -808,7 +807,7 @@ pub fn handle_promise_all_fulfill(
 
     if remaining - 1 == 0 {
         // All promises fulfilled - fulfill the result promise
-        let results = std::mem::take(&mut *state.results.borrow_mut());
+        let results = mem::take(&mut *state.results.borrow_mut());
         let result_promise = state.result_promise.cheap_clone();
 
         let guard = interp.heap.create_guard();
@@ -946,7 +945,7 @@ pub fn promise_race(
 
     let shared_state = Rc::new(PromiseRaceSharedState {
         result_promise: result_promise.cheap_clone(),
-        settled: std::cell::Cell::new(false),
+        settled: Cell::new(false),
         input_order_ids,
     });
 

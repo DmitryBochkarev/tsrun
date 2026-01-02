@@ -6,6 +6,7 @@ use super::Compiler;
 use super::bytecode::{Op, Register};
 use crate::ast::{ObjectPatternProperty, ObjectPropertyKey, Pattern};
 use crate::error::JsError;
+use crate::prelude::*;
 use crate::value::CheapClone;
 
 impl Compiler {

@@ -21,6 +21,18 @@
 //! }
 //! ```
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// no_std support
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#![cfg_attr(not(feature = "std"), no_std)]
+
+#[cfg(not(feature = "std"))]
+extern crate alloc;
+
+mod prelude;
+use prelude::ToString;
+
 pub mod api;
 pub mod ast;
 pub mod compiler;
@@ -29,8 +41,11 @@ pub mod gc;
 pub(crate) mod interpreter;
 pub mod lexer;
 pub mod parser;
+pub mod platform;
 pub mod string_dict;
 pub mod value;
+
+use prelude::{format, String, Vec};
 
 pub use error::JsError;
 pub use gc::{Gc, GcStats, Guard, Heap, Reset};
@@ -284,7 +299,7 @@ impl RuntimeValue {
     }
 }
 
-impl std::ops::Deref for RuntimeValue {
+impl core::ops::Deref for RuntimeValue {
     type Target = JsValue;
 
     fn deref(&self) -> &Self::Target {
@@ -292,8 +307,8 @@ impl std::ops::Deref for RuntimeValue {
     }
 }
 
-impl std::fmt::Debug for RuntimeValue {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Debug for RuntimeValue {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("RuntimeValue")
             .field("value", &self.value)
             .field("guarded", &self._guard.is_some())
@@ -301,9 +316,9 @@ impl std::fmt::Debug for RuntimeValue {
     }
 }
 
-impl std::fmt::Display for RuntimeValue {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        std::fmt::Display::fmt(&self.value, f)
+impl core::fmt::Display for RuntimeValue {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(&self.value, f)
     }
 }
 
@@ -417,8 +432,8 @@ impl ModulePath {
     }
 }
 
-impl std::fmt::Display for ModulePath {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for ModulePath {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{}", self.0)
     }
 }

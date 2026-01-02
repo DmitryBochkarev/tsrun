@@ -13,13 +13,12 @@ mod hoist;
 pub use builder::{BytecodeBuilder, JumpPlaceholder};
 pub use bytecode::{BytecodeChunk, Constant, FunctionInfo, JumpTarget, Op, Register};
 
+use crate::prelude::*;
+
 use crate::ast::Program;
 use crate::error::JsError;
 use crate::value::JsString;
 use builder::RegisterAllocator;
-use rustc_hash::FxHashMap;
-use rustc_hash::FxHashSet;
-use std::rc::Rc;
 
 /// Compiler state for converting AST to bytecode
 pub struct Compiler {
@@ -56,7 +55,7 @@ pub struct Compiler {
     track_completion: bool,
 
     /// Source file path for stack traces (propagated to all nested chunks)
-    source_file: Option<std::path::PathBuf>,
+    source_file: Option<String>,
 }
 
 /// Context for a class being compiled (for private field handling)
@@ -113,7 +112,7 @@ impl Compiler {
     }
 
     /// Create a new compiler with a source file path for stack traces
-    pub fn with_source_file(source_file: std::path::PathBuf) -> Self {
+    pub fn with_source_file(source_file: String) -> Self {
         let mut compiler = Self::new();
         compiler.source_file = Some(source_file.clone());
         compiler.builder.set_source_file(source_file);
@@ -171,7 +170,7 @@ impl Compiler {
     /// Compile a program to bytecode with source file path for stack traces
     pub fn compile_program_with_source(
         program: &Program,
-        source_file: std::path::PathBuf,
+        source_file: String,
     ) -> Result<Rc<BytecodeChunk>, JsError> {
         let mut compiler = Compiler::with_source_file(source_file);
 

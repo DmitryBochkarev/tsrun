@@ -1,5 +1,6 @@
 //! RegExp built-in methods
 
+use crate::prelude::{format, String, Vec};
 use crate::error::JsError;
 use crate::gc::Gc;
 use crate::interpreter::Interpreter;

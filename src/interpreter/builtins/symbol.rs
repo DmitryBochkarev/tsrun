@@ -2,6 +2,7 @@
 
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
+use crate::prelude::*;
 use crate::value::{CheapClone, Guarded, JsString, JsSymbol, JsValue, PropertyKey};
 
 /// Well-known symbol IDs (reserved during initialization)

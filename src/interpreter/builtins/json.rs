@@ -4,7 +4,7 @@ use crate::error::JsError;
 use crate::gc::Guard;
 use crate::interpreter::Interpreter;
 use crate::value::{ExoticObject, Guarded, JsObject, JsString, JsValue, PropertyKey};
-use std::collections::HashSet;
+use crate::prelude::{format, math, HashSet, String, ToString, Vec};
 
 const MS_PER_SECOND: i64 = 1000;
 const MS_PER_MINUTE: i64 = 60 * MS_PER_SECOND;
@@ -175,7 +175,7 @@ fn js_value_to_json_with_visited(
         JsValue::Number(n) => {
             if n.is_finite() {
                 // Check if the number is a whole integer that fits in i64
-                if n.fract() == 0.0 && *n >= i64::MIN as f64 && *n <= i64::MAX as f64 {
+                if math::fract(*n) == 0.0 && *n >= i64::MIN as f64 && *n <= i64::MAX as f64 {
                     serde_json::Value::Number(serde_json::Number::from(*n as i64))
                 } else {
                     serde_json::Value::Number(

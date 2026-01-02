@@ -1,21 +1,21 @@
 //! Error types for the TypeScript interpreter
 
+use crate::prelude::*;
 use crate::value::Guarded;
-use std::path::PathBuf;
 
 /// Source location information for error messages
 #[derive(Debug, Clone, PartialEq)]
 pub struct SourceLocation {
-    pub file: Option<PathBuf>,
+    pub file: Option<String>,
     pub line: u32,
     pub column: u32,
     pub length: u32,
 }
 
-impl std::fmt::Display for SourceLocation {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for SourceLocation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if let Some(file) = &self.file {
-            write!(f, "{}:{}:{}", file.display(), self.line, self.column)
+            write!(f, "{}:{}:{}", file, self.line, self.column)
         } else {
             write!(f, "{}:{}", self.line, self.column)
         }
@@ -26,20 +26,20 @@ impl std::fmt::Display for SourceLocation {
 #[derive(Debug, Clone)]
 pub struct StackFrame {
     pub function_name: Option<String>,
-    pub file: Option<PathBuf>,
+    pub file: Option<String>,
     pub line: u32,
     pub column: u32,
 }
 
-impl std::fmt::Display for StackFrame {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for StackFrame {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let name = self.function_name.as_deref().unwrap_or("<anonymous>");
         if let Some(file) = &self.file {
             write!(
                 f,
                 "    at {} ({}:{}:{})",
                 name,
-                file.display(),
+                file,
                 self.line,
                 self.column
             )
@@ -116,8 +116,8 @@ fn format_location(location: &Option<SourceLocation>) -> String {
     }
 }
 
-impl std::fmt::Display for JsError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for JsError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             JsError::SyntaxError { message, location } => {
                 write!(f, "SyntaxError: {} at {}", message, location)
@@ -160,6 +160,7 @@ impl std::fmt::Display for JsError {
     }
 }
 
+#[cfg(feature = "std")]
 impl std::error::Error for JsError {}
 
 impl JsError {

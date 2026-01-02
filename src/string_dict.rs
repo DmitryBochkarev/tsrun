@@ -3,7 +3,7 @@
 //! This module provides a dictionary that ensures identical strings share the same
 //! `Rc<str>` instance, reducing memory allocations and improving cache locality.
 
-use rustc_hash::FxHashMap;
+use crate::prelude::*;
 
 use crate::value::{CheapClone, JsString};
 

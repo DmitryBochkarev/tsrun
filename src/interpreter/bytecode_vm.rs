@@ -6,11 +6,11 @@
 use crate::compiler::{BytecodeChunk, Constant, Op, Register};
 use crate::error::{JsError, StackFrame};
 use crate::gc::{Gc, Guard};
+use crate::prelude::{*, math};
 use crate::value::{
     BytecodeFunction, CheapClone, ExoticObject, Guarded, JsFunction, JsObject, JsString, JsValue,
     Property, PropertyKey,
 };
-use std::rc::Rc;
 
 use super::Interpreter;
 
@@ -1297,19 +1297,19 @@ impl BytecodeVM {
         }
 
         // Save current VM state to trampoline stack
-        let old_guard = std::mem::replace(&mut self.register_guard, new_guard);
+        let old_guard = mem::replace(&mut self.register_guard, new_guard);
         // new_arguments already set from rest parameter handling above - no extra allocation needed
         let frame = TrampolineFrame {
             ip: self.ip,
             chunk: self.chunk.cheap_clone(),
-            registers: std::mem::replace(&mut self.registers, new_registers),
-            this_value: std::mem::replace(&mut self.this_value, effective_this),
-            vm_call_stack: std::mem::take(&mut self.call_stack),
-            try_stack: std::mem::take(&mut self.try_stack),
+            registers: mem::replace(&mut self.registers, new_registers),
+            this_value: mem::replace(&mut self.this_value, effective_this),
+            vm_call_stack: mem::take(&mut self.call_stack),
+            try_stack: mem::take(&mut self.try_stack),
             exception_value: self.exception_value.take(),
-            saved_env_stack: std::mem::take(&mut self.saved_env_stack),
-            arguments: std::mem::replace(&mut self.arguments, new_arguments),
-            new_target: std::mem::replace(&mut self.new_target, new_target),
+            saved_env_stack: mem::take(&mut self.saved_env_stack),
+            arguments: mem::replace(&mut self.arguments, new_arguments),
+            new_target: mem::replace(&mut self.new_target, new_target),
             current_constructor: self.current_constructor.take(),
             pending_completion: self.pending_completion.take(),
             return_register,
@@ -1495,19 +1495,19 @@ impl BytecodeVM {
         }
 
         // Save current VM state to trampoline stack
-        let old_guard = std::mem::replace(&mut self.register_guard, new_guard);
+        let old_guard = mem::replace(&mut self.register_guard, new_guard);
         // new_arguments already set from rest parameter handling above - no extra allocation needed
         let frame = TrampolineFrame {
             ip: self.ip,
             chunk: self.chunk.cheap_clone(),
-            registers: std::mem::replace(&mut self.registers, new_registers),
-            this_value: std::mem::replace(&mut self.this_value, effective_this),
-            vm_call_stack: std::mem::take(&mut self.call_stack),
-            try_stack: std::mem::take(&mut self.try_stack),
+            registers: mem::replace(&mut self.registers, new_registers),
+            this_value: mem::replace(&mut self.this_value, effective_this),
+            vm_call_stack: mem::take(&mut self.call_stack),
+            try_stack: mem::take(&mut self.try_stack),
             exception_value: self.exception_value.take(),
-            saved_env_stack: std::mem::take(&mut self.saved_env_stack),
-            arguments: std::mem::replace(&mut self.arguments, new_arguments),
-            new_target: std::mem::replace(&mut self.new_target, new_target),
+            saved_env_stack: mem::take(&mut self.saved_env_stack),
+            arguments: mem::replace(&mut self.arguments, new_arguments),
+            new_target: mem::replace(&mut self.new_target, new_target),
             current_constructor: self.current_constructor.take(),
             pending_completion: self.pending_completion.take(),
             return_register,
@@ -1536,11 +1536,11 @@ impl BytecodeVM {
         return_value: JsValue,
     ) {
         // Release current registers back to pool before restoring
-        let current_registers = std::mem::take(&mut self.registers);
+        let current_registers = mem::take(&mut self.registers);
         self.release_registers(current_registers);
 
         // Release current arguments back to pool before restoring
-        let current_arguments = std::mem::take(&mut self.arguments);
+        let current_arguments = mem::take(&mut self.arguments);
         self.release_arguments(current_arguments);
 
         // Restore VM state
@@ -1701,11 +1701,11 @@ impl BytecodeVM {
             let return_register = frame.return_register;
 
             // Release current registers back to pool before restoring
-            let current_registers = std::mem::take(&mut self.registers);
+            let current_registers = mem::take(&mut self.registers);
             self.release_registers(current_registers);
 
             // Release current arguments back to pool before restoring
-            let current_arguments = std::mem::take(&mut self.arguments);
+            let current_arguments = mem::take(&mut self.arguments);
             self.release_arguments(current_arguments);
 
             // Unwind current frame's scopes before restoring - if the called function
@@ -2004,13 +2004,20 @@ impl BytecodeVM {
             // ═══════════════════════════════════════════════════════════════════════════
             Op::LoadConst { dst, idx } => {
                 let (value, _guard) = match self.get_constant(idx) {
-                    Some(Constant::String(s)) => (JsValue::String(s.cheap_clone()), None),
-                    Some(Constant::Number(n)) => (JsValue::Number(*n), None),
+                    Some(Constant::String(s)) => (JsValue::String(s.cheap_clone()), None::<Guard<JsObject>>),
+                    Some(Constant::Number(n)) => (JsValue::Number(*n), None::<Guard<JsObject>>),
+                    #[cfg(feature = "regex")]
                     Some(Constant::RegExp { pattern, flags }) => {
                         let guard = interp.heap.create_guard();
                         let obj =
                             interp.create_regexp_literal(&guard, pattern.as_str(), flags.as_str());
                         (JsValue::Object(obj), Some(guard))
+                    }
+                    #[cfg(not(feature = "regex"))]
+                    Some(Constant::RegExp { .. }) => {
+                        return Err(JsError::type_error(
+                            "RegExp not available (enable 'regex' feature)",
+                        ));
                     }
                     Some(Constant::Chunk(_)) => {
                         return Err(JsError::internal_error("Cannot load chunk as value"));
@@ -2114,7 +2121,7 @@ impl BytecodeVM {
             Op::Exp { dst, left, right } => {
                 let left_val = interp.coerce_to_number(self.get_reg(left))?;
                 let right_val = interp.coerce_to_number(self.get_reg(right))?;
-                self.set_reg(dst, JsValue::Number(left_val.powf(right_val)));
+                self.set_reg(dst, JsValue::Number(math::powf(left_val, right_val)));
                 Ok(OpResult::Continue)
             }
 
@@ -2285,7 +2292,7 @@ impl BytecodeVM {
                     let result = interp.call_function(
                         JsValue::Object(method_obj),
                         right_val.clone(),
-                        std::slice::from_ref(left_val),
+                        core::slice::from_ref(left_val),
                     )?;
                     // Convert result to boolean
                     self.set_reg(dst, JsValue::Boolean(result.value.to_boolean()));
@@ -4800,7 +4807,7 @@ impl BytecodeVM {
                     let result = interp.call_function(
                         init_val.clone(),
                         JsValue::Undefined,
-                        std::slice::from_ref(value_val),
+                        core::slice::from_ref(value_val),
                     )?;
                     self.set_reg(value, result.value);
                 }

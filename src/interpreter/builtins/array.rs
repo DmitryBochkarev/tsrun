@@ -3,6 +3,7 @@
 use crate::error::JsError;
 use crate::gc::Gc;
 use crate::interpreter::Interpreter;
+use crate::prelude::*;
 use crate::value::{
     CheapClone, ExoticObject, Guarded, JsObject, JsObjectRef, JsString, JsValue, PropertyKey,
 };

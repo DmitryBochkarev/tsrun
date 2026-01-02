@@ -5,6 +5,7 @@
 
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
+use crate::prelude::{vec, ToString, Vec};
 use crate::value::{
     ExoticObject, Guarded, JsFunction, JsObject, JsObjectRef, JsValue, Property, PropertyKey,
     ProxyData,

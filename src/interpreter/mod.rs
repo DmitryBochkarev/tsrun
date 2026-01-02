@@ -8,9 +8,13 @@ pub mod builtins;
 // Bytecode virtual machine
 pub mod bytecode_vm;
 
-use std::cell::RefCell;
-use std::rc::Rc;
-use std::time::Instant;
+use crate::prelude::*;
+
+#[cfg(feature = "std")]
+use crate::platform::{StdRandomProvider, StdTimeProvider};
+#[cfg(not(feature = "std"))]
+use crate::platform::{NoOpRandomProvider, NoOpTimeProvider};
+use crate::platform::{RandomProvider, TimeProvider};
 
 use crate::StepResult;
 use crate::ast::{ImportSpecifier, Program, Statement};
@@ -24,8 +28,6 @@ use crate::value::{
     JsSymbol, JsValue, ModuleExport, NativeFn, NativeFunction, PromiseStatus, Property,
     PropertyKey, VarKey, create_environment_unrooted, create_environment_unrooted_with_capacity,
 };
-use rustc_hash::FxHashMap;
-use std::collections::VecDeque;
 
 use self::builtins::symbol::WellKnownSymbols;
 
@@ -241,10 +243,20 @@ pub struct Interpreter {
     pub well_known_symbols: WellKnownSymbols,
 
     /// Console timers for console.time() / console.timeEnd()
-    console_timers: FxHashMap<String, Instant>,
+    /// Stores timer start values from TimeProvider::start_timer()
+    console_timers: FxHashMap<String, u64>,
 
     /// Console counters for console.count() / console.countReset()
     console_counters: FxHashMap<String, u64>,
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Platform Providers
+    // ═══════════════════════════════════════════════════════════════════════════
+    /// Time provider for Date.now(), console.time(), etc.
+    time_provider: Box<dyn TimeProvider>,
+
+    /// Random provider for Math.random()
+    random_provider: Box<dyn RandomProvider>,
 
     // ═══════════════════════════════════════════════════════════════════════════
     // Step-based Execution
@@ -432,6 +444,15 @@ impl Interpreter {
             well_known_symbols,
             console_timers: FxHashMap::default(),
             console_counters: FxHashMap::default(),
+            // Platform providers
+            #[cfg(feature = "std")]
+            time_provider: Box::new(StdTimeProvider::new()),
+            #[cfg(not(feature = "std"))]
+            time_provider: Box::new(NoOpTimeProvider),
+            #[cfg(feature = "std")]
+            random_provider: Box::new(StdRandomProvider::new()),
+            #[cfg(not(feature = "std"))]
+            random_provider: Box::new(NoOpRandomProvider),
             // Step-based execution
             active_vm: None,
             active_module_path: None,
@@ -500,8 +521,9 @@ impl Interpreter {
         // Initialize JSON global object
         builtins::init_json(self);
 
-        // Initialize console global object
-        builtins::init_console(self);
+        // Initialize console global object (only when console feature is enabled)
+        #[cfg(feature = "console")]
+        builtins::console::init_console(self);
 
         // Initialize Number prototype methods
         builtins::init_number_prototype(self);
@@ -549,11 +571,14 @@ impl Interpreter {
             JsValue::Object(object_constructor),
         );
 
-        // Initialize RegExp prototype and constructor
-        builtins::init_regexp_prototype(self);
-        let regexp_constructor = builtins::create_regexp_constructor(self);
-        let regexp_name = self.intern("RegExp");
-        self.env_define(regexp_name, JsValue::Object(regexp_constructor), false);
+        // Initialize RegExp prototype and constructor (only when regex feature is enabled)
+        #[cfg(feature = "regex")]
+        {
+            builtins::regexp::init_regexp_prototype(self);
+            let regexp_constructor = builtins::regexp::create_regexp_constructor(self);
+            let regexp_name = self.intern("RegExp");
+            self.env_define(regexp_name, JsValue::Object(regexp_constructor), false);
+        }
 
         // Initialize Number constructor (global Number function)
         let number_constructor = builtins::create_number_constructor(self);
@@ -660,14 +685,31 @@ impl Interpreter {
 
     /// Start a console timer
     pub fn console_timer_start(&mut self, label: String) {
-        self.console_timers.insert(label, Instant::now());
+        let start = self.time_provider.start_timer();
+        self.console_timers.insert(label, start);
     }
 
     /// End a console timer and return elapsed milliseconds, or None if timer doesn't exist
-    pub fn console_timer_end(&mut self, label: &str) -> Option<u128> {
+    pub fn console_timer_end(&mut self, label: &str) -> Option<u64> {
         self.console_timers
             .remove(label)
-            .map(|start| start.elapsed().as_millis())
+            .map(|start| self.time_provider.elapsed_millis(start))
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Platform Provider Access
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// Get current time in milliseconds since Unix epoch
+    /// Used by Date.now() and Date constructor
+    pub fn now_millis(&self) -> i64 {
+        self.time_provider.now_millis()
+    }
+
+    /// Generate a random number in [0, 1)
+    /// Used by Math.random()
+    pub fn random(&mut self) -> f64 {
+        self.random_provider.random()
     }
 
     /// Increment a console counter and return the new count
@@ -764,10 +806,7 @@ impl Interpreter {
 
         // Compile the program to bytecode
         let chunk = if let Some(ref path) = module_path {
-            Compiler::compile_program_with_source(
-                &program,
-                std::path::PathBuf::from(path.as_str()),
-            )?
+            Compiler::compile_program_with_source(&program, path.as_str().to_string())?
         } else {
             Compiler::compile_program(&program)?
         };
@@ -892,13 +931,13 @@ impl Interpreter {
             VmResult::Complete(guarded) => {
                 // Check if there are pending orders to return
                 if !self.pending_orders.is_empty() {
-                    let pending = std::mem::take(&mut self.pending_orders);
-                    let cancelled = std::mem::take(&mut self.cancelled_orders);
+                    let pending = mem::take(&mut self.pending_orders);
+                    let cancelled = mem::take(&mut self.cancelled_orders);
                     return Ok(StepResult::Suspended { pending, cancelled });
                 }
                 // Check for suspended order awaits or waiting async contexts
                 if self.suspended_for_order.is_some() || self.wait_graph.has_waiting_contexts() {
-                    let cancelled = std::mem::take(&mut self.cancelled_orders);
+                    let cancelled = mem::take(&mut self.cancelled_orders);
                     return Ok(StepResult::Suspended {
                         pending: Vec::new(),
                         cancelled,
@@ -933,15 +972,15 @@ impl Interpreter {
 
                 self.wait_graph.add_context(suspended_ctx);
 
-                let pending = std::mem::take(&mut self.pending_orders);
-                let cancelled = std::mem::take(&mut self.cancelled_orders);
+                let pending = mem::take(&mut self.pending_orders);
+                let cancelled = mem::take(&mut self.cancelled_orders);
                 Ok(StepResult::Suspended { pending, cancelled })
             }
             VmResult::SuspendForOrder(order_suspension) => {
                 // Order suspension - waiting for host to provide a value
                 self.suspended_for_order = Some(order_suspension);
-                let pending = std::mem::take(&mut self.pending_orders);
-                let cancelled = std::mem::take(&mut self.cancelled_orders);
+                let pending = mem::take(&mut self.pending_orders);
+                let cancelled = mem::take(&mut self.cancelled_orders);
                 Ok(StepResult::Suspended { pending, cancelled })
             }
             VmResult::Yield(_) | VmResult::YieldStar(_) => Err(JsError::internal_error(
@@ -1006,8 +1045,8 @@ impl Interpreter {
                 } else {
                     // Order not yet fulfilled - re-suspend
                     self.suspended_for_order = Some(order_suspension);
-                    let pending = std::mem::take(&mut self.pending_orders);
-                    let cancelled = std::mem::take(&mut self.cancelled_orders);
+                    let pending = mem::take(&mut self.pending_orders);
+                    let cancelled = mem::take(&mut self.cancelled_orders);
                     return Ok(StepResult::Suspended { pending, cancelled });
                 }
             }
@@ -1085,8 +1124,8 @@ impl Interpreter {
             // No VM and nothing to resume
             // Check if there are waiting contexts (unresolved promises) or suspended orders
             if self.suspended_for_order.is_some() || self.wait_graph.has_waiting_contexts() {
-                let pending = std::mem::take(&mut self.pending_orders);
-                let cancelled = std::mem::take(&mut self.cancelled_orders);
+                let pending = mem::take(&mut self.pending_orders);
+                let cancelled = mem::take(&mut self.cancelled_orders);
                 return Ok(StepResult::Suspended { pending, cancelled });
             }
             // Truly done
@@ -1123,13 +1162,13 @@ impl Interpreter {
             VmResult::Complete(guarded) => {
                 // Check if there are pending orders to return
                 if !self.pending_orders.is_empty() {
-                    let pending = std::mem::take(&mut self.pending_orders);
-                    let cancelled = std::mem::take(&mut self.cancelled_orders);
+                    let pending = mem::take(&mut self.pending_orders);
+                    let cancelled = mem::take(&mut self.cancelled_orders);
                     return Ok(StepResult::Suspended { pending, cancelled });
                 }
                 // Check for suspended order awaits or waiting async contexts
                 if self.suspended_for_order.is_some() || self.wait_graph.has_waiting_contexts() {
-                    let cancelled = std::mem::take(&mut self.cancelled_orders);
+                    let cancelled = mem::take(&mut self.cancelled_orders);
                     return Ok(StepResult::Suspended {
                         pending: Vec::new(),
                         cancelled,
@@ -1164,15 +1203,15 @@ impl Interpreter {
 
                 self.wait_graph.add_context(suspended_ctx);
 
-                let pending = std::mem::take(&mut self.pending_orders);
-                let cancelled = std::mem::take(&mut self.cancelled_orders);
+                let pending = mem::take(&mut self.pending_orders);
+                let cancelled = mem::take(&mut self.cancelled_orders);
                 Ok(StepResult::Suspended { pending, cancelled })
             }
             VmResult::SuspendForOrder(order_suspension) => {
                 // Order suspension - waiting for host to provide a value
                 self.suspended_for_order = Some(order_suspension);
-                let pending = std::mem::take(&mut self.pending_orders);
-                let cancelled = std::mem::take(&mut self.cancelled_orders);
+                let pending = mem::take(&mut self.pending_orders);
+                let cancelled = mem::take(&mut self.cancelled_orders);
                 Ok(StepResult::Suspended { pending, cancelled })
             }
             VmResult::Yield(_) | VmResult::YieldStar(_) => Err(JsError::internal_error(
@@ -1251,10 +1290,7 @@ impl Interpreter {
 
         // Compile the program to bytecode
         let chunk = if let Some(ref path) = module_path {
-            Compiler::compile_program_with_source(
-                &program,
-                std::path::PathBuf::from(path.as_str()),
-            )?
+            Compiler::compile_program_with_source(&program, path.as_str().to_string())?
         } else {
             Compiler::compile_program(&program)?
         };
@@ -1391,10 +1427,7 @@ impl Interpreter {
 
         // Compile the program to bytecode
         let chunk = if let Some(ref path) = module_path {
-            Compiler::compile_program_with_source(
-                &program,
-                std::path::PathBuf::from(path.as_str()),
-            )?
+            Compiler::compile_program_with_source(&program, path.as_str().to_string())?
         } else {
             Compiler::compile_program(&program)?
         };
@@ -1820,7 +1853,7 @@ impl Interpreter {
 
     /// Deduplicate import requests by resolved path.
     fn dedupe_import_requests(imports: Vec<crate::ImportRequest>) -> Vec<crate::ImportRequest> {
-        let mut seen = std::collections::HashSet::new();
+        let mut seen = HashSet::new();
         imports
             .into_iter()
             .filter(|req| seen.insert(req.resolved_path.clone()))
@@ -2105,6 +2138,7 @@ impl Interpreter {
 
     /// Create a RegExp literal object.
     /// Caller provides the guard to control object lifetime.
+    #[cfg(feature = "regex")]
     fn create_regexp_literal(
         &mut self,
         guard: &Guard<JsObject>,
@@ -3105,7 +3139,7 @@ impl Interpreter {
 
         // Use current module path for source file in stack traces
         let chunk = if let Some(ref path) = self.current_module_path {
-            Compiler::compile_program_with_source(program, std::path::PathBuf::from(path.as_str()))?
+            Compiler::compile_program_with_source(program, path.as_str().to_string())?
         } else {
             Compiler::compile_program(program)?
         };
@@ -3251,7 +3285,7 @@ impl Interpreter {
 
         // Save current environment and exports
         let saved_env = self.env.cheap_clone();
-        let saved_exports = std::mem::take(&mut self.exports);
+        let saved_exports = mem::take(&mut self.exports);
 
         // Create module environment (rooted so it persists for live bindings)
         let module_env = self.create_module_environment();
@@ -3369,7 +3403,7 @@ impl Interpreter {
     /// Implements the == operator with type coercion
     fn abstract_equals(&mut self, left: &JsValue, right: &JsValue) -> bool {
         // If types are the same, use strict equality
-        if std::mem::discriminant(left) == std::mem::discriminant(right) {
+        if mem::discriminant(left) == mem::discriminant(right) {
             return left.strict_equals(right);
         }
 

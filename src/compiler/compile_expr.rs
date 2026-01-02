@@ -9,6 +9,7 @@ use crate::ast::{
     LogicalOp, MemberProperty, ObjectProperty, ObjectPropertyKey, PropertyKind, UnaryOp, UpdateOp,
 };
 use crate::error::JsError;
+use crate::prelude::*;
 use crate::value::{CheapClone, JsString};
 
 /// Information about a member key (const or computed)
@@ -1691,7 +1692,7 @@ impl Compiler {
     /// For expressions like `(a?.b)`, this returns the object expression (`a`) and the member (`b`).
     /// This is used to preserve `this` binding when calling methods via parenthesized optional chains.
     fn extract_member_from_parenthesized_optional_chain(
-        expr: &std::rc::Rc<Expression>,
+        expr: &Rc<Expression>,
     ) -> Option<(&Expression, &crate::ast::MemberExpression)> {
         // Unwrap Parenthesized expression
         let inner = match expr.as_ref() {
@@ -2458,7 +2459,7 @@ impl Compiler {
         // Add the chunk to constants
         let chunk_idx = self
             .builder
-            .add_constant(super::bytecode::Constant::Chunk(std::rc::Rc::new(chunk)))?;
+            .add_constant(super::bytecode::Constant::Chunk(Rc::new(chunk)))?;
 
         // Emit the appropriate closure creation opcode
         if func.generator && func.async_ {
@@ -2508,7 +2509,7 @@ impl Compiler {
         // Add chunk to constants
         let chunk_idx = self
             .builder
-            .add_constant(super::bytecode::Constant::Chunk(std::rc::Rc::new(chunk)))?;
+            .add_constant(super::bytecode::Constant::Chunk(Rc::new(chunk)))?;
 
         // Arrow functions use CreateArrow (captures lexical this)
         self.builder.emit(Op::CreateArrow { dst, chunk_idx });

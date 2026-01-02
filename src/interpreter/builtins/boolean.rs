@@ -37,7 +37,7 @@ pub fn boolean_constructor_fn(
         let is_new_call = {
             let borrowed = obj.borrow();
             if let Some(ref proto) = borrowed.prototype {
-                std::ptr::eq(
+                core::ptr::eq(
                     &*proto.borrow() as *const _,
                     &*interp.boolean_prototype.borrow() as *const _,
                 )

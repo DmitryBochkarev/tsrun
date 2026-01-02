@@ -9,8 +9,7 @@ use super::bytecode::{
 use crate::error::JsError;
 use crate::lexer::Span;
 use crate::value::JsString;
-use rustc_hash::FxHashMap;
-use std::rc::Rc;
+use crate::prelude::*;
 
 /// Placeholder for a jump that needs to be patched later
 #[derive(Debug, Clone, Copy)]
@@ -150,7 +149,7 @@ pub struct BytecodeBuilder {
     function_info: Option<FunctionInfo>,
 
     /// Source file path (for stack traces)
-    source_file: Option<std::path::PathBuf>,
+    source_file: Option<String>,
 }
 
 impl BytecodeBuilder {
@@ -177,12 +176,12 @@ impl BytecodeBuilder {
     }
 
     /// Set the source file path for stack traces
-    pub fn set_source_file(&mut self, path: std::path::PathBuf) {
+    pub fn set_source_file(&mut self, path: String) {
         self.source_file = Some(path);
     }
 
     /// Get the current source file path
-    pub fn source_file(&self) -> Option<&std::path::PathBuf> {
+    pub fn source_file(&self) -> Option<&String> {
         self.source_file.as_ref()
     }
 
@@ -513,7 +512,7 @@ impl BytecodeBuilder {
     /// Emit LoadConst for a number
     pub fn emit_load_number(&mut self, dst: Register, n: f64) -> Result<(), JsError> {
         // Optimize small integers
-        if n.fract() == 0.0 && n >= i32::MIN as f64 && n <= i32::MAX as f64 {
+        if math::fract(n) == 0.0 && n >= i32::MIN as f64 && n <= i32::MAX as f64 {
             let i = n as i32;
             // Use LoadInt for small integers
             if (-128..=127).contains(&i) {

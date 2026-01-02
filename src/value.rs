@@ -2,13 +2,7 @@
 //!
 //! The core JsValue type and related structures for representing JavaScript values at runtime.
 
-use std::cell::RefCell;
-use std::fmt;
-use std::hash::{Hash, Hasher};
-use std::rc::Rc;
-
-use indexmap::{IndexMap, IndexSet};
-use rustc_hash::FxHashMap;
+use crate::prelude::*;
 
 /// Convert a JavaScript number to its canonical string representation.
 ///
@@ -35,7 +29,7 @@ pub fn number_to_string(n: f64) -> String {
     let abs_n = n.abs();
 
     // Check if it's an integer that can be represented exactly
-    if n.trunc() == n && abs_n < 1e21 {
+    if math::trunc(n) == n && abs_n < 1e21 {
         // Format as integer (no decimal point)
         return format!("{:.0}", n);
     }
@@ -56,11 +50,11 @@ pub fn number_to_string(n: f64) -> String {
 fn format_exponential(n: f64) -> String {
     // Get the exponent
     let abs_n = n.abs();
-    let exponent = abs_n.log10().floor() as i32;
-    let mantissa = n / 10_f64.powi(exponent);
+    let exponent = math::floor(math::log10(abs_n)) as i32;
+    let mantissa = n / math::powi(10_f64, exponent);
 
     // Format mantissa - remove trailing zeros after decimal point
-    let mantissa_str = if mantissa.trunc() == mantissa {
+    let mantissa_str = if math::trunc(mantissa) == mantissa {
         format!("{:.0}", mantissa)
     } else {
         let s = format!("{}", mantissa);
@@ -285,8 +279,8 @@ pub struct Guarded {
     pub guard: Option<Guard<JsObject>>,
 }
 
-impl std::fmt::Debug for Guarded {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for Guarded {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Guarded")
             .field("value", &self.value)
             .field("guard", &self.guard.as_ref().map(|_| "<guard>"))
@@ -804,8 +798,8 @@ pub struct JsString(Rc<str>);
 #[derive(Clone)]
 pub struct VarKey(pub JsString);
 
-impl std::hash::Hash for VarKey {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+impl Hash for VarKey {
+    fn hash<H: Hasher>(&self, state: &mut H) {
         // Hash the pointer address, not the content
         // Use the data pointer from the fat pointer (Rc<str> is a fat pointer)
         let ptr = Rc::as_ptr(&self.0.0) as *const () as usize;
@@ -822,14 +816,14 @@ impl PartialEq for VarKey {
 
 impl Eq for VarKey {}
 
-impl std::fmt::Debug for VarKey {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for VarKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "VarKey({:?})", self.0)
     }
 }
 
-impl std::fmt::Display for VarKey {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for VarKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
     }
 }
@@ -884,7 +878,7 @@ impl JsString {
         self.0.len()
     }
 
-    pub fn parse<F: std::str::FromStr>(&self) -> Result<F, F::Err> {
+    pub fn parse<F: core::str::FromStr>(&self) -> Result<F, F::Err> {
         self.0.parse()
     }
 }
@@ -895,7 +889,7 @@ impl AsRef<str> for JsString {
     }
 }
 
-impl std::borrow::Borrow<str> for JsString {
+impl core::borrow::Borrow<str> for JsString {
     fn borrow(&self) -> &str {
         &self.0
     }
@@ -937,7 +931,7 @@ impl fmt::Display for JsString {
     }
 }
 
-impl std::ops::Add<&str> for JsString {
+impl core::ops::Add<&str> for JsString {
     type Output = JsString;
 
     fn add(self, other: &str) -> JsString {
@@ -947,7 +941,7 @@ impl std::ops::Add<&str> for JsString {
     }
 }
 
-impl std::ops::Add<&JsString> for JsString {
+impl core::ops::Add<&JsString> for JsString {
     type Output = JsString;
 
     fn add(self, other: &JsString) -> JsString {
@@ -987,8 +981,8 @@ impl PartialEq for JsSymbol {
 
 impl Eq for JsSymbol {}
 
-impl std::hash::Hash for JsSymbol {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+impl Hash for JsSymbol {
+    fn hash<H: Hasher>(&self, state: &mut H) {
         self.id.hash(state);
     }
 }
@@ -1720,10 +1714,10 @@ impl JsObject {
                 // Also update reverse mapping if value is numeric
                 if let JsValue::Number(n) = &value {
                     // Find and update the reverse mapping entry
-                    let reverse_key = if n.fract() == 0.0 && *n >= 0.0 && *n <= u32::MAX as f64 {
+                    let reverse_key = if math::fract(*n) == 0.0 && *n >= 0.0 && *n <= u32::MAX as f64 {
                         PropertyKey::Index(*n as u32)
                     } else {
-                        PropertyKey::String(JsString::from(n.to_string()))
+                        PropertyKey::String(JsString::from(ToString::to_string(n)))
                     };
                     self.properties.insert(
                         reverse_key,
@@ -2076,7 +2070,7 @@ impl PropertyStorage {
     pub fn new() -> Self {
         PropertyStorage::Inline {
             len: 0,
-            entries: std::array::from_fn(|_| {
+            entries: core::array::from_fn(|_| {
                 (PropertyKey::Index(0), Property::data(JsValue::Undefined))
             }),
         }
@@ -2146,7 +2140,7 @@ impl PropertyStorage {
                 // Check if key already exists
                 for entry in entries.get_mut(..current_len).unwrap_or_default() {
                     if entry.0 == key {
-                        let old = std::mem::replace(&mut entry.1, value);
+                        let old = mem::replace(&mut entry.1, value);
                         return Some(old);
                     }
                 }
@@ -2164,7 +2158,7 @@ impl PropertyStorage {
                     Default::default(),
                 );
                 for entry in entries.iter_mut() {
-                    let (k, v) = std::mem::replace(
+                    let (k, v) = mem::replace(
                         entry,
                         (PropertyKey::Index(0), Property::data(JsValue::Undefined)),
                     );
@@ -2214,7 +2208,7 @@ impl PropertyStorage {
                 if let Some(i) = found_idx {
                     // Swap with last element and decrement len
                     let removed = if let Some(entry) = entries.get_mut(i) {
-                        std::mem::replace(
+                        mem::replace(
                             entry,
                             (PropertyKey::Index(0), Property::data(JsValue::Undefined)),
                         )
@@ -2307,7 +2301,10 @@ pub enum PropertyStorageIter<'a> {
         index: usize,
         len: usize,
     },
+    #[cfg(feature = "std")]
     Map(std::collections::hash_map::Iter<'a, PropertyKey, Property>),
+    #[cfg(not(feature = "std"))]
+    Map(hashbrown::hash_map::Iter<'a, PropertyKey, Property>),
 }
 
 impl<'a> Iterator for PropertyStorageIter<'a> {
@@ -2338,7 +2335,10 @@ pub enum PropertyStorageIterMut<'a> {
     Inline {
         entries: &'a mut [(PropertyKey, Property)],
     },
+    #[cfg(feature = "std")]
     Map(std::collections::hash_map::IterMut<'a, PropertyKey, Property>),
+    #[cfg(not(feature = "std"))]
+    Map(hashbrown::hash_map::IterMut<'a, PropertyKey, Property>),
 }
 
 impl<'a> Iterator for PropertyStorageIterMut<'a> {
@@ -2352,7 +2352,7 @@ impl<'a> Iterator for PropertyStorageIterMut<'a> {
                     None
                 } else {
                     // Split the slice: take first element, keep the rest
-                    let (first, rest) = std::mem::take(entries).split_at_mut(1);
+                    let (first, rest) = mem::take(entries).split_at_mut(1);
                     *entries = rest;
                     first.first_mut().map(|e| (&e.0, &mut e.1))
                 }
@@ -2451,7 +2451,7 @@ impl Eq for JsMapKey {}
 impl Hash for JsMapKey {
     fn hash<H: Hasher>(&self, state: &mut H) {
         // Hash discriminant first to differentiate types
-        std::mem::discriminant(&self.0).hash(state);
+        mem::discriminant(&self.0).hash(state);
 
         match &self.0 {
             JsValue::Undefined | JsValue::Null => {
@@ -2738,8 +2738,8 @@ pub struct GeneratorState {
     pub started: bool,
 }
 
-impl std::fmt::Debug for GeneratorState {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for GeneratorState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("GeneratorState")
             .field("status", &self.status)
             .field("id", &self.id)
@@ -2799,8 +2799,8 @@ pub struct BytecodeGeneratorState {
     pub throw_value: Option<JsValue>,
 }
 
-impl std::fmt::Debug for BytecodeGeneratorState {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for BytecodeGeneratorState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("BytecodeGeneratorState")
             .field("status", &self.status)
             .field("id", &self.id)
@@ -2832,14 +2832,14 @@ pub enum JsFunction {
     /// Promise.all fulfill handler (tracks shared state for aggregation)
     /// Contains (shared_state, index) - index is which promise slot to fill
     PromiseAllFulfill {
-        state: std::rc::Rc<PromiseAllSharedState>,
+        state: Rc<PromiseAllSharedState>,
         index: usize,
     },
     /// Promise.all reject handler (rejects on first failure)
-    PromiseAllReject(std::rc::Rc<PromiseAllSharedState>),
+    PromiseAllReject(Rc<PromiseAllSharedState>),
     /// Promise.race settle handler (settles on first settlement, either fulfill or reject)
     PromiseRaceSettle {
-        state: std::rc::Rc<PromiseRaceSharedState>,
+        state: Rc<PromiseRaceSharedState>,
         /// true = on_fulfilled handler, false = on_rejected handler
         is_fulfill: bool,
         /// Index of this Promise in the race inputs (for identifying winner)
@@ -2871,13 +2871,13 @@ pub enum JsFunction {
 #[derive(Debug)]
 pub struct PromiseAllSharedState {
     /// Number of promises still pending
-    pub remaining: std::cell::Cell<usize>,
+    pub remaining: Cell<usize>,
     /// Results array (indexed by original position)
-    pub results: std::cell::RefCell<Vec<JsValue>>,
+    pub results: RefCell<Vec<JsValue>>,
     /// The result promise to fulfill when all complete
     pub result_promise: JsObjectRef,
     /// Whether any promise has already rejected
-    pub rejected: std::cell::Cell<bool>,
+    pub rejected: Cell<bool>,
 }
 
 /// Shared state for Promise.race tracking
@@ -2887,7 +2887,7 @@ pub struct PromiseRaceSharedState {
     /// The result promise to settle
     pub result_promise: JsObjectRef,
     /// Whether the race has already been settled
-    pub settled: std::cell::Cell<bool>,
+    pub settled: Cell<bool>,
     /// Order IDs of input Promises (indexed by position, None for non-host Promises)
     pub input_order_ids: Vec<Option<crate::OrderId>>,
 }

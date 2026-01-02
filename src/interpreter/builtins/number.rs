@@ -3,6 +3,7 @@
 use crate::error::JsError;
 use crate::gc::Gc;
 use crate::interpreter::Interpreter;
+use crate::prelude::{format, math, String, ToString, Vec};
 use crate::value::{ExoticObject, Guarded, JsObject, JsString, JsValue, PropertyKey};
 
 /// Initialize Number.prototype with toFixed, toString, toPrecision, toExponential, valueOf
@@ -38,7 +39,7 @@ pub fn number_constructor_fn(
         let is_new_call = {
             let borrowed = obj.borrow();
             if let Some(ref proto) = borrowed.prototype {
-                std::ptr::eq(
+                core::ptr::eq(
                     &*proto.borrow() as *const _,
                     &*interp.number_prototype.borrow() as *const _,
                 )
@@ -228,7 +229,7 @@ pub fn number_is_integer(
 ) -> Result<Guarded, JsError> {
     match args.first() {
         Some(JsValue::Number(n)) => {
-            let is_int = n.is_finite() && n.trunc() == *n;
+            let is_int = n.is_finite() && math::trunc(*n) == *n;
             Ok(Guarded::unguarded(JsValue::Boolean(is_int)))
         }
         _ => Ok(Guarded::unguarded(JsValue::Boolean(false))),
@@ -244,7 +245,7 @@ pub fn number_is_safe_integer(
     const MAX_SAFE: f64 = 9007199254740991.0;
     match args.first() {
         Some(JsValue::Number(n)) => {
-            let is_safe = n.is_finite() && n.trunc() == *n && n.abs() <= MAX_SAFE;
+            let is_safe = n.is_finite() && math::trunc(*n) == *n && n.abs() <= MAX_SAFE;
             Ok(Guarded::unguarded(JsValue::Boolean(is_safe)))
         }
         _ => Ok(Guarded::unguarded(JsValue::Boolean(false))),
@@ -308,7 +309,7 @@ pub fn number_to_string(
     }
 
     // For other radixes, we need integer conversion
-    if !n.is_finite() || n.fract() != 0.0 {
+    if !n.is_finite() || math::fract(n) != 0.0 {
         return Ok(Guarded::unguarded(JsValue::String(JsString::from(
             format_number_js(n),
         ))));

@@ -2,8 +2,7 @@
 //!
 //! Uses recursive descent with Pratt parsing for expressions.
 
-use std::rc::Rc;
-
+use crate::prelude::*;
 use crate::ast::*;
 use crate::error::JsError;
 use crate::lexer::{Lexer, Span, Token, TokenKind};
@@ -519,7 +518,7 @@ impl<'a> Parser<'a> {
         self.require_token(&TokenKind::LParen)?;
 
         let mut params = vec![];
-        let mut seen_names: std::collections::HashSet<JsString> = std::collections::HashSet::new();
+        let mut seen_names: HashSet<JsString> = HashSet::new();
 
         while !self.check(&TokenKind::RParen) && !self.is_at_end() {
             let param_start = self.current.span;
@@ -592,7 +591,7 @@ impl<'a> Parser<'a> {
     /// Collects all binding names from a pattern and checks against seen names.
     fn check_duplicate_params(
         pattern: &Pattern,
-        seen: &mut std::collections::HashSet<JsString>,
+        seen: &mut HashSet<JsString>,
     ) -> Result<(), JsError> {
         match pattern {
             Pattern::Identifier(id) => {
@@ -3216,7 +3215,7 @@ impl<'a> Parser<'a> {
         is_async: bool,
     ) -> Result<Expression, JsError> {
         // Check for duplicate parameter names in strict mode
-        let mut seen_names: std::collections::HashSet<JsString> = std::collections::HashSet::new();
+        let mut seen_names: HashSet<JsString> = HashSet::new();
         for param in &params {
             Self::check_duplicate_params(&param.pattern, &mut seen_names)?;
         }
@@ -4625,7 +4624,7 @@ impl<'a> Parser<'a> {
     }
 
     fn advance(&mut self) {
-        self.previous = std::mem::replace(&mut self.current, self.lexer.next_token());
+        self.previous = mem::replace(&mut self.current, self.lexer.next_token());
     }
 
     fn require_token(&mut self, kind: &TokenKind) -> Result<(), JsError> {
@@ -4710,7 +4709,7 @@ impl<'a> Parser<'a> {
     }
 
     fn check(&self, kind: &TokenKind) -> bool {
-        std::mem::discriminant(&self.current.kind) == std::mem::discriminant(kind)
+        mem::discriminant(&self.current.kind) == mem::discriminant(kind)
     }
 
     /// Check if the next token (after current) is of the given kind
@@ -4718,7 +4717,7 @@ impl<'a> Parser<'a> {
         let checkpoint = self.lexer.checkpoint();
         let next = self.lexer.next_token();
         self.lexer.restore(checkpoint);
-        std::mem::discriminant(&next.kind) == std::mem::discriminant(kind)
+        mem::discriminant(&next.kind) == mem::discriminant(kind)
     }
 
     fn check_identifier(&self) -> bool {

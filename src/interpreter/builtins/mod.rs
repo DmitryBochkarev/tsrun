@@ -2,6 +2,7 @@
 
 pub mod array;
 pub mod boolean;
+#[cfg(feature = "console")]
 pub mod console;
 pub mod date;
 pub mod error;
@@ -16,6 +17,7 @@ pub mod number;
 pub mod object;
 pub mod promise;
 pub mod proxy;
+#[cfg(feature = "regex")]
 pub mod regexp;
 pub mod set;
 pub mod string;
@@ -24,6 +26,8 @@ pub mod symbol;
 // Re-export public functions from enabled modules
 pub use array::*;
 pub use boolean::*;
+#[cfg(feature = "console")]
+#[allow(unused_imports)]
 pub use console::*;
 pub use date::*;
 pub use error::*;
@@ -36,6 +40,8 @@ pub use map::*;
 pub use math::*;
 pub use number::*;
 pub use object::*;
+#[cfg(feature = "regex")]
+#[allow(unused_imports)]
 pub use regexp::*;
 pub use set::*;
 pub use string::*;

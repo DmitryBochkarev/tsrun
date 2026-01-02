@@ -2,6 +2,7 @@
 
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
+use crate::prelude::*;
 use crate::value::{Guarded, JsValue, PropertyKey};
 
 /// Format a JsValue for console output (strings without quotes)

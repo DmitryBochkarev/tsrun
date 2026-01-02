@@ -1,25 +1,16 @@
 //! Date built-in methods
 //!
-//! Implements JavaScript Date using std::time and manual calendar calculations.
-
-use std::time::{SystemTime, UNIX_EPOCH};
+//! Implements JavaScript Date using platform-provided time and manual calendar calculations.
 
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
+use crate::prelude::*;
 use crate::value::{ExoticObject, Guarded, JsString, JsValue, PropertyKey};
 
 const MS_PER_SECOND: i64 = 1000;
 const MS_PER_MINUTE: i64 = 60 * MS_PER_SECOND;
 const MS_PER_HOUR: i64 = 60 * MS_PER_MINUTE;
 const MS_PER_DAY: i64 = 24 * MS_PER_HOUR;
-
-/// Get current time in milliseconds since Unix epoch
-fn now_millis() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0)
-}
 
 /// Convert days since Unix epoch to (year, month, day)
 /// Uses the algorithm from Howard Hinnant's date library
@@ -344,7 +335,7 @@ pub fn date_constructor(
     let is_new_call = if let JsValue::Object(obj) = &this {
         let borrowed = obj.borrow();
         if let Some(ref proto) = borrowed.prototype {
-            std::ptr::eq(
+            core::ptr::eq(
                 &*proto.borrow() as *const _,
                 &*interp.date_prototype.borrow() as *const _,
             )
@@ -357,7 +348,7 @@ pub fn date_constructor(
 
     // When called as a function (without `new`), return the current date/time as a string
     if !is_new_call {
-        let date_string = format_date_for_tostring(now_millis() as f64);
+        let date_string = format_date_for_tostring(interp.now_millis() as f64);
         return Ok(Guarded::unguarded(JsValue::String(JsString::from(
             date_string,
         ))));
@@ -365,7 +356,7 @@ pub fn date_constructor(
 
     // Called with `new` - create a Date object
     let timestamp = if args.is_empty() {
-        now_millis() as f64
+        interp.now_millis() as f64
     } else if args.len() == 1 {
         match args.first() {
             Some(JsValue::Number(n)) => *n,
@@ -394,11 +385,11 @@ pub fn date_constructor(
 }
 
 pub fn date_now(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     _this: JsValue,
     _args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    Ok(Guarded::unguarded(JsValue::Number(now_millis() as f64)))
+    Ok(Guarded::unguarded(JsValue::Number(interp.now_millis() as f64)))
 }
 
 pub fn date_utc(

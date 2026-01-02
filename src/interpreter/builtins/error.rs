@@ -3,6 +3,7 @@
 use crate::error::JsError;
 use crate::gc::{Gc, Guard};
 use crate::interpreter::Interpreter;
+use crate::prelude::{format, String, ToString};
 use crate::value::{Guarded, JsObject, JsString, JsValue, PropertyKey};
 
 /// Initialize Error and all derived error constructors and add them to globals

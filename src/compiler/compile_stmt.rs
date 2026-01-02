@@ -13,6 +13,7 @@ use crate::ast::{
     WhileStatement,
 };
 use crate::error::JsError;
+use crate::prelude::*;
 use crate::value::{CheapClone, JsString};
 
 impl Compiler {
@@ -1293,7 +1294,7 @@ impl Compiler {
         let mut static_private_fields: Vec<&ClassProperty> = Vec::new();
         let mut instance_private_methods: Vec<&ClassMethod> = Vec::new();
         let mut static_private_methods: Vec<&ClassMethod> = Vec::new();
-        let mut private_members = rustc_hash::FxHashMap::default();
+        let mut private_members = FxHashMap::default();
 
         for member in &class.body.members {
             match member {

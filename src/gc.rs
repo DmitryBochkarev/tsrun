@@ -3,9 +3,7 @@
 //! Objects are kept alive by being reachable from Guard roots through ownership edges.
 //! Collection happens when guards are dropped, using a mark-and-sweep algorithm.
 
-use std::cell::{Cell, Ref, RefCell, RefMut};
-use std::ptr::NonNull;
-use std::rc::{Rc, Weak};
+use crate::prelude::*;
 
 // ============================================================================
 // ChunkBitmask - 256-bit bitmask for marking objects within a chunk
@@ -140,8 +138,8 @@ impl<T: Default + Reset + Traceable> PartialEq for Gc<T> {
     }
 }
 
-impl<T: Default + Reset + Traceable> std::hash::Hash for Gc<T> {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+impl<T: Default + Reset + Traceable> Hash for Gc<T> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
         self.ptr.hash(state);
     }
 }
@@ -254,8 +252,8 @@ impl<T: Default + Reset + Traceable> Drop for Gc<T> {
     }
 }
 
-impl<T: Default + Reset + Traceable> std::fmt::Debug for Gc<T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<T: Default + Reset + Traceable> fmt::Debug for Gc<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Gc").field("ptr", &self.ptr).finish()
     }
 }
@@ -533,7 +531,7 @@ impl<T: Default + Reset + Traceable> Space<T> {
 
         // Take ownership of the persistent mark stack to avoid borrow issues.
         // This preserves capacity from previous GC cycles - the key optimization.
-        let mut stack = std::mem::take(&mut self.mark_stack);
+        let mut stack = mem::take(&mut self.mark_stack);
         stack.clear();
 
         // Collect roots from all active guards.
@@ -616,7 +614,7 @@ impl<T: Default + Reset + Traceable> Space<T> {
     fn sweep(&mut self) -> usize {
         let mut collected = 0;
         // Take ownership of persistent sweep buffer (preserves capacity from previous cycles)
-        let mut to_pool = std::mem::take(&mut self.sweep_buffer);
+        let mut to_pool = mem::take(&mut self.sweep_buffer);
         to_pool.clear();
 
         // First pass: reset all unmarked objects and collect their pointers
@@ -867,7 +865,7 @@ impl<T: Default + Reset + Traceable> Drop for Guard<T> {
             // Note: Space's Weak ref will become invalid when inner is dropped
             if Rc::strong_count(&self.inner) == 1 {
                 let mut roots = self.inner.roots.borrow_mut();
-                let storage = std::mem::take(&mut *roots);
+                let storage = mem::take(&mut *roots);
                 drop(roots);
                 space.borrow_mut().return_guard_to_pool(storage);
             }

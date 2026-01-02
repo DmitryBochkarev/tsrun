@@ -2,8 +2,8 @@
 
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
+use crate::prelude::{index_map_new, index_map_with_capacity, vec, Vec};
 use crate::value::{ExoticObject, Guarded, JsMapKey, JsValue, PropertyKey};
-use indexmap::IndexMap;
 
 /// Initialize Map.prototype with get, set, has, delete, clear, forEach methods
 pub fn init_map_prototype(interp: &mut Interpreter) {
@@ -66,7 +66,7 @@ pub fn map_constructor(
     {
         let mut obj = map_obj.borrow_mut();
         obj.exotic = ExoticObject::Map {
-            entries: IndexMap::new(),
+            entries: index_map_new(),
         };
         obj.prototype = Some(interp.map_prototype.clone());
         obj.set_property(size_key, JsValue::Number(0.0));
@@ -408,14 +408,14 @@ pub fn map_group_by(
     {
         let mut obj = map_obj.borrow_mut();
         obj.exotic = ExoticObject::Map {
-            entries: IndexMap::new(),
+            entries: index_map_new(),
         };
         obj.prototype = Some(interp.map_prototype.clone());
         obj.set_property(size_key.clone(), JsValue::Number(0.0));
     }
 
     // Track groups using IndexMap for O(1) lookup with SameValueZero semantics
-    let mut groups: IndexMap<JsMapKey, Vec<JsValue>> = IndexMap::new();
+    let mut groups = index_map_new::<JsMapKey, Vec<JsValue>>();
 
     // Iterate and group
     for (index, item) in elements.into_iter().enumerate() {
@@ -439,7 +439,7 @@ pub fn map_group_by(
 
     // Now build the Map from the groups
     // First, create all the arrays (which may trigger GC)
-    let mut built_entries: IndexMap<JsMapKey, JsValue> = IndexMap::with_capacity(groups.len());
+    let mut built_entries = index_map_with_capacity::<JsMapKey, JsValue>(groups.len());
     for (key, items) in groups {
         let arr = interp.create_array_from(&guard, items);
         built_entries.insert(key, JsValue::Object(arr));

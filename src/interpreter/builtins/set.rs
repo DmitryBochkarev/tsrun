@@ -2,8 +2,8 @@
 
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
+use crate::prelude::{index_set_new, vec, Vec};
 use crate::value::{ExoticObject, Guarded, JsMapKey, JsValue, PropertyKey};
-use indexmap::IndexSet;
 
 /// Initialize Set.prototype with add, has, delete, clear, forEach methods
 pub fn init_set_prototype(interp: &mut Interpreter) {
@@ -62,7 +62,7 @@ pub fn set_constructor(
     {
         let mut obj = set_obj.borrow_mut();
         obj.exotic = ExoticObject::Set {
-            entries: IndexSet::new(),
+            entries: index_set_new(),
         };
         obj.prototype = Some(interp.set_prototype.clone());
         obj.set_property(size_key, JsValue::Number(0.0));

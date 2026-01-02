@@ -4,10 +4,10 @@ use crate::error::JsError;
 use crate::gc::{Gc, Guard};
 use crate::interpreter::Interpreter;
 use crate::parser::Parser;
+use crate::prelude::{format, index_map_with_capacity, index_set_with_capacity, String, ToString, Vec};
 use crate::value::{
     CheapClone, ExoticObject, Guarded, JsMapKey, JsObject, JsString, JsValue, Property, PropertyKey,
 };
-use indexmap::{IndexMap, IndexSet};
 
 /// Register global functions (parseInt, parseFloat, isNaN, isFinite, URI functions)
 pub fn init_global_functions(interp: &mut Interpreter) {
@@ -767,7 +767,7 @@ fn clone_object(
                 .collect();
             drop(obj_ref);
 
-            let mut cloned_entries = IndexMap::with_capacity(entries_to_clone.len());
+            let mut cloned_entries = index_map_with_capacity(entries_to_clone.len());
             for (key, val) in &entries_to_clone {
                 let cloned_key = structured_clone_internal(interp, guard, key)?;
                 let cloned_val = structured_clone_internal(interp, guard, val)?;
@@ -790,7 +790,7 @@ fn clone_object(
             let entries_to_clone: Vec<JsValue> = entries.iter().map(|k| k.0.clone()).collect();
             drop(obj_ref);
 
-            let mut cloned_entries = IndexSet::with_capacity(entries_to_clone.len());
+            let mut cloned_entries = index_set_with_capacity(entries_to_clone.len());
             for entry in &entries_to_clone {
                 cloned_entries.insert(JsMapKey(structured_clone_internal(interp, guard, entry)?));
             }

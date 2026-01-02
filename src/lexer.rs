@@ -2,9 +2,7 @@
 //!
 //! Converts source text into a stream of tokens.
 
-use std::iter::Peekable;
-use std::str::CharIndices;
-
+use crate::prelude::*;
 use crate::string_dict::StringDict;
 use crate::value::JsString;
 

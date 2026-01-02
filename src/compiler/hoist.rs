@@ -8,6 +8,7 @@ use super::Compiler;
 use super::bytecode::Op;
 use crate::ast::{ForInOfLeft, ForInit, Pattern, Statement, VariableDeclaration, VariableKind};
 use crate::error::JsError;
+use crate::prelude::*;
 use crate::value::{CheapClone, JsString};
 
 impl Compiler {
@@ -189,8 +190,6 @@ pub fn count_function_bindings(
     body: &[Statement],
     is_arrow: bool,
 ) -> usize {
-    use rustc_hash::FxHashSet;
-
     let mut seen: FxHashSet<JsString> = FxHashSet::default();
     let mut count: usize = 0;
 
@@ -223,7 +222,7 @@ pub fn count_function_bindings(
 /// Count bindings from a pattern (for parameters and destructuring)
 fn count_pattern_bindings(
     pattern: &Pattern,
-    seen: &mut rustc_hash::FxHashSet<JsString>,
+    seen: &mut FxHashSet<JsString>,
     count: &mut usize,
 ) {
     match pattern {
@@ -261,7 +260,7 @@ fn count_pattern_bindings(
 /// Collect function declaration names (hoisted)
 fn collect_function_decl_names(
     statements: &[Statement],
-    seen: &mut rustc_hash::FxHashSet<JsString>,
+    seen: &mut FxHashSet<JsString>,
     count: &mut usize,
 ) {
     for stmt in statements {
@@ -272,7 +271,7 @@ fn collect_function_decl_names(
 /// Collect function declaration names from a single statement
 fn collect_function_decl_names_stmt(
     stmt: &Statement,
-    seen: &mut rustc_hash::FxHashSet<JsString>,
+    seen: &mut FxHashSet<JsString>,
     count: &mut usize,
 ) {
     match stmt {
