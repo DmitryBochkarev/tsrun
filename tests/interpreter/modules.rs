@@ -1,15 +1,15 @@
 //! Tests for the module system and order API
 
-use super::{create_test_runtime, run, run_to_completion};
+use super::{run, run_to_completion};
 use tsrun::{
-    Guarded, InternalModule, Interpreter, JsError, JsValue, ModulePath, Runtime, RuntimeConfig,
+    Guarded, InternalModule, Interpreter, InterpreterConfig, JsError, JsValue, ModulePath,
     RuntimeValue, StepResult, value::PropertyKey,
 };
 
 #[test]
 fn test_runtime_result_complete() {
-    let mut runtime = Runtime::new();
-    let result = run(&mut runtime, "1 + 2", None).unwrap();
+    let mut interp = Interpreter::new();
+    let result = run(&mut interp, "1 + 2", None).unwrap();
 
     match result {
         StepResult::Complete(value) => {
@@ -21,8 +21,8 @@ fn test_runtime_result_complete() {
 
 #[test]
 fn test_runtime_result_need_imports() {
-    let mut runtime = Runtime::new();
-    let result = run(&mut runtime, r#"import { foo } from "./utils";"#, None).unwrap();
+    let mut interp = Interpreter::new();
+    let result = run(&mut interp, r#"import { foo } from "./utils";"#, None).unwrap();
 
     match result {
         StepResult::NeedImports(imports) => {
@@ -37,11 +37,11 @@ fn test_runtime_result_need_imports() {
 
 #[test]
 fn test_provide_module() {
-    let mut runtime = Runtime::new();
+    let mut interp = Interpreter::new();
 
     // First call returns NeedImports
     let result = run(
-        &mut runtime,
+        &mut interp,
         r#"
         import { add } from "./math";
         add(2, 3);
@@ -55,7 +55,7 @@ fn test_provide_module() {
             assert_eq!(imports[0].specifier, "./math");
 
             // Provide the module using the resolved path
-            runtime
+            interp
                 .provide_module(
                     imports[0].resolved_path.clone(),
                     r#"
@@ -67,7 +67,7 @@ fn test_provide_module() {
                 .unwrap();
 
             // Continue evaluation
-            let result2 = run_to_completion(&mut runtime).unwrap();
+            let result2 = run_to_completion(&mut interp).unwrap();
 
             match result2 {
                 StepResult::Complete(_) | StepResult::Done => {
@@ -102,11 +102,11 @@ fn test_internal_module_registered() {
     // Create a native internal module
     let eval_internal = InternalModule::native("eval:internal").build();
 
-    let config = RuntimeConfig {
+    let config = InterpreterConfig {
         internal_modules: vec![eval_internal],
     };
 
-    let _runtime = Runtime::with_config(config);
+    let _interp = Interpreter::with_config(config);
 
     // Internal module is registered (we can't test import yet, but we verify setup)
     // Basic smoke test that config works - if we got here without panic, it works
@@ -119,14 +119,14 @@ fn test_internal_module_not_in_need_imports() {
 
     let eval_internal = InternalModule::native("eval:internal").build();
 
-    let config = RuntimeConfig {
+    let config = InterpreterConfig {
         internal_modules: vec![eval_internal],
     };
 
-    let mut runtime = Runtime::with_config(config);
+    let mut interp = Interpreter::with_config(config);
 
     let result = run(
-        &mut runtime,
+        &mut interp,
         r#"
         import { __order__ } from "eval:internal";
         import { foo } from "./external";
@@ -182,15 +182,15 @@ fn test_native_internal_module() {
         .with_function("getValue", test_get_value, 0)
         .build();
 
-    let config = RuntimeConfig {
+    let config = InterpreterConfig {
         internal_modules: vec![test_module],
     };
 
-    let mut runtime = Runtime::with_config(config);
+    let mut interp = Interpreter::with_config(config);
 
     // Test that functions are properly imported and callable
     let result = run(
-        &mut runtime,
+        &mut interp,
         r#"
         import { add, getValue } from "eval:test";
         add(getValue(), 8);
@@ -225,15 +225,15 @@ fn test_source_internal_module() {
     "#,
     );
 
-    let config = RuntimeConfig {
+    let config = InterpreterConfig {
         internal_modules: vec![math_module],
     };
 
-    let mut runtime = Runtime::with_config(config);
+    let mut interp = Interpreter::with_config(config);
 
     // Test using the source module
     let result = run(
-        &mut runtime,
+        &mut interp,
         r#"
         import { double, square, PI } from "eval:math";
         double(5) + square(3) + Math.floor(PI);
@@ -259,14 +259,14 @@ fn test_import_namespace() {
         .with_function("getValue", test_get_value, 0)
         .build();
 
-    let config = RuntimeConfig {
+    let config = InterpreterConfig {
         internal_modules: vec![test_module],
     };
 
-    let mut runtime = Runtime::with_config(config);
+    let mut interp = Interpreter::with_config(config);
 
     let result = run(
-        &mut runtime,
+        &mut interp,
         r#"
         import * as testMod from "eval:test";
         testMod.getValue();
@@ -290,15 +290,15 @@ fn test_order_syscall() {
     // Create the eval:internal module
     let eval_internal = create_eval_internal_module();
 
-    let config = RuntimeConfig {
+    let config = InterpreterConfig {
         internal_modules: vec![eval_internal],
     };
 
-    let mut runtime = Runtime::with_config(config);
+    let mut interp = Interpreter::with_config(config);
 
     // Test that __order__ creates an order and suspends
     let result = run(
-        &mut runtime,
+        &mut interp,
         r#"
         import { __order__ } from "eval:internal";
         const orderId = __order__({ type: "test", data: 42 });
@@ -332,15 +332,15 @@ fn test_order_syscall_returns_promise() {
 
     let eval_internal = create_eval_internal_module();
 
-    let config = RuntimeConfig {
+    let config = InterpreterConfig {
         internal_modules: vec![eval_internal],
     };
 
-    let mut runtime = Runtime::with_config(config);
+    let mut interp = Interpreter::with_config(config);
 
     // Test that __order__ returns a Promise object
     let result = run(
-        &mut runtime,
+        &mut interp,
         r#"
         import { __order__ } from "eval:internal";
         const p = __order__({ type: "test" });
@@ -366,15 +366,15 @@ fn test_await_pending_promise_suspends_and_resumes() {
 
     let eval_internal = create_eval_internal_module();
 
-    let config = RuntimeConfig {
+    let config = InterpreterConfig {
         internal_modules: vec![eval_internal],
     };
 
-    let mut runtime = Runtime::with_config(config);
+    let mut interp = Interpreter::with_config(config);
 
     // Test that await on a pending promise suspends execution
     let result = run(
-        &mut runtime,
+        &mut interp,
         r#"
         import { __order__ } from "eval:internal";
         // This will suspend when we await the pending promise
@@ -397,8 +397,8 @@ fn test_await_pending_promise_suspends_and_resumes() {
                 result: Ok(RuntimeValue::unguarded(JsValue::Number(21.0))),
             };
 
-            runtime.fulfill_orders(vec![response]);
-            let result2 = run_to_completion(&mut runtime).unwrap();
+            interp.fulfill_orders(vec![response]);
+            let result2 = run_to_completion(&mut interp).unwrap();
 
             // After fulfillment, should complete with 42 (21 * 2)
             match result2 {
@@ -421,15 +421,15 @@ fn test_await_suspension_with_multiple_awaits() {
 
     let eval_internal = create_eval_internal_module();
 
-    let config = RuntimeConfig {
+    let config = InterpreterConfig {
         internal_modules: vec![eval_internal],
     };
 
-    let mut runtime = Runtime::with_config(config);
+    let mut interp = Interpreter::with_config(config);
 
     // Test multiple sequential awaits
     let result = run(
-        &mut runtime,
+        &mut interp,
         r#"
         import { __order__ } from "eval:internal";
         const a = await __order__({ type: "first" });
@@ -451,8 +451,8 @@ fn test_await_suspension_with_multiple_awaits() {
                 result: Ok(RuntimeValue::unguarded(JsValue::Number(10.0))),
             };
 
-            runtime.fulfill_orders(vec![response]);
-            let result2 = run_to_completion(&mut runtime).unwrap();
+            interp.fulfill_orders(vec![response]);
+            let result2 = run_to_completion(&mut interp).unwrap();
 
             // Should suspend again for second await
             match result2 {
@@ -467,8 +467,8 @@ fn test_await_suspension_with_multiple_awaits() {
                         result: Ok(RuntimeValue::unguarded(JsValue::Number(32.0))),
                     };
 
-                    runtime.fulfill_orders(vec![response2]);
-                    let result3 = run_to_completion(&mut runtime).unwrap();
+                    interp.fulfill_orders(vec![response2]);
+                    let result3 = run_to_completion(&mut interp).unwrap();
 
                     // Should complete with 42 (10 + 32)
                     match result3 {
@@ -491,11 +491,11 @@ fn test_await_suspension_with_multiple_awaits() {
 
 #[test]
 fn test_external_module_named_exports() {
-    let mut runtime = Runtime::new();
+    let mut interp = Interpreter::new();
 
     // First, eval code that imports from external module
     let result = run(
-        &mut runtime,
+        &mut interp,
         r#"
         import { add, multiply } from "./math";
         add(2, 3) + multiply(4, 5);
@@ -511,7 +511,7 @@ fn test_external_module_named_exports() {
             assert_eq!(imports[0].specifier, "./math");
 
             // Provide the module using the resolved path
-            runtime
+            interp
                 .provide_module(
                     imports[0].resolved_path.clone(),
                     r#"
@@ -526,7 +526,7 @@ fn test_external_module_named_exports() {
                 .unwrap();
 
             // Continue evaluation
-            let result2 = run_to_completion(&mut runtime).unwrap();
+            let result2 = run_to_completion(&mut interp).unwrap();
 
             match result2 {
                 StepResult::Complete(value) => {
@@ -542,10 +542,10 @@ fn test_external_module_named_exports() {
 
 #[test]
 fn test_external_module_default_export() {
-    let mut runtime = Runtime::new();
+    let mut interp = Interpreter::new();
 
     let result = run(
-        &mut runtime,
+        &mut interp,
         r#"
         import greet from "./greeting";
         greet("World");
@@ -558,7 +558,7 @@ fn test_external_module_default_export() {
         StepResult::NeedImports(imports) => {
             assert_eq!(imports[0].specifier, "./greeting");
 
-            runtime
+            interp
                 .provide_module(
                     imports[0].resolved_path.clone(),
                     r#"
@@ -569,7 +569,7 @@ fn test_external_module_default_export() {
                 )
                 .unwrap();
 
-            let result2 = run_to_completion(&mut runtime).unwrap();
+            let result2 = run_to_completion(&mut interp).unwrap();
 
             match result2 {
                 StepResult::Complete(value) => {
@@ -584,10 +584,10 @@ fn test_external_module_default_export() {
 
 #[test]
 fn test_external_module_mixed_exports() {
-    let mut runtime = Runtime::new();
+    let mut interp = Interpreter::new();
 
     let result = run(
-        &mut runtime,
+        &mut interp,
         r#"
         import Calculator, { PI, E } from "./constants";
         const calc = new Calculator();
@@ -601,7 +601,7 @@ fn test_external_module_mixed_exports() {
         StepResult::NeedImports(imports) => {
             assert_eq!(imports[0].specifier, "./constants");
 
-            runtime
+            interp
                 .provide_module(
                     imports[0].resolved_path.clone(),
                     r#"
@@ -617,7 +617,7 @@ fn test_external_module_mixed_exports() {
                 )
                 .unwrap();
 
-            let result2 = run_to_completion(&mut runtime).unwrap();
+            let result2 = run_to_completion(&mut interp).unwrap();
 
             match result2 {
                 StepResult::Complete(rv) => {
@@ -636,10 +636,10 @@ fn test_external_module_mixed_exports() {
 
 #[test]
 fn test_external_module_aliased_imports() {
-    let mut runtime = Runtime::new();
+    let mut interp = Interpreter::new();
 
     let result = run(
-        &mut runtime,
+        &mut interp,
         r#"
         import { value as myValue, compute as calculate } from "./utils";
         calculate(myValue);
@@ -651,7 +651,7 @@ fn test_external_module_aliased_imports() {
     match result {
         StepResult::NeedImports(imports) => {
             // Provide the module using the resolved path
-            runtime
+            interp
                 .provide_module(
                     imports[0].resolved_path.clone(),
                     r#"
@@ -663,7 +663,7 @@ fn test_external_module_aliased_imports() {
                 )
                 .unwrap();
 
-            let result2 = run_to_completion(&mut runtime).unwrap();
+            let result2 = run_to_completion(&mut interp).unwrap();
 
             match result2 {
                 StepResult::Complete(value) => {
@@ -678,10 +678,10 @@ fn test_external_module_aliased_imports() {
 
 #[test]
 fn test_multiple_external_modules() {
-    let mut runtime = Runtime::new();
+    let mut interp = Interpreter::new();
 
     let result = run(
-        &mut runtime,
+        &mut interp,
         r#"
         import { a } from "./moduleA";
         import { b } from "./moduleB";
@@ -704,12 +704,12 @@ fn test_multiple_external_modules() {
                 } else {
                     "export const b = 20;"
                 };
-                runtime
+                interp
                     .provide_module(req.resolved_path.clone(), source)
                     .unwrap();
             }
 
-            let result2 = run_to_completion(&mut runtime).unwrap();
+            let result2 = run_to_completion(&mut interp).unwrap();
 
             match result2 {
                 StepResult::Complete(value) => {
@@ -724,10 +724,10 @@ fn test_multiple_external_modules() {
 
 #[test]
 fn test_module_namespace_import() {
-    let mut runtime = Runtime::new();
+    let mut interp = Interpreter::new();
 
     let result = run(
-        &mut runtime,
+        &mut interp,
         r#"
         import * as utils from "./utils";
         utils.double(utils.BASE);
@@ -738,7 +738,7 @@ fn test_module_namespace_import() {
 
     match result {
         StepResult::NeedImports(imports) => {
-            runtime
+            interp
                 .provide_module(
                     imports[0].resolved_path.clone(),
                     r#"
@@ -750,7 +750,7 @@ fn test_module_namespace_import() {
                 )
                 .unwrap();
 
-            let result2 = run_to_completion(&mut runtime).unwrap();
+            let result2 = run_to_completion(&mut interp).unwrap();
 
             match result2 {
                 StepResult::Complete(value) => {
@@ -770,14 +770,14 @@ fn test_module_with_internal_imports() {
 
     let eval_internal = create_eval_internal_module();
 
-    let config = RuntimeConfig {
+    let config = InterpreterConfig {
         internal_modules: vec![eval_internal],
     };
 
-    let mut runtime = Runtime::with_config(config);
+    let mut interp = Interpreter::with_config(config);
 
     let result = run(
-        &mut runtime,
+        &mut interp,
         r#"
         import { helper } from "./myModule";
         helper(5);
@@ -792,7 +792,7 @@ fn test_module_with_internal_imports() {
             assert_eq!(imports.len(), 1);
             assert_eq!(imports[0].specifier, "./myModule");
 
-            runtime
+            interp
                 .provide_module(
                     imports[0].resolved_path.clone(),
                     r#"
@@ -804,7 +804,7 @@ fn test_module_with_internal_imports() {
                 )
                 .unwrap();
 
-            let result2 = run_to_completion(&mut runtime).unwrap();
+            let result2 = run_to_completion(&mut interp).unwrap();
 
             match result2 {
                 StepResult::Complete(value) => {
@@ -819,10 +819,10 @@ fn test_module_with_internal_imports() {
 
 #[test]
 fn test_export_const_variable() {
-    let mut runtime = Runtime::new();
+    let mut interp = Interpreter::new();
 
     let result = run(
-        &mut runtime,
+        &mut interp,
         r#"
         import { CONFIG } from "./config";
         CONFIG.name + " v" + CONFIG.version;
@@ -833,7 +833,7 @@ fn test_export_const_variable() {
 
     match result {
         StepResult::NeedImports(imports) => {
-            runtime
+            interp
                 .provide_module(
                     imports[0].resolved_path.clone(),
                     r#"
@@ -845,7 +845,7 @@ fn test_export_const_variable() {
                 )
                 .unwrap();
 
-            let result2 = run_to_completion(&mut runtime).unwrap();
+            let result2 = run_to_completion(&mut interp).unwrap();
 
             match result2 {
                 StepResult::Complete(value) => {
@@ -860,10 +860,10 @@ fn test_export_const_variable() {
 
 #[test]
 fn test_export_class() {
-    let mut runtime = Runtime::new();
+    let mut interp = Interpreter::new();
 
     let result = run(
-        &mut runtime,
+        &mut interp,
         r#"
         import { Point } from "./geometry";
         const p = new Point(3, 4);
@@ -875,7 +875,7 @@ fn test_export_class() {
 
     match result {
         StepResult::NeedImports(imports) => {
-            runtime
+            interp
                 .provide_module(
                     imports[0].resolved_path.clone(),
                     r#"
@@ -894,7 +894,7 @@ fn test_export_class() {
                 )
                 .unwrap();
 
-            let result2 = run_to_completion(&mut runtime).unwrap();
+            let result2 = run_to_completion(&mut interp).unwrap();
 
             match result2 {
                 StepResult::Complete(value) => {
@@ -969,11 +969,11 @@ fn test_module_path_absolute() {
 
 #[test]
 fn test_eval_with_path_resolves_imports() {
-    let mut runtime = Runtime::new();
+    let mut interp = Interpreter::new();
 
     // Eval with a base path
     let result = run(
-        &mut runtime,
+        &mut interp,
         r#"import { foo } from "./utils";"#,
         Some("/project/src/main.ts"),
     )
@@ -994,11 +994,11 @@ fn test_eval_with_path_resolves_imports() {
 
 #[test]
 fn test_nested_module_imports_resolve_correctly() {
-    let mut runtime = Runtime::new();
+    let mut interp = Interpreter::new();
 
     // Main module at /project/src/main.ts imports ./lib/helpers
     let result = run(
-        &mut runtime,
+        &mut interp,
         r#"import { helper } from "./lib/helpers";"#,
         Some("/project/src/main.ts"),
     )
@@ -1012,7 +1012,7 @@ fn test_nested_module_imports_resolve_correctly() {
             );
 
             // Provide the helpers module, which imports from ../shared
-            runtime
+            interp
                 .provide_module(
                     imports[0].resolved_path.clone(),
                     r#"
@@ -1023,7 +1023,7 @@ fn test_nested_module_imports_resolve_correctly() {
                 .unwrap();
 
             // Continue - should now need /project/src/shared
-            let result2 = run_to_completion(&mut runtime).unwrap();
+            let result2 = run_to_completion(&mut interp).unwrap();
 
             match result2 {
                 StepResult::NeedImports(imports2) => {
@@ -1046,11 +1046,11 @@ fn test_nested_module_imports_resolve_correctly() {
 
 #[test]
 fn test_same_module_different_paths_deduplicated() {
-    let mut runtime = Runtime::new();
+    let mut interp = Interpreter::new();
 
     // Main module imports the same logical module via different relative paths
     let result = run(
-        &mut runtime,
+        &mut interp,
         r#"
             import { a } from "./utils";
             import { b } from "./lib/../utils";
@@ -1076,10 +1076,10 @@ fn test_same_module_different_paths_deduplicated() {
 fn test_export_star_as_namespace_basic() {
     // Test: export * as utils from "./utils"
     // The intermediate module re-exports everything from utils as a namespace
-    let mut runtime = Runtime::new();
+    let mut interp = Interpreter::new();
 
     let result = run(
-        &mut runtime,
+        &mut interp,
         r#"
         import { utils } from "./reexport";
         utils.add(2, 3) + utils.BASE;
@@ -1094,14 +1094,14 @@ fn test_export_star_as_namespace_basic() {
             assert_eq!(imports[0].specifier, "./reexport");
 
             // Provide the re-export module
-            runtime
+            interp
                 .provide_module(
                     imports[0].resolved_path.clone(),
                     r#"export * as utils from "./utils";"#,
                 )
                 .unwrap();
 
-            let result2 = run_to_completion(&mut runtime).unwrap();
+            let result2 = run_to_completion(&mut interp).unwrap();
 
             match result2 {
                 StepResult::NeedImports(imports2) => {
@@ -1109,7 +1109,7 @@ fn test_export_star_as_namespace_basic() {
                     assert_eq!(imports2.len(), 1);
                     assert_eq!(imports2[0].specifier, "./utils");
 
-                    runtime
+                    interp
                         .provide_module(
                             imports2[0].resolved_path.clone(),
                             r#"
@@ -1121,7 +1121,7 @@ fn test_export_star_as_namespace_basic() {
                         )
                         .unwrap();
 
-                    let result3 = run_to_completion(&mut runtime).unwrap();
+                    let result3 = run_to_completion(&mut interp).unwrap();
 
                     match result3 {
                         StepResult::Complete(value) => {
@@ -1141,10 +1141,10 @@ fn test_export_star_as_namespace_basic() {
 #[test]
 fn test_export_star_as_namespace_multiple() {
     // Test: multiple namespace re-exports in one module
-    let mut runtime = Runtime::new();
+    let mut interp = Interpreter::new();
 
     let result = run(
-        &mut runtime,
+        &mut interp,
         r#"
         import { math, str } from "./combined";
         math.double(3) + str.len("hello");
@@ -1155,7 +1155,7 @@ fn test_export_star_as_namespace_multiple() {
 
     match result {
         StepResult::NeedImports(imports) => {
-            runtime
+            interp
                 .provide_module(
                     imports[0].resolved_path.clone(),
                     r#"
@@ -1165,7 +1165,7 @@ fn test_export_star_as_namespace_multiple() {
                 )
                 .unwrap();
 
-            let result2 = run_to_completion(&mut runtime).unwrap();
+            let result2 = run_to_completion(&mut interp).unwrap();
 
             match result2 {
                 StepResult::NeedImports(imports2) => {
@@ -1174,14 +1174,14 @@ fn test_export_star_as_namespace_multiple() {
 
                     for req in &imports2 {
                         if req.specifier == "./mathUtils" {
-                            runtime
+                            interp
                                 .provide_module(
                                     req.resolved_path.clone(),
                                     r#"export function double(x: number): number { return x * 2; }"#,
                                 )
                                 .unwrap();
                         } else if req.specifier == "./strUtils" {
-                            runtime
+                            interp
                                 .provide_module(
                                     req.resolved_path.clone(),
                                     r#"export function len(s: string): number { return s.length; }"#,
@@ -1190,7 +1190,7 @@ fn test_export_star_as_namespace_multiple() {
                         }
                     }
 
-                    let result3 = run_to_completion(&mut runtime).unwrap();
+                    let result3 = run_to_completion(&mut interp).unwrap();
 
                     match result3 {
                         StepResult::Complete(value) => {
@@ -1210,10 +1210,10 @@ fn test_export_star_as_namespace_multiple() {
 #[test]
 fn test_export_star_as_namespace_with_other_exports() {
     // Test: namespace re-export alongside regular exports
-    let mut runtime = Runtime::new();
+    let mut interp = Interpreter::new();
 
     let result = run(
-        &mut runtime,
+        &mut interp,
         r#"
         import { helpers, VERSION } from "./api";
         helpers.greet() + " v" + VERSION;
@@ -1224,7 +1224,7 @@ fn test_export_star_as_namespace_with_other_exports() {
 
     match result {
         StepResult::NeedImports(imports) => {
-            runtime
+            interp
                 .provide_module(
                     imports[0].resolved_path.clone(),
                     r#"
@@ -1234,18 +1234,18 @@ fn test_export_star_as_namespace_with_other_exports() {
                 )
                 .unwrap();
 
-            let result2 = run_to_completion(&mut runtime).unwrap();
+            let result2 = run_to_completion(&mut interp).unwrap();
 
             match result2 {
                 StepResult::NeedImports(imports2) => {
-                    runtime
+                    interp
                         .provide_module(
                             imports2[0].resolved_path.clone(),
                             r#"export function greet(): string { return "Hello"; }"#,
                         )
                         .unwrap();
 
-                    let result3 = run_to_completion(&mut runtime).unwrap();
+                    let result3 = run_to_completion(&mut interp).unwrap();
 
                     match result3 {
                         StepResult::Complete(value) => {
@@ -1264,10 +1264,10 @@ fn test_export_star_as_namespace_with_other_exports() {
 #[test]
 fn test_export_star_as_namespace_nested() {
     // Test: import a namespace that was re-exported as namespace
-    let mut runtime = Runtime::new();
+    let mut interp = Interpreter::new();
 
     let result = run(
-        &mut runtime,
+        &mut interp,
         r#"
         import { nested } from "./level1";
         nested.inner.value;
@@ -1278,36 +1278,36 @@ fn test_export_star_as_namespace_nested() {
 
     match result {
         StepResult::NeedImports(imports) => {
-            runtime
+            interp
                 .provide_module(
                     imports[0].resolved_path.clone(),
                     r#"export * as nested from "./level2";"#,
                 )
                 .unwrap();
 
-            let result2 = run_to_completion(&mut runtime).unwrap();
+            let result2 = run_to_completion(&mut interp).unwrap();
 
             match result2 {
                 StepResult::NeedImports(imports2) => {
-                    runtime
+                    interp
                         .provide_module(
                             imports2[0].resolved_path.clone(),
                             r#"export * as inner from "./level3";"#,
                         )
                         .unwrap();
 
-                    let result3 = run_to_completion(&mut runtime).unwrap();
+                    let result3 = run_to_completion(&mut interp).unwrap();
 
                     match result3 {
                         StepResult::NeedImports(imports3) => {
-                            runtime
+                            interp
                                 .provide_module(
                                     imports3[0].resolved_path.clone(),
                                     r#"export const value: number = 42;"#,
                                 )
                                 .unwrap();
 
-                            let result4 = run_to_completion(&mut runtime).unwrap();
+                            let result4 = run_to_completion(&mut interp).unwrap();
 
                             match result4 {
                                 StepResult::Complete(value) => {
@@ -1333,10 +1333,10 @@ fn test_export_star_as_namespace_nested() {
 #[test]
 fn test_live_binding_let_variable() {
     // Test: imported let variable reflects changes made by exported function
-    let mut runtime = Runtime::new();
+    let mut interp = Interpreter::new();
 
     let result = run(
-        &mut runtime,
+        &mut interp,
         r#"
         import { count, increment } from "./counter";
         const before = count;
@@ -1350,7 +1350,7 @@ fn test_live_binding_let_variable() {
 
     match result {
         StepResult::NeedImports(imports) => {
-            runtime
+            interp
                 .provide_module(
                     imports[0].resolved_path.clone(),
                     r#"
@@ -1362,7 +1362,7 @@ fn test_live_binding_let_variable() {
                 )
                 .unwrap();
 
-            let result2 = run_to_completion(&mut runtime).unwrap();
+            let result2 = run_to_completion(&mut interp).unwrap();
 
             match result2 {
                 StepResult::Complete(value) => {
@@ -1396,10 +1396,10 @@ fn test_live_binding_let_variable() {
 #[test]
 fn test_live_binding_multiple_increments() {
     // Test: multiple updates are all visible
-    let mut runtime = Runtime::new();
+    let mut interp = Interpreter::new();
 
     let result = run(
-        &mut runtime,
+        &mut interp,
         r#"
         import { value, add } from "./accumulator";
         add(10);
@@ -1413,7 +1413,7 @@ fn test_live_binding_multiple_increments() {
 
     match result {
         StepResult::NeedImports(imports) => {
-            runtime
+            interp
                 .provide_module(
                     imports[0].resolved_path.clone(),
                     r#"
@@ -1425,7 +1425,7 @@ fn test_live_binding_multiple_increments() {
                 )
                 .unwrap();
 
-            let result2 = run_to_completion(&mut runtime).unwrap();
+            let result2 = run_to_completion(&mut interp).unwrap();
 
             match result2 {
                 StepResult::Complete(value) => {
@@ -1443,10 +1443,10 @@ fn test_live_binding_multiple_increments() {
 fn test_live_binding_object_mutation() {
     // Test: object property mutations are visible (this works even without live bindings
     // because objects are references, but let's verify)
-    let mut runtime = Runtime::new();
+    let mut interp = Interpreter::new();
 
     let result = run(
-        &mut runtime,
+        &mut interp,
         r#"
         import { state, setState } from "./state";
         const before = state.value;
@@ -1460,7 +1460,7 @@ fn test_live_binding_object_mutation() {
 
     match result {
         StepResult::NeedImports(imports) => {
-            runtime
+            interp
                 .provide_module(
                     imports[0].resolved_path.clone(),
                     r#"
@@ -1472,7 +1472,7 @@ fn test_live_binding_object_mutation() {
                 )
                 .unwrap();
 
-            let result2 = run_to_completion(&mut runtime).unwrap();
+            let result2 = run_to_completion(&mut interp).unwrap();
 
             match result2 {
                 StepResult::Complete(value) => {
@@ -1500,10 +1500,10 @@ fn test_live_binding_object_mutation() {
 #[test]
 fn test_live_binding_reassignment() {
     // Test: complete reassignment of exported variable is visible
-    let mut runtime = Runtime::new();
+    let mut interp = Interpreter::new();
 
     let result = run(
-        &mut runtime,
+        &mut interp,
         r#"
         import { config, updateConfig } from "./config";
         const before = config;
@@ -1517,7 +1517,7 @@ fn test_live_binding_reassignment() {
 
     match result {
         StepResult::NeedImports(imports) => {
-            runtime
+            interp
                 .provide_module(
                     imports[0].resolved_path.clone(),
                     r#"
@@ -1529,7 +1529,7 @@ fn test_live_binding_reassignment() {
                 )
                 .unwrap();
 
-            let result2 = run_to_completion(&mut runtime).unwrap();
+            let result2 = run_to_completion(&mut interp).unwrap();
 
             match result2 {
                 StepResult::Complete(value) => {
@@ -1561,10 +1561,10 @@ fn test_live_binding_reassignment() {
 #[test]
 fn test_live_binding_namespace_import() {
     // Test: namespace imports also see live updates
-    let mut runtime = Runtime::new();
+    let mut interp = Interpreter::new();
 
     let result = run(
-        &mut runtime,
+        &mut interp,
         r#"
         import * as counter from "./counter";
         const before = counter.count;
@@ -1579,7 +1579,7 @@ fn test_live_binding_namespace_import() {
 
     match result {
         StepResult::NeedImports(imports) => {
-            runtime
+            interp
                 .provide_module(
                     imports[0].resolved_path.clone(),
                     r#"
@@ -1591,7 +1591,7 @@ fn test_live_binding_namespace_import() {
                 )
                 .unwrap();
 
-            let result2 = run_to_completion(&mut runtime).unwrap();
+            let result2 = run_to_completion(&mut interp).unwrap();
 
             match result2 {
                 StepResult::Complete(value) => {
@@ -1621,10 +1621,10 @@ fn test_live_binding_through_reexport() {
     // Test: re-exports properly propagate live bindings.
     // When module A re-exports from module B, reading the re-exported value
     // delegates to module B's live binding, so changes are visible.
-    let mut runtime = Runtime::new();
+    let mut interp = Interpreter::new();
 
     let result = run(
-        &mut runtime,
+        &mut interp,
         r#"
         import { count, increment } from "./reexport";
         const before = count;
@@ -1638,7 +1638,7 @@ fn test_live_binding_through_reexport() {
 
     match result {
         StepResult::NeedImports(imports) => {
-            runtime
+            interp
                 .provide_module(
                     imports[0].resolved_path.clone(),
                     r#"
@@ -1647,11 +1647,11 @@ fn test_live_binding_through_reexport() {
                 )
                 .unwrap();
 
-            let result2 = run_to_completion(&mut runtime).unwrap();
+            let result2 = run_to_completion(&mut interp).unwrap();
 
             match result2 {
                 StepResult::NeedImports(imports2) => {
-                    runtime
+                    interp
                         .provide_module(
                             imports2[0].resolved_path.clone(),
                             r#"
@@ -1663,7 +1663,7 @@ fn test_live_binding_through_reexport() {
                         )
                         .unwrap();
 
-                    let result3 = run_to_completion(&mut runtime).unwrap();
+                    let result3 = run_to_completion(&mut interp).unwrap();
 
                     match result3 {
                         StepResult::Complete(value) => {
@@ -1696,10 +1696,10 @@ fn test_live_binding_through_reexport() {
 #[test]
 fn test_live_binding_aliased_import() {
     // Test: aliased imports also get live binding
-    let mut runtime = Runtime::new();
+    let mut interp = Interpreter::new();
 
     let result = run(
-        &mut runtime,
+        &mut interp,
         r#"
         import { count as myCount, increment as inc } from "./counter";
         const before = myCount;
@@ -1715,7 +1715,7 @@ fn test_live_binding_aliased_import() {
 
     match result {
         StepResult::NeedImports(imports) => {
-            runtime
+            interp
                 .provide_module(
                     imports[0].resolved_path.clone(),
                     r#"
@@ -1727,7 +1727,7 @@ fn test_live_binding_aliased_import() {
                 )
                 .unwrap();
 
-            let result2 = run_to_completion(&mut runtime).unwrap();
+            let result2 = run_to_completion(&mut interp).unwrap();
 
             match result2 {
                 StepResult::Complete(value) => {
@@ -1755,10 +1755,10 @@ fn test_live_binding_aliased_import() {
 // Debug test for namespace import - just accessing a value
 #[test]
 fn test_live_binding_namespace_simple() {
-    let mut runtime = Runtime::new();
+    let mut interp = Interpreter::new();
 
     let result = run(
-        &mut runtime,
+        &mut interp,
         r#"
         import * as counter from "./counter";
         counter.count;
@@ -1769,14 +1769,14 @@ fn test_live_binding_namespace_simple() {
 
     match result {
         StepResult::NeedImports(imports) => {
-            runtime
+            interp
                 .provide_module(
                     imports[0].resolved_path.clone(),
                     r#"export let count: number = 42;"#,
                 )
                 .unwrap();
 
-            let result2 = run_to_completion(&mut runtime).unwrap();
+            let result2 = run_to_completion(&mut interp).unwrap();
 
             match result2 {
                 StepResult::Complete(value) => {
@@ -1792,10 +1792,10 @@ fn test_live_binding_namespace_simple() {
 // Debug test for namespace import - calling a function
 #[test]
 fn test_live_binding_namespace_call() {
-    let mut runtime = Runtime::new();
+    let mut interp = Interpreter::new();
 
     let result = run(
-        &mut runtime,
+        &mut interp,
         r#"
         import * as counter from "./counter";
         counter.getValue();
@@ -1806,7 +1806,7 @@ fn test_live_binding_namespace_call() {
 
     match result {
         StepResult::NeedImports(imports) => {
-            runtime
+            interp
                 .provide_module(
                     imports[0].resolved_path.clone(),
                     r#"
@@ -1817,7 +1817,7 @@ fn test_live_binding_namespace_call() {
                 )
                 .unwrap();
 
-            let result2 = run_to_completion(&mut runtime).unwrap();
+            let result2 = run_to_completion(&mut interp).unwrap();
 
             match result2 {
                 StepResult::Complete(value) => {
@@ -1834,10 +1834,10 @@ fn test_live_binding_namespace_call() {
 #[test]
 fn test_live_binding_reexport_debug() {
     // Simpler test: just check if we can import through re-export and call a function
-    let mut runtime = Runtime::new();
+    let mut interp = Interpreter::new();
 
     let result = run(
-        &mut runtime,
+        &mut interp,
         r#"
         import { getValue } from "./reexport";
         getValue();
@@ -1848,18 +1848,18 @@ fn test_live_binding_reexport_debug() {
 
     match result {
         StepResult::NeedImports(imports) => {
-            runtime
+            interp
                 .provide_module(
                     imports[0].resolved_path.clone(),
                     r#"export { getValue } from "./source";"#,
                 )
                 .unwrap();
 
-            let result2 = run_to_completion(&mut runtime).unwrap();
+            let result2 = run_to_completion(&mut interp).unwrap();
 
             match result2 {
                 StepResult::NeedImports(imports2) => {
-                    runtime
+                    interp
                         .provide_module(
                             imports2[0].resolved_path.clone(),
                             r#"
@@ -1870,7 +1870,7 @@ fn test_live_binding_reexport_debug() {
                         )
                         .unwrap();
 
-                    let result3 = run_to_completion(&mut runtime).unwrap();
+                    let result3 = run_to_completion(&mut interp).unwrap();
 
                     match result3 {
                         StepResult::Complete(value) => {
@@ -1889,10 +1889,10 @@ fn test_live_binding_reexport_debug() {
 #[test]
 fn test_live_binding_imported_value_is_readonly() {
     // Test: attempting to assign to imported binding should error
-    let mut runtime = Runtime::new();
+    let mut interp = Interpreter::new();
 
     let result = run(
-        &mut runtime,
+        &mut interp,
         r#"
         import { count } from "./counter";
         count = 100;  // Should error - imports are read-only
@@ -1903,7 +1903,7 @@ fn test_live_binding_imported_value_is_readonly() {
 
     match result {
         StepResult::NeedImports(imports) => {
-            runtime
+            interp
                 .provide_module(
                     imports[0].resolved_path.clone(),
                     r#"
@@ -1912,7 +1912,7 @@ fn test_live_binding_imported_value_is_readonly() {
                 )
                 .unwrap();
 
-            let result2 = run_to_completion(&mut runtime);
+            let result2 = run_to_completion(&mut interp);
 
             // Should be an error - cannot assign to import binding
             assert!(result2.is_err(), "Assigning to import should error");

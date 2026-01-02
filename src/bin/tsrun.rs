@@ -14,7 +14,7 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
-use tsrun::{JsValue, ModulePath, Runtime, StepResult};
+use tsrun::{Interpreter, JsValue, ModulePath, StepResult};
 
 /// Minimal package.json representation for module resolution
 #[derive(serde::Deserialize)]
@@ -138,14 +138,14 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let source = fs::read_to_string(&entry_path)
         .map_err(|e| format!("Cannot read {}: {}", entry_path.display(), e))?;
 
-    let mut runtime = Runtime::new();
+    let mut interp = Interpreter::new();
     // Allow overriding GC threshold via environment variable for stress testing
     if let Ok(threshold_str) = std::env::var("GC_THRESHOLD") {
         if let Ok(threshold) = threshold_str.parse::<usize>() {
-            runtime.set_gc_threshold(threshold);
+            interp.set_gc_threshold(threshold);
         }
     } else {
-        runtime.set_gc_threshold(100);
+        interp.set_gc_threshold(100);
     }
 
     // Track provided modules by resolved path to avoid reloading
@@ -171,7 +171,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         };
 
     // Helper to load and provide a module
-    let load_and_provide_module = |runtime: &mut Runtime,
+    let load_and_provide_module = |interp: &mut Interpreter,
                                    req: &tsrun::ImportRequest,
                                    provided: &mut HashMap<ModulePath, PathBuf>,
                                    import_chain: &mut HashMap<String, (String, String)>|
@@ -224,8 +224,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             format_error(&e.to_string(), &canonical_str, &chain)
         })?;
 
-        // Provide to runtime using the resolved_path the runtime expects
-        runtime
+        // Provide to interpreter using the resolved_path it expects
+        interp
             .provide_module(req.resolved_path.clone(), &module_source)
             .map_err(|e| {
                 let chain = build_chain(&canonical_str, import_chain);
@@ -240,8 +240,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     if has_limits {
         // Step-based execution with limit checking
-        let initial_result = runtime
-            .prepare(&source, Some(entry_file.as_str()))
+        let initial_result = interp
+            .prepare(&source, Some(ModulePath::new(entry_file.as_str())))
             .map_err(|e| format_error(&e.to_string(), &entry_file, &[]))?;
 
         let start_time = Instant::now();
@@ -256,7 +256,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             if let Some(max_depth) = config.max_depth {
-                let depth = runtime.call_depth();
+                let depth = interp.call_depth();
                 if depth > max_depth {
                     return Err(
                         format!("Maximum call depth exceeded: {} > {}", depth, max_depth).into(),
@@ -266,7 +266,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
             match step_result {
                 StepResult::Continue => {
-                    step_result = runtime.step().map_err(|e| format!("{}", e))?;
+                    step_result = interp.step().map_err(|e| format!("{}", e))?;
                 }
                 StepResult::Complete(runtime_value) => {
                     print_value(runtime_value.value());
@@ -278,13 +278,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 StepResult::NeedImports(import_requests) => {
                     for req in &import_requests {
                         load_and_provide_module(
-                            &mut runtime,
+                            &mut interp,
                             req,
                             &mut provided,
                             &mut import_chain,
                         )?;
                     }
-                    step_result = runtime.step().map_err(|e| format!("{}", e))?;
+                    step_result = interp.step().map_err(|e| format!("{}", e))?;
                 }
                 StepResult::Suspended { pending, .. } => {
                     return Err(format!(
@@ -297,12 +297,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
     } else {
         // Fast path: no limits, step-based execution
-        runtime
-            .prepare(&source, Some(entry_file.as_str()))
+        interp
+            .prepare(&source, Some(ModulePath::new(entry_file.as_str())))
             .map_err(|e| format_error(&e.to_string(), &entry_file, &[]))?;
 
         loop {
-            match runtime.step().map_err(|e| format!("{}", e))? {
+            match interp.step().map_err(|e| format!("{}", e))? {
                 StepResult::Continue => continue,
                 StepResult::Complete(runtime_value) => {
                     print_value(runtime_value.value());
@@ -314,7 +314,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 StepResult::NeedImports(import_requests) => {
                     for req in &import_requests {
                         load_and_provide_module(
-                            &mut runtime,
+                            &mut interp,
                             req,
                             &mut provided,
                             &mut import_chain,

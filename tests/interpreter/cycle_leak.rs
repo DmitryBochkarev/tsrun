@@ -1,13 +1,13 @@
 //! Test for cycle memory leak
 
 use super::run;
-use tsrun::Runtime;
+use tsrun::Interpreter;
 
 /// Get baseline object count (builtins only, no user code)
 fn get_baseline_live_count() -> usize {
-    let runtime = Runtime::new();
-    runtime.collect();
-    runtime.gc_stats().live_objects
+    let interp = Interpreter::new();
+    interp.collect();
+    interp.gc_stats().live_objects
 }
 
 #[test]
@@ -28,9 +28,9 @@ fn test_cycle_leak_detailed() {
         sum
     "#;
 
-    let mut runtime = Runtime::new();
-    runtime.set_gc_threshold(50); // Trigger GC frequently
-    let result_step = run(&mut runtime, source, None).unwrap();
+    let mut interp = Interpreter::new();
+    interp.set_gc_threshold(50); // Trigger GC frequently
+    let result_step = run(&mut interp, source, None).unwrap();
     let result = if let tsrun::StepResult::Complete(rv) = result_step {
         rv
     } else {
@@ -38,8 +38,8 @@ fn test_cycle_leak_detailed() {
     };
 
     // Force final GC
-    runtime.collect();
-    let stats = runtime.gc_stats();
+    interp.collect();
+    let stats = interp.gc_stats();
 
     println!("Result: {:?}", result);
     println!(

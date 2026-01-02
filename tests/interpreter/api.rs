@@ -1,6 +1,6 @@
 //! Tests for the public API ergonomics
 
-use super::{create_test_runtime, run, run_to_completion};
+use super::{create_test_runtime, run};
 use tsrun::{JsValue, StepResult, api};
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1767,13 +1767,13 @@ fn test_get_export_names() {
 
 #[test]
 fn test_get_export_no_module() {
-    let mut runtime = create_test_runtime();
+    let interp = create_test_runtime();
 
     // No module evaluated yet
-    let result = api::get_export(&runtime, "anything");
+    let result = api::get_export(&interp, "anything");
     assert!(result.is_none());
 
-    let names = api::get_export_names(&runtime);
+    let names = api::get_export_names(&interp);
     assert!(names.is_empty());
 }
 

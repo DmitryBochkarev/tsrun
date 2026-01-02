@@ -3,14 +3,14 @@
 //! # Example
 //!
 //! ```
-//! use tsrun::{Runtime, StepResult};
+//! use tsrun::{Interpreter, StepResult};
 //!
-//! let mut runtime = Runtime::new();
-//! runtime.prepare("1 + 2 * 3", None).unwrap();
+//! let mut interp = Interpreter::new();
+//! interp.prepare("1 + 2 * 3", None).unwrap();
 //!
 //! // Step until completion
 //! loop {
-//!     match runtime.step().unwrap() {
+//!     match interp.step().unwrap() {
 //!         StepResult::Continue => continue,
 //!         StepResult::Complete(value) => {
 //!             assert_eq!(value.as_number(), Some(7.0));
@@ -80,7 +80,7 @@ pub struct OrderResponse {
     pub id: OrderId,
     /// The result of the operation (success or error).
     /// Use `RuntimeValue::unguarded()` for primitives or
-    /// `Runtime::create_response_object()` for objects.
+    /// `api::create_response_object()` for objects.
     pub result: Result<RuntimeValue, JsError>,
 }
 
@@ -574,164 +574,12 @@ impl NativeModuleBuilder {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Runtime Configuration
+// Interpreter Configuration
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// Configuration for creating a Runtime
+/// Configuration for creating an Interpreter
 #[derive(Default)]
-pub struct RuntimeConfig {
+pub struct InterpreterConfig {
     /// Internal modules available for import
     pub internal_modules: Vec<InternalModule>,
-}
-
-/// The main runtime for executing TypeScript code
-pub struct Runtime {
-    interpreter: Interpreter,
-}
-
-impl Runtime {
-    /// Create a new runtime instance
-    pub fn new() -> Self {
-        Self {
-            interpreter: Interpreter::new(),
-        }
-    }
-
-    /// Create a runtime with configuration
-    pub fn with_config(config: RuntimeConfig) -> Self {
-        let mut runtime = Self::new();
-        for module in config.internal_modules {
-            runtime.register_internal_module(module);
-        }
-        runtime
-    }
-
-    /// Register an internal module for import
-    pub fn register_internal_module(&mut self, module: InternalModule) {
-        self.interpreter.register_internal_module(module);
-    }
-
-    /// Provide a module source for a pending import.
-    ///
-    /// The `resolved_path` should be the `ImportRequest.resolved_path` from
-    /// the `NeedImports` result. This ensures proper deduplication of modules
-    /// even when they are imported with different relative paths.
-    ///
-    /// After providing all required modules, call `step()` to continue execution.
-    pub fn provide_module(
-        &mut self,
-        resolved_path: impl Into<ModulePath>,
-        source: &str,
-    ) -> Result<(), JsError> {
-        self.interpreter
-            .provide_module(resolved_path.into(), source)
-    }
-
-    /// Fulfill orders with responses from the host.
-    ///
-    /// Stores the responses for when execution resumes.
-    /// After calling this, call `step()` to continue execution.
-    pub fn fulfill_orders(&mut self, responses: Vec<OrderResponse>) {
-        self.interpreter.fulfill_orders(responses);
-    }
-
-    /// Set the GC threshold (0 = disable automatic collection)
-    ///
-    /// Lower values reduce peak memory but increase GC overhead.
-    /// Higher values improve throughput but may use more memory.
-    pub fn set_gc_threshold(&self, threshold: usize) {
-        self.interpreter.heap.set_gc_threshold(threshold);
-    }
-
-    /// Execute a single bytecode instruction.
-    ///
-    /// This method provides step-by-step execution for host-controlled interruption.
-    /// Call `prepare()` first to compile the code, then call `step()` repeatedly
-    /// until a terminal result is returned.
-    ///
-    /// # Returns
-    /// - `StepResult::Continue` - One instruction executed, more to go
-    /// - `StepResult::Complete(value)` - Execution finished
-    /// - `StepResult::NeedImports(...)` - Need modules before continuing
-    /// - `StepResult::Suspended(...)` - Waiting for order fulfillment
-    /// - `StepResult::Done` - No active execution (call `prepare()` first)
-    ///
-    /// # Example
-    /// ```ignore
-    /// let mut runtime = Runtime::new();
-    /// runtime.prepare("let x = 0; while (true) { x++; }", None)?;
-    ///
-    /// // Run for at most 1000 steps
-    /// for _ in 0..1000 {
-    ///     match runtime.step()? {
-    ///         StepResult::Continue => continue,
-    ///         StepResult::Complete(value) => {
-    ///             println!("Completed: {:?}", value);
-    ///             break;
-    ///         }
-    ///         StepResult::Done => break,
-    ///         _ => break,
-    ///     }
-    /// }
-    /// ```
-    #[inline(always)]
-    pub fn step(&mut self) -> Result<StepResult, JsError> {
-        self.interpreter.step()
-    }
-
-    /// Prepare code for step-based execution without running it.
-    ///
-    /// After calling this, use `step()` to execute one instruction at a time,
-    /// or `run_to_completion()` to run until a terminal result.
-    ///
-    /// # Returns
-    /// - `StepResult::Continue` - Ready to step
-    /// - `StepResult::NeedImports(...)` - Need modules before continuing
-    ///
-    /// # Example
-    /// ```ignore
-    /// let mut runtime = Runtime::new();
-    ///
-    /// // Prepare and run with step limit
-    /// runtime.prepare("let x = 0; while (true) { x++; }", None)?;
-    /// for _ in 0..1000 {
-    ///     match runtime.step()? {
-    ///         StepResult::Continue => continue,
-    ///         StepResult::Complete(value) => {
-    ///             println!("Completed: {:?}", value);
-    ///             break;
-    ///         }
-    ///         _ => break,
-    ///     }
-    /// }
-    /// ```
-    pub fn prepare(&mut self, source: &str, path: Option<&str>) -> Result<StepResult, JsError> {
-        self.interpreter.prepare(source, path.map(ModulePath::new))
-    }
-
-    /// Get the current call stack depth.
-    ///
-    /// Returns the depth of the JavaScript call stack (trampoline stack + interpreter call stack).
-    /// This can be used by the host to implement stack depth limits.
-    ///
-    /// Returns 0 if no execution is active.
-    pub fn call_depth(&self) -> usize {
-        self.interpreter.call_depth()
-    }
-
-    /// Force a garbage collection cycle
-    pub fn collect(&self) {
-        self.interpreter.heap.collect();
-    }
-
-    /// Get GC statistics
-    pub fn gc_stats(&self) -> gc::GcStats {
-        self.interpreter.heap.stats()
-    }
-}
-
-impl Default for Runtime {
-    fn default() -> Self {
-        Self::new()
-    }
 }

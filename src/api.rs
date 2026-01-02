@@ -7,13 +7,13 @@
 //! # Example
 //!
 //! ```ignore
-//! use tsrun::{Runtime, api, JsValue};
+//! use tsrun::{Interpreter, api, JsValue};
 //!
-//! let mut runtime = Runtime::new();
-//! let guard = api::create_guard(&runtime);
+//! let mut interp = Interpreter::new();
+//! let guard = api::create_guard(&interp);
 //!
 //! // Create values - objects are guarded by the provided guard
-//! let obj = api::create_object(&mut runtime, &guard)?;
+//! let obj = api::create_object(&mut interp, &guard)?;
 //! api::set_property(&obj, "name", JsValue::from("Alice"))?;
 //!
 //! // Read values
@@ -21,17 +21,17 @@
 //! assert_eq!(name.as_str(), Some("Alice"));
 //!
 //! // Call methods - results are guarded
-//! let arr = api::create_from_json(&mut runtime, &guard, &serde_json::json!([3, 1, 2]))?;
-//! api::call_method(&mut runtime, &guard, &arr, "sort", &[])?;
-//! let joined = api::call_method(&mut runtime, &guard, &arr, "join", &[JsValue::from("-")])?;
+//! let arr = api::create_from_json(&mut interp, &guard, &serde_json::json!([3, 1, 2]))?;
+//! api::call_method(&mut interp, &guard, &arr, "sort", &[])?;
+//! let joined = api::call_method(&mut interp, &guard, &arr, "join", &[JsValue::from("-")])?;
 //! assert_eq!(joined.as_str(), Some("1-2-3"));
 //! ```
 
+use crate::JsString;
 use crate::error::JsError;
 use crate::gc::{Gc, Guard};
-use crate::interpreter;
+use crate::interpreter::{self, Interpreter};
 use crate::value::{self, CheapClone, JsObject, JsValue};
-use crate::{JsString, Runtime};
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Guard Creation
@@ -45,13 +45,13 @@ use crate::{JsString, Runtime};
 ///
 /// # Example
 /// ```ignore
-/// let guard = api::create_guard(&runtime);
-/// let obj = api::create_object(&mut runtime, &guard)?;
+/// let guard = api::create_guard(&interp);
+/// let obj = api::create_object(&mut interp, &guard)?;
 /// // obj is kept alive by guard
 /// // When guard is dropped, obj may be collected
 /// ```
-pub fn create_guard(runtime: &Runtime) -> Guard<JsObject> {
-    runtime.interpreter.heap.create_guard()
+pub fn create_guard(interp: &Interpreter) -> Guard<JsObject> {
+    interp.heap.create_guard()
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -96,42 +96,45 @@ pub fn create_null() -> JsValue {
 /// ```ignore
 /// use serde_json::json;
 ///
-/// let guard = runtime.create_guard();
-/// let user = api::create_from_json(&mut runtime, &guard, &json!({
+/// let guard = interp.heap.create_guard();
+/// let user = api::create_from_json(&mut interp, &guard, &json!({
 ///     "name": "Alice",
 ///     "age": 30
 /// }))?;
 ///
-/// let items = api::create_from_json(&mut runtime, &guard, &json!([1, 2, 3]))?;
+/// let items = api::create_from_json(&mut interp, &guard, &json!([1, 2, 3]))?;
 /// ```
 pub fn create_from_json(
-    runtime: &mut Runtime,
+    interp: &mut Interpreter,
     guard: &Guard<JsObject>,
     json: &serde_json::Value,
 ) -> Result<JsValue, JsError> {
-    interpreter::builtins::json::json_to_js_value_with_guard(&mut runtime.interpreter, json, guard)
+    interpreter::builtins::json::json_to_js_value_with_guard(interp, json, guard)
 }
 
 /// Create an empty object.
 ///
 /// # Example
 /// ```ignore
-/// let guard = runtime.create_guard();
-/// let obj = api::create_object(&mut runtime, &guard)?;
+/// let guard = interp.heap.create_guard();
+/// let obj = api::create_object(&mut interp, &guard)?;
 /// ```
-pub fn create_object(runtime: &mut Runtime, guard: &Guard<JsObject>) -> Result<JsValue, JsError> {
-    create_from_json(runtime, guard, &serde_json::json!({}))
+pub fn create_object(
+    interp: &mut Interpreter,
+    guard: &Guard<JsObject>,
+) -> Result<JsValue, JsError> {
+    create_from_json(interp, guard, &serde_json::json!({}))
 }
 
 /// Create an empty array.
 ///
 /// # Example
 /// ```ignore
-/// let guard = runtime.create_guard();
-/// let arr = api::create_array(&mut runtime, &guard)?;
+/// let guard = interp.heap.create_guard();
+/// let arr = api::create_array(&mut interp, &guard)?;
 /// ```
-pub fn create_array(runtime: &mut Runtime, guard: &Guard<JsObject>) -> Result<JsValue, JsError> {
-    create_from_json(runtime, guard, &serde_json::json!([]))
+pub fn create_array(interp: &mut Interpreter, guard: &Guard<JsObject>) -> Result<JsValue, JsError> {
+    create_from_json(interp, guard, &serde_json::json!([]))
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -145,8 +148,8 @@ pub fn create_array(runtime: &mut Runtime, guard: &Guard<JsObject>) -> Result<Js
 ///
 /// # Example
 /// ```ignore
-/// let guard = runtime.create_guard();
-/// let user = api::create_from_json(&mut runtime, &guard, &json!({"name": "Alice", "age": 30}))?;
+/// let guard = interp.heap.create_guard();
+/// let user = api::create_from_json(&mut interp, &guard, &json!({"name": "Alice", "age": 30}))?;
 /// let name = api::get_property(&user, "name")?;
 /// assert_eq!(name.as_str(), Some("Alice"));
 /// ```
@@ -170,8 +173,8 @@ pub fn get_property(obj: &JsValue, key: &str) -> Result<JsValue, JsError> {
 ///
 /// # Example
 /// ```ignore
-/// let guard = runtime.create_guard();
-/// let arr = api::create_from_json(&mut runtime, &guard, &json!([10, 20, 30]))?;
+/// let guard = interp.heap.create_guard();
+/// let arr = api::create_from_json(&mut interp, &guard, &json!([10, 20, 30]))?;
 /// let first = api::get_index(&arr, 0)?;
 /// assert_eq!(first.as_number(), Some(10.0));
 /// ```
@@ -194,8 +197,8 @@ pub fn get_index(arr: &JsValue, index: usize) -> Result<JsValue, JsError> {
 ///
 /// # Example
 /// ```ignore
-/// let guard = runtime.create_guard();
-/// let arr = api::create_from_json(&mut runtime, &guard, &json!([1, 2, 3]))?;
+/// let guard = interp.heap.create_guard();
+/// let arr = api::create_from_json(&mut interp, &guard, &json!([1, 2, 3]))?;
 /// let elements = api::get_elements(&arr)?;
 /// for elem in elements {
 ///     println!("{}", elem);
@@ -225,8 +228,8 @@ pub fn get_elements(arr: &JsValue) -> Result<Vec<JsValue>, JsError> {
 ///
 /// # Example
 /// ```ignore
-/// let guard = runtime.create_guard();
-/// let obj = api::create_object(&mut runtime, &guard)?;
+/// let guard = interp.heap.create_guard();
+/// let obj = api::create_object(&mut interp, &guard)?;
 /// api::set_property(&obj, "name", JsValue::from("Alice"))?;
 /// api::set_property(&obj, "age", JsValue::from(30))?;
 /// ```
@@ -247,8 +250,8 @@ pub fn set_property(obj: &JsValue, key: &str, value: JsValue) -> Result<(), JsEr
 ///
 /// # Example
 /// ```ignore
-/// let guard = runtime.create_guard();
-/// let arr = api::create_from_json(&mut runtime, &guard, &json!([1, 2, 3]))?;
+/// let guard = interp.heap.create_guard();
+/// let arr = api::create_from_json(&mut interp, &guard, &json!([1, 2, 3]))?;
 /// api::set_index(&arr, 1, JsValue::from(20))?;  // [1, 20, 3]
 /// ```
 pub fn set_index(arr: &JsValue, index: usize, value: JsValue) -> Result<(), JsError> {
@@ -283,8 +286,8 @@ pub fn set_index(arr: &JsValue, index: usize, value: JsValue) -> Result<(), JsEr
 ///
 /// # Example
 /// ```ignore
-/// let guard = runtime.create_guard();
-/// let arr = api::create_array(&mut runtime, &guard)?;
+/// let guard = interp.heap.create_guard();
+/// let arr = api::create_array(&mut interp, &guard)?;
 /// api::push(&arr, JsValue::from(1))?;
 /// api::push(&arr, JsValue::from(2))?;
 /// // arr is now [1, 2]
@@ -321,16 +324,16 @@ pub fn push(arr: &JsValue, value: JsValue) -> Result<(), JsError> {
 ///
 /// # Example
 /// ```ignore
-/// let guard = runtime.create_guard();
-/// let arr = api::create_from_json(&mut runtime, &guard, &json!([3, 1, 2]))?;
-/// api::call_method(&mut runtime, &guard, &arr, "sort", &[])?;
+/// let guard = interp.heap.create_guard();
+/// let arr = api::create_from_json(&mut interp, &guard, &json!([3, 1, 2]))?;
+/// api::call_method(&mut interp, &guard, &arr, "sort", &[])?;
 /// // arr is now [1, 2, 3]
 ///
-/// let result = api::call_method(&mut runtime, &guard, &arr, "join", &[JsValue::from("-")])?;
+/// let result = api::call_method(&mut interp, &guard, &arr, "join", &[JsValue::from("-")])?;
 /// assert_eq!(result.as_str(), Some("1-2-3"));
 /// ```
 pub fn call_method(
-    runtime: &mut Runtime,
+    interp: &mut Interpreter,
     guard: &Guard<JsObject>,
     obj: &JsValue,
     method_name: &str,
@@ -357,10 +360,7 @@ pub fn call_method(
         )));
     }
 
-    let result =
-        runtime
-            .interpreter
-            .call_function(method, JsValue::Object(object.cheap_clone()), args)?;
+    let result = interp.call_function(method, JsValue::Object(object.cheap_clone()), args)?;
 
     // Guard the result if it's an object
     if let Some(obj) = result.value.as_object() {
@@ -376,21 +376,19 @@ pub fn call_method(
 ///
 /// # Example
 /// ```ignore
-/// let guard = runtime.create_guard();
-/// let result = runtime.run("function add(a, b) { return a + b; } add", None)?;
-/// if let RuntimeResult::Complete(add_fn) = result {
-///     let sum = api::call_function(
-///         &mut runtime,
-///         &guard,
-///         add_fn.value(),
-///         None,
-///         &[JsValue::from(10), JsValue::from(20)]
-///     )?;
-///     assert_eq!(sum.as_number(), Some(30.0));
-/// }
+/// let guard = interp.heap.create_guard();
+/// // After running: "function add(a, b) { return a + b; } add"
+/// let sum = api::call_function(
+///     &mut interp,
+///     &guard,
+///     &add_fn,
+///     None,
+///     &[JsValue::from(10), JsValue::from(20)]
+/// )?;
+/// assert_eq!(sum.as_number(), Some(30.0));
 /// ```
 pub fn call_function(
-    runtime: &mut Runtime,
+    interp: &mut Interpreter,
     guard: &Guard<JsObject>,
     func: &JsValue,
     this: Option<&JsValue>,
@@ -402,9 +400,7 @@ pub fn call_function(
 
     let this_value = this.cloned().unwrap_or(JsValue::Undefined);
 
-    let result = runtime
-        .interpreter
-        .call_function(func.clone(), this_value, args)?;
+    let result = interp.call_function(func.clone(), this_value, args)?;
 
     // Guard the result if it's an object
     if let Some(obj) = result.value.as_object() {
@@ -425,7 +421,7 @@ pub fn call_function(
 ///
 /// # Example
 /// ```ignore
-/// let guard = runtime.create_guard();
+/// let guard = interp.heap.create_guard();
 /// let value = api::get_property(&obj, "nested")?;
 /// api::guard_value(&guard, &value);  // Ensure nested object is kept alive
 /// ```
@@ -441,8 +437,8 @@ pub fn guard_value(guard: &Guard<JsObject>, value: &JsValue) {
 ///
 /// # Example
 /// ```ignore
-/// let guard = runtime.create_guard();
-/// let arr = api::create_from_json(&mut runtime, &guard, &json!([1, 2, 3, 4, 5]))?;
+/// let guard = interp.heap.create_guard();
+/// let arr = api::create_from_json(&mut interp, &guard, &json!([1, 2, 3, 4, 5]))?;
 /// assert_eq!(api::len(&arr), Some(5));
 /// ```
 pub fn len(arr: &JsValue) -> Option<usize> {
@@ -462,9 +458,9 @@ pub fn is_empty(arr: &JsValue) -> Option<bool> {
 ///
 /// # Example
 /// ```ignore
-/// let guard = runtime.create_guard();
-/// let arr = api::create_from_json(&mut runtime, &guard, &json!([1, 2, 3]))?;
-/// let obj = api::create_from_json(&mut runtime, &guard, &json!({"x": 1}))?;
+/// let guard = interp.heap.create_guard();
+/// let arr = api::create_from_json(&mut interp, &guard, &json!([1, 2, 3]))?;
+/// let obj = api::create_from_json(&mut interp, &guard, &json!({"x": 1}))?;
 /// assert!(api::is_array(&arr));
 /// assert!(!api::is_array(&obj));
 /// ```
@@ -483,8 +479,8 @@ pub fn is_array(value: &JsValue) -> bool {
 ///
 /// # Example
 /// ```ignore
-/// let guard = runtime.create_guard();
-/// let obj = api::create_from_json(&mut runtime, &guard, &json!({"a": 1, "b": 2}))?;
+/// let guard = interp.heap.create_guard();
+/// let obj = api::create_from_json(&mut interp, &guard, &json!({"a": 1, "b": 2}))?;
 /// let keys = api::keys(&obj);
 /// assert!(keys.contains(&"a".to_string()));
 /// assert!(keys.contains(&"b".to_string()));
@@ -527,42 +523,22 @@ pub fn as_object(value: &JsValue) -> Option<Gc<JsObject>> {
 ///
 /// # Example
 /// ```ignore
-/// use tsrun::{Runtime, RuntimeResult, api};
+/// use tsrun::{Interpreter, StepResult, api};
 ///
-/// let mut runtime = Runtime::new();
+/// let mut interp = Interpreter::new();
 ///
 /// // Evaluate a module with exports
-/// let result = runtime.run(r#"
-///     export interface Processor {
-///         elementHeader: (element: JsElement) => JsElement;
-///     }
-///
-///     export const processor: Processor = {
-///         elementHeader: function(element) {
-///             return element;
-///         }
-///     };
-///
+/// interp.prepare(r#"
 ///     export const VERSION = "1.0.0";
-/// "#, Some("/main.ts")).unwrap();
+/// "#, Some("/main.ts".into())).unwrap();
+/// // ... run to completion ...
 ///
 /// // After completion, get exports
-/// if let RuntimeResult::Complete(_) = result {
-///     let guard = api::create_guard(&runtime);
-///
-///     // Get a simple export
-///     let version = api::get_export(&runtime, "VERSION");
-///     assert_eq!(version.unwrap().as_str(), Some("1.0.0"));
-///
-///     // Get an object export and guard it
-///     if let Some(processor) = api::get_export(&runtime, "processor") {
-///         api::guard_value(&guard, &processor);
-///         // Now you can call methods on processor
-///     }
-/// }
+/// let version = api::get_export(&interp, "VERSION");
+/// assert_eq!(version.unwrap().as_str(), Some("1.0.0"));
 /// ```
-pub fn get_export(runtime: &Runtime, name: &str) -> Option<JsValue> {
-    runtime.interpreter.get_export(name)
+pub fn get_export(interp: &Interpreter, name: &str) -> Option<JsValue> {
+    interp.get_export(name)
 }
 
 /// Get all export names from the main module.
@@ -571,20 +547,16 @@ pub fn get_export(runtime: &Runtime, name: &str) -> Option<JsValue> {
 ///
 /// # Example
 /// ```ignore
-/// use tsrun::{Runtime, RuntimeResult, api};
+/// use tsrun::{Interpreter, api};
 ///
-/// let mut runtime = Runtime::new();
-/// runtime.run(r#"
-///     export const a = 1;
-///     export const b = 2;
-///     export function c() {}
-/// "#, Some("/main.ts")).unwrap();
+/// let mut interp = Interpreter::new();
+/// // ... evaluate module with exports ...
 ///
-/// let exports = api::get_export_names(&runtime);
+/// let exports = api::get_export_names(&interp);
 /// // exports contains ["a", "b", "c"]
 /// ```
-pub fn get_export_names(runtime: &Runtime) -> Vec<String> {
-    runtime.interpreter.get_export_names()
+pub fn get_export_names(interp: &Interpreter) -> Vec<String> {
+    interp.get_export_names()
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -602,7 +574,7 @@ use crate::{OrderId, RuntimeValue};
 /// ```ignore
 /// use serde_json::json;
 ///
-/// let response_value = api::create_response_object(&mut runtime, &json!({
+/// let response_value = api::create_response_object(&mut interp, &json!({
 ///     "id": 1,
 ///     "name": "John",
 ///     "items": [1, 2, 3]
@@ -614,15 +586,11 @@ use crate::{OrderId, RuntimeValue};
 /// };
 /// ```
 pub fn create_response_object(
-    runtime: &mut Runtime,
+    interp: &mut Interpreter,
     json: &serde_json::Value,
 ) -> Result<RuntimeValue, JsError> {
-    let guard = runtime.interpreter.heap.create_guard();
-    let value = interpreter::builtins::json::json_to_js_value_with_guard(
-        &mut runtime.interpreter,
-        json,
-        &guard,
-    )?;
+    let guard = interp.heap.create_guard();
+    let value = interpreter::builtins::json::json_to_js_value_with_guard(interp, json, &guard)?;
     Ok(RuntimeValue::with_guard(value, guard))
 }
 
@@ -637,20 +605,20 @@ pub fn create_response_object(
 /// # Example
 /// ```ignore
 /// // Create an unresolved promise
-/// let promise = api::create_promise(&mut runtime);
+/// let promise = api::create_promise(&mut interp);
 ///
 /// // Return it as the response to an order
-/// runtime.fulfill_orders(vec![OrderResponse {
+/// interp.fulfill_orders(vec![OrderResponse {
 ///     id: order.id,
 ///     result: Ok(promise.clone()),
-/// }])?;
+/// }]);
 ///
 /// // Later, when the async operation completes:
-/// api::resolve_promise(&mut runtime, &promise, result_value)?;
+/// api::resolve_promise(&mut interp, &promise, result_value)?;
 /// ```
-pub fn create_promise(runtime: &mut Runtime) -> RuntimeValue {
-    let guard = runtime.interpreter.heap.create_guard();
-    let promise = interpreter::builtins::promise::create_promise(&mut runtime.interpreter, &guard);
+pub fn create_promise(interp: &mut Interpreter) -> RuntimeValue {
+    let guard = interp.heap.create_guard();
+    let promise = interpreter::builtins::promise::create_promise(interp, &guard);
     RuntimeValue::with_guard(JsValue::Object(promise), guard)
 }
 
@@ -658,7 +626,7 @@ pub fn create_promise(runtime: &mut Runtime) -> RuntimeValue {
 ///
 /// Similar to `create_promise()`, but the Promise is associated with the given
 /// order ID. When this Promise "loses" in a `Promise.race()`, the order ID will
-/// be included in the `cancelled` list of `RuntimeResult::Suspended`.
+/// be included in the `cancelled` list of `StepResult::Suspended`.
 ///
 /// Use this when returning a Promise as an order response to enable automatic
 /// cancellation notification when the Promise is no longer needed.
@@ -666,36 +634,32 @@ pub fn create_promise(runtime: &mut Runtime) -> RuntimeValue {
 /// # Example
 /// ```ignore
 /// let order_id = order.id;
-/// let promise = api::create_order_promise(&mut runtime, order_id);
+/// let promise = api::create_order_promise(&mut interp, order_id);
 ///
-/// runtime.fulfill_orders(vec![OrderResponse {
+/// interp.fulfill_orders(vec![OrderResponse {
 ///     id: order_id,
 ///     result: Ok(promise.clone()),
-/// }])?;
+/// }]);
 ///
 /// // If this Promise loses in a Promise.race(), order_id will be in
-/// // RuntimeResult::Suspended { cancelled: vec![order_id], ... }
+/// // StepResult::Suspended { cancelled: vec![order_id], ... }
 /// ```
-pub fn create_order_promise(runtime: &mut Runtime, order_id: OrderId) -> RuntimeValue {
-    let guard = runtime.interpreter.heap.create_guard();
-    let promise = interpreter::builtins::promise::create_order_promise(
-        &mut runtime.interpreter,
-        &guard,
-        order_id,
-    );
+pub fn create_order_promise(interp: &mut Interpreter, order_id: OrderId) -> RuntimeValue {
+    let guard = interp.heap.create_guard();
+    let promise = interpreter::builtins::promise::create_order_promise(interp, &guard, order_id);
     RuntimeValue::with_guard(JsValue::Object(promise), guard)
 }
 
 /// Resolve a Promise that was created with `create_promise`.
 ///
 /// This will fulfill the Promise with the given value and queue any
-/// `.then()` handlers. Call `runtime.run_to_completion()` afterwards to
+/// `.then()` handlers. Call `interp.step()` afterwards to
 /// execute the queued handlers.
 ///
 /// # Errors
 /// Returns an error if the value is not a Promise.
 pub fn resolve_promise(
-    runtime: &mut Runtime,
+    interp: &mut Interpreter,
     promise: &RuntimeValue,
     value: RuntimeValue,
 ) -> Result<(), JsError> {
@@ -704,13 +668,13 @@ pub fn resolve_promise(
     };
 
     interpreter::builtins::promise::resolve_promise_value(
-        &mut runtime.interpreter,
+        interp,
         promise_obj,
         value.value().clone(),
     )?;
 
     // Check if any waiting contexts are now ready
-    runtime.interpreter.check_resolved_promises_public();
+    interp.check_resolved_promises_public();
 
     Ok(())
 }
@@ -718,13 +682,13 @@ pub fn resolve_promise(
 /// Reject a Promise that was created with `create_promise`.
 ///
 /// This will reject the Promise with the given reason and queue any
-/// `.catch()` or rejection handlers. Call `runtime.run_to_completion()` afterwards
+/// `.catch()` or rejection handlers. Call `interp.step()` afterwards
 /// to execute the queued handlers.
 ///
 /// # Errors
 /// Returns an error if the value is not a Promise.
 pub fn reject_promise(
-    runtime: &mut Runtime,
+    interp: &mut Interpreter,
     promise: &RuntimeValue,
     reason: RuntimeValue,
 ) -> Result<(), JsError> {
@@ -733,13 +697,13 @@ pub fn reject_promise(
     };
 
     interpreter::builtins::promise::reject_promise_value(
-        &mut runtime.interpreter,
+        interp,
         promise_obj,
         reason.value().clone(),
     )?;
 
     // Check if any waiting contexts are now ready
-    runtime.interpreter.check_resolved_promises_public();
+    interp.check_resolved_promises_public();
 
     Ok(())
 }

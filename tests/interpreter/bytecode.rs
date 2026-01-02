@@ -4,13 +4,13 @@
 //! as the stack-based interpreter.
 
 use super::{create_test_runtime, run};
-use tsrun::{JsValue, Runtime, StepResult};
+use tsrun::{JsValue, StepResult};
 
 /// Helper to evaluate using bytecode VM
-#[allow(clippy::expect_used)]
+#[allow(clippy::expect_used, clippy::panic)]
 fn eval_bytecode(source: &str) -> JsValue {
-    let mut runtime = create_test_runtime();
-    let result = run(&mut runtime, source, None).expect("eval failed");
+    let mut interp = create_test_runtime();
+    let result = run(&mut interp, source, None).expect("eval failed");
     match result {
         StepResult::Complete(rv) => rv.value().clone(),
         _ => panic!("Expected Complete result"),

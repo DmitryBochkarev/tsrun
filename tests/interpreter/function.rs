@@ -2,7 +2,7 @@
 
 use super::{eval, run};
 use tsrun::value::JsString;
-use tsrun::{JsValue, Runtime, StepResult};
+use tsrun::{Interpreter, JsValue, StepResult};
 
 #[test]
 fn test_function_name_property() {
@@ -375,10 +375,10 @@ fn test_fibonacci_iterative() {
 #[test]
 fn test_array_map_callback() {
     // Basic map with callback - should work fine
-    let mut runtime = Runtime::new();
+    let mut interp = Interpreter::new();
 
     let result = run(
-        &mut runtime,
+        &mut interp,
         r#"
         [1, 2, 3].map(function(x) { return x * 2; })
     "#,
@@ -390,10 +390,10 @@ fn test_array_map_callback() {
 /// Test nested array callbacks - map inside map
 #[test]
 fn test_nested_array_callbacks() {
-    let mut runtime = Runtime::new();
+    let mut interp = Interpreter::new();
 
     let result = run(
-        &mut runtime,
+        &mut interp,
         r#"
         const arr = [[1, 2], [3, 4]];
         arr.map(function(inner) {
@@ -408,12 +408,12 @@ fn test_nested_array_callbacks() {
 /// Test array callback that itself recurses
 #[test]
 fn test_array_callback_with_recursion() {
-    let mut runtime = Runtime::new();
+    let mut interp = Interpreter::new();
 
     // The callback itself has recursion depth 5
     // forEach has 3 elements, each calling a recursive function
     let result = run(
-        &mut runtime,
+        &mut interp,
         r#"
         let sum = 0;
         function countDown(n) {

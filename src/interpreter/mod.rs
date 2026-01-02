@@ -579,6 +579,15 @@ impl Interpreter {
         builtins::proxy::init_proxy(self);
     }
 
+    /// Create an interpreter with configuration
+    pub fn with_config(config: crate::InterpreterConfig) -> Self {
+        let mut interp = Self::new();
+        for module in config.internal_modules {
+            interp.register_internal_module(module);
+        }
+        interp
+    }
+
     // ═══════════════════════════════════════════════════════════════════════════
     // Call Stack Depth
     // ═══════════════════════════════════════════════════════════════════════════
@@ -594,6 +603,24 @@ impl Interpreter {
             .map(|vm| vm.trampoline_depth())
             .unwrap_or(0);
         self.call_stack.len() + vm_depth
+    }
+
+    /// Set the GC threshold (0 = disable automatic collection)
+    ///
+    /// Lower values reduce peak memory but increase GC overhead.
+    /// Higher values improve throughput but may use more memory.
+    pub fn set_gc_threshold(&self, threshold: usize) {
+        self.heap.set_gc_threshold(threshold);
+    }
+
+    /// Force a garbage collection cycle
+    pub fn collect(&self) {
+        self.heap.collect();
+    }
+
+    /// Get GC statistics
+    pub fn gc_stats(&self) -> crate::gc::GcStats {
+        self.heap.stats()
     }
 
     // ═══════════════════════════════════════════════════════════════════════════

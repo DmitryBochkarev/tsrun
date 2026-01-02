@@ -1,34 +1,34 @@
 //! Tests for garbage collection of JavaScript objects
 
 use super::run;
-use tsrun::{GcStats, JsString, JsValue, Runtime, RuntimeValue, StepResult};
+use tsrun::{GcStats, Interpreter, JsString, JsValue, RuntimeValue, StepResult};
 
 /// Get baseline object count (builtins only, no user code)
 fn get_baseline_live_count() -> usize {
-    let runtime = Runtime::new();
-    runtime.collect();
-    runtime.gc_stats().live_objects
+    let interp = Interpreter::new();
+    interp.collect();
+    interp.gc_stats().live_objects
 }
 
 #[allow(clippy::unwrap_used, clippy::panic)]
 fn eval_with_gc_stats(source: &str) -> (RuntimeValue, GcStats) {
-    let mut runtime = Runtime::new();
-    let result_step = run(&mut runtime, source, None).unwrap();
+    let mut interp = Interpreter::new();
+    let result_step = run(&mut interp, source, None).unwrap();
     let result = if let StepResult::Complete(rv) = result_step {
         rv
     } else {
         panic!("Expected Complete, got {:?}", result_step);
     };
     // Force GC to run
-    runtime.collect();
-    let stats = runtime.gc_stats();
+    interp.collect();
+    let stats = interp.gc_stats();
     (result, stats)
 }
 
 #[test]
 fn test_gc_stats_available() {
-    let runtime = Runtime::new();
-    let stats = runtime.gc_stats();
+    let interp = Interpreter::new();
+    let stats = interp.gc_stats();
     // Should have some live objects (global, global_env, prototypes)
     assert!(stats.live_objects > 0, "Should have live objects");
 }
@@ -89,10 +89,10 @@ fn test_cycle_detection_simple() {
     "#;
 
     // Run with low gc_threshold to trigger GC during execution
-    let mut runtime = Runtime::new();
-    runtime.set_gc_threshold(50);
+    let mut interp = Interpreter::new();
+    interp.set_gc_threshold(50);
 
-    let result_step = run(&mut runtime, source, None).unwrap();
+    let result_step = run(&mut interp, source, None).unwrap();
     let result = if let StepResult::Complete(rv) = result_step {
         rv
     } else {
@@ -119,10 +119,10 @@ fn test_self_referencing_collected() {
     "#;
 
     // Run with low gc_threshold to trigger GC during execution
-    let mut runtime = Runtime::new();
-    runtime.set_gc_threshold(50);
+    let mut interp = Interpreter::new();
+    interp.set_gc_threshold(50);
 
-    let result_step = run(&mut runtime, source, None).unwrap();
+    let result_step = run(&mut interp, source, None).unwrap();
     let result = if let StepResult::Complete(rv) = result_step {
         rv
     } else {
@@ -149,8 +149,8 @@ fn test_reachable_objects_preserved() {
         global_obj.a + global_arr.length
     "#;
 
-    let mut runtime = Runtime::new();
-    let result_step = run(&mut runtime, source, None).unwrap();
+    let mut interp = Interpreter::new();
+    let result_step = run(&mut interp, source, None).unwrap();
     let result = if let StepResult::Complete(rv) = result_step {
         rv
     } else {
@@ -158,11 +158,11 @@ fn test_reachable_objects_preserved() {
     };
 
     // Run GC
-    runtime.collect();
+    interp.collect();
 
     // Verify global objects are still accessible
     let check_step = run(
-        &mut runtime,
+        &mut interp,
         "global_obj.a + global_obj.b + global_arr[0]",
         None,
     )
@@ -218,10 +218,10 @@ fn test_many_cycles_memory_bounded() {
 
     // With low GC threshold, collection happens frequently during execution
     // This allows cycles to be broken while variables are still in scope
-    let mut runtime = Runtime::new();
-    runtime.set_gc_threshold(100);
+    let mut interp = Interpreter::new();
+    interp.set_gc_threshold(100);
 
-    let result_step = run(&mut runtime, source, None).unwrap();
+    let result_step = run(&mut interp, source, None).unwrap();
     let result = if let StepResult::Complete(rv) = result_step {
         rv
     } else {
@@ -229,8 +229,8 @@ fn test_many_cycles_memory_bounded() {
     };
 
     // Final GC
-    runtime.collect();
-    let stats = runtime.gc_stats();
+    interp.collect();
+    let stats = interp.gc_stats();
 
     let baseline = 256; // Approximate baseline from builtins
     println!("Result: {:?}", result);
@@ -283,9 +283,9 @@ fn test_gc_cycles_graph_with_push_multiple() {
     "#;
 
     // Test with low GC threshold to trigger the bug
-    let mut runtime = Runtime::new();
-    runtime.set_gc_threshold(100);
-    let result_step = run(&mut runtime, source, None).unwrap();
+    let mut interp = Interpreter::new();
+    interp.set_gc_threshold(100);
+    let result_step = run(&mut interp, source, None).unwrap();
     let result = if let StepResult::Complete(rv) = result_step {
         rv
     } else {
@@ -320,9 +320,9 @@ fn test_gc_cycles_array_refs_with_push_multiple() {
         sum
     "#;
 
-    let mut runtime = Runtime::new();
-    runtime.set_gc_threshold(100);
-    let result_step = run(&mut runtime, source, None).unwrap();
+    let mut interp = Interpreter::new();
+    interp.set_gc_threshold(100);
+    let result_step = run(&mut interp, source, None).unwrap();
     let result = if let StepResult::Complete(rv) = result_step {
         rv
     } else {
@@ -352,9 +352,9 @@ fn test_gc_object_cycle_with_property_assignment() {
         sum
     "#;
 
-    let mut runtime = Runtime::new();
-    runtime.set_gc_threshold(50); // Low threshold to trigger GC often
-    let result_step = run(&mut runtime, source, None).unwrap();
+    let mut interp = Interpreter::new();
+    interp.set_gc_threshold(50); // Low threshold to trigger GC often
+    let result_step = run(&mut interp, source, None).unwrap();
     let result = if let StepResult::Complete(rv) = result_step {
         rv
     } else {
@@ -386,9 +386,9 @@ fn test_gc_object_cycle_with_array_push() {
         sum
     "#;
 
-    let mut runtime = Runtime::new();
-    runtime.set_gc_threshold(50); // Low threshold to trigger GC often
-    let result_step = run(&mut runtime, source, None).unwrap();
+    let mut interp = Interpreter::new();
+    interp.set_gc_threshold(50); // Low threshold to trigger GC often
+    let result_step = run(&mut interp, source, None).unwrap();
     let result = if let StepResult::Complete(rv) = result_step {
         rv
     } else {
@@ -525,10 +525,10 @@ const results: number[] = [];
 results
     "#;
 
-    let mut runtime = Runtime::new();
+    let mut interp = Interpreter::new();
     // Use lower GC threshold to trigger collection more frequently
-    runtime.set_gc_threshold(100);
-    let result_step = run(&mut runtime, source, None).unwrap();
+    interp.set_gc_threshold(100);
+    let result_step = run(&mut interp, source, None).unwrap();
     let result = if let StepResult::Complete(rv) = result_step {
         rv
     } else {
@@ -573,9 +573,9 @@ results
 /// Helper to evaluate with gc_threshold=1 (most aggressive GC)
 #[allow(clippy::unwrap_used, clippy::panic)]
 fn eval_with_threshold_1(source: &str) -> RuntimeValue {
-    let mut runtime = Runtime::new();
-    runtime.set_gc_threshold(1);
-    let result_step = run(&mut runtime, source, None).unwrap();
+    let mut interp = Interpreter::new();
+    interp.set_gc_threshold(1);
+    let result_step = run(&mut interp, source, None).unwrap();
     match result_step {
         StepResult::Complete(rv) => rv,
         other => panic!("Expected Complete, got {:?}", other),
@@ -1380,18 +1380,18 @@ fn test_function_call_registers_cleaned_up() {
         sum
     "#;
 
-    let mut runtime = Runtime::new();
-    runtime.set_gc_threshold(100); // Trigger GC frequently during execution
+    let mut interp = Interpreter::new();
+    interp.set_gc_threshold(100); // Trigger GC frequently during execution
 
-    let result_step = run(&mut runtime, source, None).unwrap();
+    let result_step = run(&mut interp, source, None).unwrap();
     let result = if let StepResult::Complete(rv) = result_step {
         rv
     } else {
         panic!("Expected Complete, got {:?}", result_step);
     };
 
-    runtime.collect();
-    let stats = runtime.gc_stats();
+    interp.collect();
+    let stats = interp.gc_stats();
 
     println!("Result: {:?}", result);
     println!(
@@ -1435,18 +1435,18 @@ fn test_nested_function_calls_registers_cleaned_up() {
         sum
     "#;
 
-    let mut runtime = Runtime::new();
-    runtime.set_gc_threshold(50); // Very aggressive GC
+    let mut interp = Interpreter::new();
+    interp.set_gc_threshold(50); // Very aggressive GC
 
-    let result_step = run(&mut runtime, source, None).unwrap();
+    let result_step = run(&mut interp, source, None).unwrap();
     let result = if let StepResult::Complete(rv) = result_step {
         rv
     } else {
         panic!("Expected Complete, got {:?}", result_step);
     };
 
-    runtime.collect();
-    let stats = runtime.gc_stats();
+    interp.collect();
+    let stats = interp.gc_stats();
 
     println!("Result: {:?}", result);
     println!(
@@ -1488,18 +1488,18 @@ fn test_exception_unwind_registers_cleaned_up() {
         sum
     "#;
 
-    let mut runtime = Runtime::new();
-    runtime.set_gc_threshold(50);
+    let mut interp = Interpreter::new();
+    interp.set_gc_threshold(50);
 
-    let result_step = run(&mut runtime, source_normal, None).unwrap();
+    let result_step = run(&mut interp, source_normal, None).unwrap();
     let result = if let StepResult::Complete(rv) = result_step {
         rv
     } else {
         panic!("Expected Complete, got {:?}", result_step);
     };
 
-    runtime.collect();
-    let stats = runtime.gc_stats();
+    interp.collect();
+    let stats = interp.gc_stats();
 
     println!("Normal return path:");
     println!("Result: {:?}", result);
@@ -1515,7 +1515,7 @@ fn test_exception_unwind_registers_cleaned_up() {
     println!("Normal path overhead: {}", normal_overhead);
 
     // Now test exception path
-    drop(runtime);
+    drop(interp);
 
     // Use var instead of let to avoid for-loop per-iteration scope complexity
     let source_throws = r#"
@@ -1540,18 +1540,18 @@ fn test_exception_unwind_registers_cleaned_up() {
         sum
     "#;
 
-    let mut runtime = Runtime::new();
-    runtime.set_gc_threshold(50);
+    let mut interp = Interpreter::new();
+    interp.set_gc_threshold(50);
 
-    let result_step = run(&mut runtime, source_throws, None).unwrap();
+    let result_step = run(&mut interp, source_throws, None).unwrap();
     let result = if let StepResult::Complete(rv) = result_step {
         rv
     } else {
         panic!("Expected Complete, got {:?}", result_step);
     };
 
-    runtime.collect();
-    let stats = runtime.gc_stats();
+    interp.collect();
+    let stats = interp.gc_stats();
 
     println!("\nException path:");
     println!("Result: {:?}", result);

@@ -25,7 +25,7 @@ use std::fs;
 use std::io::{self, Write as IoWrite};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
-use tsrun::{JsError, Runtime, StepResult};
+use tsrun::{Interpreter, JsError, StepResult};
 
 /// Test metadata parsed from YAML frontmatter
 #[derive(Debug, Default)]
@@ -318,17 +318,17 @@ impl TestRunner {
 
         let full_source = format!("{}\n{}", preamble, test_source);
 
-        // Create runtime
-        let mut runtime = Runtime::new();
-        runtime.set_gc_threshold(100);
+        // Create interpreter
+        let mut interp = Interpreter::new();
+        interp.set_gc_threshold(100);
 
         // Execute test using step-based API
-        let result = runtime.prepare(&full_source, None);
+        let result = interp.prepare(&full_source, None);
         let result = match result {
             Ok(_) => {
                 // Run to completion
                 loop {
-                    match runtime.step() {
+                    match interp.step() {
                         Ok(StepResult::Continue) => continue,
                         Ok(step_result) => break Ok(step_result),
                         Err(e) => break Err(e),

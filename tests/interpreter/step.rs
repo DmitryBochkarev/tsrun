@@ -6,19 +6,19 @@
 //! - Query call depth with call_depth()
 //! - Enforce time limits, step limits, or depth limits as needed
 
-use tsrun::{Runtime, StepResult};
+use tsrun::{Interpreter, StepResult};
 
 #[test]
 fn test_step_basic_execution() {
-    let mut runtime = Runtime::new();
+    let mut interp = Interpreter::new();
 
     // Prepare execution
-    let result = runtime.prepare("1 + 2 + 3", None);
+    let result = interp.prepare("1 + 2 + 3", None);
     assert!(matches!(result, Ok(StepResult::Continue)));
 
     // Step through until complete
     for _ in 0..1000 {
-        match runtime.step().unwrap() {
+        match interp.step().unwrap() {
             StepResult::Continue => continue,
             StepResult::Complete(value) => {
                 assert_eq!(value.as_number(), Some(6.0));
@@ -32,26 +32,26 @@ fn test_step_basic_execution() {
 
 #[test]
 fn test_step_returns_done_when_no_active_vm() {
-    let mut runtime = Runtime::new();
+    let mut interp = Interpreter::new();
 
     // Without prepare(), step() should return Done
-    let result = runtime.step().unwrap();
+    let result = interp.step().unwrap();
     assert!(matches!(result, StepResult::Done));
 }
 
 #[test]
 fn test_step_can_stop_infinite_loop() {
-    let mut runtime = Runtime::new();
+    let mut interp = Interpreter::new();
 
     // Prepare an infinite loop
-    let result = runtime.prepare("while (true) {}", None);
+    let result = interp.prepare("while (true) {}", None);
     assert!(matches!(result, Ok(StepResult::Continue)));
 
     // Step for a limited number of iterations
     let max_steps = 100;
     let mut steps = 0;
     for _ in 0..max_steps {
-        let result = runtime.step().unwrap();
+        let result = interp.step().unwrap();
         steps += 1;
         match result {
             StepResult::Continue => continue,
@@ -66,10 +66,10 @@ fn test_step_can_stop_infinite_loop() {
 
 #[test]
 fn test_step_function_calls() {
-    let mut runtime = Runtime::new();
+    let mut interp = Interpreter::new();
 
     // Prepare code with function calls
-    let result = runtime.prepare(
+    let result = interp.prepare(
         r#"
         function add(a, b) { return a + b; }
         add(1, 2)
@@ -80,7 +80,7 @@ fn test_step_function_calls() {
 
     // Step through until complete
     for _ in 0..1000 {
-        match runtime.step().unwrap() {
+        match interp.step().unwrap() {
             StepResult::Continue => continue,
             StepResult::Complete(value) => {
                 assert_eq!(value.as_number(), Some(3.0));
@@ -94,10 +94,10 @@ fn test_step_function_calls() {
 
 #[test]
 fn test_step_loop_with_counter() {
-    let mut runtime = Runtime::new();
+    let mut interp = Interpreter::new();
 
     // Prepare a loop that terminates
-    let result = runtime.prepare(
+    let result = interp.prepare(
         r#"
         let sum = 0;
         for (let i = 0; i < 10; i++) {
@@ -111,7 +111,7 @@ fn test_step_loop_with_counter() {
 
     // Step through until complete
     for _ in 0..10000 {
-        match runtime.step().unwrap() {
+        match interp.step().unwrap() {
             StepResult::Continue => continue,
             StepResult::Complete(value) => {
                 // sum = 0 + 1 + 2 + ... + 9 = 45
@@ -128,8 +128,8 @@ fn test_step_loop_with_counter() {
 fn test_run_to_completion() {
     // run() helper should execute to completion in a single call
     use super::{create_test_runtime, run};
-    let mut runtime = create_test_runtime();
-    let result = run(&mut runtime, "1 + 2 * 3", None);
+    let mut interp = create_test_runtime();
+    let result = run(&mut interp, "1 + 2 * 3", None);
     assert!(result.is_ok());
     if let Ok(StepResult::Complete(value)) = result {
         assert_eq!(value.as_number(), Some(7.0));
@@ -138,10 +138,10 @@ fn test_run_to_completion() {
 
 #[test]
 fn test_step_recursion() {
-    let mut runtime = Runtime::new();
+    let mut interp = Interpreter::new();
 
     // Prepare recursive function
-    let result = runtime.prepare(
+    let result = interp.prepare(
         r#"
         function fib(n) {
             if (n <= 1) return n;
@@ -155,7 +155,7 @@ fn test_step_recursion() {
 
     // Step through until complete
     for _ in 0..100000 {
-        match runtime.step().unwrap() {
+        match interp.step().unwrap() {
             StepResult::Continue => continue,
             StepResult::Complete(value) => {
                 assert_eq!(value.as_number(), Some(55.0)); // fib(10) = 55
@@ -173,23 +173,23 @@ fn test_step_recursion() {
 
 #[test]
 fn test_call_depth_starts_at_zero() {
-    let runtime = Runtime::new();
-    assert_eq!(runtime.call_depth(), 0);
+    let interp = Interpreter::new();
+    assert_eq!(interp.call_depth(), 0);
 }
 
 #[test]
 fn test_call_depth_after_prepare() {
-    let mut runtime = Runtime::new();
-    runtime.prepare("1 + 2", None).unwrap();
+    let mut interp = Interpreter::new();
+    interp.prepare("1 + 2", None).unwrap();
     // After prepare, there's an active VM but no function calls yet
     // The depth should be 0 (no trampoline stack entries)
-    assert_eq!(runtime.call_depth(), 0);
+    assert_eq!(interp.call_depth(), 0);
 }
 
 #[test]
 fn test_call_depth_increases_during_function_call() {
-    let mut runtime = Runtime::new();
-    runtime
+    let mut interp = Interpreter::new();
+    interp
         .prepare(
             r#"
         function outer() {
@@ -206,11 +206,11 @@ fn test_call_depth_increases_during_function_call() {
 
     let mut max_depth = 0;
     loop {
-        let depth = runtime.call_depth();
+        let depth = interp.call_depth();
         if depth > max_depth {
             max_depth = depth;
         }
-        match runtime.step().unwrap() {
+        match interp.step().unwrap() {
             StepResult::Continue => continue,
             StepResult::Complete(_) => break,
             _ => panic!("Unexpected result"),
@@ -223,8 +223,8 @@ fn test_call_depth_increases_during_function_call() {
 
 #[test]
 fn test_call_depth_with_recursion() {
-    let mut runtime = Runtime::new();
-    runtime
+    let mut interp = Interpreter::new();
+    interp
         .prepare(
             r#"
         function recurse(n) {
@@ -239,11 +239,11 @@ fn test_call_depth_with_recursion() {
 
     let mut max_depth = 0;
     loop {
-        let depth = runtime.call_depth();
+        let depth = interp.call_depth();
         if depth > max_depth {
             max_depth = depth;
         }
-        match runtime.step().unwrap() {
+        match interp.step().unwrap() {
             StepResult::Continue => continue,
             StepResult::Complete(_) => break,
             _ => panic!("Unexpected result"),
@@ -260,8 +260,8 @@ fn test_call_depth_with_recursion() {
 
 #[test]
 fn test_host_can_enforce_depth_limit() {
-    let mut runtime = Runtime::new();
-    runtime
+    let mut interp = Interpreter::new();
+    interp
         .prepare(
             r#"
         function recurse(n) {
@@ -277,12 +277,12 @@ fn test_host_can_enforce_depth_limit() {
     let mut stopped_due_to_depth = false;
 
     for _ in 0..10000 {
-        let depth = runtime.call_depth();
+        let depth = interp.call_depth();
         if depth > max_allowed_depth {
             stopped_due_to_depth = true;
             break;
         }
-        match runtime.step().unwrap() {
+        match interp.step().unwrap() {
             StepResult::Continue => continue,
             StepResult::Complete(_) => break,
             _ => break,
@@ -297,15 +297,15 @@ fn test_host_can_enforce_depth_limit() {
 
 #[test]
 fn test_host_can_enforce_step_limit() {
-    let mut runtime = Runtime::new();
-    runtime.prepare("while (true) {}", None).unwrap();
+    let mut interp = Interpreter::new();
+    interp.prepare("while (true) {}", None).unwrap();
 
     let max_steps = 50;
     let mut steps_executed = 0;
 
     for _ in 0..max_steps {
         steps_executed += 1;
-        match runtime.step().unwrap() {
+        match interp.step().unwrap() {
             StepResult::Continue => continue,
             StepResult::Complete(_) => panic!("Infinite loop should not complete"),
             _ => break,
@@ -319,8 +319,8 @@ fn test_host_can_enforce_step_limit() {
 fn test_host_can_enforce_time_limit() {
     use std::time::{Duration, Instant};
 
-    let mut runtime = Runtime::new();
-    runtime.prepare("while (true) {}", None).unwrap();
+    let mut interp = Interpreter::new();
+    interp.prepare("while (true) {}", None).unwrap();
 
     let start = Instant::now();
     let timeout = Duration::from_millis(50);
@@ -331,7 +331,7 @@ fn test_host_can_enforce_time_limit() {
             timed_out = true;
             break;
         }
-        match runtime.step().unwrap() {
+        match interp.step().unwrap() {
             StepResult::Continue => continue,
             StepResult::Complete(_) => panic!("Infinite loop should not complete"),
             _ => break,
@@ -343,8 +343,8 @@ fn test_host_can_enforce_time_limit() {
 
 #[test]
 fn test_depth_limit_allows_normal_execution() {
-    let mut runtime = Runtime::new();
-    runtime
+    let mut interp = Interpreter::new();
+    interp
         .prepare(
             r#"
         function a() { return b(); }
@@ -360,11 +360,11 @@ fn test_depth_limit_allows_normal_execution() {
     let mut result_value = None;
 
     for _ in 0..10000 {
-        let depth = runtime.call_depth();
+        let depth = interp.call_depth();
         if depth > max_allowed_depth {
             panic!("Depth limit exceeded unexpectedly");
         }
-        match runtime.step().unwrap() {
+        match interp.step().unwrap() {
             StepResult::Continue => continue,
             StepResult::Complete(value) => {
                 result_value = Some(value);
@@ -379,8 +379,8 @@ fn test_depth_limit_allows_normal_execution() {
 
 #[test]
 fn test_call_depth_returns_to_zero_after_completion() {
-    let mut runtime = Runtime::new();
-    runtime
+    let mut interp = Interpreter::new();
+    interp
         .prepare(
             r#"
         function foo() { return 1; }
@@ -392,7 +392,7 @@ fn test_call_depth_returns_to_zero_after_completion() {
 
     // Run to completion
     loop {
-        match runtime.step().unwrap() {
+        match interp.step().unwrap() {
             StepResult::Continue => continue,
             StepResult::Complete(_) => break,
             _ => break,
@@ -400,13 +400,13 @@ fn test_call_depth_returns_to_zero_after_completion() {
     }
 
     // After completion, depth should be 0
-    assert_eq!(runtime.call_depth(), 0);
+    assert_eq!(interp.call_depth(), 0);
 }
 
 #[test]
 fn test_call_depth_with_nested_user_functions() {
-    let mut runtime = Runtime::new();
-    runtime
+    let mut interp = Interpreter::new();
+    interp
         .prepare(
             r#"
         function level1() {
@@ -429,11 +429,11 @@ fn test_call_depth_with_nested_user_functions() {
 
     let mut max_depth = 0;
     loop {
-        let depth = runtime.call_depth();
+        let depth = interp.call_depth();
         if depth > max_depth {
             max_depth = depth;
         }
-        match runtime.step().unwrap() {
+        match interp.step().unwrap() {
             StepResult::Continue => continue,
             StepResult::Complete(value) => {
                 assert_eq!(value.as_number(), Some(42.0));

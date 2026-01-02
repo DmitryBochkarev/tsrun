@@ -22,7 +22,7 @@ timeout 30 cargo test -- --nocapture     # Show test output
 
 | File/Directory | Purpose |
 |----------------|---------|
-| `src/lib.rs` | Public API - `Runtime` struct |
+| `src/lib.rs` | Public API - `Interpreter`, `InterpreterConfig` |
 | `src/api.rs` | High-level API for stepping execution |
 | `src/lexer.rs` | Tokenizer |
 | `src/parser.rs` | Recursive descent + Pratt parsing |

@@ -7,7 +7,7 @@
 use super::{run, run_to_completion};
 use serde_json::json;
 use tsrun::{
-    InternalModule, JsString, JsValue, OrderId, OrderResponse, Runtime, RuntimeConfig,
+    InternalModule, Interpreter, InterpreterConfig, JsString, JsValue, OrderId, OrderResponse,
     RuntimeValue, StepResult, api, create_eval_internal_module, value::PropertyKey,
 };
 
@@ -62,23 +62,23 @@ globalThis.writeFile = function(path: string, content: string): string {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// Create a runtime with eval:internal and eval:globals modules
-fn create_test_runtime() -> Runtime {
-    let config = RuntimeConfig {
+fn create_test_interp() -> Interpreter {
+    let config = InterpreterConfig {
         internal_modules: vec![
             create_eval_internal_module(),
             InternalModule::source("eval:globals", GLOBALS_SOURCE),
         ],
     };
-    let runtime = Runtime::with_config(config);
+    let interp = Interpreter::with_config(config);
 
     // Set aggressive GC for testing
     let gc_threshold = std::env::var("GC_THRESHOLD")
         .ok()
         .and_then(|s| s.parse::<usize>().ok())
         .unwrap_or(1);
-    runtime.set_gc_threshold(gc_threshold);
+    interp.set_gc_threshold(gc_threshold);
 
-    runtime
+    interp
 }
 
 /// Extract string property from JsValue object
@@ -95,14 +95,14 @@ fn get_string_prop(obj: &JsValue, key: &str) -> Option<String> {
 
 /// Run script with globals, handling the import of eval:globals first
 #[allow(clippy::expect_used)]
-fn run_with_globals(runtime: &mut Runtime, script: &str) -> StepResult {
+fn run_with_globals(interp: &mut Interpreter, script: &str) -> StepResult {
     // Prepend import of globals module to register global functions
     let full_script = format!(
         r#"import "eval:globals";
 {}"#,
         script
     );
-    run(runtime, &full_script, None).expect("eval should not fail")
+    run(interp, &full_script, None).expect("eval should not fail")
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -114,12 +114,12 @@ fn run_with_globals(runtime: &mut Runtime, script: &str) -> StepResult {
 // ═══════════════════════════════════════════════════════════════════════════════
 #[test]
 fn test_promise_then_callback_closure() {
-    let mut runtime = create_test_runtime();
+    let mut interp = create_test_interp();
 
     // Test that .then() callbacks can access closure variables after Promise resolution
     // Host returns a Promise, script attaches .then() callback, host resolves Promise
     let result = run_with_globals(
-        &mut runtime,
+        &mut interp,
         r#"
         import { __order__ } from "eval:internal";
 
@@ -148,12 +148,12 @@ fn test_promise_then_callback_closure() {
     );
 
     // Host creates and returns a Promise
-    let promise = api::create_promise(&mut runtime);
-    runtime.fulfill_orders(vec![OrderResponse {
+    let promise = api::create_promise(&mut interp);
+    interp.fulfill_orders(vec![OrderResponse {
         id: pending[0].id,
         result: Ok(RuntimeValue::unguarded(promise.value().clone())),
     }]);
-    let result2 = run_to_completion(&mut runtime).unwrap();
+    let result2 = run_to_completion(&mut interp).unwrap();
 
     // Second suspension: script is awaiting the Promise (via .then())
     let StepResult::Suspended { .. } = result2 else {
@@ -162,12 +162,12 @@ fn test_promise_then_callback_closure() {
 
     // Resolve the Promise - this triggers the .then() callback
     api::resolve_promise(
-        &mut runtime,
+        &mut interp,
         &promise,
         RuntimeValue::unguarded(JsValue::Undefined),
     )
     .unwrap();
-    let result3 = run_to_completion(&mut runtime).unwrap();
+    let result3 = run_to_completion(&mut interp).unwrap();
 
     // After resolution, the callback should have run and modified `captured`
     let StepResult::Complete(value) = result3 else {
@@ -178,12 +178,12 @@ fn test_promise_then_callback_closure() {
 
 #[test]
 fn test_promise_then_callback_nested_closure() {
-    let mut runtime = create_test_runtime();
+    let mut interp = create_test_interp();
 
     // Test that .then() callbacks can access module-level variables from inside
     // a function call (nested closure)
     let result = run_with_globals(
-        &mut runtime,
+        &mut interp,
         r#"
         import { __order__ } from "eval:internal";
 
@@ -213,12 +213,12 @@ fn test_promise_then_callback_nested_closure() {
     assert_eq!(pending.len(), 1);
 
     // Host returns a Promise
-    let promise = api::create_promise(&mut runtime);
-    runtime.fulfill_orders(vec![OrderResponse {
+    let promise = api::create_promise(&mut interp);
+    interp.fulfill_orders(vec![OrderResponse {
         id: pending[0].id,
         result: Ok(RuntimeValue::unguarded(promise.value().clone())),
     }]);
-    let result2 = run_to_completion(&mut runtime).unwrap();
+    let result2 = run_to_completion(&mut interp).unwrap();
 
     // Second suspension: awaiting the Promise
     let StepResult::Suspended { .. } = result2 else {
@@ -227,12 +227,12 @@ fn test_promise_then_callback_nested_closure() {
 
     // Resolve the Promise
     api::resolve_promise(
-        &mut runtime,
+        &mut interp,
         &promise,
         RuntimeValue::unguarded(JsValue::Undefined),
     )
     .unwrap();
-    let result3 = run_to_completion(&mut runtime).unwrap();
+    let result3 = run_to_completion(&mut interp).unwrap();
 
     let StepResult::Complete(value) = result3 else {
         panic!("Expected Complete after Promise resolution");
@@ -244,7 +244,7 @@ fn test_promise_then_callback_nested_closure() {
 fn test_cross_module_closure_simple() {
     // Test that callbacks from another module can access that module's variables
     // Host returns a Promise, module attaches .then() callback
-    let config = RuntimeConfig {
+    let config = InterpreterConfig {
         internal_modules: vec![
             create_eval_internal_module(),
             InternalModule::source(
@@ -271,16 +271,16 @@ fn test_cross_module_closure_simple() {
             ),
         ],
     };
-    let mut runtime = Runtime::with_config(config);
+    let mut interp = Interpreter::with_config(config);
 
     let gc_threshold = std::env::var("GC_THRESHOLD")
         .ok()
         .and_then(|s| s.parse::<usize>().ok())
         .unwrap_or(1);
-    runtime.set_gc_threshold(gc_threshold);
+    interp.set_gc_threshold(gc_threshold);
 
     let result = run(
-        &mut runtime,
+        &mut interp,
         r#"
             import { runWithCallback, getState } from "eval:timer-module";
 
@@ -301,12 +301,12 @@ fn test_cross_module_closure_simple() {
     assert_eq!(pending.len(), 1);
 
     // Host returns a Promise
-    let promise = api::create_promise(&mut runtime);
-    runtime.fulfill_orders(vec![OrderResponse {
+    let promise = api::create_promise(&mut interp);
+    interp.fulfill_orders(vec![OrderResponse {
         id: pending[0].id,
         result: Ok(RuntimeValue::unguarded(promise.value().clone())),
     }]);
-    let result2 = run_to_completion(&mut runtime).unwrap();
+    let result2 = run_to_completion(&mut interp).unwrap();
 
     // Second suspension: awaiting the Promise
     let StepResult::Suspended { .. } = result2 else {
@@ -315,12 +315,12 @@ fn test_cross_module_closure_simple() {
 
     // Resolve the Promise - triggers .then() callback
     api::resolve_promise(
-        &mut runtime,
+        &mut interp,
         &promise,
         RuntimeValue::unguarded(JsValue::Undefined),
     )
     .unwrap();
-    let result3 = run_to_completion(&mut runtime).unwrap();
+    let result3 = run_to_completion(&mut interp).unwrap();
 
     let StepResult::Complete(value) = result3 else {
         panic!("Expected Complete after Promise resolution");
@@ -332,7 +332,7 @@ fn test_cross_module_closure_simple() {
 fn test_cross_module_nested_closure() {
     // Test that a callback defined in one module can access a variable from an outer
     // function's closure, where that function is defined in another module
-    let config = RuntimeConfig {
+    let config = InterpreterConfig {
         internal_modules: vec![
             create_eval_internal_module(),
             InternalModule::source(
@@ -366,16 +366,16 @@ fn test_cross_module_nested_closure() {
             ),
         ],
     };
-    let mut runtime = Runtime::with_config(config);
+    let mut interp = Interpreter::with_config(config);
 
     let gc_threshold = std::env::var("GC_THRESHOLD")
         .ok()
         .and_then(|s| s.parse::<usize>().ok())
         .unwrap_or(1);
-    runtime.set_gc_threshold(gc_threshold);
+    interp.set_gc_threshold(gc_threshold);
 
     let result = run(
-        &mut runtime,
+        &mut interp,
         r#"
             import { wrapWithThen, getState } from "eval:helper-module";
 
@@ -399,12 +399,12 @@ fn test_cross_module_nested_closure() {
     assert_eq!(pending.len(), 1);
 
     // Host returns a Promise
-    let promise = api::create_promise(&mut runtime);
-    runtime.fulfill_orders(vec![OrderResponse {
+    let promise = api::create_promise(&mut interp);
+    interp.fulfill_orders(vec![OrderResponse {
         id: pending[0].id,
         result: Ok(RuntimeValue::unguarded(promise.value().clone())),
     }]);
-    let result2 = run_to_completion(&mut runtime).unwrap();
+    let result2 = run_to_completion(&mut interp).unwrap();
 
     // Second suspension: awaiting the Promise
     let StepResult::Suspended { .. } = result2 else {
@@ -413,12 +413,12 @@ fn test_cross_module_nested_closure() {
 
     // Resolve the Promise - triggers .then() callback
     api::resolve_promise(
-        &mut runtime,
+        &mut interp,
         &promise,
         RuntimeValue::unguarded(JsValue::Undefined),
     )
     .unwrap();
-    let result3 = run_to_completion(&mut runtime).unwrap();
+    let result3 = run_to_completion(&mut interp).unwrap();
 
     let StepResult::Complete(value) = result3 else {
         panic!("Expected Complete after Promise resolution");
@@ -432,15 +432,15 @@ fn test_cross_module_nested_closure() {
 #[test]
 fn test_debug_closure_gc() {
     // Test GC with closures accessing local and module variables
-    let config = RuntimeConfig {
+    let config = InterpreterConfig {
         internal_modules: vec![create_eval_internal_module()],
     };
-    let mut runtime = Runtime::with_config(config);
-    runtime.set_gc_threshold(1);
+    let mut interp = Interpreter::with_config(config);
+    interp.set_gc_threshold(1);
 
     // Test that callback closure survives GC with local variables
     let result = run(
-        &mut runtime,
+        &mut interp,
         r#"
             import { __order__ } from "eval:internal";
 
@@ -468,12 +468,12 @@ fn test_debug_closure_gc() {
     };
 
     // Host returns a Promise
-    let promise = api::create_promise(&mut runtime);
-    runtime.fulfill_orders(vec![OrderResponse {
+    let promise = api::create_promise(&mut interp);
+    interp.fulfill_orders(vec![OrderResponse {
         id: pending[0].id,
         result: Ok(RuntimeValue::unguarded(promise.value().clone())),
     }]);
-    let result2 = run_to_completion(&mut runtime).unwrap();
+    let result2 = run_to_completion(&mut interp).unwrap();
 
     // Second suspension: awaiting the Promise
     let StepResult::Suspended { .. } = result2 else {
@@ -482,12 +482,12 @@ fn test_debug_closure_gc() {
 
     // Resolve the Promise - triggers .then() callback with closure
     api::resolve_promise(
-        &mut runtime,
+        &mut interp,
         &promise,
         RuntimeValue::unguarded(JsValue::Undefined),
     )
     .unwrap();
-    let result3 = run_to_completion(&mut runtime).unwrap();
+    let result3 = run_to_completion(&mut interp).unwrap();
 
     let StepResult::Complete(value) = result3 else {
         panic!("Expected Complete after Promise resolution");
@@ -501,11 +501,11 @@ fn test_debug_closure_gc() {
 
 #[test]
 fn test_sleep_basic() {
-    let mut runtime = create_test_runtime();
+    let mut interp = create_test_interp();
 
     // Use blocking sleep() which suspends for the host to handle
     let result = run_with_globals(
-        &mut runtime,
+        &mut interp,
         r#"
         let result = "before";
         sleep(100);
@@ -525,11 +525,11 @@ fn test_sleep_basic() {
     assert_eq!(get_string_prop(payload, "type"), Some("sleep".into()));
 
     // Fulfill the order (host would wait the delay then respond)
-    runtime.fulfill_orders(vec![OrderResponse {
+    interp.fulfill_orders(vec![OrderResponse {
         id: pending[0].id,
         result: Ok(RuntimeValue::unguarded(JsValue::Undefined)),
     }]);
-    let result2 = run_to_completion(&mut runtime).unwrap();
+    let result2 = run_to_completion(&mut interp).unwrap();
 
     let StepResult::Complete(value) = result2 else {
         panic!("Expected Complete after sleep");
@@ -539,11 +539,11 @@ fn test_sleep_basic() {
 
 #[test]
 fn test_sleep_sequential() {
-    let mut runtime = create_test_runtime();
+    let mut interp = create_test_interp();
 
     // Multiple sequential sleep() calls
     let result = run_with_globals(
-        &mut runtime,
+        &mut interp,
         r#"
         let count = 0;
         sleep(10);
@@ -562,11 +562,11 @@ fn test_sleep_sequential() {
     };
     assert_eq!(pending.len(), 1);
 
-    runtime.fulfill_orders(vec![OrderResponse {
+    interp.fulfill_orders(vec![OrderResponse {
         id: pending[0].id,
         result: Ok(RuntimeValue::unguarded(JsValue::Undefined)),
     }]);
-    let result = run_to_completion(&mut runtime).unwrap();
+    let result = run_to_completion(&mut interp).unwrap();
 
     // Second sleep
     let StepResult::Suspended { pending, .. } = result else {
@@ -574,11 +574,11 @@ fn test_sleep_sequential() {
     };
     assert_eq!(pending.len(), 1);
 
-    runtime.fulfill_orders(vec![OrderResponse {
+    interp.fulfill_orders(vec![OrderResponse {
         id: pending[0].id,
         result: Ok(RuntimeValue::unguarded(JsValue::Undefined)),
     }]);
-    let result = run_to_completion(&mut runtime).unwrap();
+    let result = run_to_completion(&mut interp).unwrap();
 
     // Third sleep
     let StepResult::Suspended { pending, .. } = result else {
@@ -586,11 +586,11 @@ fn test_sleep_sequential() {
     };
     assert_eq!(pending.len(), 1);
 
-    runtime.fulfill_orders(vec![OrderResponse {
+    interp.fulfill_orders(vec![OrderResponse {
         id: pending[0].id,
         result: Ok(RuntimeValue::unguarded(JsValue::Undefined)),
     }]);
-    let result = run_to_completion(&mut runtime).unwrap();
+    let result = run_to_completion(&mut interp).unwrap();
 
     // Complete
     let StepResult::Complete(value) = result else {
@@ -605,10 +605,10 @@ fn test_sleep_sequential() {
 
 #[test]
 fn test_fetch_get_basic() {
-    let mut runtime = create_test_runtime();
+    let mut interp = create_test_interp();
 
     let result = run_with_globals(
-        &mut runtime,
+        &mut interp,
         r#"
         const response = await fetch("https://api.example.com/users/1");
         response.name;
@@ -630,7 +630,7 @@ fn test_fetch_get_basic() {
 
             // Return mock response using create_response_object
             let mock_response = api::create_response_object(
-                &mut runtime,
+                &mut interp,
                 &json!({
                     "id": 1,
                     "name": "John",
@@ -644,8 +644,8 @@ fn test_fetch_get_basic() {
                 result: Ok(mock_response),
             };
 
-            runtime.fulfill_orders(vec![response]);
-            let result2 = run_to_completion(&mut runtime).unwrap();
+            interp.fulfill_orders(vec![response]);
+            let result2 = run_to_completion(&mut interp).unwrap();
 
             match result2 {
                 StepResult::Complete(value) => {
@@ -660,10 +660,10 @@ fn test_fetch_get_basic() {
 
 #[test]
 fn test_fetch_post_with_body() {
-    let mut runtime = create_test_runtime();
+    let mut interp = create_test_interp();
 
     let result = run_with_globals(
-        &mut runtime,
+        &mut interp,
         r#"
         const response = await fetch("https://api.example.com/users", {
             method: "POST",
@@ -692,7 +692,7 @@ fn test_fetch_post_with_body() {
 
             // Return mock created response
             let mock_response =
-                api::create_response_object(&mut runtime, &json!({ "id": 42, "name": "Jane" }))
+                api::create_response_object(&mut interp, &json!({ "id": 42, "name": "Jane" }))
                     .unwrap();
 
             let response = OrderResponse {
@@ -700,8 +700,8 @@ fn test_fetch_post_with_body() {
                 result: Ok(mock_response),
             };
 
-            runtime.fulfill_orders(vec![response]);
-            let result2 = run_to_completion(&mut runtime).unwrap();
+            interp.fulfill_orders(vec![response]);
+            let result2 = run_to_completion(&mut interp).unwrap();
 
             match result2 {
                 StepResult::Complete(value) => {
@@ -716,11 +716,11 @@ fn test_fetch_post_with_body() {
 
 #[test]
 fn test_fetch_parallel() {
-    let mut runtime = create_test_runtime();
+    let mut interp = create_test_interp();
 
     // Simplified test - two sequential awaits instead of Promise.all
     let result = run_with_globals(
-        &mut runtime,
+        &mut interp,
         r#"
         const user = await fetch("/users/1");
         const posts = await fetch("/posts?userId=1");
@@ -739,12 +739,12 @@ fn test_fetch_parallel() {
     );
 
     let user_response =
-        api::create_response_object(&mut runtime, &json!({ "name": "John" })).unwrap();
-    runtime.fulfill_orders(vec![OrderResponse {
+        api::create_response_object(&mut interp, &json!({ "name": "John" })).unwrap();
+    interp.fulfill_orders(vec![OrderResponse {
         id: pending[0].id,
         result: Ok(user_response),
     }]);
-    let result2 = run_to_completion(&mut runtime).unwrap();
+    let result2 = run_to_completion(&mut interp).unwrap();
 
     // Second suspension: fetch("/posts?userId=1")
     let StepResult::Suspended { pending, .. } = result2 else {
@@ -756,16 +756,14 @@ fn test_fetch_parallel() {
         Some("/posts?userId=1".into())
     );
 
-    let posts_response = api::create_response_object(
-        &mut runtime,
-        &json!([{ "id": 1 }, { "id": 2 }, { "id": 3 }]),
-    )
-    .unwrap();
-    runtime.fulfill_orders(vec![OrderResponse {
+    let posts_response =
+        api::create_response_object(&mut interp, &json!([{ "id": 1 }, { "id": 2 }, { "id": 3 }]))
+            .unwrap();
+    interp.fulfill_orders(vec![OrderResponse {
         id: pending[0].id,
         result: Ok(posts_response),
     }]);
-    let result3 = run_to_completion(&mut runtime).unwrap();
+    let result3 = run_to_completion(&mut interp).unwrap();
 
     // Final result
     let StepResult::Complete(value) = result3 else {
@@ -780,10 +778,10 @@ fn test_fetch_parallel() {
 
 #[test]
 fn test_read_file_basic() {
-    let mut runtime = create_test_runtime();
+    let mut interp = create_test_interp();
 
     let result = run_with_globals(
-        &mut runtime,
+        &mut interp,
         r#"
         const content = await readFile("/config.txt");
         content;
@@ -806,8 +804,8 @@ fn test_read_file_basic() {
                 ))),
             };
 
-            runtime.fulfill_orders(vec![response]);
-            let result2 = run_to_completion(&mut runtime).unwrap();
+            interp.fulfill_orders(vec![response]);
+            let result2 = run_to_completion(&mut interp).unwrap();
 
             match result2 {
                 StepResult::Complete(value) => {
@@ -822,10 +820,10 @@ fn test_read_file_basic() {
 
 #[test]
 fn test_read_file_json_parse() {
-    let mut runtime = create_test_runtime();
+    let mut interp = create_test_interp();
 
     let result = run_with_globals(
-        &mut runtime,
+        &mut interp,
         r#"
         const raw = await readFile("/config.json");
         const config = JSON.parse(raw);
@@ -846,8 +844,8 @@ fn test_read_file_json_parse() {
                 ))),
             };
 
-            runtime.fulfill_orders(vec![response]);
-            let result2 = run_to_completion(&mut runtime).unwrap();
+            interp.fulfill_orders(vec![response]);
+            let result2 = run_to_completion(&mut interp).unwrap();
 
             match result2 {
                 StepResult::Complete(value) => {
@@ -862,10 +860,10 @@ fn test_read_file_json_parse() {
 
 #[test]
 fn test_write_file_basic() {
-    let mut runtime = create_test_runtime();
+    let mut interp = create_test_interp();
 
     let result = run_with_globals(
-        &mut runtime,
+        &mut interp,
         r#"
         await writeFile("/output.txt", "Hello from TypeScript!");
         "written";
@@ -890,8 +888,8 @@ fn test_write_file_basic() {
                 result: Ok(RuntimeValue::unguarded(JsValue::Undefined)),
             };
 
-            runtime.fulfill_orders(vec![response]);
-            let result2 = run_to_completion(&mut runtime).unwrap();
+            interp.fulfill_orders(vec![response]);
+            let result2 = run_to_completion(&mut interp).unwrap();
 
             match result2 {
                 StepResult::Complete(value) => {
@@ -906,10 +904,10 @@ fn test_write_file_basic() {
 
 #[test]
 fn test_read_write_roundtrip() {
-    let mut runtime = create_test_runtime();
+    let mut interp = create_test_interp();
 
     let result = run_with_globals(
-        &mut runtime,
+        &mut interp,
         r#"
         const data = "test data 12345";
         await writeFile("/temp.txt", data);
@@ -932,11 +930,11 @@ fn test_read_write_roundtrip() {
     let file_content = get_string_prop(pending[0].payload.value(), "content").unwrap_or_default();
     assert_eq!(file_content, "test data 12345");
 
-    runtime.fulfill_orders(vec![OrderResponse {
+    interp.fulfill_orders(vec![OrderResponse {
         id: pending[0].id,
         result: Ok(RuntimeValue::unguarded(JsValue::Undefined)),
     }]);
-    let result = run_to_completion(&mut runtime).unwrap();
+    let result = run_to_completion(&mut interp).unwrap();
 
     // Second: readFile
     let StepResult::Suspended { pending, .. } = result else {
@@ -949,13 +947,13 @@ fn test_read_write_roundtrip() {
     );
 
     // Return the "stored" content
-    runtime.fulfill_orders(vec![OrderResponse {
+    interp.fulfill_orders(vec![OrderResponse {
         id: pending[0].id,
         result: Ok(RuntimeValue::unguarded(JsValue::String(
             file_content.into(),
         ))),
     }]);
-    let result = run_to_completion(&mut runtime).unwrap();
+    let result = run_to_completion(&mut interp).unwrap();
 
     // Complete
     let StepResult::Complete(value) = result else {
@@ -970,10 +968,10 @@ fn test_read_write_roundtrip() {
 
 #[test]
 fn test_config_generation_workflow() {
-    let mut runtime = create_test_runtime();
+    let mut interp = create_test_interp();
 
     let result = run_with_globals(
-        &mut runtime,
+        &mut interp,
         r#"
         // 1. Read local config
         const configRaw = await readFile("/app.json");
@@ -1008,11 +1006,11 @@ fn test_config_generation_workflow() {
 
     let config_json =
         r#"{"name": "MyApp", "version": "1.0.0", "apiUrl": "https://api.example.com"}"#;
-    runtime.fulfill_orders(vec![OrderResponse {
+    interp.fulfill_orders(vec![OrderResponse {
         id: pending[0].id,
         result: Ok(RuntimeValue::unguarded(JsValue::String(config_json.into()))),
     }]);
-    let result = run_to_completion(&mut runtime).unwrap();
+    let result = run_to_completion(&mut interp).unwrap();
 
     // Step 2: fetch api settings
     let StepResult::Suspended { pending, .. } = result else {
@@ -1029,13 +1027,13 @@ fn test_config_generation_workflow() {
     );
 
     let api_response =
-        api::create_response_object(&mut runtime, &json!({ "theme": "dark", "language": "en" }))
+        api::create_response_object(&mut interp, &json!({ "theme": "dark", "language": "en" }))
             .unwrap();
-    runtime.fulfill_orders(vec![OrderResponse {
+    interp.fulfill_orders(vec![OrderResponse {
         id: pending[0].id,
         result: Ok(api_response),
     }]);
-    let result = run_to_completion(&mut runtime).unwrap();
+    let result = run_to_completion(&mut interp).unwrap();
 
     // Step 3: writeFile /manifest.json
     let StepResult::Suspended { pending, .. } = result else {
@@ -1057,11 +1055,11 @@ fn test_config_generation_workflow() {
     assert!(manifest_content.contains("1.0.0"));
     assert!(manifest_content.contains("dark"));
 
-    runtime.fulfill_orders(vec![OrderResponse {
+    interp.fulfill_orders(vec![OrderResponse {
         id: pending[0].id,
         result: Ok(RuntimeValue::unguarded(JsValue::Undefined)),
     }]);
-    let result = run_to_completion(&mut runtime).unwrap();
+    let result = run_to_completion(&mut interp).unwrap();
 
     // Complete
     let StepResult::Complete(value) = result else {
@@ -1077,14 +1075,14 @@ fn test_config_generation_workflow() {
 #[test]
 fn test_host_create_and_resolve_promise() {
     // Test that host can create a Promise and resolve it later
-    let mut runtime = create_test_runtime();
+    let mut interp = create_test_interp();
 
     // Create an unresolved promise from the host
-    let host_promise = api::create_promise(&mut runtime);
+    let host_promise = api::create_promise(&mut interp);
 
     // The script must await the returned Promise separately
     let result = run_with_globals(
-        &mut runtime,
+        &mut interp,
         r#"
         import { __order__ } from "eval:internal";
 
@@ -1107,11 +1105,11 @@ fn test_host_create_and_resolve_promise() {
     );
 
     // Fulfill with the unresolved promise - use the value directly
-    runtime.fulfill_orders(vec![OrderResponse {
+    interp.fulfill_orders(vec![OrderResponse {
         id: pending[0].id,
         result: Ok(RuntimeValue::unguarded(host_promise.value().clone())),
     }]);
-    let result2 = run_to_completion(&mut runtime).unwrap();
+    let result2 = run_to_completion(&mut interp).unwrap();
 
     // Still suspended - waiting for the Promise to be resolved
     let StepResult::Suspended { .. } = result2 else {
@@ -1120,8 +1118,8 @@ fn test_host_create_and_resolve_promise() {
 
     // Now resolve the promise with a value
     let value = RuntimeValue::unguarded(JsValue::String("Hello from host!".into()));
-    api::resolve_promise(&mut runtime, &host_promise, value).unwrap();
-    let result3 = run_to_completion(&mut runtime).unwrap();
+    api::resolve_promise(&mut interp, &host_promise, value).unwrap();
+    let result3 = run_to_completion(&mut interp).unwrap();
 
     // Should complete now
     let StepResult::Complete(final_value) = result3 else {
@@ -1136,12 +1134,12 @@ fn test_host_create_and_resolve_promise() {
 #[test]
 fn test_host_create_and_reject_promise() {
     // Test that host can create a Promise and reject it later
-    let mut runtime = create_test_runtime();
+    let mut interp = create_test_interp();
 
-    let host_promise = api::create_promise(&mut runtime);
+    let host_promise = api::create_promise(&mut interp);
 
     let result = run_with_globals(
-        &mut runtime,
+        &mut interp,
         r#"
         import { __order__ } from "eval:internal";
 
@@ -1161,11 +1159,11 @@ fn test_host_create_and_reject_promise() {
     };
 
     // Fulfill with the unresolved promise
-    runtime.fulfill_orders(vec![OrderResponse {
+    interp.fulfill_orders(vec![OrderResponse {
         id: pending[0].id,
         result: Ok(RuntimeValue::unguarded(host_promise.value().clone())),
     }]);
-    let result2 = run_to_completion(&mut runtime).unwrap();
+    let result2 = run_to_completion(&mut interp).unwrap();
 
     let StepResult::Suspended { .. } = result2 else {
         panic!("Expected Suspended waiting for Promise");
@@ -1173,8 +1171,8 @@ fn test_host_create_and_reject_promise() {
 
     // Reject the promise
     let reason = RuntimeValue::unguarded(JsValue::String("Something went wrong".into()));
-    api::reject_promise(&mut runtime, &host_promise, reason).unwrap();
-    let result3 = run_to_completion(&mut runtime).unwrap();
+    api::reject_promise(&mut interp, &host_promise, reason).unwrap();
+    let result3 = run_to_completion(&mut interp).unwrap();
 
     let StepResult::Complete(final_value) = result3 else {
         panic!("Expected Complete after rejecting Promise");
@@ -1188,10 +1186,10 @@ fn test_host_create_and_reject_promise() {
 #[test]
 fn test_host_promise_immediate_resolve() {
     // Test resolving a Promise immediately before returning it
-    let mut runtime = create_test_runtime();
+    let mut interp = create_test_interp();
 
     let result = run_with_globals(
-        &mut runtime,
+        &mut interp,
         r#"
         import { __order__ } from "eval:internal";
 
@@ -1207,19 +1205,19 @@ fn test_host_promise_immediate_resolve() {
     };
 
     // Create promise and resolve it first
-    let promise = api::create_promise(&mut runtime);
+    let promise = api::create_promise(&mut interp);
     let value = RuntimeValue::unguarded(JsValue::Number(42.0));
 
     // Resolve the promise BEFORE returning it to the script
     // This is valid - the Promise is already fulfilled when returned
-    api::resolve_promise(&mut runtime, &promise, value).unwrap();
+    api::resolve_promise(&mut interp, &promise, value).unwrap();
 
     // Now fulfill the order with the already-resolved promise
-    runtime.fulfill_orders(vec![OrderResponse {
+    interp.fulfill_orders(vec![OrderResponse {
         id: pending[0].id,
         result: Ok(RuntimeValue::unguarded(promise.value().clone())),
     }]);
-    let result2 = run_to_completion(&mut runtime).unwrap();
+    let result2 = run_to_completion(&mut interp).unwrap();
 
     // Since the Promise was already resolved, await should complete immediately
     let StepResult::Complete(final_value) = result2 else {
@@ -1240,14 +1238,14 @@ fn test_host_promise_immediate_resolve() {
 #[test]
 fn test_concurrent_fetch_with_promise_all() {
     // Simulate concurrent fetching: script gets Promises, uses Promise.all
-    let mut runtime = create_test_runtime();
+    let mut interp = create_test_interp();
 
     // Create host Promises before running script
-    let promise_users = api::create_promise(&mut runtime);
-    let promise_posts = api::create_promise(&mut runtime);
+    let promise_users = api::create_promise(&mut interp);
+    let promise_posts = api::create_promise(&mut interp);
 
     let result = run_with_globals(
-        &mut runtime,
+        &mut interp,
         r#"
         import { __order__ } from "eval:internal";
 
@@ -1272,11 +1270,11 @@ fn test_concurrent_fetch_with_promise_all() {
         Some("/users".into())
     );
 
-    runtime.fulfill_orders(vec![OrderResponse {
+    interp.fulfill_orders(vec![OrderResponse {
         id: pending[0].id,
         result: Ok(RuntimeValue::unguarded(promise_users.value().clone())),
     }]);
-    let result = run_to_completion(&mut runtime).unwrap();
+    let result = run_to_completion(&mut interp).unwrap();
 
     // Second order: /posts
     let StepResult::Suspended { pending, .. } = result else {
@@ -1288,11 +1286,11 @@ fn test_concurrent_fetch_with_promise_all() {
         Some("/posts".into())
     );
 
-    runtime.fulfill_orders(vec![OrderResponse {
+    interp.fulfill_orders(vec![OrderResponse {
         id: pending[0].id,
         result: Ok(RuntimeValue::unguarded(promise_posts.value().clone())),
     }]);
-    let result = run_to_completion(&mut runtime).unwrap();
+    let result = run_to_completion(&mut interp).unwrap();
 
     // Now awaiting Promise.all - both Promises are pending
     let StepResult::Suspended { .. } = result else {
@@ -1300,9 +1298,9 @@ fn test_concurrent_fetch_with_promise_all() {
     };
 
     // Resolve /posts first (out of order!)
-    let posts_data = api::create_response_object(&mut runtime, &json!({ "count": 100 })).unwrap();
-    api::resolve_promise(&mut runtime, &promise_posts, posts_data).unwrap();
-    let result = run_to_completion(&mut runtime).unwrap();
+    let posts_data = api::create_response_object(&mut interp, &json!({ "count": 100 })).unwrap();
+    api::resolve_promise(&mut interp, &promise_posts, posts_data).unwrap();
+    let result = run_to_completion(&mut interp).unwrap();
 
     // Still waiting for /users
     let StepResult::Suspended { .. } = result else {
@@ -1310,9 +1308,9 @@ fn test_concurrent_fetch_with_promise_all() {
     };
 
     // Resolve /users
-    let users_data = api::create_response_object(&mut runtime, &json!({ "count": 42 })).unwrap();
-    api::resolve_promise(&mut runtime, &promise_users, users_data).unwrap();
-    let result = run_to_completion(&mut runtime).unwrap();
+    let users_data = api::create_response_object(&mut interp, &json!({ "count": 42 })).unwrap();
+    api::resolve_promise(&mut interp, &promise_users, users_data).unwrap();
+    let result = run_to_completion(&mut interp).unwrap();
 
     // Complete - results in original order despite resolution order
     let StepResult::Complete(value) = result else {
@@ -1324,13 +1322,13 @@ fn test_concurrent_fetch_with_promise_all() {
 #[test]
 fn test_promise_race_first_wins() {
     // Promise.race: first to resolve determines the result
-    let mut runtime = create_test_runtime();
+    let mut interp = create_test_interp();
 
-    let promise_fast = api::create_promise(&mut runtime);
-    let promise_slow = api::create_promise(&mut runtime);
+    let promise_fast = api::create_promise(&mut interp);
+    let promise_slow = api::create_promise(&mut interp);
 
     let result = run_with_globals(
-        &mut runtime,
+        &mut interp,
         r#"
         import { __order__ } from "eval:internal";
 
@@ -1347,21 +1345,21 @@ fn test_promise_race_first_wins() {
     let StepResult::Suspended { pending, .. } = result else {
         panic!("Expected Suspended");
     };
-    runtime.fulfill_orders(vec![OrderResponse {
+    interp.fulfill_orders(vec![OrderResponse {
         id: pending[0].id,
         result: Ok(RuntimeValue::unguarded(promise_fast.value().clone())),
     }]);
-    let result = run_to_completion(&mut runtime).unwrap();
+    let result = run_to_completion(&mut interp).unwrap();
 
     // Get second Promise
     let StepResult::Suspended { pending, .. } = result else {
         panic!("Expected Suspended");
     };
-    runtime.fulfill_orders(vec![OrderResponse {
+    interp.fulfill_orders(vec![OrderResponse {
         id: pending[0].id,
         result: Ok(RuntimeValue::unguarded(promise_slow.value().clone())),
     }]);
-    let result = run_to_completion(&mut runtime).unwrap();
+    let result = run_to_completion(&mut interp).unwrap();
 
     // Awaiting Promise.race
     let StepResult::Suspended { .. } = result else {
@@ -1369,10 +1367,9 @@ fn test_promise_race_first_wins() {
     };
 
     // Resolve "fast" first - this should win the race
-    let fast_data =
-        api::create_response_object(&mut runtime, &json!({ "server": "fast" })).unwrap();
-    api::resolve_promise(&mut runtime, &promise_fast, fast_data).unwrap();
-    let result = run_to_completion(&mut runtime).unwrap();
+    let fast_data = api::create_response_object(&mut interp, &json!({ "server": "fast" })).unwrap();
+    api::resolve_promise(&mut interp, &promise_fast, fast_data).unwrap();
+    let result = run_to_completion(&mut interp).unwrap();
 
     // Race completes immediately when first Promise resolves
     let StepResult::Complete(value) = result else {
@@ -1384,13 +1381,13 @@ fn test_promise_race_first_wins() {
 #[test]
 fn test_promise_race_second_wins() {
     // Verify race works when second Promise resolves first
-    let mut runtime = create_test_runtime();
+    let mut interp = create_test_interp();
 
-    let promise_a = api::create_promise(&mut runtime);
-    let promise_b = api::create_promise(&mut runtime);
+    let promise_a = api::create_promise(&mut interp);
+    let promise_b = api::create_promise(&mut interp);
 
     let result = run_with_globals(
-        &mut runtime,
+        &mut interp,
         r#"
         import { __order__ } from "eval:internal";
 
@@ -1406,29 +1403,29 @@ fn test_promise_race_second_wins() {
     let StepResult::Suspended { pending, .. } = result else {
         panic!("Expected Suspended");
     };
-    runtime.fulfill_orders(vec![OrderResponse {
+    interp.fulfill_orders(vec![OrderResponse {
         id: pending[0].id,
         result: Ok(RuntimeValue::unguarded(promise_a.value().clone())),
     }]);
-    let result = run_to_completion(&mut runtime).unwrap();
+    let result = run_to_completion(&mut interp).unwrap();
 
     let StepResult::Suspended { pending, .. } = result else {
         panic!("Expected Suspended");
     };
-    runtime.fulfill_orders(vec![OrderResponse {
+    interp.fulfill_orders(vec![OrderResponse {
         id: pending[0].id,
         result: Ok(RuntimeValue::unguarded(promise_b.value().clone())),
     }]);
-    let result = run_to_completion(&mut runtime).unwrap();
+    let result = run_to_completion(&mut interp).unwrap();
 
     let StepResult::Suspended { .. } = result else {
         panic!("Expected Suspended for Promise.race");
     };
 
     // Resolve B first - B wins even though it was second in array
-    let b_data = api::create_response_object(&mut runtime, &json!({ "winner": "B" })).unwrap();
-    api::resolve_promise(&mut runtime, &promise_b, b_data).unwrap();
-    let result = run_to_completion(&mut runtime).unwrap();
+    let b_data = api::create_response_object(&mut interp, &json!({ "winner": "B" })).unwrap();
+    api::resolve_promise(&mut interp, &promise_b, b_data).unwrap();
+    let result = run_to_completion(&mut interp).unwrap();
 
     let StepResult::Complete(value) = result else {
         panic!("Expected Complete");
@@ -1439,13 +1436,13 @@ fn test_promise_race_second_wins() {
 #[test]
 fn test_concurrent_with_partial_failure() {
     // One Promise resolves, one rejects - test error handling with Promise.all
-    let mut runtime = create_test_runtime();
+    let mut interp = create_test_interp();
 
-    let promise_ok = api::create_promise(&mut runtime);
-    let promise_fail = api::create_promise(&mut runtime);
+    let promise_ok = api::create_promise(&mut interp);
+    let promise_fail = api::create_promise(&mut interp);
 
     let result = run_with_globals(
-        &mut runtime,
+        &mut interp,
         r#"
         import { __order__ } from "eval:internal";
 
@@ -1465,20 +1462,20 @@ fn test_concurrent_with_partial_failure() {
     let StepResult::Suspended { pending, .. } = result else {
         panic!("Expected Suspended");
     };
-    runtime.fulfill_orders(vec![OrderResponse {
+    interp.fulfill_orders(vec![OrderResponse {
         id: pending[0].id,
         result: Ok(RuntimeValue::unguarded(promise_ok.value().clone())),
     }]);
-    let result = run_to_completion(&mut runtime).unwrap();
+    let result = run_to_completion(&mut interp).unwrap();
 
     let StepResult::Suspended { pending, .. } = result else {
         panic!("Expected Suspended");
     };
-    runtime.fulfill_orders(vec![OrderResponse {
+    interp.fulfill_orders(vec![OrderResponse {
         id: pending[0].id,
         result: Ok(RuntimeValue::unguarded(promise_fail.value().clone())),
     }]);
-    let result = run_to_completion(&mut runtime).unwrap();
+    let result = run_to_completion(&mut interp).unwrap();
 
     let StepResult::Suspended { .. } = result else {
         panic!("Expected Suspended for Promise.all");
@@ -1486,8 +1483,8 @@ fn test_concurrent_with_partial_failure() {
 
     // Resolve the first one successfully
     let ok_data = RuntimeValue::unguarded(JsValue::String("OK".into()));
-    api::resolve_promise(&mut runtime, &promise_ok, ok_data).unwrap();
-    let result = run_to_completion(&mut runtime).unwrap();
+    api::resolve_promise(&mut interp, &promise_ok, ok_data).unwrap();
+    let result = run_to_completion(&mut interp).unwrap();
 
     // Still waiting for second
     let StepResult::Suspended { .. } = result else {
@@ -1496,8 +1493,8 @@ fn test_concurrent_with_partial_failure() {
 
     // Reject the second one
     let error = RuntimeValue::unguarded(JsValue::String("Network error".into()));
-    api::reject_promise(&mut runtime, &promise_fail, error).unwrap();
-    let result = run_to_completion(&mut runtime).unwrap();
+    api::reject_promise(&mut interp, &promise_fail, error).unwrap();
+    let result = run_to_completion(&mut interp).unwrap();
 
     // Promise.all rejects if any Promise rejects
     let StepResult::Complete(value) = result else {
@@ -1510,14 +1507,14 @@ fn test_concurrent_with_partial_failure() {
 fn test_concurrent_three_way_race() {
     // Race with three Promises, middle one wins
     // Note: Script gets each Promise sequentially, then races them
-    let mut runtime = create_test_runtime();
+    let mut interp = create_test_interp();
 
-    let promise1 = api::create_promise(&mut runtime);
-    let promise2 = api::create_promise(&mut runtime);
-    let promise3 = api::create_promise(&mut runtime);
+    let promise1 = api::create_promise(&mut interp);
+    let promise2 = api::create_promise(&mut interp);
+    let promise3 = api::create_promise(&mut interp);
 
     let result = run_with_globals(
-        &mut runtime,
+        &mut interp,
         r#"
         import { __order__ } from "eval:internal";
 
@@ -1536,29 +1533,29 @@ fn test_concurrent_three_way_race() {
     let StepResult::Suspended { pending, .. } = result else {
         panic!("Expected Suspended for order 1");
     };
-    runtime.fulfill_orders(vec![OrderResponse {
+    interp.fulfill_orders(vec![OrderResponse {
         id: pending[0].id,
         result: Ok(RuntimeValue::unguarded(promise1.value().clone())),
     }]);
-    let result = run_to_completion(&mut runtime).unwrap();
+    let result = run_to_completion(&mut interp).unwrap();
 
     let StepResult::Suspended { pending, .. } = result else {
         panic!("Expected Suspended for order 2");
     };
-    runtime.fulfill_orders(vec![OrderResponse {
+    interp.fulfill_orders(vec![OrderResponse {
         id: pending[0].id,
         result: Ok(RuntimeValue::unguarded(promise2.value().clone())),
     }]);
-    let result = run_to_completion(&mut runtime).unwrap();
+    let result = run_to_completion(&mut interp).unwrap();
 
     let StepResult::Suspended { pending, .. } = result else {
         panic!("Expected Suspended for order 3");
     };
-    runtime.fulfill_orders(vec![OrderResponse {
+    interp.fulfill_orders(vec![OrderResponse {
         id: pending[0].id,
         result: Ok(RuntimeValue::unguarded(promise3.value().clone())),
     }]);
-    let result = run_to_completion(&mut runtime).unwrap();
+    let result = run_to_completion(&mut interp).unwrap();
 
     // Now awaiting Promise.race with three unresolved Promises
     let StepResult::Suspended { .. } = result else {
@@ -1567,12 +1564,12 @@ fn test_concurrent_three_way_race() {
 
     // Resolve promise2 first (should win the race)
     api::resolve_promise(
-        &mut runtime,
+        &mut interp,
         &promise2,
         RuntimeValue::unguarded(JsValue::Number(2.0)),
     )
     .unwrap();
-    let result = run_to_completion(&mut runtime).unwrap();
+    let result = run_to_completion(&mut interp).unwrap();
 
     let StepResult::Complete(value) = result else {
         panic!("Expected Complete after resolving winner, got {:?}", result);
@@ -1583,13 +1580,13 @@ fn test_concurrent_three_way_race() {
 #[test]
 fn test_concurrent_chained_operations() {
     // Start concurrent fetches, then chain more operations on results
-    let mut runtime = create_test_runtime();
+    let mut interp = create_test_interp();
 
-    let promise_user = api::create_promise(&mut runtime);
-    let promise_profile = api::create_promise(&mut runtime);
+    let promise_user = api::create_promise(&mut interp);
+    let promise_profile = api::create_promise(&mut interp);
 
     let result = run_with_globals(
-        &mut runtime,
+        &mut interp,
         r#"
         import { __order__ } from "eval:internal";
 
@@ -1611,29 +1608,29 @@ fn test_concurrent_chained_operations() {
     let StepResult::Suspended { pending, .. } = result else {
         panic!("Expected Suspended");
     };
-    runtime.fulfill_orders(vec![OrderResponse {
+    interp.fulfill_orders(vec![OrderResponse {
         id: pending[0].id,
         result: Ok(RuntimeValue::unguarded(promise_user.value().clone())),
     }]);
-    let result = run_to_completion(&mut runtime).unwrap();
+    let result = run_to_completion(&mut interp).unwrap();
 
     let StepResult::Suspended { pending, .. } = result else {
         panic!("Expected Suspended");
     };
-    runtime.fulfill_orders(vec![OrderResponse {
+    interp.fulfill_orders(vec![OrderResponse {
         id: pending[0].id,
         result: Ok(RuntimeValue::unguarded(promise_profile.value().clone())),
     }]);
-    let result = run_to_completion(&mut runtime).unwrap();
+    let result = run_to_completion(&mut interp).unwrap();
 
     let StepResult::Suspended { .. } = result else {
         panic!("Expected Suspended for Promise.all");
     };
 
     // Resolve user
-    let user_data = api::create_response_object(&mut runtime, &json!({ "name": "Alice" })).unwrap();
-    api::resolve_promise(&mut runtime, &promise_user, user_data).unwrap();
-    let result = run_to_completion(&mut runtime).unwrap();
+    let user_data = api::create_response_object(&mut interp, &json!({ "name": "Alice" })).unwrap();
+    api::resolve_promise(&mut interp, &promise_user, user_data).unwrap();
+    let result = run_to_completion(&mut interp).unwrap();
 
     let StepResult::Suspended { .. } = result else {
         panic!("Expected Suspended waiting for profile");
@@ -1641,9 +1638,9 @@ fn test_concurrent_chained_operations() {
 
     // Resolve profile
     let profile_data =
-        api::create_response_object(&mut runtime, &json!({ "bio": "Developer" })).unwrap();
-    api::resolve_promise(&mut runtime, &promise_profile, profile_data).unwrap();
-    let result = run_to_completion(&mut runtime).unwrap();
+        api::create_response_object(&mut interp, &json!({ "bio": "Developer" })).unwrap();
+    api::resolve_promise(&mut interp, &promise_profile, profile_data).unwrap();
+    let result = run_to_completion(&mut interp).unwrap();
 
     let StepResult::Complete(value) = result else {
         panic!("Expected Complete");
@@ -1663,16 +1660,16 @@ fn test_concurrent_chained_operations() {
 #[test]
 fn test_promise_race_cancels_losing_order() {
     // When Promise.race settles, losing Promises' order IDs should be cancelled
-    let mut runtime = create_test_runtime();
+    let mut interp = create_test_interp();
 
     // Create host Promises linked to orders
     let order1_id = OrderId(100);
     let order2_id = OrderId(200);
-    let promise1 = api::create_order_promise(&mut runtime, order1_id);
-    let promise2 = api::create_order_promise(&mut runtime, order2_id);
+    let promise1 = api::create_order_promise(&mut interp, order1_id);
+    let promise2 = api::create_order_promise(&mut interp, order2_id);
 
     let result = run_with_globals(
-        &mut runtime,
+        &mut interp,
         r#"
         import { __order__ } from "eval:internal";
 
@@ -1689,22 +1686,22 @@ fn test_promise_race_cancels_losing_order() {
         panic!("Expected Suspended");
     };
     let first_order_id = pending[0].id;
-    runtime.fulfill_orders(vec![OrderResponse {
+    interp.fulfill_orders(vec![OrderResponse {
         id: first_order_id,
         result: Ok(RuntimeValue::unguarded(promise1.value().clone())),
     }]);
-    let result = run_to_completion(&mut runtime).unwrap();
+    let result = run_to_completion(&mut interp).unwrap();
 
     // Get second order
     let StepResult::Suspended { pending, .. } = result else {
         panic!("Expected Suspended");
     };
     let second_order_id = pending[0].id;
-    runtime.fulfill_orders(vec![OrderResponse {
+    interp.fulfill_orders(vec![OrderResponse {
         id: second_order_id,
         result: Ok(RuntimeValue::unguarded(promise2.value().clone())),
     }]);
-    let result = run_to_completion(&mut runtime).unwrap();
+    let result = run_to_completion(&mut interp).unwrap();
 
     // Awaiting Promise.race
     let StepResult::Suspended { .. } = result else {
@@ -1713,12 +1710,12 @@ fn test_promise_race_cancels_losing_order() {
 
     // Resolve promise1 first - it wins, promise2's order should be cancelled
     api::resolve_promise(
-        &mut runtime,
+        &mut interp,
         &promise1,
         RuntimeValue::unguarded(JsValue::String("first".into())),
     )
     .unwrap();
-    let result = run_to_completion(&mut runtime).unwrap();
+    let result = run_to_completion(&mut interp).unwrap();
 
     // Check that the result includes cancelled order
     match result {
@@ -1734,7 +1731,7 @@ fn test_promise_race_cancels_losing_order() {
                 cancelled
             );
             // Continue to get final result
-            let result = run_to_completion(&mut runtime).unwrap();
+            let result = run_to_completion(&mut interp).unwrap();
             if let StepResult::Complete(value) = result {
                 assert_eq!(*value, JsValue::String("first".into()));
             }
@@ -1746,15 +1743,15 @@ fn test_promise_race_cancels_losing_order() {
 #[test]
 fn test_promise_race_second_wins_cancels_first() {
     // Verify cancellation works when second Promise wins
-    let mut runtime = create_test_runtime();
+    let mut interp = create_test_interp();
 
     let order1_id = OrderId(111);
     let order2_id = OrderId(222);
-    let promise1 = api::create_order_promise(&mut runtime, order1_id);
-    let promise2 = api::create_order_promise(&mut runtime, order2_id);
+    let promise1 = api::create_order_promise(&mut interp, order1_id);
+    let promise2 = api::create_order_promise(&mut interp, order2_id);
 
     let result = run_with_globals(
-        &mut runtime,
+        &mut interp,
         r#"
         import { __order__ } from "eval:internal";
 
@@ -1770,20 +1767,20 @@ fn test_promise_race_second_wins_cancels_first() {
     let StepResult::Suspended { pending, .. } = result else {
         panic!("Expected Suspended");
     };
-    runtime.fulfill_orders(vec![OrderResponse {
+    interp.fulfill_orders(vec![OrderResponse {
         id: pending[0].id,
         result: Ok(RuntimeValue::unguarded(promise1.value().clone())),
     }]);
-    let result = run_to_completion(&mut runtime).unwrap();
+    let result = run_to_completion(&mut interp).unwrap();
 
     let StepResult::Suspended { pending, .. } = result else {
         panic!("Expected Suspended");
     };
-    runtime.fulfill_orders(vec![OrderResponse {
+    interp.fulfill_orders(vec![OrderResponse {
         id: pending[0].id,
         result: Ok(RuntimeValue::unguarded(promise2.value().clone())),
     }]);
-    let result = run_to_completion(&mut runtime).unwrap();
+    let result = run_to_completion(&mut interp).unwrap();
 
     let StepResult::Suspended { .. } = result else {
         panic!("Expected Suspended");
@@ -1791,12 +1788,12 @@ fn test_promise_race_second_wins_cancels_first() {
 
     // Resolve promise2 first - it wins, promise1's order should be cancelled
     api::resolve_promise(
-        &mut runtime,
+        &mut interp,
         &promise2,
         RuntimeValue::unguarded(JsValue::String("second".into())),
     )
     .unwrap();
-    let result = run_to_completion(&mut runtime).unwrap();
+    let result = run_to_completion(&mut interp).unwrap();
 
     match result {
         StepResult::Complete(value) => {
@@ -1818,13 +1815,13 @@ fn test_promise_race_second_wins_cancels_first() {
 #[test]
 fn test_promise_rejection_signals_cancelled_order() {
     // When a host Promise is rejected, its order should be signalled as cancelled
-    let mut runtime = create_test_runtime();
+    let mut interp = create_test_interp();
 
     let order_id = OrderId(999);
-    let promise = api::create_order_promise(&mut runtime, order_id);
+    let promise = api::create_order_promise(&mut interp, order_id);
 
     let result = run_with_globals(
-        &mut runtime,
+        &mut interp,
         r#"
         import { __order__ } from "eval:internal";
 
@@ -1842,11 +1839,11 @@ fn test_promise_rejection_signals_cancelled_order() {
     let StepResult::Suspended { pending, .. } = result else {
         panic!("Expected Suspended");
     };
-    runtime.fulfill_orders(vec![OrderResponse {
+    interp.fulfill_orders(vec![OrderResponse {
         id: pending[0].id,
         result: Ok(RuntimeValue::unguarded(promise.value().clone())),
     }]);
-    let result = run_to_completion(&mut runtime).unwrap();
+    let result = run_to_completion(&mut interp).unwrap();
 
     let StepResult::Suspended { .. } = result else {
         panic!("Expected Suspended");
@@ -1854,12 +1851,12 @@ fn test_promise_rejection_signals_cancelled_order() {
 
     // Reject the Promise - its order should be cancelled
     api::reject_promise(
-        &mut runtime,
+        &mut interp,
         &promise,
         RuntimeValue::unguarded(JsValue::String("error".into())),
     )
     .unwrap();
-    let result = run_to_completion(&mut runtime).unwrap();
+    let result = run_to_completion(&mut interp).unwrap();
 
     match result {
         StepResult::Complete(value) => {
@@ -1874,7 +1871,7 @@ fn test_promise_rejection_signals_cancelled_order() {
                 cancelled
             );
             // Continue to get final result
-            let result = run_to_completion(&mut runtime).unwrap();
+            let result = run_to_completion(&mut interp).unwrap();
             if let StepResult::Complete(value) = result {
                 assert_eq!(*value, JsValue::String("caught: error".into()));
             }
@@ -1886,17 +1883,17 @@ fn test_promise_rejection_signals_cancelled_order() {
 #[test]
 fn test_three_way_race_cancels_two_losers() {
     // Three-way race: winner gets result, two losers' orders cancelled
-    let mut runtime = create_test_runtime();
+    let mut interp = create_test_interp();
 
     let order1_id = OrderId(1);
     let order2_id = OrderId(2);
     let order3_id = OrderId(3);
-    let promise1 = api::create_order_promise(&mut runtime, order1_id);
-    let promise2 = api::create_order_promise(&mut runtime, order2_id);
-    let promise3 = api::create_order_promise(&mut runtime, order3_id);
+    let promise1 = api::create_order_promise(&mut interp, order1_id);
+    let promise2 = api::create_order_promise(&mut interp, order2_id);
+    let promise3 = api::create_order_promise(&mut interp, order3_id);
 
     let result = run_with_globals(
-        &mut runtime,
+        &mut interp,
         r#"
         import { __order__ } from "eval:internal";
 
@@ -1913,29 +1910,29 @@ fn test_three_way_race_cancels_two_losers() {
     let StepResult::Suspended { pending, .. } = result else {
         panic!("Expected Suspended");
     };
-    runtime.fulfill_orders(vec![OrderResponse {
+    interp.fulfill_orders(vec![OrderResponse {
         id: pending[0].id,
         result: Ok(RuntimeValue::unguarded(promise1.value().clone())),
     }]);
-    let result = run_to_completion(&mut runtime).unwrap();
+    let result = run_to_completion(&mut interp).unwrap();
 
     let StepResult::Suspended { pending, .. } = result else {
         panic!("Expected Suspended");
     };
-    runtime.fulfill_orders(vec![OrderResponse {
+    interp.fulfill_orders(vec![OrderResponse {
         id: pending[0].id,
         result: Ok(RuntimeValue::unguarded(promise2.value().clone())),
     }]);
-    let result = run_to_completion(&mut runtime).unwrap();
+    let result = run_to_completion(&mut interp).unwrap();
 
     let StepResult::Suspended { pending, .. } = result else {
         panic!("Expected Suspended");
     };
-    runtime.fulfill_orders(vec![OrderResponse {
+    interp.fulfill_orders(vec![OrderResponse {
         id: pending[0].id,
         result: Ok(RuntimeValue::unguarded(promise3.value().clone())),
     }]);
-    let result = run_to_completion(&mut runtime).unwrap();
+    let result = run_to_completion(&mut interp).unwrap();
 
     let StepResult::Suspended { .. } = result else {
         panic!("Expected Suspended");
@@ -1943,12 +1940,12 @@ fn test_three_way_race_cancels_two_losers() {
 
     // Resolve promise2 (middle one wins)
     api::resolve_promise(
-        &mut runtime,
+        &mut interp,
         &promise2,
         RuntimeValue::unguarded(JsValue::Number(2.0)),
     )
     .unwrap();
-    let result = run_to_completion(&mut runtime).unwrap();
+    let result = run_to_completion(&mut interp).unwrap();
 
     // Check that both losers' orders are cancelled
     let cancelled = match &result {

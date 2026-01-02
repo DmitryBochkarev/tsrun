@@ -52,12 +52,12 @@ mod string;
 mod symbol;
 mod typescript;
 
-use tsrun::{JsError, JsValue, Runtime, RuntimeValue, StepResult};
+use tsrun::{Interpreter, JsError, JsValue, RuntimeValue, StepResult};
 
-/// Create a new runtime with aggressive defaults for testing:
+/// Create a new interpreter with aggressive defaults for testing:
 /// - GC_THRESHOLD=1 (GC on every allocation) to catch GC bugs
-pub fn create_test_runtime() -> Runtime {
-    let runtime = Runtime::new();
+pub fn create_test_runtime() -> Interpreter {
+    let interp = Interpreter::new();
 
     // Default to GC_THRESHOLD=1 (most aggressive) to catch GC bugs early
     // Override via environment variable if needed:
@@ -67,27 +67,31 @@ pub fn create_test_runtime() -> Runtime {
         .ok()
         .and_then(|s| s.parse::<usize>().ok())
         .unwrap_or(1);
-    runtime.set_gc_threshold(gc_threshold);
+    interp.set_gc_threshold(gc_threshold);
 
-    runtime
+    interp
 }
 
-/// Run a runtime to completion using the step-based API.
+/// Run an interpreter to completion using the step-based API.
 /// Returns the final StepResult (Complete, NeedImports, or Suspended).
-pub fn run_to_completion(runtime: &mut Runtime) -> Result<StepResult, JsError> {
+pub fn run_to_completion(interp: &mut Interpreter) -> Result<StepResult, JsError> {
     loop {
-        match runtime.step()? {
+        match interp.step()? {
             StepResult::Continue => continue,
             result => return Ok(result),
         }
     }
 }
 
-/// Run code in a runtime using prepare() + step loop.
+/// Run code in an interpreter using prepare() + step loop.
 /// This is a test helper equivalent to the old runtime.run() method.
-pub fn run(runtime: &mut Runtime, source: &str, path: Option<&str>) -> Result<StepResult, JsError> {
-    runtime.prepare(source, path)?;
-    run_to_completion(runtime)
+pub fn run(
+    interp: &mut Interpreter,
+    source: &str,
+    path: Option<&str>,
+) -> Result<StepResult, JsError> {
+    interp.prepare(source, path.map(tsrun::ModulePath::new))?;
+    run_to_completion(interp)
 }
 
 /// Helper function to evaluate TypeScript source code.
@@ -102,13 +106,13 @@ pub fn eval(source: &str) -> RuntimeValue {
 /// Uses the step-based API which properly handles async/await.
 /// Returns RuntimeValue which keeps the result guarded from GC.
 pub fn eval_result(source: &str) -> Result<RuntimeValue, JsError> {
-    let mut runtime = create_test_runtime();
+    let mut interp = create_test_runtime();
 
     // Prepare the source
-    runtime.prepare(source, None)?;
+    interp.prepare(source, None)?;
 
     // Run to completion using step-based API
-    match run_to_completion(&mut runtime)? {
+    match run_to_completion(&mut interp)? {
         StepResult::Complete(rv) => Ok(rv),
         StepResult::NeedImports(specifiers) => Err(JsError::type_error(format!(
             "Missing imports in test: {:?}",
