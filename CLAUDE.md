@@ -37,6 +37,7 @@ timeout 30 cargo test -- --nocapture     # Show test output
 ## Development Rules
 
 - **Always use the Edit tool** - never shell commands like `echo >>` to modify files
+- **Use haiku agents for bulk changes** - for repetitive edits across multiple files (renames, pattern replacements), spawn Task agents with `model: "haiku"` instead of using sed/awk
 - **Use TypeScript annotations in tests** - types are stripped at runtime but tests should use proper syntax
 - **No tech debt** - fix failing tests immediately, no TODO/FIXME for known bugs
 - **Use TDD** - if a test fails because a feature isn't implemented, implement the feature
