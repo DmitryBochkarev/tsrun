@@ -376,12 +376,9 @@ fn parse_bare_specifier(
 /// Tries in order:
 /// 1. Exact path (if has extension and exists)
 /// 2. path.ts
-/// 3. path.tsx
-/// 4. path.js
-/// 5. path.mjs
-/// 6. path/index.ts
-/// 7. path/index.tsx
-/// 8. path/index.js
+/// 3. path.js
+/// 4. path/index.ts
+/// 5. path/index.js
 fn resolve_file_with_extensions(path: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
     // If path already has an extension and exists, use it
     if path.extension().is_some() && path.exists() {
@@ -389,7 +386,7 @@ fn resolve_file_with_extensions(path: &Path) -> Result<PathBuf, Box<dyn std::err
     }
 
     // Try TypeScript extensions first (project preference)
-    let extensions = ["ts", "tsx", "js", "mjs"];
+    let extensions = ["ts", "js"];
 
     for ext in &extensions {
         let with_ext = path.with_extension(ext);
@@ -399,7 +396,7 @@ fn resolve_file_with_extensions(path: &Path) -> Result<PathBuf, Box<dyn std::err
     }
 
     // Try as directory with index file
-    let index_files = ["index.ts", "index.tsx", "index.js"];
+    let index_files = ["index.ts", "index.js"];
     for index in &index_files {
         let index_path = path.join(index);
         if index_path.exists() {
