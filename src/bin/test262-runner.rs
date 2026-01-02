@@ -19,7 +19,7 @@
 //!   test262-runner --filter "array" test/built-ins/Array
 //!   test262-runner --skip-features "BigInt,WeakRef" test/language
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::env;
 use std::fs;
 use std::io::{self, Write as IoWrite};
@@ -34,7 +34,7 @@ struct TestMetadata {
     info: Option<String>,
     features: Vec<String>,
     includes: Vec<String>,
-    flags: HashSet<String>,
+    flags: FxHashSet<String>,
     negative: Option<NegativeExpectation>,
     locale: Vec<String>,
 }
@@ -64,26 +64,26 @@ struct TestOutcome {
 
 struct TestRunner {
     test262_dir: PathBuf,
-    harness_cache: HashMap<String, String>,
+    harness_cache: FxHashMap<String, String>,
     verbose: bool,
     stop_on_fail: bool,
     strict_only: bool,
     non_strict_only: bool,
-    skip_features: HashSet<String>,
-    required_features: HashSet<String>,
+    skip_features: FxHashSet<String>,
+    required_features: FxHashSet<String>,
 }
 
 impl TestRunner {
     fn new(test262_dir: PathBuf) -> Self {
         Self {
             test262_dir,
-            harness_cache: HashMap::new(),
+            harness_cache: FxHashMap::default(),
             verbose: false,
             stop_on_fail: false,
             strict_only: false,
             non_strict_only: false,
-            skip_features: HashSet::new(),
-            required_features: HashSet::new(),
+            skip_features: FxHashSet::default(),
+            required_features: FxHashSet::default(),
         }
     }
 
@@ -638,8 +638,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     // Parse arguments
     let mut test262_dir = PathBuf::from("test262");
     let mut filter: Option<String> = None;
-    let mut skip_features: HashSet<String> = HashSet::new();
-    let mut required_features: HashSet<String> = HashSet::new();
+    let mut skip_features: FxHashSet<String> = FxHashSet::default();
+    let mut required_features: FxHashSet<String> = FxHashSet::default();
     let mut verbose = false;
     let mut stop_on_fail = false;
     let mut list_only = false;

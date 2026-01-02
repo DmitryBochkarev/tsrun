@@ -1853,7 +1853,7 @@ impl Interpreter {
 
     /// Deduplicate import requests by resolved path.
     fn dedupe_import_requests(imports: Vec<crate::ImportRequest>) -> Vec<crate::ImportRequest> {
-        let mut seen = HashSet::new();
+        let mut seen = FxHashSet::default();
         imports
             .into_iter()
             .filter(|req| seen.insert(req.resolved_path.clone()))

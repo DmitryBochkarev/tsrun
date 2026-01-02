@@ -44,16 +44,8 @@ pub use alloc::{
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// HashMap - use hashbrown for no_std, std::collections for std
-// ═══════════════════════════════════════════════════════════════════════════════
-
-#[cfg(feature = "std")]
-pub use std::collections::HashSet;
-
-#[cfg(not(feature = "std"))]
-pub use hashbrown::HashSet;
-
 // FxHashMap/FxHashSet - use rustc-hash for std, define our own for no_std
+// ═══════════════════════════════════════════════════════════════════════════════
 #[cfg(feature = "std")]
 pub use rustc_hash::{FxHashMap, FxHashSet};
 

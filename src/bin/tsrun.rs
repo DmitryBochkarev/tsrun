@@ -9,7 +9,7 @@
 //! Supports static imports - modules are resolved relative to the importing file.
 //! Nested imports are supported.
 
-use std::collections::HashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -149,17 +149,17 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Track provided modules by resolved path to avoid reloading
-    let mut provided: HashMap<ModulePath, PathBuf> = HashMap::new();
+    let mut provided: FxHashMap<ModulePath, PathBuf> = FxHashMap::default();
 
     // Track import chain for error reporting: maps resolved_path -> (importer, specifier)
-    let mut import_chain: HashMap<String, (String, String)> = HashMap::new();
+    let mut import_chain: FxHashMap<String, (String, String)> = FxHashMap::default();
 
     // Start evaluation - may return NeedImports
     let entry_file = entry_path.display().to_string();
 
     // Helper to build import chain from a file back to entry
     let build_chain =
-        |file: &str, chain_map: &HashMap<String, (String, String)>| -> Vec<(String, String)> {
+        |file: &str, chain_map: &FxHashMap<String, (String, String)>| -> Vec<(String, String)> {
             let mut chain = Vec::new();
             let mut current = file.to_string();
             while let Some((importer, specifier)) = chain_map.get(&current) {
@@ -173,8 +173,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     // Helper to load and provide a module
     let load_and_provide_module = |interp: &mut Interpreter,
                                    req: &tsrun::ImportRequest,
-                                   provided: &mut HashMap<ModulePath, PathBuf>,
-                                   import_chain: &mut HashMap<String, (String, String)>|
+                                   provided: &mut FxHashMap<ModulePath, PathBuf>,
+                                   import_chain: &mut FxHashMap<String, (String, String)>|
      -> Result<(), Box<dyn std::error::Error>> {
         // Use resolved_path for deduplication
         if provided.contains_key(&req.resolved_path) {
@@ -550,13 +550,12 @@ fn print_value(value: &JsValue) {
 }
 
 fn value_to_json(value: &JsValue) -> Result<serde_json::Value, &'static str> {
-    use std::collections::HashSet;
     use tsrun::Gc;
     use tsrun::value::JsObject;
 
     fn to_json_inner(
         value: &JsValue,
-        visited: &mut HashSet<Gc<JsObject>>,
+        visited: &mut FxHashSet<Gc<JsObject>>,
     ) -> Result<serde_json::Value, &'static str> {
         match value {
             JsValue::Undefined => Ok(serde_json::Value::Null),
@@ -612,6 +611,6 @@ fn value_to_json(value: &JsValue) -> Result<serde_json::Value, &'static str> {
         }
     }
 
-    let mut visited = HashSet::new();
+    let mut visited = FxHashSet::default();
     to_json_inner(value, &mut visited)
 }

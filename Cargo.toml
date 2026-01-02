@@ -22,6 +22,11 @@ name = "profile_parser"
 path = "src/bin/profile_parser.rs"
 required-features = ["std"]
 
+[[bin]]
+name = "test262-runner"
+path = "src/bin/test262-runner.rs"
+required-features = ["std"]
+
 [features]
 default = ["std"]
 

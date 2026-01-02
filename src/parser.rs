@@ -518,7 +518,7 @@ impl<'a> Parser<'a> {
         self.require_token(&TokenKind::LParen)?;
 
         let mut params = vec![];
-        let mut seen_names: HashSet<JsString> = HashSet::new();
+        let mut seen_names: FxHashSet<JsString> = FxHashSet::default();
 
         while !self.check(&TokenKind::RParen) && !self.is_at_end() {
             let param_start = self.current.span;
@@ -591,7 +591,7 @@ impl<'a> Parser<'a> {
     /// Collects all binding names from a pattern and checks against seen names.
     fn check_duplicate_params(
         pattern: &Pattern,
-        seen: &mut HashSet<JsString>,
+        seen: &mut FxHashSet<JsString>,
     ) -> Result<(), JsError> {
         match pattern {
             Pattern::Identifier(id) => {
@@ -3215,7 +3215,7 @@ impl<'a> Parser<'a> {
         is_async: bool,
     ) -> Result<Expression, JsError> {
         // Check for duplicate parameter names in strict mode
-        let mut seen_names: HashSet<JsString> = HashSet::new();
+        let mut seen_names: FxHashSet<JsString> = FxHashSet::default();
         for param in &params {
             Self::check_duplicate_params(&param.pattern, &mut seen_names)?;
         }

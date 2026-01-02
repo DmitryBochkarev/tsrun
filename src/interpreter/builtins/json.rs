@@ -4,7 +4,7 @@ use crate::error::JsError;
 use crate::gc::Guard;
 use crate::interpreter::Interpreter;
 use crate::value::{ExoticObject, Guarded, JsObject, JsString, JsValue, PropertyKey};
-use crate::prelude::{format, math, HashSet, String, ToString, Vec};
+use crate::prelude::{format, math, FxHashSet, String, ToString, Vec};
 
 const MS_PER_SECOND: i64 = 1000;
 const MS_PER_MINUTE: i64 = 60 * MS_PER_SECOND;
@@ -76,7 +76,7 @@ pub fn json_stringify(
     let indent = args.get(2).cloned().unwrap_or(JsValue::Undefined);
 
     // Track visited objects for circular reference detection
-    let mut visited = HashSet::new();
+    let mut visited = FxHashSet::default();
     let json = js_value_to_json_with_visited(&value, &mut visited)?;
 
     let output = match indent {
@@ -159,14 +159,14 @@ pub fn json_parse(
 
 /// Convert a JsValue to JSON, with public API for external callers (without circular detection)
 pub fn js_value_to_json(value: &JsValue) -> Result<serde_json::Value, JsError> {
-    let mut visited = HashSet::new();
+    let mut visited = FxHashSet::default();
     js_value_to_json_with_visited(value, &mut visited)
 }
 
 /// Convert a JsValue to JSON, tracking visited objects for circular reference detection
 fn js_value_to_json_with_visited(
     value: &JsValue,
-    visited: &mut HashSet<usize>,
+    visited: &mut FxHashSet<usize>,
 ) -> Result<serde_json::Value, JsError> {
     Ok(match value {
         JsValue::Undefined => serde_json::Value::Null,
