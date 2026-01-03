@@ -45,6 +45,10 @@ pub mod platform;
 pub mod string_dict;
 pub mod value;
 
+// C FFI module (only when c-api feature is enabled)
+#[cfg(feature = "c-api")]
+pub mod ffi;
+
 use prelude::{format, String, Vec};
 
 pub use error::JsError;

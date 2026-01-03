@@ -12,6 +12,8 @@ TypeScript interpreter written in Rust for config/manifest generation with suppo
 
 ```bash
 cargo build                              # Build the project
+cargo build --features c-api             # Build with C FFI support
+cargo build --release --features c-api   # Release build with C FFI (creates libtsrun.so)
 timeout 30 cargo test                    # Run all tests (always use timeout!)
 timeout 30 cargo test --test interpreter # Run interpreter integration tests
 timeout 30 cargo test test_name          # Run specific test
@@ -32,7 +34,9 @@ timeout 30 cargo test -- --nocapture     # Show test output
 | `src/error.rs` | JsError types |
 | `src/compiler/` | Bytecode compiler |
 | `src/interpreter/` | VM and builtins |
+| `src/ffi/` | C FFI module (feature-gated: `c-api`) |
 | `tests/interpreter/` | Integration tests by feature |
+| `examples/c-embedding/` | C API usage examples |
 
 ## Development Rules
 
@@ -247,6 +251,14 @@ pub enum RuntimeResult {
 - `symbol.rs`, `boolean.rs`, `console.rs` - Additional builtins
 - `global.rs` - Global functions (parseInt, parseFloat, etc.)
 
+**C FFI** (`src/ffi/`, feature-gated):
+- `mod.rs` - Types, result structs, utility functions
+- `context.rs` - Context lifecycle and step-based execution
+- `value.rs` - Value creation, inspection, object/array operations
+- `native.rs` - Native C function callback system
+- `module.rs` - Module system (provide_module, exports)
+- `order.rs` - Async order system (pending orders, fulfillment)
+
 ## Implementation Patterns
 
 ### Adding Built-in Methods
@@ -341,10 +353,67 @@ The interpreter runs all code in strict mode - use `--strict-only` for meaningfu
 - `enum` declarations → compile to object literals
 - Type assertions (`x as T`, `<T>x`) → evaluate to just the expression
 
+## C FFI
+
+The interpreter can be embedded in C/C++ applications via a C API (feature-gated behind `c-api`).
+
+### Building
+
+```bash
+cargo build --release --features c-api
+# Output: target/release/libtsrun.so (Linux), .dylib (macOS), .dll (Windows)
+```
+
+### Key Concepts
+
+- **Opaque handles**: `TsRunContext*`, `TsRunValue*` - all types are opaque pointers
+- **Step-based execution**: `tsrun_prepare()` → `tsrun_run()` loop handling `NeedImports`/`Suspended`
+- **Native callbacks**: C functions callable from JS via `tsrun_native_function()`
+- **Order system**: Async operations via `tsrun_create_pending_order()` + `tsrun_fulfill_orders()`
+
+### Examples
+
+See `examples/c-embedding/` for working examples:
+- `basic.c` - Value creation, objects, arrays, JSON
+- `native_functions.c` - C callbacks, stateful functions, error handling
+- `module_loading.c` - ES module loading with virtual filesystem
+- `async_orders.c` - Async operations via pending orders
+
+### Header
+
+The C header is at `examples/c-embedding/tsrun.h`. Key functions:
+
+```c
+// Lifecycle
+TsRunContext* tsrun_new(void);
+void tsrun_free(TsRunContext* ctx);
+
+// Execution
+TsRunResult tsrun_prepare(TsRunContext* ctx, const char* code, const char* path);
+TsRunStepResult tsrun_run(TsRunContext* ctx);
+
+// Values
+TsRunValue* tsrun_number(TsRunContext* ctx, double n);
+TsRunValue* tsrun_string(TsRunContext* ctx, const char* s);
+TsRunValueResult tsrun_get(TsRunContext* ctx, TsRunValue* obj, const char* key);
+
+// Native functions
+TsRunValueResult tsrun_native_function(TsRunContext* ctx, const char* name,
+                                        TsRunNativeFn func, size_t arity, void* userdata);
+
+// Async orders
+TsRunValueResult tsrun_create_pending_order(TsRunContext* ctx, TsRunValue* payload,
+                                             TsRunOrderId* order_id_out);
+TsRunResult tsrun_fulfill_orders(TsRunContext* ctx, const TsRunOrderResponse* responses,
+                                  size_t count);
+```
+
 ## Implementation Status
 
 **Language Features:** variables, functions, closures, control flow, classes with inheritance/static blocks, destructuring, spread, template literals, all operators, generators, async/await, Promises.
 
 **Built-in Objects:** Array, String, Object, Number, Math, JSON, Map, Set, WeakMap, WeakSet, Date, RegExp, Function, Error types, Symbol, Proxy, Reflect, console.
+
+**C FFI:** Full embedding API with native callbacks, module loading, and async order system.
 
 See profiling.md for performance notes.

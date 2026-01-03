@@ -37,6 +37,7 @@ pub fn init_function_prototype(interp: &mut Interpreter) {
             name: name.cheap_clone(),
             func: function_prototype_fn,
             arity: 0,
+            ffi_id: 0,
         }));
         // Set length = 0 and name = "" as per spec
         let length_key = PropertyKey::String(interp.intern("length"));

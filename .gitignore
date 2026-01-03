@@ -4,3 +4,9 @@ perf.data.old
 massif.out
 dhat.out.*
 massif.out.*
+
+# C embedding examples
+examples/c-embedding/basic
+examples/c-embedding/native_functions
+examples/c-embedding/module_loading
+examples/c-embedding/async_orders

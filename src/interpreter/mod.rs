@@ -249,6 +249,10 @@ pub struct Interpreter {
     /// Console counters for console.count() / console.countReset()
     console_counters: FxHashMap<String, u64>,
 
+    /// Current FFI callback ID (set before calling native functions with ffi_id > 0)
+    /// Used by the FFI layer to look up C callbacks
+    pub current_ffi_id: usize,
+
     // ═══════════════════════════════════════════════════════════════════════════
     // Platform Providers
     // ═══════════════════════════════════════════════════════════════════════════
@@ -444,6 +448,7 @@ impl Interpreter {
             well_known_symbols,
             console_timers: FxHashMap::default(),
             console_counters: FxHashMap::default(),
+            current_ffi_id: 0,
             // Platform providers
             #[cfg(feature = "std")]
             time_provider: Box::new(StdTimeProvider::new()),
@@ -2217,6 +2222,7 @@ impl Interpreter {
                 name: name_str,
                 func,
                 arity,
+                ffi_id: 0,
             }));
         }
         func_obj
@@ -2525,6 +2531,7 @@ impl Interpreter {
                 name: name_str.cheap_clone(),
                 func,
                 arity,
+                ffi_id: 0,
             }));
             // Set length property (number of formal parameters)
             f_ref.set_property(length_key, JsValue::Number(arity as f64));

@@ -925,7 +925,12 @@ impl BytecodeVM {
             }
             JsFunction::Native(native) => {
                 // Native functions are quick, call directly
-                let result = (native.func)(interp, this_value, &args)?;
+                // Set FFI callback ID if this is an FFI-registered function
+                let prev_ffi_id = interp.current_ffi_id;
+                interp.current_ffi_id = native.ffi_id;
+                let result = (native.func)(interp, this_value, &args);
+                interp.current_ffi_id = prev_ffi_id;
+                let result = result?;
 
                 // Check if result is a PendingOrder - if so, suspend immediately
                 if let JsValue::Object(ref obj) = result.value

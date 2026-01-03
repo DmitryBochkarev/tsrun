@@ -2953,6 +2953,8 @@ pub struct NativeFunction {
     pub name: JsString,
     pub func: NativeFn,
     pub arity: usize,
+    /// FFI callback ID (0 = not an FFI callback, non-zero = lookup key in FFI registry)
+    pub ffi_id: usize,
 }
 
 impl fmt::Debug for NativeFunction {

@@ -7,6 +7,9 @@ license = "MIT"
 keywords = ["typescript", "javascript", "interpreter", "embedding"]
 categories = ["parser-implementations"]
 
+[lib]
+crate-type = ["rlib", "cdylib", "staticlib"]
+
 [[bin]]
 name = "tsrun"
 path = "src/bin/tsrun.rs"
@@ -38,6 +41,9 @@ regex = ["dep:fancy-regex"]
 
 # Console builtin (requires std for println!)
 console = []
+
+# C API for embedding (requires std for CString, etc.)
+c-api = ["std"]
 
 [dependencies]
 serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
