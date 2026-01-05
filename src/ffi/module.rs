@@ -1,7 +1,11 @@
 //! Module system functions.
 
-use std::ffi::c_char;
-use std::ptr;
+extern crate alloc;
+
+use alloc::string::ToString;
+use alloc::vec::Vec;
+use core::ffi::c_char;
+use core::ptr;
 
 use crate::ModulePath;
 
@@ -111,6 +115,6 @@ pub extern "C" fn tsrun_get_export_names(
 
     let mut boxed = c_names.into_boxed_slice();
     let ptr = boxed.as_mut_ptr();
-    std::mem::forget(boxed);
+    core::mem::forget(boxed);
     ptr
 }

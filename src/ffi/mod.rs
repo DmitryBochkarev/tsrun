@@ -16,16 +16,22 @@
 
 #![cfg(feature = "c-api")]
 
+extern crate alloc;
+
 mod context;
 mod module;
 mod native;
 mod order;
 mod value;
 
-use std::ffi::{c_char, c_void, CStr, CString};
-use std::ptr;
+use alloc::boxed::Box;
+use alloc::ffi::CString;
+use alloc::string::String;
+use alloc::vec::Vec;
+use core::ffi::{c_char, c_void, CStr};
+use core::ptr;
 
-use rustc_hash::FxHashMap;
+use crate::prelude::FxHashMap;
 
 use crate::value::CheapClone;
 use crate::{Interpreter, JsValue, RuntimeValue};

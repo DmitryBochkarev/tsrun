@@ -253,6 +253,10 @@ pub struct Interpreter {
     /// Used by the FFI layer to look up C callbacks
     pub current_ffi_id: usize,
 
+    /// FFI context pointer (set during tsrun_step/tsrun_run)
+    /// Used by native callback trampoline to access TsRunContext
+    pub(crate) ffi_context: *mut core::ffi::c_void,
+
     // ═══════════════════════════════════════════════════════════════════════════
     // Platform Providers
     // ═══════════════════════════════════════════════════════════════════════════
@@ -449,6 +453,7 @@ impl Interpreter {
             console_timers: FxHashMap::default(),
             console_counters: FxHashMap::default(),
             current_ffi_id: 0,
+            ffi_context: core::ptr::null_mut(),
             // Platform providers
             #[cfg(feature = "std")]
             time_provider: Box::new(StdTimeProvider::new()),

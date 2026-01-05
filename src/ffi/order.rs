@@ -1,7 +1,12 @@
 //! Order/async system functions.
 
-use std::ffi::c_char;
-use std::ptr;
+extern crate alloc;
+
+use alloc::boxed::Box;
+use alloc::string::ToString;
+use alloc::vec::Vec;
+use core::ffi::c_char;
+use core::ptr;
 
 use crate::value::{CheapClone, PropertyKey};
 use crate::{JsError, JsString, JsValue, OrderId, OrderResponse, RuntimeValue};

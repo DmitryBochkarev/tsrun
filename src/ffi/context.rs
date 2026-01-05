@@ -1,11 +1,16 @@
 //! Context lifecycle and execution functions.
 
-use std::ffi::c_char;
-use std::ptr;
+extern crate alloc;
+
+use alloc::boxed::Box;
+use alloc::ffi::CString;
+use alloc::string::ToString;
+use alloc::vec::Vec;
+use core::ffi::{c_char, c_void};
+use core::ptr;
 
 use crate::{ModulePath, StepResult};
 
-use super::native::{clear_current_context, set_current_context};
 use super::{
     c_str_to_str, str_to_c_string, TsRunContext, TsRunImportRequest, TsRunOrder, TsRunResult,
     TsRunStepResult, TsRunStepStatus, TsRunValue,
@@ -86,11 +91,11 @@ pub extern "C" fn tsrun_step(ctx: *mut TsRunContext) -> TsRunStepResult {
         };
     }
 
-    // Set context for native callbacks before stepping
-    set_current_context(ctx);
-
     let ctx_ref = unsafe { &mut *ctx };
     ctx_ref.clear_error();
+
+    // Set FFI context pointer in interpreter for native callbacks
+    ctx_ref.interp.ffi_context = ctx as *mut c_void;
 
     let result = match ctx_ref.interp.step() {
         Ok(step_result) => convert_step_result(ctx_ref, step_result),
@@ -101,8 +106,8 @@ pub extern "C" fn tsrun_step(ctx: *mut TsRunContext) -> TsRunStepResult {
         },
     };
 
-    // Clear context after stepping
-    clear_current_context();
+    // Clear FFI context after stepping
+    ctx_ref.interp.ffi_context = ptr::null_mut();
 
     result
 }
@@ -120,11 +125,11 @@ pub extern "C" fn tsrun_run(ctx: *mut TsRunContext) -> TsRunStepResult {
         };
     }
 
-    // Set context for native callbacks before stepping
-    set_current_context(ctx);
-
     let ctx_ref = unsafe { &mut *ctx };
     ctx_ref.clear_error();
+
+    // Set FFI context pointer in interpreter for native callbacks
+    ctx_ref.interp.ffi_context = ctx as *mut c_void;
 
     let result = loop {
         match ctx_ref.interp.step() {
@@ -140,8 +145,8 @@ pub extern "C" fn tsrun_run(ctx: *mut TsRunContext) -> TsRunStepResult {
         }
     };
 
-    // Clear context after stepping
-    clear_current_context();
+    // Clear FFI context after stepping
+    ctx_ref.interp.ffi_context = ptr::null_mut();
 
     result
 }
@@ -165,13 +170,13 @@ pub extern "C" fn tsrun_step_result_free(result: *mut TsRunStepResult) {
             for import in imports {
                 // Free the strings inside each import request
                 if !import.specifier.is_null() {
-                    drop(std::ffi::CString::from_raw(import.specifier as *mut c_char));
+                    drop(CString::from_raw(import.specifier as *mut c_char));
                 }
                 if !import.resolved_path.is_null() {
-                    drop(std::ffi::CString::from_raw(import.resolved_path as *mut c_char));
+                    drop(CString::from_raw(import.resolved_path as *mut c_char));
                 }
                 if !import.importer.is_null() {
-                    drop(std::ffi::CString::from_raw(import.importer as *mut c_char));
+                    drop(CString::from_raw(import.importer as *mut c_char));
                 }
             }
         }
@@ -240,7 +245,7 @@ fn convert_step_result(_ctx: &mut TsRunContext, result: StepResult) -> TsRunStep
 
             let import_count = c_imports.len();
             let imports_ptr = c_imports.as_mut_ptr();
-            std::mem::forget(c_imports);
+            core::mem::forget(c_imports);
 
             TsRunStepResult {
                 status: TsRunStepStatus::NeedImports,
@@ -262,13 +267,13 @@ fn convert_step_result(_ctx: &mut TsRunContext, result: StepResult) -> TsRunStep
 
             let pending_count = c_orders.len();
             let orders_ptr = c_orders.as_mut_ptr();
-            std::mem::forget(c_orders);
+            core::mem::forget(c_orders);
 
             // Convert cancelled order IDs
             let mut c_cancelled: Vec<u64> = cancelled.into_iter().map(|id| id.0).collect();
             let cancelled_count = c_cancelled.len();
             let cancelled_ptr = c_cancelled.as_mut_ptr();
-            std::mem::forget(c_cancelled);
+            core::mem::forget(c_cancelled);
 
             TsRunStepResult {
                 status: TsRunStepStatus::Suspended,

@@ -1,7 +1,14 @@
 //! Value inspection, creation, and manipulation functions.
 
-use std::ffi::c_char;
-use std::ptr;
+extern crate alloc;
+
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::ToString;
+use alloc::vec;
+use alloc::vec::Vec;
+use core::ffi::c_char;
+use core::ptr;
 
 use crate::value::{CheapClone, ExoticObject, PropertyKey};
 use crate::{JsString, JsValue};
@@ -267,8 +274,8 @@ pub extern "C" fn tsrun_string_len(
         return ptr::null_mut();
     }
 
-    let bytes = unsafe { std::slice::from_raw_parts(s as *const u8, len) };
-    let s_str = match std::str::from_utf8(bytes) {
+    let bytes = unsafe { core::slice::from_raw_parts(s as *const u8, len) };
+    let s_str = match core::str::from_utf8(bytes) {
         Ok(s) => s,
         Err(_) => return ptr::null_mut(),
     };
@@ -526,7 +533,7 @@ pub extern "C" fn tsrun_keys(
 
     let mut boxed = keys.into_boxed_slice();
     let ptr = boxed.as_mut_ptr();
-    std::mem::forget(boxed);
+    core::mem::forget(boxed);
     ptr
 }
 

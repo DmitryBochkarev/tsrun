@@ -1,7 +1,12 @@
 //! Native function callback system.
 
-use std::ffi::{c_char, c_void, CStr};
-use std::ptr;
+extern crate alloc;
+
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use core::ffi::{c_char, c_void, CStr};
+use core::ptr;
 
 use crate::error::JsError;
 use crate::value::{CheapClone, Guarded, JsValue};
@@ -104,8 +109,8 @@ fn native_callback_trampoline(
         ));
     }
 
-    // Get the TsRunContext from thread-local (set by tsrun_step/tsrun_run)
-    let ctx_ptr = CURRENT_CONTEXT.with(|cell| cell.get());
+    // Get the TsRunContext from interpreter (set by tsrun_step/tsrun_run)
+    let ctx_ptr = interp.ffi_context as *mut TsRunContext;
     if ctx_ptr.is_null() {
         return Err(JsError::internal_error(
             "Native callback called without context",
@@ -174,23 +179,6 @@ fn native_callback_trampoline(
             Ok(Guarded::unguarded(result_val.inner.value().clone()))
         }
     }
-}
-
-// Thread-local storage for tracking context during native calls
-thread_local! {
-    static CURRENT_CONTEXT: std::cell::Cell<*mut TsRunContext> = const { std::cell::Cell::new(ptr::null_mut()) };
-}
-
-/// Set the current context for native callback invocation.
-///
-/// This is called internally before stepping the interpreter.
-pub(crate) fn set_current_context(ctx: *mut TsRunContext) {
-    CURRENT_CONTEXT.with(|cell| cell.set(ctx));
-}
-
-/// Clear the current context after native callback invocation.
-pub(crate) fn clear_current_context() {
-    CURRENT_CONTEXT.with(|cell| cell.set(ptr::null_mut()));
 }
 
 // ============================================================================
