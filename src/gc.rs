@@ -1,7 +1,55 @@
 //! Mark-and-sweep garbage collection system.
 //!
-//! Objects are kept alive by being reachable from Guard roots through ownership edges.
-//! Collection happens when guards are dropped, using a mark-and-sweep algorithm.
+//! Objects are kept alive by being reachable from [`Guard`] roots.
+//! Collection happens automatically when the allocation threshold is reached.
+//!
+//! # Overview
+//!
+//! - [`Heap`] - Main entry point, owns the GC arena
+//! - [`Guard`] - Root anchor that keeps objects alive
+//! - [`Gc`] - Smart pointer to GC-managed object
+//!
+//! # Usage Pattern
+//!
+//! ```
+//! use tsrun::{Interpreter, api, JsValue};
+//!
+//! let mut interp = Interpreter::new();
+//!
+//! // Create a guard from the interpreter's heap
+//! let guard = api::create_guard(&interp);
+//!
+//! // Allocate objects - they're added to guard's roots
+//! let obj = api::create_object(&mut interp, &guard).unwrap();
+//! api::set_property(&obj, "x", JsValue::from(42)).unwrap();
+//!
+//! // Objects stay alive while guard exists
+//! assert_eq!(api::get_property(&obj, "x").unwrap().as_number(), Some(42.0));
+//!
+//! // When guard drops, objects become eligible for collection
+//! drop(guard);
+//! ```
+//!
+//! # GC Triggering
+//!
+//! Collection runs automatically when `net_allocs >= gc_threshold`.
+//! Set threshold to 0 to disable automatic collection.
+//!
+//! ```
+//! use tsrun::Interpreter;
+//!
+//! let mut interp = Interpreter::new();
+//!
+//! // Disable automatic GC (useful for benchmarking)
+//! interp.set_gc_threshold(0);
+//!
+//! // Manually trigger collection
+//! interp.collect();
+//!
+//! // Check GC stats
+//! let stats = interp.gc_stats();
+//! println!("Live objects: {}", stats.live_objects);
+//! ```
 
 use crate::prelude::*;
 
@@ -770,17 +818,33 @@ impl<T: Default + Reset + Traceable> GuardInner<T> {
     }
 }
 
-/// A root anchor that keeps objects alive.
+/// A root anchor that keeps GC-managed objects alive.
 ///
-/// Guards provide a way to allocate GC-managed objects. The returned `Gc<T>`
-/// A Guard tracks objects that should be treated as GC roots.
-/// Objects added to a guard are kept alive until the guard is dropped or cleared.
+/// Guards track objects that should survive garbage collection. Objects
+/// added to a guard (via [`Guard::guard`] or allocation) remain alive
+/// until the guard is dropped.
 ///
-/// Guards are pooled for reuse - when dropped, they return to the heap's guard pool.
-/// This avoids repeated allocation of guard storage.
+/// # Lifetime Rules
 ///
-/// The guard stores pointers to guarded objects. During mark-and-sweep,
-/// these objects are used as roots for tracing.
+/// 1. Create guard BEFORE allocating objects
+/// 2. Guard input values BEFORE allocations that might trigger GC
+/// 3. Objects are collected when no guard references them
+///
+/// # Example
+///
+/// ```
+/// use tsrun::{Interpreter, api, JsValue};
+///
+/// let mut interp = Interpreter::new();
+/// let guard = api::create_guard(&interp);
+///
+/// // Objects allocated with this guard stay alive
+/// let arr = api::create_array(&mut interp, &guard).unwrap();
+/// api::push(&arr, JsValue::from(1)).unwrap();
+/// api::push(&arr, JsValue::from(2)).unwrap();
+///
+/// assert_eq!(api::len(&arr), Some(2));
+/// ```
 pub struct Guard<T: Default + Reset + Traceable> {
     /// Weak reference back to space for allocation and returning to pool
     space: Weak<RefCell<Space<T>>>,

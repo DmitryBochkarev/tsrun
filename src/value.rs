@@ -1,6 +1,49 @@
-//! JavaScript value representation
+//! JavaScript value representation.
 //!
-//! The core JsValue type and related structures for representing JavaScript values at runtime.
+//! This module contains [`JsValue`], the core type representing JavaScript values at runtime.
+//!
+//! # JsValue Variants
+//!
+//! | Variant | JS Type | Example |
+//! |---------|---------|---------|
+//! | `Undefined` | `undefined` | `undefined` |
+//! | `Null` | `null` | `null` |
+//! | `Boolean` | `boolean` | `true`, `false` |
+//! | `Number` | `number` | `42`, `3.14`, `NaN` |
+//! | `String` | `string` | `"hello"` |
+//! | `Symbol` | `symbol` | `Symbol("desc")` |
+//! | `Object` | `object`/`function` | `{}`, `[]`, `function(){}` |
+//!
+//! # Creating Values
+//!
+//! ```
+//! use tsrun::JsValue;
+//!
+//! // From primitives
+//! let num: JsValue = 42.into();
+//! let text: JsValue = "hello".into();
+//! let flag: JsValue = true.into();
+//!
+//! // Type checking
+//! assert!(num.is_number());
+//! assert!(text.is_string());
+//! assert!(flag.is_boolean());
+//!
+//! // Value extraction
+//! assert_eq!(num.as_number(), Some(42.0));
+//! assert_eq!(text.as_str(), Some("hello"));
+//! assert_eq!(flag.as_bool(), Some(true));
+//! ```
+//!
+//! # Nullish Values
+//!
+//! ```
+//! use tsrun::JsValue;
+//!
+//! assert!(JsValue::Undefined.is_nullish());
+//! assert!(JsValue::Null.is_nullish());
+//! assert!(!JsValue::from(0).is_nullish()); // 0 is not nullish
+//! ```
 
 use crate::prelude::*;
 
@@ -251,10 +294,50 @@ pub trait CheapClone: Clone {
 impl<T: ?Sized> CheapClone for Rc<T> {}
 impl<T: CheapClone> CheapClone for Option<T> {}
 
-/// A JavaScript value
+/// A JavaScript value.
 ///
-/// Size-optimized: JsSymbol is boxed since symbols are rare, allowing JsValue
-/// to be 16 bytes instead of 32 bytes.
+/// This is the primary type for representing all JavaScript values in the interpreter.
+/// Size-optimized to 16 bytes by boxing the rare Symbol variant.
+///
+/// # Conversions
+///
+/// ```
+/// use tsrun::JsValue;
+///
+/// // Numbers
+/// let n: JsValue = 42.into();
+/// let f: JsValue = 3.14.into();
+///
+/// // Strings
+/// let s: JsValue = "hello".into();
+/// let owned: JsValue = String::from("world").into();
+///
+/// // Booleans
+/// let t: JsValue = true.into();
+///
+/// // Unit converts to undefined
+/// let u: JsValue = ().into();
+/// assert!(u.is_undefined());
+/// ```
+///
+/// # Type Coercion
+///
+/// Use `to_boolean()`, `to_number()`, `to_string_value()` for JS coercion:
+///
+/// ```
+/// use tsrun::JsValue;
+///
+/// // Falsy values
+/// assert!(!JsValue::from(0).to_boolean());
+/// assert!(!JsValue::from("").to_boolean());
+/// assert!(!JsValue::Null.to_boolean());
+/// assert!(!JsValue::Undefined.to_boolean());
+/// assert!(!JsValue::from(f64::NAN).to_boolean());
+///
+/// // Truthy values
+/// assert!(JsValue::from(1).to_boolean());
+/// assert!(JsValue::from("x").to_boolean());
+/// ```
 #[derive(Clone, Default)]
 pub enum JsValue {
     #[default]

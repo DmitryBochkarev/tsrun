@@ -6,24 +6,24 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```
 //! use tsrun::{Interpreter, api, JsValue};
 //!
 //! let mut interp = Interpreter::new();
 //! let guard = api::create_guard(&interp);
 //!
 //! // Create values - objects are guarded by the provided guard
-//! let obj = api::create_object(&mut interp, &guard)?;
-//! api::set_property(&obj, "name", JsValue::from("Alice"))?;
+//! let obj = api::create_object(&mut interp, &guard).unwrap();
+//! api::set_property(&obj, "name", JsValue::from("Alice")).unwrap();
 //!
 //! // Read values
-//! let name = api::get_property(&obj, "name")?;
+//! let name = api::get_property(&obj, "name").unwrap();
 //! assert_eq!(name.as_str(), Some("Alice"));
 //!
 //! // Call methods - results are guarded
-//! let arr = api::create_from_json(&mut interp, &guard, &serde_json::json!([3, 1, 2]))?;
-//! api::call_method(&mut interp, &guard, &arr, "sort", &[])?;
-//! let joined = api::call_method(&mut interp, &guard, &arr, "join", &[JsValue::from("-")])?;
+//! let arr = api::create_from_json(&mut interp, &guard, &serde_json::json!([3, 1, 2])).unwrap();
+//! api::call_method(&mut interp, &guard, &arr, "sort", &[]).unwrap();
+//! let joined = api::call_method(&mut interp, &guard, &arr, "join", &[JsValue::from("-")]).unwrap();
 //! assert_eq!(joined.as_str(), Some("1-2-3"));
 //! ```
 
@@ -45,11 +45,12 @@ use crate::value::{self, CheapClone, JsObject, JsValue};
 /// remain alive as long as the guard exists.
 ///
 /// # Example
-/// ```ignore
+/// ```
+/// use tsrun::{Interpreter, api};
+///
+/// let interp = Interpreter::new();
 /// let guard = api::create_guard(&interp);
-/// let obj = api::create_object(&mut interp, &guard)?;
-/// // obj is kept alive by guard
-/// // When guard is dropped, obj may be collected
+/// // All objects created with this guard stay alive until guard is dropped
 /// ```
 pub fn create_guard(interp: &Interpreter) -> Guard<JsObject> {
     interp.heap.create_guard()
@@ -70,10 +71,16 @@ pub fn create_guard(interp: &Interpreter) -> Guard<JsObject> {
 /// For complex types (objects, arrays), use `create_from_json()` instead.
 ///
 /// # Example
-/// ```ignore
+/// ```
+/// use tsrun::api;
+///
 /// let num = api::create_value(42);
 /// let text = api::create_value("hello");
 /// let flag = api::create_value(true);
+///
+/// assert_eq!(num.as_number(), Some(42.0));
+/// assert_eq!(text.as_str(), Some("hello"));
+/// assert_eq!(flag.as_bool(), Some(true));
 /// ```
 pub fn create_value<T: Into<JsValue>>(value: T) -> JsValue {
     value.into()
@@ -94,16 +101,20 @@ pub fn create_null() -> JsValue {
 /// The created objects are added to the provided guard to keep them alive.
 ///
 /// # Example
-/// ```ignore
+/// ```
+/// use tsrun::{Interpreter, api};
 /// use serde_json::json;
 ///
-/// let guard = interp.heap.create_guard();
+/// let mut interp = Interpreter::new();
+/// let guard = api::create_guard(&interp);
+///
 /// let user = api::create_from_json(&mut interp, &guard, &json!({
 ///     "name": "Alice",
 ///     "age": 30
-/// }))?;
+/// })).unwrap();
 ///
-/// let items = api::create_from_json(&mut interp, &guard, &json!([1, 2, 3]))?;
+/// let items = api::create_from_json(&mut interp, &guard, &json!([1, 2, 3])).unwrap();
+/// assert_eq!(api::len(&items), Some(3));
 /// ```
 pub fn create_from_json(
     interp: &mut Interpreter,
@@ -116,9 +127,13 @@ pub fn create_from_json(
 /// Create an empty object.
 ///
 /// # Example
-/// ```ignore
-/// let guard = interp.heap.create_guard();
-/// let obj = api::create_object(&mut interp, &guard)?;
+/// ```
+/// use tsrun::{Interpreter, api, JsValue};
+///
+/// let mut interp = Interpreter::new();
+/// let guard = api::create_guard(&interp);
+/// let obj = api::create_object(&mut interp, &guard).unwrap();
+/// api::set_property(&obj, "x", JsValue::from(42)).unwrap();
 /// ```
 pub fn create_object(
     interp: &mut Interpreter,
@@ -130,9 +145,14 @@ pub fn create_object(
 /// Create an empty array.
 ///
 /// # Example
-/// ```ignore
-/// let guard = interp.heap.create_guard();
-/// let arr = api::create_array(&mut interp, &guard)?;
+/// ```
+/// use tsrun::{Interpreter, api, JsValue};
+///
+/// let mut interp = Interpreter::new();
+/// let guard = api::create_guard(&interp);
+/// let arr = api::create_array(&mut interp, &guard).unwrap();
+/// api::push(&arr, JsValue::from(1)).unwrap();
+/// assert_eq!(api::len(&arr), Some(1));
 /// ```
 pub fn create_array(interp: &mut Interpreter, guard: &Guard<JsObject>) -> Result<JsValue, JsError> {
     create_from_json(interp, guard, &serde_json::json!([]))
@@ -148,10 +168,14 @@ pub fn create_array(interp: &mut Interpreter, guard: &Guard<JsObject>) -> Result
 /// ensure it's guarded if needed for GC safety.
 ///
 /// # Example
-/// ```ignore
-/// let guard = interp.heap.create_guard();
-/// let user = api::create_from_json(&mut interp, &guard, &json!({"name": "Alice", "age": 30}))?;
-/// let name = api::get_property(&user, "name")?;
+/// ```
+/// use tsrun::{Interpreter, api};
+/// use serde_json::json;
+///
+/// let mut interp = Interpreter::new();
+/// let guard = api::create_guard(&interp);
+/// let user = api::create_from_json(&mut interp, &guard, &json!({"name": "Alice", "age": 30})).unwrap();
+/// let name = api::get_property(&user, "name").unwrap();
 /// assert_eq!(name.as_str(), Some("Alice"));
 /// ```
 pub fn get_property(obj: &JsValue, key: &str) -> Result<JsValue, JsError> {
@@ -173,10 +197,14 @@ pub fn get_property(obj: &JsValue, key: &str) -> Result<JsValue, JsError> {
 /// Returns undefined if the index is out of bounds.
 ///
 /// # Example
-/// ```ignore
-/// let guard = interp.heap.create_guard();
-/// let arr = api::create_from_json(&mut interp, &guard, &json!([10, 20, 30]))?;
-/// let first = api::get_index(&arr, 0)?;
+/// ```
+/// use tsrun::{Interpreter, api};
+/// use serde_json::json;
+///
+/// let mut interp = Interpreter::new();
+/// let guard = api::create_guard(&interp);
+/// let arr = api::create_from_json(&mut interp, &guard, &json!([10, 20, 30])).unwrap();
+/// let first = api::get_index(&arr, 0).unwrap();
 /// assert_eq!(first.as_number(), Some(10.0));
 /// ```
 pub fn get_index(arr: &JsValue, index: usize) -> Result<JsValue, JsError> {
@@ -197,13 +225,16 @@ pub fn get_index(arr: &JsValue, index: usize) -> Result<JsValue, JsError> {
 /// Get all elements of an array as JsValues.
 ///
 /// # Example
-/// ```ignore
-/// let guard = interp.heap.create_guard();
-/// let arr = api::create_from_json(&mut interp, &guard, &json!([1, 2, 3]))?;
-/// let elements = api::get_elements(&arr)?;
-/// for elem in elements {
-///     println!("{}", elem);
-/// }
+/// ```
+/// use tsrun::{Interpreter, api};
+/// use serde_json::json;
+///
+/// let mut interp = Interpreter::new();
+/// let guard = api::create_guard(&interp);
+/// let arr = api::create_from_json(&mut interp, &guard, &json!([1, 2, 3])).unwrap();
+/// let elements = api::get_elements(&arr).unwrap();
+/// assert_eq!(elements.len(), 3);
+/// assert_eq!(elements[0].as_number(), Some(1.0));
 /// ```
 pub fn get_elements(arr: &JsValue) -> Result<Vec<JsValue>, JsError> {
     let object = arr
@@ -228,11 +259,16 @@ pub fn get_elements(arr: &JsValue) -> Result<Vec<JsValue>, JsError> {
 /// Set a property on an object.
 ///
 /// # Example
-/// ```ignore
-/// let guard = interp.heap.create_guard();
-/// let obj = api::create_object(&mut interp, &guard)?;
-/// api::set_property(&obj, "name", JsValue::from("Alice"))?;
-/// api::set_property(&obj, "age", JsValue::from(30))?;
+/// ```
+/// use tsrun::{Interpreter, api, JsValue};
+///
+/// let mut interp = Interpreter::new();
+/// let guard = api::create_guard(&interp);
+/// let obj = api::create_object(&mut interp, &guard).unwrap();
+/// api::set_property(&obj, "name", JsValue::from("Alice")).unwrap();
+/// api::set_property(&obj, "age", JsValue::from(30)).unwrap();
+///
+/// assert_eq!(api::get_property(&obj, "name").unwrap().as_str(), Some("Alice"));
 /// ```
 pub fn set_property(obj: &JsValue, key: &str, value: JsValue) -> Result<(), JsError> {
     let object = obj
@@ -250,10 +286,15 @@ pub fn set_property(obj: &JsValue, key: &str, value: JsValue) -> Result<(), JsEr
 /// with undefined values.
 ///
 /// # Example
-/// ```ignore
-/// let guard = interp.heap.create_guard();
-/// let arr = api::create_from_json(&mut interp, &guard, &json!([1, 2, 3]))?;
-/// api::set_index(&arr, 1, JsValue::from(20))?;  // [1, 20, 3]
+/// ```
+/// use tsrun::{Interpreter, api, JsValue};
+/// use serde_json::json;
+///
+/// let mut interp = Interpreter::new();
+/// let guard = api::create_guard(&interp);
+/// let arr = api::create_from_json(&mut interp, &guard, &json!([1, 2, 3])).unwrap();
+/// api::set_index(&arr, 1, JsValue::from(20)).unwrap();  // [1, 20, 3]
+/// assert_eq!(api::get_index(&arr, 1).unwrap().as_number(), Some(20.0));
 /// ```
 pub fn set_index(arr: &JsValue, index: usize, value: JsValue) -> Result<(), JsError> {
     let object = arr
@@ -286,12 +327,16 @@ pub fn set_index(arr: &JsValue, index: usize, value: JsValue) -> Result<(), JsEr
 /// Push a value onto an array.
 ///
 /// # Example
-/// ```ignore
-/// let guard = interp.heap.create_guard();
-/// let arr = api::create_array(&mut interp, &guard)?;
-/// api::push(&arr, JsValue::from(1))?;
-/// api::push(&arr, JsValue::from(2))?;
+/// ```
+/// use tsrun::{Interpreter, api, JsValue};
+///
+/// let mut interp = Interpreter::new();
+/// let guard = api::create_guard(&interp);
+/// let arr = api::create_array(&mut interp, &guard).unwrap();
+/// api::push(&arr, JsValue::from(1)).unwrap();
+/// api::push(&arr, JsValue::from(2)).unwrap();
 /// // arr is now [1, 2]
+/// assert_eq!(api::len(&arr), Some(2));
 /// ```
 pub fn push(arr: &JsValue, value: JsValue) -> Result<(), JsError> {
     let object = arr
@@ -324,13 +369,17 @@ pub fn push(arr: &JsValue, value: JsValue) -> Result<(), JsError> {
 /// The result (if an object) is added to the provided guard.
 ///
 /// # Example
-/// ```ignore
-/// let guard = interp.heap.create_guard();
-/// let arr = api::create_from_json(&mut interp, &guard, &json!([3, 1, 2]))?;
-/// api::call_method(&mut interp, &guard, &arr, "sort", &[])?;
+/// ```
+/// use tsrun::{Interpreter, api, JsValue};
+/// use serde_json::json;
+///
+/// let mut interp = Interpreter::new();
+/// let guard = api::create_guard(&interp);
+/// let arr = api::create_from_json(&mut interp, &guard, &json!([3, 1, 2])).unwrap();
+/// api::call_method(&mut interp, &guard, &arr, "sort", &[]).unwrap();
 /// // arr is now [1, 2, 3]
 ///
-/// let result = api::call_method(&mut interp, &guard, &arr, "join", &[JsValue::from("-")])?;
+/// let result = api::call_method(&mut interp, &guard, &arr, "join", &[JsValue::from("-")]).unwrap();
 /// assert_eq!(result.as_str(), Some("1-2-3"));
 /// ```
 pub fn call_method(
@@ -376,16 +425,30 @@ pub fn call_method(
 /// The result (if an object) is added to the provided guard.
 ///
 /// # Example
-/// ```ignore
-/// let guard = interp.heap.create_guard();
-/// // After running: "function add(a, b) { return a + b; } add"
+/// ```
+/// use tsrun::{Interpreter, StepResult, api, JsValue};
+///
+/// let mut interp = Interpreter::new();
+/// interp.prepare("function add(a, b) { return a + b; } add", None).unwrap();
+///
+/// // Run to get the function
+/// let add_fn = loop {
+///     match interp.step().unwrap() {
+///         StepResult::Continue => continue,
+///         StepResult::Complete(v) => break v,
+///         _ => panic!("Unexpected"),
+///     }
+/// };
+///
+/// // Call the function
+/// let guard = api::create_guard(&interp);
 /// let sum = api::call_function(
 ///     &mut interp,
 ///     &guard,
-///     &add_fn,
+///     add_fn.value(),
 ///     None,
 ///     &[JsValue::from(10), JsValue::from(20)]
-/// )?;
+/// ).unwrap();
 /// assert_eq!(sum.as_number(), Some(30.0));
 /// ```
 pub fn call_function(
@@ -421,10 +484,15 @@ pub fn call_function(
 /// Does nothing for primitive values.
 ///
 /// # Example
-/// ```ignore
-/// let guard = interp.heap.create_guard();
-/// let value = api::get_property(&obj, "nested")?;
-/// api::guard_value(&guard, &value);  // Ensure nested object is kept alive
+/// ```
+/// use tsrun::{Interpreter, api};
+/// use serde_json::json;
+///
+/// let mut interp = Interpreter::new();
+/// let guard = api::create_guard(&interp);
+/// let obj = api::create_from_json(&mut interp, &guard, &json!({"nested": {"x": 1}})).unwrap();
+/// let nested = api::get_property(&obj, "nested").unwrap();
+/// api::guard_value(&guard, &nested);  // nested object kept alive by guard
 /// ```
 pub fn guard_value(guard: &Guard<JsObject>, value: &JsValue) {
     if let Some(obj) = value.as_object() {
@@ -437,9 +505,13 @@ pub fn guard_value(guard: &Guard<JsObject>, value: &JsValue) {
 /// Returns `None` if this is not an array.
 ///
 /// # Example
-/// ```ignore
-/// let guard = interp.heap.create_guard();
-/// let arr = api::create_from_json(&mut interp, &guard, &json!([1, 2, 3, 4, 5]))?;
+/// ```
+/// use tsrun::{Interpreter, api};
+/// use serde_json::json;
+///
+/// let mut interp = Interpreter::new();
+/// let guard = api::create_guard(&interp);
+/// let arr = api::create_from_json(&mut interp, &guard, &json!([1, 2, 3, 4, 5])).unwrap();
 /// assert_eq!(api::len(&arr), Some(5));
 /// ```
 pub fn len(arr: &JsValue) -> Option<usize> {
@@ -458,10 +530,14 @@ pub fn is_empty(arr: &JsValue) -> Option<bool> {
 /// Check if this value is an array.
 ///
 /// # Example
-/// ```ignore
-/// let guard = interp.heap.create_guard();
-/// let arr = api::create_from_json(&mut interp, &guard, &json!([1, 2, 3]))?;
-/// let obj = api::create_from_json(&mut interp, &guard, &json!({"x": 1}))?;
+/// ```
+/// use tsrun::{Interpreter, api};
+/// use serde_json::json;
+///
+/// let mut interp = Interpreter::new();
+/// let guard = api::create_guard(&interp);
+/// let arr = api::create_from_json(&mut interp, &guard, &json!([1, 2, 3])).unwrap();
+/// let obj = api::create_from_json(&mut interp, &guard, &json!({"x": 1})).unwrap();
 /// assert!(api::is_array(&arr));
 /// assert!(!api::is_array(&obj));
 /// ```
@@ -479,9 +555,13 @@ pub fn is_array(value: &JsValue) -> bool {
 /// Returns an empty vector if this is not an object.
 ///
 /// # Example
-/// ```ignore
-/// let guard = interp.heap.create_guard();
-/// let obj = api::create_from_json(&mut interp, &guard, &json!({"a": 1, "b": 2}))?;
+/// ```
+/// use tsrun::{Interpreter, api};
+/// use serde_json::json;
+///
+/// let mut interp = Interpreter::new();
+/// let guard = api::create_guard(&interp);
+/// let obj = api::create_from_json(&mut interp, &guard, &json!({"a": 1, "b": 2})).unwrap();
 /// let keys = api::keys(&obj);
 /// assert!(keys.contains(&"a".to_string()));
 /// assert!(keys.contains(&"b".to_string()));
@@ -523,20 +603,24 @@ pub fn as_object(value: &JsValue) -> Option<Gc<JsObject>> {
 /// Note: If the export is an object, you should guard it to prevent GC collection.
 ///
 /// # Example
-/// ```ignore
+/// ```
 /// use tsrun::{Interpreter, StepResult, api};
 ///
 /// let mut interp = Interpreter::new();
+/// interp.prepare(r#"export const VERSION = "1.0.0";"#, Some("/main.ts".into())).unwrap();
 ///
-/// // Evaluate a module with exports
-/// interp.prepare(r#"
-///     export const VERSION = "1.0.0";
-/// "#, Some("/main.ts".into())).unwrap();
-/// // ... run to completion ...
+/// // Run to completion
+/// loop {
+///     match interp.step().unwrap() {
+///         StepResult::Continue => continue,
+///         StepResult::Complete(_) => break,
+///         _ => break,
+///     }
+/// }
 ///
-/// // After completion, get exports
-/// let version = api::get_export(&interp, "VERSION");
-/// assert_eq!(version.unwrap().as_str(), Some("1.0.0"));
+/// // Get export
+/// let version = api::get_export(&interp, "VERSION").unwrap();
+/// assert_eq!(version.as_str(), Some("1.0.0"));
 /// ```
 pub fn get_export(interp: &Interpreter, name: &str) -> Option<JsValue> {
     interp.get_export(name)
@@ -547,14 +631,24 @@ pub fn get_export(interp: &Interpreter, name: &str) -> Option<JsValue> {
 /// Returns an empty vector if no main module has been evaluated.
 ///
 /// # Example
-/// ```ignore
-/// use tsrun::{Interpreter, api};
+/// ```
+/// use tsrun::{Interpreter, StepResult, api};
 ///
 /// let mut interp = Interpreter::new();
-/// // ... evaluate module with exports ...
+/// interp.prepare("export const a = 1; export const b = 2;", Some("/m.ts".into())).unwrap();
+///
+/// // Run to completion
+/// loop {
+///     match interp.step().unwrap() {
+///         StepResult::Continue => continue,
+///         StepResult::Complete(_) => break,
+///         _ => break,
+///     }
+/// }
 ///
 /// let exports = api::get_export_names(&interp);
-/// // exports contains ["a", "b", "c"]
+/// assert!(exports.contains(&"a".to_string()));
+/// assert!(exports.contains(&"b".to_string()));
 /// ```
 pub fn get_export_names(interp: &Interpreter) -> Vec<String> {
     interp.get_export_names()
@@ -572,19 +666,18 @@ use crate::{OrderId, RuntimeValue};
 /// The returned RuntimeValue keeps the object alive until it is consumed.
 ///
 /// # Example
-/// ```ignore
+/// ```
+/// use tsrun::{Interpreter, api, RuntimeValue};
 /// use serde_json::json;
 ///
+/// let mut interp = Interpreter::new();
 /// let response_value = api::create_response_object(&mut interp, &json!({
-///     "id": 1,
-///     "name": "John",
-///     "items": [1, 2, 3]
-/// }))?;
+///     "status": "ok",
+///     "data": [1, 2, 3]
+/// })).unwrap();
 ///
-/// let response = OrderResponse {
-///     id: order.id,
-///     result: Ok(response_value),
-/// };
+/// // response_value can be used in OrderResponse::result
+/// assert!(response_value.is_object());
 /// ```
 pub fn create_response_object(
     interp: &mut Interpreter,
@@ -604,18 +697,16 @@ pub fn create_response_object(
 /// Store it and later call `resolve_promise` or `reject_promise` to settle it.
 ///
 /// # Example
-/// ```ignore
-/// // Create an unresolved promise
+/// ```
+/// use tsrun::{Interpreter, api};
+///
+/// let mut interp = Interpreter::new();
 /// let promise = api::create_promise(&mut interp);
 ///
-/// // Return it as the response to an order
-/// interp.fulfill_orders(vec![OrderResponse {
-///     id: order.id,
-///     result: Ok(promise.clone()),
-/// }]);
+/// // The promise is pending until resolved
+/// assert!(promise.is_object());
 ///
-/// // Later, when the async operation completes:
-/// api::resolve_promise(&mut interp, &promise, result_value)?;
+/// // Later: api::resolve_promise(&mut interp, &promise, result_value)
 /// ```
 pub fn create_promise(interp: &mut Interpreter) -> RuntimeValue {
     let guard = interp.heap.create_guard();
@@ -633,17 +724,15 @@ pub fn create_promise(interp: &mut Interpreter) -> RuntimeValue {
 /// cancellation notification when the Promise is no longer needed.
 ///
 /// # Example
-/// ```ignore
-/// let order_id = order.id;
+/// ```
+/// use tsrun::{Interpreter, api, OrderId};
+///
+/// let mut interp = Interpreter::new();
+/// let order_id = OrderId(42);
 /// let promise = api::create_order_promise(&mut interp, order_id);
 ///
-/// interp.fulfill_orders(vec![OrderResponse {
-///     id: order_id,
-///     result: Ok(promise.clone()),
-/// }]);
-///
-/// // If this Promise loses in a Promise.race(), order_id will be in
-/// // StepResult::Suspended { cancelled: vec![order_id], ... }
+/// // Promise is linked to order_id for cancellation tracking
+/// assert!(promise.is_object());
 /// ```
 pub fn create_order_promise(interp: &mut Interpreter, order_id: OrderId) -> RuntimeValue {
     let guard = interp.heap.create_guard();

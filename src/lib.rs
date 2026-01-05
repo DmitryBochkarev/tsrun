@@ -1,6 +1,10 @@
-//! TypeScript interpreter for config/manifest generation
+//! TypeScript interpreter for config/manifest generation.
 //!
-//! # Example
+//! This crate provides a TypeScript/JavaScript interpreter written in Rust,
+//! designed for executing configuration scripts and generating manifests.
+//! Types are parsed but stripped at runtime (not type-checked).
+//!
+//! # Quick Start
 //!
 //! ```
 //! use tsrun::{Interpreter, StepResult};
@@ -8,7 +12,6 @@
 //! let mut interp = Interpreter::new();
 //! interp.prepare("1 + 2 * 3", None).unwrap();
 //!
-//! // Step until completion
 //! loop {
 //!     match interp.step().unwrap() {
 //!         StepResult::Continue => continue,
@@ -19,6 +22,113 @@
 //!         _ => panic!("Unexpected result"),
 //!     }
 //! }
+//! ```
+//!
+//! # Execution Model
+//!
+//! The interpreter uses step-based execution, giving hosts full control:
+//!
+//! - [`Interpreter::prepare`] - Compiles code and prepares for execution
+//! - [`Interpreter::step`] - Executes one instruction, returns [`StepResult`]
+//! - [`StepResult::NeedImports`] - Execution paused, waiting for ES modules
+//! - [`StepResult::Suspended`] - Execution paused, waiting for async operations
+//!
+//! # Working with Values
+//!
+//! Use the [`api`] module for creating and manipulating JavaScript values:
+//!
+//! ```
+//! use tsrun::{Interpreter, api};
+//!
+//! let mut interp = Interpreter::new();
+//! let guard = api::create_guard(&interp);
+//!
+//! // Create objects from JSON
+//! let user = api::create_from_json(&mut interp, &guard, &serde_json::json!({
+//!     "name": "Alice",
+//!     "scores": [95, 87, 92]
+//! })).unwrap();
+//!
+//! // Read properties
+//! let name = api::get_property(&user, "name").unwrap();
+//! assert_eq!(name.as_str(), Some("Alice"));
+//!
+//! // Call methods on arrays
+//! let scores = api::get_property(&user, "scores").unwrap();
+//! let joined = api::call_method(&mut interp, &guard, &scores, "join", &["-".into()]).unwrap();
+//! assert_eq!(joined.as_str(), Some("95-87-92"));
+//! ```
+//!
+//! # Module Loading
+//!
+//! ES modules are loaded on-demand. When execution needs an import:
+//!
+//! ```
+//! use tsrun::{Interpreter, StepResult, ModulePath};
+//!
+//! let mut interp = Interpreter::new();
+//! interp.prepare(r#"import { x } from "./config.ts"; x"#, Some("/main.ts".into())).unwrap();
+//!
+//! loop {
+//!     match interp.step().unwrap() {
+//!         StepResult::Continue => continue,
+//!         StepResult::NeedImports(imports) => {
+//!             for import in imports {
+//!                 // Host provides module source code
+//!                 let source = "export const x = 42;";
+//!                 interp.provide_module(import.resolved_path, source).unwrap();
+//!             }
+//!         }
+//!         StepResult::Complete(value) => {
+//!             assert_eq!(value.as_number(), Some(42.0));
+//!             break;
+//!         }
+//!         _ => break,
+//!     }
+//! }
+//! ```
+//!
+//! # Internal Modules
+//!
+//! Register Rust functions as importable modules:
+//!
+//! ```
+//! use tsrun::{Interpreter, InterpreterConfig, InternalModule, JsValue, Guarded, JsError};
+//!
+//! fn get_version(
+//!     _interp: &mut Interpreter,
+//!     _this: JsValue,
+//!     _args: &[JsValue]
+//! ) -> Result<Guarded, JsError> {
+//!     Ok(Guarded::unguarded(JsValue::from("1.0.0")))
+//! }
+//!
+//! let config = InterpreterConfig {
+//!     internal_modules: vec![
+//!         InternalModule::native("app:version")
+//!             .with_function("getVersion", get_version, 0)
+//!             .build(),
+//!     ],
+//! };
+//! let interp = Interpreter::with_config(config);
+//! // Now code can: import { getVersion } from "app:version";
+//! ```
+//!
+//! # GC Safety
+//!
+//! Objects are garbage-collected. Use [`Guard`] to keep them alive:
+//!
+//! ```
+//! use tsrun::{Interpreter, api};
+//!
+//! let mut interp = Interpreter::new();
+//! let guard = api::create_guard(&interp);
+//!
+//! // Objects allocated with guard stay alive until guard is dropped
+//! let obj = api::create_object(&mut interp, &guard).unwrap();
+//! api::set_property(&obj, "x", 42.into()).unwrap();
+//!
+//! // guard dropped here - obj may be collected
 //! ```
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -113,18 +223,37 @@ pub struct OrderResponse {
 /// the `RuntimeValue` exists. The guard is private to prevent accidental
 /// extraction of the value without the guard.
 ///
-/// # Example
-/// ```ignore
-/// let result = runtime.run("{ foo: 42 }", None)?;
-/// match result {
-///     RuntimeResult::Complete(runtime_value) => {
-///         // Value is guaranteed alive while runtime_value exists
-///         let value = runtime_value.value();
-///         println!("{:?}", value);
+/// # Creating RuntimeValues
+///
+/// For primitives (no GC needed):
+/// ```
+/// use tsrun::{RuntimeValue, JsValue};
+///
+/// let num = RuntimeValue::unguarded(JsValue::from(42.0));
+/// assert_eq!(num.as_number(), Some(42.0));
+///
+/// let text = RuntimeValue::unguarded(JsValue::from("hello"));
+/// assert_eq!(text.as_str(), Some("hello"));
+/// ```
+///
+/// For objects returned from execution:
+/// ```
+/// use tsrun::{Interpreter, StepResult};
+///
+/// let mut interp = Interpreter::new();
+/// interp.prepare("({ x: 1, y: 2 })", None).unwrap();
+///
+/// loop {
+///     match interp.step().unwrap() {
+///         StepResult::Continue => continue,
+///         StepResult::Complete(value) => {
+///             // value is a RuntimeValue keeping the object alive
+///             assert!(value.is_object());
+///             break;
+///         }
+///         _ => break,
 ///     }
-///     _ => {}
 /// }
-/// // Guard dropped here, object may be collected
 /// ```
 pub struct RuntimeValue {
     value: JsValue,
@@ -349,6 +478,29 @@ impl PartialEq<RuntimeValue> for JsValue {
 /// - Forward slashes only
 /// - No trailing slashes
 /// - Absolute (starts with `/` or is a bare specifier like `lodash`)
+///
+/// # Resolution Examples
+///
+/// ```
+/// use tsrun::ModulePath;
+///
+/// // Relative paths resolve against a base
+/// let base = ModulePath::new("/src/app/main.ts");
+/// let resolved = ModulePath::resolve("./utils.ts", Some(&base));
+/// assert_eq!(resolved.as_str(), "/src/app/utils.ts");
+///
+/// // Parent directory traversal
+/// let resolved = ModulePath::resolve("../lib/helper.ts", Some(&base));
+/// assert_eq!(resolved.as_str(), "/src/lib/helper.ts");
+///
+/// // Bare specifiers pass through for host resolution
+/// let resolved = ModulePath::resolve("lodash", Some(&base));
+/// assert_eq!(resolved.as_str(), "lodash");
+///
+/// // Absolute paths are just normalized
+/// let resolved = ModulePath::resolve("/lib/../src/index.ts", None);
+/// assert_eq!(resolved.as_str(), "/src/index.ts");
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ModulePath(String);
 
@@ -474,6 +626,28 @@ pub struct ImportRequest {
 /// Step-based execution gives the host full control over when execution should stop.
 /// The host calls `step()` repeatedly until it receives a terminal result
 /// (`Complete`, `NeedImports`, `Suspended`), or decides to stop early.
+///
+/// # Execution Loop
+///
+/// ```
+/// use tsrun::{Interpreter, StepResult};
+///
+/// fn run_to_completion(interp: &mut Interpreter) -> Option<f64> {
+///     loop {
+///         match interp.step().ok()? {
+///             StepResult::Continue => continue,
+///             StepResult::Complete(val) => return val.as_number(),
+///             StepResult::NeedImports(_) => return None, // would need module loading
+///             StepResult::Suspended { .. } => return None, // would need async handling
+///             StepResult::Done => return None,
+///         }
+///     }
+/// }
+///
+/// let mut interp = Interpreter::new();
+/// interp.prepare("2 ** 10", None).unwrap();
+/// assert_eq!(run_to_completion(&mut interp), Some(1024.0));
+/// ```
 #[derive(Debug)]
 pub enum StepResult {
     /// Executed one instruction, more to execute.
@@ -530,7 +704,40 @@ pub enum InternalModuleKind {
     Source(String),
 }
 
-/// Definition of an internal module
+/// Definition of an internal module that can be imported from JavaScript.
+///
+/// Internal modules allow you to expose Rust functions to JavaScript code.
+/// They're imported using the specifier you define (e.g., `import { x } from "mymodule"`).
+///
+/// # Native Module (Rust functions)
+///
+/// ```
+/// use tsrun::{InternalModule, JsValue, Guarded, JsError, Interpreter};
+///
+/// fn add(_: &mut Interpreter, _: JsValue, args: &[JsValue]) -> Result<Guarded, JsError> {
+///     let a = args.first().and_then(|v| v.as_number()).unwrap_or(0.0);
+///     let b = args.get(1).and_then(|v| v.as_number()).unwrap_or(0.0);
+///     Ok(Guarded::unguarded(JsValue::from(a + b)))
+/// }
+///
+/// let module = InternalModule::native("math:utils")
+///     .with_function("add", add, 2)
+///     .with_value("PI", JsValue::from(3.14159))
+///     .build();
+///
+/// assert_eq!(module.specifier, "math:utils");
+/// ```
+///
+/// # Source Module (TypeScript code)
+///
+/// ```
+/// use tsrun::InternalModule;
+///
+/// let module = InternalModule::source("config:defaults", r#"
+///     export const timeout = 5000;
+///     export const retries = 3;
+/// "#);
+/// ```
 pub struct InternalModule {
     /// The import specifier (e.g., "eval:internal", "eval:fs")
     pub specifier: String,

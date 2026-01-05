@@ -1,4 +1,34 @@
-//! Error types for the TypeScript interpreter
+//! Error types for the TypeScript interpreter.
+//!
+//! [`JsError`] represents errors that can occur during parsing or execution.
+//!
+//! # Error Kinds
+//!
+//! | Error | When |
+//! |-------|------|
+//! | `SyntaxError` | Parsing failures |
+//! | `TypeError` | Type mismatches at runtime |
+//! | `ReferenceError` | Undefined variable access |
+//! | `RangeError` | Value out of valid range |
+//! | `ModuleError` | Module loading failures |
+//!
+//! # Creating Errors
+//!
+//! ```
+//! use tsrun::JsError;
+//!
+//! // Type error (most common)
+//! let err = JsError::type_error("Cannot read property of undefined");
+//! assert!(err.to_string().contains("TypeError"));
+//!
+//! // Reference error
+//! let err = JsError::reference_error("foo");
+//! assert!(err.to_string().contains("foo is not defined"));
+//!
+//! // Range error
+//! let err = JsError::range_error("Invalid array length");
+//! assert!(err.to_string().contains("RangeError"));
+//! ```
 
 use crate::prelude::*;
 use crate::value::Guarded;
@@ -49,7 +79,26 @@ impl fmt::Display for StackFrame {
     }
 }
 
-/// Main error type for the interpreter
+/// Main error type for the interpreter.
+///
+/// Corresponds to JavaScript's built-in error types. Use the constructor
+/// methods (`type_error`, `reference_error`, etc.) to create errors.
+///
+/// # Example
+///
+/// ```
+/// use tsrun::JsError;
+///
+/// fn divide(a: f64, b: f64) -> Result<f64, JsError> {
+///     if b == 0.0 {
+///         return Err(JsError::range_error("Division by zero"));
+///     }
+///     Ok(a / b)
+/// }
+///
+/// assert!(divide(10.0, 0.0).is_err());
+/// assert_eq!(divide(10.0, 2.0).unwrap(), 5.0);
+/// ```
 #[derive(Debug)]
 pub enum JsError {
     SyntaxError {
