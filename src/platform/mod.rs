@@ -6,8 +6,14 @@
 #[cfg(feature = "std")]
 mod std_impl;
 
+#[cfg(all(target_arch = "wasm32", feature = "wasm"))]
+mod wasm_impl;
+
 #[cfg(feature = "std")]
-pub use std_impl::{StdRandomProvider, StdTimeProvider};
+pub use std_impl::{StdConsoleProvider, StdRandomProvider, StdTimeProvider};
+
+#[cfg(all(target_arch = "wasm32", feature = "wasm"))]
+pub use wasm_impl::{WasmConsoleProvider, WasmRandomProvider, WasmTimeProvider};
 
 /// Trait for providing time-related functionality.
 ///
@@ -63,5 +69,45 @@ impl RandomProvider for NoOpRandomProvider {
     fn random(&mut self) -> f64 {
         // Return 0.5 as a predictable fallback
         0.5
+    }
+}
+
+/// Log level for console output.
+///
+/// Maps to the different console methods: console.log(), console.warn(), etc.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConsoleLevel {
+    /// console.log() - general output
+    Log,
+    /// console.info() - informational messages
+    Info,
+    /// console.debug() - debug messages
+    Debug,
+    /// console.warn() - warnings
+    Warn,
+    /// console.error() - errors
+    Error,
+}
+
+/// Trait for handling console output.
+///
+/// In std environments, this writes to stdout/stderr.
+/// In WASM environments, this calls the browser's console object.
+/// In no_std environments, this is a no-op.
+pub trait ConsoleProvider {
+    /// Write a message at the specified log level.
+    fn write(&self, level: ConsoleLevel, message: &str);
+
+    /// Clear the console (optional operation, may be no-op).
+    fn clear(&self) {}
+}
+
+/// A no-op console provider that discards all output.
+/// Used as a fallback in no_std environments.
+pub struct NoOpConsoleProvider;
+
+impl ConsoleProvider for NoOpConsoleProvider {
+    fn write(&self, _level: ConsoleLevel, _message: &str) {
+        // Discard output
     }
 }

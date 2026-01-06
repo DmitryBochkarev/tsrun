@@ -10,11 +10,14 @@ pub mod bytecode_vm;
 
 use crate::prelude::*;
 
+// Platform provider imports based on target/features
 #[cfg(feature = "std")]
-use crate::platform::{StdRandomProvider, StdTimeProvider};
-#[cfg(not(feature = "std"))]
-use crate::platform::{NoOpRandomProvider, NoOpTimeProvider};
-use crate::platform::{RandomProvider, TimeProvider};
+use crate::platform::{StdConsoleProvider, StdRandomProvider, StdTimeProvider};
+#[cfg(all(target_arch = "wasm32", feature = "wasm", not(feature = "std")))]
+use crate::platform::{WasmConsoleProvider, WasmRandomProvider, WasmTimeProvider};
+#[cfg(all(not(feature = "std"), not(all(target_arch = "wasm32", feature = "wasm"))))]
+use crate::platform::{NoOpConsoleProvider, NoOpRandomProvider, NoOpTimeProvider};
+use crate::platform::{ConsoleLevel, ConsoleProvider, RandomProvider, TimeProvider};
 
 use crate::StepResult;
 use crate::ast::{ImportSpecifier, Program, Statement};
@@ -266,6 +269,9 @@ pub struct Interpreter {
     /// Random provider for Math.random()
     random_provider: Box<dyn RandomProvider>,
 
+    /// Console provider for console.log(), console.error(), etc.
+    console_provider: Box<dyn ConsoleProvider>,
+
     // ═══════════════════════════════════════════════════════════════════════════
     // Step-based Execution
     // ═══════════════════════════════════════════════════════════════════════════
@@ -454,15 +460,25 @@ impl Interpreter {
             console_counters: FxHashMap::default(),
             current_ffi_id: 0,
             ffi_context: core::ptr::null_mut(),
-            // Platform providers
+            // Platform providers - std takes priority, then wasm, then no-op
             #[cfg(feature = "std")]
             time_provider: Box::new(StdTimeProvider::new()),
-            #[cfg(not(feature = "std"))]
+            #[cfg(all(target_arch = "wasm32", feature = "wasm", not(feature = "std")))]
+            time_provider: Box::new(WasmTimeProvider::new()),
+            #[cfg(all(not(feature = "std"), not(all(target_arch = "wasm32", feature = "wasm"))))]
             time_provider: Box::new(NoOpTimeProvider),
             #[cfg(feature = "std")]
             random_provider: Box::new(StdRandomProvider::new()),
-            #[cfg(not(feature = "std"))]
+            #[cfg(all(target_arch = "wasm32", feature = "wasm", not(feature = "std")))]
+            random_provider: Box::new(WasmRandomProvider::new()),
+            #[cfg(all(not(feature = "std"), not(all(target_arch = "wasm32", feature = "wasm"))))]
             random_provider: Box::new(NoOpRandomProvider),
+            #[cfg(feature = "std")]
+            console_provider: Box::new(StdConsoleProvider::new()),
+            #[cfg(all(target_arch = "wasm32", feature = "wasm", not(feature = "std")))]
+            console_provider: Box::new(WasmConsoleProvider::new()),
+            #[cfg(all(not(feature = "std"), not(all(target_arch = "wasm32", feature = "wasm"))))]
+            console_provider: Box::new(NoOpConsoleProvider),
             // Step-based execution
             active_vm: None,
             active_module_path: None,
@@ -496,6 +512,16 @@ impl Interpreter {
         // Register built-in internal modules
         interp.register_internal_module(builtins::create_eval_internal_module());
 
+        interp
+    }
+
+    /// Create a new interpreter with a custom console provider.
+    ///
+    /// This is useful for WASM environments where you want to capture
+    /// console output into a buffer rather than sending it to the browser console.
+    pub fn with_console(console_provider: Box<dyn ConsoleProvider>) -> Self {
+        let mut interp = Self::new();
+        interp.console_provider = console_provider;
         interp
     }
 
@@ -720,6 +746,18 @@ impl Interpreter {
     /// Used by Math.random()
     pub fn random(&mut self) -> f64 {
         self.random_provider.random()
+    }
+
+    /// Write a message to the console at the specified level.
+    /// Used by console.log(), console.error(), etc.
+    pub fn console_write(&self, level: ConsoleLevel, message: &str) {
+        self.console_provider.write(level, message);
+    }
+
+    /// Clear the console.
+    /// Used by console.clear()
+    pub fn console_clear(&self) {
+        self.console_provider.clear();
     }
 
     /// Increment a console counter and return the new count

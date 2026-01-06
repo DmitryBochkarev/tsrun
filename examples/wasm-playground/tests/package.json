@@ -1,0 +1,10 @@
+{
+  "name": "tsrun-wasm-tests",
+  "version": "1.0.0",
+  "description": "End-to-end tests for tsrun WASM module",
+  "type": "module",
+  "scripts": {
+    "test": "node test.js"
+  },
+  "devDependencies": {}
+}

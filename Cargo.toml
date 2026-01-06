@@ -39,11 +39,14 @@ std = ["regex", "console", "serde/std", "serde_json/std", "rustc-hash/std"]
 # Regex support (requires std due to fancy-regex)
 regex = ["dep:fancy-regex"]
 
-# Console builtin (requires std for println!)
+# Console builtin (now works with any ConsoleProvider)
 console = []
 
 # C API for embedding (no_std compatible)
 c-api = []
+
+# WebAssembly support with browser APIs
+wasm = ["dep:wasm-bindgen", "console"]
 
 [dependencies]
 serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
@@ -53,6 +56,10 @@ fancy-regex = { version = "0.17", optional = true }
 rustc-hash = { version = "2.1", default-features = false }
 hashbrown = { version = "0.15", default-features = false, features = ["default-hasher"] }
 libm = "0.2"
+
+# WASM dependencies (optional)
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = { version = "0.2", optional = true }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
@@ -86,3 +93,6 @@ panic = "abort"
 inherits = "release"
 debug = true
 strip = false
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false

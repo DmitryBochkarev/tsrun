@@ -527,6 +527,7 @@ dependencies = [
  "rustc-hash",
  "serde",
  "serde_json",
+ "wasm-bindgen",
 ]
 
 [[package]]

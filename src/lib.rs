@@ -159,6 +159,10 @@ pub mod value;
 #[cfg(feature = "c-api")]
 pub mod ffi;
 
+// WebAssembly module (only when wasm feature is enabled on wasm32 target)
+#[cfg(all(target_arch = "wasm32", feature = "wasm"))]
+pub mod wasm;
+
 use prelude::{format, String, Vec};
 
 pub use error::JsError;

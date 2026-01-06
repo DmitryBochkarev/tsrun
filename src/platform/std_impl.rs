@@ -2,7 +2,7 @@
 //!
 //! These implementations are only available when the `std` feature is enabled.
 
-use super::{RandomProvider, TimeProvider};
+use super::{ConsoleLevel, ConsoleProvider, RandomProvider, TimeProvider};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 /// Time provider using std::time.
@@ -98,5 +98,41 @@ impl RandomProvider for StdRandomProvider {
         // Use the upper 53 bits for better distribution
         let mantissa = x >> 11; // 53 bits
         (mantissa as f64) / ((1u64 << 53) as f64)
+    }
+}
+
+/// Console provider using std print macros.
+///
+/// Writes to stdout for Log/Info/Debug and stderr for Warn/Error.
+pub struct StdConsoleProvider;
+
+impl StdConsoleProvider {
+    /// Create a new StdConsoleProvider.
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Default for StdConsoleProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ConsoleProvider for StdConsoleProvider {
+    fn write(&self, level: ConsoleLevel, message: &str) {
+        match level {
+            ConsoleLevel::Log | ConsoleLevel::Info | ConsoleLevel::Debug => {
+                println!("{message}");
+            }
+            ConsoleLevel::Warn | ConsoleLevel::Error => {
+                eprintln!("{message}");
+            }
+        }
+    }
+
+    fn clear(&self) {
+        // Print some newlines as a visual separator
+        println!("\n--- Console cleared ---\n");
     }
 }

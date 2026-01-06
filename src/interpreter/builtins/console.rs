@@ -2,6 +2,7 @@
 
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
+use crate::platform::ConsoleLevel;
 use crate::prelude::*;
 use crate::value::{Guarded, JsValue, PropertyKey};
 
@@ -51,59 +52,59 @@ pub fn init_console(interp: &mut Interpreter) {
 }
 
 pub fn console_log(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
     let output: Vec<String> = args.iter().map(format_for_console).collect();
-    println!("{}", output.join(" "));
+    interp.console_write(ConsoleLevel::Log, &output.join(" "));
     Ok(Guarded::unguarded(JsValue::Undefined))
 }
 
 pub fn console_error(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
     let output: Vec<String> = args.iter().map(format_for_console).collect();
-    eprintln!("{}", output.join(" "));
+    interp.console_write(ConsoleLevel::Error, &output.join(" "));
     Ok(Guarded::unguarded(JsValue::Undefined))
 }
 
 pub fn console_warn(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
     let output: Vec<String> = args.iter().map(format_for_console).collect();
-    eprintln!("{}", output.join(" "));
+    interp.console_write(ConsoleLevel::Warn, &output.join(" "));
     Ok(Guarded::unguarded(JsValue::Undefined))
 }
 
 pub fn console_info(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
     let output: Vec<String> = args.iter().map(format_for_console).collect();
-    println!("{}", output.join(" "));
+    interp.console_write(ConsoleLevel::Info, &output.join(" "));
     Ok(Guarded::unguarded(JsValue::Undefined))
 }
 
 pub fn console_debug(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
     let output: Vec<String> = args.iter().map(format_for_console).collect();
-    println!("{}", output.join(" "));
+    interp.console_write(ConsoleLevel::Debug, &output.join(" "));
     Ok(Guarded::unguarded(JsValue::Undefined))
 }
 
 /// console.table(data, columns?)
 /// Displays tabular data as a table
 pub fn console_table(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
@@ -113,32 +114,34 @@ pub fn console_table(
         JsValue::Object(obj) => {
             let obj_ref = obj.borrow();
             if let Some(length) = obj_ref.array_length() {
-                println!("┌───────┬───────────┐");
-                println!("│ index │   value   │");
-                println!("├───────┼───────────┤");
+                interp.console_write(ConsoleLevel::Log, "┌───────┬───────────┐");
+                interp.console_write(ConsoleLevel::Log, "│ index │   value   │");
+                interp.console_write(ConsoleLevel::Log, "├───────┼───────────┤");
                 for i in 0..length {
                     let val = obj_ref
                         .get_property(&PropertyKey::Index(i))
                         .unwrap_or(JsValue::Undefined);
-                    println!("│ {:5} │ {:9} │", i, format!("{:?}", val));
-                }
-                println!("└───────┴───────────┘");
-            } else {
-                // Regular object - display properties
-                println!("┌─────────────┬───────────┐");
-                println!("│     key     │   value   │");
-                println!("├─────────────┼───────────┤");
-                for (key, prop) in obj_ref.properties.iter() {
-                    println!(
-                        "│ {:11} │ {:9} │",
-                        key.to_string(),
-                        format!("{:?}", prop.value)
+                    interp.console_write(
+                        ConsoleLevel::Log,
+                        &format!("│ {:5} │ {:9} │", i, format!("{:?}", val)),
                     );
                 }
-                println!("└─────────────┴───────────┘");
+                interp.console_write(ConsoleLevel::Log, "└───────┴───────────┘");
+            } else {
+                // Regular object - display properties
+                interp.console_write(ConsoleLevel::Log, "┌─────────────┬───────────┐");
+                interp.console_write(ConsoleLevel::Log, "│     key     │   value   │");
+                interp.console_write(ConsoleLevel::Log, "├─────────────┼───────────┤");
+                for (key, prop) in obj_ref.properties.iter() {
+                    interp.console_write(
+                        ConsoleLevel::Log,
+                        &format!("│ {:11} │ {:9} │", key.to_string(), format!("{:?}", prop.value)),
+                    );
+                }
+                interp.console_write(ConsoleLevel::Log, "└─────────────┴───────────┘");
             }
         }
-        _ => println!("{:?}", data),
+        _ => interp.console_write(ConsoleLevel::Log, &format!("{:?}", data)),
     }
     Ok(Guarded::unguarded(JsValue::Undefined))
 }
@@ -146,7 +149,7 @@ pub fn console_table(
 /// console.dir(obj, options?)
 /// Displays an interactive listing of the properties of a specified JavaScript object
 pub fn console_dir(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     _this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
@@ -155,13 +158,13 @@ pub fn console_dir(
     match &obj {
         JsValue::Object(o) => {
             let o_ref = o.borrow();
-            println!("Object {{");
+            interp.console_write(ConsoleLevel::Log, "Object {");
             for (key, prop) in o_ref.properties.iter() {
-                println!("  {}: {:?}", key, prop.value);
+                interp.console_write(ConsoleLevel::Log, &format!("  {}: {:?}", key, prop.value));
             }
-            println!("}}");
+            interp.console_write(ConsoleLevel::Log, "}");
         }
-        other => println!("{:?}", other),
+        other => interp.console_write(ConsoleLevel::Log, &format!("{:?}", other)),
     }
     Ok(Guarded::unguarded(JsValue::Undefined))
 }
@@ -195,8 +198,10 @@ pub fn console_time_end(
     };
 
     match interp.console_timer_end(&label) {
-        Some(elapsed_ms) => println!("{}: {}ms", label, elapsed_ms),
-        None => println!("Timer '{}' does not exist", label),
+        Some(elapsed_ms) => {
+            interp.console_write(ConsoleLevel::Log, &format!("{}: {}ms", label, elapsed_ms))
+        }
+        None => interp.console_write(ConsoleLevel::Warn, &format!("Timer '{}' does not exist", label)),
     }
     Ok(Guarded::unguarded(JsValue::Undefined))
 }
@@ -214,7 +219,7 @@ pub fn console_count(
     };
 
     let count = interp.console_counter_increment(label.clone());
-    println!("{}: {}", label, count);
+    interp.console_write(ConsoleLevel::Log, &format!("{}: {}", label, count));
     Ok(Guarded::unguarded(JsValue::Undefined))
 }
 
@@ -237,13 +242,11 @@ pub fn console_count_reset(
 /// console.clear()
 /// Clears the console
 pub fn console_clear(
-    _interp: &mut Interpreter,
+    interp: &mut Interpreter,
     _this: JsValue,
     _args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    // In a real terminal, we'd clear the screen
-    // For now, just print some newlines
-    println!("\n\n--- Console cleared ---\n\n");
+    interp.console_clear();
     Ok(Guarded::unguarded(JsValue::Undefined))
 }
 
@@ -260,9 +263,9 @@ pub fn console_group(
     };
 
     if label.is_empty() {
-        println!("▼");
+        interp.console_write(ConsoleLevel::Log, "▼");
     } else {
-        println!("▼ {}", label);
+        interp.console_write(ConsoleLevel::Log, &format!("▼ {}", label));
     }
     Ok(Guarded::unguarded(JsValue::Undefined))
 }
