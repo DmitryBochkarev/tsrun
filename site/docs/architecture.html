@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Architecture - tsrun</title>
+  <meta name="description" content="tsrun architecture - VM design, garbage collection, and internals.">
+  <link rel="stylesheet" href="/css/style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+  <style>
+    .pipeline {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      margin: 24px 0;
+      font-family: var(--font-mono);
+      font-size: 0.9rem;
+    }
+    .pipeline-step {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      padding: 8px 16px;
+      border-radius: var(--radius);
+    }
+    .pipeline-arrow {
+      color: var(--text-muted);
+    }
+    .arch-diagram {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 24px;
+      margin: 24px 0;
+      font-family: var(--font-mono);
+      font-size: 0.85rem;
+      overflow-x: auto;
+      white-space: pre;
+      line-height: 1.4;
+    }
+  </style>
+</head>
+<body>
+  <nav class="nav">
+    <div class="nav-container">
+      <a href="/" class="nav-brand">
+        <span>tsrun</span>
+      </a>
+      <ul class="nav-links">
+        <li><a href="/playground/">Playground</a></li>
+        <li><a href="/getting-started/">Getting Started</a></li>
+        <li><a href="/docs/" class="active">Documentation</a></li>
+        <li><a href="/examples/">Examples</a></li>
+      </ul>
+      <div class="nav-actions">
+        <button class="theme-toggle" aria-label="Toggle theme"></button>
+        <a href="https://github.com/DmitryBochkarev/tsrun" class="github-link" aria-label="GitHub">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
+          </svg>
+        </a>
+      </div>
+    </div>
+  </nav>
+
+  <main>
+    <div class="container">
+      <div class="docs-layout">
+        <aside class="docs-sidebar">
+          <h4>Documentation</h4>
+          <ul>
+            <li><a href="/docs/">Overview</a></li>
+            <li><a href="/docs/api.html">API Reference</a></li>
+            <li><a href="/docs/architecture.html" class="active">Architecture</a></li>
+          </ul>
+          <h4>On This Page</h4>
+          <ul>
+            <li><a href="#pipeline">Execution Pipeline</a></li>
+            <li><a href="#vm">Register-Based VM</a></li>
+            <li><a href="#values">Value Types</a></li>
+            <li><a href="#gc">Garbage Collection</a></li>
+            <li><a href="#modules">Module System</a></li>
+          </ul>
+        </aside>
+
+        <div class="docs-content">
+          <h1>Architecture</h1>
+
+          <p>tsrun uses a register-based bytecode VM for efficient execution. This page describes the key architectural components.</p>
+
+          <h2 id="pipeline">Execution Pipeline</h2>
+
+          <div class="pipeline">
+            <span class="pipeline-step">Source</span>
+            <span class="pipeline-arrow">&#x2192;</span>
+            <span class="pipeline-step">Lexer</span>
+            <span class="pipeline-arrow">&#x2192;</span>
+            <span class="pipeline-step">Parser</span>
+            <span class="pipeline-arrow">&#x2192;</span>
+            <span class="pipeline-step">AST</span>
+            <span class="pipeline-arrow">&#x2192;</span>
+            <span class="pipeline-step">Compiler</span>
+            <span class="pipeline-arrow">&#x2192;</span>
+            <span class="pipeline-step">Bytecode</span>
+            <span class="pipeline-arrow">&#x2192;</span>
+            <span class="pipeline-step">VM</span>
+            <span class="pipeline-arrow">&#x2192;</span>
+            <span class="pipeline-step">Result</span>
+          </div>
+
+          <div class="arch-diagram">RuntimeResult
+    |
+    +-- Complete(value)      // Execution finished
+    |
+    +-- NeedImports([...])   // Waiting for module sources
+    |
+    +-- Suspended {          // Async operation pending
+            pending: [...],
+            cancelled: [...]
+        }</div>
+
+          <h2 id="vm">Register-Based VM</h2>
+
+          <p>The VM uses registers instead of a stack, providing:</p>
+          <ul>
+            <li><strong>Fewer instructions</strong> - No push/pop overhead</li>
+            <li><strong>Better cache locality</strong> - Registers are contiguous in memory</li>
+            <li><strong>Efficient state capture</strong> - Easy to suspend/resume for async and generators</li>
+          </ul>
+
+          <p>Each function call frame has up to 256 registers (u8 index). The compiler allocates registers for:</p>
+          <ul>
+            <li>Local variables</li>
+            <li>Temporary values</li>
+            <li>Function arguments</li>
+            <li>Return values</li>
+          </ul>
+
+          <h3>Bytecode Instructions</h3>
+          <p>The VM has 100+ instruction types:</p>
+
+          <table>
+            <thead>
+              <tr>
+                <th>Category</th>
+                <th>Examples</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Load/Store</td>
+                <td><code>LoadConst</code>, <code>LoadLocal</code>, <code>StoreLocal</code>, <code>Move</code></td>
+              </tr>
+              <tr>
+                <td>Arithmetic</td>
+                <td><code>Add</code>, <code>Sub</code>, <code>Mul</code>, <code>Div</code>, <code>Mod</code></td>
+              </tr>
+              <tr>
+                <td>Comparison</td>
+                <td><code>Eq</code>, <code>Ne</code>, <code>Lt</code>, <code>Le</code>, <code>Gt</code>, <code>Ge</code></td>
+              </tr>
+              <tr>
+                <td>Control Flow</td>
+                <td><code>Jump</code>, <code>JumpIfTrue</code>, <code>JumpIfFalse</code></td>
+              </tr>
+              <tr>
+                <td>Functions</td>
+                <td><code>Call</code>, <code>Return</code>, <code>TailCall</code></td>
+              </tr>
+              <tr>
+                <td>Objects</td>
+                <td><code>GetProperty</code>, <code>SetProperty</code>, <code>CreateObject</code></td>
+              </tr>
+              <tr>
+                <td>Arrays</td>
+                <td><code>CreateArray</code>, <code>GetIndex</code>, <code>SetIndex</code></td>
+              </tr>
+              <tr>
+                <td>Async</td>
+                <td><code>Await</code>, <code>Yield</code>, <code>CreatePromise</code></td>
+              </tr>
+            </tbody>
+          </table>
+
+          <h2 id="values">Value Types</h2>
+
+          <p>JavaScript values are represented by the <code>JsValue</code> enum:</p>
+
+          <div class="code-block">
+            <div class="code-header">
+              <span class="lang">rust</span>
+              <button class="copy-btn">Copy</button>
+            </div>
+            <div class="code-content">
+              <pre><code class="language-rust">pub enum JsValue {
+    Undefined,
+    Null,
+    Boolean(bool),
+    Number(f64),
+    String(JsString),      // Rc&lt;str&gt; - cheap clone
+    Object(Gc&lt;JsObject&gt;),  // GC-managed object
+    Symbol(JsSymbol),
+}</code></pre>
+            </div>
+          </div>
+
+          <h3>Object Types</h3>
+          <p>Objects have an "exotic" type that determines special behavior:</p>
+
+          <table>
+            <thead>
+              <tr>
+                <th>Type</th>
+                <th>Description</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>Ordinary</code></td>
+                <td>Regular objects with properties</td>
+              </tr>
+              <tr>
+                <td><code>Array { length }</code></td>
+                <td>Array with tracked length</td>
+              </tr>
+              <tr>
+                <td><code>Function { ... }</code></td>
+                <td>Callable with environment</td>
+              </tr>
+              <tr>
+                <td><code>NativeFunction</code></td>
+                <td>Rust/C callback</td>
+              </tr>
+              <tr>
+                <td><code>BoundFunction</code></td>
+                <td>Function with bound this/args</td>
+              </tr>
+              <tr>
+                <td><code>Generator</code></td>
+                <td>Generator state machine</td>
+              </tr>
+              <tr>
+                <td><code>Promise</code></td>
+                <td>Promise with pending/fulfilled/rejected</td>
+              </tr>
+              <tr>
+                <td><code>Proxy</code></td>
+                <td>Proxy with handler traps</td>
+              </tr>
+              <tr>
+                <td><code>Map</code>, <code>Set</code></td>
+                <td>Collection types</td>
+              </tr>
+              <tr>
+                <td><code>Date</code></td>
+                <td>Date with timestamp</td>
+              </tr>
+              <tr>
+                <td><code>RegExp</code></td>
+                <td>Compiled regex</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <h2 id="gc">Garbage Collection</h2>
+
+          <p>tsrun uses a mark-and-sweep garbage collector with a guard system for safe object references.</p>
+
+          <h3>Guard System</h3>
+          <p>Guards keep objects alive during GC. The pattern is:</p>
+
+          <div class="code-block">
+            <div class="code-header">
+              <span class="lang">rust</span>
+              <button class="copy-btn">Copy</button>
+            </div>
+            <div class="code-content">
+              <pre><code class="language-rust">// Create guard BEFORE allocating
+let guard = heap.create_guard();
+
+// Guard existing values that might be collected
+heap.guard_value_with(&guard, &existing_value);
+
+// Now safe to allocate - GC won't collect guarded values
+let new_obj = create_object(&guard);</code></pre>
+            </div>
+          </div>
+
+          <h3>Key Rules</h3>
+          <ul>
+            <li><strong>Guard before allocate</strong> - GC runs during allocation</li>
+            <li><strong>Return Guarded</strong> - Functions returning objects return <code>Guarded</code> to keep values alive</li>
+            <li><strong>Guard scope in loops</strong> - Keep guards alive for the entire loop when collecting values</li>
+          </ul>
+
+          <h3>Collection Timing</h3>
+          <p>GC runs when heap size exceeds a threshold (configurable via <code>GC_THRESHOLD</code> env var). Collection is triggered during object allocation.</p>
+
+          <h2 id="modules">Module System</h2>
+
+          <p>ES modules use step-based loading:</p>
+
+          <ol>
+            <li>Parser encounters <code>import</code> statement</li>
+            <li>Compiler records import request</li>
+            <li>VM returns <code>NeedImports</code> with list of paths</li>
+            <li>Host provides module sources via <code>provide_module()</code></li>
+            <li>VM parses, compiles, and links modules</li>
+            <li>Execution continues</li>
+          </ol>
+
+          <p>This design allows the host to load modules from any source: filesystem, network, embedded resources, or generated code.</p>
+
+          <h3>Module Resolution</h3>
+          <p>Import specifiers are resolved relative to the importing module's path:</p>
+
+          <div class="code-block">
+            <div class="code-header">
+              <span class="lang">typescript</span>
+              <button class="copy-btn">Copy</button>
+            </div>
+            <div class="code-content">
+              <pre><code class="language-typescript">// In /app/main.ts
+import { util } from "./lib/util.ts";  // Resolves to /app/lib/util.ts
+import { core } from "../core.ts";     // Resolves to /core.ts</code></pre>
+            </div>
+          </div>
+
+          <h2>Source Structure</h2>
+
+          <table>
+            <thead>
+              <tr>
+                <th>File/Directory</th>
+                <th>Purpose</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>src/lib.rs</code></td>
+                <td>Public API - Interpreter, InterpreterConfig</td>
+              </tr>
+              <tr>
+                <td><code>src/lexer.rs</code></td>
+                <td>Tokenizer</td>
+              </tr>
+              <tr>
+                <td><code>src/parser.rs</code></td>
+                <td>Recursive descent + Pratt parsing</td>
+              </tr>
+              <tr>
+                <td><code>src/ast.rs</code></td>
+                <td>AST node types</td>
+              </tr>
+              <tr>
+                <td><code>src/value.rs</code></td>
+                <td>Runtime values, object model</td>
+              </tr>
+              <tr>
+                <td><code>src/gc.rs</code></td>
+                <td>Garbage collector, Guard system</td>
+              </tr>
+              <tr>
+                <td><code>src/compiler/</code></td>
+                <td>Bytecode compiler</td>
+              </tr>
+              <tr>
+                <td><code>src/interpreter/</code></td>
+                <td>VM and builtins</td>
+              </tr>
+              <tr>
+                <td><code>src/ffi/</code></td>
+                <td>C FFI module</td>
+              </tr>
+            </tbody>
+          </table>
+
+        </div>
+      </div>
+    </div>
+
+    <footer class="footer">
+      <div class="container">
+        <div class="footer-content">
+          <div class="footer-links">
+            <a href="https://github.com/DmitryBochkarev/tsrun">GitHub</a>
+            <a href="/docs/">Documentation</a>
+            <a href="/examples/">Examples</a>
+          </div>
+          <p class="footer-copy">MIT License</p>
+        </div>
+      </div>
+    </footer>
+  </main>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+  <script src="/js/main.js"></script>
+</body>
+</html>

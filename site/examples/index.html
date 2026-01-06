@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Examples - tsrun</title>
+  <meta name="description" content="tsrun code examples - TypeScript patterns and use cases.">
+  <link rel="stylesheet" href="/css/style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+</head>
+<body>
+  <nav class="nav">
+    <div class="nav-container">
+      <a href="/" class="nav-brand">
+        <span>tsrun</span>
+      </a>
+      <ul class="nav-links">
+        <li><a href="/playground/">Playground</a></li>
+        <li><a href="/getting-started/">Getting Started</a></li>
+        <li><a href="/docs/">Documentation</a></li>
+        <li><a href="/examples/" class="active">Examples</a></li>
+      </ul>
+      <div class="nav-actions">
+        <button class="theme-toggle" aria-label="Toggle theme"></button>
+        <a href="https://github.com/DmitryBochkarev/tsrun" class="github-link" aria-label="GitHub">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
+          </svg>
+        </a>
+      </div>
+    </div>
+  </nav>
+
+  <main>
+    <div class="container">
+      <div class="section-header" style="padding-top: 48px;">
+        <h1>Examples</h1>
+        <p>Code examples demonstrating tsrun features and patterns</p>
+      </div>
+
+      <h2 style="margin-top: 48px; margin-bottom: 24px;">TypeScript Features</h2>
+      <div class="examples-grid">
+        <a href="/playground/#classes" class="example-card">
+          <h4>Classes with Inheritance</h4>
+          <p>Classes, inheritance, static blocks, private fields, getters/setters</p>
+        </a>
+        <a href="/playground/#generators" class="example-card">
+          <h4>Generators</h4>
+          <p>function*, yield, yield*, lazy sequences</p>
+        </a>
+        <a href="/playground/#promises" class="example-card">
+          <h4>Promises</h4>
+          <p>Async/await, Promise.all, Promise.race</p>
+        </a>
+        <a href="/playground/#destructuring" class="example-card">
+          <h4>Destructuring</h4>
+          <p>Array and object destructuring, rest/spread</p>
+        </a>
+      </div>
+
+      <h2 style="margin-top: 48px; margin-bottom: 24px;">Built-in Objects</h2>
+      <div class="examples-grid">
+        <a href="/playground/#arrays" class="example-card">
+          <h4>Arrays</h4>
+          <p>map, filter, reduce, find, includes, and more</p>
+        </a>
+        <a href="/playground/#strings" class="example-card">
+          <h4>Strings</h4>
+          <p>Template literals, split, join, replace, regex</p>
+        </a>
+        <a href="/playground/#map-set" class="example-card">
+          <h4>Map & Set</h4>
+          <p>Key-value maps and unique value sets</p>
+        </a>
+        <a href="/playground/#regex" class="example-card">
+          <h4>RegExp</h4>
+          <p>Regular expressions with match, replace, test</p>
+        </a>
+        <a href="/playground/#json" class="example-card">
+          <h4>JSON</h4>
+          <p>Parse and stringify with replacers/revivers</p>
+        </a>
+        <a href="/playground/#date" class="example-card">
+          <h4>Date</h4>
+          <p>Date creation, formatting, arithmetic</p>
+        </a>
+      </div>
+
+      <h2 style="margin-top: 48px; margin-bottom: 24px;">Code Examples</h2>
+
+      <h3 style="margin-top: 32px;">Classes with Inheritance</h3>
+      <div class="code-block">
+        <div class="code-header">
+          <span class="lang">typescript</span>
+          <button class="copy-btn">Copy</button>
+        </div>
+        <div class="code-content">
+          <pre><code class="language-typescript">class Entity {
+    static #count = 0;
+    #id: number;
+
+    constructor() {
+        this.#id = ++Entity.#count;
+    }
+
+    get id() { return this.#id; }
+    static getCount() { return Entity.#count; }
+}
+
+class User extends Entity {
+    constructor(public name: string, public email: string) {
+        super();
+    }
+
+    toJSON() {
+        return { id: this.id, name: this.name, email: this.email };
+    }
+}
+
+const user = new User("Alice", "alice@example.com");
+console.log(JSON.stringify(user.toJSON()));
+// {"id":1,"name":"Alice","email":"alice@example.com"}</code></pre>
+        </div>
+      </div>
+
+      <h3 style="margin-top: 32px;">Generators</h3>
+      <div class="code-block">
+        <div class="code-header">
+          <span class="lang">typescript</span>
+          <button class="copy-btn">Copy</button>
+        </div>
+        <div class="code-content">
+          <pre><code class="language-typescript">function* fibonacci(): Generator&lt;number&gt; {
+    let [a, b] = [0, 1];
+    while (true) {
+        yield a;
+        [a, b] = [b, a + b];
+    }
+}
+
+function* take&lt;T&gt;(gen: Generator&lt;T&gt;, n: number): Generator&lt;T&gt; {
+    for (const value of gen) {
+        if (n-- <= 0) return;
+        yield value;
+    }
+}
+
+const first10 = [...take(fibonacci(), 10)];
+console.log(first10);
+// [0, 1, 1, 2, 3, 5, 8, 13, 21, 34]</code></pre>
+        </div>
+      </div>
+
+      <h3 style="margin-top: 32px;">Async/Await</h3>
+      <div class="code-block">
+        <div class="code-header">
+          <span class="lang">typescript</span>
+          <button class="copy-btn">Copy</button>
+        </div>
+        <div class="code-content">
+          <pre><code class="language-typescript">async function fetchUserWithPosts(userId: number) {
+    const [user, posts] = await Promise.all([
+        fetchUser(userId),
+        fetchUserPosts(userId)
+    ]);
+    return { user, posts };
+}
+
+async function processAll&lt;T, R&gt;(
+    items: T[],
+    fn: (item: T) => Promise&lt;R&gt;
+): Promise&lt;R[]&gt; {
+    const results: R[] = [];
+    for (const item of items) {
+        results.push(await fn(item));
+    }
+    return results;
+}</code></pre>
+        </div>
+      </div>
+
+      <h3 style="margin-top: 32px;">Config Generation</h3>
+      <div class="code-block">
+        <div class="code-header">
+          <span class="lang">typescript</span>
+          <button class="copy-btn">Copy</button>
+        </div>
+        <div class="code-content">
+          <pre><code class="language-typescript">interface Config {
+    database: { host: string; port: number; ssl?: boolean };
+    logging: { level: string };
+}
+
+const DEFAULT_CONFIG: Config = {
+    database: { host: "localhost", port: 5432 },
+    logging: { level: "info" }
+};
+
+const envOverrides: Record&lt;string, Partial&lt;Config&gt;&gt; = {
+    production: {
+        database: { host: "prod-db.example.com", port: 5432, ssl: true },
+        logging: { level: "warn" }
+    },
+    development: {
+        database: { host: "localhost", port: 5432 },
+        logging: { level: "debug" }
+    }
+};
+
+function buildConfig(env: string): Config {
+    const overrides = envOverrides[env] || {};
+    return {
+        database: { ...DEFAULT_CONFIG.database, ...overrides.database },
+        logging: { ...DEFAULT_CONFIG.logging, ...overrides.logging }
+    };
+}
+
+console.log(JSON.stringify(buildConfig("production"), null, 2));</code></pre>
+        </div>
+      </div>
+
+      <h2 style="margin-top: 48px; margin-bottom: 24px;">Embedding Examples</h2>
+      <div class="examples-grid">
+        <a href="https://github.com/DmitryBochkarev/tsrun/tree/main/examples/c-embedding/basic.c" class="example-card">
+          <h4>C: Basic Usage</h4>
+          <p>Create values, objects, arrays, and run code</p>
+        </a>
+        <a href="https://github.com/DmitryBochkarev/tsrun/tree/main/examples/c-embedding/native_functions.c" class="example-card">
+          <h4>C: Native Functions</h4>
+          <p>Register C callbacks callable from JavaScript</p>
+        </a>
+        <a href="https://github.com/DmitryBochkarev/tsrun/tree/main/examples/c-embedding/module_loading.c" class="example-card">
+          <h4>C: Module Loading</h4>
+          <p>Load ES modules from virtual filesystem</p>
+        </a>
+        <a href="https://github.com/DmitryBochkarev/tsrun/tree/main/examples/c-embedding/async_orders.c" class="example-card">
+          <h4>C: Async Orders</h4>
+          <p>Handle async operations via the order system</p>
+        </a>
+      </div>
+
+      <div class="cta" style="margin-top: 60px;">
+        <h2>Try it yourself</h2>
+        <p>Run these examples directly in your browser with our interactive playground.</p>
+        <a href="/playground/" class="btn btn-primary">Open Playground</a>
+      </div>
+    </div>
+
+    <footer class="footer">
+      <div class="container">
+        <div class="footer-content">
+          <div class="footer-links">
+            <a href="https://github.com/DmitryBochkarev/tsrun">GitHub</a>
+            <a href="/docs/">Documentation</a>
+            <a href="/examples/">Examples</a>
+          </div>
+          <p class="footer-copy">MIT License</p>
+        </div>
+      </div>
+    </footer>
+  </main>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+  <script src="/js/main.js"></script>
+</body>
+</html>

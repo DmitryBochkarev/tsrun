@@ -1,0 +1,27 @@
+# Cloudflare Pages headers
+# https://developers.cloudflare.com/pages/platform/headers
+
+# Cache static assets for 1 year
+/css/*
+  Cache-Control: public, max-age=31536000, immutable
+
+/js/*
+  Cache-Control: public, max-age=31536000, immutable
+
+/playground/pkg/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# Cache HTML pages for 1 hour, revalidate
+/*
+  Cache-Control: public, max-age=3600, must-revalidate
+
+# Security headers for all pages
+/*
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: strict-origin-when-cross-origin
+
+# WASM files need correct MIME type
+/*.wasm
+  Content-Type: application/wasm
+  Cache-Control: public, max-age=31536000, immutable

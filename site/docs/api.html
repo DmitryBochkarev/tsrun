@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>API Reference - tsrun</title>
+  <meta name="description" content="tsrun API reference for Rust and C embedding.">
+  <link rel="stylesheet" href="/css/style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+</head>
+<body>
+  <nav class="nav">
+    <div class="nav-container">
+      <a href="/" class="nav-brand">
+        <span>tsrun</span>
+      </a>
+      <ul class="nav-links">
+        <li><a href="/playground/">Playground</a></li>
+        <li><a href="/getting-started/">Getting Started</a></li>
+        <li><a href="/docs/" class="active">Documentation</a></li>
+        <li><a href="/examples/">Examples</a></li>
+      </ul>
+      <div class="nav-actions">
+        <button class="theme-toggle" aria-label="Toggle theme"></button>
+        <a href="https://github.com/DmitryBochkarev/tsrun" class="github-link" aria-label="GitHub">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
+          </svg>
+        </a>
+      </div>
+    </div>
+  </nav>
+
+  <main>
+    <div class="container">
+      <div class="docs-layout">
+        <aside class="docs-sidebar">
+          <h4>Documentation</h4>
+          <ul>
+            <li><a href="/docs/">Overview</a></li>
+            <li><a href="/docs/api.html" class="active">API Reference</a></li>
+            <li><a href="/docs/architecture.html">Architecture</a></li>
+          </ul>
+          <h4>On This Page</h4>
+          <ul>
+            <li><a href="#rust-api">Rust API</a></li>
+            <li><a href="#c-api">C API</a></li>
+          </ul>
+        </aside>
+
+        <div class="docs-content">
+          <h1>API Reference</h1>
+
+          <h2 id="rust-api">Rust API</h2>
+
+          <h3>Basic Execution</h3>
+          <div class="code-block">
+            <div class="code-header">
+              <span class="lang">rust</span>
+              <button class="copy-btn">Copy</button>
+            </div>
+            <div class="code-content">
+              <pre><code class="language-rust">use tsrun::{Interpreter, StepResult, JsValue};
+
+let mut interp = Interpreter::new();
+interp.prepare(r#"
+    const greeting = "Hello";
+    const target = "World";
+    `${greeting}, ${target}!`
+"#, None)?;
+
+loop {
+    match interp.step()? {
+        StepResult::Continue => continue,
+        StepResult::Complete(value) => {
+            assert_eq!(value.as_str(), Some("Hello, World!"));
+            break;
+        }
+        _ => break,
+    }
+}</code></pre>
+            </div>
+          </div>
+
+          <h3>ES Module Loading</h3>
+          <p>The interpreter pauses when imports are needed:</p>
+          <div class="code-block">
+            <div class="code-header">
+              <span class="lang">rust</span>
+              <button class="copy-btn">Copy</button>
+            </div>
+            <div class="code-content">
+              <pre><code class="language-rust">use tsrun::{Interpreter, StepResult, ModulePath};
+
+let mut interp = Interpreter::new();
+
+// Main module with imports
+interp.prepare(r#"
+    import { add } from "./math.ts";
+    export const result = add(2, 3);
+"#, Some(ModulePath::new("/main.ts")))?;
+
+loop {
+    match interp.step()? {
+        StepResult::Continue => continue,
+        StepResult::NeedImports(imports) => {
+            for import in imports {
+                // Load module source from filesystem, network, etc.
+                let source = match import.resolved_path.as_str() {
+                    "/math.ts" => "export function add(a, b) { return a + b; }",
+                    _ => panic!("Unknown module"),
+                };
+                interp.provide_module(import.resolved_path, source)?;
+            }
+        }
+        StepResult::Complete(value) => {
+            println!("Done: {}", value);
+            break;
+        }
+        _ => break,
+    }
+}</code></pre>
+            </div>
+          </div>
+
+          <h3>Working with Values</h3>
+          <div class="code-block">
+            <div class="code-header">
+              <span class="lang">rust</span>
+              <button class="copy-btn">Copy</button>
+            </div>
+            <div class="code-content">
+              <pre><code class="language-rust">use tsrun::{Interpreter, api, JsValue};
+use serde_json::json;
+
+let mut interp = Interpreter::new();
+let guard = api::create_guard(&interp);
+
+// Create values from JSON
+let user = api::create_from_json(&mut interp, &guard, &json!({
+    "name": "Alice",
+    "age": 30,
+    "tags": ["admin", "developer"]
+}))?;
+
+// Read properties
+let name = api::get_property(&user, "name")?;
+assert_eq!(name.as_str(), Some("Alice"));
+
+// Modify properties
+api::set_property(&user, "email", JsValue::from("alice@example.com"))?;
+
+// Call methods
+let tags = api::get_property(&user, "tags")?;
+let joined = api::call_method(&mut interp, &guard, &tags, "join", &[JsValue::from(", ")])?;
+assert_eq!(joined.as_str(), Some("admin, developer"));</code></pre>
+            </div>
+          </div>
+
+          <h3>Async/Await with Orders</h3>
+          <p>For async operations, the interpreter pauses with pending "orders" that the host fulfills:</p>
+          <div class="code-block">
+            <div class="code-header">
+              <span class="lang">rust</span>
+              <button class="copy-btn">Copy</button>
+            </div>
+            <div class="code-content">
+              <pre><code class="language-rust">use tsrun::{Interpreter, StepResult, OrderResponse, api};
+
+let mut interp = Interpreter::new();
+
+interp.prepare(r#"
+    import { request } from "eval:internal";
+    const response = await request({ url: "/api/users" });
+    response.data
+"#, Some("/main.ts".into()))?;
+
+loop {
+    match interp.step()? {
+        StepResult::Continue => continue,
+        StepResult::Suspended { pending, cancelled } => {
+            let mut responses = Vec::new();
+            for order in pending {
+                // Examine order.payload to determine what to do
+                let response = api::create_response_object(&mut interp, &json!({
+                    "data": [{"id": 1, "name": "Alice"}]
+                }))?;
+                responses.push(OrderResponse {
+                    id: order.id,
+                    result: Ok(response),
+                });
+            }
+            interp.fulfill_orders(responses);
+        }
+        StepResult::Complete(value) => {
+            println!("Result: {}", value);
+            break;
+        }
+        _ => break,
+    }
+}</code></pre>
+            </div>
+          </div>
+
+          <h3>Accessing Module Exports</h3>
+          <div class="code-block">
+            <div class="code-header">
+              <span class="lang">rust</span>
+              <button class="copy-btn">Copy</button>
+            </div>
+            <div class="code-content">
+              <pre><code class="language-rust">use tsrun::{Interpreter, StepResult, api};
+
+let mut interp = Interpreter::new();
+interp.prepare(r#"
+    export const VERSION = "1.0.0";
+    export const CONFIG = { debug: true };
+"#, Some("/config.ts".into()))?;
+
+// Run to completion
+loop {
+    match interp.step()? {
+        StepResult::Continue => continue,
+        StepResult::Complete(_) => break,
+        _ => break,
+    }
+}
+
+// Access exports
+let version = api::get_export(&interp, "VERSION");
+assert_eq!(version.unwrap().as_str(), Some("1.0.0"));
+
+let export_names = api::get_export_names(&interp);
+assert!(export_names.contains(&"VERSION".to_string()));
+assert!(export_names.contains(&"CONFIG".to_string()));</code></pre>
+            </div>
+          </div>
+
+          <h2 id="c-api">C API</h2>
+
+          <p>Build with C API support:</p>
+          <div class="code-block">
+            <div class="code-header">
+              <span class="lang">bash</span>
+              <button class="copy-btn">Copy</button>
+            </div>
+            <div class="code-content">
+              <pre><code class="language-bash">cargo build --release --features c-api</code></pre>
+            </div>
+          </div>
+
+          <h3>Context Lifecycle</h3>
+          <div class="code-block">
+            <div class="code-header">
+              <span class="lang">c</span>
+              <button class="copy-btn">Copy</button>
+            </div>
+            <div class="code-content">
+              <pre><code class="language-c">#include "tsrun.h"
+
+int main() {
+    // Create context
+    TsRunContext* ctx = tsrun_new();
+
+    // Prepare and run code
+    tsrun_prepare(ctx, "1 + 2 * 3", NULL);
+    TsRunStepResult result = tsrun_run(ctx);
+
+    if (result.status == TSRUN_STEP_COMPLETE) {
+        printf("Result: %g\n", tsrun_get_number(result.value));
+        tsrun_value_free(result.value);
+    }
+
+    // Cleanup
+    tsrun_step_result_free(&result);
+    tsrun_free(ctx);
+    return 0;
+}</code></pre>
+            </div>
+          </div>
+
+          <h3>Native Functions</h3>
+          <p>Register C functions callable from JavaScript:</p>
+          <div class="code-block">
+            <div class="code-header">
+              <span class="lang">c</span>
+              <button class="copy-btn">Copy</button>
+            </div>
+            <div class="code-content">
+              <pre><code class="language-c">static TsRunValue* native_add(TsRunContext* ctx, TsRunValue* this_arg,
+                              TsRunValue** args, size_t argc,
+                              void* userdata, const char** error_out) {
+    double a = tsrun_get_number(args[0]);
+    double b = tsrun_get_number(args[1]);
+    return tsrun_number(ctx, a + b);
+}
+
+int main() {
+    TsRunContext* ctx = tsrun_new();
+
+    // Register native function
+    TsRunValueResult fn = tsrun_native_function(ctx, "add", native_add, 2, NULL);
+    tsrun_set_global(ctx, "add", fn.value);
+
+    // Use from JS
+    tsrun_prepare(ctx, "add(10, 20)", NULL);
+    TsRunStepResult result = tsrun_run(ctx);
+    // result.value is 30.0
+
+    tsrun_step_result_free(&result);
+    tsrun_free(ctx);
+    return 0;
+}</code></pre>
+            </div>
+          </div>
+
+          <h3>Module Loading</h3>
+          <div class="code-block">
+            <div class="code-header">
+              <span class="lang">c</span>
+              <button class="copy-btn">Copy</button>
+            </div>
+            <div class="code-content">
+              <pre><code class="language-c">TsRunStepResult result = tsrun_run(ctx);
+
+while (result.status == TSRUN_STEP_NEED_IMPORTS) {
+    for (size_t i = 0; i < result.import_count; i++) {
+        const char* path = result.imports[i].resolved_path;
+        const char* source = load_from_filesystem(path);
+        tsrun_provide_module(ctx, path, source);
+    }
+    tsrun_step_result_free(&result);
+    result = tsrun_run(ctx);
+}</code></pre>
+            </div>
+          </div>
+
+          <h3>Creating Values</h3>
+          <div class="code-block">
+            <div class="code-header">
+              <span class="lang">c</span>
+              <button class="copy-btn">Copy</button>
+            </div>
+            <div class="code-content">
+              <pre><code class="language-c">// Primitives
+TsRunValue* num = tsrun_number(ctx, 42.0);
+TsRunValue* str = tsrun_string(ctx, "hello");
+TsRunValue* b = tsrun_boolean(ctx, true);
+TsRunValue* null = tsrun_null(ctx);
+TsRunValue* undef = tsrun_undefined(ctx);
+
+// Objects
+TsRunValue* obj = tsrun_object(ctx);
+tsrun_set(ctx, obj, "name", tsrun_string(ctx, "Alice"));
+tsrun_set(ctx, obj, "age", tsrun_number(ctx, 30));
+
+// Arrays
+TsRunValue* arr = tsrun_array(ctx, 3);
+tsrun_set_index(ctx, arr, 0, tsrun_number(ctx, 1));
+tsrun_set_index(ctx, arr, 1, tsrun_number(ctx, 2));
+tsrun_set_index(ctx, arr, 2, tsrun_number(ctx, 3));</code></pre>
+            </div>
+          </div>
+
+          <h3>Key Functions</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>Function</th>
+                <th>Description</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>tsrun_new()</code></td>
+                <td>Create new interpreter context</td>
+              </tr>
+              <tr>
+                <td><code>tsrun_free(ctx)</code></td>
+                <td>Free context and all associated memory</td>
+              </tr>
+              <tr>
+                <td><code>tsrun_prepare(ctx, code, path)</code></td>
+                <td>Prepare code for execution</td>
+              </tr>
+              <tr>
+                <td><code>tsrun_run(ctx)</code></td>
+                <td>Run until pause or completion</td>
+              </tr>
+              <tr>
+                <td><code>tsrun_provide_module(ctx, path, src)</code></td>
+                <td>Provide module source</td>
+              </tr>
+              <tr>
+                <td><code>tsrun_native_function(...)</code></td>
+                <td>Create native function</td>
+              </tr>
+              <tr>
+                <td><code>tsrun_set_global(ctx, name, val)</code></td>
+                <td>Set global variable</td>
+              </tr>
+              <tr>
+                <td><code>tsrun_get(ctx, obj, key)</code></td>
+                <td>Get object property</td>
+              </tr>
+              <tr>
+                <td><code>tsrun_set(ctx, obj, key, val)</code></td>
+                <td>Set object property</td>
+              </tr>
+              <tr>
+                <td><code>tsrun_value_free(val)</code></td>
+                <td>Free a value</td>
+              </tr>
+            </tbody>
+          </table>
+
+        </div>
+      </div>
+    </div>
+
+    <footer class="footer">
+      <div class="container">
+        <div class="footer-content">
+          <div class="footer-links">
+            <a href="https://github.com/DmitryBochkarev/tsrun">GitHub</a>
+            <a href="/docs/">Documentation</a>
+            <a href="/examples/">Examples</a>
+          </div>
+          <p class="footer-copy">MIT License</p>
+        </div>
+      </div>
+    </footer>
+  </main>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/c.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+  <script src="/js/main.js"></script>
+</body>
+</html>

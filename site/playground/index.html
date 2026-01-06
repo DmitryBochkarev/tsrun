@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Playground - tsrun</title>
+  <meta name="description" content="Try tsrun in your browser. Interactive TypeScript playground powered by WebAssembly.">
+  <link rel="stylesheet" href="/css/style.css">
+  <link rel="stylesheet" href="style.css">
+  <style>
+    /* Override some playground styles to integrate with site nav */
+    body {
+      background-color: var(--bg-primary);
+    }
+    .playground-container {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 1rem;
+      display: flex;
+      flex-direction: column;
+      min-height: calc(100vh - var(--nav-height));
+    }
+    .playground-header {
+      padding: 1rem 0;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 1rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .playground-title h1 {
+      font-size: 1.5rem;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+    .playground-title p {
+      color: var(--text-secondary);
+      font-size: 0.9rem;
+      margin-top: 0.25rem;
+    }
+    .playground-footer {
+      padding: 1rem 0;
+      border-top: 1px solid var(--border);
+      margin-top: 1rem;
+      text-align: center;
+    }
+    .playground-footer p {
+      color: var(--text-secondary);
+      font-size: 0.85rem;
+      margin: 0.25rem 0;
+    }
+    .playground-footer strong {
+      color: var(--text-primary);
+    }
+  </style>
+</head>
+<body>
+  <nav class="nav">
+    <div class="nav-container">
+      <a href="/" class="nav-brand">
+        <span>tsrun</span>
+      </a>
+      <ul class="nav-links">
+        <li><a href="/playground/" class="active">Playground</a></li>
+        <li><a href="/getting-started/">Getting Started</a></li>
+        <li><a href="/docs/">Documentation</a></li>
+        <li><a href="/examples/">Examples</a></li>
+      </ul>
+      <div class="nav-actions">
+        <button class="theme-toggle" aria-label="Toggle theme"></button>
+        <a href="https://github.com/DmitryBochkarev/tsrun" class="github-link" aria-label="GitHub">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
+          </svg>
+        </a>
+      </div>
+    </div>
+  </nav>
+
+  <main>
+    <div class="playground-container">
+      <div class="playground-header">
+        <div class="playground-title">
+          <h1>Playground</h1>
+          <p>Try TypeScript code directly in your browser</p>
+        </div>
+      </div>
+
+      <div class="playground">
+        <div class="editor-section">
+          <div class="section-header">
+            <div class="section-title">
+              <span>Code</span>
+              <select id="examples" class="examples-select">
+                <option value="">-- Select Example --</option>
+              </select>
+            </div>
+            <div class="controls">
+              <span class="keyboard-hint">Ctrl+Enter to run</span>
+              <button id="run-btn" class="btn btn-primary" disabled>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M8 5v14l11-7z"/>
+                </svg>
+                Run
+              </button>
+              <button id="clear-btn" class="btn btn-secondary">Clear</button>
+            </div>
+          </div>
+          <textarea id="code" spellcheck="false" placeholder="Enter your TypeScript/JavaScript code here..."></textarea>
+        </div>
+
+        <div class="output-section">
+          <div class="section-header">
+            <span>Output</span>
+            <span id="status" class="status"></span>
+          </div>
+          <div id="output" class="output-content"></div>
+        </div>
+      </div>
+
+      <div class="playground-footer">
+        <p>Powered by <strong>tsrun</strong> compiled to WebAssembly</p>
+        <p style="font-size: 0.8rem; opacity: 0.8;">
+          Supports: ES6+ syntax, TypeScript types, classes, async/generators, Map/Set, Proxy, RegExp, and more
+        </p>
+      </div>
+    </div>
+  </main>
+
+  <script src="/js/main.js"></script>
+  <script type="module" src="main.js"></script>
+</body>
+</html>

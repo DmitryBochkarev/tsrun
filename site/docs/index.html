@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Documentation - tsrun</title>
+  <meta name="description" content="tsrun documentation - features, API reference, and architecture.">
+  <link rel="stylesheet" href="/css/style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+</head>
+<body>
+  <nav class="nav">
+    <div class="nav-container">
+      <a href="/" class="nav-brand">
+        <span>tsrun</span>
+      </a>
+      <ul class="nav-links">
+        <li><a href="/playground/">Playground</a></li>
+        <li><a href="/getting-started/">Getting Started</a></li>
+        <li><a href="/docs/" class="active">Documentation</a></li>
+        <li><a href="/examples/">Examples</a></li>
+      </ul>
+      <div class="nav-actions">
+        <button class="theme-toggle" aria-label="Toggle theme"></button>
+        <a href="https://github.com/DmitryBochkarev/tsrun" class="github-link" aria-label="GitHub">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
+          </svg>
+        </a>
+      </div>
+    </div>
+  </nav>
+
+  <main>
+    <div class="container">
+      <div class="docs-layout">
+        <aside class="docs-sidebar">
+          <h4>Documentation</h4>
+          <ul>
+            <li><a href="/docs/" class="active">Overview</a></li>
+            <li><a href="/docs/api.html">API Reference</a></li>
+            <li><a href="/docs/architecture.html">Architecture</a></li>
+          </ul>
+          <h4>Guides</h4>
+          <ul>
+            <li><a href="/getting-started/">Getting Started</a></li>
+            <li><a href="/examples/">Examples</a></li>
+          </ul>
+        </aside>
+
+        <div class="docs-content">
+          <h1>Documentation</h1>
+
+          <p>tsrun is a TypeScript interpreter written in Rust, designed for embedding in applications. It executes TypeScript code directly using a register-based bytecode VM.</p>
+
+          <h2>Features</h2>
+
+          <table>
+            <thead>
+              <tr>
+                <th>Feature</th>
+                <th>Description</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>ES Modules</strong></td>
+                <td>Full import/export support with step-based module loading</td>
+              </tr>
+              <tr>
+                <td><strong>Async/Await</strong></td>
+                <td>Promises, async functions, Promise.all/race/allSettled</td>
+              </tr>
+              <tr>
+                <td><strong>Classes</strong></td>
+                <td>Inheritance, static blocks, private fields, getters/setters</td>
+              </tr>
+              <tr>
+                <td><strong>Generators</strong></td>
+                <td>function*, yield, yield*, for...of iteration</td>
+              </tr>
+              <tr>
+                <td><strong>Destructuring</strong></td>
+                <td>Arrays, objects, function parameters, rest/spread</td>
+              </tr>
+              <tr>
+                <td><strong>Built-ins</strong></td>
+                <td>Array, String, Object, Map, Set, Date, RegExp, JSON, Math, Proxy, Reflect, Symbol</td>
+              </tr>
+              <tr>
+                <td><strong>Embeddable</strong></td>
+                <td>Rust and C APIs for integration into host applications</td>
+              </tr>
+              <tr>
+                <td><strong>no_std</strong></td>
+                <td>Can run in environments without the standard library</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <h2>TypeScript Support</h2>
+
+          <p>tsrun parses TypeScript syntax but strips types at runtime (no type checking). Supported TypeScript features:</p>
+
+          <ul>
+            <li>Type annotations on variables, parameters, and return types</li>
+            <li>Interfaces and type aliases</li>
+            <li>Generic types (syntax only)</li>
+            <li>Enums (compiled to object literals)</li>
+            <li>Type assertions (<code>x as T</code>, <code>&lt;T&gt;x</code>)</li>
+            <li>Optional chaining and nullish coalescing</li>
+            <li>Parameter properties in constructors</li>
+          </ul>
+
+          <h2>Step-Based Execution</h2>
+
+          <p>The interpreter uses a step-based execution model that allows the host to control execution flow:</p>
+
+          <div class="code-block">
+            <div class="code-header">
+              <span class="lang">rust</span>
+              <button class="copy-btn">Copy</button>
+            </div>
+            <div class="code-content">
+              <pre><code class="language-rust">loop {
+    match interp.step()? {
+        StepResult::Continue => continue,        // Keep running
+        StepResult::Complete(value) => break,    // Finished
+        StepResult::NeedImports(imports) => {    // Load modules
+            for import in imports {
+                interp.provide_module(path, source)?;
+            }
+        }
+        StepResult::Suspended { pending, .. } => { // Async operations
+            // Fulfill pending orders and resume
+        }
+    }
+}</code></pre>
+            </div>
+          </div>
+
+          <p>This model enables:</p>
+          <ul>
+            <li><strong>Module loading</strong> - Pause to load imports from any source</li>
+            <li><strong>Async operations</strong> - Pause for host-provided I/O</li>
+            <li><strong>Cancellation</strong> - Stop execution at any step</li>
+            <li><strong>Progress reporting</strong> - Track execution progress</li>
+          </ul>
+
+          <h2>Feature Flags</h2>
+
+          <table>
+            <thead>
+              <tr>
+                <th>Flag</th>
+                <th>Description</th>
+                <th>Default</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>std</code></td>
+                <td>Full standard library support</td>
+                <td>Yes</td>
+              </tr>
+              <tr>
+                <td><code>regex</code></td>
+                <td>Regular expression support (requires std)</td>
+                <td>Yes</td>
+              </tr>
+              <tr>
+                <td><code>console</code></td>
+                <td>Console.log builtin</td>
+                <td>Yes</td>
+              </tr>
+              <tr>
+                <td><code>c-api</code></td>
+                <td>C FFI for embedding (requires std)</td>
+                <td>No</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <h2>Limitations</h2>
+
+          <ul>
+            <li><strong>No type checking</strong> - Types are parsed and stripped, not validated</li>
+            <li><strong>Strict mode only</strong> - All code runs in strict mode</li>
+            <li><strong>No eval()</strong> - Dynamic code evaluation is not supported</li>
+            <li><strong>Single-threaded</strong> - One interpreter instance per thread</li>
+          </ul>
+
+          <h2>Next</h2>
+
+          <ul>
+            <li><a href="/docs/api.html">API Reference</a> - Rust and C APIs</li>
+            <li><a href="/docs/architecture.html">Architecture</a> - VM design and internals</li>
+            <li><a href="/examples/">Examples</a> - Code examples</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <footer class="footer">
+      <div class="container">
+        <div class="footer-content">
+          <div class="footer-links">
+            <a href="https://github.com/DmitryBochkarev/tsrun">GitHub</a>
+            <a href="/docs/">Documentation</a>
+            <a href="/examples/">Examples</a>
+          </div>
+          <p class="footer-copy">MIT License</p>
+        </div>
+      </div>
+    </footer>
+  </main>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+  <script src="/js/main.js"></script>
+</body>
+</html>
