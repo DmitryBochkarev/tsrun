@@ -1,10 +1,119 @@
 //! RegExp built-in methods
 
-use crate::prelude::{format, String, Vec};
+use crate::prelude::{format, Rc, String, ToString, Vec};
 use crate::error::JsError;
 use crate::gc::Gc;
 use crate::interpreter::Interpreter;
+use crate::platform::CompiledRegex;
 use crate::value::{ExoticObject, Guarded, JsObject, JsString, JsValue, PropertyKey};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Backward Compatibility: build_regex for string methods
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// The string methods (match, replace, split, search, matchAll) currently use
+// fancy_regex methods directly (captures_iter, split, etc.) which aren't abstracted
+// by the CompiledRegex trait yet. For backward compatibility, we keep build_regex
+// here which directly uses fancy_regex when the feature is enabled.
+//
+// TODO: In a future iteration, update string methods to use CompiledRegex trait
+// methods so they can benefit from custom providers (like WasmRegExpProvider).
+
+#[cfg(feature = "regex")]
+mod regex_compat {
+    use super::*;
+
+    /// Convert a JavaScript regex pattern to a Rust regex pattern.
+    /// Handles differences between JS and Rust regex syntax.
+    fn js_regex_to_rust(pattern: &str) -> String {
+        let mut result = String::with_capacity(pattern.len() + 16);
+        let chars: Vec<char> = pattern.chars().collect();
+        let len = chars.len();
+        let mut i = 0;
+        let mut in_char_class = false;
+        let mut char_class_start = false;
+
+        while i < len {
+            let Some(c) = chars.get(i).copied() else {
+                break;
+            };
+
+            if c == '\\' {
+                if let Some(next) = chars.get(i + 1).copied() {
+                    result.push(c);
+                    result.push(next);
+                    i += 2;
+                    char_class_start = false;
+                    continue;
+                }
+            }
+
+            if !in_char_class {
+                if c == '[' {
+                    in_char_class = true;
+                    char_class_start = true;
+                    result.push(c);
+                } else {
+                    result.push(c);
+                }
+            } else {
+                if char_class_start {
+                    if c == '^' {
+                        result.push(c);
+                    } else if c == ']' {
+                        result.push(c);
+                        char_class_start = false;
+                    } else if c == '[' {
+                        result.push('\\');
+                        result.push('[');
+                        char_class_start = false;
+                    } else {
+                        result.push(c);
+                        char_class_start = false;
+                    }
+                } else if c == ']' {
+                    in_char_class = false;
+                    result.push(c);
+                } else if c == '[' {
+                    result.push('\\');
+                    result.push('[');
+                } else {
+                    result.push(c);
+                }
+            }
+            i += 1;
+        }
+
+        result
+    }
+
+    /// Build a fancy_regex::Regex from pattern and flags.
+    /// Used by string methods that need direct access to fancy_regex features.
+    pub fn build_regex(pattern: &str, flags: &str) -> Result<fancy_regex::Regex, JsError> {
+        let mut regex_pattern = js_regex_to_rust(pattern);
+        let mut prefix = String::new();
+
+        if flags.contains('i') {
+            prefix.push('i');
+        }
+        if flags.contains('m') {
+            prefix.push('m');
+        }
+        if flags.contains('s') {
+            prefix.push('s');
+        }
+
+        if !prefix.is_empty() {
+            regex_pattern = format!("(?{}){}", prefix, regex_pattern);
+        }
+
+        fancy_regex::Regex::new(&regex_pattern)
+            .map_err(|e| JsError::syntax_error(format!("Invalid regular expression: {}", e), 0, 0))
+    }
+}
+
+#[cfg(feature = "regex")]
+pub use regex_compat::build_regex;
 
 /// Initialize RegExp.prototype with test and exec methods
 pub fn init_regexp_prototype(interp: &mut Interpreter) {
@@ -51,6 +160,9 @@ pub fn regexp_constructor(
     let flags_arg = args.get(1).cloned().unwrap_or(JsValue::String(empty));
     let flags = interp.to_js_string(&flags_arg).to_string();
 
+    // Compile the regex to validate it (also caches for later use)
+    let compiled = interp.compile_regexp(&pattern, &flags)?;
+
     // Pre-intern all property keys
     let source_key = PropertyKey::String(interp.intern("source"));
     let flags_key = PropertyKey::String(interp.intern("flags"));
@@ -69,6 +181,7 @@ pub fn regexp_constructor(
         obj.exotic = ExoticObject::RegExp {
             pattern: pattern.clone(),
             flags: flags.clone(),
+            compiled: Some(compiled),
         };
         obj.prototype = Some(interp.regexp_prototype.clone());
         obj.set_property(source_key, JsValue::String(JsString::from(pattern)));
@@ -85,6 +198,7 @@ pub fn regexp_constructor(
     Ok(Guarded::with_guard(JsValue::Object(regexp_obj), guard))
 }
 
+/// Get pattern and flags from a RegExp object
 pub fn get_regexp_data(this: &JsValue) -> Result<(String, String), JsError> {
     let JsValue::Object(obj) = this else {
         return Err(JsError::type_error("this is not a RegExp"));
@@ -93,6 +207,7 @@ pub fn get_regexp_data(this: &JsValue) -> Result<(String, String), JsError> {
     if let ExoticObject::RegExp {
         ref pattern,
         ref flags,
+        ..
     } = obj_ref.exotic
     {
         Ok((pattern.clone(), flags.clone()))
@@ -101,108 +216,30 @@ pub fn get_regexp_data(this: &JsValue) -> Result<(String, String), JsError> {
     }
 }
 
-/// Convert a JavaScript regex pattern to a Rust regex pattern.
-/// Handles differences between JS and Rust regex syntax:
-/// - In JS, `[` inside a character class is a literal character
-/// - In Rust, `[` inside a character class needs to be escaped as `\[`
-fn js_regex_to_rust(pattern: &str) -> String {
-    let mut result = String::with_capacity(pattern.len() + 16);
-    let chars: Vec<char> = pattern.chars().collect();
-    let len = chars.len();
-    let mut i = 0;
-    let mut in_char_class = false;
-    let mut char_class_start = false; // True right after [ or [^
-
-    while i < len {
-        let Some(c) = chars.get(i).copied() else {
-            break;
-        };
-
-        if c == '\\'
-            && let Some(next) = chars.get(i + 1).copied()
-        {
-            // Escaped character - copy both chars and skip
-            result.push(c);
-            result.push(next);
-            i += 2;
-            char_class_start = false;
-            continue;
+/// Get the compiled regex from a RegExp object, compiling if needed
+pub fn get_compiled_regexp(
+    interp: &Interpreter,
+    obj: &Gc<JsObject>,
+) -> Result<Rc<dyn CompiledRegex>, JsError> {
+    let obj_ref = obj.borrow();
+    if let ExoticObject::RegExp {
+        ref pattern,
+        ref flags,
+        ref compiled,
+        ..
+    } = obj_ref.exotic
+    {
+        if let Some(compiled) = compiled {
+            return Ok(compiled.clone());
         }
-
-        if !in_char_class {
-            if c == '[' {
-                in_char_class = true;
-                char_class_start = true;
-                result.push(c);
-            } else {
-                result.push(c);
-            }
-        } else {
-            // Inside character class
-            if char_class_start {
-                // First char(s) after [ have special meaning
-                if c == '^' {
-                    result.push(c);
-                    // Still in char_class_start mode - next char could be ]
-                } else if c == ']' {
-                    // ] right after [ or [^ is a literal ]
-                    result.push(c);
-                    char_class_start = false;
-                } else if c == '[' {
-                    // [ at start of class - needs escaping for Rust
-                    result.push('\\');
-                    result.push('[');
-                    char_class_start = false;
-                } else {
-                    result.push(c);
-                    char_class_start = false;
-                }
-            } else if c == ']' {
-                // End of character class
-                in_char_class = false;
-                result.push(c);
-            } else if c == '[' {
-                // Unescaped [ inside character class - escape it for Rust
-                result.push('\\');
-                result.push('[');
-            } else {
-                result.push(c);
-            }
-        }
-        i += 1;
+        // Not cached - compile now
+        let pattern = pattern.clone();
+        let flags = flags.clone();
+        drop(obj_ref);
+        interp.compile_regexp(&pattern, &flags)
+    } else {
+        Err(JsError::type_error("this is not a RegExp"))
     }
-
-    result
-}
-
-pub fn build_regex(pattern: &str, flags: &str) -> Result<fancy_regex::Regex, JsError> {
-    // Convert JS regex syntax to Rust regex syntax
-    let mut regex_pattern = js_regex_to_rust(pattern);
-
-    // Build flags prefix
-    let mut prefix = String::new();
-
-    // Handle case-insensitive flag (i)
-    if flags.contains('i') {
-        prefix.push('i');
-    }
-
-    // Handle multiline flag (m)
-    if flags.contains('m') {
-        prefix.push('m');
-    }
-
-    // Handle dotAll flag (s) - makes . match newlines
-    if flags.contains('s') {
-        prefix.push('s');
-    }
-
-    if !prefix.is_empty() {
-        regex_pattern = format!("(?{}){}", prefix, regex_pattern);
-    }
-
-    fancy_regex::Regex::new(&regex_pattern)
-        .map_err(|e| JsError::syntax_error(format!("Invalid regular expression: {}", e), 0, 0))
 }
 
 pub fn regexp_test(
@@ -210,16 +247,19 @@ pub fn regexp_test(
     this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    let (pattern, flags) = get_regexp_data(&this)?;
+    let JsValue::Object(ref obj) = this else {
+        return Err(JsError::type_error("this is not a RegExp"));
+    };
+
+    let re = get_compiled_regexp(interp, obj)?;
 
     // Use ToString abstract operation (calls object's toString if needed)
     let input_arg = args.first().cloned().unwrap_or(JsValue::Undefined);
     let input = interp.coerce_to_string(&input_arg)?.to_string();
 
-    let re = build_regex(&pattern, &flags)?;
     let is_match = re
         .is_match(&input)
-        .map_err(|e| JsError::syntax_error(format!("Regex execution error: {}", e), 0, 0))?;
+        .map_err(|e| JsError::syntax_error(e, 0, 0))?;
     Ok(Guarded::unguarded(JsValue::Boolean(is_match)))
 }
 
@@ -232,7 +272,8 @@ pub fn regexp_exec(
         return Err(JsError::type_error("this is not a RegExp"));
     };
 
-    let (pattern, flags) = get_regexp_data(&this)?;
+    let (_, flags) = get_regexp_data(&this)?;
+    let re = get_compiled_regexp(interp, obj)?;
 
     // Use ToString abstract operation (calls object's toString if needed)
     let input_arg = args.first().cloned().unwrap_or(JsValue::Undefined);
@@ -260,58 +301,47 @@ pub fn regexp_exec(
         0
     };
 
-    let re = build_regex(&pattern, &flags)?;
-
-    // For global/sticky, we need to search starting from lastIndex
-    let search_str = if last_index > 0 && last_index <= input.len() {
-        // Get substring starting from lastIndex (handle UTF-8 properly)
-        input
-            .char_indices()
-            .nth(last_index)
-            .and_then(|(byte_idx, _)| input.get(byte_idx..))
-            .unwrap_or("")
-    } else if last_index > input.len() {
-        // lastIndex past end of string - no match
+    // Check if lastIndex is past end of string
+    if last_index > input.len() {
         if is_global || is_sticky {
             obj.borrow_mut()
                 .set_property(last_index_key, JsValue::Number(0.0));
         }
         return Ok(Guarded::unguarded(JsValue::Null));
-    } else {
-        input.as_str()
-    };
+    }
 
-    let captures_result = re
-        .captures(search_str)
-        .map_err(|e| JsError::syntax_error(format!("Regex execution error: {}", e), 0, 0))?;
+    // Use the provider's find method which handles start position
+    let match_result = re
+        .find(&input, last_index)
+        .map_err(|e| JsError::syntax_error(e, 0, 0))?;
 
-    match captures_result {
-        Some(caps) => {
+    match match_result {
+        Some(regex_match) => {
+            // Build result array from captures
             let mut result = Vec::new();
-            for cap in caps.iter() {
-                match cap {
-                    Some(m) => result.push(JsValue::String(JsString::from(m.as_str()))),
+            for capture in &regex_match.captures {
+                match capture {
+                    Some((start, end)) => {
+                        let s = input.get(*start..*end).unwrap_or("");
+                        result.push(JsValue::String(JsString::from(s)));
+                    }
                     None => result.push(JsValue::Undefined),
                 }
             }
+
             let guard = interp.heap.create_guard();
             let arr = interp.create_array_from(&guard, result);
 
-            // Calculate actual index in original string
-            let match_start = caps.get(0).map(|m| m.start()).unwrap_or(0);
-            let actual_index = last_index + match_start;
-
+            // Set index property (match start position)
             arr.borrow_mut()
-                .set_property(index_key, JsValue::Number(actual_index as f64));
+                .set_property(index_key, JsValue::Number(regex_match.start as f64));
             arr.borrow_mut()
                 .set_property(input_key, JsValue::String(JsString::from(input.clone())));
 
             // Update lastIndex for global/sticky regexes
             if is_global || is_sticky {
-                let match_end = caps.get(0).map(|m| m.end()).unwrap_or(0);
-                let new_last_index = last_index + match_end;
                 obj.borrow_mut()
-                    .set_property(last_index_key, JsValue::Number(new_last_index as f64));
+                    .set_property(last_index_key, JsValue::Number(regex_match.end as f64));
             }
 
             Ok(Guarded::with_guard(JsValue::Object(arr), guard))

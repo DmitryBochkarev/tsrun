@@ -45,6 +45,7 @@
 //! assert!(!JsValue::from(0).is_nullish()); // 0 is not nullish
 //! ```
 
+use crate::platform::CompiledRegex;
 use crate::prelude::*;
 
 /// Convert a JavaScript number to its canonical string representation.
@@ -737,7 +738,7 @@ impl fmt::Debug for JsValue {
                     ExoticObject::Map { entries } => write!(f, "Map({})", entries.len()),
                     ExoticObject::Set { entries } => write!(f, "Set({})", entries.len()),
                     ExoticObject::Date { timestamp } => write!(f, "Date({})", timestamp),
-                    ExoticObject::RegExp { pattern, flags } => write!(f, "/{}/{}", pattern, flags),
+                    ExoticObject::RegExp { pattern, flags, .. } => write!(f, "/{}/{}", pattern, flags),
                     ExoticObject::Generator(_) => write!(f, "[object Generator]"),
                     ExoticObject::BytecodeGenerator(_) => write!(f, "[object Generator]"),
                     ExoticObject::Promise(state) => {
@@ -2586,8 +2587,13 @@ pub enum ExoticObject {
     Set { entries: IndexSet<JsMapKey> },
     /// Date exotic object - stores timestamp in milliseconds since Unix epoch
     Date { timestamp: f64 },
-    /// RegExp exotic object - stores pattern and flags
-    RegExp { pattern: String, flags: String },
+    /// RegExp exotic object - stores pattern, flags, and cached compiled regex
+    RegExp {
+        pattern: String,
+        flags: String,
+        /// Cached compiled regex. Lazily compiled on first use.
+        compiled: Option<Rc<dyn CompiledRegex>>,
+    },
     /// Generator exotic object - stores generator state (AST-based)
     Generator(Rc<RefCell<GeneratorState>>),
     /// Bytecode generator exotic object - stores bytecode generator state

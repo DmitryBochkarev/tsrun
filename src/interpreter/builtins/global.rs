@@ -821,7 +821,7 @@ fn clone_object(
         }
 
         // RegExps - clone pattern and flags
-        ExoticObject::RegExp { pattern, flags } => {
+        ExoticObject::RegExp { pattern, flags, .. } => {
             let pattern_clone = pattern.clone();
             let flags_clone = flags.clone();
             drop(obj_ref);
@@ -844,6 +844,7 @@ fn clone_object(
                 regexp_ref.exotic = ExoticObject::RegExp {
                     pattern: pattern_clone.clone(),
                     flags: flags_clone.clone(),
+                    compiled: None, // Will be lazily compiled on first use
                 };
 
                 // Set properties like source, flags, etc.

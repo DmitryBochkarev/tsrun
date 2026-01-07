@@ -27,6 +27,13 @@ wasm-pack build \
 echo ""
 echo "Build complete!"
 echo "Output: $SCRIPT_DIR/pkg/"
+
+# Copy to site directory
+SITE_PKG_DIR="$PROJECT_DIR/site/playground/pkg"
+if [[ -d "$PROJECT_DIR/site/playground" ]]; then
+    echo "Copying to site: $SITE_PKG_DIR"
+    cp -r "$SCRIPT_DIR/pkg/"* "$SITE_PKG_DIR/"
+fi
 echo ""
 
 # Run tests if --test flag is provided

@@ -619,6 +619,176 @@ test('JSON.parse', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// RegExp Tests
+// ─────────────────────────────────────────────────────────────────────────────
+
+console.log('\n── RegExp ──\n');
+
+test('RegExp literal basic', () => {
+    const runner = new TsRunner();
+    const result = runner.run('/hello/.test("hello world")');
+    assertTrue(result.success, `Expected success: ${result.error}`);
+    assertEqual(result.value, 'true');
+});
+
+test('RegExp literal with flags', () => {
+    const runner = new TsRunner();
+    const result = runner.run('/HELLO/i.test("hello world")');
+    assertTrue(result.success, `Expected success: ${result.error}`);
+    assertEqual(result.value, 'true');
+});
+
+test('RegExp.test() method', () => {
+    const runner = new TsRunner();
+    const result = runner.run(`
+        const re = /\\d+/;
+        re.test("abc123def")
+    `);
+    assertTrue(result.success, `Expected success: ${result.error}`);
+    assertEqual(result.value, 'true');
+});
+
+test('RegExp.test() no match', () => {
+    const runner = new TsRunner();
+    const result = runner.run('/\\d+/.test("no digits here")');
+    assertTrue(result.success, `Expected success: ${result.error}`);
+    assertEqual(result.value, 'false');
+});
+
+test('RegExp.exec() with match', () => {
+    const runner = new TsRunner();
+    const result = runner.run(`
+        const re = /\\d+/;
+        const match = re.exec("abc123def");
+        match[0]
+    `);
+    assertTrue(result.success, `Expected success: ${result.error}`);
+    assertEqual(result.value, '"123"');
+});
+
+test('RegExp.exec() no match returns null', () => {
+    const runner = new TsRunner();
+    const result = runner.run('/\\d+/.exec("no digits")');
+    assertTrue(result.success, `Expected success: ${result.error}`);
+    assertEqual(result.value, 'null');
+});
+
+test('RegExp.exec() with groups', () => {
+    const runner = new TsRunner();
+    const result = runner.run(`
+        const re = /(\\w+)@(\\w+)/;
+        const match = re.exec("user@domain");
+        match[1] + " at " + match[2]
+    `);
+    assertTrue(result.success, `Expected success: ${result.error}`);
+    assertEqual(result.value, '"user at domain"');
+});
+
+test('RegExp constructor', () => {
+    const runner = new TsRunner();
+    const result = runner.run(`
+        const re = new RegExp("hello", "i");
+        re.test("HELLO")
+    `);
+    assertTrue(result.success, `Expected success: ${result.error}`);
+    assertEqual(result.value, 'true');
+});
+
+test('RegExp source property', () => {
+    const runner = new TsRunner();
+    const result = runner.run('/hello\\d+/.source');
+    assertTrue(result.success, `Expected success: ${result.error}`);
+    // The source is the literal pattern, escaped once for the JS string output
+    assertEqual(result.value, '"hello\\d+"');
+});
+
+test('RegExp flags property', () => {
+    const runner = new TsRunner();
+    const result = runner.run('/test/gi.flags');
+    assertTrue(result.success, `Expected success: ${result.error}`);
+    assertEqual(result.value, '"gi"');
+});
+
+test('String.match() with RegExp', () => {
+    const runner = new TsRunner();
+    const result = runner.run(`
+        const match = "hello123world".match(/\\d+/);
+        match[0]
+    `);
+    assertTrue(result.success, `Expected success: ${result.error}`);
+    assertEqual(result.value, '"123"');
+});
+
+test('String.match() global flag', () => {
+    const runner = new TsRunner();
+    const result = runner.run(`
+        const matches = "a1b2c3".match(/\\d/g);
+        matches.length
+    `);
+    assertTrue(result.success, `Expected success: ${result.error}`);
+    assertEqual(result.value, '3');
+});
+
+test('String.replace() with RegExp', () => {
+    const runner = new TsRunner();
+    const result = runner.run('"hello world".replace(/world/, "there")');
+    assertTrue(result.success, `Expected success: ${result.error}`);
+    assertEqual(result.value, '"hello there"');
+});
+
+test('String.replace() global flag', () => {
+    const runner = new TsRunner();
+    const result = runner.run('"a1b2c3".replace(/\\d/g, "X")');
+    assertTrue(result.success, `Expected success: ${result.error}`);
+    assertEqual(result.value, '"aXbXcX"');
+});
+
+test('String.split() with RegExp', () => {
+    const runner = new TsRunner();
+    const result = runner.run(`
+        const parts = "a1b2c3".split(/\\d/);
+        parts.join("-")
+    `);
+    assertTrue(result.success, `Expected success: ${result.error}`);
+    assertEqual(result.value, '"a-b-c-"');
+});
+
+test('String.search() with RegExp', () => {
+    const runner = new TsRunner();
+    const result = runner.run('"hello123world".search(/\\d+/)');
+    assertTrue(result.success, `Expected success: ${result.error}`);
+    assertEqual(result.value, '5');
+});
+
+test('String.search() no match', () => {
+    const runner = new TsRunner();
+    const result = runner.run('"hello".search(/\\d+/)');
+    assertTrue(result.success, `Expected success: ${result.error}`);
+    assertEqual(result.value, '-1');
+});
+
+test('RegExp case insensitive flag', () => {
+    const runner = new TsRunner();
+    const result = runner.run(`
+        const re = /hello/i;
+        [re.test("HELLO"), re.test("HeLLo"), re.test("hello")].every(x => x)
+    `);
+    assertTrue(result.success, `Expected success: ${result.error}`);
+    assertEqual(result.value, 'true');
+});
+
+test('RegExp multiline flag', () => {
+    const runner = new TsRunner();
+    const result = runner.run(`
+        const text = "line1\\nline2";
+        const re = /^line2/m;
+        re.test(text)
+    `);
+    assertTrue(result.success, `Expected success: ${result.error}`);
+    assertEqual(result.value, 'true');
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Runner State Tests
 // ─────────────────────────────────────────────────────────────────────────────
 

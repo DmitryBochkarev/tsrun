@@ -344,6 +344,78 @@ void tsrun_internal_module_add_value(
 TsRunResult tsrun_register_internal_module(TsRunContext* ctx, TsRunInternalModule* module);
 
 // ============================================================================
+// Custom RegExp Provider
+// ============================================================================
+
+// Regex match result (for captures)
+typedef struct {
+    intptr_t start;  // Start byte offset (-1 if group didn't participate)
+    intptr_t end;    // End byte offset (-1 if group didn't participate)
+} TsRunRegexCapture;
+
+// Regex match result
+typedef struct {
+    size_t start;                   // Byte offset where match starts
+    size_t end;                     // Byte offset where match ends (exclusive)
+    TsRunRegexCapture* captures;    // Array of capture groups (NULL if none)
+    size_t capture_count;           // Number of capture groups
+} TsRunRegexMatch;
+
+// Callback: Compile a regex pattern
+// Returns opaque handle on success, NULL on error (set *error_out)
+typedef void* (*TsRunRegexCompileFn)(
+    void* userdata,
+    const char* pattern,
+    const char* flags,
+    const char** error_out
+);
+
+// Callback: Test if regex matches (1=match, 0=no match, -1=error)
+typedef int (*TsRunRegexIsMatchFn)(
+    void* userdata,
+    void* handle,
+    const char* input,
+    size_t input_len,
+    const char** error_out
+);
+
+// Callback: Find first match at position (1=found, 0=not found, -1=error)
+typedef int (*TsRunRegexFindFn)(
+    void* userdata,
+    void* handle,
+    const char* input,
+    size_t input_len,
+    size_t start_pos,
+    TsRunRegexMatch* match_out,
+    const char** error_out
+);
+
+// Callback: Free a compiled regex handle
+typedef void (*TsRunRegexFreeFn)(void* userdata, void* handle);
+
+// Callback: Free captures array (may be NULL if not needed)
+typedef void (*TsRunRegexFreeCapturesFn)(
+    void* userdata,
+    TsRunRegexCapture* captures,
+    size_t count
+);
+
+// Bundle of regex callbacks
+typedef struct {
+    TsRunRegexCompileFn compile;
+    TsRunRegexIsMatchFn is_match;
+    TsRunRegexFindFn find;
+    TsRunRegexFreeFn free;
+    TsRunRegexFreeCapturesFn free_captures;  // May be NULL
+    void* userdata;
+} TsRunRegexCallbacks;
+
+// Set a custom RegExp provider
+// The callbacks must remain valid for the lifetime of the context
+TsRunResult tsrun_set_regexp_provider(TsRunContext* ctx,
+                                       const TsRunRegexCallbacks* callbacks);
+
+// ============================================================================
 // Debugging / Statistics
 // ============================================================================
 

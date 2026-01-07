@@ -109,6 +109,7 @@
 //!             .with_function("getVersion", get_version, 0)
 //!             .build(),
 //!     ],
+//!     ..Default::default()
 //! };
 //! let interp = Interpreter::with_config(config);
 //! // Now code can: import { getVersion } from "app:version";
@@ -163,7 +164,7 @@ pub mod ffi;
 #[cfg(all(target_arch = "wasm32", feature = "wasm"))]
 pub mod wasm;
 
-use prelude::{format, String, Vec};
+use prelude::{format, Rc, String, Vec};
 
 pub use error::JsError;
 pub use gc::{Gc, GcStats, Guard, Heap, Reset};
@@ -808,8 +809,23 @@ impl NativeModuleBuilder {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// Configuration for creating an Interpreter
-#[derive(Default)]
 pub struct InterpreterConfig {
     /// Internal modules available for import
     pub internal_modules: Vec<InternalModule>,
+
+    /// Custom RegExp provider.
+    ///
+    /// If `None`, uses the default provider:
+    /// - `FancyRegexProvider` when `regex` feature is enabled
+    /// - `NoOpRegExpProvider` otherwise
+    pub regexp_provider: Option<Rc<dyn platform::RegExpProvider>>,
+}
+
+impl Default for InterpreterConfig {
+    fn default() -> Self {
+        Self {
+            internal_modules: Vec::new(),
+            regexp_provider: None,
+        }
+    }
 }

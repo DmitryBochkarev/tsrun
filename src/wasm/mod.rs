@@ -27,7 +27,7 @@
 //! ```
 
 use crate::interpreter::Interpreter;
-use crate::platform::{ConsoleLevel, ConsoleProvider};
+use crate::platform::{ConsoleLevel, ConsoleProvider, WasmRegExpProvider};
 use crate::prelude::*;
 use crate::value::{ExoticObject, JsValue};
 use crate::StepResult;
@@ -172,9 +172,11 @@ impl TsRunner {
         // Create a buffer for console output
         let console_buffer: Rc<RefCell<Vec<ConsoleEntry>>> = Rc::new(RefCell::new(Vec::new()));
 
-        // Create a fresh interpreter with buffered console provider
+        // Create a fresh interpreter with buffered console and WASM regex provider
         let console_provider = BufferedConsoleProvider::new(Rc::clone(&console_buffer));
+        let regexp_provider = Rc::new(WasmRegExpProvider::new());
         let mut interp = Interpreter::with_console(Box::new(console_provider));
+        interp.set_regexp_provider(regexp_provider);
 
         // Prepare execution
         if let Err(e) = interp.prepare(code, Some("playground.ts".into())) {

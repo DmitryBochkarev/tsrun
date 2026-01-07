@@ -2011,17 +2011,17 @@ impl BytecodeVM {
                 let (value, _guard) = match self.get_constant(idx) {
                     Some(Constant::String(s)) => (JsValue::String(s.cheap_clone()), None::<Guard<JsObject>>),
                     Some(Constant::Number(n)) => (JsValue::Number(*n), None::<Guard<JsObject>>),
-                    #[cfg(feature = "regex")]
+                    #[cfg(any(feature = "regex", feature = "wasm"))]
                     Some(Constant::RegExp { pattern, flags }) => {
                         let guard = interp.heap.create_guard();
                         let obj =
                             interp.create_regexp_literal(&guard, pattern.as_str(), flags.as_str());
                         (JsValue::Object(obj), Some(guard))
                     }
-                    #[cfg(not(feature = "regex"))]
+                    #[cfg(not(any(feature = "regex", feature = "wasm")))]
                     Some(Constant::RegExp { .. }) => {
                         return Err(JsError::type_error(
-                            "RegExp not available (enable 'regex' feature)",
+                            "RegExp not available (enable 'regex' or 'wasm' feature)",
                         ));
                     }
                     Some(Constant::Chunk(_)) => {

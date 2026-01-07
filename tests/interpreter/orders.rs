@@ -68,6 +68,7 @@ fn create_test_interp() -> Interpreter {
             create_eval_internal_module(),
             InternalModule::source("eval:globals", GLOBALS_SOURCE),
         ],
+        ..Default::default()
     };
     let interp = Interpreter::with_config(config);
 
@@ -270,6 +271,7 @@ fn test_cross_module_closure_simple() {
             "#,
             ),
         ],
+        ..Default::default()
     };
     let mut interp = Interpreter::with_config(config);
 
@@ -365,6 +367,7 @@ fn test_cross_module_nested_closure() {
             "#,
             ),
         ],
+        ..Default::default()
     };
     let mut interp = Interpreter::with_config(config);
 
@@ -434,6 +437,7 @@ fn test_debug_closure_gc() {
     // Test GC with closures accessing local and module variables
     let config = InterpreterConfig {
         internal_modules: vec![create_eval_internal_module()],
+        ..Default::default()
     };
     let mut interp = Interpreter::with_config(config);
     interp.set_gc_threshold(1);

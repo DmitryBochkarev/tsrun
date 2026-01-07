@@ -46,7 +46,7 @@ console = []
 c-api = []
 
 # WebAssembly support with browser APIs
-wasm = ["dep:wasm-bindgen", "console"]
+wasm = ["dep:wasm-bindgen", "dep:js-sys", "console"]
 
 [dependencies]
 serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
@@ -60,6 +60,7 @@ libm = "0.2"
 # WASM dependencies (optional)
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = { version = "0.2", optional = true }
+js-sys = { version = "0.3", optional = true }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

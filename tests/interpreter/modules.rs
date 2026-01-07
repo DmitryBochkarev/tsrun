@@ -104,6 +104,7 @@ fn test_internal_module_registered() {
 
     let config = InterpreterConfig {
         internal_modules: vec![eval_internal],
+        ..Default::default()
     };
 
     let _interp = Interpreter::with_config(config);
@@ -121,6 +122,7 @@ fn test_internal_module_not_in_need_imports() {
 
     let config = InterpreterConfig {
         internal_modules: vec![eval_internal],
+        ..Default::default()
     };
 
     let mut interp = Interpreter::with_config(config);
@@ -184,6 +186,7 @@ fn test_native_internal_module() {
 
     let config = InterpreterConfig {
         internal_modules: vec![test_module],
+        ..Default::default()
     };
 
     let mut interp = Interpreter::with_config(config);
@@ -227,6 +230,7 @@ fn test_source_internal_module() {
 
     let config = InterpreterConfig {
         internal_modules: vec![math_module],
+        ..Default::default()
     };
 
     let mut interp = Interpreter::with_config(config);
@@ -261,6 +265,7 @@ fn test_import_namespace() {
 
     let config = InterpreterConfig {
         internal_modules: vec![test_module],
+        ..Default::default()
     };
 
     let mut interp = Interpreter::with_config(config);
@@ -292,6 +297,7 @@ fn test_order_syscall() {
 
     let config = InterpreterConfig {
         internal_modules: vec![eval_internal],
+        ..Default::default()
     };
 
     let mut interp = Interpreter::with_config(config);
@@ -334,6 +340,7 @@ fn test_order_syscall_returns_promise() {
 
     let config = InterpreterConfig {
         internal_modules: vec![eval_internal],
+        ..Default::default()
     };
 
     let mut interp = Interpreter::with_config(config);
@@ -368,6 +375,7 @@ fn test_await_pending_promise_suspends_and_resumes() {
 
     let config = InterpreterConfig {
         internal_modules: vec![eval_internal],
+        ..Default::default()
     };
 
     let mut interp = Interpreter::with_config(config);
@@ -423,6 +431,7 @@ fn test_await_suspension_with_multiple_awaits() {
 
     let config = InterpreterConfig {
         internal_modules: vec![eval_internal],
+        ..Default::default()
     };
 
     let mut interp = Interpreter::with_config(config);
@@ -772,6 +781,7 @@ fn test_module_with_internal_imports() {
 
     let config = InterpreterConfig {
         internal_modules: vec![eval_internal],
+        ..Default::default()
     };
 
     let mut interp = Interpreter::with_config(config);

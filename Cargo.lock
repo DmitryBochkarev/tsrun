@@ -523,6 +523,7 @@ dependencies = [
  "fancy-regex",
  "hashbrown 0.15.5",
  "indexmap",
+ "js-sys",
  "libm",
  "rustc-hash",
  "serde",

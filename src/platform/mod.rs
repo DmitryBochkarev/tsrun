@@ -3,6 +3,9 @@
 //! This module defines traits that abstract over platform-specific functionality,
 //! allowing the interpreter to run in both std and no_std environments.
 
+use crate::prelude::{Rc, String, Vec};
+use core::fmt::Debug;
+
 #[cfg(feature = "std")]
 mod std_impl;
 
@@ -12,8 +15,11 @@ mod wasm_impl;
 #[cfg(feature = "std")]
 pub use std_impl::{StdConsoleProvider, StdRandomProvider, StdTimeProvider};
 
+#[cfg(feature = "regex")]
+pub use std_impl::FancyRegexProvider;
+
 #[cfg(all(target_arch = "wasm32", feature = "wasm"))]
-pub use wasm_impl::{WasmConsoleProvider, WasmRandomProvider, WasmTimeProvider};
+pub use wasm_impl::{WasmConsoleProvider, WasmRandomProvider, WasmRegExpProvider, WasmTimeProvider};
 
 /// Trait for providing time-related functionality.
 ///
@@ -109,5 +115,90 @@ pub struct NoOpConsoleProvider;
 impl ConsoleProvider for NoOpConsoleProvider {
     fn write(&self, _level: ConsoleLevel, _message: &str) {
         // Discard output
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// RegExp Provider
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Result from a single regex match.
+///
+/// Contains byte offsets (not character offsets) for the match and capture groups.
+#[derive(Debug, Clone)]
+pub struct RegexMatch {
+    /// Start byte offset of the full match in the input string.
+    pub start: usize,
+    /// End byte offset (exclusive) of the full match.
+    pub end: usize,
+    /// Capture groups. Index 0 is the full match, 1+ are numbered groups.
+    /// `None` entries represent non-participating optional groups.
+    pub captures: Vec<Option<(usize, usize)>>,
+}
+
+/// A compiled regular expression.
+///
+/// This trait abstracts over different regex implementations, allowing
+/// the interpreter to use browser's native RegExp in WASM, custom C
+/// implementations via FFI, or the default `fancy-regex` in std builds.
+pub trait CompiledRegex: Debug {
+    /// Test if the regex matches anywhere in the input string.
+    fn is_match(&self, input: &str) -> Result<bool, String>;
+
+    /// Find the first match starting at or after `start_pos` (byte offset).
+    ///
+    /// Returns `None` if no match is found.
+    fn find(&self, input: &str, start_pos: usize) -> Result<Option<RegexMatch>, String>;
+
+    /// Find all non-overlapping matches in the input string.
+    fn find_iter(&self, input: &str) -> Result<Vec<RegexMatch>, String>;
+
+    /// Split the input string by matches of this regex.
+    ///
+    /// Returns the substrings between matches.
+    fn split(&self, input: &str) -> Result<Vec<String>, String>;
+
+    /// Replace the first match with the replacement string.
+    ///
+    /// The replacement string can contain:
+    /// - `$1`, `$2`, ... for capture group references
+    /// - `$&` for the full match
+    /// - `$$` for a literal `$`
+    fn replace(&self, input: &str, replacement: &str) -> Result<String, String>;
+
+    /// Replace all matches with the replacement string.
+    fn replace_all(&self, input: &str, replacement: &str) -> Result<String, String>;
+}
+
+/// Trait for providing regex compilation functionality.
+///
+/// Implementations can wrap different regex engines:
+/// - `FancyRegexProvider`: Uses the `fancy-regex` crate (default for std builds)
+/// - `WasmRegExpProvider`: Delegates to browser's native RegExp via wasm-bindgen
+/// - Custom C implementations via FFI callbacks
+pub trait RegExpProvider {
+    /// Compile a regex pattern with the given flags.
+    ///
+    /// # Flags
+    /// - `g`: global (affects JS-level iteration, not compilation)
+    /// - `i`: case-insensitive matching
+    /// - `m`: multiline (^ and $ match line boundaries)
+    /// - `s`: dotAll (. matches newlines)
+    /// - `u`: unicode
+    /// - `y`: sticky (match only at lastIndex)
+    ///
+    /// Returns a compiled regex that can be used for matching operations.
+    fn compile(&self, pattern: &str, flags: &str) -> Result<Rc<dyn CompiledRegex>, String>;
+}
+
+/// A no-op regex provider that always returns errors.
+///
+/// Used as a fallback when no regex implementation is available
+/// (e.g., in no_std environments without a custom provider).
+pub struct NoOpRegExpProvider;
+
+impl RegExpProvider for NoOpRegExpProvider {
+    fn compile(&self, _pattern: &str, _flags: &str) -> Result<Rc<dyn CompiledRegex>, String> {
+        Err("RegExp not available: enable 'regex' feature or provide a custom RegExpProvider".into())
     }
 }

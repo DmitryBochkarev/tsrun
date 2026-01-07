@@ -19,6 +19,13 @@ use crate::platform::{WasmConsoleProvider, WasmRandomProvider, WasmTimeProvider}
 use crate::platform::{NoOpConsoleProvider, NoOpRandomProvider, NoOpTimeProvider};
 use crate::platform::{ConsoleLevel, ConsoleProvider, RandomProvider, TimeProvider};
 
+// RegExp provider imports
+use crate::platform::RegExpProvider;
+#[cfg(feature = "regex")]
+use crate::platform::FancyRegexProvider;
+#[cfg(not(feature = "regex"))]
+use crate::platform::NoOpRegExpProvider;
+
 use crate::StepResult;
 use crate::ast::{ImportSpecifier, Program, Statement};
 use crate::error::JsError;
@@ -272,6 +279,10 @@ pub struct Interpreter {
     /// Console provider for console.log(), console.error(), etc.
     console_provider: Box<dyn ConsoleProvider>,
 
+    /// RegExp provider for regex operations.
+    /// Defaults to FancyRegexProvider when `regex` feature is enabled.
+    regexp_provider: Rc<dyn RegExpProvider>,
+
     // ═══════════════════════════════════════════════════════════════════════════
     // Step-based Execution
     // ═══════════════════════════════════════════════════════════════════════════
@@ -479,6 +490,11 @@ impl Interpreter {
             console_provider: Box::new(WasmConsoleProvider::new()),
             #[cfg(all(not(feature = "std"), not(all(target_arch = "wasm32", feature = "wasm"))))]
             console_provider: Box::new(NoOpConsoleProvider),
+            // RegExp provider - regex feature takes priority, then no-op
+            #[cfg(feature = "regex")]
+            regexp_provider: Rc::new(FancyRegexProvider::new()),
+            #[cfg(not(feature = "regex"))]
+            regexp_provider: Rc::new(NoOpRegExpProvider),
             // Step-based execution
             active_vm: None,
             active_module_path: None,
@@ -523,6 +539,44 @@ impl Interpreter {
         let mut interp = Self::new();
         interp.console_provider = console_provider;
         interp
+    }
+
+    /// Create a new interpreter with a custom RegExp provider.
+    ///
+    /// This is useful for:
+    /// - WASM environments where you want to use the browser's native RegExp
+    /// - C FFI embeddings with custom regex implementations
+    /// - Testing with mock regex providers
+    pub fn with_regexp_provider(regexp_provider: Rc<dyn RegExpProvider>) -> Self {
+        let mut interp = Self::new();
+        interp.regexp_provider = regexp_provider;
+        interp
+    }
+
+    /// Set the RegExp provider at runtime.
+    ///
+    /// Note: This only affects newly compiled regexes. Already-cached compiled
+    /// regexes in existing RegExp objects will continue to use the old provider.
+    pub fn set_regexp_provider(&mut self, provider: Rc<dyn RegExpProvider>) {
+        self.regexp_provider = provider;
+    }
+
+    /// Get a reference to the current RegExp provider.
+    pub fn regexp_provider(&self) -> &Rc<dyn RegExpProvider> {
+        &self.regexp_provider
+    }
+
+    /// Compile a regex pattern using the configured RegExp provider.
+    ///
+    /// This is a convenience method that wraps the provider's compile method.
+    pub fn compile_regexp(
+        &self,
+        pattern: &str,
+        flags: &str,
+    ) -> Result<Rc<dyn crate::platform::CompiledRegex>, JsError> {
+        self.regexp_provider
+            .compile(pattern, flags)
+            .map_err(|e| JsError::syntax_error(e, 0, 0))
     }
 
     /// Initialize built-in global values
@@ -607,8 +661,8 @@ impl Interpreter {
             JsValue::Object(object_constructor),
         );
 
-        // Initialize RegExp prototype and constructor (only when regex feature is enabled)
-        #[cfg(feature = "regex")]
+        // Initialize RegExp prototype and constructor (when regex or wasm feature is enabled)
+        #[cfg(any(feature = "regex", feature = "wasm"))]
         {
             builtins::regexp::init_regexp_prototype(self);
             let regexp_constructor = builtins::regexp::create_regexp_constructor(self);
@@ -643,9 +697,17 @@ impl Interpreter {
     /// Create an interpreter with configuration
     pub fn with_config(config: crate::InterpreterConfig) -> Self {
         let mut interp = Self::new();
+
+        // Apply custom regexp provider if specified
+        if let Some(provider) = config.regexp_provider {
+            interp.regexp_provider = provider;
+        }
+
+        // Register internal modules
         for module in config.internal_modules {
             interp.register_internal_module(module);
         }
+
         interp
     }
 
@@ -2186,7 +2248,7 @@ impl Interpreter {
 
     /// Create a RegExp literal object.
     /// Caller provides the guard to control object lifetime.
-    #[cfg(feature = "regex")]
+    #[cfg(any(feature = "regex", feature = "wasm"))]
     fn create_regexp_literal(
         &mut self,
         guard: &Guard<JsObject>,
@@ -2210,6 +2272,7 @@ impl Interpreter {
             obj.exotic = ExoticObject::RegExp {
                 pattern: pattern.to_string(),
                 flags: flags.to_string(),
+                compiled: None, // Will be lazily compiled on first use
             };
             obj.prototype = Some(self.regexp_prototype.clone());
             obj.set_property(source_key, JsValue::String(JsString::from(pattern)));

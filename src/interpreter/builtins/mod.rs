@@ -17,7 +17,7 @@ pub mod number;
 pub mod object;
 pub mod promise;
 pub mod proxy;
-#[cfg(feature = "regex")]
+#[cfg(any(feature = "regex", feature = "wasm"))]
 pub mod regexp;
 pub mod set;
 pub mod string;
@@ -40,7 +40,7 @@ pub use map::*;
 pub use math::*;
 pub use number::*;
 pub use object::*;
-#[cfg(feature = "regex")]
+#[cfg(any(feature = "regex", feature = "wasm"))]
 #[allow(unused_imports)]
 pub use regexp::*;
 pub use set::*;

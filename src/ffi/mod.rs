@@ -22,6 +22,7 @@ mod context;
 mod module;
 mod native;
 mod order;
+mod regexp;
 mod value;
 
 use alloc::boxed::Box;
