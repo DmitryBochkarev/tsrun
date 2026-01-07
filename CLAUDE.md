@@ -408,6 +408,33 @@ TsRunResult tsrun_fulfill_orders(TsRunContext* ctx, const TsRunOrderResponse* re
                                   size_t count);
 ```
 
+## WASM Playground
+
+The interpreter compiles to WebAssembly for browser-based execution.
+
+### Building
+
+```bash
+cd examples/wasm-playground
+./build.sh              # Build WASM module and copy to site/playground/pkg
+./build.sh --test       # Build and run e2e tests
+```
+
+### Files
+
+| Location | Purpose |
+|----------|---------|
+| `examples/wasm-playground/` | WASM build scripts and playground HTML |
+| `examples/wasm-playground/pkg/` | Built WASM output |
+| `site/playground/pkg/` | Copy of WASM pkg for the website |
+| `src/platform/wasm_impl.rs` | WASM-specific platform code |
+
+### Notes
+
+- Uses `wasm-pack` with `--target web`
+- Feature-gated: builds with `--features wasm` and `--no-default-features`
+- Imports in builtins must use `crate::prelude::Box` (not `std::boxed::Box`) for `no_std` compatibility
+
 ## Implementation Status
 
 **Language Features:** variables, functions, closures, control flow, classes with inheritance/static blocks, destructuring, spread, template literals, all operators, generators, async/await, Promises.

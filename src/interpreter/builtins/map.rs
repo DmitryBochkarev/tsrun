@@ -2,7 +2,7 @@
 
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
-use crate::prelude::{Vec, index_map_new, index_map_with_capacity, vec};
+use crate::prelude::{Box, Vec, index_map_new, index_map_with_capacity, vec};
 use crate::value::{CheapClone, ExoticObject, Guarded, JsMapKey, JsValue, PropertyKey};
 
 /// Initialize Map.prototype with get, set, has, delete, clear, forEach methods

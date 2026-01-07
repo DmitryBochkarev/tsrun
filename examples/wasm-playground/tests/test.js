@@ -619,6 +619,334 @@ test('JSON.parse', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Map Tests
+// ─────────────────────────────────────────────────────────────────────────────
+
+console.log('\n── Map ──\n');
+
+test('Map constructor empty', () => {
+    const runner = new TsRunner();
+    const result = runner.run('new Map().size');
+    assertTrue(result.success, `Expected success: ${result.error}`);
+    assertEqual(result.value, '0');
+});
+
+test('Map constructor with entries', () => {
+    const runner = new TsRunner();
+    const result = runner.run('new Map([["a", 1], ["b", 2]]).size');
+    assertTrue(result.success, `Expected success: ${result.error}`);
+    assertEqual(result.value, '2');
+});
+
+test('Map.set and Map.get', () => {
+    const runner = new TsRunner();
+    const result = runner.run(`
+        const m = new Map();
+        m.set("key", "value");
+        m.get("key")
+    `);
+    assertTrue(result.success, `Expected success: ${result.error}`);
+    assertEqual(result.value, '"value"');
+});
+
+test('Map.get returns undefined for missing key', () => {
+    const runner = new TsRunner();
+    const result = runner.run('new Map().get("missing")');
+    assertTrue(result.success, `Expected success: ${result.error}`);
+    assertEqual(result.value, 'undefined');
+});
+
+test('Map.has', () => {
+    const runner = new TsRunner();
+    const result = runner.run(`
+        const m = new Map([["a", 1]]);
+        [m.has("a"), m.has("b")]
+    `);
+    assertTrue(result.success, `Expected success: ${result.error}`);
+    assertEqual(result.value, '[true, false]');
+});
+
+test('Map.delete', () => {
+    const runner = new TsRunner();
+    const result = runner.run(`
+        const m = new Map([["a", 1], ["b", 2]]);
+        const deleted = m.delete("a");
+        [deleted, m.has("a"), m.size]
+    `);
+    assertTrue(result.success, `Expected success: ${result.error}`);
+    assertEqual(result.value, '[true, false, 1]');
+});
+
+test('Map.clear', () => {
+    const runner = new TsRunner();
+    const result = runner.run(`
+        const m = new Map([["a", 1], ["b", 2]]);
+        m.clear();
+        m.size
+    `);
+    assertTrue(result.success, `Expected success: ${result.error}`);
+    assertEqual(result.value, '0');
+});
+
+test('Map.set returns the map (chaining)', () => {
+    const runner = new TsRunner();
+    const result = runner.run(`
+        const m = new Map();
+        m.set("a", 1).set("b", 2).set("c", 3);
+        m.size
+    `);
+    assertTrue(result.success, `Expected success: ${result.error}`);
+    assertEqual(result.value, '3');
+});
+
+test('Map.forEach', () => {
+    const runner = new TsRunner();
+    const result = runner.run(`
+        const m = new Map([["a", 1], ["b", 2]]);
+        let sum = 0;
+        m.forEach((value, key) => { sum += value; });
+        sum
+    `);
+    assertTrue(result.success, `Expected success: ${result.error}`);
+    assertEqual(result.value, '3');
+});
+
+test('Map.keys', () => {
+    const runner = new TsRunner();
+    const result = runner.run(`
+        const m = new Map([["a", 1], ["b", 2]]);
+        const keys = [...m.keys()];
+        keys.length
+    `);
+    assertTrue(result.success, `Expected success: ${result.error}`);
+    assertEqual(result.value, '2');
+});
+
+test('Map.values', () => {
+    const runner = new TsRunner();
+    const result = runner.run(`
+        const m = new Map([["a", 1], ["b", 2]]);
+        const values = [...m.values()];
+        values.reduce((a, b) => a + b, 0)
+    `);
+    assertTrue(result.success, `Expected success: ${result.error}`);
+    assertEqual(result.value, '3');
+});
+
+test('Map.entries', () => {
+    const runner = new TsRunner();
+    const result = runner.run(`
+        const m = new Map([["a", 1], ["b", 2]]);
+        const entries = [...m.entries()];
+        entries.length
+    `);
+    assertTrue(result.success, `Expected success: ${result.error}`);
+    assertEqual(result.value, '2');
+});
+
+test('Map iteration with for-of', () => {
+    const runner = new TsRunner();
+    const result = runner.run(`
+        const m = new Map([["a", 1], ["b", 2], ["c", 3]]);
+        let sum = 0;
+        for (const [key, value] of m) {
+            sum += value;
+        }
+        sum
+    `);
+    assertTrue(result.success, `Expected success: ${result.error}`);
+    assertEqual(result.value, '6');
+});
+
+test('Map with object keys', () => {
+    const runner = new TsRunner();
+    const result = runner.run(`
+        const key1 = { id: 1 };
+        const key2 = { id: 2 };
+        const m = new Map();
+        m.set(key1, "first");
+        m.set(key2, "second");
+        [m.get(key1), m.get(key2), m.size]
+    `);
+    assertTrue(result.success, `Expected success: ${result.error}`);
+    assertEqual(result.value, '["first", "second", 2]');
+});
+
+test('Map overwrites existing key', () => {
+    const runner = new TsRunner();
+    const result = runner.run(`
+        const m = new Map();
+        m.set("key", "first");
+        m.set("key", "second");
+        [m.get("key"), m.size]
+    `);
+    assertTrue(result.success, `Expected success: ${result.error}`);
+    assertEqual(result.value, '["second", 1]');
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Set Tests
+// ─────────────────────────────────────────────────────────────────────────────
+
+console.log('\n── Set ──\n');
+
+test('Set constructor empty', () => {
+    const runner = new TsRunner();
+    const result = runner.run('new Set().size');
+    assertTrue(result.success, `Expected success: ${result.error}`);
+    assertEqual(result.value, '0');
+});
+
+test('Set constructor with values', () => {
+    const runner = new TsRunner();
+    const result = runner.run('new Set([1, 2, 3]).size');
+    assertTrue(result.success, `Expected success: ${result.error}`);
+    assertEqual(result.value, '3');
+});
+
+test('Set.add', () => {
+    const runner = new TsRunner();
+    const result = runner.run(`
+        const s = new Set();
+        s.add(1);
+        s.add(2);
+        s.size
+    `);
+    assertTrue(result.success, `Expected success: ${result.error}`);
+    assertEqual(result.value, '2');
+});
+
+test('Set.add returns the set (chaining)', () => {
+    const runner = new TsRunner();
+    const result = runner.run(`
+        const s = new Set();
+        s.add(1).add(2).add(3);
+        s.size
+    `);
+    assertTrue(result.success, `Expected success: ${result.error}`);
+    assertEqual(result.value, '3');
+});
+
+test('Set.has', () => {
+    const runner = new TsRunner();
+    const result = runner.run(`
+        const s = new Set([1, 2, 3]);
+        [s.has(2), s.has(4)]
+    `);
+    assertTrue(result.success, `Expected success: ${result.error}`);
+    assertEqual(result.value, '[true, false]');
+});
+
+test('Set.delete', () => {
+    const runner = new TsRunner();
+    const result = runner.run(`
+        const s = new Set([1, 2, 3]);
+        const deleted = s.delete(2);
+        [deleted, s.has(2), s.size]
+    `);
+    assertTrue(result.success, `Expected success: ${result.error}`);
+    assertEqual(result.value, '[true, false, 2]');
+});
+
+test('Set.clear', () => {
+    const runner = new TsRunner();
+    const result = runner.run(`
+        const s = new Set([1, 2, 3]);
+        s.clear();
+        s.size
+    `);
+    assertTrue(result.success, `Expected success: ${result.error}`);
+    assertEqual(result.value, '0');
+});
+
+test('Set deduplicates values', () => {
+    const runner = new TsRunner();
+    const result = runner.run('new Set([1, 2, 2, 3, 3, 3]).size');
+    assertTrue(result.success, `Expected success: ${result.error}`);
+    assertEqual(result.value, '3');
+});
+
+test('Set.forEach', () => {
+    const runner = new TsRunner();
+    const result = runner.run(`
+        const s = new Set([1, 2, 3]);
+        let sum = 0;
+        s.forEach(value => { sum += value; });
+        sum
+    `);
+    assertTrue(result.success, `Expected success: ${result.error}`);
+    assertEqual(result.value, '6');
+});
+
+test('Set.keys (same as values)', () => {
+    const runner = new TsRunner();
+    const result = runner.run(`
+        const s = new Set([1, 2, 3]);
+        const keys = [...s.keys()];
+        keys.reduce((a, b) => a + b, 0)
+    `);
+    assertTrue(result.success, `Expected success: ${result.error}`);
+    assertEqual(result.value, '6');
+});
+
+test('Set.values', () => {
+    const runner = new TsRunner();
+    const result = runner.run(`
+        const s = new Set([1, 2, 3]);
+        const values = [...s.values()];
+        values.length
+    `);
+    assertTrue(result.success, `Expected success: ${result.error}`);
+    assertEqual(result.value, '3');
+});
+
+test('Set.entries', () => {
+    const runner = new TsRunner();
+    const result = runner.run(`
+        const s = new Set(["a", "b"]);
+        const entries = [...s.entries()];
+        entries[0][0] === entries[0][1]
+    `);
+    assertTrue(result.success, `Expected success: ${result.error}`);
+    assertEqual(result.value, 'true');
+});
+
+test('Set iteration with for-of', () => {
+    const runner = new TsRunner();
+    const result = runner.run(`
+        const s = new Set([1, 2, 3, 4]);
+        let sum = 0;
+        for (const value of s) {
+            sum += value;
+        }
+        sum
+    `);
+    assertTrue(result.success, `Expected success: ${result.error}`);
+    assertEqual(result.value, '10');
+});
+
+test('Set with string values', () => {
+    const runner = new TsRunner();
+    const result = runner.run(`
+        const s = new Set(["apple", "banana", "apple"]);
+        [s.size, s.has("apple"), s.has("cherry")]
+    `);
+    assertTrue(result.success, `Expected success: ${result.error}`);
+    assertEqual(result.value, '[2, true, false]');
+});
+
+test('Set spread into array', () => {
+    const runner = new TsRunner();
+    const result = runner.run(`
+        const s = new Set([3, 1, 2]);
+        const arr = [...s];
+        arr.length
+    `);
+    assertTrue(result.success, `Expected success: ${result.error}`);
+    assertEqual(result.value, '3');
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Value Formatting Tests
 // ─────────────────────────────────────────────────────────────────────────────
 
