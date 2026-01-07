@@ -4,7 +4,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-TypeScript interpreter written in Rust for config/manifest generation with support for ES modules and async/await. Types are parsed but stripped at runtime (not type-checked). The interpreter uses a **register-based bytecode VM** for execution.
+A minimal TypeScript runtime in Rust designed for embedding in applications. The primary use case is configuration files where users benefit from IDE autocompletion, type checking, and error highlighting.
+
+**Key characteristics:**
+- **TypeScript-native** - Supports enums, interfaces, type annotations, and generics (types are stripped at runtime, not checked)
+- **Minimal footprint** - No Node.js dependency, designed for embedding
+- **Register-based bytecode VM** - Efficient execution with ES modules and async/await
 
 ## Quick Reference
 
@@ -347,11 +352,23 @@ cargo build --release --bin test262-runner
 
 The interpreter runs all code in strict mode - use `--strict-only` for meaningful results.
 
-### TypeScript Handling
+### TypeScript Features
 
-- Type annotations, interfaces, type aliases → parsed but no-op at runtime
-- `enum` declarations → compile to object literals
+**Supported:**
+- Type annotations, interfaces, type aliases → parsed but stripped at runtime
+- `enum` declarations → compile to object literals with reverse mappings
+- Generic functions and classes → type parameters parsed and stripped
 - Type assertions (`x as T`, `<T>x`) → evaluate to just the expression
+- Parameter properties (`constructor(public x: number)`) → desugared to assignments
+- Optional parameters (`x?: number`) and default values
+
+**Also supported:**
+- Decorators (class, method, property, parameter)
+- Namespaces
+- `eval()` for dynamic code evaluation
+
+**Not supported:**
+- Type checking (no type errors at runtime)
 
 ## C FFI
 
@@ -437,10 +454,10 @@ cd examples/wasm-playground
 
 ## Implementation Status
 
-**Language Features:** variables, functions, closures, control flow, classes with inheritance/static blocks, destructuring, spread, template literals, all operators, generators, async/await, Promises.
+**TypeScript Features:** enums, interfaces, type annotations, generics, type assertions, parameter properties, optional parameters, decorators, namespaces.
+
+**Language Features:** variables, functions, closures, control flow, classes with inheritance/static blocks, destructuring, spread, template literals, all operators, generators, async/await, Promises, eval().
 
 **Built-in Objects:** Array, String, Object, Number, Math, JSON, Map, Set, WeakMap, WeakSet, Date, RegExp, Function, Error types, Symbol, Proxy, Reflect, console.
 
-**C FFI:** Full embedding API with native callbacks, module loading, and async order system.
-
-See profiling.md for performance notes.
+**Embedding:** Rust API, C FFI with native callbacks, module loading, async order system, and WASM support for browser execution.

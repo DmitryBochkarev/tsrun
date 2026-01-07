@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>tsrun - TypeScript Interpreter in Rust</title>
-  <meta name="description" content="A TypeScript interpreter written in Rust, designed for embedding in applications. Execute TypeScript directly without Node.js.">
+  <meta name="description" content="A minimal TypeScript runtime in Rust for embedding. Use TypeScript for config files with IDE autocompletion, type checking, and error highlighting. No Node.js required.">
   <link rel="stylesheet" href="/css/style.css">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
 </head>
@@ -36,7 +36,7 @@
         <h1>tsrun</h1>
         <p class="tagline">TypeScript Interpreter in Rust</p>
         <p class="description">
-          Execute TypeScript directly without transpilation. A register-based bytecode VM designed for embedding in applications.
+          A minimal TypeScript runtime designed for embedding in applications. Perfect for configuration files where you want autocompletion, type checking, and error highlighting in your editor.
         </p>
         <div class="hero-buttons">
           <a href="/playground/" class="btn btn-primary">
@@ -53,7 +53,7 @@
       <div class="container">
         <div class="section-header">
           <h2>Features</h2>
-          <p>Everything you need to run TypeScript in embedded environments</p>
+          <p>TypeScript for configs with IDE autocompletion - embedded in your application</p>
         </div>
         <div class="features-grid">
           <div class="feature-card">
@@ -82,9 +82,14 @@
             <p>Array, String, Object, Map, Set, Date, RegExp, JSON, Math, Proxy, Reflect, Symbol and more.</p>
           </div>
           <div class="feature-card">
+            <div class="feature-icon">&#x1F3F7;</div>
+            <h3>TypeScript Native</h3>
+            <p>Enums, interfaces, decorators, namespaces, generics, and type annotations. Types are stripped at runtime.</p>
+          </div>
+          <div class="feature-card">
             <div class="feature-icon">&#x1F517;</div>
-            <h3>Embeddable</h3>
-            <p>Rust and C APIs for integration. Create native functions, load modules, handle async operations.</p>
+            <h3>Minimal & Embeddable</h3>
+            <p>Small footprint with Rust and C APIs. No Node.js dependency. Ideal for config files and scripting in host applications.</p>
           </div>
         </div>
       </div>

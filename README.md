@@ -1,23 +1,41 @@
 # tsrun
 
-A TypeScript interpreter written in Rust, designed for embedding in applications.
+A minimal TypeScript runtime in Rust for embedding in applications.
 
 ## Overview
 
-tsrun executes TypeScript code directly without transpilation to JavaScript. It uses a register-based bytecode VM for efficient execution. Type annotations are parsed but stripped at runtime (no type checking).
+tsrun is designed for configuration files where you want the full benefits of TypeScript in your editor: autocompletion, type checking, and error highlighting. The runtime executes TypeScript directly without transpilation, using a register-based bytecode VM.
 
-**Primary use case:** Configuration and manifest generation where you want TypeScript's syntax and module system without a Node.js dependency.
+**Why TypeScript for configs?**
+- IDE autocompletion for your config schema
+- Catch errors before runtime with type checking in your editor
+- Native support for enums, interfaces, and type annotations
+- No Node.js dependency - embed directly in your application
 
 ## Features
 
+### TypeScript Support
+- **Enums** - Native support with numeric and string enums, including reverse mappings
+- **Type Annotations** - Full parsing of types, interfaces, type aliases, and generics
+- **Decorators** - Class, method, property, and parameter decorators
+- **Namespaces** - TypeScript namespace declarations
+- **Parameter Properties** - `constructor(public x: number)` syntax support
+- **Type Assertions** - Both `x as T` and `<T>x` syntaxes
+
+### JavaScript Features
 - **ES Modules** - Full import/export support with step-based module loading
 - **Async/Await** - Promises, async functions, Promise.all/race/allSettled
 - **Classes** - Inheritance, static blocks, private fields, getters/setters
 - **Generators** - function*, yield, yield*, for...of iteration
 - **Destructuring** - Arrays, objects, function parameters, rest/spread
+- **eval()** - Dynamic code evaluation
 - **Built-ins** - Array, String, Object, Map, Set, Date, RegExp, JSON, Math, Proxy, Reflect, Symbol
-- **Embeddable** - Rust and C APIs for integration into host applications
-- **no_std compatible** - Can run in environments without the standard library
+
+### Embedding
+- **Minimal Runtime** - Small footprint, no Node.js dependency
+- **Rust & C APIs** - Full integration support for host applications
+- **WASM Support** - Run in browsers via WebAssembly
+- **no_std Compatible** - Can run in environments without the standard library
 
 ## Installation
 
@@ -326,6 +344,38 @@ tsrun = { version = "0.1", features = ["c-api"] }
 
 ## TypeScript Examples
 
+### Enums
+
+```typescript
+enum LogLevel {
+    Debug = 0,
+    Info = 1,
+    Warn = 2,
+    Error = 3
+}
+
+enum Status {
+    Pending = "pending",
+    Active = "active",
+    Completed = "completed"
+}
+
+interface Config {
+    logLevel: LogLevel;
+    status: Status;
+    retries: number;
+}
+
+const config: Config = {
+    logLevel: LogLevel.Info,
+    status: Status.Active,
+    retries: 3
+};
+
+// Reverse mapping works for numeric enums
+LogLevel[1]; // "Info"
+```
+
 ### Classes with Inheritance
 
 ```typescript
@@ -458,9 +508,8 @@ Release builds use LTO and are optimized for size (`opt-level = "z"`).
 
 ## Limitations
 
-- **No type checking** - Types are parsed and stripped, not validated
+- **No runtime type checking** - Types are parsed and stripped for IDE support, not validated at runtime
 - **Strict mode only** - All code runs in strict mode
-- **No eval()** - Dynamic code evaluation is not supported
 - **Single-threaded** - One interpreter instance per thread
 
 ## License

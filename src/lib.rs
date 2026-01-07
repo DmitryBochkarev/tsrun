@@ -1,8 +1,20 @@
-//! TypeScript interpreter for config/manifest generation.
+//! A minimal TypeScript runtime for embedding in applications.
 //!
-//! This crate provides a TypeScript/JavaScript interpreter written in Rust,
-//! designed for executing configuration scripts and generating manifests.
-//! Types are parsed but stripped at runtime (not type-checked).
+//! This crate provides a TypeScript interpreter written in Rust, designed for
+//! configuration files where users benefit from IDE autocompletion, type checking,
+//! and error highlighting. TypeScript features like enums, interfaces, and generics
+//! are fully parsed; types are stripped at runtime (not type-checked).
+//!
+//! # TypeScript Features
+//!
+//! The interpreter supports TypeScript-specific syntax for better editor experience:
+//!
+//! - **Enums** - Numeric and string enums with reverse mappings
+//! - **Interfaces & Types** - Parsed for IDE support, stripped at runtime
+//! - **Decorators** - Class, method, property, and parameter decorators
+//! - **Namespaces** - TypeScript namespace declarations
+//! - **Generics** - Generic functions and classes
+//! - **Parameter Properties** - `constructor(public x: number)` syntax
 //!
 //! # Quick Start
 //!
@@ -10,13 +22,18 @@
 //! use tsrun::{Interpreter, StepResult};
 //!
 //! let mut interp = Interpreter::new();
-//! interp.prepare("1 + 2 * 3", None).unwrap();
+//! interp.prepare(r#"
+//!     enum Status { Active = 1, Inactive = 0 }
+//!     interface Config { status: Status; }
+//!     const cfg: Config = { status: Status.Active };
+//!     cfg.status
+//! "#, None).unwrap();
 //!
 //! loop {
 //!     match interp.step().unwrap() {
 //!         StepResult::Continue => continue,
 //!         StepResult::Complete(value) => {
-//!             assert_eq!(value.as_number(), Some(7.0));
+//!             assert_eq!(value.as_number(), Some(1.0));
 //!             break;
 //!         }
 //!         _ => panic!("Unexpected result"),

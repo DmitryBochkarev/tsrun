@@ -50,7 +50,7 @@
         <div class="docs-content">
           <h1>Documentation</h1>
 
-          <p>tsrun is a TypeScript interpreter written in Rust, designed for embedding in applications. It executes TypeScript code directly using a register-based bytecode VM.</p>
+          <p>tsrun is a minimal TypeScript runtime in Rust, designed for configuration files where you want IDE autocompletion, type checking, and error highlighting. It executes TypeScript directly using a register-based bytecode VM with no Node.js dependency.</p>
 
           <h2>Features</h2>
 
@@ -104,8 +104,10 @@
           <ul>
             <li>Type annotations on variables, parameters, and return types</li>
             <li>Interfaces and type aliases</li>
-            <li>Generic types (syntax only)</li>
-            <li>Enums (compiled to object literals)</li>
+            <li>Generic types</li>
+            <li>Enums (compiled to object literals with reverse mappings)</li>
+            <li>Decorators (class, method, property, parameter)</li>
+            <li>Namespaces</li>
             <li>Type assertions (<code>x as T</code>, <code>&lt;T&gt;x</code>)</li>
             <li>Optional chaining and nullish coalescing</li>
             <li>Parameter properties in constructors</li>
@@ -183,9 +185,8 @@
           <h2>Limitations</h2>
 
           <ul>
-            <li><strong>No type checking</strong> - Types are parsed and stripped, not validated</li>
+            <li><strong>No type checking</strong> - Types are parsed and stripped, not validated at runtime</li>
             <li><strong>Strict mode only</strong> - All code runs in strict mode</li>
-            <li><strong>No eval()</strong> - Dynamic code evaluation is not supported</li>
             <li><strong>Single-threaded</strong> - One interpreter instance per thread</li>
           </ul>
 
