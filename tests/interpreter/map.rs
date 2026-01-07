@@ -273,3 +273,141 @@ fn test_map_groupby_returns_map_instance() {
         JsValue::Boolean(true)
     );
 }
+
+// =============================================================================
+// Map Iteration Tests (for...of, spread, Symbol.iterator)
+// =============================================================================
+
+#[test]
+fn test_map_for_of_iteration() {
+    // Map should be iterable with for...of, yielding [key, value] pairs
+    assert_eq!(
+        eval(
+            r#"
+            const m = new Map([['a', 1], ['b', 2], ['c', 3]]);
+            let result: string[] = [];
+            for (const [k, v] of m) {
+                result.push(k + ':' + v);
+            }
+            result.join(',')
+        "#
+        ),
+        JsValue::from("a:1,b:2,c:3")
+    );
+}
+
+#[test]
+fn test_map_for_of_empty() {
+    // Empty map iteration should work
+    assert_eq!(
+        eval(
+            r#"
+            const m = new Map();
+            let count = 0;
+            for (const entry of m) {
+                count++;
+            }
+            count
+        "#
+        ),
+        JsValue::Number(0.0)
+    );
+}
+
+#[test]
+fn test_map_spread_operator() {
+    // Spread operator should convert Map to array of [key, value] pairs
+    assert_eq!(
+        eval(
+            r#"
+            const m = new Map([['x', 10], ['y', 20]]);
+            const arr = [...m];
+            arr.length
+        "#
+        ),
+        JsValue::Number(2.0)
+    );
+}
+
+#[test]
+fn test_map_spread_operator_contents() {
+    // Verify spread contents are [key, value] pairs
+    assert_eq!(
+        eval(
+            r#"
+            const m = new Map([['x', 10], ['y', 20]]);
+            const arr = [...m];
+            arr[0][0] + ':' + arr[0][1] + ',' + arr[1][0] + ':' + arr[1][1]
+        "#
+        ),
+        JsValue::from("x:10,y:20")
+    );
+}
+
+#[test]
+fn test_map_symbol_iterator_exists() {
+    // Map should have Symbol.iterator
+    assert_eq!(
+        eval(
+            r#"
+            const m = new Map();
+            typeof m[Symbol.iterator]
+        "#
+        ),
+        JsValue::from("function")
+    );
+}
+
+#[test]
+fn test_map_array_from() {
+    // Array.from should work with Map
+    assert_eq!(
+        eval(
+            r#"
+            const m = new Map([['a', 1], ['b', 2]]);
+            const arr = Array.from(m);
+            arr.length
+        "#
+        ),
+        JsValue::Number(2.0)
+    );
+}
+
+#[test]
+fn test_map_destructuring_in_for_of() {
+    // Destructuring should work in for...of
+    assert_eq!(
+        eval(
+            r#"
+            const m = new Map([['first', 100], ['second', 200]]);
+            let keys: string[] = [];
+            let values: number[] = [];
+            for (const [key, value] of m) {
+                keys.push(key);
+                values.push(value);
+            }
+            keys.join(',') + '|' + values.join(',')
+        "#
+        ),
+        JsValue::from("first,second|100,200")
+    );
+}
+
+#[test]
+fn test_map_iterator_entries_equivalence() {
+    // Symbol.iterator should be equivalent to entries()
+    assert_eq!(
+        eval(
+            r#"
+            const m = new Map([['a', 1]]);
+            const iter1 = m[Symbol.iterator]();
+            const iter2 = m.entries();
+            const r1 = iter1.next().value;
+            const r2 = iter2.next().value;
+            // Both should return the same structure
+            (r1[0] === r2[0] && r1[1] === r2[1]).toString()
+        "#
+        ),
+        JsValue::from("true")
+    );
+}

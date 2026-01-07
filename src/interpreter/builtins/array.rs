@@ -1305,34 +1305,119 @@ pub fn array_from(
 
     match source {
         JsValue::Object(obj) => {
-            let source_elements: Vec<JsValue> = {
-                let obj_ref = obj.borrow();
-                if let Some(elements) = obj_ref.array_elements() {
-                    elements.to_vec()
-                } else {
-                    vec![]
-                }
-            };
-
-            for (i, elem) in source_elements.into_iter().enumerate() {
-                let mapped = if let Some(ref map) = map_fn {
-                    if map.is_callable() {
-                        let Guarded {
-                            value: mapped_val,
-                            guard: _mapped_guard,
-                        } = interp.call_function(
-                            map.clone(),
-                            JsValue::Undefined,
-                            &[elem, JsValue::Number(i as f64)],
-                        )?;
-                        mapped_val
+            // First check if object is an array (fast path)
+            let is_array = obj.borrow().array_elements().is_some();
+            if is_array {
+                let source_elements: Vec<JsValue> = obj
+                    .borrow()
+                    .array_elements()
+                    .map(|e| e.to_vec())
+                    .unwrap_or_default();
+                for (i, elem) in source_elements.into_iter().enumerate() {
+                    let mapped = if let Some(ref map) = map_fn {
+                        if map.is_callable() {
+                            let Guarded {
+                                value: mapped_val,
+                                guard: _mapped_guard,
+                            } = interp.call_function(
+                                map.clone(),
+                                JsValue::Undefined,
+                                &[elem, JsValue::Number(i as f64)],
+                            )?;
+                            mapped_val
+                        } else {
+                            elem
+                        }
                     } else {
                         elem
+                    };
+                    elements.push(mapped);
+                }
+            } else {
+                // Check for Symbol.iterator (handles Map, Set, and other iterables)
+                let well_known = interp.well_known_symbols;
+                let iterator_symbol = crate::value::JsSymbol::new(
+                    well_known.iterator,
+                    Some(interp.intern("Symbol.iterator")),
+                );
+                let iterator_key = PropertyKey::Symbol(Box::new(iterator_symbol));
+                let iterator_method = obj.borrow().get_property(&iterator_key);
+
+                if let Some(JsValue::Object(method_obj)) = iterator_method {
+                    // Call the iterator method to get the iterator object
+                    let Guarded {
+                        value: iterator_val,
+                        guard: _iter_guard,
+                    } = interp.call_function(
+                        JsValue::Object(method_obj),
+                        JsValue::Object(obj.cheap_clone()),
+                        &[],
+                    )?;
+
+                    if let JsValue::Object(iterator_obj) = iterator_val {
+                        // Get the next method
+                        let next_key = interp.property_key("next");
+                        let next_method = iterator_obj.borrow().get_property(&next_key);
+
+                        if let Some(JsValue::Object(next_fn)) = next_method {
+                            // Iterate until done
+                            let mut i = 0usize;
+                            loop {
+                                let Guarded {
+                                    value: result_val,
+                                    guard: _result_guard,
+                                } = interp.call_function(
+                                    JsValue::Object(next_fn.cheap_clone()),
+                                    JsValue::Object(iterator_obj.cheap_clone()),
+                                    &[],
+                                )?;
+
+                                if let JsValue::Object(result_obj) = result_val {
+                                    let done_key = interp.property_key("done");
+                                    let value_key = interp.property_key("value");
+
+                                    let done = result_obj
+                                        .borrow()
+                                        .get_property(&done_key)
+                                        .map(|v| v.to_boolean())
+                                        .unwrap_or(false);
+
+                                    if done {
+                                        break;
+                                    }
+
+                                    let elem = result_obj
+                                        .borrow()
+                                        .get_property(&value_key)
+                                        .unwrap_or(JsValue::Undefined);
+
+                                    let mapped = if let Some(ref map) = map_fn {
+                                        if map.is_callable() {
+                                            let Guarded {
+                                                value: mapped_val,
+                                                guard: _mapped_guard,
+                                            } = interp.call_function(
+                                                map.clone(),
+                                                JsValue::Undefined,
+                                                &[elem, JsValue::Number(i as f64)],
+                                            )?;
+                                            mapped_val
+                                        } else {
+                                            elem
+                                        }
+                                    } else {
+                                        elem
+                                    };
+                                    elements.push(mapped);
+                                    i += 1;
+                                } else {
+                                    break;
+                                }
+                            }
+                        }
                     }
-                } else {
-                    elem
-                };
-                elements.push(mapped);
+                }
+                // If no iterator, elements remains empty (array-like objects would need length property)
             }
         }
         JsValue::String(s) => {
