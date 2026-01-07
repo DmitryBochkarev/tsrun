@@ -4,7 +4,11 @@
   "description": "End-to-end tests for tsrun WASM module",
   "type": "module",
   "scripts": {
-    "test": "node test.js"
+    "test": "node test.js",
+    "test:browser": "node browser-test.js",
+    "test:all": "npm run test && npm run test:browser"
   },
-  "devDependencies": {}
+  "devDependencies": {
+    "puppeteer": "^24.0.0"
+  }
 }

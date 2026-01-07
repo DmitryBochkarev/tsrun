@@ -9,7 +9,8 @@ use core::ffi::{CStr, c_char, c_void};
 use core::ptr;
 
 use crate::error::JsError;
-use crate::value::{CheapClone, Guarded, JsValue};
+use crate::value::{CheapClone, Guarded, JsValue, PropertyKey};
+use crate::JsString;
 
 use super::{
     NativeCallbackWrapper, TsRunContext, TsRunNativeFn, TsRunResult, TsRunValue, TsRunValueResult,
@@ -182,18 +183,15 @@ fn native_callback_trampoline(
 }
 
 // ============================================================================
-// Internal Module Builder (Placeholder)
+// Internal Module Builder
 // ============================================================================
 
 /// Opaque internal module builder.
 pub struct TsRunInternalModule {
-    #[allow(dead_code)]
     specifier: String,
-    #[allow(dead_code)]
     exports: Vec<(String, InternalExportKind)>,
 }
 
-#[allow(dead_code)]
 enum InternalExportKind {
     Function {
         func: TsRunNativeFn,
@@ -270,7 +268,8 @@ pub extern "C" fn tsrun_internal_module_add_value(
 
 /// Register an internal module with a context.
 ///
-/// Takes ownership of the module.
+/// Takes ownership of the module. After registration, JS code can import from
+/// the module using its specifier (e.g., `import { add } from "myapp:math";`).
 #[unsafe(no_mangle)]
 pub extern "C" fn tsrun_register_internal_module(
     ctx: *mut TsRunContext,
@@ -290,13 +289,66 @@ pub extern "C" fn tsrun_register_internal_module(
         return TsRunResult::err(ctx, "NULL module".to_string());
     }
 
-    let _module = unsafe { Box::from_raw(module) };
+    let module = unsafe { Box::from_raw(module) };
 
-    // TODO: Actually register the module with the interpreter.
-    // This requires converting the C callbacks to Rust InternalFn,
-    // which is complex because InternalFn is a function pointer, not a closure.
-    //
-    // For now, this is a placeholder that frees the module.
+    // Create module namespace object
+    let guard = ctx.interp.heap.create_guard();
+    let module_obj = ctx.interp.create_object(&guard);
+
+    // Process each export
+    for (name, export) in module.exports {
+        let key = PropertyKey::String(JsString::from(name.as_str()));
+
+        match export {
+            InternalExportKind::Function {
+                func,
+                arity,
+                userdata,
+            } => {
+                // Generate a unique FFI ID for this callback
+                let ffi_id = ctx.next_ffi_id;
+                ctx.next_ffi_id += 1;
+
+                // Store the callback wrapper keyed by FFI ID
+                let wrapper = NativeCallbackWrapper {
+                    callback: func,
+                    userdata,
+                };
+                ctx.native_callbacks.insert(ffi_id, wrapper);
+
+                // Create a native function using the trampoline and FFI ID
+                let fn_obj = ctx.interp.create_ffi_native_fn(
+                    &guard,
+                    &name,
+                    native_callback_trampoline,
+                    arity,
+                    ffi_id,
+                );
+
+                module_obj
+                    .borrow_mut()
+                    .set_property(key, JsValue::Object(fn_obj));
+            }
+            InternalExportKind::Value(value_ptr) => {
+                // Get the value from the pointer
+                let value = if value_ptr.is_null() {
+                    JsValue::Undefined
+                } else {
+                    unsafe { &*value_ptr }.value().clone()
+                };
+
+                module_obj.borrow_mut().set_property(key, value);
+
+                // Free the value handle (we've cloned the inner value)
+                if !value_ptr.is_null() {
+                    unsafe { drop(Box::from_raw(value_ptr)) };
+                }
+            }
+        }
+    }
+
+    // Register the module namespace with the interpreter
+    ctx.interp.register_ffi_module(&module.specifier, module_obj);
 
     TsRunResult::success()
 }

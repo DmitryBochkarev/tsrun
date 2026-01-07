@@ -25,7 +25,7 @@ endif
 INCLUDES = -I.
 
 # Examples
-EXAMPLES = basic native_functions module_loading async_orders
+EXAMPLES = basic native_functions module_loading async_orders internal_modules event_system
 
 # Targets
 .PHONY: all clean lib check
@@ -56,6 +56,12 @@ module_loading: module_loading.c tsrun.h
 async_orders: async_orders.c tsrun.h
 	$(CC) $(CFLAGS) $(INCLUDES) -o $@ $< $(LDFLAGS)
 
+internal_modules: internal_modules.c tsrun.h
+	$(CC) $(CFLAGS) $(INCLUDES) -o $@ $< $(LDFLAGS)
+
+event_system: event_system.c tsrun.h
+	$(CC) $(CFLAGS) $(INCLUDES) -o $@ $< $(LDFLAGS)
+
 # Run examples (need to set library path)
 run-basic: basic
 	LD_LIBRARY_PATH=../../target/release ./basic
@@ -69,6 +75,12 @@ run-modules: module_loading
 run-async: async_orders
 	LD_LIBRARY_PATH=../../target/release ./async_orders
 
+run-internal: internal_modules
+	LD_LIBRARY_PATH=../../target/release ./internal_modules
+
+run-event: event_system
+	LD_LIBRARY_PATH=../../target/release ./event_system
+
 run-all: $(EXAMPLES)
 	@echo "=== Running basic ===" && LD_LIBRARY_PATH=../../target/release ./basic
 	@echo ""
@@ -77,6 +89,10 @@ run-all: $(EXAMPLES)
 	@echo "=== Running module_loading ===" && LD_LIBRARY_PATH=../../target/release ./module_loading
 	@echo ""
 	@echo "=== Running async_orders ===" && LD_LIBRARY_PATH=../../target/release ./async_orders
+	@echo ""
+	@echo "=== Running internal_modules ===" && LD_LIBRARY_PATH=../../target/release ./internal_modules
+	@echo ""
+	@echo "=== Running event_system ===" && LD_LIBRARY_PATH=../../target/release ./event_system
 
 clean:
 	rm -f $(EXAMPLES)

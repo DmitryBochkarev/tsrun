@@ -1318,6 +1318,345 @@ Reflect.set(obj2, "z", 3);
 console.log("After Reflect.set:", obj2);
 console.log("Reflect.has:", Reflect.has(obj2, "y"));
 console.log("Reflect.ownKeys:", Reflect.ownKeys(obj2));`
+    },
+
+    // Real-world scenarios
+    'config-generator': {
+        name: 'Config Generator',
+        code: `// Generate nginx-style config from TypeScript objects
+interface Location {
+    path: string;
+    proxy_pass?: string;
+    root?: string;
+    try_files?: string;
+}
+
+interface ServerConfig {
+    listen: number;
+    server_name: string;
+    locations: Location[];
+    ssl?: boolean;
+}
+
+function generateNginxConfig(config: ServerConfig): string {
+    const lines: string[] = [];
+
+    lines.push("server {");
+    lines.push(\`    listen \${config.listen}\${config.ssl ? " ssl" : ""};\`);
+    lines.push(\`    server_name \${config.server_name};\`);
+    lines.push("");
+
+    for (const loc of config.locations) {
+        lines.push(\`    location \${loc.path} {\`);
+        if (loc.proxy_pass) {
+            lines.push(\`        proxy_pass \${loc.proxy_pass};\`);
+        }
+        if (loc.root) {
+            lines.push(\`        root \${loc.root};\`);
+        }
+        if (loc.try_files) {
+            lines.push(\`        try_files \${loc.try_files};\`);
+        }
+        lines.push("    }");
+        lines.push("");
+    }
+
+    lines.push("}");
+    return lines.join("\\n");
+}
+
+// Define a server configuration
+const myServer: ServerConfig = {
+    listen: 443,
+    server_name: "example.com",
+    ssl: true,
+    locations: [
+        {
+            path: "/",
+            root: "/var/www/html",
+            try_files: "$uri $uri/ /index.html"
+        },
+        {
+            path: "/api",
+            proxy_pass: "http://localhost:3000"
+        },
+        {
+            path: "/static",
+            root: "/var/www/static"
+        }
+    ]
+};
+
+console.log("Generated nginx config:");
+console.log("=".repeat(40));
+console.log(generateNginxConfig(myServer));`
+    },
+
+    'template-engine': {
+        name: 'Template Engine',
+        code: `// Simple Mustache-like template engine
+interface TemplateContext {
+    [key: string]: string | number | boolean | TemplateContext | TemplateContext[];
+}
+
+function render(template: string, context: TemplateContext): string {
+    let result = template;
+
+    // Handle {{#each items}}...{{/each}} loops
+    const eachRegex = /\\{\\{#each (\\w+)\\}\\}([\\s\\S]*?)\\{\\{\\/each\\}\\}/g;
+    result = result.replace(eachRegex, (match: string, key: string, inner: string) => {
+        const items = context[key];
+        if (!Array.isArray(items)) return "";
+        return items.map((item: TemplateContext) => render(inner, item)).join("");
+    });
+
+    // Handle {{#if condition}}...{{/if}} conditionals
+    const ifRegex = /\\{\\{#if (\\w+)\\}\\}([\\s\\S]*?)\\{\\{\\/if\\}\\}/g;
+    result = result.replace(ifRegex, (match: string, key: string, inner: string) => {
+        return context[key] ? render(inner, context) : "";
+    });
+
+    // Handle {{variable}} substitutions
+    const varRegex = /\\{\\{(\\w+)\\}\\}/g;
+    result = result.replace(varRegex, (match: string, key: string) => {
+        const val = context[key];
+        return val !== undefined ? String(val) : "";
+    });
+
+    return result;
+}
+
+// Example: HTML email template
+const emailTemplate = \`
+<html>
+<body>
+  <h1>Hello {{name}}!</h1>
+  {{#if premium}}
+  <p>Thank you for being a premium member!</p>
+  {{/if}}
+  <h2>Your Orders:</h2>
+  <ul>
+    {{#each orders}}
+    <li>{{product}} - \\\${{price}}</li>
+    {{/each}}
+  </ul>
+  <p>Total items: {{orderCount}}</p>
+</body>
+</html>
+\`;
+
+const data: TemplateContext = {
+    name: "Alice",
+    premium: true,
+    orderCount: 3,
+    orders: [
+        { product: "Laptop", price: 999 },
+        { product: "Mouse", price: 29 },
+        { product: "Keyboard", price: 79 }
+    ]
+};
+
+console.log("Rendered template:");
+console.log("=".repeat(40));
+console.log(render(emailTemplate, data));`
+    },
+
+    'data-pipeline': {
+        name: 'Data Pipeline',
+        code: `// Data processing pipeline with filter, map, reduce
+interface SalesRecord {
+    id: number;
+    product: string;
+    quantity: number;
+    price: number;
+    region: string;
+    status: string;
+}
+
+// Sample sales data
+const salesData: SalesRecord[] = [
+    { id: 1, product: "Widget A", quantity: 10, price: 25, region: "North", status: "completed" },
+    { id: 2, product: "Widget B", quantity: 5, price: 50, region: "South", status: "completed" },
+    { id: 3, product: "Widget A", quantity: 8, price: 25, region: "North", status: "pending" },
+    { id: 4, product: "Widget C", quantity: 20, price: 15, region: "East", status: "completed" },
+    { id: 5, product: "Widget B", quantity: 3, price: 50, region: "West", status: "completed" },
+    { id: 6, product: "Widget A", quantity: 15, price: 25, region: "South", status: "completed" },
+    { id: 7, product: "Widget C", quantity: 12, price: 15, region: "North", status: "cancelled" },
+];
+
+console.log("=== Sales Data Pipeline ===\\n");
+console.log("Raw data:", salesData.length, "records");
+
+// Pipeline step 1: Filter completed orders only
+const completed = salesData.filter(r => r.status === "completed");
+console.log("After filter (completed):", completed.length, "records");
+
+// Pipeline step 2: Add computed total field
+const withTotals = completed.map(r => ({
+    ...r,
+    total: r.quantity * r.price
+}));
+console.log("After map (add totals):", withTotals.length, "records");
+
+// Pipeline step 3: Calculate grand total
+const grandTotal = withTotals.reduce((sum, r) => sum + r.total, 0);
+console.log("\\nGrand Total: $" + grandTotal);
+
+// Aggregation: Sales by region
+console.log("\\n=== Sales by Region ===");
+const byRegion: Record<string, number> = {};
+for (const r of withTotals) {
+    byRegion[r.region] = (byRegion[r.region] || 0) + r.total;
+}
+for (const [region, total] of Object.entries(byRegion)) {
+    console.log(\`  \${region}: $\${total}\`);
+}
+
+// Aggregation: Sales by product
+console.log("\\n=== Sales by Product ===");
+const byProduct: Record<string, { quantity: number; revenue: number }> = {};
+for (const r of withTotals) {
+    if (!byProduct[r.product]) {
+        byProduct[r.product] = { quantity: 0, revenue: 0 };
+    }
+    byProduct[r.product].quantity += r.quantity;
+    byProduct[r.product].revenue += r.total;
+}
+for (const [product, stats] of Object.entries(byProduct)) {
+    console.log(\`  \${product}: \${stats.quantity} units, $\${stats.revenue}\`);
+}
+
+// Find top performing product
+const topProduct = Object.entries(byProduct)
+    .sort((a, b) => b[1].revenue - a[1].revenue)[0];
+console.log("\\nTop Product:", topProduct[0], "with $" + topProduct[1].revenue);`
+    },
+
+    'state-machine': {
+        name: 'State Machine',
+        code: `// Vending Machine State Machine
+type VendingState = "idle" | "selecting" | "paying" | "dispensing";
+type VendingEvent = "insert_coin" | "select_item" | "cancel" | "dispense_complete" | "add_coin";
+
+interface Item {
+    name: string;
+    price: number;
+}
+
+class VendingMachine {
+    state: VendingState = "idle";
+    balance: number = 0;
+    selectedItem: Item | null = null;
+
+    items: Map<string, Item> = new Map([
+        ["A1", { name: "Cola", price: 150 }],
+        ["A2", { name: "Chips", price: 100 }],
+        ["A3", { name: "Candy", price: 75 }],
+        ["B1", { name: "Water", price: 100 }],
+    ]);
+
+    transition(event: VendingEvent, data?: any): string {
+        const prevState = this.state;
+        let message = "";
+
+        switch (this.state) {
+            case "idle":
+                if (event === "insert_coin") {
+                    this.balance = data || 0;
+                    this.state = "selecting";
+                    message = \`Inserted $\${(this.balance / 100).toFixed(2)}. Please select an item.\`;
+                }
+                break;
+
+            case "selecting":
+                if (event === "select_item") {
+                    const item = this.items.get(data);
+                    if (!item) {
+                        message = "Invalid selection. Try again.";
+                    } else if (this.balance >= item.price) {
+                        this.selectedItem = item;
+                        this.state = "dispensing";
+                        message = \`Dispensing \${item.name}...\`;
+                    } else {
+                        this.selectedItem = item;
+                        this.state = "paying";
+                        message = \`\${item.name} costs $\${(item.price / 100).toFixed(2)}. Insert $\${((item.price - this.balance) / 100).toFixed(2)} more.\`;
+                    }
+                } else if (event === "cancel") {
+                    const refund = this.balance;
+                    this.balance = 0;
+                    this.state = "idle";
+                    message = \`Cancelled. Refunding $\${(refund / 100).toFixed(2)}.\`;
+                }
+                break;
+
+            case "paying":
+                if (event === "add_coin") {
+                    this.balance += data || 0;
+                    if (this.selectedItem && this.balance >= this.selectedItem.price) {
+                        this.state = "dispensing";
+                        message = \`Payment complete! Dispensing \${this.selectedItem.name}...\`;
+                    } else {
+                        const remaining = this.selectedItem ? this.selectedItem.price - this.balance : 0;
+                        message = \`Balance: $\${(this.balance / 100).toFixed(2)}. Need $\${(remaining / 100).toFixed(2)} more.\`;
+                    }
+                } else if (event === "cancel") {
+                    const refund = this.balance;
+                    this.balance = 0;
+                    this.selectedItem = null;
+                    this.state = "idle";
+                    message = \`Cancelled. Refunding $\${(refund / 100).toFixed(2)}.\`;
+                }
+                break;
+
+            case "dispensing":
+                if (event === "dispense_complete") {
+                    const change = this.selectedItem ? this.balance - this.selectedItem.price : this.balance;
+                    const item = this.selectedItem;
+                    this.balance = 0;
+                    this.selectedItem = null;
+                    this.state = "idle";
+                    message = \`Enjoy your \${item?.name}!\`;
+                    if (change > 0) {
+                        message += \` Change: $\${(change / 100).toFixed(2)}\`;
+                    }
+                }
+                break;
+        }
+
+        console.log(\`[\${prevState} -> \${this.state}] \${message}\`);
+        return message;
+    }
+}
+
+// Simulate a vending machine session
+console.log("=== Vending Machine Demo ===\\n");
+const vm = new VendingMachine();
+
+console.log("Available items:");
+for (const [code, item] of vm.items) {
+    console.log(\`  \${code}: \${item.name} - $\${(item.price / 100).toFixed(2)}\`);
+}
+console.log("");
+
+// Scenario 1: Buy chips with exact change
+console.log("--- Scenario 1: Exact change ---");
+vm.transition("insert_coin", 100);
+vm.transition("select_item", "A2");
+vm.transition("dispense_complete");
+
+// Scenario 2: Buy cola, need more money
+console.log("\\n--- Scenario 2: Add more coins ---");
+vm.transition("insert_coin", 100);
+vm.transition("select_item", "A1");
+vm.transition("add_coin", 50);
+vm.transition("dispense_complete");
+
+// Scenario 3: Cancel transaction
+console.log("\\n--- Scenario 3: Cancel ---");
+vm.transition("insert_coin", 200);
+vm.transition("select_item", "A3");
+vm.transition("cancel");`
     }
 };
 

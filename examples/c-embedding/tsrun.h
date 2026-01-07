@@ -226,7 +226,7 @@ TsRunValueResult tsrun_array_new(TsRunContext* ctx);
 void tsrun_value_free(TsRunValue* val);
 
 // Duplicate a value handle (both handles must be freed separately)
-TsRunValue* tsrun_value_dup(const TsRunValue* val);
+TsRunValue* tsrun_value_dup(TsRunContext* ctx, const TsRunValue* val);
 
 // ============================================================================
 // Object/Array Operations

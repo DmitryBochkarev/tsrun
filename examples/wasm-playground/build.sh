@@ -49,14 +49,21 @@ if [[ "$1" == "--test" ]]; then
         --features wasm
 
     cd "$SCRIPT_DIR/tests"
-    node test.js
-    echo ""
+
+    # Install puppeteer if not present
+    if [[ ! -d "node_modules/puppeteer" ]]; then
+        npm install
+    fi
+
+    # Run all tests
+    npm run test:all
 fi
 
+echo ""
 echo "To serve the playground locally:"
 echo "  cd $SCRIPT_DIR"
 echo "  python3 -m http.server 8080"
 echo "  # Then open http://localhost:8080"
 echo ""
-echo "To run e2e tests:"
+echo "To run all tests (Node.js + browser):"
 echo "  $0 --test"

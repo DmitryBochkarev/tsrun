@@ -858,7 +858,9 @@ impl Interpreter {
 
     /// Check if a specifier is an internal module
     pub fn is_internal_module(&self, specifier: &str) -> bool {
+        // Check both registered internal modules and FFI-registered modules
         self.internal_modules.contains_key(specifier)
+            || self.internal_module_cache.contains_key(specifier)
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -2344,6 +2346,44 @@ impl Interpreter {
             }));
         }
         func_obj
+    }
+
+    /// Create a native function object with FFI callback support.
+    /// The `ffi_id` is used to look up the C callback in the FFI registry.
+    /// Caller provides the guard to control object lifetime.
+    #[cfg(feature = "c-api")]
+    pub fn create_ffi_native_fn(
+        &mut self,
+        guard: &Guard<JsObject>,
+        name: &str,
+        func: NativeFn,
+        arity: usize,
+        ffi_id: usize,
+    ) -> Gc<JsObject> {
+        let name_str = self.intern(name);
+        let func_obj = guard.alloc();
+        {
+            let mut f_ref = func_obj.borrow_mut();
+            f_ref.prototype = Some(self.function_prototype.clone());
+            f_ref.exotic = ExoticObject::Function(JsFunction::Native(NativeFunction {
+                name: name_str,
+                func,
+                arity,
+                ffi_id,
+            }));
+        }
+        func_obj
+    }
+
+    /// Register a pre-built module namespace object as an internal module.
+    /// This is used by the C FFI to register modules built from C callbacks.
+    #[cfg(feature = "c-api")]
+    pub fn register_ffi_module(&mut self, specifier: &str, namespace: Gc<JsObject>) {
+        // Root the module (lives forever)
+        self.root_guard.guard(namespace.clone());
+        // Cache it directly
+        self.internal_module_cache
+            .insert(specifier.to_string(), namespace);
     }
 
     /// Create a bytecode function object.
