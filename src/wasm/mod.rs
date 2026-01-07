@@ -252,6 +252,19 @@ impl Default for TsRunner {
 
 /// Format a JsValue as a string for display.
 fn format_js_value(value: &JsValue) -> String {
+    format_js_value_with_depth(value, 0, &mut Vec::new())
+}
+
+/// Format a JsValue with depth tracking to handle nested structures.
+/// `seen` tracks object addresses to detect circular references.
+fn format_js_value_with_depth(
+    value: &JsValue,
+    depth: usize,
+    seen: &mut Vec<usize>,
+) -> String {
+    const MAX_DEPTH: usize = 10;
+    const MAX_ITEMS: usize = 100;
+
     match value {
         JsValue::Undefined => String::from("undefined"),
         JsValue::Null => String::from("null"),
@@ -279,16 +292,159 @@ fn format_js_value(value: &JsValue) -> String {
         }
         JsValue::String(s) => format!("\"{}\"", s),
         JsValue::Object(obj) => {
-            let obj_ref = obj.borrow();
-            match &obj_ref.exotic {
-                ExoticObject::Array { .. } => String::from("[Array]"),
-                ExoticObject::Function(_) => String::from("[Function]"),
-                _ => String::from("[Object]"),
+            // Check for circular reference using object id
+            let obj_id = obj.id();
+            if seen.contains(&obj_id) {
+                return String::from("[Circular]");
             }
+
+            // Check depth limit
+            if depth >= MAX_DEPTH {
+                let obj_ref = obj.borrow();
+                return match &obj_ref.exotic {
+                    ExoticObject::Array { elements } => format!("[Array({})]", elements.len()),
+                    ExoticObject::Function(_) => String::from("[Function]"),
+                    _ => String::from("{...}"),
+                };
+            }
+
+            seen.push(obj_id);
+            let result = format_object_contents(obj, depth, seen, MAX_ITEMS);
+            seen.pop();
+            result
         }
         JsValue::Symbol(sym) => match &sym.description {
             Some(desc) => format!("Symbol({})", desc),
             None => String::from("Symbol()"),
         },
+    }
+}
+
+/// Format the contents of an object or array.
+fn format_object_contents(
+    obj: &crate::gc::Gc<crate::value::JsObject>,
+    depth: usize,
+    seen: &mut Vec<usize>,
+    max_items: usize,
+) -> String {
+    use crate::value::PropertyKey;
+
+    let obj_ref = obj.borrow();
+
+    match &obj_ref.exotic {
+        ExoticObject::Array { elements } => {
+            let mut items = Vec::new();
+            let length = elements.len();
+            let display_len = length.min(max_items);
+
+            for elem in elements.iter().take(display_len) {
+                items.push(format_js_value_with_depth(elem, depth + 1, seen));
+            }
+
+            if length > max_items {
+                items.push(format!("... {} more items", length - max_items));
+            }
+
+            format!("[{}]", items.join(", "))
+        }
+        ExoticObject::Function(func_info) => {
+            let name = func_info.name().unwrap_or("anonymous");
+            format!("[Function: {}]", name)
+        }
+        ExoticObject::Date { timestamp } => {
+            format!("Date({})", timestamp)
+        }
+        ExoticObject::RegExp { pattern, flags, .. } => {
+            format!("/{}/{}", pattern, flags)
+        }
+        ExoticObject::Map { entries } => {
+            let mut items = Vec::new();
+            let display_len = entries.len().min(max_items);
+
+            for (i, (k, v)) in entries.iter().enumerate() {
+                if i >= display_len {
+                    break;
+                }
+                // JsMapKey wraps JsValue, access via .0
+                let key_str = format_js_value_with_depth(&k.0, depth + 1, seen);
+                let val_str = format_js_value_with_depth(v, depth + 1, seen);
+                items.push(format!("{} => {}", key_str, val_str));
+            }
+
+            if entries.len() > max_items {
+                items.push(format!("... {} more entries", entries.len() - max_items));
+            }
+
+            format!("Map({}){{{}}}", entries.len(),
+                if items.is_empty() { String::new() } else { format!(" {} ", items.join(", ")) })
+        }
+        ExoticObject::Set { entries } => {
+            let mut items = Vec::new();
+            let display_len = entries.len().min(max_items);
+
+            for (i, v) in entries.iter().enumerate() {
+                if i >= display_len {
+                    break;
+                }
+                // JsMapKey wraps JsValue, access via .0
+                items.push(format_js_value_with_depth(&v.0, depth + 1, seen));
+            }
+
+            if entries.len() > max_items {
+                items.push(format!("... {} more items", entries.len() - max_items));
+            }
+
+            format!("Set({}){{{}}}", entries.len(),
+                if items.is_empty() { String::new() } else { format!(" {} ", items.join(", ")) })
+        }
+        ExoticObject::Promise(_) => String::from("Promise { <pending> }"),
+        ExoticObject::Generator(_) | ExoticObject::BytecodeGenerator(_) => {
+            String::from("Generator { <suspended> }")
+        }
+        ExoticObject::Proxy(_) => String::from("Proxy {}"),
+        ExoticObject::Boolean(b) => format!("[Boolean: {}]", b),
+        ExoticObject::Number(n) => format!("[Number: {}]", n),
+        ExoticObject::StringObj(s) => format!("[String: \"{}\"]", s),
+        ExoticObject::Symbol(sym) => {
+            match &sym.description {
+                Some(desc) => format!("[Symbol: Symbol({})]", desc),
+                None => String::from("[Symbol: Symbol()]"),
+            }
+        }
+        ExoticObject::Environment(_) => String::from("[Environment]"),
+        ExoticObject::Enum(_) => String::from("[Enum]"),
+        ExoticObject::RawJSON(s) => s.to_string(),
+        ExoticObject::PendingOrder { id } => format!("[PendingOrder: {}]", id),
+        ExoticObject::Ordinary => {
+            // Regular object - format as { key: value, ... }
+            let mut items = Vec::new();
+            let mut count = 0;
+
+            for (key, prop) in obj_ref.properties.iter() {
+                if count >= max_items {
+                    break;
+                }
+                // Skip internal properties (symbols)
+                let key_str = match key {
+                    PropertyKey::String(s) => s.to_string(),
+                    PropertyKey::Symbol(_) => continue, // Skip symbols in output
+                    PropertyKey::Index(i) => i.to_string(),
+                };
+                let val_str = format_js_value_with_depth(&prop.value, depth + 1, seen);
+                items.push(format!("{}: {}", key_str, val_str));
+                count += 1;
+            }
+
+            let total = obj_ref.properties.len();
+            if total > max_items {
+                items.push(format!("... {} more properties", total - max_items));
+            }
+
+            if items.is_empty() {
+                String::from("{}")
+            } else {
+                format!("{{ {} }}", items.join(", "))
+            }
+        }
     }
 }

@@ -619,6 +619,99 @@ test('JSON.parse', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Value Formatting Tests
+// ─────────────────────────────────────────────────────────────────────────────
+
+console.log('\n── Value Formatting ──\n');
+
+test('Array formatting', () => {
+    const runner = new TsRunner();
+    const result = runner.run('[1, 2, 3]');
+    assertTrue(result.success);
+    assertEqual(result.value, '[1, 2, 3]');
+});
+
+test('Nested array formatting', () => {
+    const runner = new TsRunner();
+    const result = runner.run('[[1, 2], [3, 4]]');
+    assertTrue(result.success);
+    assertEqual(result.value, '[[1, 2], [3, 4]]');
+});
+
+test('Object formatting', () => {
+    const runner = new TsRunner();
+    const result = runner.run('({ a: 1, b: 2 })');
+    assertTrue(result.success);
+    assertContains(result.value, 'a: 1');
+    assertContains(result.value, 'b: 2');
+});
+
+test('Nested object formatting', () => {
+    const runner = new TsRunner();
+    const result = runner.run('({ x: { y: 1 } })');
+    assertTrue(result.success);
+    assertContains(result.value, 'x: { y: 1 }');
+});
+
+test('Mixed array and object formatting', () => {
+    const runner = new TsRunner();
+    const result = runner.run('({ arr: [1, 2], obj: { x: 3 } })');
+    assertTrue(result.success);
+    assertContains(result.value, 'arr: [1, 2]');
+    assertContains(result.value, 'obj: { x: 3 }');
+});
+
+test('Function formatting', () => {
+    const runner = new TsRunner();
+    const result = runner.run('function foo() {}; foo');
+    assertTrue(result.success);
+    assertContains(result.value, '[Function: foo]');
+});
+
+test('Arrow function formatting', () => {
+    const runner = new TsRunner();
+    const result = runner.run('const f = () => {}; f');
+    assertTrue(result.success);
+    assertContains(result.value, '[Function');
+});
+
+test('Map formatting', () => {
+    const runner = new TsRunner();
+    const result = runner.run('new Map([["a", 1], ["b", 2]])');
+    assertTrue(result.success);
+    assertContains(result.value, 'Map(2)');
+    assertContains(result.value, '"a" => 1');
+});
+
+test('Set formatting', () => {
+    const runner = new TsRunner();
+    const result = runner.run('new Set([1, 2, 3])');
+    assertTrue(result.success);
+    assertContains(result.value, 'Set(3)');
+});
+
+test('Date formatting', () => {
+    const runner = new TsRunner();
+    const result = runner.run('new Date(0)');
+    assertTrue(result.success);
+    assertContains(result.value, 'Date(');
+});
+
+test('Empty object formatting', () => {
+    const runner = new TsRunner();
+    const result = runner.run('({})');
+    assertTrue(result.success);
+    assertEqual(result.value, '{}');
+});
+
+test('Empty array formatting', () => {
+    const runner = new TsRunner();
+    const result = runner.run('[]');
+    assertTrue(result.success);
+    assertEqual(result.value, '[]');
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // RegExp Tests
 // ─────────────────────────────────────────────────────────────────────────────
 
