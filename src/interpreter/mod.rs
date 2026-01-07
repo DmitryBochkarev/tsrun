@@ -11,20 +11,23 @@ pub mod bytecode_vm;
 use crate::prelude::*;
 
 // Platform provider imports based on target/features
+use crate::platform::{ConsoleLevel, ConsoleProvider, RandomProvider, TimeProvider};
+#[cfg(all(
+    not(feature = "std"),
+    not(all(target_arch = "wasm32", feature = "wasm"))
+))]
+use crate::platform::{NoOpConsoleProvider, NoOpRandomProvider, NoOpTimeProvider};
 #[cfg(feature = "std")]
 use crate::platform::{StdConsoleProvider, StdRandomProvider, StdTimeProvider};
 #[cfg(all(target_arch = "wasm32", feature = "wasm", not(feature = "std")))]
 use crate::platform::{WasmConsoleProvider, WasmRandomProvider, WasmTimeProvider};
-#[cfg(all(not(feature = "std"), not(all(target_arch = "wasm32", feature = "wasm"))))]
-use crate::platform::{NoOpConsoleProvider, NoOpRandomProvider, NoOpTimeProvider};
-use crate::platform::{ConsoleLevel, ConsoleProvider, RandomProvider, TimeProvider};
 
 // RegExp provider imports
-use crate::platform::RegExpProvider;
 #[cfg(feature = "regex")]
 use crate::platform::FancyRegexProvider;
 #[cfg(not(feature = "regex"))]
 use crate::platform::NoOpRegExpProvider;
+use crate::platform::RegExpProvider;
 
 use crate::StepResult;
 use crate::ast::{ImportSpecifier, Program, Statement};
@@ -476,19 +479,28 @@ impl Interpreter {
             time_provider: Box::new(StdTimeProvider::new()),
             #[cfg(all(target_arch = "wasm32", feature = "wasm", not(feature = "std")))]
             time_provider: Box::new(WasmTimeProvider::new()),
-            #[cfg(all(not(feature = "std"), not(all(target_arch = "wasm32", feature = "wasm"))))]
+            #[cfg(all(
+                not(feature = "std"),
+                not(all(target_arch = "wasm32", feature = "wasm"))
+            ))]
             time_provider: Box::new(NoOpTimeProvider),
             #[cfg(feature = "std")]
             random_provider: Box::new(StdRandomProvider::new()),
             #[cfg(all(target_arch = "wasm32", feature = "wasm", not(feature = "std")))]
             random_provider: Box::new(WasmRandomProvider::new()),
-            #[cfg(all(not(feature = "std"), not(all(target_arch = "wasm32", feature = "wasm"))))]
+            #[cfg(all(
+                not(feature = "std"),
+                not(all(target_arch = "wasm32", feature = "wasm"))
+            ))]
             random_provider: Box::new(NoOpRandomProvider),
             #[cfg(feature = "std")]
             console_provider: Box::new(StdConsoleProvider::new()),
             #[cfg(all(target_arch = "wasm32", feature = "wasm", not(feature = "std")))]
             console_provider: Box::new(WasmConsoleProvider::new()),
-            #[cfg(all(not(feature = "std"), not(all(target_arch = "wasm32", feature = "wasm"))))]
+            #[cfg(all(
+                not(feature = "std"),
+                not(all(target_arch = "wasm32", feature = "wasm"))
+            ))]
             console_provider: Box::new(NoOpConsoleProvider),
             // RegExp provider - regex feature takes priority, then no-op
             #[cfg(feature = "regex")]

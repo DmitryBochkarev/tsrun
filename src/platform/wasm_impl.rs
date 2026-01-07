@@ -6,7 +6,10 @@
 //! - Random numbers (Math.random())
 //! - RegExp (browser's native RegExp)
 
-use super::{CompiledRegex, ConsoleLevel, ConsoleProvider, RandomProvider, RegExpProvider, RegexMatch, TimeProvider};
+use super::{
+    CompiledRegex, ConsoleLevel, ConsoleProvider, RandomProvider, RegExpProvider, RegexMatch,
+    TimeProvider,
+};
 use alloc::rc::Rc;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;

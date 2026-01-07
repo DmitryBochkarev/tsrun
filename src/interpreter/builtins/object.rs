@@ -6,7 +6,7 @@ use crate::interpreter::builtins::proxy::{
     is_proxy, proxy_define_property, proxy_get_own_property_descriptor, proxy_get_prototype_of,
     proxy_is_extensible, proxy_own_keys, proxy_prevent_extensions, proxy_set_prototype_of,
 };
-use crate::prelude::{format, vec, String, ToString, Vec};
+use crate::prelude::{String, ToString, Vec, format, vec};
 use crate::value::{
     CheapClone, ExoticObject, Guarded, JsObjectRef, JsString, JsValue, Property, PropertyKey,
 };

@@ -19,7 +19,9 @@ pub use std_impl::{StdConsoleProvider, StdRandomProvider, StdTimeProvider};
 pub use std_impl::FancyRegexProvider;
 
 #[cfg(all(target_arch = "wasm32", feature = "wasm"))]
-pub use wasm_impl::{WasmConsoleProvider, WasmRandomProvider, WasmRegExpProvider, WasmTimeProvider};
+pub use wasm_impl::{
+    WasmConsoleProvider, WasmRandomProvider, WasmRegExpProvider, WasmTimeProvider,
+};
 
 /// Trait for providing time-related functionality.
 ///
@@ -199,6 +201,9 @@ pub struct NoOpRegExpProvider;
 
 impl RegExpProvider for NoOpRegExpProvider {
     fn compile(&self, _pattern: &str, _flags: &str) -> Result<Rc<dyn CompiledRegex>, String> {
-        Err("RegExp not available: enable 'regex' feature or provide a custom RegExpProvider".into())
+        Err(
+            "RegExp not available: enable 'regex' feature or provide a custom RegExpProvider"
+                .into(),
+        )
     }
 }

@@ -47,7 +47,7 @@ use core::ptr;
 
 use crate::platform::{CompiledRegex, RegExpProvider, RegexMatch};
 
-use super::{c_str_to_str, TsRunContext, TsRunResult};
+use super::{TsRunContext, TsRunResult, c_str_to_str};
 
 // ============================================================================
 // C Callback Type Definitions

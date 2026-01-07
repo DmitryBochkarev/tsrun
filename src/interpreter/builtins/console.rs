@@ -135,7 +135,11 @@ pub fn console_table(
                 for (key, prop) in obj_ref.properties.iter() {
                     interp.console_write(
                         ConsoleLevel::Log,
-                        &format!("│ {:11} │ {:9} │", key.to_string(), format!("{:?}", prop.value)),
+                        &format!(
+                            "│ {:11} │ {:9} │",
+                            key.to_string(),
+                            format!("{:?}", prop.value)
+                        ),
                     );
                 }
                 interp.console_write(ConsoleLevel::Log, "└─────────────┴───────────┘");
@@ -201,7 +205,10 @@ pub fn console_time_end(
         Some(elapsed_ms) => {
             interp.console_write(ConsoleLevel::Log, &format!("{}: {}ms", label, elapsed_ms))
         }
-        None => interp.console_write(ConsoleLevel::Warn, &format!("Timer '{}' does not exist", label)),
+        None => interp.console_write(
+            ConsoleLevel::Warn,
+            &format!("Timer '{}' does not exist", label),
+        ),
     }
     Ok(Guarded::unguarded(JsValue::Undefined))
 }

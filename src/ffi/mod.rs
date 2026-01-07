@@ -29,7 +29,7 @@ use alloc::boxed::Box;
 use alloc::ffi::CString;
 use alloc::string::String;
 use alloc::vec::Vec;
-use core::ffi::{c_char, c_void, CStr};
+use core::ffi::{CStr, c_char, c_void};
 use core::ptr;
 
 use crate::prelude::FxHashMap;
@@ -87,7 +87,9 @@ impl TsRunContext {
             }
             Err(_) => {
                 // If error contains null bytes, use a fallback message
-                self.last_error = Some(CString::new("Error message contained null bytes").expect("static string"));
+                self.last_error = Some(
+                    CString::new("Error message contained null bytes").expect("static string"),
+                );
                 self.last_error.as_ref().map_or(ptr::null(), |s| s.as_ptr())
             }
         }

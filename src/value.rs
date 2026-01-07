@@ -738,7 +738,9 @@ impl fmt::Debug for JsValue {
                     ExoticObject::Map { entries } => write!(f, "Map({})", entries.len()),
                     ExoticObject::Set { entries } => write!(f, "Set({})", entries.len()),
                     ExoticObject::Date { timestamp } => write!(f, "Date({})", timestamp),
-                    ExoticObject::RegExp { pattern, flags, .. } => write!(f, "/{}/{}", pattern, flags),
+                    ExoticObject::RegExp { pattern, flags, .. } => {
+                        write!(f, "/{}/{}", pattern, flags)
+                    }
                     ExoticObject::Generator(_) => write!(f, "[object Generator]"),
                     ExoticObject::BytecodeGenerator(_) => write!(f, "[object Generator]"),
                     ExoticObject::Promise(state) => {
@@ -1798,11 +1800,12 @@ impl JsObject {
                 // Also update reverse mapping if value is numeric
                 if let JsValue::Number(n) = &value {
                     // Find and update the reverse mapping entry
-                    let reverse_key = if math::fract(*n) == 0.0 && *n >= 0.0 && *n <= u32::MAX as f64 {
-                        PropertyKey::Index(*n as u32)
-                    } else {
-                        PropertyKey::String(JsString::from(ToString::to_string(n)))
-                    };
+                    let reverse_key =
+                        if math::fract(*n) == 0.0 && *n >= 0.0 && *n <= u32::MAX as f64 {
+                            PropertyKey::Index(*n as u32)
+                        } else {
+                            PropertyKey::String(JsString::from(ToString::to_string(n)))
+                        };
                     self.properties.insert(
                         reverse_key,
                         Property::data(JsValue::String(s.cheap_clone())),

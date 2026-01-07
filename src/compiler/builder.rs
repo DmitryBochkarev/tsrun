@@ -8,8 +8,8 @@ use super::bytecode::{
 };
 use crate::error::JsError;
 use crate::lexer::Span;
-use crate::value::JsString;
 use crate::prelude::*;
+use crate::value::JsString;
 
 /// Placeholder for a jump that needs to be patched later
 #[derive(Debug, Clone, Copy)]

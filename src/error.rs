@@ -68,10 +68,7 @@ impl fmt::Display for StackFrame {
             write!(
                 f,
                 "    at {} ({}:{}:{})",
-                name,
-                file,
-                self.line,
-                self.column
+                name, file, self.line, self.column
             )
         } else {
             write!(f, "    at {} (<eval>:{}:{})", name, self.line, self.column)

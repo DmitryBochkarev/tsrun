@@ -164,7 +164,7 @@ pub mod ffi;
 #[cfg(all(target_arch = "wasm32", feature = "wasm"))]
 pub mod wasm;
 
-use prelude::{format, Rc, String, Vec};
+use prelude::{Rc, String, Vec, format};
 
 pub use error::JsError;
 pub use gc::{Gc, GcStats, Guard, Heap, Reset};

@@ -4,8 +4,8 @@
 //! We use a register-based design with up to 256 virtual registers.
 
 use crate::lexer::Span;
-use crate::value::JsString;
 use crate::prelude::*;
+use crate::value::JsString;
 
 /// Virtual register index (0-255)
 pub type Register = u8;

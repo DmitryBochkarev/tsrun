@@ -5,7 +5,7 @@ extern crate alloc;
 use alloc::boxed::Box;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
-use core::ffi::{c_char, c_void, CStr};
+use core::ffi::{CStr, c_char, c_void};
 use core::ptr;
 
 use crate::error::JsError;
@@ -44,7 +44,7 @@ pub extern "C" fn tsrun_native_function(
             return TsRunValueResult {
                 value: ptr::null_mut(),
                 error: b"NULL context\0".as_ptr() as *const c_char,
-            }
+            };
         }
     };
 
@@ -54,7 +54,7 @@ pub extern "C" fn tsrun_native_function(
         match unsafe { CStr::from_ptr(name) }.to_str() {
             Ok(s) => s,
             Err(_) => {
-                return TsRunValueResult::err(ctx, "Invalid function name encoding".to_string())
+                return TsRunValueResult::err(ctx, "Invalid function name encoding".to_string());
             }
         }
     };
@@ -282,7 +282,7 @@ pub extern "C" fn tsrun_register_internal_module(
             return TsRunResult {
                 ok: false,
                 error: b"NULL context\0".as_ptr() as *const c_char,
-            }
+            };
         }
     };
 

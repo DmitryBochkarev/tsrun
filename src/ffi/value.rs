@@ -14,8 +14,8 @@ use crate::value::{CheapClone, ExoticObject, PropertyKey};
 use crate::{JsString, JsValue};
 
 use super::{
-    c_str_to_str, str_to_c_string, TsRunContext, TsRunResult, TsRunType, TsRunValue,
-    TsRunValueResult,
+    TsRunContext, TsRunResult, TsRunType, TsRunValue, TsRunValueResult, c_str_to_str,
+    str_to_c_string,
 };
 
 // ============================================================================
@@ -200,7 +200,10 @@ pub extern "C" fn tsrun_undefined(ctx: *mut TsRunContext) -> *mut TsRunValue {
         Some(c) => c,
         None => return ptr::null_mut(),
     };
-    Box::into_raw(TsRunValue::from_js_value(&mut ctx.interp, JsValue::Undefined))
+    Box::into_raw(TsRunValue::from_js_value(
+        &mut ctx.interp,
+        JsValue::Undefined,
+    ))
 }
 
 /// Create a null value.
@@ -304,7 +307,10 @@ pub extern "C" fn tsrun_value_free(val: *mut TsRunValue) {
 ///
 /// Both handles must be freed separately.
 #[unsafe(no_mangle)]
-pub extern "C" fn tsrun_value_dup(ctx: *mut TsRunContext, val: *const TsRunValue) -> *mut TsRunValue {
+pub extern "C" fn tsrun_value_dup(
+    ctx: *mut TsRunContext,
+    val: *const TsRunValue,
+) -> *mut TsRunValue {
     let ctx = match unsafe { ctx.as_mut() } {
         Some(c) => c,
         None => return ptr::null_mut(),
@@ -316,7 +322,10 @@ pub extern "C" fn tsrun_value_dup(ctx: *mut TsRunContext, val: *const TsRunValue
     };
 
     // Clone the value and create a new guard if needed
-    Box::into_raw(TsRunValue::from_js_value(&mut ctx.interp, val.value().clone()))
+    Box::into_raw(TsRunValue::from_js_value(
+        &mut ctx.interp,
+        val.value().clone(),
+    ))
 }
 
 // ============================================================================
@@ -336,7 +345,7 @@ pub extern "C" fn tsrun_get(
             return TsRunValueResult {
                 value: ptr::null_mut(),
                 error: b"NULL context\0".as_ptr() as *const c_char,
-            }
+            };
         }
     };
 
@@ -377,7 +386,7 @@ pub extern "C" fn tsrun_set(
             return TsRunResult {
                 ok: false,
                 error: b"NULL context\0".as_ptr() as *const c_char,
-            }
+            };
         }
     };
 
@@ -451,7 +460,7 @@ pub extern "C" fn tsrun_delete(
             return TsRunResult {
                 ok: false,
                 error: b"NULL context\0".as_ptr() as *const c_char,
-            }
+            };
         }
     };
 
@@ -570,7 +579,7 @@ pub extern "C" fn tsrun_array_get(
             return TsRunValueResult {
                 value: ptr::null_mut(),
                 error: b"NULL context\0".as_ptr() as *const c_char,
-            }
+            };
         }
     };
 
@@ -608,7 +617,7 @@ pub extern "C" fn tsrun_array_set(
             return TsRunResult {
                 ok: false,
                 error: b"NULL context\0".as_ptr() as *const c_char,
-            }
+            };
         }
     };
 
@@ -664,7 +673,7 @@ pub extern "C" fn tsrun_array_push(
             return TsRunResult {
                 ok: false,
                 error: b"NULL context\0".as_ptr() as *const c_char,
-            }
+            };
         }
     };
 
@@ -715,7 +724,7 @@ pub extern "C" fn tsrun_json_parse(
             return TsRunValueResult {
                 value: ptr::null_mut(),
                 error: b"NULL context\0".as_ptr() as *const c_char,
-            }
+            };
         }
     };
 
@@ -790,7 +799,7 @@ pub extern "C" fn tsrun_object_new(ctx: *mut TsRunContext) -> TsRunValueResult {
             return TsRunValueResult {
                 value: ptr::null_mut(),
                 error: b"NULL context\0".as_ptr() as *const c_char,
-            }
+            };
         }
     };
 
@@ -810,7 +819,7 @@ pub extern "C" fn tsrun_array_new(ctx: *mut TsRunContext) -> TsRunValueResult {
             return TsRunValueResult {
                 value: ptr::null_mut(),
                 error: b"NULL context\0".as_ptr() as *const c_char,
-            }
+            };
         }
     };
 
@@ -840,7 +849,7 @@ pub extern "C" fn tsrun_call(
             return TsRunValueResult {
                 value: ptr::null_mut(),
                 error: b"NULL context\0".as_ptr() as *const c_char,
-            }
+            };
         }
     };
 
@@ -888,7 +897,7 @@ pub extern "C" fn tsrun_call_method(
             return TsRunValueResult {
                 value: ptr::null_mut(),
                 error: b"NULL context\0".as_ptr() as *const c_char,
-            }
+            };
         }
     };
 
@@ -959,7 +968,7 @@ pub extern "C" fn tsrun_get_global(
             return TsRunValueResult {
                 value: ptr::null_mut(),
                 error: b"NULL context\0".as_ptr() as *const c_char,
-            }
+            };
         }
     };
 
@@ -992,7 +1001,7 @@ pub extern "C" fn tsrun_set_global(
             return TsRunResult {
                 ok: false,
                 error: b"NULL context\0".as_ptr() as *const c_char,
-            }
+            };
         }
     };
 
@@ -1029,7 +1038,7 @@ pub extern "C" fn tsrun_gc_stats(ctx: *mut TsRunContext) -> super::TsRunGcStats 
                 total_objects: 0,
                 pooled_objects: 0,
                 live_objects: 0,
-            }
+            };
         }
     };
 

@@ -67,11 +67,7 @@ impl StdRandomProvider {
             .unwrap_or(0x12345678_9abcdef0);
 
         // Ensure non-zero seed
-        let seed = if seed == 0 {
-            0x12345678_9abcdef0
-        } else {
-            seed
-        };
+        let seed = if seed == 0 { 0x12345678_9abcdef0 } else { seed };
 
         Self { state: seed }
     }

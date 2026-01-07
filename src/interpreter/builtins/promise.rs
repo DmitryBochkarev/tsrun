@@ -2,7 +2,7 @@
 //!
 //! This module implements Promise using the new guard-based GC system.
 
-use crate::prelude::{format, mem, vec, Cell, RefCell, Rc, Vec};
+use crate::prelude::{Cell, Rc, RefCell, Vec, format, mem, vec};
 
 use crate::error::JsError;
 use crate::gc::{Gc, Guard};

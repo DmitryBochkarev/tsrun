@@ -3,8 +3,8 @@
 use crate::error::JsError;
 use crate::gc::Guard;
 use crate::interpreter::Interpreter;
+use crate::prelude::{FxHashSet, String, ToString, Vec, format, math};
 use crate::value::{ExoticObject, Guarded, JsObject, JsString, JsValue, PropertyKey};
-use crate::prelude::{format, math, FxHashSet, String, ToString, Vec};
 
 const MS_PER_SECOND: i64 = 1000;
 const MS_PER_MINUTE: i64 = 60 * MS_PER_SECOND;

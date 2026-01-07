@@ -220,11 +220,7 @@ pub fn count_function_bindings(
 }
 
 /// Count bindings from a pattern (for parameters and destructuring)
-fn count_pattern_bindings(
-    pattern: &Pattern,
-    seen: &mut FxHashSet<JsString>,
-    count: &mut usize,
-) {
+fn count_pattern_bindings(pattern: &Pattern, seen: &mut FxHashSet<JsString>, count: &mut usize) {
     match pattern {
         Pattern::Identifier(id) => {
             if seen.insert(id.name.cheap_clone()) {

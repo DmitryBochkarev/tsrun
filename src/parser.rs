@@ -2,10 +2,10 @@
 //!
 //! Uses recursive descent with Pratt parsing for expressions.
 
-use crate::prelude::*;
 use crate::ast::*;
 use crate::error::JsError;
 use crate::lexer::{Lexer, Span, Token, TokenKind};
+use crate::prelude::*;
 use crate::string_dict::StringDict;
 use crate::value::JsString;
 

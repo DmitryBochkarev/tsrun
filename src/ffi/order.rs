@@ -11,7 +11,9 @@ use core::ptr;
 use crate::value::{CheapClone, PropertyKey};
 use crate::{JsError, JsString, JsValue, OrderId, OrderResponse, RuntimeValue};
 
-use super::{c_str_to_str, TsRunContext, TsRunOrderResponse, TsRunResult, TsRunValue, TsRunValueResult};
+use super::{
+    TsRunContext, TsRunOrderResponse, TsRunResult, TsRunValue, TsRunValueResult, c_str_to_str,
+};
 
 // ============================================================================
 // Order Fulfillment
@@ -30,7 +32,7 @@ pub extern "C" fn tsrun_fulfill_orders(
             return TsRunResult {
                 ok: false,
                 error: b"NULL context\0".as_ptr() as *const c_char,
-            }
+            };
         }
     };
 
@@ -92,7 +94,7 @@ pub extern "C" fn tsrun_create_pending_order(
             return TsRunValueResult {
                 value: ptr::null_mut(),
                 error: b"NULL context\0".as_ptr() as *const c_char,
-            }
+            };
         }
     };
 
@@ -154,7 +156,7 @@ pub extern "C" fn tsrun_create_order_promise(
             return TsRunValueResult {
                 value: ptr::null_mut(),
                 error: b"NULL context\0".as_ptr() as *const c_char,
-            }
+            };
         }
     };
 
@@ -175,7 +177,7 @@ pub extern "C" fn tsrun_resolve_promise(
             return TsRunResult {
                 ok: false,
                 error: b"NULL context\0".as_ptr() as *const c_char,
-            }
+            };
         }
     };
 
@@ -209,7 +211,7 @@ pub extern "C" fn tsrun_reject_promise(
             return TsRunResult {
                 ok: false,
                 error: b"NULL context\0".as_ptr() as *const c_char,
-            }
+            };
         }
     };
 

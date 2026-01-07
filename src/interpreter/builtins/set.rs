@@ -2,7 +2,7 @@
 
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
-use crate::prelude::{index_set_new, vec, Vec};
+use crate::prelude::{Vec, index_set_new, vec};
 use crate::value::{ExoticObject, Guarded, JsMapKey, JsValue, PropertyKey};
 
 /// Initialize Set.prototype with add, has, delete, clear, forEach methods

@@ -26,11 +26,11 @@
 //! }
 //! ```
 
+use crate::StepResult;
 use crate::interpreter::Interpreter;
 use crate::platform::{ConsoleLevel, ConsoleProvider, WasmRegExpProvider};
 use crate::prelude::*;
 use crate::value::{ExoticObject, JsValue};
-use crate::StepResult;
 use alloc::rc::Rc;
 use core::cell::RefCell;
 use wasm_bindgen::prelude::*;
@@ -257,11 +257,7 @@ fn format_js_value(value: &JsValue) -> String {
 
 /// Format a JsValue with depth tracking to handle nested structures.
 /// `seen` tracks object addresses to detect circular references.
-fn format_js_value_with_depth(
-    value: &JsValue,
-    depth: usize,
-    seen: &mut Vec<usize>,
-) -> String {
+fn format_js_value_with_depth(value: &JsValue, depth: usize, seen: &mut Vec<usize>) -> String {
     const MAX_DEPTH: usize = 10;
     const MAX_ITEMS: usize = 100;
 
@@ -375,8 +371,15 @@ fn format_object_contents(
                 items.push(format!("... {} more entries", entries.len() - max_items));
             }
 
-            format!("Map({}){{{}}}", entries.len(),
-                if items.is_empty() { String::new() } else { format!(" {} ", items.join(", ")) })
+            format!(
+                "Map({}){{{}}}",
+                entries.len(),
+                if items.is_empty() {
+                    String::new()
+                } else {
+                    format!(" {} ", items.join(", "))
+                }
+            )
         }
         ExoticObject::Set { entries } => {
             let mut items = Vec::new();
@@ -394,8 +397,15 @@ fn format_object_contents(
                 items.push(format!("... {} more items", entries.len() - max_items));
             }
 
-            format!("Set({}){{{}}}", entries.len(),
-                if items.is_empty() { String::new() } else { format!(" {} ", items.join(", ")) })
+            format!(
+                "Set({}){{{}}}",
+                entries.len(),
+                if items.is_empty() {
+                    String::new()
+                } else {
+                    format!(" {} ", items.join(", "))
+                }
+            )
         }
         ExoticObject::Promise(_) => String::from("Promise { <pending> }"),
         ExoticObject::Generator(_) | ExoticObject::BytecodeGenerator(_) => {
@@ -405,12 +415,10 @@ fn format_object_contents(
         ExoticObject::Boolean(b) => format!("[Boolean: {}]", b),
         ExoticObject::Number(n) => format!("[Number: {}]", n),
         ExoticObject::StringObj(s) => format!("[String: \"{}\"]", s),
-        ExoticObject::Symbol(sym) => {
-            match &sym.description {
-                Some(desc) => format!("[Symbol: Symbol({})]", desc),
-                None => String::from("[Symbol: Symbol()]"),
-            }
-        }
+        ExoticObject::Symbol(sym) => match &sym.description {
+            Some(desc) => format!("[Symbol: Symbol({})]", desc),
+            None => String::from("[Symbol: Symbol()]"),
+        },
         ExoticObject::Environment(_) => String::from("[Environment]"),
         ExoticObject::Enum(_) => String::from("[Enum]"),
         ExoticObject::RawJSON(s) => s.to_string(),

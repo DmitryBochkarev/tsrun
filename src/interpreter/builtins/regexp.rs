@@ -1,10 +1,10 @@
 //! RegExp built-in methods
 
-use crate::prelude::{format, Rc, String, ToString, Vec};
 use crate::error::JsError;
 use crate::gc::Gc;
 use crate::interpreter::Interpreter;
 use crate::platform::CompiledRegex;
+use crate::prelude::{Rc, String, ToString, Vec, format};
 use crate::value::{ExoticObject, Guarded, JsObject, JsString, JsValue, PropertyKey};
 
 // ═══════════════════════════════════════════════════════════════════════════════

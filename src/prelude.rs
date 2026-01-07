@@ -54,8 +54,7 @@ pub type FxHashMap<K, V> =
     hashbrown::HashMap<K, V, core::hash::BuildHasherDefault<rustc_hash::FxHasher>>;
 
 #[cfg(not(feature = "std"))]
-pub type FxHashSet<T> =
-    hashbrown::HashSet<T, core::hash::BuildHasherDefault<rustc_hash::FxHasher>>;
+pub type FxHashSet<T> = hashbrown::HashSet<T, core::hash::BuildHasherDefault<rustc_hash::FxHasher>>;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // IndexMap/IndexSet - use FxHasher for both std and no_std
@@ -64,8 +63,7 @@ pub type FxHashSet<T> =
 pub type IndexMap<K, V> =
     indexmap::IndexMap<K, V, core::hash::BuildHasherDefault<rustc_hash::FxHasher>>;
 
-pub type IndexSet<T> =
-    indexmap::IndexSet<T, core::hash::BuildHasherDefault<rustc_hash::FxHasher>>;
+pub type IndexSet<T> = indexmap::IndexSet<T, core::hash::BuildHasherDefault<rustc_hash::FxHasher>>;
 
 /// Create an empty IndexMap
 #[inline]

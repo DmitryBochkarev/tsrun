@@ -1,6 +1,6 @@
 //! Generator built-in methods
 
-use crate::prelude::{Box, RefCell, Rc};
+use crate::prelude::{Box, Rc, RefCell};
 
 use crate::error::JsError;
 use crate::gc::{Gc, Guard};

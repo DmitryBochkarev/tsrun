@@ -389,7 +389,9 @@ pub fn date_now(
     _this: JsValue,
     _args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    Ok(Guarded::unguarded(JsValue::Number(interp.now_millis() as f64)))
+    Ok(Guarded::unguarded(JsValue::Number(
+        interp.now_millis() as f64
+    )))
 }
 
 pub fn date_utc(

@@ -3,7 +3,7 @@
 use crate::error::JsError;
 use crate::gc::Gc;
 use crate::interpreter::Interpreter;
-use crate::prelude::{format, math, String, ToString, Vec};
+use crate::prelude::{String, ToString, Vec, format, math};
 use crate::value::{ExoticObject, Guarded, JsObject, JsString, JsValue, PropertyKey};
 
 /// Initialize Number.prototype with toFixed, toString, toPrecision, toExponential, valueOf

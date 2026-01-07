@@ -1,6 +1,6 @@
 //! Function.prototype built-in methods (call, apply, bind) and Function constructor
 
-use crate::prelude::{format, vec, Box, Rc, String, ToString, Vec};
+use crate::prelude::{Box, Rc, String, ToString, Vec, format, vec};
 
 use crate::ast::{Expression, Statement};
 use crate::compiler::Compiler;

@@ -210,7 +210,9 @@ pub fn math_pow(
 ) -> Result<Guarded, JsError> {
     let base = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
     let exp = args.get(1).map(|v| v.to_number()).unwrap_or(f64::NAN);
-    Ok(Guarded::unguarded(JsValue::Number(prelude_math::powf(base, exp))))
+    Ok(Guarded::unguarded(JsValue::Number(prelude_math::powf(
+        base, exp,
+    ))))
 }
 
 pub fn math_sqrt(
@@ -310,7 +312,9 @@ pub fn math_atan2(
 ) -> Result<Guarded, JsError> {
     let y = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
     let x = args.get(1).map(|v| v.to_number()).unwrap_or(f64::NAN);
-    Ok(Guarded::unguarded(JsValue::Number(prelude_math::atan2(y, x))))
+    Ok(Guarded::unguarded(JsValue::Number(prelude_math::atan2(
+        y, x,
+    ))))
 }
 
 pub fn math_sinh(
@@ -391,7 +395,9 @@ pub fn math_hypot(
             n * n
         })
         .sum();
-    Ok(Guarded::unguarded(JsValue::Number(prelude_math::sqrt(sum_sq))))
+    Ok(Guarded::unguarded(JsValue::Number(prelude_math::sqrt(
+        sum_sq,
+    ))))
 }
 
 pub fn math_log10(

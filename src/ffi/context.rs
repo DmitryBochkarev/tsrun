@@ -12,8 +12,8 @@ use core::ptr;
 use crate::{ModulePath, StepResult};
 
 use super::{
-    c_str_to_str, str_to_c_string, TsRunContext, TsRunImportRequest, TsRunOrder, TsRunResult,
-    TsRunStepResult, TsRunStepStatus, TsRunValue,
+    TsRunContext, TsRunImportRequest, TsRunOrder, TsRunResult, TsRunStepResult, TsRunStepStatus,
+    TsRunValue, c_str_to_str, str_to_c_string,
 };
 
 // ============================================================================
@@ -59,7 +59,7 @@ pub extern "C" fn tsrun_prepare(
             return TsRunResult {
                 ok: false,
                 error: b"NULL context\0".as_ptr() as *const c_char,
-            }
+            };
         }
     };
 
@@ -140,7 +140,7 @@ pub extern "C" fn tsrun_run(ctx: *mut TsRunContext) -> TsRunStepResult {
                     status: TsRunStepStatus::Error,
                     error: ctx_ref.set_error(e.to_string()),
                     ..Default::default()
-                }
+                };
             }
         }
     };

@@ -4,7 +4,9 @@ use crate::error::JsError;
 use crate::gc::{Gc, Guard};
 use crate::interpreter::Interpreter;
 use crate::parser::Parser;
-use crate::prelude::{format, index_map_with_capacity, index_set_with_capacity, String, ToString, Vec};
+use crate::prelude::{
+    String, ToString, Vec, format, index_map_with_capacity, index_set_with_capacity,
+};
 use crate::value::{
     CheapClone, ExoticObject, Guarded, JsMapKey, JsObject, JsString, JsValue, Property, PropertyKey,
 };

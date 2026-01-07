@@ -27,11 +27,11 @@
 //! assert_eq!(joined.as_str(), Some("1-2-3"));
 //! ```
 
-use crate::prelude::*;
 use crate::JsString;
 use crate::error::JsError;
 use crate::gc::{Gc, Guard};
 use crate::interpreter::{self, Interpreter};
+use crate::prelude::*;
 use crate::value::{self, CheapClone, JsObject, JsValue};
 
 // ═══════════════════════════════════════════════════════════════════════════════

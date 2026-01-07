@@ -9,7 +9,7 @@ use core::ptr;
 
 use crate::ModulePath;
 
-use super::{c_str_to_str, str_to_c_string, TsRunContext, TsRunResult, TsRunValueResult};
+use super::{TsRunContext, TsRunResult, TsRunValueResult, c_str_to_str, str_to_c_string};
 
 // ============================================================================
 // Module Loading
@@ -28,7 +28,7 @@ pub extern "C" fn tsrun_provide_module(
             return TsRunResult {
                 ok: false,
                 error: b"NULL context\0".as_ptr() as *const c_char,
-            }
+            };
         }
     };
 
@@ -65,7 +65,7 @@ pub extern "C" fn tsrun_get_export(
             return TsRunValueResult {
                 value: ptr::null_mut(),
                 error: b"NULL context\0".as_ptr() as *const c_char,
-            }
+            };
         }
     };
 
@@ -75,7 +75,9 @@ pub extern "C" fn tsrun_get_export(
     };
 
     match ctx.interp.get_export(name_str) {
-        Some(value) => TsRunValueResult::ok(super::TsRunValue::from_js_value(&mut ctx.interp, value)),
+        Some(value) => {
+            TsRunValueResult::ok(super::TsRunValue::from_js_value(&mut ctx.interp, value))
+        }
         None => TsRunValueResult::ok(super::TsRunValue::from_js_value(
             &mut ctx.interp,
             crate::JsValue::Undefined,

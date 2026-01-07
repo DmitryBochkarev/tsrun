@@ -6,7 +6,7 @@
 use crate::compiler::{BytecodeChunk, Constant, Op, Register};
 use crate::error::{JsError, StackFrame};
 use crate::gc::{Gc, Guard};
-use crate::prelude::{*, math};
+use crate::prelude::{math, *};
 use crate::value::{
     BytecodeFunction, CheapClone, ExoticObject, Guarded, JsFunction, JsObject, JsString, JsValue,
     Property, PropertyKey,
@@ -2009,7 +2009,9 @@ impl BytecodeVM {
             // ═══════════════════════════════════════════════════════════════════════════
             Op::LoadConst { dst, idx } => {
                 let (value, _guard) = match self.get_constant(idx) {
-                    Some(Constant::String(s)) => (JsValue::String(s.cheap_clone()), None::<Guard<JsObject>>),
+                    Some(Constant::String(s)) => {
+                        (JsValue::String(s.cheap_clone()), None::<Guard<JsObject>>)
+                    }
                     Some(Constant::Number(n)) => (JsValue::Number(*n), None::<Guard<JsObject>>),
                     #[cfg(any(feature = "regex", feature = "wasm"))]
                     Some(Constant::RegExp { pattern, flags }) => {

@@ -2,7 +2,7 @@
 
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
-use crate::prelude::{format, math, vec, String, ToString, Vec};
+use crate::prelude::{String, ToString, Vec, format, math, vec};
 use crate::value::{CheapClone, Guarded, JsObjectRef, JsString, JsValue, PropertyKey};
 
 /// Initialize String.prototype with all string methods.
@@ -595,7 +595,8 @@ pub fn string_split(
                     #[cfg(any(feature = "regex", feature = "wasm"))]
                     {
                         let re = interp.compile_regexp(&pattern, &flags)?;
-                        let split_result = re.split(s.as_str()).map_err(|e| JsError::type_error(e))?;
+                        let split_result =
+                            re.split(s.as_str()).map_err(|e| JsError::type_error(e))?;
                         let split: Vec<JsValue> = split_result
                             .into_iter()
                             .map(|p| JsValue::String(JsString::from(p)))
@@ -767,7 +768,9 @@ pub fn string_replace(
             #[cfg(not(any(feature = "regex", feature = "wasm")))]
             {
                 let _ = (pattern, flags);
-                return Err(JsError::type_error("RegExp not available (enable 'regex' or 'wasm' feature)"));
+                return Err(JsError::type_error(
+                    "RegExp not available (enable 'regex' or 'wasm' feature)",
+                ));
             }
         }
     }
@@ -1033,7 +1036,9 @@ pub fn string_match(
     _this: JsValue,
     _args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    Err(JsError::type_error("String.prototype.match requires 'regex' or 'wasm' feature"))
+    Err(JsError::type_error(
+        "String.prototype.match requires 'regex' or 'wasm' feature",
+    ))
 }
 
 /// String.prototype.match(regexp)
@@ -1137,7 +1142,9 @@ pub fn string_match_all(
     _this: JsValue,
     _args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    Err(JsError::type_error("String.prototype.matchAll requires 'regex' feature"))
+    Err(JsError::type_error(
+        "String.prototype.matchAll requires 'regex' feature",
+    ))
 }
 
 /// String.prototype.matchAll(regexp)
@@ -1223,7 +1230,9 @@ pub fn string_search(
     _this: JsValue,
     _args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    Err(JsError::type_error("String.prototype.search requires 'regex' or 'wasm' feature"))
+    Err(JsError::type_error(
+        "String.prototype.search requires 'regex' or 'wasm' feature",
+    ))
 }
 
 /// String.prototype.search(regexp)
