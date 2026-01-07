@@ -1307,6 +1307,73 @@ test('Console output with multiple arguments', () => {
     assertEqual(output[0].message, 'x = 42');
 });
 
+test('Console.log formats objects with contents', () => {
+    const runner = new TsRunner();
+    const result = runner.run('console.log({a: 1, b: 2})');
+    assertTrue(result.success);
+
+    const output = result.console_output;
+    assertEqual(output.length, 1);
+    assertContains(output[0].message, 'a: 1');
+    assertContains(output[0].message, 'b: 2');
+});
+
+test('Console.log formats arrays with contents', () => {
+    const runner = new TsRunner();
+    const result = runner.run('console.log([1, 2, 3])');
+    assertTrue(result.success);
+
+    const output = result.console_output;
+    assertEqual(output.length, 1);
+    assertEqual(output[0].message, '[1, 2, 3]');
+});
+
+test('Console.log formats nested objects', () => {
+    const runner = new TsRunner();
+    const result = runner.run('console.log({a: {b: [1, 2, 3]}, c: 4})');
+    assertTrue(result.success);
+
+    const output = result.console_output;
+    assertEqual(output.length, 1);
+    assertContains(output[0].message, 'a: { b: [1, 2, 3] }');
+    assertContains(output[0].message, 'c: 4');
+});
+
+test('Console.log formats Map with contents', () => {
+    const runner = new TsRunner();
+    const result = runner.run('console.log(new Map([["x", 1], ["y", 2]]))');
+    assertTrue(result.success);
+
+    const output = result.console_output;
+    assertEqual(output.length, 1);
+    assertContains(output[0].message, 'Map(2)');
+    assertContains(output[0].message, 'x => 1');
+});
+
+test('Console.log formats Set with contents', () => {
+    const runner = new TsRunner();
+    const result = runner.run('console.log(new Set([1, 2, 3]))');
+    assertTrue(result.success);
+
+    const output = result.console_output;
+    assertEqual(output.length, 1);
+    assertContains(output[0].message, 'Set(3)');
+    assertContains(output[0].message, '1');
+    assertContains(output[0].message, '2');
+    assertContains(output[0].message, '3');
+});
+
+test('Console.log formats mixed arguments correctly', () => {
+    const runner = new TsRunner();
+    const result = runner.run('console.log("obj:", {x: 1}, "arr:", [1, 2])');
+    assertTrue(result.success);
+
+    const output = result.console_output;
+    assertEqual(output.length, 1);
+    assertContains(output[0].message, 'obj: { x: 1 }');
+    assertContains(output[0].message, 'arr: [1, 2]');
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Results Summary
 // ─────────────────────────────────────────────────────────────────────────────

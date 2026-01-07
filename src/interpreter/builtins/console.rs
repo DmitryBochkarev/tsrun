@@ -4,13 +4,207 @@ use crate::error::JsError;
 use crate::interpreter::Interpreter;
 use crate::platform::ConsoleLevel;
 use crate::prelude::*;
-use crate::value::{Guarded, JsValue, PropertyKey};
+use crate::value::{ExoticObject, Guarded, JsValue, PropertyKey};
 
 /// Format a JsValue for console output (strings without quotes)
 fn format_for_console(value: &JsValue) -> String {
+    format_value_with_depth(value, 0, &mut Vec::new())
+}
+
+/// Format a JsValue with depth tracking to handle nested structures.
+fn format_value_with_depth(value: &JsValue, depth: usize, seen: &mut Vec<usize>) -> String {
+    const MAX_DEPTH: usize = 10;
+    const MAX_ITEMS: usize = 100;
+
     match value {
-        JsValue::String(s) => s.to_string(),
-        other => format!("{:?}", other),
+        JsValue::Undefined => String::from("undefined"),
+        JsValue::Null => String::from("null"),
+        JsValue::Boolean(b) => {
+            if *b {
+                String::from("true")
+            } else {
+                String::from("false")
+            }
+        }
+        JsValue::Number(n) => {
+            if n.is_nan() {
+                String::from("NaN")
+            } else if n.is_infinite() {
+                if *n > 0.0 {
+                    String::from("Infinity")
+                } else {
+                    String::from("-Infinity")
+                }
+            } else if n.fract() == 0.0 && n.abs() < 1e15 {
+                format!("{}", *n as i64)
+            } else {
+                format!("{}", n)
+            }
+        }
+        JsValue::String(s) => s.to_string(), // No quotes for console output
+        JsValue::Symbol(sym) => match &sym.description {
+            Some(desc) => format!("Symbol({})", desc),
+            None => String::from("Symbol()"),
+        },
+        JsValue::Object(obj) => {
+            // Check for circular reference using object id
+            let obj_id = obj.id();
+            if seen.contains(&obj_id) {
+                return String::from("[Circular]");
+            }
+
+            // Check depth limit
+            if depth >= MAX_DEPTH {
+                let obj_ref = obj.borrow();
+                return match &obj_ref.exotic {
+                    ExoticObject::Array { elements } => format!("[Array({})]", elements.len()),
+                    ExoticObject::Function(_) => String::from("[Function]"),
+                    _ => String::from("{...}"),
+                };
+            }
+
+            seen.push(obj_id);
+            let result = format_object_for_console(obj, depth, seen, MAX_ITEMS);
+            seen.pop();
+            result
+        }
+    }
+}
+
+/// Format the contents of an object or array for console output.
+fn format_object_for_console(
+    obj: &crate::gc::Gc<crate::value::JsObject>,
+    depth: usize,
+    seen: &mut Vec<usize>,
+    max_items: usize,
+) -> String {
+    let obj_ref = obj.borrow();
+
+    match &obj_ref.exotic {
+        ExoticObject::Array { elements } => {
+            let mut items = Vec::new();
+            let length = elements.len();
+            let display_len = length.min(max_items);
+
+            for elem in elements.iter().take(display_len) {
+                items.push(format_value_with_depth(elem, depth + 1, seen));
+            }
+
+            if length > max_items {
+                items.push(format!("... {} more items", length - max_items));
+            }
+
+            format!("[{}]", items.join(", "))
+        }
+        ExoticObject::Function(func_info) => {
+            let name = func_info.name().unwrap_or("anonymous");
+            format!("[Function: {}]", name)
+        }
+        ExoticObject::Date { timestamp } => {
+            format!("Date({})", timestamp)
+        }
+        ExoticObject::RegExp { pattern, flags, .. } => {
+            format!("/{}/{}", pattern, flags)
+        }
+        ExoticObject::Map { entries } => {
+            let mut items = Vec::new();
+            let display_len = entries.len().min(max_items);
+
+            for (i, (k, v)) in entries.iter().enumerate() {
+                if i >= display_len {
+                    break;
+                }
+                let key_str = format_value_with_depth(&k.0, depth + 1, seen);
+                let val_str = format_value_with_depth(v, depth + 1, seen);
+                items.push(format!("{} => {}", key_str, val_str));
+            }
+
+            if entries.len() > max_items {
+                items.push(format!("... {} more entries", entries.len() - max_items));
+            }
+
+            format!(
+                "Map({}){{{}}}",
+                entries.len(),
+                if items.is_empty() {
+                    String::new()
+                } else {
+                    format!(" {} ", items.join(", "))
+                }
+            )
+        }
+        ExoticObject::Set { entries } => {
+            let mut items = Vec::new();
+            let display_len = entries.len().min(max_items);
+
+            for (i, v) in entries.iter().enumerate() {
+                if i >= display_len {
+                    break;
+                }
+                items.push(format_value_with_depth(&v.0, depth + 1, seen));
+            }
+
+            if entries.len() > max_items {
+                items.push(format!("... {} more items", entries.len() - max_items));
+            }
+
+            format!(
+                "Set({}){{{}}}",
+                entries.len(),
+                if items.is_empty() {
+                    String::new()
+                } else {
+                    format!(" {} ", items.join(", "))
+                }
+            )
+        }
+        ExoticObject::Promise(_) => String::from("Promise { <pending> }"),
+        ExoticObject::Generator(_) | ExoticObject::BytecodeGenerator(_) => {
+            String::from("Generator { <suspended> }")
+        }
+        ExoticObject::Proxy(_) => String::from("Proxy {}"),
+        ExoticObject::Boolean(b) => format!("[Boolean: {}]", b),
+        ExoticObject::Number(n) => format!("[Number: {}]", n),
+        ExoticObject::StringObj(s) => format!("[String: \"{}\"]", s),
+        ExoticObject::Symbol(sym) => match &sym.description {
+            Some(desc) => format!("[Symbol: Symbol({})]", desc),
+            None => String::from("[Symbol: Symbol()]"),
+        },
+        ExoticObject::Environment(_) => String::from("[Environment]"),
+        ExoticObject::Enum(_) => String::from("[Enum]"),
+        ExoticObject::RawJSON(s) => s.to_string(),
+        ExoticObject::PendingOrder { id } => format!("[PendingOrder: {}]", id),
+        ExoticObject::Ordinary => {
+            // Regular object - format as { key: value, ... }
+            let mut items = Vec::new();
+            let mut count = 0;
+
+            for (key, prop) in obj_ref.properties.iter() {
+                if count >= max_items {
+                    break;
+                }
+                // Skip internal properties (symbols)
+                let key_str = match key {
+                    PropertyKey::String(s) => s.to_string(),
+                    PropertyKey::Symbol(_) => continue, // Skip symbols in output
+                    PropertyKey::Index(i) => i.to_string(),
+                };
+                let val_str = format_value_with_depth(&prop.value, depth + 1, seen);
+                items.push(format!("{}: {}", key_str, val_str));
+                count += 1;
+            }
+
+            let total = obj_ref.properties.len();
+            if total > max_items {
+                items.push(format!("... {} more properties", total - max_items));
+            }
+
+            if items.is_empty() {
+                String::from("{}")
+            } else {
+                format!("{{ {} }}", items.join(", "))
+            }
+        }
     }
 }
 
