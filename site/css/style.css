@@ -25,19 +25,6 @@
   --transition: 0.2s ease;
 }
 
-[data-theme="light"] {
-  --bg-primary: #ffffff;
-  --bg-secondary: #f6f8fa;
-  --bg-tertiary: #eaeef2;
-  --text-primary: #1f2328;
-  --text-secondary: #656d76;
-  --text-muted: #8b949e;
-  --accent: #0969da;
-  --accent-hover: #0550ae;
-  --border: #d0d7de;
-  --code-bg: #f6f8fa;
-}
-
 * {
   box-sizing: border-box;
   margin: 0;
@@ -130,24 +117,6 @@ code, pre {
   display: flex;
   align-items: center;
   gap: 12px;
-}
-
-.theme-toggle {
-  background: none;
-  border: none;
-  color: var(--text-secondary);
-  cursor: pointer;
-  padding: 8px;
-  border-radius: var(--radius);
-  transition: background var(--transition), color var(--transition);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.theme-toggle:hover {
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
 }
 
 .github-link {
@@ -606,19 +575,6 @@ td {
 .hljs-attr { color: #79c0ff; }
 .hljs-property { color: #79c0ff; }
 .hljs-title { color: #d2a8ff; }
-
-[data-theme="light"] .hljs-keyword { color: #cf222e; }
-[data-theme="light"] .hljs-string { color: #0a3069; }
-[data-theme="light"] .hljs-number { color: #0550ae; }
-[data-theme="light"] .hljs-function { color: #8250df; }
-[data-theme="light"] .hljs-class { color: #116329; }
-[data-theme="light"] .hljs-comment { color: var(--text-muted); }
-[data-theme="light"] .hljs-built_in { color: #953800; }
-[data-theme="light"] .hljs-type { color: #116329; }
-[data-theme="light"] .hljs-variable { color: #953800; }
-[data-theme="light"] .hljs-attr { color: #0550ae; }
-[data-theme="light"] .hljs-property { color: #0550ae; }
-[data-theme="light"] .hljs-title { color: #8250df; }
 
 /* Badge */
 .badge {
