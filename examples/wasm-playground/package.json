@@ -1,11 +1,11 @@
 {
-  "name": "tsrun-wasm-tests",
+  "name": "tsrun-wasm-playground",
   "version": "1.0.0",
-  "description": "End-to-end tests for tsrun WASM module",
+  "description": "WASM playground and tests for tsrun",
   "type": "module",
   "scripts": {
-    "test": "node test.js",
-    "test:browser": "node browser-test.js",
+    "test": "node tests/test.js",
+    "test:browser": "node tests/browser-test.js",
     "test:all": "npm run test && npm run test:browser"
   },
   "devDependencies": {

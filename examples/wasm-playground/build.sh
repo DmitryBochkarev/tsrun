@@ -48,7 +48,7 @@ if [[ "$1" == "--test" ]]; then
         --no-default-features \
         --features wasm
 
-    cd "$SCRIPT_DIR/tests"
+    cd "$SCRIPT_DIR"
 
     # Install puppeteer if not present
     if [[ ! -d "node_modules/puppeteer" ]]; then
