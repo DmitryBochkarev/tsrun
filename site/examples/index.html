@@ -39,6 +39,10 @@
 
       <h2 style="margin-top: 48px; margin-bottom: 24px;">TypeScript Features</h2>
       <div class="examples-grid">
+        <a href="/playground/#enums" class="example-card">
+          <h4>Enums & State Machine</h4>
+          <p>TypeScript enums with state transitions and validation</p>
+        </a>
         <a href="/playground/#classes" class="example-card">
           <h4>Classes with Inheritance</h4>
           <p>Classes, inheritance, static blocks, private fields, getters/setters</p>
@@ -86,6 +90,71 @@
       </div>
 
       <h2 style="margin-top: 48px; margin-bottom: 24px;">Code Examples</h2>
+
+      <h3 style="margin-top: 32px;">Enums & State Machine</h3>
+      <div class="code-block">
+        <div class="code-header">
+          <span class="lang">typescript</span>
+          <button class="copy-btn">Copy</button>
+        </div>
+        <div class="code-content">
+          <pre><code class="language-typescript">enum OrderState {
+    Pending = "pending",
+    Confirmed = "confirmed",
+    Shipped = "shipped",
+    Delivered = "delivered",
+    Cancelled = "cancelled"
+}
+
+enum OrderEvent {
+    Confirm = "confirm",
+    Ship = "ship",
+    Deliver = "deliver",
+    Cancel = "cancel"
+}
+
+// Define valid transitions
+const transitions: Record&lt;OrderState, Partial&lt;Record&lt;OrderEvent, OrderState&gt;&gt;&gt; = {
+    [OrderState.Pending]: {
+        [OrderEvent.Confirm]: OrderState.Confirmed,
+        [OrderEvent.Cancel]: OrderState.Cancelled
+    },
+    [OrderState.Confirmed]: {
+        [OrderEvent.Ship]: OrderState.Shipped,
+        [OrderEvent.Cancel]: OrderState.Cancelled
+    },
+    [OrderState.Shipped]: {
+        [OrderEvent.Deliver]: OrderState.Delivered
+    },
+    [OrderState.Delivered]: {},
+    [OrderState.Cancelled]: {}
+};
+
+class Order {
+    constructor(
+        public id: string,
+        public state: OrderState = OrderState.Pending
+    ) {}
+
+    transition(event: OrderEvent): boolean {
+        const nextState = transitions[this.state][event];
+        if (nextState) {
+            console.log(`Order ${this.id}: ${this.state} -> ${nextState}`);
+            this.state = nextState;
+            return true;
+        }
+        console.log(`Invalid transition: ${this.state} + ${event}`);
+        return false;
+    }
+}
+
+const order = new Order("ORD-001");
+order.transition(OrderEvent.Confirm);  // pending -> confirmed
+order.transition(OrderEvent.Ship);     // confirmed -> shipped
+order.transition(OrderEvent.Cancel);   // Invalid transition
+order.transition(OrderEvent.Deliver);  // shipped -> delivered</code></pre>
+        </div>
+      </div>
 
       <h3 style="margin-top: 32px;">Classes with Inheritance</h3>
       <div class="code-block">
