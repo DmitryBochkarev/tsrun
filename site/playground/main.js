@@ -1534,129 +1534,91 @@ console.log("\\nTop Product:", topProduct[0], "with $" + topProduct[1].revenue);
 
     'state-machine': {
         name: 'State Machine',
-        code: `// Vending Machine State Machine
-type VendingState = "idle" | "selecting" | "paying" | "dispensing";
-type VendingEvent = "insert_coin" | "select_item" | "cancel" | "dispense_complete" | "add_coin";
+        code: `// Order State Machine with TypeScript Enums
 
-interface Item {
-    name: string;
-    price: number;
+enum OrderState {
+    Pending = "pending",
+    Confirmed = "confirmed",
+    Shipped = "shipped",
+    Delivered = "delivered",
+    Cancelled = "cancelled"
 }
 
-class VendingMachine {
-    state: VendingState = "idle";
-    balance: number = 0;
-    selectedItem: Item | null = null;
+enum OrderEvent {
+    Confirm = "confirm",
+    Ship = "ship",
+    Deliver = "deliver",
+    Cancel = "cancel"
+}
 
-    items: Map<string, Item> = new Map([
-        ["A1", { name: "Cola", price: 150 }],
-        ["A2", { name: "Chips", price: 100 }],
-        ["A3", { name: "Candy", price: 75 }],
-        ["B1", { name: "Water", price: 100 }],
-    ]);
+// Define valid state transitions
+const transitions: Record<OrderState, Partial<Record<OrderEvent, OrderState>>> = {
+    [OrderState.Pending]: {
+        [OrderEvent.Confirm]: OrderState.Confirmed,
+        [OrderEvent.Cancel]: OrderState.Cancelled
+    },
+    [OrderState.Confirmed]: {
+        [OrderEvent.Ship]: OrderState.Shipped,
+        [OrderEvent.Cancel]: OrderState.Cancelled
+    },
+    [OrderState.Shipped]: {
+        [OrderEvent.Deliver]: OrderState.Delivered
+    },
+    [OrderState.Delivered]: {},
+    [OrderState.Cancelled]: {}
+};
 
-    transition(event: VendingEvent, data?: any): string {
-        const prevState = this.state;
-        let message = "";
+class Order {
+    constructor(
+        public id: string,
+        public state: OrderState = OrderState.Pending
+    ) {}
 
-        switch (this.state) {
-            case "idle":
-                if (event === "insert_coin") {
-                    this.balance = data || 0;
-                    this.state = "selecting";
-                    message = \`Inserted $\${(this.balance / 100).toFixed(2)}. Please select an item.\`;
-                }
-                break;
-
-            case "selecting":
-                if (event === "select_item") {
-                    const item = this.items.get(data);
-                    if (!item) {
-                        message = "Invalid selection. Try again.";
-                    } else if (this.balance >= item.price) {
-                        this.selectedItem = item;
-                        this.state = "dispensing";
-                        message = \`Dispensing \${item.name}...\`;
-                    } else {
-                        this.selectedItem = item;
-                        this.state = "paying";
-                        message = \`\${item.name} costs $\${(item.price / 100).toFixed(2)}. Insert $\${((item.price - this.balance) / 100).toFixed(2)} more.\`;
-                    }
-                } else if (event === "cancel") {
-                    const refund = this.balance;
-                    this.balance = 0;
-                    this.state = "idle";
-                    message = \`Cancelled. Refunding $\${(refund / 100).toFixed(2)}.\`;
-                }
-                break;
-
-            case "paying":
-                if (event === "add_coin") {
-                    this.balance += data || 0;
-                    if (this.selectedItem && this.balance >= this.selectedItem.price) {
-                        this.state = "dispensing";
-                        message = \`Payment complete! Dispensing \${this.selectedItem.name}...\`;
-                    } else {
-                        const remaining = this.selectedItem ? this.selectedItem.price - this.balance : 0;
-                        message = \`Balance: $\${(this.balance / 100).toFixed(2)}. Need $\${(remaining / 100).toFixed(2)} more.\`;
-                    }
-                } else if (event === "cancel") {
-                    const refund = this.balance;
-                    this.balance = 0;
-                    this.selectedItem = null;
-                    this.state = "idle";
-                    message = \`Cancelled. Refunding $\${(refund / 100).toFixed(2)}.\`;
-                }
-                break;
-
-            case "dispensing":
-                if (event === "dispense_complete") {
-                    const change = this.selectedItem ? this.balance - this.selectedItem.price : this.balance;
-                    const item = this.selectedItem;
-                    this.balance = 0;
-                    this.selectedItem = null;
-                    this.state = "idle";
-                    message = \`Enjoy your \${item?.name}!\`;
-                    if (change > 0) {
-                        message += \` Change: $\${(change / 100).toFixed(2)}\`;
-                    }
-                }
-                break;
+    transition(event: OrderEvent): boolean {
+        const nextState = transitions[this.state][event];
+        if (nextState) {
+            console.log(\`Order \${this.id}: \${this.state} -> \${nextState}\`);
+            this.state = nextState;
+            return true;
         }
+        console.log(\`Invalid transition: \${this.state} + \${event}\`);
+        return false;
+    }
 
-        console.log(\`[\${prevState} -> \${this.state}] \${message}\`);
-        return message;
+    canTransition(event: OrderEvent): boolean {
+        return transitions[this.state][event] !== undefined;
     }
 }
 
-// Simulate a vending machine session
-console.log("=== Vending Machine Demo ===\\n");
-const vm = new VendingMachine();
+// Demo: Order lifecycle
+console.log("=== Order State Machine Demo ===\\n");
 
-console.log("Available items:");
-for (const [code, item] of vm.items) {
-    console.log(\`  \${code}: \${item.name} - $\${(item.price / 100).toFixed(2)}\`);
-}
-console.log("");
+const order1 = new Order("ORD-001");
+console.log("--- Order 1: Normal flow ---");
+order1.transition(OrderEvent.Confirm);
+order1.transition(OrderEvent.Ship);
+order1.transition(OrderEvent.Deliver);
+console.log(\`Final state: \${order1.state}\\n\`);
 
-// Scenario 1: Buy chips with exact change
-console.log("--- Scenario 1: Exact change ---");
-vm.transition("insert_coin", 100);
-vm.transition("select_item", "A2");
-vm.transition("dispense_complete");
+const order2 = new Order("ORD-002");
+console.log("--- Order 2: Cancellation ---");
+order2.transition(OrderEvent.Confirm);
+order2.transition(OrderEvent.Cancel);
+console.log(\`Final state: \${order2.state}\\n\`);
 
-// Scenario 2: Buy cola, need more money
-console.log("\\n--- Scenario 2: Add more coins ---");
-vm.transition("insert_coin", 100);
-vm.transition("select_item", "A1");
-vm.transition("add_coin", 50);
-vm.transition("dispense_complete");
+const order3 = new Order("ORD-003");
+console.log("--- Order 3: Invalid transitions ---");
+order3.transition(OrderEvent.Ship);      // Can't ship pending order
+order3.transition(OrderEvent.Confirm);
+order3.transition(OrderEvent.Ship);
+order3.transition(OrderEvent.Cancel);    // Can't cancel shipped order
+console.log(\`Final state: \${order3.state}\\n\`);
 
-// Scenario 3: Cancel transaction
-console.log("\\n--- Scenario 3: Cancel ---");
-vm.transition("insert_coin", 200);
-vm.transition("select_item", "A3");
-vm.transition("cancel");`
+// Enum reverse mapping (numeric enums)
+enum Priority { Low = 1, Medium = 2, High = 3 }
+console.log("--- Enum reverse mapping ---");
+console.log(\`Priority[2] = "\${Priority[2]}"\`);
+console.log(\`Priority.High = \${Priority.High}\`);`
     }
 };
 
