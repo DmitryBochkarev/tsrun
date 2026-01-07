@@ -10,3 +10,8 @@ examples/c-embedding/basic
 examples/c-embedding/native_functions
 examples/c-embedding/module_loading
 examples/c-embedding/async_orders
+examples/c-embedding/internal_modules
+examples/c-embedding/event_system
+
+# Node.js
+node_modules/
