@@ -689,6 +689,44 @@ fn test_class_parameter_properties() {
 }
 
 #[test]
+fn test_class_parameter_properties_with_default() {
+    // Parameter property with default value
+    assert_eq!(
+        eval(
+            r#"
+            class Config {
+                constructor(public timeout: number = 5000) {}
+            }
+
+            let c = new Config();
+            c.timeout
+        "#
+        ),
+        JsValue::Number(5000.0)
+    );
+}
+
+#[test]
+fn test_class_parameter_properties_with_enum_default() {
+    // Parameter property with enum default value - tests the state machine pattern
+    assert_eq!(
+        eval(
+            r#"
+            enum State { A = "a", B = "b" }
+
+            class Machine {
+                constructor(public state: State = State.A) {}
+            }
+
+            let m = new Machine();
+            m.state
+        "#
+        ),
+        JsValue::from("a")
+    );
+}
+
+#[test]
 fn test_class_static_types() {
     assert_eq!(
         eval(

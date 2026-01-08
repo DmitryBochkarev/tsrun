@@ -116,30 +116,38 @@ async function runTests() {
         }
         await setTimeout(100);
 
-        // Check for errors in output
+        // Check for errors in output (parse errors, runtime errors like TypeError, etc.)
+        // Note: console.error() output also has .output-error class, but runtime errors
+        // are prefixed with "Error:" by the playground's displayOutput function
         const output = await page.evaluate(() => {
             const outputEl = document.getElementById('output');
             const errorLines = outputEl.querySelectorAll('.output-error');
+            const errorTexts = Array.from(errorLines).map(el => el.textContent);
+            // Only flag as error if it's a real runtime error (prefixed with "Error:")
+            // not just console.error() output from the example code
+            const runtimeError = errorTexts.find(text =>
+                text.startsWith('Error:') ||
+                text.includes('Parse error') ||
+                text.includes('Unexpected token')
+            );
             return {
-                hasParseError: Array.from(errorLines).some(el =>
-                    el.textContent.includes('Parse error') ||
-                    el.textContent.includes('Unexpected token')
-                ),
+                hasError: !!runtimeError,
+                errorText: runtimeError || null,
                 text: outputEl.textContent
             };
         });
 
         // Check for page errors (like ReferenceError in main.js)
         const hasPageError = errors.length > 0;
-        const hasParseError = output.hasParseError;
+        const hasOutputError = output.hasError;
 
-        if (hasPageError || hasParseError) {
+        if (hasPageError || hasOutputError) {
             console.log(`✗ ${example.name}`);
             if (hasPageError) {
                 console.log(`  Page error: ${errors[0]}`);
             }
-            if (hasParseError) {
-                console.log(`  Parse error in example code`);
+            if (hasOutputError) {
+                console.log(`  Runtime error: ${output.errorText}`);
             }
             failed++;
         } else {

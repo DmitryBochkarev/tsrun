@@ -2025,7 +2025,9 @@ impl Compiler {
         // Compile parameter declarations inline (same as compile_function_body)
         // Also collect parameter properties (public/private/protected) to assign to this
         let mut param_names = Vec::with_capacity(ctor.params.len());
-        let mut param_properties: Vec<(JsString, u8)> = Vec::new();
+        // Param properties: (name, value_reg, needs_free)
+        // needs_free is true for registers allocated for default values
+        let mut param_properties: Vec<(JsString, u8, bool)> = Vec::new();
 
         for (idx, param) in ctor.params.iter().enumerate() {
             let arg_reg = idx as u8;
@@ -2041,8 +2043,9 @@ impl Compiler {
                     });
 
                     // If this is a parameter property (has accessibility or readonly), record it
+                    // arg_reg is a fixed argument register, doesn't need freeing
                     if param.accessibility.is_some() || param.readonly {
-                        param_properties.push((id.name.cheap_clone(), arg_reg));
+                        param_properties.push((id.name.cheap_clone(), arg_reg, false));
                     }
                 }
                 crate::ast::Pattern::Rest(rest) => {
@@ -2095,21 +2098,24 @@ impl Compiler {
                     if let crate::ast::Pattern::Identifier(id) = assign_pat.left.as_ref() {
                         param_names.push(id.name.cheap_clone());
                         // If this is a parameter property, record it
+                        // Note: we DON'T free actual_value here if it's a param property,
+                        // because it's needed later in the param_properties loop
                         if param.accessibility.is_some() || param.readonly {
-                            param_properties.push((id.name.cheap_clone(), actual_value));
+                            param_properties.push((id.name.cheap_clone(), actual_value, true));
+                        } else {
+                            func_compiler.builder.free_register(actual_value);
                         }
                     } else {
                         param_names.push(JsString::from(format!("__param{}__", idx)));
+                        func_compiler.builder.free_register(actual_value);
                     }
-
-                    func_compiler.builder.free_register(actual_value);
                 }
             }
         }
 
         // Emit parameter property assignments: this.x = x
         // These happen before instance field initializers
-        for (prop_name, value_reg) in &param_properties {
+        for (prop_name, value_reg, needs_free) in &param_properties {
             let this_reg = func_compiler.builder.alloc_register()?;
             func_compiler.builder.emit(Op::LoadThis { dst: this_reg });
             let prop_idx = func_compiler.builder.add_string(prop_name.cheap_clone())?;
@@ -2119,6 +2125,10 @@ impl Compiler {
                 value: *value_reg,
             });
             func_compiler.builder.free_register(this_reg);
+            // Free registers allocated for default values after they've been used
+            if *needs_free {
+                func_compiler.builder.free_register(*value_reg);
+            }
         }
 
         // Compile instance field initializers at the start of constructor
