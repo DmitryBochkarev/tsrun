@@ -117,10 +117,26 @@ async function runCode() {
 function loadExample(name) {
     if (name && EXAMPLES[name]) {
         codeEl.value = EXAMPLES[name].code;
+        examplesSelect.value = name;
         clearOutput();
         setStatus('success', 'Ready');
     }
 }
+
+// Load example from URL hash
+function loadExampleFromHash() {
+    const hash = window.location.hash.slice(1); // Remove '#'
+    if (hash && EXAMPLES[hash]) {
+        loadExample(hash);
+        return true;
+    }
+    return false;
+}
+
+// Handle hash changes (back/forward navigation)
+window.addEventListener('hashchange', () => {
+    loadExampleFromHash();
+});
 
 // Event listeners
 runBtn.addEventListener('click', runCode);
@@ -1673,5 +1689,8 @@ function populateExamples() {
 // Initialize
 runBtn.disabled = true;
 populateExamples();
-loadExample('hello-world');
+// Load from URL hash, or default to 'hello-world'
+if (!loadExampleFromHash()) {
+    loadExample('hello-world');
+}
 initWasm();

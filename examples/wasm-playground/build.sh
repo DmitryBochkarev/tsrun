@@ -29,10 +29,12 @@ echo "Build complete!"
 echo "Output: $SCRIPT_DIR/pkg/"
 
 # Copy to site directory
-SITE_PKG_DIR="$PROJECT_DIR/site/playground/pkg"
-if [[ -d "$PROJECT_DIR/site/playground" ]]; then
-    echo "Copying to site: $SITE_PKG_DIR"
-    cp -r "$SCRIPT_DIR/pkg/"* "$SITE_PKG_DIR/"
+SITE_PLAYGROUND_DIR="$PROJECT_DIR/site/playground"
+if [[ -d "$SITE_PLAYGROUND_DIR" ]]; then
+    echo "Copying to site: $SITE_PLAYGROUND_DIR"
+    cp -r "$SCRIPT_DIR/pkg/"* "$SITE_PLAYGROUND_DIR/pkg/"
+    cp "$SCRIPT_DIR/main.js" "$SITE_PLAYGROUND_DIR/"
+    # Note: index.html is NOT copied - site has its own version with site navigation
 fi
 echo ""
 

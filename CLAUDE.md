@@ -441,9 +441,9 @@ cd examples/wasm-playground
 
 | Location | Purpose |
 |----------|---------|
-| `examples/wasm-playground/` | WASM build scripts and playground HTML |
+| `examples/wasm-playground/` | **Source** - playground HTML, JS, and build scripts |
 | `examples/wasm-playground/pkg/` | Built WASM output |
-| `site/playground/pkg/` | Copy of WASM pkg for the website |
+| `site/playground/` | **Copy** - synced by build.sh |
 | `src/platform/wasm_impl.rs` | WASM-specific platform code |
 
 ### Notes
