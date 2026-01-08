@@ -1,6 +1,6 @@
 //! eval:internal built-in module
 //!
-//! Provides the core order system functions for blocking host operations.
+//! Provides the core order system functions for async host operations.
 
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
@@ -18,18 +18,20 @@ pub fn create_eval_internal_module() -> InternalModule {
 
 /// Native implementation of __order__
 ///
-/// Suspends the VM immediately and creates a pending order. The host provides
-/// a response value (any JsValue) via fulfill_orders(). The VM resumes and
-/// __order__() returns that value directly.
+/// Creates a pending order and returns a PendingOrder marker. The VM
+/// suspends immediately when this function returns, allowing the host
+/// to provide any value (plain objects, Promises, primitives).
 ///
-/// This is a blocking operation - the VM suspends at the call site.
-/// If host wants to defer the actual value, host can return a Promise
-/// and the script can await it.
+/// This is a blocking syscall - each call suspends execution until
+/// the host fulfills the order.
 ///
 /// Usage:
-///   const result = __order__({ type: "readFile", path: "/foo" });
-///   // If host returns a Promise that needs unwrapping:
-///   const result = await __order__({ type: "getAsyncValue" });
+///   const result = await __order__({ type: "readFile", path: "/foo" });
+///
+/// For parallel requests (host returns Promises, resolves them later):
+///   const p1 = __order__({ type: "fetch", url: "/a" });  // suspends, host returns Promise
+///   const p2 = __order__({ type: "fetch", url: "/b" });  // suspends, host returns Promise
+///   const [a, b] = await Promise.all([p1, p2]);          // awaits both
 fn order_syscall(
     interp: &mut Interpreter,
     _this: JsValue,
@@ -56,7 +58,7 @@ fn order_syscall(
         payload: payload_rv,
     });
 
-    // Return PendingOrder marker - VM will suspend when this is detected
+    // Create PendingOrder marker - VM will suspend immediately when this returns
     let marker_guard = interp.heap.create_guard();
     let marker = marker_guard.alloc();
     marker.borrow_mut().exotic = ExoticObject::PendingOrder { id: id.0 };

@@ -40,8 +40,10 @@ timeout 30 cargo test -- --nocapture     # Show test output
 | `src/compiler/` | Bytecode compiler |
 | `src/interpreter/` | VM and builtins |
 | `src/ffi/` | C FFI module (feature-gated: `c-api`) |
+| `src/wasm/mod.rs` | WASM API (feature-gated: `wasm`) |
 | `tests/interpreter/` | Integration tests by feature |
 | `examples/c-embedding/` | C API usage examples |
+| `examples/wasm-playground/` | WASM playground source |
 
 ## Development Rules
 
@@ -427,7 +429,7 @@ TsRunResult tsrun_fulfill_orders(TsRunContext* ctx, const TsRunOrderResponse* re
 
 ## WASM Playground
 
-The interpreter compiles to WebAssembly for browser-based execution.
+The interpreter compiles to WebAssembly for browser-based execution with a step-based API.
 
 ### Building
 
@@ -444,13 +446,140 @@ cd examples/wasm-playground
 | `examples/wasm-playground/` | **Source** - playground HTML, JS, and build scripts |
 | `examples/wasm-playground/pkg/` | Built WASM output |
 | `site/playground/` | **Copy** - synced by build.sh |
+| `src/wasm/mod.rs` | WASM API (TsRunner, step-based execution) |
 | `src/platform/wasm_impl.rs` | WASM-specific platform code |
+
+### Step-Based API
+
+The WASM module exposes a step-based execution API where JavaScript controls the execution loop:
+
+```javascript
+import init, { TsRunner, STEP_CONTINUE, STEP_COMPLETE, STEP_ERROR, STEP_SUSPENDED } from './pkg/tsrun.js';
+
+await init();
+const runner = new TsRunner();
+
+// Load constants (they're functions that return values)
+const StepStatus = {
+    CONTINUE: STEP_CONTINUE(),
+    COMPLETE: STEP_COMPLETE(),
+    NEED_IMPORTS: STEP_NEED_IMPORTS(),
+    SUSPENDED: STEP_SUSPENDED(),
+    DONE: STEP_DONE(),
+    ERROR: STEP_ERROR()
+};
+
+// Prepare code
+const prepResult = runner.prepare(code, 'script.ts');
+if (prepResult.status === StepStatus.ERROR) {
+    console.error(prepResult.error);
+    return;
+}
+
+// Main execution loop
+while (true) {
+    const result = runner.step();
+
+    // Display console output from this step
+    for (const entry of result.console_output) {
+        console.log(`[${entry.level}] ${entry.message}`);
+    }
+
+    switch (result.status) {
+        case StepStatus.CONTINUE:
+            continue;
+        case StepStatus.COMPLETE:
+            console.log('Result:', result.value);
+            return;
+        case StepStatus.DONE:
+            return;
+        case StepStatus.ERROR:
+            console.error(result.error);
+            return;
+        case StepStatus.NEED_IMPORTS:
+            console.error('Imports:', runner.get_import_requests());
+            return;
+        case StepStatus.SUSPENDED:
+            // Handle async orders (see below)
+            const orders = runner.get_pending_orders();
+            const responses = await handleOrders(orders);
+            runner.fulfill_orders(responses);
+            continue;
+    }
+}
+```
+
+### Status Constants
+
+| Function | Value | Meaning |
+|----------|-------|---------|
+| `STEP_CONTINUE()` | 0 | More to execute, call step() again |
+| `STEP_COMPLETE()` | 1 | Finished with a value in `result.value` |
+| `STEP_NEED_IMPORTS()` | 2 | Waiting for modules (call `get_import_requests()`) |
+| `STEP_SUSPENDED()` | 3 | Waiting for orders (call `get_pending_orders()`) |
+| `STEP_DONE()` | 4 | Finished, no return value |
+| `STEP_ERROR()` | 5 | Error in `result.error` |
+
+### Async Order System
+
+For async operations, TypeScript code uses `__order__` from the `eval:internal` module:
+
+```typescript
+import { __order__ } from "eval:internal";
+
+function fetch(url: string): Promise<any> {
+    return __order__({ type: "fetch", url });
+}
+
+const data = await fetch("/api/users");
+```
+
+JavaScript handles these orders and fulfills them:
+
+```javascript
+async function handleOrders(orders) {
+    const responses = [];
+    for (const order of orders) {
+        const { id, payload } = order;
+        // payload contains { type: "fetch", url: "..." }
+
+        // Simulate async operation with setTimeout
+        await new Promise(r => setTimeout(r, 100));
+
+        // Mock response based on payload
+        const result = { data: "mock" };
+        responses.push({ id, result });
+    }
+    return responses;
+}
+```
+
+### TsRunner Methods
+
+| Method | Description |
+|--------|-------------|
+| `new TsRunner()` | Create new runner instance |
+| `prepare(code, filename)` | Compile code, returns WasmStepResult |
+| `step()` | Execute one step, returns WasmStepResult |
+| `get_pending_orders()` | Get orders when Suspended (returns `[{id, payload}]`) |
+| `get_import_requests()` | Get module specifiers when NeedImports |
+| `fulfill_orders(responses)` | Provide order responses (`[{id, result?, error?}]`) |
+
+### WasmStepResult Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `status` | number | StepStatus enum value |
+| `value` | string? | Result value (for Complete status) |
+| `error` | string? | Error message (for Error status) |
+| `console_output` | ConsoleEntry[] | Console output from this step |
 
 ### Notes
 
 - Uses `wasm-pack` with `--target web`
 - Feature-gated: builds with `--features wasm` and `--no-default-features`
 - Imports in builtins must use `crate::prelude::Box` (not `std::boxed::Box`) for `no_std` compatibility
+- Each `TsRunner` instance is independent (no shared state)
 
 ## Implementation Status
 

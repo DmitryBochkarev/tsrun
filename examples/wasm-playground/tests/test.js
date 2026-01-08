@@ -7,7 +7,87 @@
  * Run with: node test.js
  */
 
-import { TsRunner } from './pkg/tsrun.js';
+import {
+    TsRunner,
+    STEP_CONTINUE,
+    STEP_COMPLETE,
+    STEP_NEED_IMPORTS,
+    STEP_SUSPENDED,
+    STEP_DONE,
+    STEP_ERROR
+} from './pkg/tsrun.js';
+
+// Step status constants for readability (these are functions that return values)
+const StepStatus = {
+    CONTINUE: STEP_CONTINUE(),
+    COMPLETE: STEP_COMPLETE(),
+    NEED_IMPORTS: STEP_NEED_IMPORTS(),
+    SUSPENDED: STEP_SUSPENDED(),
+    DONE: STEP_DONE(),
+    ERROR: STEP_ERROR()
+};
+
+// Helper function to run code using the step-based API
+function runCode(runner, code) {
+    const prepResult = runner.prepare(code, 'test.ts');
+    if (prepResult.status === StepStatus.ERROR) {
+        return {
+            success: false,
+            error: prepResult.error,
+            value: null,
+            console_output: prepResult.console_output
+        };
+    }
+
+    let allConsole = [...(prepResult.console_output || [])];
+
+    // Run until completion
+    while (true) {
+        const result = runner.step();
+        allConsole = allConsole.concat(result.console_output || []);
+
+        switch (result.status) {
+            case StepStatus.CONTINUE:
+                continue;
+            case StepStatus.COMPLETE:
+                return {
+                    success: true,
+                    error: null,
+                    value: result.value,
+                    console_output: allConsole
+                };
+            case StepStatus.DONE:
+                return {
+                    success: true,
+                    error: null,
+                    value: 'undefined',
+                    console_output: allConsole
+                };
+            case StepStatus.ERROR:
+                return {
+                    success: false,
+                    error: result.error,
+                    value: null,
+                    console_output: allConsole
+                };
+            case StepStatus.NEED_IMPORTS:
+                return {
+                    success: false,
+                    error: 'Module imports not supported: ' + runner.get_import_requests().join(', '),
+                    value: null,
+                    console_output: allConsole
+                };
+            case StepStatus.SUSPENDED:
+                // For tests, just return error - we don't handle async in tests
+                return {
+                    success: false,
+                    error: 'Async operations not supported in tests',
+                    value: null,
+                    console_output: allConsole
+                };
+        }
+    }
+}
 
 // Test utilities
 let passed = 0;
@@ -58,14 +138,14 @@ test('TsRunner can be instantiated', () => {
 
 test('Basic execution works', () => {
     const runner = new TsRunner();
-    const result = runner.run('1 + 2 * 3');
+    const result = runCode(runner, '1 + 2 * 3');
     assertTrue(result.success, 'Expected success');
     assertEqual(result.value, '7');
 });
 
 test('Console output is captured', () => {
     const runner = new TsRunner();
-    const result = runner.run('console.log("Hello")');
+    const result = runCode(runner, 'console.log("Hello")');
     assertTrue(result.success);
     assertTrue(result.console_output.length === 1);
     assertEqual(result.console_output[0].message, 'Hello');
@@ -73,17 +153,19 @@ test('Console output is captured', () => {
 
 test('Errors are reported', () => {
     const runner = new TsRunner();
-    const result = runner.run('undefinedVariable');
+    const result = runCode(runner, 'undefinedVariable');
     assertTrue(!result.success);
     assertTrue(result.error !== null);
 });
 
-test('Runner reset clears state', () => {
-    const runner = new TsRunner();
-    runner.run('const x = 123');
-    runner.reset();
-    const result = runner.run('x');
-    assertTrue(!result.success);
+test('Fresh runner for each execution', () => {
+    // Each TsRunner instance starts fresh - no shared state
+    const runner1 = new TsRunner();
+    runCode(runner1, 'const x = 123');
+
+    const runner2 = new TsRunner();
+    const result = runCode(runner2, 'x');
+    assertTrue(!result.success, 'New runner should not have previous state');
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -621,7 +703,7 @@ console.log("Final state:", order.state);`
 for (const [name, code] of Object.entries(PLAYGROUND_EXAMPLES)) {
     test(`Playground: ${name}`, () => {
         const runner = new TsRunner();
-        const result = runner.run(code);
+        const result = runCode(runner, code);
         assertTrue(result.success, `Example '${name}' failed: ${result.error}`);
     });
 }

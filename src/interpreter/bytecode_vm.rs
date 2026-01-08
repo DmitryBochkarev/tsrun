@@ -932,7 +932,11 @@ impl BytecodeVM {
                 interp.current_ffi_id = prev_ffi_id;
                 let result = result?;
 
-                // Check if result is a PendingOrder - if so, suspend immediately
+                // Check if result is a PendingOrder - if so, suspend immediately.
+                // This makes __order__ a blocking syscall - each call suspends
+                // execution until the host fulfills the order with a value.
+                // For parallel operations, the host can return unresolved Promises
+                // that are later resolved concurrently.
                 if let JsValue::Object(ref obj) = result.value
                     && let ExoticObject::PendingOrder { id, .. } = &obj.borrow().exotic
                 {

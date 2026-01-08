@@ -575,6 +575,11 @@ impl Interpreter {
         self.regexp_provider = provider;
     }
 
+    /// Set the console provider at runtime.
+    pub fn set_console(&mut self, provider: Box<dyn ConsoleProvider>) {
+        self.console_provider = provider;
+    }
+
     /// Get a reference to the current RegExp provider.
     pub fn regexp_provider(&self) -> &Rc<dyn RegExpProvider> {
         &self.regexp_provider
@@ -1808,10 +1813,16 @@ impl Interpreter {
 
     /// Fulfill orders with responses from the host
     ///
-    /// Stores responses for later consumption when VM resumes via step().
-    /// The response value becomes the return value of __order__().
+    /// The host can provide any value as the order response:
+    /// - Plain objects: returned directly to JS code
+    /// - Promises: returned to JS code, can be awaited for deferred resolution
+    /// - Primitives: returned directly to JS code
+    ///
+    /// For parallel async operations, the host can return unresolved Promises
+    /// and resolve them later via api::resolve_promise.
     pub fn fulfill_orders(&mut self, responses: Vec<crate::OrderResponse>) {
         for response in responses {
+            // Store response - will be injected into VM when execution resumes
             self.order_responses.insert(response.id, response.result);
         }
     }

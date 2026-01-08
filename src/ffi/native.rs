@@ -8,9 +8,9 @@ use alloc::vec::Vec;
 use core::ffi::{CStr, c_char, c_void};
 use core::ptr;
 
+use crate::JsString;
 use crate::error::JsError;
 use crate::value::{CheapClone, Guarded, JsValue, PropertyKey};
-use crate::JsString;
 
 use super::{
     NativeCallbackWrapper, TsRunContext, TsRunNativeFn, TsRunResult, TsRunValue, TsRunValueResult,
@@ -348,7 +348,8 @@ pub extern "C" fn tsrun_register_internal_module(
     }
 
     // Register the module namespace with the interpreter
-    ctx.interp.register_ffi_module(&module.specifier, module_obj);
+    ctx.interp
+        .register_ffi_module(&module.specifier, module_obj);
 
     TsRunResult::success()
 }

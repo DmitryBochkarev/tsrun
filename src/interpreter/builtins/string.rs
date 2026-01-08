@@ -595,8 +595,7 @@ pub fn string_split(
                     #[cfg(any(feature = "regex", feature = "wasm"))]
                     {
                         let re = interp.compile_regexp(&pattern, &flags)?;
-                        let split_result =
-                            re.split(s.as_str()).map_err(JsError::type_error)?;
+                        let split_result = re.split(s.as_str()).map_err(JsError::type_error)?;
                         let split: Vec<JsValue> = split_result
                             .into_iter()
                             .map(|p| JsValue::String(JsString::from(p)))

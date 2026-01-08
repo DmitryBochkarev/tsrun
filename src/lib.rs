@@ -838,4 +838,3 @@ pub struct InterpreterConfig {
     /// - `NoOpRegExpProvider` otherwise
     pub regexp_provider: Option<Rc<dyn platform::RegExpProvider>>,
 }
-

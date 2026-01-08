@@ -287,6 +287,86 @@ assert!(export_names.contains(&"CONFIG".to_string()));
 
 See [examples/c-embedding/](examples/c-embedding/) for complete examples.
 
+## WASM / Browser
+
+The interpreter compiles to WebAssembly for browser execution. Try it at the [online playground](https://your-site.com/playground).
+
+### Building
+
+```bash
+cd examples/wasm-playground
+./build.sh              # Build WASM module
+./build.sh --test       # Build and run tests
+```
+
+### JavaScript API
+
+```javascript
+import init, { TsRunner, STEP_CONTINUE, STEP_COMPLETE, STEP_ERROR } from './pkg/tsrun.js';
+
+await init();
+const runner = new TsRunner();
+
+// Status constants (functions that return values)
+const Status = {
+    CONTINUE: STEP_CONTINUE(),
+    COMPLETE: STEP_COMPLETE(),
+    ERROR: STEP_ERROR()
+};
+
+// Prepare and run
+runner.prepare('console.log("Hello!"); 1 + 2', 'script.ts');
+
+while (true) {
+    const result = runner.step();
+
+    // Display console output
+    for (const entry of result.console_output) {
+        console.log(`[${entry.level}] ${entry.message}`);
+    }
+
+    if (result.status === Status.COMPLETE) {
+        console.log('Result:', result.value);
+        break;
+    } else if (result.status === Status.ERROR) {
+        console.error('Error:', result.error);
+        break;
+    }
+}
+```
+
+### Async Operations
+
+TypeScript code can use `__order__` for async operations that the JavaScript host fulfills:
+
+```typescript
+import { __order__ } from "eval:internal";
+
+function fetch(url: string): Promise<any> {
+    return __order__({ type: "fetch", url });
+}
+
+const [user, posts] = await Promise.all([
+    fetch("/api/users/1"),
+    fetch("/api/posts")
+]);
+```
+
+```javascript
+// In the step loop, handle STEP_SUSPENDED status:
+if (result.status === STEP_SUSPENDED()) {
+    const orders = runner.get_pending_orders();
+    // orders = [{ id: 1, payload: { type: "fetch", url: "/api/users/1" } }, ...]
+
+    const responses = await Promise.all(orders.map(async order => {
+        const data = await realFetch(order.payload.url);
+        return { id: order.id, result: data };
+    }));
+
+    runner.fulfill_orders(responses);
+}
+```
+
 ### Native Functions
 
 Register C functions callable from JavaScript:

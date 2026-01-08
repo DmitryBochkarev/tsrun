@@ -19,25 +19,24 @@ use tsrun::{
 /// This demonstrates how hosts can extend the interpreter with custom async operations.
 ///
 /// With blocking __order__() semantics:
-/// - __order__() suspends VM immediately and returns host's value when resumed
-/// - Functions return actual values, not Promises
-/// - await is optional (used only if host returns a Promise)
+/// - __order__() suspends immediately, host provides any value
+/// - Host can return plain values or Promises
+/// - For parallel operations, host returns Promises and resolves them later
 const GLOBALS_SOURCE: &str = r#"
 import { __order__ } from "eval:internal";
 
-// sleep(ms) - Blocks until delay passes
-// Host responds when timer fires
-globalThis.sleep = function(ms: number): void {
-    __order__({ type: "sleep", delay: ms });
+// sleep(ms) - Returns Promise that resolves after delay
+globalThis.sleep = async function(ms: number): Promise<void> {
+    await __order__({ type: "sleep", delay: ms });
 };
 
-// fetch(url, options?) - Blocks until response received
-globalThis.fetch = function(url: string, options?: {
+// fetch(url, options?) - Returns Promise with response
+globalThis.fetch = async function(url: string, options?: {
     method?: string;
     body?: string;
     headers?: Record<string, string>;
-}): any {
-    return __order__({
+}): Promise<any> {
+    return await __order__({
         type: "fetch",
         url: url,
         method: options?.method || "GET",
@@ -46,14 +45,14 @@ globalThis.fetch = function(url: string, options?: {
     });
 };
 
-// readFile(path) - Blocks until file content is read
-globalThis.readFile = function(path: string): string {
-    return __order__({ type: "readFile", path: path });
+// readFile(path) - Returns Promise with file content
+globalThis.readFile = async function(path: string): Promise<string> {
+    return await __order__({ type: "readFile", path: path });
 };
 
-// writeFile(path, content) - Blocks until file is written
-globalThis.writeFile = function(path: string, content: string): string {
-    return __order__({ type: "writeFile", path: path, content: content });
+// writeFile(path, content) - Returns Promise when complete
+globalThis.writeFile = async function(path: string, content: string): Promise<string> {
+    return await __order__({ type: "writeFile", path: path, content: content });
 };
 "#;
 
@@ -90,6 +89,18 @@ fn get_string_prop(obj: &JsValue, key: &str) -> Option<String> {
             .get_property(&PropertyKey::String(JsString::from(key)))
     {
         return Some(s.to_string());
+    }
+    None
+}
+
+/// Extract number property from JsValue object
+fn get_number_prop(obj: &JsValue, key: &str) -> Option<f64> {
+    if let JsValue::Object(o) = obj
+        && let Some(JsValue::Number(n)) = o
+            .borrow()
+            .get_property(&PropertyKey::String(JsString::from(key)))
+    {
+        return Some(n);
     }
     None
 }
@@ -244,7 +255,7 @@ fn test_promise_then_callback_nested_closure() {
 #[test]
 fn test_cross_module_closure_simple() {
     // Test that callbacks from another module can access that module's variables
-    // Host returns a Promise, module attaches .then() callback
+    // __order__ returns a Promise immediately, host fulfills with a value
     let config = InterpreterConfig {
         internal_modules: vec![
             create_eval_internal_module(),
@@ -256,7 +267,7 @@ fn test_cross_module_closure_simple() {
                 // Module-level variable
                 let moduleState: string = "initial";
 
-                // Function that gets a Promise from host and attaches .then() callback
+                // Function that gets a Promise from __order__ and attaches .then() callback
                 // The callback captures moduleState from this module
                 export function runWithCallback(): Promise<void> {
                     const promise = __order__({ type: "getPromise" });
@@ -296,13 +307,13 @@ fn test_cross_module_closure_simple() {
     )
     .expect("eval should work");
 
-    // First suspension: __order__ waiting for host response
+    // Suspension: __order__ waiting for host response
     let StepResult::Suspended { pending, .. } = result else {
         panic!("Expected Suspended for __order__");
     };
     assert_eq!(pending.len(), 1);
 
-    // Host returns a Promise
+    // Host returns a Promise (since script calls .then() on the result)
     let promise = api::create_promise(&mut interp);
     interp.fulfill_orders(vec![OrderResponse {
         id: pending[0].id,
@@ -310,12 +321,12 @@ fn test_cross_module_closure_simple() {
     }]);
     let result2 = run_to_completion(&mut interp).unwrap();
 
-    // Second suspension: awaiting the Promise
+    // Second suspension: awaiting the Promise (via .then())
     let StepResult::Suspended { .. } = result2 else {
         panic!("Expected Suspended waiting for Promise");
     };
 
-    // Resolve the Promise - triggers .then() callback
+    // Resolve the Promise to trigger the .then() callback
     api::resolve_promise(
         &mut interp,
         &promise,
@@ -324,6 +335,7 @@ fn test_cross_module_closure_simple() {
     .unwrap();
     let result3 = run_to_completion(&mut interp).unwrap();
 
+    // The .then() callback should have run and modified `moduleState`
     let StepResult::Complete(value) = result3 else {
         panic!("Expected Complete after Promise resolution");
     };
@@ -334,6 +346,7 @@ fn test_cross_module_closure_simple() {
 fn test_cross_module_nested_closure() {
     // Test that a callback defined in one module can access a variable from an outer
     // function's closure, where that function is defined in another module
+    // __order__ returns a Promise immediately, host fulfills with a value
     let config = InterpreterConfig {
         internal_modules: vec![
             create_eval_internal_module(),
@@ -345,7 +358,7 @@ fn test_cross_module_nested_closure() {
                 // Module-level state
                 let moduleState: string = "module-initial";
 
-                // This function gets a Promise from host and attaches .then() callback that
+                // This function gets a Promise from __order__ and attaches .then() callback that
                 // accesses BOTH function-local variable AND module variable
                 export function wrapWithThen(userCallback: () => void): Promise<void> {
                     const functionLocal = "function-local";
@@ -395,13 +408,13 @@ fn test_cross_module_nested_closure() {
     )
     .expect("eval should work");
 
-    // First suspension: __order__ waiting for host response
+    // Suspension: __order__ waiting for host response
     let StepResult::Suspended { pending, .. } = result else {
         panic!("Expected Suspended for __order__");
     };
     assert_eq!(pending.len(), 1);
 
-    // Host returns a Promise
+    // Host returns a Promise (since script calls .then() on the result)
     let promise = api::create_promise(&mut interp);
     interp.fulfill_orders(vec![OrderResponse {
         id: pending[0].id,
@@ -409,12 +422,12 @@ fn test_cross_module_nested_closure() {
     }]);
     let result2 = run_to_completion(&mut interp).unwrap();
 
-    // Second suspension: awaiting the Promise
+    // Second suspension: awaiting the Promise (via .then())
     let StepResult::Suspended { .. } = result2 else {
         panic!("Expected Suspended waiting for Promise");
     };
 
-    // Resolve the Promise - triggers .then() callback
+    // Resolve the Promise to trigger the .then() callback
     api::resolve_promise(
         &mut interp,
         &promise,
@@ -423,6 +436,7 @@ fn test_cross_module_nested_closure() {
     .unwrap();
     let result3 = run_to_completion(&mut interp).unwrap();
 
+    // The .then() callback should have run
     let StepResult::Complete(value) = result3 else {
         panic!("Expected Complete after Promise resolution");
     };
@@ -435,6 +449,7 @@ fn test_cross_module_nested_closure() {
 #[test]
 fn test_debug_closure_gc() {
     // Test GC with closures accessing local and module variables
+    // __order__ returns a Promise immediately, host fulfills with a value
     let config = InterpreterConfig {
         internal_modules: vec![create_eval_internal_module()],
         ..Default::default()
@@ -466,12 +481,12 @@ fn test_debug_closure_gc() {
     )
     .expect("eval should work");
 
-    // First suspension: __order__ waiting for host response
+    // Suspension: __order__ waiting for host response
     let StepResult::Suspended { pending, .. } = result else {
         panic!("Expected Suspended for __order__");
     };
 
-    // Host returns a Promise
+    // Host returns a Promise (since script calls .then() on the result)
     let promise = api::create_promise(&mut interp);
     interp.fulfill_orders(vec![OrderResponse {
         id: pending[0].id,
@@ -479,12 +494,12 @@ fn test_debug_closure_gc() {
     }]);
     let result2 = run_to_completion(&mut interp).unwrap();
 
-    // Second suspension: awaiting the Promise
+    // Second suspension: awaiting the Promise (via .then())
     let StepResult::Suspended { .. } = result2 else {
         panic!("Expected Suspended waiting for Promise");
     };
 
-    // Resolve the Promise - triggers .then() callback with closure
+    // Resolve the Promise to trigger the .then() callback
     api::resolve_promise(
         &mut interp,
         &promise,
@@ -493,6 +508,7 @@ fn test_debug_closure_gc() {
     .unwrap();
     let result3 = run_to_completion(&mut interp).unwrap();
 
+    // The .then() callback should have run with the closure
     let StepResult::Complete(value) = result3 else {
         panic!("Expected Complete after Promise resolution");
     };
@@ -507,12 +523,12 @@ fn test_debug_closure_gc() {
 fn test_sleep_basic() {
     let mut interp = create_test_interp();
 
-    // Use blocking sleep() which suspends for the host to handle
+    // Use async sleep() which returns a Promise
     let result = run_with_globals(
         &mut interp,
         r#"
         let result = "before";
-        sleep(100);
+        await sleep(100);
         result = "after";
         result;
     "#,
@@ -545,16 +561,16 @@ fn test_sleep_basic() {
 fn test_sleep_sequential() {
     let mut interp = create_test_interp();
 
-    // Multiple sequential sleep() calls
+    // Multiple sequential await sleep() calls
     let result = run_with_globals(
         &mut interp,
         r#"
         let count = 0;
-        sleep(10);
+        await sleep(10);
         count += 1;
-        sleep(20);
+        await sleep(20);
         count += 1;
-        sleep(30);
+        await sleep(30);
         count += 1;
         count;
     "#,
@@ -1233,109 +1249,136 @@ fn test_host_promise_immediate_resolve() {
 // ═══════════════════════════════════════════════════════════════════════════════
 // Concurrency Tests (via host-returned Promises)
 // With blocking __order__(), concurrency is achieved by:
-// 1. Script requests multiple Promises from host via sequential __order__() calls
-// 2. Host returns unresolved Promises for each
-// 3. Script combines them with Promise.all/race/allSettled
-// 4. Host resolves Promises in any order
+// 1. Script calls __order__() which SUSPENDS immediately
+// 2. Host returns an unresolved Promise (or any other value)
+// 3. Script continues to next __order__(), which also suspends
+// 4. Eventually script reaches await Promise.all with multiple host Promises
+// 5. Host resolves Promises in any order (can do work in parallel)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[test]
 fn test_concurrent_fetch_with_promise_all() {
-    // Simulate concurrent fetching: script gets Promises, uses Promise.all
+    // Simulate concurrent fetching via host-returned Promises
+    // Blocking __order__ semantics:
+    // 1. First __order__ suspends immediately, host sees "/users" order
+    // 2. Host fulfills with unresolved Promise
+    // 3. Second __order__ suspends, host sees "/posts" order
+    // 4. Host fulfills with unresolved Promise
+    // 5. await Promise.all waits for both Promises
+    // 6. Host resolves Promises (can do work in parallel)
     let mut interp = create_test_interp();
 
-    // Create host Promises before running script
-    let promise_users = api::create_promise(&mut interp);
-    let promise_posts = api::create_promise(&mut interp);
+    // Create two Promises that will be returned by orders
+    let users_promise = api::create_promise(&mut interp);
+    let posts_promise = api::create_promise(&mut interp);
 
     let result = run_with_globals(
         &mut interp,
         r#"
         import { __order__ } from "eval:internal";
 
-        // Get Promises for two different resources
+        // Each __order__ suspends immediately - host sees one at a time
         const usersPromise = __order__({ type: "fetch", url: "/users" });
         const postsPromise = __order__({ type: "fetch", url: "/posts" });
 
-        // Wait for both concurrently
+        // await Promise.all waits for both host Promises
         const [users, posts] = await Promise.all([usersPromise, postsPromise]);
 
         `${users.count} users, ${posts.count} posts`;
     "#,
     );
 
-    // First order: /users
+    // First suspension: __order__ for "/users"
     let StepResult::Suspended { pending, .. } = result else {
-        panic!("Expected Suspended for first fetch");
+        panic!("Expected Suspended at first __order__");
     };
-    assert_eq!(pending.len(), 1);
+    assert_eq!(pending.len(), 1, "First order pending");
     assert_eq!(
         get_string_prop(pending[0].payload.value(), "url"),
         Some("/users".into())
     );
+    let users_order_id = pending[0].id;
 
+    // Fulfill first order with unresolved Promise
+    // Note: users_promise RuntimeValue stays alive, keeping the Promise guarded
     interp.fulfill_orders(vec![OrderResponse {
-        id: pending[0].id,
-        result: Ok(RuntimeValue::unguarded(promise_users.value().clone())),
+        id: users_order_id,
+        result: Ok(RuntimeValue::unguarded(users_promise.value().clone())),
     }]);
     let result = run_to_completion(&mut interp).unwrap();
 
-    // Second order: /posts
+    // Second suspension: __order__ for "/posts"
     let StepResult::Suspended { pending, .. } = result else {
-        panic!("Expected Suspended for second fetch");
+        panic!("Expected Suspended at second __order__, got {:?}", result);
     };
-    assert_eq!(pending.len(), 1);
+    assert_eq!(pending.len(), 1, "Second order pending");
     assert_eq!(
         get_string_prop(pending[0].payload.value(), "url"),
         Some("/posts".into())
     );
+    let posts_order_id = pending[0].id;
 
+    // Fulfill second order with unresolved Promise
+    // Note: posts_promise RuntimeValue stays alive, keeping the Promise guarded
     interp.fulfill_orders(vec![OrderResponse {
-        id: pending[0].id,
-        result: Ok(RuntimeValue::unguarded(promise_posts.value().clone())),
+        id: posts_order_id,
+        result: Ok(RuntimeValue::unguarded(posts_promise.value().clone())),
     }]);
     let result = run_to_completion(&mut interp).unwrap();
 
-    // Now awaiting Promise.all - both Promises are pending
-    let StepResult::Suspended { .. } = result else {
-        panic!("Expected Suspended waiting for Promise.all");
-    };
+    // Now awaiting Promise.all with two unresolved Promises
+    // No more orders pending, just waiting for Promises
+    match &result {
+        StepResult::Suspended { pending, .. } if pending.is_empty() => {
+            // Suspended with no orders - just awaiting Promises
+        }
+        StepResult::Done => {
+            // Done - async work pending, no more sync work
+        }
+        other => {
+            panic!(
+                "Expected Done or Suspended while awaiting Promises, got {:?}",
+                other
+            );
+        }
+    }
 
-    // Resolve /posts first (out of order!)
-    let posts_data = api::create_response_object(&mut interp, &json!({ "count": 100 })).unwrap();
-    api::resolve_promise(&mut interp, &promise_posts, posts_data).unwrap();
+    // Resolve both Promises - host can do this in parallel
+    let users_data = api::create_response_object(&mut interp, &json!({ "count": 5 })).unwrap();
+    let posts_data = api::create_response_object(&mut interp, &json!({ "count": 10 })).unwrap();
+    api::resolve_promise(&mut interp, &users_promise, users_data).unwrap();
+    api::resolve_promise(&mut interp, &posts_promise, posts_data).unwrap();
+
+    // After resolving Promises, step to process the results
     let result = run_to_completion(&mut interp).unwrap();
 
-    // Still waiting for /users
-    let StepResult::Suspended { .. } = result else {
-        panic!("Expected Suspended still waiting for users");
-    };
-
-    // Resolve /users
-    let users_data = api::create_response_object(&mut interp, &json!({ "count": 42 })).unwrap();
-    api::resolve_promise(&mut interp, &promise_users, users_data).unwrap();
-    let result = run_to_completion(&mut interp).unwrap();
-
-    // Complete - results in original order despite resolution order
+    // Complete - results in original order
     let StepResult::Complete(value) = result else {
-        panic!("Expected Complete after both resolved");
+        panic!("Expected Complete after both resolved, got {:?}", result);
     };
-    assert_eq!(*value, JsValue::String("42 users, 100 posts".into()));
+    assert_eq!(*value, JsValue::String("5 users, 10 posts".into()));
 }
 
 #[test]
 fn test_promise_race_first_wins() {
     // Promise.race: first to resolve determines the result
+    // With blocking __order__:
+    // 1. First __order__ suspends, host returns Promise1
+    // 2. Second __order__ suspends, host returns Promise2
+    // 3. Promise.race waits for first Promise to resolve
+    // 4. Host resolves first Promise - it wins
     let mut interp = create_test_interp();
 
-    let promise_fast = api::create_promise(&mut interp);
-    let promise_slow = api::create_promise(&mut interp);
+    // Create two Promises that will be returned by orders
+    let fast_promise = api::create_promise(&mut interp);
+    let slow_promise = api::create_promise(&mut interp);
 
     let result = run_with_globals(
         &mut interp,
         r#"
         import { __order__ } from "eval:internal";
 
+        // Each __order__ suspends, host returns a Promise
         const fast = __order__({ type: "fetch", server: "fast" });
         const slow = __order__({ type: "fetch", server: "slow" });
 
@@ -1345,56 +1388,84 @@ fn test_promise_race_first_wins() {
     "#,
     );
 
-    // Get first Promise
+    // First order suspends
     let StepResult::Suspended { pending, .. } = result else {
-        panic!("Expected Suspended");
+        panic!("Expected Suspended for first order");
     };
+    assert_eq!(pending.len(), 1, "One order at a time");
+    let first_order_id = pending[0].id;
+    assert_eq!(
+        get_string_prop(pending[0].payload.value(), "server"),
+        Some("fast".into())
+    );
+
+    // Fulfill first order with Promise (not resolved yet)
     interp.fulfill_orders(vec![OrderResponse {
-        id: pending[0].id,
-        result: Ok(RuntimeValue::unguarded(promise_fast.value().clone())),
+        id: first_order_id,
+        result: Ok(RuntimeValue::unguarded(fast_promise.value().clone())),
     }]);
     let result = run_to_completion(&mut interp).unwrap();
 
-    // Get second Promise
+    // Second order suspends
     let StepResult::Suspended { pending, .. } = result else {
-        panic!("Expected Suspended");
+        panic!("Expected Suspended for second order");
     };
+    assert_eq!(pending.len(), 1, "One order at a time");
+    let second_order_id = pending[0].id;
+    assert_eq!(
+        get_string_prop(pending[0].payload.value(), "server"),
+        Some("slow".into())
+    );
+
+    // Fulfill second order with Promise (not resolved yet)
     interp.fulfill_orders(vec![OrderResponse {
-        id: pending[0].id,
-        result: Ok(RuntimeValue::unguarded(promise_slow.value().clone())),
+        id: second_order_id,
+        result: Ok(RuntimeValue::unguarded(slow_promise.value().clone())),
     }]);
     let result = run_to_completion(&mut interp).unwrap();
 
-    // Awaiting Promise.race
-    let StepResult::Suspended { .. } = result else {
+    // Now awaiting Promise.race with two unresolved Promises
+    let StepResult::Suspended { pending, .. } = result else {
         panic!("Expected Suspended for Promise.race");
     };
+    assert!(
+        pending.is_empty(),
+        "No orders pending, just awaiting Promises"
+    );
 
-    // Resolve "fast" first - this should win the race
+    // Resolve first Promise - it wins the race
     let fast_data = api::create_response_object(&mut interp, &json!({ "server": "fast" })).unwrap();
-    api::resolve_promise(&mut interp, &promise_fast, fast_data).unwrap();
+    api::resolve_promise(&mut interp, &fast_promise, fast_data).unwrap();
+
     let result = run_to_completion(&mut interp).unwrap();
 
-    // Race completes immediately when first Promise resolves
+    // Race completes - first resolved wins
     let StepResult::Complete(value) = result else {
-        panic!("Expected Complete after first resolve");
+        panic!("Expected Complete after fulfillment, got {:?}", result);
     };
     assert_eq!(*value, JsValue::String("fast".into()));
 }
 
 #[test]
 fn test_promise_race_second_wins() {
-    // Verify race works when second Promise resolves first
+    // Verify race works when second Promise is resolved first
+    // With blocking __order__:
+    // 1. First __order__ suspends, host returns Promise1
+    // 2. Second __order__ suspends, host returns Promise2
+    // 3. Promise.race waits for first Promise to resolve
+    // 4. Host resolves second Promise first - it wins
     let mut interp = create_test_interp();
 
-    let promise_a = api::create_promise(&mut interp);
-    let promise_b = api::create_promise(&mut interp);
+    // Create two Promises that will be returned by orders
+    let a_promise = api::create_promise(&mut interp);
+    let b_promise = api::create_promise(&mut interp);
 
     let result = run_with_globals(
         &mut interp,
         r#"
         import { __order__ } from "eval:internal";
 
+        // Each __order__ suspends, host returns a Promise
         const a = __order__({ type: "fetch", id: "a" });
         const b = __order__({ type: "fetch", id: "b" });
 
@@ -1403,36 +1474,60 @@ fn test_promise_race_second_wins() {
     "#,
     );
 
-    // Get both Promises
+    // First order suspends
     let StepResult::Suspended { pending, .. } = result else {
-        panic!("Expected Suspended");
+        panic!("Expected Suspended for first order");
     };
+    assert_eq!(pending.len(), 1, "One order at a time");
+    let first_order_id = pending[0].id;
+    assert_eq!(
+        get_string_prop(pending[0].payload.value(), "id"),
+        Some("a".into())
+    );
+
+    // Fulfill first order with Promise (not resolved yet)
     interp.fulfill_orders(vec![OrderResponse {
-        id: pending[0].id,
-        result: Ok(RuntimeValue::unguarded(promise_a.value().clone())),
+        id: first_order_id,
+        result: Ok(RuntimeValue::unguarded(a_promise.value().clone())),
     }]);
     let result = run_to_completion(&mut interp).unwrap();
 
+    // Second order suspends
     let StepResult::Suspended { pending, .. } = result else {
-        panic!("Expected Suspended");
+        panic!("Expected Suspended for second order");
     };
+    assert_eq!(pending.len(), 1, "One order at a time");
+    let second_order_id = pending[0].id;
+    assert_eq!(
+        get_string_prop(pending[0].payload.value(), "id"),
+        Some("b".into())
+    );
+
+    // Fulfill second order with Promise (not resolved yet)
     interp.fulfill_orders(vec![OrderResponse {
-        id: pending[0].id,
-        result: Ok(RuntimeValue::unguarded(promise_b.value().clone())),
+        id: second_order_id,
+        result: Ok(RuntimeValue::unguarded(b_promise.value().clone())),
     }]);
     let result = run_to_completion(&mut interp).unwrap();
 
-    let StepResult::Suspended { .. } = result else {
+    // Now awaiting Promise.race with two unresolved Promises
+    let StepResult::Suspended { pending, .. } = result else {
         panic!("Expected Suspended for Promise.race");
     };
+    assert!(
+        pending.is_empty(),
+        "No orders pending, just awaiting Promises"
+    );
 
-    // Resolve B first - B wins even though it was second in array
+    // Resolve B first - it wins even though it was second in array
     let b_data = api::create_response_object(&mut interp, &json!({ "winner": "B" })).unwrap();
-    api::resolve_promise(&mut interp, &promise_b, b_data).unwrap();
+    api::resolve_promise(&mut interp, &b_promise, b_data).unwrap();
+
     let result = run_to_completion(&mut interp).unwrap();
 
+    // Race completes - B wins because it was resolved first
     let StepResult::Complete(value) = result else {
-        panic!("Expected Complete");
+        panic!("Expected Complete, got {:?}", result);
     };
     assert_eq!(*value, JsValue::String("B".into()));
 }
@@ -1440,16 +1535,23 @@ fn test_promise_race_second_wins() {
 #[test]
 fn test_concurrent_with_partial_failure() {
     // One Promise resolves, one rejects - test error handling with Promise.all
+    // With blocking __order__:
+    // 1. First __order__ suspends, host returns Promise1
+    // 2. Second __order__ suspends, host returns Promise2
+    // 3. Promise.all waits for both Promises
+    // 4. Host resolves first, rejects second - Promise.all catches the error
     let mut interp = create_test_interp();
 
-    let promise_ok = api::create_promise(&mut interp);
-    let promise_fail = api::create_promise(&mut interp);
+    // Create two Promises that will be returned by orders
+    let ok_promise = api::create_promise(&mut interp);
+    let fail_promise = api::create_promise(&mut interp);
 
     let result = run_with_globals(
         &mut interp,
         r#"
         import { __order__ } from "eval:internal";
 
+        // Each __order__ suspends, host returns a Promise
         const ok = __order__({ type: "fetch", url: "/ok" });
         const fail = __order__({ type: "fetch", url: "/fail" });
 
@@ -1462,47 +1564,64 @@ fn test_concurrent_with_partial_failure() {
     "#,
     );
 
-    // Get both Promises
+    // First order suspends
     let StepResult::Suspended { pending, .. } = result else {
-        panic!("Expected Suspended");
+        panic!("Expected Suspended for first order");
     };
+    assert_eq!(pending.len(), 1, "One order at a time");
+    let first_order_id = pending[0].id;
+    assert_eq!(
+        get_string_prop(pending[0].payload.value(), "url"),
+        Some("/ok".into())
+    );
+
+    // Fulfill first order with Promise (not resolved yet)
     interp.fulfill_orders(vec![OrderResponse {
-        id: pending[0].id,
-        result: Ok(RuntimeValue::unguarded(promise_ok.value().clone())),
+        id: first_order_id,
+        result: Ok(RuntimeValue::unguarded(ok_promise.value().clone())),
     }]);
     let result = run_to_completion(&mut interp).unwrap();
 
+    // Second order suspends
     let StepResult::Suspended { pending, .. } = result else {
-        panic!("Expected Suspended");
+        panic!("Expected Suspended for second order");
     };
+    assert_eq!(pending.len(), 1, "One order at a time");
+    let second_order_id = pending[0].id;
+    assert_eq!(
+        get_string_prop(pending[0].payload.value(), "url"),
+        Some("/fail".into())
+    );
+
+    // Fulfill second order with Promise (not resolved yet)
     interp.fulfill_orders(vec![OrderResponse {
-        id: pending[0].id,
-        result: Ok(RuntimeValue::unguarded(promise_fail.value().clone())),
+        id: second_order_id,
+        result: Ok(RuntimeValue::unguarded(fail_promise.value().clone())),
     }]);
     let result = run_to_completion(&mut interp).unwrap();
 
-    let StepResult::Suspended { .. } = result else {
+    // Now awaiting Promise.all with two unresolved Promises
+    let StepResult::Suspended { pending, .. } = result else {
         panic!("Expected Suspended for Promise.all");
     };
+    assert!(
+        pending.is_empty(),
+        "No orders pending, just awaiting Promises"
+    );
 
-    // Resolve the first one successfully
+    // Resolve first Promise with success
     let ok_data = RuntimeValue::unguarded(JsValue::String("OK".into()));
-    api::resolve_promise(&mut interp, &promise_ok, ok_data).unwrap();
-    let result = run_to_completion(&mut interp).unwrap();
+    api::resolve_promise(&mut interp, &ok_promise, ok_data).unwrap();
 
-    // Still waiting for second
-    let StepResult::Suspended { .. } = result else {
-        panic!("Expected Suspended waiting for second");
-    };
+    // Reject second Promise with error
+    let error_value = RuntimeValue::unguarded(JsValue::String("Network error".into()));
+    api::reject_promise(&mut interp, &fail_promise, error_value).unwrap();
 
-    // Reject the second one
-    let error = RuntimeValue::unguarded(JsValue::String("Network error".into()));
-    api::reject_promise(&mut interp, &promise_fail, error).unwrap();
     let result = run_to_completion(&mut interp).unwrap();
 
     // Promise.all rejects if any Promise rejects
     let StepResult::Complete(value) = result else {
-        panic!("Expected Complete with error");
+        panic!("Expected Complete with error, got {:?}", result);
     };
     assert_eq!(*value, JsValue::String("Error: Network error".into()));
 }
@@ -1510,9 +1629,10 @@ fn test_concurrent_with_partial_failure() {
 #[test]
 fn test_concurrent_three_way_race() {
     // Race with three Promises, middle one wins
-    // Note: Script gets each Promise sequentially, then races them
+    // With blocking __order__, each order suspends one at a time
     let mut interp = create_test_interp();
 
+    // Create three host Promises upfront
     let promise1 = api::create_promise(&mut interp);
     let promise2 = api::create_promise(&mut interp);
     let promise3 = api::create_promise(&mut interp);
@@ -1522,7 +1642,7 @@ fn test_concurrent_three_way_race() {
         r#"
         import { __order__ } from "eval:internal";
 
-        // Get three Promises from host
+        // Get three Promises from host (each __order__ suspends)
         const p1 = __order__({ id: 1 });
         const p2 = __order__({ id: 2 });
         const p3 = __order__({ id: 3 });
@@ -1533,28 +1653,42 @@ fn test_concurrent_three_way_race() {
     "#,
     );
 
-    // Get all three Promises via sequential orders
+    // First order suspends
     let StepResult::Suspended { pending, .. } = result else {
-        panic!("Expected Suspended for order 1");
+        panic!("Expected Suspended for first order");
     };
+    assert_eq!(pending.len(), 1, "One order at a time");
+    assert_eq!(get_number_prop(pending[0].payload.value(), "id"), Some(1.0));
+
+    // Fulfill first order with Promise1
     interp.fulfill_orders(vec![OrderResponse {
         id: pending[0].id,
         result: Ok(RuntimeValue::unguarded(promise1.value().clone())),
     }]);
     let result = run_to_completion(&mut interp).unwrap();
 
+    // Second order suspends
     let StepResult::Suspended { pending, .. } = result else {
-        panic!("Expected Suspended for order 2");
+        panic!("Expected Suspended for second order");
     };
+    assert_eq!(pending.len(), 1, "One order at a time");
+    assert_eq!(get_number_prop(pending[0].payload.value(), "id"), Some(2.0));
+
+    // Fulfill second order with Promise2
     interp.fulfill_orders(vec![OrderResponse {
         id: pending[0].id,
         result: Ok(RuntimeValue::unguarded(promise2.value().clone())),
     }]);
     let result = run_to_completion(&mut interp).unwrap();
 
+    // Third order suspends
     let StepResult::Suspended { pending, .. } = result else {
-        panic!("Expected Suspended for order 3");
+        panic!("Expected Suspended for third order");
     };
+    assert_eq!(pending.len(), 1, "One order at a time");
+    assert_eq!(get_number_prop(pending[0].payload.value(), "id"), Some(3.0));
+
+    // Fulfill third order with Promise3
     interp.fulfill_orders(vec![OrderResponse {
         id: pending[0].id,
         result: Ok(RuntimeValue::unguarded(promise3.value().clone())),
@@ -1562,17 +1696,22 @@ fn test_concurrent_three_way_race() {
     let result = run_to_completion(&mut interp).unwrap();
 
     // Now awaiting Promise.race with three unresolved Promises
-    let StepResult::Suspended { .. } = result else {
+    let StepResult::Suspended { pending, .. } = result else {
         panic!("Expected Suspended for Promise.race");
     };
+    assert!(
+        pending.is_empty(),
+        "No orders pending, just awaiting Promises"
+    );
 
-    // Resolve promise2 first (should win the race)
+    // Resolve Promise2 first - it should win the race
     api::resolve_promise(
         &mut interp,
         &promise2,
         RuntimeValue::unguarded(JsValue::Number(2.0)),
     )
     .unwrap();
+
     let result = run_to_completion(&mut interp).unwrap();
 
     let StepResult::Complete(value) = result else {
@@ -1584,17 +1723,24 @@ fn test_concurrent_three_way_race() {
 #[test]
 fn test_concurrent_chained_operations() {
     // Start concurrent fetches, then chain more operations on results
+    // With blocking __order__:
+    // 1. First __order__ suspends, host returns Promise1
+    // 2. Second __order__ suspends, host returns Promise2
+    // 3. .then() chains transformations on each Promise
+    // 4. Promise.all waits for both transformed Promises
+    // 5. Host resolves both Promises
     let mut interp = create_test_interp();
 
-    let promise_user = api::create_promise(&mut interp);
-    let promise_profile = api::create_promise(&mut interp);
+    // Create two Promises that will be returned by orders
+    let user_promise = api::create_promise(&mut interp);
+    let profile_promise = api::create_promise(&mut interp);
 
     let result = run_with_globals(
         &mut interp,
         r#"
         import { __order__ } from "eval:internal";
 
-        // Get user and profile concurrently
+        // Each __order__ suspends, host returns a Promise
         const userPromise = __order__({ type: "getUser" });
         const profilePromise = __order__({ type: "getProfile" });
 
@@ -1608,46 +1754,63 @@ fn test_concurrent_chained_operations() {
     "#,
     );
 
-    // Get both Promises
+    // First order suspends
     let StepResult::Suspended { pending, .. } = result else {
-        panic!("Expected Suspended");
+        panic!("Expected Suspended for first order");
     };
+    assert_eq!(pending.len(), 1, "One order at a time");
+    let first_order_id = pending[0].id;
+    assert_eq!(
+        get_string_prop(pending[0].payload.value(), "type"),
+        Some("getUser".into())
+    );
+
+    // Fulfill first order with Promise (not resolved yet)
     interp.fulfill_orders(vec![OrderResponse {
-        id: pending[0].id,
-        result: Ok(RuntimeValue::unguarded(promise_user.value().clone())),
+        id: first_order_id,
+        result: Ok(RuntimeValue::unguarded(user_promise.value().clone())),
     }]);
     let result = run_to_completion(&mut interp).unwrap();
 
+    // Second order suspends
     let StepResult::Suspended { pending, .. } = result else {
-        panic!("Expected Suspended");
+        panic!("Expected Suspended for second order");
     };
+    assert_eq!(pending.len(), 1, "One order at a time");
+    let second_order_id = pending[0].id;
+    assert_eq!(
+        get_string_prop(pending[0].payload.value(), "type"),
+        Some("getProfile".into())
+    );
+
+    // Fulfill second order with Promise (not resolved yet)
     interp.fulfill_orders(vec![OrderResponse {
-        id: pending[0].id,
-        result: Ok(RuntimeValue::unguarded(promise_profile.value().clone())),
+        id: second_order_id,
+        result: Ok(RuntimeValue::unguarded(profile_promise.value().clone())),
     }]);
     let result = run_to_completion(&mut interp).unwrap();
 
-    let StepResult::Suspended { .. } = result else {
+    // Now awaiting Promise.all with two unresolved Promises (with .then() chains)
+    let StepResult::Suspended { pending, .. } = result else {
         panic!("Expected Suspended for Promise.all");
     };
+    assert!(
+        pending.is_empty(),
+        "No orders pending, just awaiting Promises"
+    );
 
-    // Resolve user
+    // Resolve both Promises - host can do this in parallel
     let user_data = api::create_response_object(&mut interp, &json!({ "name": "Alice" })).unwrap();
-    api::resolve_promise(&mut interp, &promise_user, user_data).unwrap();
-    let result = run_to_completion(&mut interp).unwrap();
-
-    let StepResult::Suspended { .. } = result else {
-        panic!("Expected Suspended waiting for profile");
-    };
-
-    // Resolve profile
     let profile_data =
         api::create_response_object(&mut interp, &json!({ "bio": "Developer" })).unwrap();
-    api::resolve_promise(&mut interp, &promise_profile, profile_data).unwrap();
+    api::resolve_promise(&mut interp, &user_promise, user_data).unwrap();
+    api::resolve_promise(&mut interp, &profile_promise, profile_data).unwrap();
+
     let result = run_to_completion(&mut interp).unwrap();
 
+    // Complete - .then() chains should have run
     let StepResult::Complete(value) = result else {
-        panic!("Expected Complete");
+        panic!("Expected Complete, got {:?}", result);
     };
     assert_eq!(
         *value,
@@ -1664,11 +1827,12 @@ fn test_concurrent_chained_operations() {
 #[test]
 fn test_promise_race_cancels_losing_order() {
     // When Promise.race settles, losing Promises' order IDs should be cancelled
+    // With blocking __order__, each order suspends one at a time
     let mut interp = create_test_interp();
 
-    // Create host Promises linked to orders
-    let order1_id = OrderId(100);
-    let order2_id = OrderId(200);
+    // Create two host Promises with order IDs for cancellation tracking
+    let order1_id = OrderId(1);
+    let order2_id = OrderId(2);
     let promise1 = api::create_order_promise(&mut interp, order1_id);
     let promise2 = api::create_order_promise(&mut interp, order2_id);
 
@@ -1685,40 +1849,51 @@ fn test_promise_race_cancels_losing_order() {
     "#,
     );
 
-    // Get first order
+    // First order suspends
     let StepResult::Suspended { pending, .. } = result else {
-        panic!("Expected Suspended");
+        panic!("Expected Suspended for first order");
     };
-    let first_order_id = pending[0].id;
+    assert_eq!(pending.len(), 1, "One order at a time");
+    assert_eq!(get_number_prop(pending[0].payload.value(), "id"), Some(1.0));
+
+    // Fulfill first order with Promise1 (with order_id for cancellation tracking)
     interp.fulfill_orders(vec![OrderResponse {
-        id: first_order_id,
+        id: pending[0].id,
         result: Ok(RuntimeValue::unguarded(promise1.value().clone())),
     }]);
     let result = run_to_completion(&mut interp).unwrap();
 
-    // Get second order
+    // Second order suspends
     let StepResult::Suspended { pending, .. } = result else {
-        panic!("Expected Suspended");
+        panic!("Expected Suspended for second order");
     };
-    let second_order_id = pending[0].id;
+    assert_eq!(pending.len(), 1, "One order at a time");
+    assert_eq!(get_number_prop(pending[0].payload.value(), "id"), Some(2.0));
+
+    // Fulfill second order with Promise2 (with order_id for cancellation tracking)
     interp.fulfill_orders(vec![OrderResponse {
-        id: second_order_id,
+        id: pending[0].id,
         result: Ok(RuntimeValue::unguarded(promise2.value().clone())),
     }]);
     let result = run_to_completion(&mut interp).unwrap();
 
-    // Awaiting Promise.race
-    let StepResult::Suspended { .. } = result else {
+    // Now awaiting Promise.race with two unresolved Promises
+    let StepResult::Suspended { pending, .. } = result else {
         panic!("Expected Suspended for Promise.race");
     };
+    assert!(
+        pending.is_empty(),
+        "No orders pending, just awaiting Promises"
+    );
 
-    // Resolve promise1 first - it wins, promise2's order should be cancelled
+    // Resolve Promise1 first - it wins the race, Promise2's order should be cancelled
     api::resolve_promise(
         &mut interp,
         &promise1,
         RuntimeValue::unguarded(JsValue::String("first".into())),
     )
     .unwrap();
+
     let result = run_to_completion(&mut interp).unwrap();
 
     // Check that the result includes cancelled order
@@ -1747,10 +1922,12 @@ fn test_promise_race_cancels_losing_order() {
 #[test]
 fn test_promise_race_second_wins_cancels_first() {
     // Verify cancellation works when second Promise wins
+    // With blocking __order__, each order suspends one at a time
     let mut interp = create_test_interp();
 
-    let order1_id = OrderId(111);
-    let order2_id = OrderId(222);
+    // Create two host Promises with order IDs for cancellation tracking
+    let order1_id = OrderId(1);
+    let order2_id = OrderId(2);
     let promise1 = api::create_order_promise(&mut interp, order1_id);
     let promise2 = api::create_order_promise(&mut interp, order2_id);
 
@@ -1767,36 +1944,51 @@ fn test_promise_race_second_wins_cancels_first() {
     "#,
     );
 
-    // Get both orders and return Promises
+    // First order suspends
     let StepResult::Suspended { pending, .. } = result else {
-        panic!("Expected Suspended");
+        panic!("Expected Suspended for first order");
     };
+    assert_eq!(pending.len(), 1, "One order at a time");
+    assert_eq!(get_number_prop(pending[0].payload.value(), "id"), Some(1.0));
+
+    // Fulfill first order with Promise1
     interp.fulfill_orders(vec![OrderResponse {
         id: pending[0].id,
         result: Ok(RuntimeValue::unguarded(promise1.value().clone())),
     }]);
     let result = run_to_completion(&mut interp).unwrap();
 
+    // Second order suspends
     let StepResult::Suspended { pending, .. } = result else {
-        panic!("Expected Suspended");
+        panic!("Expected Suspended for second order");
     };
+    assert_eq!(pending.len(), 1, "One order at a time");
+    assert_eq!(get_number_prop(pending[0].payload.value(), "id"), Some(2.0));
+
+    // Fulfill second order with Promise2
     interp.fulfill_orders(vec![OrderResponse {
         id: pending[0].id,
         result: Ok(RuntimeValue::unguarded(promise2.value().clone())),
     }]);
     let result = run_to_completion(&mut interp).unwrap();
 
-    let StepResult::Suspended { .. } = result else {
-        panic!("Expected Suspended");
+    // Now awaiting Promise.race with two unresolved Promises
+    let StepResult::Suspended { pending, .. } = result else {
+        panic!("Expected Suspended for Promise.race");
     };
+    assert!(
+        pending.is_empty(),
+        "No orders pending, just awaiting Promises"
+    );
 
-    // Resolve promise2 first - it wins, promise1's order should be cancelled
+    // Resolve Promise2 first - it wins the race, Promise1's order should be cancelled
     api::resolve_promise(
         &mut interp,
         &promise2,
         RuntimeValue::unguarded(JsValue::String("second".into())),
     )
     .unwrap();
+
     let result = run_to_completion(&mut interp).unwrap();
 
     match result {
@@ -1887,8 +2079,10 @@ fn test_promise_rejection_signals_cancelled_order() {
 #[test]
 fn test_three_way_race_cancels_two_losers() {
     // Three-way race: winner gets result, two losers' orders cancelled
+    // With blocking __order__, each order suspends one at a time
     let mut interp = create_test_interp();
 
+    // Create three host Promises with order IDs for cancellation tracking
     let order1_id = OrderId(1);
     let order2_id = OrderId(2);
     let order3_id = OrderId(3);
@@ -1910,45 +2104,65 @@ fn test_three_way_race_cancels_two_losers() {
     "#,
     );
 
-    // Get all three orders
+    // First order suspends
     let StepResult::Suspended { pending, .. } = result else {
-        panic!("Expected Suspended");
+        panic!("Expected Suspended for first order");
     };
+    assert_eq!(pending.len(), 1, "One order at a time");
+    assert_eq!(get_number_prop(pending[0].payload.value(), "id"), Some(1.0));
+
+    // Fulfill first order with Promise1
     interp.fulfill_orders(vec![OrderResponse {
         id: pending[0].id,
         result: Ok(RuntimeValue::unguarded(promise1.value().clone())),
     }]);
     let result = run_to_completion(&mut interp).unwrap();
 
+    // Second order suspends
     let StepResult::Suspended { pending, .. } = result else {
-        panic!("Expected Suspended");
+        panic!("Expected Suspended for second order");
     };
+    assert_eq!(pending.len(), 1, "One order at a time");
+    assert_eq!(get_number_prop(pending[0].payload.value(), "id"), Some(2.0));
+
+    // Fulfill second order with Promise2
     interp.fulfill_orders(vec![OrderResponse {
         id: pending[0].id,
         result: Ok(RuntimeValue::unguarded(promise2.value().clone())),
     }]);
     let result = run_to_completion(&mut interp).unwrap();
 
+    // Third order suspends
     let StepResult::Suspended { pending, .. } = result else {
-        panic!("Expected Suspended");
+        panic!("Expected Suspended for third order");
     };
+    assert_eq!(pending.len(), 1, "One order at a time");
+    assert_eq!(get_number_prop(pending[0].payload.value(), "id"), Some(3.0));
+
+    // Fulfill third order with Promise3
     interp.fulfill_orders(vec![OrderResponse {
         id: pending[0].id,
         result: Ok(RuntimeValue::unguarded(promise3.value().clone())),
     }]);
     let result = run_to_completion(&mut interp).unwrap();
 
-    let StepResult::Suspended { .. } = result else {
-        panic!("Expected Suspended");
+    // Now awaiting Promise.race with three unresolved Promises
+    let StepResult::Suspended { pending, .. } = result else {
+        panic!("Expected Suspended for Promise.race");
     };
+    assert!(
+        pending.is_empty(),
+        "No orders pending, just awaiting Promises"
+    );
 
-    // Resolve promise2 (middle one wins)
+    // Resolve Promise2 first (order2 wins), Promise1 and Promise3's orders should be cancelled
     api::resolve_promise(
         &mut interp,
         &promise2,
         RuntimeValue::unguarded(JsValue::Number(2.0)),
     )
     .unwrap();
+
     let result = run_to_completion(&mut interp).unwrap();
 
     // Check that both losers' orders are cancelled

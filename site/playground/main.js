@@ -12,6 +12,16 @@ const runBtn = document.getElementById('run-btn');
 const clearBtn = document.getElementById('clear-btn');
 const examplesSelect = document.getElementById('examples');
 
+// Step status constants (loaded from WASM module)
+let StepStatus = {
+    CONTINUE: 0,
+    COMPLETE: 1,
+    NEED_IMPORTS: 2,
+    SUSPENDED: 3,
+    DONE: 4,
+    ERROR: 5
+};
+
 // Initialize WASM module
 async function initWasm() {
     setStatus('loading', 'Loading WASM...');
@@ -22,6 +32,16 @@ async function initWasm() {
 
         runner = new wasm.TsRunner();
         wasmLoaded = true;
+
+        // Load step status constants from WASM module (functions that return values)
+        StepStatus = {
+            CONTINUE: wasm.STEP_CONTINUE(),
+            COMPLETE: wasm.STEP_COMPLETE(),
+            NEED_IMPORTS: wasm.STEP_NEED_IMPORTS(),
+            SUSPENDED: wasm.STEP_SUSPENDED(),
+            DONE: wasm.STEP_DONE(),
+            ERROR: wasm.STEP_ERROR()
+        };
 
         setStatus('success', 'Ready');
         runBtn.disabled = false;
@@ -54,30 +74,25 @@ function appendOutput(level, message) {
     outputEl.scrollTop = outputEl.scrollHeight;
 }
 
-// Display console output from result
-function displayOutput(result) {
-    clearOutput();
-
-    // Show console output from the WASM module
-    const consoleOutput = result.console_output;
-    if (consoleOutput && consoleOutput.length > 0) {
-        for (const entry of consoleOutput) {
-            appendOutput(entry.level, entry.message);
-        }
+// Display console output incrementally
+function displayConsole(consoleOutput) {
+    if (!consoleOutput || consoleOutput.length === 0) return;
+    for (const entry of consoleOutput) {
+        appendOutput(entry.level, entry.message);
     }
+}
 
-    // Show result or error
-    if (result.error) {
-        appendOutput('error', `\nError: ${result.error}`);
-    } else if (result.value && result.value !== 'undefined') {
+// Display final result value
+function displayResultValue(value) {
+    if (value && value !== 'undefined') {
         const resultLine = document.createElement('div');
         resultLine.className = 'output-line output-result';
-        resultLine.textContent = `=> ${result.value}`;
+        resultLine.textContent = `=> ${value}`;
         outputEl.appendChild(resultLine);
     }
 }
 
-// Run the code
+// Run the code with step-based execution
 async function runCode() {
     if (!wasmLoaded || !runner) {
         setStatus('error', 'WASM not loaded');
@@ -96,13 +111,58 @@ async function runCode() {
     runBtn.disabled = true;
 
     try {
-        const result = runner.run(code);
-        displayOutput(result);
+        // Prepare execution
+        const prepResult = runner.prepare(code, 'playground.ts');
+        displayConsole(prepResult.console_output);
 
-        if (result.error) {
+        if (prepResult.status === StepStatus.ERROR) {
+            appendOutput('error', `\nError: ${prepResult.error}`);
             setStatus('error', 'Error');
-        } else {
-            setStatus('success', 'Done');
+            return;
+        }
+
+        // Main execution loop - JS controls everything
+        while (true) {
+            const result = runner.step();
+            displayConsole(result.console_output);
+
+            switch (result.status) {
+                case StepStatus.CONTINUE:
+                    continue;
+
+                case StepStatus.COMPLETE:
+                    displayResultValue(result.value);
+                    setStatus('success', 'Done');
+                    return;
+
+                case StepStatus.DONE:
+                    setStatus('success', 'Done');
+                    return;
+
+                case StepStatus.ERROR:
+                    appendOutput('error', `\nError: ${result.error}`);
+                    setStatus('error', 'Error');
+                    return;
+
+                case StepStatus.NEED_IMPORTS:
+                    const specifiers = runner.get_import_requests();
+                    appendOutput('error', `\nModule imports not supported: ${specifiers.join(', ')}`);
+                    setStatus('error', 'Error');
+                    return;
+
+                case StepStatus.SUSPENDED:
+                    const orders = runner.get_pending_orders();
+                    if (orders.length > 0) {
+                        // Handle orders by returning unresolved Promises immediately
+                        const responses = await handleOrders(orders);
+                        runner.fulfill_orders(responses);
+                    } else {
+                        // No pending orders - we're waiting for host Promises to resolve.
+                        // Yield to the event loop so setTimeout callbacks can fire.
+                        await new Promise(resolve => setTimeout(resolve, 10));
+                    }
+                    continue;
+            }
         }
     } catch (err) {
         setStatus('error', 'Error');
@@ -111,6 +171,62 @@ async function runCode() {
     } finally {
         runBtn.disabled = false;
     }
+}
+
+// Handle pending orders by returning unresolved Promises immediately.
+// This enables parallel async operations - each order gets a Promise that
+// resolves after a random delay, but execution continues immediately.
+function handleOrders(orders) {
+    const responses = [];
+
+    for (const order of orders) {
+        const delay = 100 + Math.floor(Math.random() * 400); // 100-500ms
+        appendOutput('info', `[Order ${order.id}] Creating Promise, will resolve in ${delay}ms...`);
+
+        // Create an unresolved Promise in the interpreter
+        const promiseId = runner.create_promise();
+
+        // Fulfill the order immediately with this Promise reference
+        responses.push({ id: order.id, promise_id: promiseId });
+
+        // Schedule the actual async work - resolve the Promise later
+        setTimeout(() => {
+            const result = createMockResponse(order);
+            appendOutput('info', `[Order ${order.id}] Resolving Promise with: ${JSON.stringify(result.result)}`);
+            runner.resolve_promise(promiseId, result.result);
+        }, delay);
+    }
+
+    // Return immediately - don't wait for timeouts
+    return Promise.resolve(responses);
+}
+
+// Generate mock response based on order payload
+function createMockResponse(order) {
+    const payload = order.payload || {};
+    const type = payload.type;
+    const url = payload.url;
+    let result;
+
+    if (type === 'fetch') {
+        // Mock responses based on URL patterns
+        if (url && url.includes('/users/')) {
+            const userId = url.match(/\/users\/(\d+)/)?.[1] || '1';
+            result = { id: parseInt(userId), name: `User ${userId}`, role: 'admin' };
+        } else if (url && url.includes('/posts')) {
+            result = { id: 42, title: 'Hello World', author: 1 };
+        } else if (url && url.includes('/config')) {
+            result = { theme: 'dark', language: 'en' };
+        } else {
+            result = { status: 'ok', url };
+        }
+    } else if (type === 'sleep') {
+        result = undefined;
+    } else {
+        result = { type: type || 'unknown', status: 'mocked' };
+    }
+
+    return { id: order.id, result };
 }
 
 // Load example code
@@ -601,56 +717,41 @@ try {
     },
 
     'async-patterns': {
-        name: 'Promises & Generators',
-        code: `// Promise creation and chaining
-const promise = new Promise((resolve, reject) => {
-    resolve(42);
-});
+        name: 'Async Fetch with Promise.all',
+        code: `import { __order__ } from "eval:internal";
 
-promise
-    .then(value => {
-        console.log("Promise resolved:", value);
-        return value * 2;
-    })
-    .then(doubled => {
-        console.log("Doubled:", doubled);
-    });
-
-// Promise.resolve/reject
-Promise.resolve("immediate value")
-    .then(v => console.log("Immediate:", v));
-
-// Generator functions
-function* countdown(start: number) {
-    while (start > 0) {
-        yield start;
-        start--;
-    }
-    return "Done!";
+// fetch() uses __order__ to suspend execution.
+// Each __order__ call suspends, but the host returns an unresolved Promise
+// that resolves later. This enables parallel execution!
+function fetch(url: string): Promise<any> {
+    console.log(\`[fetch] Requesting: \${url}\`);
+    return __order__({ type: "fetch", url });
 }
 
-console.log("\\n--- Generator ---");
-const gen = countdown(3);
-console.log(gen.next()); // { value: 3, done: false }
-console.log(gen.next()); // { value: 2, done: false }
-console.log(gen.next()); // { value: 1, done: false }
-console.log(gen.next()); // { value: "Done!", done: true }
+// Fetch multiple resources in parallel with Promise.all
+async function loadDashboard() {
+    console.log("=== Loading Dashboard (Parallel) ===\\n");
 
-// Iterating over generator
-console.log("\\n--- Generator iteration ---");
-for (const n of countdown(5)) {
-    console.log("count:", n);
+    // Each fetch() suspends and gets an unresolved Promise from the host.
+    // The host schedules all three to resolve after random delays.
+    // Promise.all waits for all three Promises to resolve.
+    // Notice the order IDs are created sequentially (1, 2, 3)
+    // but the "Resolving" messages may appear in any order!
+
+    const [user, posts, config] = await Promise.all([
+        fetch("/api/users/1"),
+        fetch("/api/posts/latest"),
+        fetch("/api/config")
+    ]);
+
+    console.log("\\n=== All Data Loaded ===");
+    console.log("User:", JSON.stringify(user));
+    console.log("Posts:", JSON.stringify(posts));
+    console.log("Config:", JSON.stringify(config));
 }
 
-// Generator with yield*
-function* concat<T>(...iters: Iterable<T>[]) {
-    for (const iter of iters) {
-        yield* iter;
-    }
-}
-
-const combined = [...concat([1, 2], [3, 4], [5])];
-console.log("\\ncombined:", combined);`
+// Run the demo
+loadDashboard();`
     },
 
     'map-set': {
