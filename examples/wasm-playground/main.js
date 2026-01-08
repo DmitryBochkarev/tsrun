@@ -720,9 +720,29 @@ try {
         name: 'Async Fetch with Promise.all',
         code: `import { order } from "tsrun:host";
 
-// fetch() uses request to suspend execution.
-// Each request call suspends, but the host returns an unresolved Promise
-// that resolves later. This enables parallel execution!
+// How this works - the host (JavaScript in main.js) handles orders like this:
+//
+//   function handleOrders(orders) {
+//       const responses = [];
+//       for (const order of orders) {
+//           // Create an unresolved Promise in the interpreter
+//           const promiseId = runner.create_promise();
+//
+//           // Return the Promise ID immediately (execution resumes)
+//           responses.push({ id: order.id, promise_id: promiseId });
+//
+//           // Schedule async work - resolve the Promise later
+//           setTimeout(() => {
+//               const data = fetchFromNetwork(order.payload.url);
+//               runner.resolve_promise(promiseId, data);
+//           }, networkLatency);
+//       }
+//       return responses;  // Returns immediately, doesn't wait
+//   }
+//
+// This enables true parallelism: all fetch() calls get Promises immediately,
+// and Promise.all waits for all of them to resolve concurrently.
+
 function fetch(url: string): Promise<any> {
     console.log(\`[fetch] Requesting: \${url}\`);
     return order({ type: "fetch", url });
