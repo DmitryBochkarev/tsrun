@@ -2,7 +2,7 @@
 //!
 //! These tests demonstrate how the order system can be used for real-world async operations
 //! like fetch(), setTimeout(), and file I/O. The global functions are implemented in TypeScript
-//! using the __order__ syscall from eval:internal.
+//! using the request syscall from tsrun:host.
 
 use super::{run, run_to_completion};
 use serde_json::json;
@@ -18,16 +18,16 @@ use tsrun::{
 /// TypeScript source that defines global functions using the order system.
 /// This demonstrates how hosts can extend the interpreter with custom async operations.
 ///
-/// With blocking __order__() semantics:
-/// - __order__() suspends immediately, host provides any value
+/// With blocking request() semantics:
+/// - request() suspends immediately, host provides any value
 /// - Host can return plain values or Promises
 /// - For parallel operations, host returns Promises and resolves them later
 const GLOBALS_SOURCE: &str = r#"
-import { __order__ } from "eval:internal";
+import { order } from "tsrun:host";
 
 // sleep(ms) - Returns Promise that resolves after delay
 globalThis.sleep = async function(ms: number): Promise<void> {
-    await __order__({ type: "sleep", delay: ms });
+    await order({ type: "sleep", delay: ms });
 };
 
 // fetch(url, options?) - Returns Promise with response
@@ -36,7 +36,7 @@ globalThis.fetch = async function(url: string, options?: {
     body?: string;
     headers?: Record<string, string>;
 }): Promise<any> {
-    return await __order__({
+    return await order({
         type: "fetch",
         url: url,
         method: options?.method || "GET",
@@ -47,12 +47,12 @@ globalThis.fetch = async function(url: string, options?: {
 
 // readFile(path) - Returns Promise with file content
 globalThis.readFile = async function(path: string): Promise<string> {
-    return await __order__({ type: "readFile", path: path });
+    return await order({ type: "readFile", path: path });
 };
 
 // writeFile(path, content) - Returns Promise when complete
 globalThis.writeFile = async function(path: string, content: string): Promise<string> {
-    return await __order__({ type: "writeFile", path: path, content: content });
+    return await order({ type: "writeFile", path: path, content: content });
 };
 "#;
 
@@ -60,7 +60,7 @@ globalThis.writeFile = async function(path: string, content: string): Promise<st
 // Test Helpers
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// Create a runtime with eval:internal and eval:globals modules
+/// Create a runtime with tsrun:host and eval:globals modules
 fn create_test_interp() -> Interpreter {
     let config = InterpreterConfig {
         internal_modules: vec![
@@ -119,7 +119,7 @@ fn run_with_globals(interp: &mut Interpreter, script: &str) -> StepResult {
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Promise .then() Tests
-// With blocking __order__() semantics, to use .then() patterns:
+// With blocking request() semantics, to use .then() patterns:
 // - Host returns a Promise via fulfill_orders()
 // - Script calls .then() on that Promise
 // - Host resolves the Promise to trigger the callback
@@ -133,13 +133,13 @@ fn test_promise_then_callback_closure() {
     let result = run_with_globals(
         &mut interp,
         r#"
-        import { __order__ } from "eval:internal";
+        import { order } from "tsrun:host";
 
         // Create a captured variable in module scope
         let captured = "initial";
 
-        // Call __order__ to get a Promise from host, then attach .then() callback
-        const promise = __order__({ type: "getPromise" });
+        // Call request to get a Promise from host, then attach .then() callback
+        const promise = order({ type: "getPromise" });
         await promise.then(() => {
             captured = "modified";
         });
@@ -149,9 +149,9 @@ fn test_promise_then_callback_closure() {
     "#,
     );
 
-    // First suspension: waiting for __order__ response
+    // First suspension: waiting for request response
     let StepResult::Suspended { pending, .. } = result else {
-        panic!("Expected Suspended for __order__");
+        panic!("Expected Suspended for request");
     };
     assert_eq!(pending.len(), 1);
     assert_eq!(
@@ -197,7 +197,7 @@ fn test_promise_then_callback_nested_closure() {
     let result = run_with_globals(
         &mut interp,
         r#"
-        import { __order__ } from "eval:internal";
+        import { order } from "tsrun:host";
 
         // Module-level variable
         let moduleVar = "initial";
@@ -211,16 +211,16 @@ fn test_promise_then_callback_nested_closure() {
 
         // Call createCallback to get a callback, then use it in .then()
         const cb = createCallback();
-        const promise = __order__({ type: "getPromise" });
+        const promise = order({ type: "getPromise" });
         await promise.then(cb);
 
         moduleVar;
     "#,
     );
 
-    // First suspension: waiting for __order__ response
+    // First suspension: waiting for request response
     let StepResult::Suspended { pending, .. } = result else {
-        panic!("Expected Suspended for __order__");
+        panic!("Expected Suspended for request");
     };
     assert_eq!(pending.len(), 1);
 
@@ -255,22 +255,22 @@ fn test_promise_then_callback_nested_closure() {
 #[test]
 fn test_cross_module_closure_simple() {
     // Test that callbacks from another module can access that module's variables
-    // __order__ returns a Promise immediately, host fulfills with a value
+    // request returns a Promise immediately, host fulfills with a value
     let config = InterpreterConfig {
         internal_modules: vec![
             create_eval_internal_module(),
             InternalModule::source(
                 "eval:timer-module",
                 r#"
-                import { __order__ } from "eval:internal";
+                import { order } from "tsrun:host";
 
                 // Module-level variable
                 let moduleState: string = "initial";
 
-                // Function that gets a Promise from __order__ and attaches .then() callback
+                // Function that gets a Promise from request and attaches .then() callback
                 // The callback captures moduleState from this module
                 export function runWithCallback(): Promise<void> {
-                    const promise = __order__({ type: "getPromise" });
+                    const promise = order({ type: "getPromise" });
                     return promise.then(() => {
                         moduleState = "from-callback";
                     });
@@ -307,9 +307,9 @@ fn test_cross_module_closure_simple() {
     )
     .expect("eval should work");
 
-    // Suspension: __order__ waiting for host response
+    // Suspension: request waiting for host response
     let StepResult::Suspended { pending, .. } = result else {
-        panic!("Expected Suspended for __order__");
+        panic!("Expected Suspended for request");
     };
     assert_eq!(pending.len(), 1);
 
@@ -346,24 +346,24 @@ fn test_cross_module_closure_simple() {
 fn test_cross_module_nested_closure() {
     // Test that a callback defined in one module can access a variable from an outer
     // function's closure, where that function is defined in another module
-    // __order__ returns a Promise immediately, host fulfills with a value
+    // request returns a Promise immediately, host fulfills with a value
     let config = InterpreterConfig {
         internal_modules: vec![
             create_eval_internal_module(),
             InternalModule::source(
                 "eval:helper-module",
                 r#"
-                import { __order__ } from "eval:internal";
+                import { order } from "tsrun:host";
 
                 // Module-level state
                 let moduleState: string = "module-initial";
 
-                // This function gets a Promise from __order__ and attaches .then() callback that
+                // This function gets a Promise from request and attaches .then() callback that
                 // accesses BOTH function-local variable AND module variable
                 export function wrapWithThen(userCallback: () => void): Promise<void> {
                     const functionLocal = "function-local";
 
-                    const promise = __order__({ type: "getPromise" });
+                    const promise = order({ type: "getPromise" });
                     return promise.then(() => {
                         // Access module variable
                         moduleState = "from-then";
@@ -408,9 +408,9 @@ fn test_cross_module_nested_closure() {
     )
     .expect("eval should work");
 
-    // Suspension: __order__ waiting for host response
+    // Suspension: request waiting for host response
     let StepResult::Suspended { pending, .. } = result else {
-        panic!("Expected Suspended for __order__");
+        panic!("Expected Suspended for request");
     };
     assert_eq!(pending.len(), 1);
 
@@ -449,7 +449,7 @@ fn test_cross_module_nested_closure() {
 #[test]
 fn test_debug_closure_gc() {
     // Test GC with closures accessing local and module variables
-    // __order__ returns a Promise immediately, host fulfills with a value
+    // request returns a Promise immediately, host fulfills with a value
     let config = InterpreterConfig {
         internal_modules: vec![create_eval_internal_module()],
         ..Default::default()
@@ -461,14 +461,14 @@ fn test_debug_closure_gc() {
     let result = run(
         &mut interp,
         r#"
-            import { __order__ } from "eval:internal";
+            import { order } from "tsrun:host";
 
             let state: string = "initial";
 
             // Wrapper function WITH a local variable
             function wrapper(): Promise<void> {
                 const local = "local";  // This triggers call env creation
-                const promise = __order__({ type: "getPromise" });
+                const promise = order({ type: "getPromise" });
                 return promise.then(() => {
                     state = "modified-" + local;
                 });
@@ -481,9 +481,9 @@ fn test_debug_closure_gc() {
     )
     .expect("eval should work");
 
-    // Suspension: __order__ waiting for host response
+    // Suspension: request waiting for host response
     let StepResult::Suspended { pending, .. } = result else {
-        panic!("Expected Suspended for __order__");
+        panic!("Expected Suspended for request");
     };
 
     // Host returns a Promise (since script calls .then() on the result)
@@ -1104,10 +1104,10 @@ fn test_host_create_and_resolve_promise() {
     let result = run_with_globals(
         &mut interp,
         r#"
-        import { __order__ } from "eval:internal";
+        import { order } from "tsrun:host";
 
-        // __order__ returns a PendingOrder, await it to get the host's Promise
-        const promise = await __order__({ type: "getHostPromise" });
+        // request returns a PendingOrder, await it to get the host's Promise
+        const promise = await order({ type: "getHostPromise" });
         // Then await the Promise to get the actual value
         const result = await promise;
         "Got: " + result;
@@ -1161,11 +1161,11 @@ fn test_host_create_and_reject_promise() {
     let result = run_with_globals(
         &mut interp,
         r#"
-        import { __order__ } from "eval:internal";
+        import { order } from "tsrun:host";
 
         try {
             // Get the Promise from host and await it
-            const promise = await __order__({ type: "getHostPromise" });
+            const promise = await order({ type: "getHostPromise" });
             const result = await promise;
             "Success: " + result;
         } catch (e) {
@@ -1211,10 +1211,10 @@ fn test_host_promise_immediate_resolve() {
     let result = run_with_globals(
         &mut interp,
         r#"
-        import { __order__ } from "eval:internal";
+        import { order } from "tsrun:host";
 
         // Get the Promise from host and await it
-        const promise = await __order__({ type: "quickResolve" });
+        const promise = await order({ type: "quickResolve" });
         const result = await promise;
         "Result: " + result;
     "#,
@@ -1248,10 +1248,10 @@ fn test_host_promise_immediate_resolve() {
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Concurrency Tests (via host-returned Promises)
-// With blocking __order__(), concurrency is achieved by:
-// 1. Script calls __order__() which SUSPENDS immediately
+// With blocking request(), concurrency is achieved by:
+// 1. Script calls request() which SUSPENDS immediately
 // 2. Host returns an unresolved Promise (or any other value)
-// 3. Script continues to next __order__(), which also suspends
+// 3. Script continues to next request(), which also suspends
 // 4. Eventually script reaches await Promise.all with multiple host Promises
 // 5. Host resolves Promises in any order (can do work in parallel)
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1259,10 +1259,10 @@ fn test_host_promise_immediate_resolve() {
 #[test]
 fn test_concurrent_fetch_with_promise_all() {
     // Simulate concurrent fetching via host-returned Promises
-    // Blocking __order__ semantics:
-    // 1. First __order__ suspends immediately, host sees "/users" order
+    // Blocking request semantics:
+    // 1. First request suspends immediately, host sees "/users" order
     // 2. Host fulfills with unresolved Promise
-    // 3. Second __order__ suspends, host sees "/posts" order
+    // 3. Second request suspends, host sees "/posts" order
     // 4. Host fulfills with unresolved Promise
     // 5. await Promise.all waits for both Promises
     // 6. Host resolves Promises (can do work in parallel)
@@ -1275,11 +1275,11 @@ fn test_concurrent_fetch_with_promise_all() {
     let result = run_with_globals(
         &mut interp,
         r#"
-        import { __order__ } from "eval:internal";
+        import { order } from "tsrun:host";
 
-        // Each __order__ suspends immediately - host sees one at a time
-        const usersPromise = __order__({ type: "fetch", url: "/users" });
-        const postsPromise = __order__({ type: "fetch", url: "/posts" });
+        // Each request suspends immediately - host sees one at a time
+        const usersPromise = order({ type: "fetch", url: "/users" });
+        const postsPromise = order({ type: "fetch", url: "/posts" });
 
         // await Promise.all waits for both host Promises
         const [users, posts] = await Promise.all([usersPromise, postsPromise]);
@@ -1288,9 +1288,9 @@ fn test_concurrent_fetch_with_promise_all() {
     "#,
     );
 
-    // First suspension: __order__ for "/users"
+    // First suspension: request for "/users"
     let StepResult::Suspended { pending, .. } = result else {
-        panic!("Expected Suspended at first __order__");
+        panic!("Expected Suspended at first request");
     };
     assert_eq!(pending.len(), 1, "First order pending");
     assert_eq!(
@@ -1307,9 +1307,9 @@ fn test_concurrent_fetch_with_promise_all() {
     }]);
     let result = run_to_completion(&mut interp).unwrap();
 
-    // Second suspension: __order__ for "/posts"
+    // Second suspension: request for "/posts"
     let StepResult::Suspended { pending, .. } = result else {
-        panic!("Expected Suspended at second __order__, got {:?}", result);
+        panic!("Expected Suspended at second request, got {:?}", result);
     };
     assert_eq!(pending.len(), 1, "Second order pending");
     assert_eq!(
@@ -1362,9 +1362,9 @@ fn test_concurrent_fetch_with_promise_all() {
 #[test]
 fn test_promise_race_first_wins() {
     // Promise.race: first to resolve determines the result
-    // With blocking __order__:
-    // 1. First __order__ suspends, host returns Promise1
-    // 2. Second __order__ suspends, host returns Promise2
+    // With blocking request:
+    // 1. First request suspends, host returns Promise1
+    // 2. Second request suspends, host returns Promise2
     // 3. Promise.race waits for first Promise to resolve
     // 4. Host resolves first Promise - it wins
     let mut interp = create_test_interp();
@@ -1376,11 +1376,11 @@ fn test_promise_race_first_wins() {
     let result = run_with_globals(
         &mut interp,
         r#"
-        import { __order__ } from "eval:internal";
+        import { order } from "tsrun:host";
 
-        // Each __order__ suspends, host returns a Promise
-        const fast = __order__({ type: "fetch", server: "fast" });
-        const slow = __order__({ type: "fetch", server: "slow" });
+        // Each request suspends, host returns a Promise
+        const fast = order({ type: "fetch", server: "fast" });
+        const slow = order({ type: "fetch", server: "slow" });
 
         // Race: first to resolve wins
         const winner = await Promise.race([fast, slow]);
@@ -1449,9 +1449,9 @@ fn test_promise_race_first_wins() {
 #[test]
 fn test_promise_race_second_wins() {
     // Verify race works when second Promise is resolved first
-    // With blocking __order__:
-    // 1. First __order__ suspends, host returns Promise1
-    // 2. Second __order__ suspends, host returns Promise2
+    // With blocking request:
+    // 1. First request suspends, host returns Promise1
+    // 2. Second request suspends, host returns Promise2
     // 3. Promise.race waits for first Promise to resolve
     // 4. Host resolves second Promise first - it wins
     let mut interp = create_test_interp();
@@ -1463,11 +1463,11 @@ fn test_promise_race_second_wins() {
     let result = run_with_globals(
         &mut interp,
         r#"
-        import { __order__ } from "eval:internal";
+        import { order } from "tsrun:host";
 
-        // Each __order__ suspends, host returns a Promise
-        const a = __order__({ type: "fetch", id: "a" });
-        const b = __order__({ type: "fetch", id: "b" });
+        // Each request suspends, host returns a Promise
+        const a = order({ type: "fetch", id: "a" });
+        const b = order({ type: "fetch", id: "b" });
 
         const winner = await Promise.race([a, b]);
         winner.winner;
@@ -1535,9 +1535,9 @@ fn test_promise_race_second_wins() {
 #[test]
 fn test_concurrent_with_partial_failure() {
     // One Promise resolves, one rejects - test error handling with Promise.all
-    // With blocking __order__:
-    // 1. First __order__ suspends, host returns Promise1
-    // 2. Second __order__ suspends, host returns Promise2
+    // With blocking request:
+    // 1. First request suspends, host returns Promise1
+    // 2. Second request suspends, host returns Promise2
     // 3. Promise.all waits for both Promises
     // 4. Host resolves first, rejects second - Promise.all catches the error
     let mut interp = create_test_interp();
@@ -1549,11 +1549,11 @@ fn test_concurrent_with_partial_failure() {
     let result = run_with_globals(
         &mut interp,
         r#"
-        import { __order__ } from "eval:internal";
+        import { order } from "tsrun:host";
 
-        // Each __order__ suspends, host returns a Promise
-        const ok = __order__({ type: "fetch", url: "/ok" });
-        const fail = __order__({ type: "fetch", url: "/fail" });
+        // Each request suspends, host returns a Promise
+        const ok = order({ type: "fetch", url: "/ok" });
+        const fail = order({ type: "fetch", url: "/fail" });
 
         try {
             const results = await Promise.all([ok, fail]);
@@ -1629,7 +1629,7 @@ fn test_concurrent_with_partial_failure() {
 #[test]
 fn test_concurrent_three_way_race() {
     // Race with three Promises, middle one wins
-    // With blocking __order__, each order suspends one at a time
+    // With blocking request, each order suspends one at a time
     let mut interp = create_test_interp();
 
     // Create three host Promises upfront
@@ -1640,12 +1640,12 @@ fn test_concurrent_three_way_race() {
     let result = run_with_globals(
         &mut interp,
         r#"
-        import { __order__ } from "eval:internal";
+        import { order } from "tsrun:host";
 
-        // Get three Promises from host (each __order__ suspends)
-        const p1 = __order__({ id: 1 });
-        const p2 = __order__({ id: 2 });
-        const p3 = __order__({ id: 3 });
+        // Get three Promises from host (each request suspends)
+        const p1 = order({ id: 1 });
+        const p2 = order({ id: 2 });
+        const p3 = order({ id: 3 });
 
         // Race: first to resolve wins
         const winner = await Promise.race([p1, p2, p3]);
@@ -1723,9 +1723,9 @@ fn test_concurrent_three_way_race() {
 #[test]
 fn test_concurrent_chained_operations() {
     // Start concurrent fetches, then chain more operations on results
-    // With blocking __order__:
-    // 1. First __order__ suspends, host returns Promise1
-    // 2. Second __order__ suspends, host returns Promise2
+    // With blocking request:
+    // 1. First request suspends, host returns Promise1
+    // 2. Second request suspends, host returns Promise2
     // 3. .then() chains transformations on each Promise
     // 4. Promise.all waits for both transformed Promises
     // 5. Host resolves both Promises
@@ -1738,11 +1738,11 @@ fn test_concurrent_chained_operations() {
     let result = run_with_globals(
         &mut interp,
         r#"
-        import { __order__ } from "eval:internal";
+        import { order } from "tsrun:host";
 
-        // Each __order__ suspends, host returns a Promise
-        const userPromise = __order__({ type: "getUser" });
-        const profilePromise = __order__({ type: "getProfile" });
+        // Each request suspends, host returns a Promise
+        const userPromise = order({ type: "getUser" });
+        const profilePromise = order({ type: "getProfile" });
 
         // Chain transformations on each
         const user = userPromise.then(u => ({ ...u, type: "user" }));
@@ -1827,7 +1827,7 @@ fn test_concurrent_chained_operations() {
 #[test]
 fn test_promise_race_cancels_losing_order() {
     // When Promise.race settles, losing Promises' order IDs should be cancelled
-    // With blocking __order__, each order suspends one at a time
+    // With blocking request, each order suspends one at a time
     let mut interp = create_test_interp();
 
     // Create two host Promises with order IDs for cancellation tracking
@@ -1839,10 +1839,10 @@ fn test_promise_race_cancels_losing_order() {
     let result = run_with_globals(
         &mut interp,
         r#"
-        import { __order__ } from "eval:internal";
+        import { order } from "tsrun:host";
 
-        const p1 = __order__({ id: 1 });
-        const p2 = __order__({ id: 2 });
+        const p1 = order({ id: 1 });
+        const p2 = order({ id: 2 });
 
         const winner = await Promise.race([p1, p2]);
         winner;
@@ -1922,7 +1922,7 @@ fn test_promise_race_cancels_losing_order() {
 #[test]
 fn test_promise_race_second_wins_cancels_first() {
     // Verify cancellation works when second Promise wins
-    // With blocking __order__, each order suspends one at a time
+    // With blocking request, each order suspends one at a time
     let mut interp = create_test_interp();
 
     // Create two host Promises with order IDs for cancellation tracking
@@ -1934,10 +1934,10 @@ fn test_promise_race_second_wins_cancels_first() {
     let result = run_with_globals(
         &mut interp,
         r#"
-        import { __order__ } from "eval:internal";
+        import { order } from "tsrun:host";
 
-        const p1 = __order__({ id: 1 });
-        const p2 = __order__({ id: 2 });
+        const p1 = order({ id: 1 });
+        const p2 = order({ id: 2 });
 
         const winner = await Promise.race([p1, p2]);
         winner;
@@ -2019,10 +2019,10 @@ fn test_promise_rejection_signals_cancelled_order() {
     let result = run_with_globals(
         &mut interp,
         r#"
-        import { __order__ } from "eval:internal";
+        import { order } from "tsrun:host";
 
         try {
-            const p = __order__({ type: "will_fail" });
+            const p = order({ type: "will_fail" });
             await p;
             "resolved";
         } catch (e) {
@@ -2079,7 +2079,7 @@ fn test_promise_rejection_signals_cancelled_order() {
 #[test]
 fn test_three_way_race_cancels_two_losers() {
     // Three-way race: winner gets result, two losers' orders cancelled
-    // With blocking __order__, each order suspends one at a time
+    // With blocking request, each order suspends one at a time
     let mut interp = create_test_interp();
 
     // Create three host Promises with order IDs for cancellation tracking
@@ -2093,11 +2093,11 @@ fn test_three_way_race_cancels_two_losers() {
     let result = run_with_globals(
         &mut interp,
         r#"
-        import { __order__ } from "eval:internal";
+        import { order } from "tsrun:host";
 
-        const p1 = __order__({ id: 1 });
-        const p2 = __order__({ id: 2 });
-        const p3 = __order__({ id: 3 });
+        const p1 = order({ id: 1 });
+        const p2 = order({ id: 2 });
+        const p3 = order({ id: 3 });
 
         const winner = await Promise.race([p1, p2, p3]);
         "Winner: " + winner;

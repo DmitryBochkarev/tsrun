@@ -100,7 +100,7 @@ fn test_provide_module() {
 #[test]
 fn test_internal_module_registered() {
     // Create a native internal module
-    let eval_internal = InternalModule::native("eval:internal").build();
+    let eval_internal = InternalModule::native("tsrun:host").build();
 
     let config = InterpreterConfig {
         internal_modules: vec![eval_internal],
@@ -115,10 +115,10 @@ fn test_internal_module_registered() {
 
 #[test]
 fn test_internal_module_not_in_need_imports() {
-    // If we import from eval:internal (an internal module), it should NOT appear
+    // If we import from tsrun:host (an internal module), it should NOT appear
     // in NeedImports since internal modules are resolved automatically
 
-    let eval_internal = InternalModule::native("eval:internal").build();
+    let eval_internal = InternalModule::native("tsrun:host").build();
 
     let config = InterpreterConfig {
         internal_modules: vec![eval_internal],
@@ -130,7 +130,7 @@ fn test_internal_module_not_in_need_imports() {
     let result = run(
         &mut interp,
         r#"
-        import { __order__ } from "eval:internal";
+        import { order } from "tsrun:host";
         import { foo } from "./external";
         42
     "#,
@@ -143,8 +143,8 @@ fn test_internal_module_not_in_need_imports() {
             // Only external modules should be needed
             assert_eq!(imports.len(), 1);
             assert_eq!(imports[0].specifier, "./external");
-            // eval:internal should NOT be in the list
-            assert!(!imports.iter().any(|i| i.specifier == "eval:internal"));
+            // tsrun:host should NOT be in the list
+            assert!(!imports.iter().any(|i| i.specifier == "tsrun:host"));
         }
         _ => panic!("Expected NeedImports"),
     }
@@ -292,7 +292,7 @@ fn test_import_namespace() {
 fn test_order_syscall() {
     use tsrun::create_eval_internal_module;
 
-    // Create the eval:internal module
+    // Create the tsrun:host module
     let eval_internal = create_eval_internal_module();
 
     let config = InterpreterConfig {
@@ -302,12 +302,12 @@ fn test_order_syscall() {
 
     let mut interp = Interpreter::with_config(config);
 
-    // Test that __order__ creates an order and suspends
+    // Test that request creates an order and suspends
     let result = run(
         &mut interp,
         r#"
-        import { __order__ } from "eval:internal";
-        const orderId = __order__({ type: "test", data: 42 });
+        import { order } from "tsrun:host";
+        const orderId = order({ type: "test", data: 42 });
         orderId;
     "#,
         None,
@@ -345,19 +345,19 @@ fn test_order_syscall_returns_promise() {
 
     let mut interp = Interpreter::with_config(config);
 
-    // Test that __order__ returns a Promise object
+    // Test that request returns a Promise object
     let result = run(
         &mut interp,
         r#"
-        import { __order__ } from "eval:internal";
-        const p = __order__({ type: "test" });
+        import { order } from "tsrun:host";
+        const p = order({ type: "test" });
         typeof p === "object" && p !== null
     "#,
         None,
     )
     .unwrap();
 
-    // Since we called __order__, we should have a pending order and get Suspended
+    // Since we called request, we should have a pending order and get Suspended
     match result {
         StepResult::Suspended { pending, .. } => {
             assert_eq!(pending.len(), 1);
@@ -384,9 +384,9 @@ fn test_await_pending_promise_suspends_and_resumes() {
     let result = run(
         &mut interp,
         r#"
-        import { __order__ } from "eval:internal";
+        import { order } from "tsrun:host";
         // This will suspend when we await the pending promise
-        const result = await __order__({ type: "getData" });
+        const result = await order({ type: "getData" });
         result * 2  // This should run after resume with the resolved value
     "#,
         None,
@@ -440,9 +440,9 @@ fn test_await_suspension_with_multiple_awaits() {
     let result = run(
         &mut interp,
         r#"
-        import { __order__ } from "eval:internal";
-        const a = await __order__({ type: "first" });
-        const b = await __order__({ type: "second" });
+        import { order } from "tsrun:host";
+        const a = await order({ type: "first" });
+        const b = await order({ type: "second" });
         a + b
     "#,
         None,
@@ -798,7 +798,7 @@ fn test_module_with_internal_imports() {
 
     match result {
         StepResult::NeedImports(imports) => {
-            // Only external module should be requested, not eval:internal
+            // Only external module should be requested, not tsrun:host
             assert_eq!(imports.len(), 1);
             assert_eq!(imports[0].specifier, "./myModule");
 

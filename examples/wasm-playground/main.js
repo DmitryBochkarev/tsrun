@@ -718,14 +718,14 @@ try {
 
     'async-patterns': {
         name: 'Async Fetch with Promise.all',
-        code: `import { __order__ } from "eval:internal";
+        code: `import { order } from "tsrun:host";
 
-// fetch() uses __order__ to suspend execution.
-// Each __order__ call suspends, but the host returns an unresolved Promise
+// fetch() uses request to suspend execution.
+// Each request call suspends, but the host returns an unresolved Promise
 // that resolves later. This enables parallel execution!
 function fetch(url: string): Promise<any> {
     console.log(\`[fetch] Requesting: \${url}\`);
-    return __order__({ type: "fetch", url });
+    return order({ type: "fetch", url });
 }
 
 // Fetch multiple resources in parallel with Promise.all

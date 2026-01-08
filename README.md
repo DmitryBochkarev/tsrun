@@ -222,8 +222,8 @@ let mut interp = Interpreter::new();
 
 // Code that uses the order system for async I/O
 interp.prepare(r#"
-    import { request } from "eval:internal";
-    const response = await request({ url: "/api/users" });
+    import { order } from "tsrun:host";
+    const response = await order({ url: "/api/users" });
     response.data
 "#, Some("/main.ts".into()))?;
 
@@ -337,13 +337,13 @@ while (true) {
 
 ### Async Operations
 
-TypeScript code can use `__order__` for async operations that the JavaScript host fulfills:
+TypeScript code can use `order` for async operations that the JavaScript host fulfills:
 
 ```typescript
-import { __order__ } from "eval:internal";
+import { order } from "tsrun:host";
 
 function fetch(url: string): Promise<any> {
-    return __order__({ type: "fetch", url });
+    return order({ type: "fetch", url });
 }
 
 const [user, posts] = await Promise.all([

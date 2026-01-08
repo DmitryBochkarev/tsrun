@@ -268,7 +268,7 @@ impl TsRunner {
         self.import_specifiers.clear();
         self.host_promises.clear();
 
-        // Create interpreter with eval:internal module support
+        // Create interpreter with tsrun:host module support
         let console_provider = BufferedConsoleProvider::new(Rc::clone(&self.console_buffer));
         let regexp_provider = Rc::new(WasmRegExpProvider::new());
         let config = InterpreterConfig {

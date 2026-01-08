@@ -549,7 +549,7 @@ impl ModulePath {
     }
 
     /// Check if this is a bare specifier (not relative, not absolute)
-    /// e.g., "lodash", "react", "eval:internal"
+    /// e.g., "lodash", "react", "tsrun:host"
     pub fn is_bare(specifier: &str) -> bool {
         !specifier.starts_with('/') && !Self::is_relative(specifier)
     }
@@ -761,7 +761,7 @@ pub enum InternalModuleKind {
 /// "#);
 /// ```
 pub struct InternalModule {
-    /// The import specifier (e.g., "eval:internal", "eval:fs")
+    /// The import specifier (e.g., "tsrun:host", "eval:fs")
     pub specifier: String,
     /// How the module is implemented
     pub kind: InternalModuleKind,

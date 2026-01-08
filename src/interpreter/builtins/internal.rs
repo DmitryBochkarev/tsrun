@@ -1,4 +1,4 @@
-//! eval:internal built-in module
+//! tsrun:host built-in module
 //!
 //! Provides the core order system functions for async host operations.
 
@@ -7,16 +7,16 @@ use crate::interpreter::Interpreter;
 use crate::value::{ExoticObject, Guarded, JsValue};
 use crate::{InternalModule, Order, OrderId, RuntimeValue};
 
-/// Create the eval:internal module
+/// Create the tsrun:host module
 pub fn create_eval_internal_module() -> InternalModule {
-    InternalModule::native("eval:internal")
-        .with_function("__order__", order_syscall, 1)
+    InternalModule::native("tsrun:host")
+        .with_function("order", order_syscall, 1)
         .with_function("__cancelOrder__", cancel_order_syscall, 1)
         .with_function("__getOrderId__", get_order_id_syscall, 0)
         .build()
 }
 
-/// Native implementation of __order__
+/// Native implementation of request
 ///
 /// Creates a pending order and returns a PendingOrder marker. The VM
 /// suspends immediately when this function returns, allowing the host
@@ -26,11 +26,11 @@ pub fn create_eval_internal_module() -> InternalModule {
 /// the host fulfills the order.
 ///
 /// Usage:
-///   const result = await __order__({ type: "readFile", path: "/foo" });
+///   const result = await order({ type: "readFile", path: "/foo" });
 ///
 /// For parallel requests (host returns Promises, resolves them later):
-///   const p1 = __order__({ type: "fetch", url: "/a" });  // suspends, host returns Promise
-///   const p2 = __order__({ type: "fetch", url: "/b" });  // suspends, host returns Promise
+///   const p1 = order({ type: "fetch", url: "/a" });  // suspends, host returns Promise
+///   const p2 = order({ type: "fetch", url: "/b" });  // suspends, host returns Promise
 ///   const [a, b] = await Promise.all([p1, p2]);          // awaits both
 fn order_syscall(
     interp: &mut Interpreter,

@@ -169,7 +169,7 @@ assert_eq!(joined.as_str(), Some("admin, developer"));</code></pre>
 let mut interp = Interpreter::new();
 
 interp.prepare(r#"
-    import { request } from "eval:internal";
+    import { order } from "tsrun:host";
     const response = await request({ url: "/api/users" });
     response.data
 "#, Some("/main.ts".into()))?;

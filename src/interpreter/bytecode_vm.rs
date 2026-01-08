@@ -933,7 +933,7 @@ impl BytecodeVM {
                 let result = result?;
 
                 // Check if result is a PendingOrder - if so, suspend immediately.
-                // This makes __order__ a blocking syscall - each call suspends
+                // This makes order() a blocking syscall - each call suspends
                 // execution until the host fulfills the order with a value.
                 // For parallel operations, the host can return unresolved Promises
                 // that are later resolved concurrently.

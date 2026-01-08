@@ -522,13 +522,13 @@ while (true) {
 
 ### Async Order System
 
-For async operations, TypeScript code uses `__order__` from the `eval:internal` module:
+For async operations, TypeScript code uses `order` from the `tsrun:host` module:
 
 ```typescript
-import { __order__ } from "eval:internal";
+import { order } from "tsrun:host";
 
 function fetch(url: string): Promise<any> {
-    return __order__({ type: "fetch", url });
+    return order({ type: "fetch", url });
 }
 
 const data = await fetch("/api/users");
