@@ -18,23 +18,26 @@ required-features = ["std"]
 [[bin]]
 name = "profile_lexer"
 path = "src/bin/profile_lexer.rs"
-required-features = ["std"]
+required-features = ["dev-tools"]
 
 [[bin]]
 name = "profile_parser"
 path = "src/bin/profile_parser.rs"
-required-features = ["std"]
+required-features = ["dev-tools"]
 
 [[bin]]
 name = "test262-runner"
 path = "src/bin/test262-runner.rs"
-required-features = ["std"]
+required-features = ["dev-tools"]
 
 [features]
 default = ["std"]
 
 # Full std support (current behavior)
 std = ["regex", "console", "serde/std", "serde_json/std", "rustc-hash/std"]
+
+# Development tools (profilers, test runners) - not installed by default
+dev-tools = ["std"]
 
 # Regex support (requires std due to fancy-regex)
 regex = ["dep:fancy-regex"]
