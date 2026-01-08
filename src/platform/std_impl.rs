@@ -272,8 +272,14 @@ mod regex_impl {
         let mut i = 0;
 
         while i < chars.len() {
-            if chars[i] == '$' && i + 1 < chars.len() {
-                let next = chars[i + 1];
+            let Some(&c) = chars.get(i) else { break };
+            let Some(&next) = chars.get(i + 1) else {
+                result.push(c);
+                i += 1;
+                continue;
+            };
+
+            if c == '$' {
                 if next == '$' {
                     // $$ -> literal $
                     result.push('$');
@@ -288,16 +294,19 @@ mod regex_impl {
                     // $1-$99
                     let mut num_str = String::new();
                     let mut j = i + 1;
-                    while j < chars.len() && chars[j].is_ascii_digit() && num_str.len() < 2 {
-                        num_str.push(chars[j]);
+                    while let Some(&ch) = chars.get(j) {
+                        if !ch.is_ascii_digit() || num_str.len() >= 2 {
+                            break;
+                        }
+                        num_str.push(ch);
                         j += 1;
                     }
-                    if let Ok(group_num) = num_str.parse::<usize>() {
-                        if let Some(m) = caps.get(group_num) {
-                            result.push_str(m.as_str());
-                        }
-                        // If group doesn't exist, replace with empty string
+                    if let Ok(group_num) = num_str.parse::<usize>()
+                        && let Some(m) = caps.get(group_num)
+                    {
+                        result.push_str(m.as_str());
                     }
+                    // If group doesn't exist, replace with empty string
                     i = j;
                 } else {
                     // Not a special sequence, keep the $
@@ -305,7 +314,7 @@ mod regex_impl {
                     i += 1;
                 }
             } else {
-                result.push(chars[i]);
+                result.push(c);
                 i += 1;
             }
         }
@@ -362,15 +371,15 @@ mod regex_impl {
                 break;
             };
 
-            if c == '\\' {
-                if let Some(next) = chars.get(i + 1).copied() {
-                    // Escaped character - copy both chars and skip
-                    result.push(c);
-                    result.push(next);
-                    i += 2;
-                    char_class_start = false;
-                    continue;
-                }
+            if c == '\\'
+                && let Some(next) = chars.get(i + 1).copied()
+            {
+                // Escaped character - copy both chars and skip
+                result.push(c);
+                result.push(next);
+                i += 2;
+                char_class_start = false;
+                continue;
             }
 
             if !in_char_class {

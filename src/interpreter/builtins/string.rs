@@ -596,7 +596,7 @@ pub fn string_split(
                     {
                         let re = interp.compile_regexp(&pattern, &flags)?;
                         let split_result =
-                            re.split(s.as_str()).map_err(|e| JsError::type_error(e))?;
+                            re.split(s.as_str()).map_err(JsError::type_error)?;
                         let split: Vec<JsValue> = split_result
                             .into_iter()
                             .map(|p| JsValue::String(JsString::from(p)))
@@ -713,10 +713,10 @@ pub fn string_replace(
                     let mut last_end = 0;
 
                     let matches = if is_global {
-                        re.find_iter(&s).map_err(|e| JsError::type_error(e))?
+                        re.find_iter(&s).map_err(JsError::type_error)?
                     } else {
                         // Single match
-                        match re.find(&s, 0).map_err(|e| JsError::type_error(e))? {
+                        match re.find(&s, 0).map_err(JsError::type_error)? {
                             Some(m) => vec![m],
                             None => vec![],
                         }
@@ -757,10 +757,10 @@ pub fn string_replace(
                     let replacement_template = interp.to_js_string(&replacement_arg).to_string();
                     let result = if is_global {
                         re.replace_all(&s, &replacement_template)
-                            .map_err(|e| JsError::type_error(e))?
+                            .map_err(JsError::type_error)?
                     } else {
                         re.replace(&s, &replacement_template)
-                            .map_err(|e| JsError::type_error(e))?
+                            .map_err(JsError::type_error)?
                     };
                     return Ok(Guarded::unguarded(JsValue::String(JsString::from(result))));
                 }
@@ -1079,7 +1079,7 @@ pub fn string_match(
 
     if is_global {
         // Global flag: return array of all matches
-        let matches_result = re.find_iter(&s).map_err(|e| JsError::type_error(e))?;
+        let matches_result = re.find_iter(&s).map_err(JsError::type_error)?;
         let matches: Vec<JsValue> = matches_result
             .iter()
             .map(|m| {
@@ -1097,7 +1097,7 @@ pub fn string_match(
         }
     } else {
         // Non-global: return first match with capture groups
-        let find_result = re.find(&s, 0).map_err(|e| JsError::type_error(e))?;
+        let find_result = re.find(&s, 0).map_err(JsError::type_error)?;
         match find_result {
             Some(m) => {
                 let mut result = Vec::new();
@@ -1268,7 +1268,7 @@ pub fn string_search(
 
     let re = interp.compile_regexp(&pattern, &flags)?;
 
-    match re.find(&s, 0).map_err(|e| JsError::type_error(e))? {
+    match re.find(&s, 0).map_err(JsError::type_error)? {
         Some(m) => Ok(Guarded::unguarded(JsValue::Number(m.start as f64))),
         None => Ok(Guarded::unguarded(JsValue::Number(-1.0))),
     }

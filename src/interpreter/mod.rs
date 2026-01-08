@@ -268,6 +268,7 @@ pub struct Interpreter {
 
     /// FFI context pointer (set during tsrun_step/tsrun_run)
     /// Used by native callback trampoline to access TsRunContext
+    #[cfg(feature = "c-api")]
     pub(crate) ffi_context: *mut core::ffi::c_void,
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -473,6 +474,7 @@ impl Interpreter {
             console_timers: FxHashMap::default(),
             console_counters: FxHashMap::default(),
             current_ffi_id: 0,
+            #[cfg(feature = "c-api")]
             ffi_context: core::ptr::null_mut(),
             // Platform providers - std takes priority, then wasm, then no-op
             #[cfg(feature = "std")]

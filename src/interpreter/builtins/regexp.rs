@@ -38,14 +38,14 @@ mod regex_compat {
                 break;
             };
 
-            if c == '\\' {
-                if let Some(next) = chars.get(i + 1).copied() {
-                    result.push(c);
-                    result.push(next);
-                    i += 2;
-                    char_class_start = false;
-                    continue;
-                }
+            if c == '\\'
+                && let Some(next) = chars.get(i + 1).copied()
+            {
+                result.push(c);
+                result.push(next);
+                i += 2;
+                char_class_start = false;
+                continue;
             }
 
             if !in_char_class {
@@ -56,30 +56,28 @@ mod regex_compat {
                 } else {
                     result.push(c);
                 }
-            } else {
-                if char_class_start {
-                    if c == '^' {
-                        result.push(c);
-                    } else if c == ']' {
-                        result.push(c);
-                        char_class_start = false;
-                    } else if c == '[' {
-                        result.push('\\');
-                        result.push('[');
-                        char_class_start = false;
-                    } else {
-                        result.push(c);
-                        char_class_start = false;
-                    }
-                } else if c == ']' {
-                    in_char_class = false;
+            } else if char_class_start {
+                if c == '^' {
                     result.push(c);
+                } else if c == ']' {
+                    result.push(c);
+                    char_class_start = false;
                 } else if c == '[' {
                     result.push('\\');
                     result.push('[');
+                    char_class_start = false;
                 } else {
                     result.push(c);
+                    char_class_start = false;
                 }
+            } else if c == ']' {
+                in_char_class = false;
+                result.push(c);
+            } else if c == '[' {
+                result.push('\\');
+                result.push('[');
+            } else {
+                result.push(c);
             }
             i += 1;
         }

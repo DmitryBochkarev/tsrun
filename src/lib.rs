@@ -826,6 +826,7 @@ impl NativeModuleBuilder {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// Configuration for creating an Interpreter
+#[derive(Default)]
 pub struct InterpreterConfig {
     /// Internal modules available for import
     pub internal_modules: Vec<InternalModule>,
@@ -838,11 +839,3 @@ pub struct InterpreterConfig {
     pub regexp_provider: Option<Rc<dyn platform::RegExpProvider>>,
 }
 
-impl Default for InterpreterConfig {
-    fn default() -> Self {
-        Self {
-            internal_modules: Vec::new(),
-            regexp_provider: None,
-        }
-    }
-}
