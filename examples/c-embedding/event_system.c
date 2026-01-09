@@ -14,6 +14,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "tsrun.h"
+#include "tsrun_console.h"
 
 // ============================================================================
 // Event Subscription Storage
@@ -212,6 +213,7 @@ static void run_with_events(
     printf("\n--- Execution ---\n");
 
     TsRunContext* ctx = tsrun_new();
+    tsrun_set_console(ctx, tsrun_console_stdio, NULL);
     reset_subscriptions();
     setup_event_functions(ctx);
 

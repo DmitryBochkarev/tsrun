@@ -43,24 +43,28 @@ check:
 		exit 1; \
 	fi
 
-# Build each example
-basic: basic.c tsrun.h
-	$(CC) $(CFLAGS) $(INCLUDES) -o $@ $< $(LDFLAGS)
+# Console helper object (linked with all examples)
+tsrun_console.o: tsrun_console.c tsrun_console.h tsrun.h
+	$(CC) $(CFLAGS) $(INCLUDES) -c -o $@ $<
 
-native_functions: native_functions.c tsrun.h
-	$(CC) $(CFLAGS) $(INCLUDES) -o $@ $< $(LDFLAGS)
+# Build each example (all link with tsrun_console.o)
+basic: basic.c tsrun.h tsrun_console.o
+	$(CC) $(CFLAGS) $(INCLUDES) -o $@ $< tsrun_console.o $(LDFLAGS)
 
-module_loading: module_loading.c tsrun.h
-	$(CC) $(CFLAGS) $(INCLUDES) -o $@ $< $(LDFLAGS)
+native_functions: native_functions.c tsrun.h tsrun_console.o
+	$(CC) $(CFLAGS) $(INCLUDES) -o $@ $< tsrun_console.o $(LDFLAGS)
 
-async_orders: async_orders.c tsrun.h
-	$(CC) $(CFLAGS) $(INCLUDES) -o $@ $< $(LDFLAGS)
+module_loading: module_loading.c tsrun.h tsrun_console.o
+	$(CC) $(CFLAGS) $(INCLUDES) -o $@ $< tsrun_console.o $(LDFLAGS)
 
-internal_modules: internal_modules.c tsrun.h
-	$(CC) $(CFLAGS) $(INCLUDES) -o $@ $< $(LDFLAGS)
+async_orders: async_orders.c tsrun.h tsrun_console.o
+	$(CC) $(CFLAGS) $(INCLUDES) -o $@ $< tsrun_console.o $(LDFLAGS)
 
-event_system: event_system.c tsrun.h
-	$(CC) $(CFLAGS) $(INCLUDES) -o $@ $< $(LDFLAGS)
+internal_modules: internal_modules.c tsrun.h tsrun_console.o
+	$(CC) $(CFLAGS) $(INCLUDES) -o $@ $< tsrun_console.o $(LDFLAGS)
+
+event_system: event_system.c tsrun.h tsrun_console.o
+	$(CC) $(CFLAGS) $(INCLUDES) -o $@ $< tsrun_console.o $(LDFLAGS)
 
 # Run examples (need to set library path)
 run-basic: basic
@@ -95,7 +99,7 @@ run-all: $(EXAMPLES)
 	@echo "=== Running event_system ===" && LD_LIBRARY_PATH=../../target/release ./event_system
 
 clean:
-	rm -f $(EXAMPLES)
+	rm -f $(EXAMPLES) tsrun_console.o
 
 # For static linking (no LD_LIBRARY_PATH needed)
 static: LDFLAGS = ../../target/release/libtsrun.a -lpthread -ldl -lm

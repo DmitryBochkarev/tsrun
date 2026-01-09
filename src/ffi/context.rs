@@ -13,7 +13,7 @@ use crate::{ModulePath, StepResult};
 
 use super::{
     TsRunContext, TsRunImportRequest, TsRunOrder, TsRunResult, TsRunStepResult, TsRunStepStatus,
-    TsRunValue, c_str_to_str, str_to_c_string,
+    TsRunValue, c_str_to_str, console::FfiConsoleProvider, str_to_c_string,
 };
 
 // ============================================================================
@@ -25,7 +25,17 @@ use super::{
 /// Returns NULL on failure (unlikely).
 #[unsafe(no_mangle)]
 pub extern "C" fn tsrun_new() -> *mut TsRunContext {
-    Box::into_raw(Box::new(TsRunContext::new()))
+    let ctx = Box::new(TsRunContext::new());
+    let ctx_ptr = Box::into_raw(ctx);
+
+    // Set up FFI console provider with context pointer.
+    // The provider will look up the callback from TsRunContext.console_callback
+    // (which is initially None, meaning output is discarded).
+    let ctx_ref = unsafe { &mut *ctx_ptr };
+    let provider = FfiConsoleProvider::new(ctx_ptr as *mut c_void);
+    ctx_ref.interp.set_console(Box::new(provider));
+
+    ctx_ptr
 }
 
 /// Free an interpreter context.

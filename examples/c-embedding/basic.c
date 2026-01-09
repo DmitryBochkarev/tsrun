@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include "tsrun.h"
+#include "tsrun_console.h"
 
 // Helper to print value type
 static const char* type_name(TsRunType t) {
@@ -223,6 +224,7 @@ int main(void) {
         fprintf(stderr, "Failed to create context\n");
         return 1;
     }
+    tsrun_set_console(ctx, tsrun_console_stdio, NULL);
 
     // Basic expressions
     printf("\n=== Basic Expressions ===\n");

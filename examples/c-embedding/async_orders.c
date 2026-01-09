@@ -11,6 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "tsrun.h"
+#include "tsrun_console.h"
 
 // ============================================================================
 // Native async functions that create pending orders
@@ -397,6 +398,7 @@ static void run_async_code(const char* title, const char* code) {
     printf("\nCode:\n%s\n", code);
 
     TsRunContext* ctx = tsrun_new();
+    tsrun_set_console(ctx, tsrun_console_stdio, NULL);
 
     // Set up native async functions
     setup_async_functions(ctx);

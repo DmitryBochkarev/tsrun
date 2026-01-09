@@ -18,6 +18,7 @@
 
 extern crate alloc;
 
+mod console;
 mod context;
 mod module;
 mod native;
@@ -65,6 +66,8 @@ pub struct TsRunContext {
     pub(crate) native_callbacks: FxHashMap<usize, NativeCallbackWrapper>,
     /// Counter for generating unique FFI callback IDs
     pub(crate) next_ffi_id: usize,
+    /// Console callback (None = no-op)
+    pub(crate) console_callback: Option<ConsoleCallbackWrapper>,
 }
 
 impl TsRunContext {
@@ -74,6 +77,7 @@ impl TsRunContext {
             last_error: None,
             native_callbacks: FxHashMap::default(),
             next_ffi_id: 1, // Start at 1 so 0 means "not an FFI callback"
+            console_callback: None,
         }
     }
 
@@ -313,6 +317,39 @@ pub struct TsRunOrderResponse {
     pub value: *mut TsRunValue,
     /// Error message (NULL if success).
     pub error: *const c_char,
+}
+
+// ============================================================================
+// Console Callback
+// ============================================================================
+
+/// Console log level.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TsRunConsoleLevel {
+    Log = 0,
+    Info = 1,
+    Debug = 2,
+    Warn = 3,
+    Error = 4,
+    Clear = 5,
+}
+
+/// Console callback signature.
+///
+/// Called synchronously during step/run when JS calls console methods.
+/// For Clear level, message will be empty (message_len = 0).
+pub type TsRunConsoleFn = extern "C" fn(
+    level: TsRunConsoleLevel,
+    message: *const c_char,
+    message_len: usize,
+    userdata: *mut c_void,
+);
+
+/// Console callback wrapper storing C function pointer and userdata.
+pub(crate) struct ConsoleCallbackWrapper {
+    pub callback: TsRunConsoleFn,
+    pub userdata: *mut c_void,
 }
 
 // ============================================================================

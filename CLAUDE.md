@@ -399,6 +399,19 @@ See `examples/c-embedding/` for working examples:
 - `module_loading.c` - ES module loading with virtual filesystem
 - `async_orders.c` - Async operations via pending orders
 
+### Building and Running C Examples
+
+Use the Makefile in `examples/c-embedding/`:
+
+```bash
+cd examples/c-embedding
+make lib        # Build the Rust library (release)
+make all        # Build all C examples
+make run-all    # Run all examples
+make run-basic  # Run a specific example
+make clean      # Remove built examples
+```
+
 ### Header
 
 The C header is at `examples/c-embedding/tsrun.h`. Key functions:

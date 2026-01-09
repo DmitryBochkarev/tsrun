@@ -12,6 +12,7 @@
 #include <string.h>
 #include <math.h>
 #include "tsrun.h"
+#include "tsrun_console.h"
 
 // ============================================================================
 // Simple native function: add two numbers
@@ -263,6 +264,7 @@ int main(void) {
         fprintf(stderr, "Failed to create context\n");
         return 1;
     }
+    tsrun_set_console(ctx, tsrun_console_stdio, NULL);
 
     // Register native_add
     printf("=== Registering native functions ===\n");

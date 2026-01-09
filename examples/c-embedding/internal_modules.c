@@ -14,6 +14,7 @@
 #include <string.h>
 #include <ctype.h>
 #include "tsrun.h"
+#include "tsrun_console.h"
 
 // ============================================================================
 // Math module functions
@@ -252,6 +253,7 @@ static void run_code(const char* title, const char* code) {
     printf("\n--- Output ---\n");
 
     TsRunContext* ctx = tsrun_new();
+    tsrun_set_console(ctx, tsrun_console_stdio, NULL);
 
     // Set up internal modules before running code
     setup_modules(ctx);

@@ -47,6 +47,29 @@ typedef struct {
 } TsRunResult;
 
 // ============================================================================
+// Console Levels
+// ============================================================================
+
+typedef enum {
+    TSRUN_CONSOLE_LOG = 0,
+    TSRUN_CONSOLE_INFO,
+    TSRUN_CONSOLE_DEBUG,
+    TSRUN_CONSOLE_WARN,
+    TSRUN_CONSOLE_ERROR,
+    TSRUN_CONSOLE_CLEAR,
+} TsRunConsoleLevel;
+
+// Console callback signature
+// Called synchronously during tsrun_step()/tsrun_run() when JS calls console methods.
+// For TSRUN_CONSOLE_CLEAR, message will be empty (message_len = 0).
+typedef void (*TsRunConsoleFn)(
+    TsRunConsoleLevel level,
+    const char* message,
+    size_t message_len,
+    void* userdata
+);
+
+// ============================================================================
 // Value Types
 // ============================================================================
 
@@ -116,6 +139,12 @@ TsRunContext* tsrun_new(void);
 
 // Free an interpreter context (also frees all associated values)
 void tsrun_free(TsRunContext* ctx);
+
+// Set a custom console provider callback.
+// If func is NULL, console output is discarded (no-op).
+// The callback is invoked synchronously during step/run.
+// For a default stdout/stderr implementation, see tsrun_console.h.
+TsRunResult tsrun_set_console(TsRunContext* ctx, TsRunConsoleFn func, void* userdata);
 
 // ============================================================================
 // Execution - Step-based API

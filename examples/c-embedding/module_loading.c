@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "tsrun.h"
+#include "tsrun_console.h"
 
 // ============================================================================
 // Simulated file system (in real code, you'd read from disk)
@@ -148,6 +149,7 @@ static void example_simple_import(void) {
     printf("========================================\n");
 
     TsRunContext* ctx = tsrun_new();
+    tsrun_set_console(ctx, tsrun_console_stdio, NULL);
 
     const char* code =
         "import { PI, square, factorial } from './math.ts';\n"
@@ -202,6 +204,7 @@ static void example_multiple_imports(void) {
     printf("========================================\n");
 
     TsRunContext* ctx = tsrun_new();
+    tsrun_set_console(ctx, tsrun_console_stdio, NULL);
 
     const char* code =
         "import { square, cube } from './math.ts';\n"
@@ -247,6 +250,7 @@ static void example_default_export(void) {
     printf("========================================\n");
 
     TsRunContext* ctx = tsrun_new();
+    tsrun_set_console(ctx, tsrun_console_stdio, NULL);
 
     const char* code =
         "import config, { environment } from './config.ts';\n"
@@ -303,6 +307,7 @@ static void example_access_exports(void) {
     printf("========================================\n");
 
     TsRunContext* ctx = tsrun_new();
+    tsrun_set_console(ctx, tsrun_console_stdio, NULL);
 
     const char* code =
         "export const VERSION = '2.0.0';\n"
