@@ -3,6 +3,7 @@
 # Prerequisites:
 #   - Rust toolchain (cargo)
 #   - C compiler (gcc or clang)
+#   - PCRE2 library (optional, for regexp example)
 #
 # Build the library first:
 #   cd ../.. && cargo build --release --features c-api
@@ -24,8 +25,16 @@ endif
 # Include path
 INCLUDES = -I.
 
-# Examples
+# PCRE2 support (for regexp example)
+PCRE2_CFLAGS := $(shell pkg-config --cflags libpcre2-8 2>/dev/null)
+PCRE2_LDFLAGS := $(shell pkg-config --libs libpcre2-8 2>/dev/null)
+HAS_PCRE2 := $(if $(PCRE2_LDFLAGS),yes,no)
+
+# Examples (regexp only built if PCRE2 is available)
 EXAMPLES = basic native_functions module_loading async_orders internal_modules event_system
+ifeq ($(HAS_PCRE2),yes)
+    EXAMPLES += regexp
+endif
 
 # Targets
 .PHONY: all clean lib check
@@ -36,12 +45,17 @@ all: check $(EXAMPLES)
 lib:
 	cd ../.. && cargo build --release --features c-api
 
-# Check if library exists
+# Check if library exists and show PCRE2 status
 check:
 	@if [ ! -f ../../target/release/libtsrun.so ] && [ ! -f ../../target/release/libtsrun.dylib ] && [ ! -f ../../target/release/libtsrun.a ]; then \
 		echo "Error: libtsrun not found. Run 'make lib' or 'cargo build --release --features c-api' first."; \
 		exit 1; \
 	fi
+ifeq ($(HAS_PCRE2),no)
+	@echo "Note: PCRE2 not found. The 'regexp' example will be skipped."
+	@echo "      Install PCRE2: apt install libpcre2-dev (Debian/Ubuntu)"
+	@echo "                     brew install pcre2 (macOS)"
+endif
 
 # Console helper object (linked with all examples)
 tsrun_console.o: tsrun_console.c tsrun_console.h tsrun.h
@@ -66,6 +80,14 @@ internal_modules: internal_modules.c tsrun.h tsrun_console.o
 event_system: event_system.c tsrun.h tsrun_console.o
 	$(CC) $(CFLAGS) $(INCLUDES) -o $@ $< tsrun_console.o $(LDFLAGS)
 
+# RegExp provider object (requires PCRE2)
+regexp_provider.o: regexp_provider.c regexp_provider.h tsrun.h
+	$(CC) $(CFLAGS) $(INCLUDES) $(PCRE2_CFLAGS) -c -o $@ $<
+
+# RegExp example (requires PCRE2)
+regexp: regexp.c tsrun.h tsrun_console.o regexp_provider.o
+	$(CC) $(CFLAGS) $(INCLUDES) $(PCRE2_CFLAGS) -o $@ $< tsrun_console.o regexp_provider.o $(LDFLAGS) $(PCRE2_LDFLAGS)
+
 # Run examples (need to set library path)
 run-basic: basic
 	LD_LIBRARY_PATH=../../target/release ./basic
@@ -85,6 +107,9 @@ run-internal: internal_modules
 run-event: event_system
 	LD_LIBRARY_PATH=../../target/release ./event_system
 
+run-regexp: regexp
+	LD_LIBRARY_PATH=../../target/release ./regexp
+
 run-all: $(EXAMPLES)
 	@echo "=== Running basic ===" && LD_LIBRARY_PATH=../../target/release ./basic
 	@echo ""
@@ -97,9 +122,13 @@ run-all: $(EXAMPLES)
 	@echo "=== Running internal_modules ===" && LD_LIBRARY_PATH=../../target/release ./internal_modules
 	@echo ""
 	@echo "=== Running event_system ===" && LD_LIBRARY_PATH=../../target/release ./event_system
+ifeq ($(HAS_PCRE2),yes)
+	@echo ""
+	@echo "=== Running regexp ===" && LD_LIBRARY_PATH=../../target/release ./regexp
+endif
 
 clean:
-	rm -f $(EXAMPLES) tsrun_console.o
+	rm -f $(EXAMPLES) tsrun_console.o regexp_provider.o regexp
 
 # For static linking (no LD_LIBRARY_PATH needed)
 static: LDFLAGS = ../../target/release/libtsrun.a -lpthread -ldl -lm
@@ -120,3 +149,10 @@ help:
 	@echo "  make clean        - Remove built examples"
 	@echo ""
 	@echo "Examples: $(EXAMPLES)"
+	@echo ""
+	@echo "PCRE2 status: $(HAS_PCRE2)"
+ifeq ($(HAS_PCRE2),no)
+	@echo "  The 'regexp' example requires PCRE2."
+	@echo "  Install: apt install libpcre2-dev (Debian/Ubuntu)"
+	@echo "           brew install pcre2 (macOS)"
+endif

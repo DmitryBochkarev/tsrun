@@ -397,7 +397,8 @@ impl CompiledRegex for CCompiledRegex {
     }
 
     fn split(&self, input: &str) -> Result<Vec<String>, String> {
-        let matches = self.find_iter(input)?;
+        // split() always iterates all matches, regardless of global flag
+        let matches = self.find_all_matches(input)?;
         let mut result = Vec::new();
         let mut last_end = 0;
 
@@ -457,6 +458,30 @@ impl CompiledRegex for CCompiledRegex {
 }
 
 impl CCompiledRegex {
+    /// Find all matches regardless of global flag.
+    /// Used by split() which always needs all matches.
+    fn find_all_matches(&self, input: &str) -> Result<Vec<RegexMatch>, String> {
+        let mut matches = Vec::new();
+        let mut pos = 0;
+
+        while pos <= input.len() {
+            match self.find(input, pos)? {
+                Some(m) => {
+                    let next_pos = if m.start == m.end {
+                        m.end + 1 // Prevent infinite loop on zero-width matches
+                    } else {
+                        m.end
+                    };
+                    matches.push(m);
+                    pos = next_pos;
+                }
+                None => break,
+            }
+        }
+
+        Ok(matches)
+    }
+
     /// Convert C captures to Rust format.
     fn convert_captures(&self, match_out: &TsRunRegexMatch) -> Vec<Option<(usize, usize)>> {
         let mut captures = Vec::new();
