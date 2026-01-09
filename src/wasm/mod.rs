@@ -268,6 +268,8 @@ pub struct TsRunner {
     resolvable_promise_handles: alloc::collections::BTreeSet<u32>,
     /// Pending fulfillments accumulated before commit (order_id, fulfillment_kind)
     pending_fulfillments: Vec<(u64, FulfillmentKind)>,
+    /// Source modules to register when prepare() is called (specifier, source)
+    source_modules: Vec<(String, String)>,
 }
 
 #[wasm_bindgen]
@@ -284,7 +286,34 @@ impl TsRunner {
             next_handle_id: 1,
             resolvable_promise_handles: alloc::collections::BTreeSet::new(),
             pending_fulfillments: Vec::new(),
+            source_modules: Vec::new(),
         }
+    }
+
+    /// Register a source module that can be imported by the prepared code.
+    ///
+    /// Must be called before `prepare()`. The specifier should use a custom
+    /// prefix (e.g., "app:config", "mylib:utils") to avoid conflicts with
+    /// built-in modules like "tsrun:host".
+    ///
+    /// # Example
+    ///
+    /// ```javascript
+    /// const runner = new TsRunner();
+    /// runner.register_source_module("app:math", `
+    ///     export function double(x: number): number {
+    ///         return x * 2;
+    ///     }
+    ///     export const PI = 3.14159;
+    /// `);
+    /// runner.prepare(`
+    ///     import { double, PI } from "app:math";
+    ///     console.log(double(PI));
+    /// `, "main.ts");
+    /// ```
+    pub fn register_source_module(&mut self, specifier: &str, source: &str) {
+        self.source_modules
+            .push((specifier.to_string(), source.to_string()));
     }
 
     /// Prepare code for execution.
@@ -300,11 +329,18 @@ impl TsRunner {
         self.resolvable_promise_handles.clear();
         self.pending_fulfillments.clear();
 
-        // Create interpreter with tsrun:host module support
+        // Create interpreter with tsrun:host module support and user-registered source modules
         let console_provider = BufferedConsoleProvider::new(Rc::clone(&self.console_buffer));
         let regexp_provider = Rc::new(WasmRegExpProvider::new());
+
+        // Build internal modules list: tsrun:host + user-registered source modules
+        let mut internal_modules = vec![create_eval_internal_module()];
+        for (specifier, source) in self.source_modules.drain(..) {
+            internal_modules.push(crate::InternalModule::source(specifier, source));
+        }
+
         let config = InterpreterConfig {
-            internal_modules: vec![create_eval_internal_module()],
+            internal_modules,
             regexp_provider: Some(regexp_provider),
         };
         let mut interp = Interpreter::with_config(config);
@@ -794,9 +830,10 @@ impl TsRunner {
         let msg_key = PropertyKey::String(crate::JsString::from("message"));
         let stack_key = PropertyKey::String(crate::JsString::from("stack"));
 
-        error_obj
-            .borrow_mut()
-            .set_property(name_key, RustJsValue::String(crate::JsString::from("Error")));
+        error_obj.borrow_mut().set_property(
+            name_key,
+            RustJsValue::String(crate::JsString::from("Error")),
+        );
         error_obj
             .borrow_mut()
             .set_property(msg_key, RustJsValue::String(crate::JsString::from(message)));
@@ -1160,4 +1197,3 @@ impl Default for TsRunner {
         Self::new()
     }
 }
-

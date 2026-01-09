@@ -390,10 +390,16 @@ fn test_create_error() {
     assert_eq!(runner.value_as_string(name_h), Some("Error".into()));
 
     let msg_h = runner.get_property(err, "message");
-    assert_eq!(runner.value_as_string(msg_h), Some("Something went wrong".into()));
+    assert_eq!(
+        runner.value_as_string(msg_h),
+        Some("Something went wrong".into())
+    );
 
     let stack_h = runner.get_property(err, "stack");
-    assert_eq!(runner.value_as_string(stack_h), Some("Error: Something went wrong".into()));
+    assert_eq!(
+        runner.value_as_string(stack_h),
+        Some("Error: Something went wrong".into())
+    );
 }
 
 #[wasm_bindgen_test]
@@ -474,4 +480,182 @@ fn test_create_promise_returns_handle() {
     let promise = runner.create_promise();
     assert_ne!(promise, 0);
     assert_eq!(runner.get_value_type(promise), "object");
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Source Module Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[wasm_bindgen_test]
+fn test_source_module_basic() {
+    let mut runner = TsRunner::new();
+
+    // Register a source module
+    runner.register_source_module("test:math", "export const PI = 3.14159;");
+
+    // Import from the registered module
+    let prep = runner.prepare(
+        r#"import { PI } from "test:math"; PI;"#,
+        Some("test.ts".into()),
+    );
+    assert!(prep.status() == StepStatus::Continue);
+
+    // Run to completion
+    loop {
+        let result = runner.step();
+        match result.status() {
+            StepStatus::Continue => continue,
+            StepStatus::Complete => {
+                let handle = result.value_handle();
+                assert_eq!(runner.get_value_type(handle), "number");
+                let val = runner.value_as_number(handle);
+                assert!((val - 3.14159).abs() < 0.00001);
+                break;
+            }
+            _ => panic!("Unexpected status"),
+        }
+    }
+}
+
+#[wasm_bindgen_test]
+fn test_source_module_with_function() {
+    let mut runner = TsRunner::new();
+
+    // Register a source module with a function
+    runner.register_source_module(
+        "app:utils",
+        r#"
+        export function double(x: number): number {
+            return x * 2;
+        }
+    "#,
+    );
+
+    // Use the function
+    let prep = runner.prepare(
+        r#"import { double } from "app:utils"; double(21);"#,
+        Some("test.ts".into()),
+    );
+    assert!(prep.status() == StepStatus::Continue);
+
+    loop {
+        let result = runner.step();
+        match result.status() {
+            StepStatus::Continue => continue,
+            StepStatus::Complete => {
+                let handle = result.value_handle();
+                assert_eq!(runner.value_as_number(handle), 42.0);
+                break;
+            }
+            _ => panic!("Unexpected status"),
+        }
+    }
+}
+
+#[wasm_bindgen_test]
+fn test_multiple_source_modules() {
+    let mut runner = TsRunner::new();
+
+    // Register multiple modules
+    runner.register_source_module("config:defaults", "export const timeout = 5000;");
+    runner.register_source_module("config:flags", "export const debug = true;");
+
+    // Import from both
+    let prep = runner.prepare(
+        r#"
+        import { timeout } from "config:defaults";
+        import { debug } from "config:flags";
+        debug ? timeout : 0;
+    "#,
+        Some("test.ts".into()),
+    );
+    assert!(prep.status() == StepStatus::Continue);
+
+    loop {
+        let result = runner.step();
+        match result.status() {
+            StepStatus::Continue => continue,
+            StepStatus::Complete => {
+                let handle = result.value_handle();
+                assert_eq!(runner.value_as_number(handle), 5000.0);
+                break;
+            }
+            _ => panic!("Unexpected status"),
+        }
+    }
+}
+
+#[wasm_bindgen_test]
+fn test_source_module_importing_another() {
+    let mut runner = TsRunner::new();
+
+    // Module A exports a constant
+    runner.register_source_module("lib:a", "export const BASE = 10;");
+
+    // Module B imports from A
+    runner.register_source_module(
+        "lib:b",
+        r#"
+        import { BASE } from "lib:a";
+        export const DOUBLED = BASE * 2;
+    "#,
+    );
+
+    // Main code imports from B
+    let prep = runner.prepare(
+        r#"import { DOUBLED } from "lib:b"; DOUBLED;"#,
+        Some("test.ts".into()),
+    );
+    assert!(prep.status() == StepStatus::Continue);
+
+    loop {
+        let result = runner.step();
+        match result.status() {
+            StepStatus::Continue => continue,
+            StepStatus::Complete => {
+                let handle = result.value_handle();
+                assert_eq!(runner.value_as_number(handle), 20.0);
+                break;
+            }
+            _ => panic!("Unexpected status"),
+        }
+    }
+}
+
+#[wasm_bindgen_test]
+fn test_source_modules_cleared_on_prepare() {
+    let mut runner = TsRunner::new();
+
+    // Register a module
+    runner.register_source_module("test:first", "export const x = 1;");
+
+    // First prepare uses it
+    let prep = runner.prepare(
+        r#"import { x } from "test:first"; x;"#,
+        Some("test.ts".into()),
+    );
+    assert!(prep.status() == StepStatus::Continue);
+    run_to_completion(&mut runner, "1"); // just to reset
+
+    // Second prepare should NOT have the module (modules are drained)
+    let mut runner2 = TsRunner::new();
+    runner2.register_source_module("test:second", "export const y = 2;");
+    let prep2 = runner2.prepare(
+        r#"import { y } from "test:second"; y;"#,
+        Some("test.ts".into()),
+    );
+    assert!(prep2.status() == StepStatus::Continue);
+
+    loop {
+        let result = runner2.step();
+        match result.status() {
+            StepStatus::Continue => continue,
+            StepStatus::Complete => {
+                let handle = result.value_handle();
+                assert_eq!(runner2.value_as_number(handle), 2.0);
+                break;
+            }
+            _ => panic!("Unexpected status"),
+        }
+    }
 }
