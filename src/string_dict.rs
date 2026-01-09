@@ -281,7 +281,7 @@ mod tests {
         // Should be the same string value
         assert_eq!(s1, s2);
         // Should point to the same memory (same Rc)
-        assert!(std::ptr::eq(s1.as_str(), s2.as_str()));
+        assert!(core::ptr::eq(s1.as_str(), s2.as_str()));
     }
 
     #[test]
@@ -293,7 +293,7 @@ mod tests {
         // Different strings
         assert_ne!(s1, s2);
         // Different memory locations
-        assert!(!std::ptr::eq(s1.as_str(), s2.as_str()));
+        assert!(!core::ptr::eq(s1.as_str(), s2.as_str()));
     }
 
     #[test]
@@ -302,6 +302,6 @@ mod tests {
         // Common strings should be deduplicated
         let s1 = dict.get_or_insert("length");
         let s2 = dict.get_or_insert("length");
-        assert!(std::ptr::eq(s1.as_str(), s2.as_str()));
+        assert!(core::ptr::eq(s1.as_str(), s2.as_str()));
     }
 }

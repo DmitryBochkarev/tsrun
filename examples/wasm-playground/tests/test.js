@@ -28,13 +28,14 @@ const StepStatus = {
 };
 
 // Helper function to run code using the step-based API
+// Returns { success, error, value_handle, console_output }
 function runCode(runner, code) {
     const prepResult = runner.prepare(code, 'test.ts');
     if (prepResult.status === StepStatus.ERROR) {
         return {
             success: false,
             error: prepResult.error,
-            value: null,
+            value_handle: 0,
             console_output: prepResult.console_output
         };
     }
@@ -53,28 +54,28 @@ function runCode(runner, code) {
                 return {
                     success: true,
                     error: null,
-                    value: result.value,
+                    value_handle: result.value_handle,
                     console_output: allConsole
                 };
             case StepStatus.DONE:
                 return {
                     success: true,
                     error: null,
-                    value: 'undefined',
+                    value_handle: 0,
                     console_output: allConsole
                 };
             case StepStatus.ERROR:
                 return {
                     success: false,
                     error: result.error,
-                    value: null,
+                    value_handle: 0,
                     console_output: allConsole
                 };
             case StepStatus.NEED_IMPORTS:
                 return {
                     success: false,
                     error: 'Module imports not supported: ' + runner.get_import_requests().join(', '),
-                    value: null,
+                    value_handle: 0,
                     console_output: allConsole
                 };
             case StepStatus.SUSPENDED:
@@ -82,7 +83,7 @@ function runCode(runner, code) {
                 return {
                     success: false,
                     error: 'Async operations not supported in tests',
-                    value: null,
+                    value_handle: 0,
                     console_output: allConsole
                 };
         }
@@ -140,7 +141,8 @@ test('Basic execution works', () => {
     const runner = new TsRunner();
     const result = runCode(runner, '1 + 2 * 3');
     assertTrue(result.success, 'Expected success');
-    assertEqual(result.value, '7');
+    assertTrue(result.value_handle !== 0, 'Should have value handle');
+    assertEqual(runner.value_as_number(result.value_handle), 7);
 });
 
 test('Console output is captured', () => {
@@ -166,6 +168,236 @@ test('Fresh runner for each execution', () => {
     const runner2 = new TsRunner();
     const result = runCode(runner2, 'x');
     assertTrue(!result.success, 'New runner should not have previous state');
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Value Handle System Tests
+// ─────────────────────────────────────────────────────────────────────────────
+
+console.log('\n── Value Handle System ──\n');
+
+test('Value creation: primitives', () => {
+    const runner = new TsRunner();
+    runCode(runner, '1'); // Initialize interpreter
+
+    const numHandle = runner.create_number(42);
+    assertTrue(numHandle !== 0, 'Should return non-zero handle');
+    assertEqual(runner.get_value_type(numHandle), 'number');
+    assertEqual(runner.value_as_number(numHandle), 42);
+
+    const strHandle = runner.create_string('hello');
+    assertEqual(runner.get_value_type(strHandle), 'string');
+    assertEqual(runner.value_as_string(strHandle), 'hello');
+
+    const boolHandle = runner.create_bool(true);
+    assertEqual(runner.get_value_type(boolHandle), 'boolean');
+    assertEqual(runner.value_as_bool(boolHandle), true);
+
+    const nullHandle = runner.create_null();
+    assertEqual(runner.get_value_type(nullHandle), 'null');
+    assertTrue(runner.value_is_null(nullHandle));
+
+    const undefHandle = runner.create_undefined();
+    assertEqual(runner.get_value_type(undefHandle), 'undefined');
+    assertTrue(runner.value_is_undefined(undefHandle));
+});
+
+test('Value creation: object and array', () => {
+    const runner = new TsRunner();
+    runCode(runner, '1'); // Initialize interpreter (stays alive after completion)
+
+    const objHandle = runner.create_object();
+    assertTrue(objHandle !== 0, 'Should return non-zero handle');
+    assertEqual(runner.get_value_type(objHandle), 'object');
+    assertTrue(!runner.value_is_array(objHandle), 'Plain object is not an array');
+
+    const arrHandle = runner.create_array();
+    assertTrue(arrHandle !== 0, 'Should return non-zero handle');
+    assertEqual(runner.get_value_type(arrHandle), 'object');
+    assertTrue(runner.value_is_array(arrHandle), 'Array should be detected');
+    assertEqual(runner.array_length(arrHandle), 0);
+});
+
+test('Object operations: get/set/delete property', () => {
+    const runner = new TsRunner();
+    runCode(runner, '1'); // Initialize interpreter (stays alive after completion)
+
+    const objHandle = runner.create_object();
+    const valHandle = runner.create_number(123);
+
+    // Set property
+    assertTrue(runner.set_property(objHandle, 'x', valHandle));
+    assertTrue(runner.has_property(objHandle, 'x'));
+
+    // Get property
+    const gotHandle = runner.get_property(objHandle, 'x');
+    assertEqual(runner.value_as_number(gotHandle), 123);
+
+    // Get keys
+    const keys = runner.get_keys(objHandle);
+    assertTrue(keys.includes('x'), 'Keys should include "x"');
+
+    // Delete property
+    assertTrue(runner.delete_property(objHandle, 'x'));
+    assertTrue(!runner.has_property(objHandle, 'x'));
+});
+
+test('Array operations: get/set/push', () => {
+    const runner = new TsRunner();
+    runCode(runner, '1'); // Initialize interpreter (stays alive after completion)
+
+    const arrHandle = runner.create_array();
+    assertEqual(runner.array_length(arrHandle), 0);
+
+    // Push values
+    const val1 = runner.create_number(10);
+    const val2 = runner.create_number(20);
+    assertTrue(runner.push(arrHandle, val1));
+    assertTrue(runner.push(arrHandle, val2));
+    assertEqual(runner.array_length(arrHandle), 2);
+
+    // Get by index
+    const elem0 = runner.get_index(arrHandle, 0);
+    assertEqual(runner.value_as_number(elem0), 10);
+
+    const elem1 = runner.get_index(arrHandle, 1);
+    assertEqual(runner.value_as_number(elem1), 20);
+
+    // Set by index
+    const val3 = runner.create_number(30);
+    assertTrue(runner.set_index(arrHandle, 0, val3));
+    const updated = runner.get_index(arrHandle, 0);
+    assertEqual(runner.value_as_number(updated), 30);
+});
+
+test('Handle lifecycle: release and duplicate', () => {
+    const runner = new TsRunner();
+    runCode(runner, '1'); // Initialize interpreter
+
+    const handle1 = runner.create_number(42);
+    assertEqual(runner.value_as_number(handle1), 42);
+
+    // Duplicate creates new handle
+    const handle2 = runner.duplicate_handle(handle1);
+    assertTrue(handle2 !== handle1, 'Duplicate should have different ID');
+    assertEqual(runner.value_as_number(handle2), 42);
+
+    // Release original
+    runner.release_handle(handle1);
+    // Duplicate should still work
+    assertEqual(runner.value_as_number(handle2), 42);
+
+    // Invalid handle returns default values
+    assertTrue(Number.isNaN(runner.value_as_number(0)), 'Handle 0 should return NaN');
+    assertEqual(runner.get_value_type(0), 'undefined');
+});
+
+test('Export access: get_export and get_export_names', () => {
+    const runner = new TsRunner();
+    const result = runCode(runner, `
+        export const VERSION = "1.0.0";
+        export const count = 42;
+        export function greet() { return "hello"; }
+    `);
+    assertTrue(result.success, `Export test failed: ${result.error}`);
+
+    // Get export names
+    const names = runner.get_export_names();
+    assertTrue(names.includes('VERSION'), 'Should have VERSION export');
+    assertTrue(names.includes('count'), 'Should have count export');
+    assertTrue(names.includes('greet'), 'Should have greet export');
+
+    // Get specific exports
+    const versionHandle = runner.get_export('VERSION');
+    assertTrue(versionHandle !== 0, 'VERSION export should exist');
+    assertEqual(runner.get_value_type(versionHandle), 'string');
+    assertEqual(runner.value_as_string(versionHandle), '1.0.0');
+
+    const countHandle = runner.get_export('count');
+    assertEqual(runner.value_as_number(countHandle), 42);
+
+    const greetHandle = runner.get_export('greet');
+    assertTrue(runner.value_is_function(greetHandle), 'greet should be a function');
+
+    // Non-existent export returns 0
+    const noExport = runner.get_export('nonexistent');
+    assertEqual(noExport, 0, 'Non-existent export should return 0');
+});
+
+test('Handles are cleared on prepare()', () => {
+    const runner = new TsRunner();
+    runCode(runner, '1'); // Initialize interpreter
+
+    const handle1 = runner.create_number(42);
+    assertEqual(runner.value_as_number(handle1), 42);
+
+    // Prepare new code - should clear handles
+    runner.prepare('2', 'test.ts');
+
+    // Old handle should now be invalid (return default values)
+    assertTrue(Number.isNaN(runner.value_as_number(handle1)), 'Handle should be invalid after prepare()');
+});
+
+test('Value inspection edge cases', () => {
+    const runner = new TsRunner();
+    runCode(runner, '1'); // Initialize interpreter
+
+    // NaN for non-number
+    const strHandle = runner.create_string('not a number');
+    assertTrue(Number.isNaN(runner.value_as_number(strHandle)));
+
+    // undefined for non-string
+    const numHandle = runner.create_number(42);
+    assertEqual(runner.value_as_string(numHandle), undefined);
+
+    // undefined for non-bool
+    assertEqual(runner.value_as_bool(numHandle), undefined);
+
+    // is_array returns false for non-arrays
+    assertTrue(!runner.value_is_array(numHandle));
+    assertTrue(!runner.value_is_function(numHandle));
+});
+
+test('Step result: value_handle for objects', () => {
+    const runner = new TsRunner();
+    const result = runCode(runner, '({ x: 10, y: 20 })');
+    assertTrue(result.success, 'Expected success');
+    assertTrue(result.value_handle !== 0, 'Should have value handle');
+    assertEqual(runner.get_value_type(result.value_handle), 'object');
+
+    const xHandle = runner.get_property(result.value_handle, 'x');
+    assertEqual(runner.value_as_number(xHandle), 10);
+
+    const yHandle = runner.get_property(result.value_handle, 'y');
+    assertEqual(runner.value_as_number(yHandle), 20);
+});
+
+test('Error creation: create_error', () => {
+    const runner = new TsRunner();
+    runCode(runner, '1'); // Initialize interpreter
+
+    const errHandle = runner.create_error('Something went wrong');
+    assertTrue(errHandle !== 0, 'Should return non-zero handle');
+    assertEqual(runner.get_value_type(errHandle), 'object');
+
+    // Check error properties
+    const nameHandle = runner.get_property(errHandle, 'name');
+    assertEqual(runner.value_as_string(nameHandle), 'Error');
+
+    const msgHandle = runner.get_property(errHandle, 'message');
+    assertEqual(runner.value_as_string(msgHandle), 'Something went wrong');
+
+    const stackHandle = runner.get_property(errHandle, 'stack');
+    assertEqual(runner.value_as_string(stackHandle), 'Error: Something went wrong');
+});
+
+test('Promise creation returns handle', () => {
+    const runner = new TsRunner();
+    runCode(runner, '1'); // Initialize interpreter
+
+    const promiseHandle = runner.create_promise();
+    assertTrue(promiseHandle !== 0, 'Should return non-zero handle');
+    assertEqual(runner.get_value_type(promiseHandle), 'object');
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

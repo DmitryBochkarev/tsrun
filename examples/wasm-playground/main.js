@@ -82,13 +82,42 @@ function displayConsole(consoleOutput) {
     }
 }
 
-// Display final result value
-function displayResultValue(value) {
-    if (value && value !== 'undefined') {
-        const resultLine = document.createElement('div');
-        resultLine.className = 'output-line output-result';
-        resultLine.textContent = `=> ${value}`;
-        outputEl.appendChild(resultLine);
+// Display final result value (using handle-based API)
+function displayResultValue(valueHandle) {
+    if (valueHandle && valueHandle !== 0) {
+        const valueType = runner.get_value_type(valueHandle);
+        let displayValue;
+
+        switch (valueType) {
+            case 'number':
+                displayValue = runner.value_as_number(valueHandle);
+                break;
+            case 'string':
+                displayValue = JSON.stringify(runner.value_as_string(valueHandle));
+                break;
+            case 'boolean':
+                displayValue = runner.value_as_bool(valueHandle);
+                break;
+            case 'null':
+                displayValue = 'null';
+                break;
+            case 'undefined':
+                displayValue = 'undefined';
+                break;
+            case 'object':
+                displayValue = runner.value_is_array(valueHandle) ? '[Array]' :
+                               runner.value_is_function(valueHandle) ? '[Function]' : '[Object]';
+                break;
+            default:
+                displayValue = `[${valueType}]`;
+        }
+
+        if (displayValue !== undefined && displayValue !== 'undefined') {
+            const resultLine = document.createElement('div');
+            resultLine.className = 'output-line output-result';
+            resultLine.textContent = `=> ${displayValue}`;
+            outputEl.appendChild(resultLine);
+        }
     }
 }
 
@@ -131,7 +160,7 @@ async function runCode() {
                     continue;
 
                 case StepStatus.COMPLETE:
-                    displayResultValue(result.value);
+                    displayResultValue(result.value_handle);
                     setStatus('success', 'Done');
                     return;
 
@@ -151,11 +180,11 @@ async function runCode() {
                     return;
 
                 case StepStatus.SUSPENDED:
-                    const orders = runner.get_pending_orders();
-                    if (orders.length > 0) {
+                    const orderIds = runner.get_pending_order_ids();
+                    if (orderIds.length > 0) {
                         // Handle orders by returning unresolved Promises immediately
-                        const responses = await handleOrders(orders);
-                        runner.fulfill_orders(responses);
+                        await handleOrders(orderIds);
+                        runner.commit_fulfillments();
                     } else {
                         // No pending orders - we're waiting for host Promises to resolve.
                         // Yield to the event loop so setTimeout callbacks can fire.
@@ -176,34 +205,113 @@ async function runCode() {
 // Handle pending orders by returning unresolved Promises immediately.
 // This enables parallel async operations - each order gets a Promise that
 // resolves after a random delay, but execution continues immediately.
-function handleOrders(orders) {
-    const responses = [];
-
-    for (const order of orders) {
+function handleOrders(orderIds) {
+    for (const orderId of orderIds) {
         const delay = 100 + Math.floor(Math.random() * 400); // 100-500ms
-        appendOutput('info', `[Order ${order.id}] Creating Promise, will resolve in ${delay}ms...`);
+        appendOutput('info', `[Order ${orderId}] Creating Promise, will resolve in ${delay}ms...`);
 
-        // Create an unresolved Promise in the interpreter
-        const promiseId = runner.create_promise();
+        // Get the order payload as a handle
+        const payloadHandle = runner.get_order_payload(orderId);
 
-        // Fulfill the order immediately with this Promise reference
-        responses.push({ id: order.id, promise_id: promiseId });
+        // Create an unresolved Promise in the interpreter (returns handle)
+        const promiseHandle = runner.create_promise();
+
+        // Fulfill the order immediately with this Promise handle
+        runner.set_order_result(orderId, promiseHandle);
 
         // Schedule the actual async work - resolve the Promise later
         setTimeout(() => {
-            const result = createMockResponse(order);
-            appendOutput('info', `[Order ${order.id}] Resolving Promise with: ${JSON.stringify(result.result)}`);
-            runner.resolve_promise(promiseId, result.result);
+            const result = createMockResponseFromHandle(payloadHandle);
+            appendOutput('info', `[Order ${orderId}] Resolving Promise with: ${JSON.stringify(result)}`);
+
+            // Convert result to a handle
+            const resultHandle = jsValueToHandle(result);
+            runner.resolve_promise(promiseHandle, resultHandle);
         }, delay);
     }
 
     // Return immediately - don't wait for timeouts
-    return Promise.resolve(responses);
+    return Promise.resolve();
 }
 
-// Generate mock response based on order payload
-function createMockResponse(order) {
-    const payload = order.payload || {};
+// Convert JS value to interpreter handle
+function jsValueToHandle(value) {
+    if (value === null) {
+        return runner.create_null();
+    }
+    if (value === undefined) {
+        return runner.create_undefined();
+    }
+    if (typeof value === 'number') {
+        return runner.create_number(value);
+    }
+    if (typeof value === 'string') {
+        return runner.create_string(value);
+    }
+    if (typeof value === 'boolean') {
+        return runner.create_bool(value);
+    }
+    if (Array.isArray(value)) {
+        const arrHandle = runner.create_array();
+        for (const item of value) {
+            const itemHandle = jsValueToHandle(item);
+            runner.push(arrHandle, itemHandle);
+        }
+        return arrHandle;
+    }
+    if (typeof value === 'object') {
+        const objHandle = runner.create_object();
+        for (const [key, val] of Object.entries(value)) {
+            const valHandle = jsValueToHandle(val);
+            runner.set_property(objHandle, key, valHandle);
+        }
+        return objHandle;
+    }
+    return runner.create_undefined();
+}
+
+// Convert handle to JS value for reading payload
+function handleToJsValue(handle) {
+    if (handle === 0) return undefined;
+
+    const valueType = runner.get_value_type(handle);
+    switch (valueType) {
+        case 'number':
+            return runner.value_as_number(handle);
+        case 'string':
+            return runner.value_as_string(handle);
+        case 'boolean':
+            return runner.value_as_bool(handle);
+        case 'null':
+            return null;
+        case 'undefined':
+            return undefined;
+        case 'object':
+            if (runner.value_is_array(handle)) {
+                const arr = [];
+                const len = runner.array_length(handle);
+                for (let i = 0; i < len; i++) {
+                    const elemHandle = runner.get_index(handle, i);
+                    arr.push(handleToJsValue(elemHandle));
+                }
+                return arr;
+            } else {
+                const obj = {};
+                const keys = runner.get_keys(handle);
+                for (const key of keys) {
+                    const propHandle = runner.get_property(handle, key);
+                    obj[key] = handleToJsValue(propHandle);
+                }
+                return obj;
+            }
+        default:
+            return undefined;
+    }
+}
+
+// Generate mock response based on order payload handle
+function createMockResponseFromHandle(payloadHandle) {
+    const payload = handleToJsValue(payloadHandle) || {};
     const type = payload.type;
     const url = payload.url;
     let result;
@@ -226,7 +334,7 @@ function createMockResponse(order) {
         result = { type: type || 'unknown', status: 'mocked' };
     }
 
-    return { id: order.id, result };
+    return result;
 }
 
 // Load example code

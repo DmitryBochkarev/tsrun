@@ -3312,24 +3312,18 @@ mod tests {
     fn test_rust_parse_leading_decimal() {
         // Check what Rust does with ".1"
         let parsed: f64 = ".1".parse().unwrap();
-        println!("Parsed .1 as: {}", parsed);
         assert_eq!(parsed, 0.1);
     }
 
     #[test]
     fn test_property_key_from_value_decimal_debug() {
         let n = 0.1_f64;
-        println!("n = {}", n);
         let key = PropertyKey::from_value(&JsValue::Number(n));
-        println!("PropertyKey = {:?}", key);
-        println!("PropertyKey display = {}", key);
         match key {
             PropertyKey::String(s) => {
-                println!("It's a String: '{}'", s);
                 assert_eq!(s.as_str(), "0.1");
             }
-            PropertyKey::Index(i) => {
-                println!("It's an Index: {}", i);
+            PropertyKey::Index(_) => {
                 panic!("0.1 should not be an index!");
             }
             PropertyKey::Symbol(_) => panic!("0.1 should not be a symbol"),

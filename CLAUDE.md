@@ -23,6 +23,10 @@ timeout 30 cargo test                    # Run all tests (always use timeout!)
 timeout 30 cargo test --test interpreter # Run interpreter integration tests
 timeout 30 cargo test test_name          # Run specific test
 timeout 30 cargo test -- --nocapture     # Show test output
+
+# WASM tests
+wasm-pack test --node --features wasm --no-default-features  # Run native WASM tests
+cd examples/wasm-playground && ./build.sh --test             # Build and run playground e2e tests
 ```
 
 ### Key Files
