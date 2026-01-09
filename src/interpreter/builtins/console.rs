@@ -35,7 +35,7 @@ fn format_value_with_depth(value: &JsValue, depth: usize, seen: &mut Vec<usize>)
                 } else {
                     String::from("-Infinity")
                 }
-            } else if n.fract() == 0.0 && n.abs() < 1e15 {
+            } else if crate::prelude::math::fract(*n) == 0.0 && n.abs() < 1e15 {
                 format!("{}", *n as i64)
             } else {
                 format!("{}", n)

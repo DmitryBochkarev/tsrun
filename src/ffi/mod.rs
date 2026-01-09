@@ -16,7 +16,7 @@
 
 extern crate alloc;
 
-mod console;
+pub(crate) mod console;
 mod context;
 mod module;
 mod native;
@@ -69,7 +69,7 @@ pub struct TsRunContext {
 }
 
 impl TsRunContext {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             interp: Interpreter::new(),
             last_error: None,

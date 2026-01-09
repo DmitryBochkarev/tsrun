@@ -181,6 +181,11 @@ pub mod ffi;
 #[cfg(all(target_arch = "wasm32", feature = "wasm"))]
 pub mod wasm;
 
+// Raw WASM module (only when wasm-raw feature is enabled on wasm32 target)
+// Exports C FFI-style functions for non-browser WASM runtimes (wazero, wasmer, wasmtime)
+#[cfg(all(target_arch = "wasm32", feature = "wasm-raw"))]
+pub mod wasm_raw;
+
 use prelude::{Rc, String, Vec, format};
 
 pub use error::JsError;

@@ -580,6 +580,20 @@ impl Interpreter {
         self.console_provider = provider;
     }
 
+    /// Set the time provider at runtime.
+    ///
+    /// This affects `Date.now()`, `console.time()`, and other time-related operations.
+    pub fn set_time_provider(&mut self, provider: Box<dyn TimeProvider>) {
+        self.time_provider = provider;
+    }
+
+    /// Set the random provider at runtime.
+    ///
+    /// This affects `Math.random()` and other randomness-related operations.
+    pub fn set_random_provider(&mut self, provider: Box<dyn RandomProvider>) {
+        self.random_provider = provider;
+    }
+
     /// Get a reference to the current RegExp provider.
     pub fn regexp_provider(&self) -> &Rc<dyn RegExpProvider> {
         &self.regexp_provider
