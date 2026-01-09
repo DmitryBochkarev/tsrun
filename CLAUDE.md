@@ -56,6 +56,7 @@ timeout 30 cargo test -- --nocapture     # Show test output
 - **Fix pre-existing bugs** - write a test, fix it, then continue with your feature
 - **Proper fixes over workarounds** - make architectural changes if needed
 - **Debug via tests** - use `cargo test test_name -- --nocapture` with `console.log()`, not ad-hoc scripts
+- **Log unexpected findings** - if something doesn't match expectations during implementation, add a note to `my/observations.md` and continue working on the task
 
 ### TDD Workflow
 
