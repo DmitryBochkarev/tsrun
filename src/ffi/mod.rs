@@ -14,8 +14,6 @@
 //! - Error strings: Valid until the next tsrun_* call on the same context
 //! - Allocated strings (from `tsrun_json_stringify`): Freed by `tsrun_free_string()`
 
-#![cfg(feature = "c-api")]
-
 extern crate alloc;
 
 mod console;
@@ -91,9 +89,10 @@ impl TsRunContext {
             }
             Err(_) => {
                 // If error contains null bytes, use a fallback message
-                self.last_error = Some(
-                    CString::new("Error message contained null bytes").expect("static string"),
-                );
+                // SAFETY: Static string has no null bytes
+                self.last_error = Some(unsafe {
+                    CString::from_vec_unchecked(b"Error: null byte in message".to_vec())
+                });
                 self.last_error.as_ref().map_or(ptr::null(), |s| s.as_ptr())
             }
         }
@@ -388,21 +387,28 @@ pub struct TsRunGcStats {
 // ============================================================================
 
 /// Free a string allocated by tsrun (e.g., from tsrun_json_stringify).
+///
+/// # Safety
+/// `s` must be a pointer returned by a tsrun function (or NULL).
 #[unsafe(no_mangle)]
-pub extern "C" fn tsrun_free_string(s: *mut c_char) {
+pub unsafe extern "C" fn tsrun_free_string(s: *mut c_char) {
     if !s.is_null() {
-        unsafe {
-            drop(CString::from_raw(s));
-        }
+        // SAFETY: s was allocated by a tsrun function using CString::into_raw
+        unsafe { drop(CString::from_raw(s)) };
     }
 }
 
 /// Free a string array allocated by tsrun (e.g., from tsrun_keys).
+///
+/// # Safety
+/// `strings` must be a pointer returned by a tsrun function (or NULL), and
+/// `count` must match the count returned by that function.
 #[unsafe(no_mangle)]
-pub extern "C" fn tsrun_free_strings(strings: *mut *mut c_char, count: usize) {
+pub unsafe extern "C" fn tsrun_free_strings(strings: *mut *mut c_char, count: usize) {
     if strings.is_null() {
         return;
     }
+    // SAFETY: strings was allocated by a tsrun function, count matches original allocation
     unsafe {
         for i in 0..count {
             let s = *strings.add(i);

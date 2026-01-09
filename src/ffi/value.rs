@@ -344,7 +344,7 @@ pub extern "C" fn tsrun_get(
         None => {
             return TsRunValueResult {
                 value: ptr::null_mut(),
-                error: b"NULL context\0".as_ptr() as *const c_char,
+                error: c"NULL context".as_ptr(),
             };
         }
     };
@@ -385,7 +385,7 @@ pub extern "C" fn tsrun_set(
         None => {
             return TsRunResult {
                 ok: false,
-                error: b"NULL context\0".as_ptr() as *const c_char,
+                error: c"NULL context".as_ptr(),
             };
         }
     };
@@ -459,7 +459,7 @@ pub extern "C" fn tsrun_delete(
         None => {
             return TsRunResult {
                 ok: false,
-                error: b"NULL context\0".as_ptr() as *const c_char,
+                error: c"NULL context".as_ptr(),
             };
         }
     };
@@ -578,7 +578,7 @@ pub extern "C" fn tsrun_array_get(
         None => {
             return TsRunValueResult {
                 value: ptr::null_mut(),
-                error: b"NULL context\0".as_ptr() as *const c_char,
+                error: c"NULL context".as_ptr(),
             };
         }
     };
@@ -616,7 +616,7 @@ pub extern "C" fn tsrun_array_set(
         None => {
             return TsRunResult {
                 ok: false,
-                error: b"NULL context\0".as_ptr() as *const c_char,
+                error: c"NULL context".as_ptr(),
             };
         }
     };
@@ -672,7 +672,7 @@ pub extern "C" fn tsrun_array_push(
         None => {
             return TsRunResult {
                 ok: false,
-                error: b"NULL context\0".as_ptr() as *const c_char,
+                error: c"NULL context".as_ptr(),
             };
         }
     };
@@ -723,7 +723,7 @@ pub extern "C" fn tsrun_json_parse(
         None => {
             return TsRunValueResult {
                 value: ptr::null_mut(),
-                error: b"NULL context\0".as_ptr() as *const c_char,
+                error: c"NULL context".as_ptr(),
             };
         }
     };
@@ -798,7 +798,7 @@ pub extern "C" fn tsrun_object_new(ctx: *mut TsRunContext) -> TsRunValueResult {
         None => {
             return TsRunValueResult {
                 value: ptr::null_mut(),
-                error: b"NULL context\0".as_ptr() as *const c_char,
+                error: c"NULL context".as_ptr(),
             };
         }
     };
@@ -818,7 +818,7 @@ pub extern "C" fn tsrun_array_new(ctx: *mut TsRunContext) -> TsRunValueResult {
         None => {
             return TsRunValueResult {
                 value: ptr::null_mut(),
-                error: b"NULL context\0".as_ptr() as *const c_char,
+                error: c"NULL context".as_ptr(),
             };
         }
     };
@@ -848,7 +848,7 @@ pub extern "C" fn tsrun_call(
         None => {
             return TsRunValueResult {
                 value: ptr::null_mut(),
-                error: b"NULL context\0".as_ptr() as *const c_char,
+                error: c"NULL context".as_ptr(),
             };
         }
     };
@@ -896,7 +896,7 @@ pub extern "C" fn tsrun_call_method(
         None => {
             return TsRunValueResult {
                 value: ptr::null_mut(),
-                error: b"NULL context\0".as_ptr() as *const c_char,
+                error: c"NULL context".as_ptr(),
             };
         }
     };
@@ -967,7 +967,7 @@ pub extern "C" fn tsrun_get_global(
         None => {
             return TsRunValueResult {
                 value: ptr::null_mut(),
-                error: b"NULL context\0".as_ptr() as *const c_char,
+                error: c"NULL context".as_ptr(),
             };
         }
     };
@@ -1000,7 +1000,7 @@ pub extern "C" fn tsrun_set_global(
         None => {
             return TsRunResult {
                 ok: false,
-                error: b"NULL context\0".as_ptr() as *const c_char,
+                error: c"NULL context".as_ptr(),
             };
         }
     };

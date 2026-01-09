@@ -334,14 +334,14 @@ impl CompiledRegex for CCompiledRegex {
                 let captures = self.convert_captures(&match_out);
 
                 // Free the C captures if needed
-                if !match_out.captures.is_null() {
-                    if let Some(free_fn) = self.callbacks.free_captures {
-                        free_fn(
-                            self.callbacks.userdata,
-                            match_out.captures,
-                            match_out.capture_count,
-                        );
-                    }
+                if !match_out.captures.is_null()
+                    && let Some(free_fn) = self.callbacks.free_captures
+                {
+                    free_fn(
+                        self.callbacks.userdata,
+                        match_out.captures,
+                        match_out.capture_count,
+                    );
                 }
 
                 Ok(Some(RegexMatch {
@@ -519,10 +519,10 @@ impl CCompiledRegex {
                         i += 2;
                     }
                     Some('&') => {
-                        if let Some(Some((start, end))) = m.captures.first() {
-                            if let Some(s) = input.get(*start..*end) {
-                                result.push_str(s);
-                            }
+                        if let Some(Some((start, end))) = m.captures.first()
+                            && let Some(s) = input.get(*start..*end)
+                        {
+                            result.push_str(s);
                         }
                         i += 2;
                     }
@@ -540,12 +540,11 @@ impl CCompiledRegex {
                     }
                     Some(c) if c.is_ascii_digit() => {
                         let group_num = (*c as usize) - ('0' as usize);
-                        if group_num > 0 {
-                            if let Some(Some((start, end))) = m.captures.get(group_num) {
-                                if let Some(s) = input.get(*start..*end) {
-                                    result.push_str(s);
-                                }
-                            }
+                        if group_num > 0
+                            && let Some(Some((start, end))) = m.captures.get(group_num)
+                            && let Some(s) = input.get(*start..*end)
+                        {
+                            result.push_str(s);
                         }
                         i += 2;
                     }

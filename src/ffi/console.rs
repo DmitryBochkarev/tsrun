@@ -69,12 +69,7 @@ impl ConsoleProvider for FfiConsoleProvider {
         };
 
         // Call with Clear level and empty message
-        (wrapper.callback)(
-            TsRunConsoleLevel::Clear,
-            c"".as_ptr(),
-            0,
-            wrapper.userdata,
-        );
+        (wrapper.callback)(TsRunConsoleLevel::Clear, c"".as_ptr(), 0, wrapper.userdata);
     }
 }
 

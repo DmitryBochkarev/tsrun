@@ -68,7 +68,7 @@ pub extern "C" fn tsrun_prepare(
         None => {
             return TsRunResult {
                 ok: false,
-                error: b"NULL context\0".as_ptr() as *const c_char,
+                error: c"NULL context".as_ptr(),
             };
         }
     };
@@ -96,7 +96,7 @@ pub extern "C" fn tsrun_step(ctx: *mut TsRunContext) -> TsRunStepResult {
     if ctx.is_null() {
         return TsRunStepResult {
             status: TsRunStepStatus::Error,
-            error: b"NULL context\0".as_ptr() as *const c_char,
+            error: c"NULL context".as_ptr(),
             ..Default::default()
         };
     }
@@ -130,7 +130,7 @@ pub extern "C" fn tsrun_run(ctx: *mut TsRunContext) -> TsRunStepResult {
     if ctx.is_null() {
         return TsRunStepResult {
             status: TsRunStepStatus::Error,
-            error: b"NULL context\0".as_ptr() as *const c_char,
+            error: c"NULL context".as_ptr(),
             ..Default::default()
         };
     }

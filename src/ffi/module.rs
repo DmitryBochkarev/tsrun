@@ -27,7 +27,7 @@ pub extern "C" fn tsrun_provide_module(
         None => {
             return TsRunResult {
                 ok: false,
-                error: b"NULL context\0".as_ptr() as *const c_char,
+                error: c"NULL context".as_ptr(),
             };
         }
     };
@@ -64,7 +64,7 @@ pub extern "C" fn tsrun_get_export(
         None => {
             return TsRunValueResult {
                 value: ptr::null_mut(),
-                error: b"NULL context\0".as_ptr() as *const c_char,
+                error: c"NULL context".as_ptr(),
             };
         }
     };

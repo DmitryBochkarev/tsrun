@@ -31,7 +31,7 @@ pub extern "C" fn tsrun_fulfill_orders(
         None => {
             return TsRunResult {
                 ok: false,
-                error: b"NULL context\0".as_ptr() as *const c_char,
+                error: c"NULL context".as_ptr(),
             };
         }
     };
@@ -93,7 +93,7 @@ pub extern "C" fn tsrun_create_pending_order(
         None => {
             return TsRunValueResult {
                 value: ptr::null_mut(),
-                error: b"NULL context\0".as_ptr() as *const c_char,
+                error: c"NULL context".as_ptr(),
             };
         }
     };
@@ -155,7 +155,7 @@ pub extern "C" fn tsrun_create_order_promise(
         None => {
             return TsRunValueResult {
                 value: ptr::null_mut(),
-                error: b"NULL context\0".as_ptr() as *const c_char,
+                error: c"NULL context".as_ptr(),
             };
         }
     };
@@ -176,7 +176,7 @@ pub extern "C" fn tsrun_resolve_promise(
         None => {
             return TsRunResult {
                 ok: false,
-                error: b"NULL context\0".as_ptr() as *const c_char,
+                error: c"NULL context".as_ptr(),
             };
         }
     };
@@ -210,7 +210,7 @@ pub extern "C" fn tsrun_reject_promise(
         None => {
             return TsRunResult {
                 ok: false,
-                error: b"NULL context\0".as_ptr() as *const c_char,
+                error: c"NULL context".as_ptr(),
             };
         }
     };
