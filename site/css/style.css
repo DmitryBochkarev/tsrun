@@ -587,9 +587,67 @@ td {
   color: white;
 }
 
-/* Quick start section */
-.quick-code {
-  margin: 48px 0;
+/* Use Cases section with tabs */
+.use-cases {
+  padding: 60px 0;
+}
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 24px;
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.tab {
+  padding: 12px 20px;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  font-weight: 500;
+  white-space: nowrap;
+  transition: all var(--transition);
+  font-family: var(--font-sans);
+}
+
+.tab:hover {
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+}
+
+.tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.tab-content {
+  display: none;
+}
+
+.tab-content.active {
+  display: block;
+}
+
+.example-desc {
+  color: var(--text-secondary);
+  margin-bottom: 16px;
+  font-size: 0.95rem;
+}
+
+@media (max-width: 768px) {
+  .tabs {
+    gap: 0;
+  }
+
+  .tab {
+    padding: 10px 14px;
+    font-size: 0.85rem;
+  }
 }
 
 /* CTA Section */

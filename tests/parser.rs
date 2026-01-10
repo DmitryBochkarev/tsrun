@@ -83,6 +83,26 @@ fn test_type_alias() {
 }
 
 #[test]
+fn test_type_alias_with_leading_pipe() {
+    // TypeScript allows leading pipe in union types for better formatting
+    let prog = parse(
+        r#"
+        type Rule =
+            | { type: "required" }
+            | { type: "minLength"; value: number }
+            | { type: "email" };
+    "#,
+    );
+    assert_eq!(prog.body.len(), 1);
+}
+
+#[test]
+fn test_type_alias_with_leading_pipe_simple() {
+    let prog = parse("type Status = | 'active' | 'inactive';");
+    assert_eq!(prog.body.len(), 1);
+}
+
+#[test]
 fn test_keyof_type_simple_reference() {
     // First ensure basic type reference works
     let prog = parse("let x: Person;");

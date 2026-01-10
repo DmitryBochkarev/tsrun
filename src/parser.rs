@@ -3578,9 +3578,13 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_union_type(&mut self) -> Result<TypeAnnotation, JsError> {
+        // TypeScript allows a leading pipe for better formatting:
+        // type Rule = | "a" | "b" | "c";
+        let has_leading_pipe = self.match_token(&TokenKind::Pipe);
+
         let first = self.parse_intersection_type()?;
 
-        if !self.check(&TokenKind::Pipe) {
+        if !has_leading_pipe && !self.check(&TokenKind::Pipe) {
             return Ok(first);
         }
 

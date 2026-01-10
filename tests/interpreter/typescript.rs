@@ -969,6 +969,25 @@ fn test_literal_types() {
 }
 
 #[test]
+fn test_union_type_with_leading_pipe() {
+    // TypeScript allows leading pipe for better multiline formatting
+    assert_eq!(
+        eval(
+            r#"
+            type Rule =
+                | { type: "required" }
+                | { type: "minLength"; value: number }
+                | { type: "email" };
+
+            const rule: Rule = { type: "minLength", value: 8 };
+            rule.value
+        "#
+        ),
+        JsValue::Number(8.0)
+    );
+}
+
+#[test]
 fn test_template_literal_types() {
     // Template literal types are a compile-time feature
     // At runtime, we just use the string

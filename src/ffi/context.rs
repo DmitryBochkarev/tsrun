@@ -206,10 +206,8 @@ pub extern "C" fn tsrun_step_result_free(result: *mut TsRunStepResult) {
         // Free imports array
         // Use Box::from_raw with slice to match how we allocated (via into_boxed_slice)
         if !result.imports.is_null() && result.import_count > 0 {
-            let slice_ptr = core::ptr::slice_from_raw_parts_mut(
-                result.imports,
-                result.import_count,
-            );
+            let slice_ptr =
+                core::ptr::slice_from_raw_parts_mut(result.imports, result.import_count);
             let imports = Box::from_raw(slice_ptr);
             for import in imports.iter() {
                 // Free the strings inside each import request
@@ -231,10 +229,8 @@ pub extern "C" fn tsrun_step_result_free(result: *mut TsRunStepResult) {
         // Free pending orders array (but NOT the payload values - they're owned by context)
         // Use Box::from_raw with slice to match how we allocated (via into_boxed_slice)
         if !result.pending_orders.is_null() && result.pending_count > 0 {
-            let slice_ptr = core::ptr::slice_from_raw_parts_mut(
-                result.pending_orders,
-                result.pending_count,
-            );
+            let slice_ptr =
+                core::ptr::slice_from_raw_parts_mut(result.pending_orders, result.pending_count);
             drop(Box::from_raw(slice_ptr));
         }
         result.pending_orders = ptr::null_mut();

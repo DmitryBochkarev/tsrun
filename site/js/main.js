@@ -38,6 +38,33 @@
     });
   }
 
+  // Tab switching
+  function initTabs() {
+    document.querySelectorAll('.tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        const tabGroup = tab.closest('.use-cases');
+        if (!tabGroup) return;
+
+        // Remove active from all tabs and content in this group
+        tabGroup.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        tabGroup.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+
+        // Add active to clicked tab and corresponding content
+        tab.classList.add('active');
+        const content = document.getElementById(tab.dataset.tab);
+        if (content) {
+          content.classList.add('active');
+          // Re-highlight code in the newly visible tab
+          if (typeof hljs !== 'undefined') {
+            content.querySelectorAll('pre code').forEach(block => {
+              hljs.highlightElement(block);
+            });
+          }
+        }
+      });
+    });
+  }
+
   // Initialize
   document.addEventListener('DOMContentLoaded', () => {
     // Copy buttons
@@ -47,6 +74,9 @@
 
     // Active nav link
     setActiveNavLink();
+
+    // Tabs
+    initTabs();
 
     // Highlight.js initialization
     if (typeof hljs !== 'undefined') {

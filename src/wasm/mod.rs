@@ -166,11 +166,7 @@ pub extern "C" fn tsrun_alloc(size: u32) -> u32 {
         return 0;
     };
     let ptr = unsafe { alloc::alloc::alloc(layout) };
-    if ptr.is_null() {
-        0
-    } else {
-        ptr as u32
-    }
+    if ptr.is_null() { 0 } else { ptr as u32 }
 }
 
 /// Free memory allocated by `tsrun_alloc`.

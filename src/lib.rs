@@ -148,6 +148,301 @@
 //!
 //! // guard dropped here - obj may be collected
 //! ```
+//!
+//! # Use Case Examples
+//!
+//! ## Kubernetes Deployment Configuration
+//!
+//! Generate type-safe Kubernetes manifests with IDE autocompletion:
+//!
+//! ```
+//! use tsrun::{Interpreter, StepResult, js_value_to_json};
+//!
+//! let mut interp = Interpreter::new();
+//! interp.prepare(r#"
+//!     interface DeploymentConfig {
+//!         name: string;
+//!         image: string;
+//!         replicas: number;
+//!         port: number;
+//!     }
+//!
+//!     function deployment(config: DeploymentConfig) {
+//!         return {
+//!             apiVersion: "apps/v1",
+//!             kind: "Deployment",
+//!             metadata: { name: config.name },
+//!             spec: {
+//!                 replicas: config.replicas,
+//!                 selector: { matchLabels: { app: config.name } },
+//!                 template: {
+//!                     metadata: { labels: { app: config.name } },
+//!                     spec: {
+//!                         containers: [{
+//!                             name: config.name,
+//!                             image: config.image,
+//!                             ports: [{ containerPort: config.port }]
+//!                         }]
+//!                     }
+//!                 }
+//!             }
+//!         };
+//!     }
+//!
+//!     deployment({ name: "api", image: "myapp:v1.2.0", replicas: 3, port: 8080 })
+//! "#, None).unwrap();
+//!
+//! let result = loop {
+//!     match interp.step().unwrap() {
+//!         StepResult::Continue => continue,
+//!         StepResult::Complete(value) => {
+//!             break js_value_to_json(value.value()).unwrap();
+//!         }
+//!         _ => panic!("Unexpected result"),
+//!     }
+//! };
+//!
+//! assert_eq!(result["apiVersion"], "apps/v1");
+//! assert_eq!(result["kind"], "Deployment");
+//! assert_eq!(result["metadata"]["name"], "api");
+//! assert_eq!(result["spec"]["replicas"], 3);
+//! ```
+//!
+//! ## Game Item Configuration
+//!
+//! Define game items with enums and computed loot tables:
+//!
+//! ```
+//! use tsrun::{Interpreter, StepResult, js_value_to_json};
+//!
+//! let mut interp = Interpreter::new();
+//! interp.prepare(r#"
+//!     enum Rarity { Common, Rare, Epic, Legendary }
+//!
+//!     interface Item {
+//!         name: string;
+//!         rarity: Rarity;
+//!         basePrice: number;
+//!         effects?: string[];
+//!     }
+//!
+//!     function createLootTable(items: Item[]) {
+//!         return items.map(item => ({
+//!             ...item,
+//!             dropWeight: item.rarity === Rarity.Legendary ? 1 :
+//!                         item.rarity === Rarity.Epic ? 5 :
+//!                         item.rarity === Rarity.Rare ? 15 : 50,
+//!             sellPrice: Math.floor(item.basePrice * (1 + item.rarity * 0.5))
+//!         }));
+//!     }
+//!
+//!     createLootTable([
+//!         { name: "Iron Sword", rarity: Rarity.Common, basePrice: 100 },
+//!         { name: "Dragon Scale", rarity: Rarity.Legendary, basePrice: 5000,
+//!           effects: ["Fire Resistance", "+50 Defense"] }
+//!     ])
+//! "#, None).unwrap();
+//!
+//! let result = loop {
+//!     match interp.step().unwrap() {
+//!         StepResult::Continue => continue,
+//!         StepResult::Complete(value) => {
+//!             break js_value_to_json(value.value()).unwrap();
+//!         }
+//!         _ => panic!("Unexpected result"),
+//!     }
+//! };
+//!
+//! // Common item: dropWeight=50, sellPrice=100*(1+0*0.5)=100
+//! assert_eq!(result[0]["name"], "Iron Sword");
+//! assert_eq!(result[0]["dropWeight"], 50);
+//! assert_eq!(result[0]["sellPrice"], 100);
+//!
+//! // Legendary item: dropWeight=1, sellPrice=5000*(1+3*0.5)=12500
+//! assert_eq!(result[1]["name"], "Dragon Scale");
+//! assert_eq!(result[1]["dropWeight"], 1);
+//! assert_eq!(result[1]["sellPrice"], 12500);
+//! assert_eq!(result[1]["effects"][0], "Fire Resistance");
+//! ```
+//!
+//! ## API Router Configuration
+//!
+//! Configure REST endpoints with typed middleware and rate limits:
+//!
+//! ```
+//! use tsrun::{Interpreter, StepResult, js_value_to_json};
+//!
+//! let mut interp = Interpreter::new();
+//! interp.prepare(r#"
+//!     interface Route {
+//!         method: "GET" | "POST" | "PUT" | "DELETE";
+//!         path: string;
+//!         handler: string;
+//!         middleware?: string[];
+//!         rateLimit?: { requests: number; window: string };
+//!     }
+//!
+//!     const routes: Route[] = [
+//!         {
+//!             method: "GET",
+//!             path: "/users/:id",
+//!             handler: "users::get",
+//!             middleware: ["auth", "cache"]
+//!         },
+//!         {
+//!             method: "POST",
+//!             path: "/users",
+//!             handler: "users::create",
+//!             middleware: ["auth", "validate"],
+//!             rateLimit: { requests: 10, window: "1m" }
+//!         },
+//!         {
+//!             method: "DELETE",
+//!             path: "/users/:id",
+//!             handler: "users::delete",
+//!             middleware: ["auth", "admin"]
+//!         }
+//!     ];
+//!
+//!     routes
+//! "#, None).unwrap();
+//!
+//! let result = loop {
+//!     match interp.step().unwrap() {
+//!         StepResult::Continue => continue,
+//!         StepResult::Complete(value) => {
+//!             break js_value_to_json(value.value()).unwrap();
+//!         }
+//!         _ => panic!("Unexpected result"),
+//!     }
+//! };
+//!
+//! assert_eq!(result.as_array().unwrap().len(), 3);
+//! assert_eq!(result[0]["method"], "GET");
+//! assert_eq!(result[0]["path"], "/users/:id");
+//! assert_eq!(result[1]["rateLimit"]["requests"], 10);
+//! assert_eq!(result[2]["middleware"][1], "admin");
+//! ```
+//!
+//! ## Build Tool Configuration
+//!
+//! Create plugin-based build configurations like webpack or vite:
+//!
+//! ```
+//! use tsrun::{Interpreter, StepResult, js_value_to_json};
+//!
+//! let mut interp = Interpreter::new();
+//! interp.prepare(r#"
+//!     interface Plugin {
+//!         name: string;
+//!         options?: Record<string, any>;
+//!     }
+//!
+//!     interface BuildConfig {
+//!         entry: string;
+//!         output: { path: string; filename: string };
+//!         plugins: Plugin[];
+//!         minify: boolean;
+//!     }
+//!
+//!     const config: BuildConfig = {
+//!         entry: "./src/index.ts",
+//!         output: {
+//!             path: "./dist",
+//!             filename: "[name].[hash].js"
+//!         },
+//!         plugins: [
+//!             { name: "typescript", options: { target: "ES2022" } },
+//!             { name: "minify", options: { dropConsole: true } },
+//!             { name: "bundle-analyzer" }
+//!         ],
+//!         minify: true
+//!     };
+//!
+//!     config
+//! "#, None).unwrap();
+//!
+//! let result = loop {
+//!     match interp.step().unwrap() {
+//!         StepResult::Continue => continue,
+//!         StepResult::Complete(value) => {
+//!             break js_value_to_json(value.value()).unwrap();
+//!         }
+//!         _ => panic!("Unexpected result"),
+//!     }
+//! };
+//!
+//! assert_eq!(result["entry"], "./src/index.ts");
+//! assert_eq!(result["output"]["path"], "./dist");
+//! assert_eq!(result["plugins"].as_array().unwrap().len(), 3);
+//! assert_eq!(result["plugins"][0]["name"], "typescript");
+//! assert_eq!(result["plugins"][0]["options"]["target"], "ES2022");
+//! assert_eq!(result["minify"], true);
+//! ```
+//!
+//! ## Validation Schema
+//!
+//! Define form validation schemas with discriminated unions:
+//!
+//! ```
+//! use tsrun::{Interpreter, StepResult, js_value_to_json};
+//!
+//! let mut interp = Interpreter::new();
+//! interp.prepare(r#"
+//!     type Rule =
+//!         | { type: "required" }
+//!         | { type: "minLength"; value: number }
+//!         | { type: "maxLength"; value: number }
+//!         | { type: "pattern"; regex: string; message: string }
+//!         | { type: "email" };
+//!
+//!     interface FieldSchema {
+//!         name: string;
+//!         label: string;
+//!         rules: Rule[];
+//!     }
+//!
+//!     const userSchema: FieldSchema[] = [
+//!         {
+//!             name: "email",
+//!             label: "Email Address",
+//!             rules: [
+//!                 { type: "required" },
+//!                 { type: "email" }
+//!             ]
+//!         },
+//!         {
+//!             name: "password",
+//!             label: "Password",
+//!             rules: [
+//!                 { type: "required" },
+//!                 { type: "minLength", value: 8 },
+//!                 { type: "pattern", regex: "[A-Z]", message: "Must contain uppercase" }
+//!             ]
+//!         }
+//!     ];
+//!
+//!     userSchema
+//! "#, None).unwrap();
+//!
+//! let result = loop {
+//!     match interp.step().unwrap() {
+//!         StepResult::Continue => continue,
+//!         StepResult::Complete(value) => {
+//!             break js_value_to_json(value.value()).unwrap();
+//!         }
+//!         _ => panic!("Unexpected result"),
+//!     }
+//! };
+//!
+//! assert_eq!(result.as_array().unwrap().len(), 2);
+//! assert_eq!(result[0]["name"], "email");
+//! assert_eq!(result[0]["label"], "Email Address");
+//! assert_eq!(result[0]["rules"][0]["type"], "required");
+//! assert_eq!(result[1]["rules"][1]["type"], "minLength");
+//! assert_eq!(result[1]["rules"][1]["value"], 8);
+//! assert_eq!(result[1]["rules"][2]["message"], "Must contain uppercase");
+//! ```
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // no_std support
