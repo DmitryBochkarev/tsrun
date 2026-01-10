@@ -1,5 +1,8 @@
 # tsrun
 
+[![crates.io](https://img.shields.io/crates/v/tsrun.svg)](https://crates.io/crates/tsrun)
+[![docs.rs](https://docs.rs/tsrun/badge.svg)](https://docs.rs/tsrun)
+
 A minimal TypeScript runtime in Rust for embedding in applications.
 
 ## Overview
