@@ -4,7 +4,7 @@
 import init, {
     STEP_CONTINUE, STEP_COMPLETE, STEP_NEED_IMPORTS,
     STEP_SUSPENDED, STEP_DONE, STEP_ERROR
-} from './pkg/tsrun-raw.js';
+} from './pkg/tsrun.js';
 
 let runner = null;
 let TsRunner = null;
@@ -158,9 +158,7 @@ async function runCode() {
 
         // Main execution loop - JS controls everything
         while (true) {
-            console.log('[loop] Calling step()...');
             const result = runner.step();
-            console.log('[loop] Step returned, status:', result.status);
             displayConsole(result.console_output);
 
             switch (result.status) {
@@ -216,45 +214,29 @@ async function runCode() {
 function handleOrders(orderIds) {
     for (const orderId of orderIds) {
         const delay = 100 + Math.floor(Math.random() * 400); // 100-500ms
-        console.log(`[handleOrders] Processing order ${orderId}`);
 
         // Get the order payload as a handle and read it NOW (before fulfilling)
         // After fulfill, the payload handle may be invalidated by GC
-        console.log(`[handleOrders] Getting payload handle for order ${orderId}`);
         const payloadHandle = runner.get_order_payload(orderId);
-        console.log(`[handleOrders] Payload handle: ${payloadHandle}`);
-
-        console.log(`[handleOrders] Reading payload...`);
         const payload = handleToJsValue(payloadHandle) || {};
-        console.log(`[handleOrders] Payload:`, payload);
 
         appendOutput('info', `[Order ${orderId}] Creating Promise, will resolve in ${delay}ms...`);
 
         // Create an unresolved Promise in the interpreter (returns handle)
-        console.log(`[handleOrders] Creating promise...`);
         const promiseHandle = runner.create_promise();
-        console.log(`[handleOrders] Promise handle: ${promiseHandle}`);
 
         // Fulfill the order immediately with this Promise handle
-        console.log(`[handleOrders] Setting order result...`);
         runner.set_order_result(orderId, promiseHandle);
-        console.log(`[handleOrders] Order result set`);
 
         // Schedule the actual async work - resolve the Promise later
         // Use the already-read payload, not the stale handle
         setTimeout(() => {
-            console.log(`[timeout] Resolving order ${orderId}...`);
             const result = createMockResponse(payload);
             appendOutput('info', `[Order ${orderId}] Resolving Promise with: ${JSON.stringify(result)}`);
 
             // Convert result to a handle
-            console.log(`[timeout] Creating result handle...`);
             const resultHandle = jsValueToHandle(result);
-            console.log(`[timeout] Result handle: ${resultHandle}`);
-
-            console.log(`[timeout] Calling resolve_promise...`);
             runner.resolve_promise(promiseHandle, resultHandle);
-            console.log(`[timeout] Promise resolved`);
         }, delay);
     }
 
