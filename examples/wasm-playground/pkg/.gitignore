@@ -1,0 +1,4 @@
+# Ignore generated WASM file (built from Rust)
+*.wasm
+
+# Keep the JavaScript wrapper (handwritten)
