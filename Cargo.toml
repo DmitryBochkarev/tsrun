@@ -1,6 +1,6 @@
 [package]
 name = "tsrun"
-version = "0.1.9"
+version = "0.1.10"
 edition = "2024"
 description = "A TypeScript interpreter designed for embedding in applications"
 license = "MIT"
@@ -15,19 +15,16 @@ name = "tsrun"
 path = "src/bin/tsrun.rs"
 required-features = ["std"]
 
-[[bin]]
+[[example]]
 name = "profile_lexer"
-path = "src/bin/profile_lexer.rs"
 required-features = ["dev-tools"]
 
-[[bin]]
+[[example]]
 name = "profile_parser"
-path = "src/bin/profile_parser.rs"
 required-features = ["dev-tools"]
 
-[[bin]]
+[[example]]
 name = "test262-runner"
-path = "src/bin/test262-runner.rs"
 required-features = ["dev-tools"]
 
 [features]
