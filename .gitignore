@@ -17,3 +17,9 @@ examples/c-embedding/*.o
 # Node.js
 node_modules/
 examples/go-wazero/tsrun/tsrun.wasm
+
+# Fuzzing
+fuzz/target/
+fuzz/corpus/
+fuzz/artifacts/
+fuzz/Cargo.lock

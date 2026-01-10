@@ -1,0 +1,42 @@
+[package]
+name = "tsrun-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.tsrun]
+path = ".."
+
+# Disable zero-panic lints for fuzzing (libfuzzer uses panics internally)
+[lints.clippy]
+unwrap_used = "allow"
+expect_used = "allow"
+indexing_slicing = "allow"
+panic = "allow"
+
+[[bin]]
+name = "fuzz_lexer"
+path = "fuzz_targets/fuzz_lexer.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_parser"
+path = "fuzz_targets/fuzz_parser.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_interpreter"
+path = "fuzz_targets/fuzz_interpreter.rs"
+test = false
+doc = false
+bench = false

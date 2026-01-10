@@ -1,0 +1,73 @@
+name: Fuzzing
+
+on:
+  schedule:
+    # Run nightly at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: 'Fuzzing duration in seconds per target'
+        required: false
+        default: '300'
+      target:
+        description: 'Fuzz target (fuzz_lexer, fuzz_parser, fuzz_interpreter, all)'
+        required: false
+        default: 'all'
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [fuzz_lexer, fuzz_parser, fuzz_interpreter]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: llvm-tools-preview
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz
+
+      - name: Cache corpus
+        uses: actions/cache@v4
+        with:
+          path: fuzz/corpus
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_number }}
+          restore-keys: |
+            fuzz-corpus-${{ matrix.target }}-
+
+      - name: Extract initial corpus
+        run: python3 fuzz/scripts/extract_corpus.py
+
+      - name: Run fuzzer
+        run: |
+          DURATION="${{ github.event.inputs.duration || '300' }}"
+          cargo +nightly fuzz run ${{ matrix.target }} -- \
+            -max_total_time=${DURATION} \
+            -max_len=10000
+        continue-on-error: true
+
+      - name: Upload crash artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: crashes-${{ matrix.target }}
+          path: fuzz/artifacts/${{ matrix.target }}
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Check for crashes
+        run: |
+          if [ -d "fuzz/artifacts/${{ matrix.target }}" ] && \
+             [ "$(ls -A fuzz/artifacts/${{ matrix.target }} 2>/dev/null)" ]; then
+            echo "::error::Crashes found in ${{ matrix.target }}"
+            ls -la fuzz/artifacts/${{ matrix.target }}
+            exit 1
+          fi
+          echo "No crashes found in ${{ matrix.target }}"
