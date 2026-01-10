@@ -40,7 +40,7 @@ tsrun is designed for configuration files where you want the full benefits of Ty
 ### Embedding
 - **Minimal Runtime** - Small footprint, no Node.js dependency
 - **Rust & C APIs** - Full integration support for host applications
-- **WASM Support** - Run in browsers via WebAssembly
+- **WASM Support** - Run in browsers, Node.js, Go (wazero), and other WASM runtimes
 - **no_std Compatible** - Can run in environments without the standard library
 
 ## Installation
@@ -293,19 +293,39 @@ assert!(export_names.contains(&"CONFIG".to_string()));
 
 See [examples/c-embedding/](examples/c-embedding/) for complete examples.
 
-## WASM / Browser
+## WASM
 
-The interpreter compiles to WebAssembly for browser execution. Try it at the [online playground](https://your-site.com/playground).
+The interpreter compiles to WebAssembly with a C-style FFI, enabling use across multiple runtimes: browsers, Node.js, Go (via wazero), and others.
 
 ### Building
 
 ```bash
 cd examples/wasm-playground
 ./build.sh              # Build WASM module
-./build.sh --test       # Build and run tests
+./build.sh --test       # Build and run browser tests
 ```
 
-### JavaScript API
+### Go Embedding (wazero)
+
+```go
+import "github.com/example/tsrun-go/tsrun"
+
+ctx := context.Background()
+rt, _ := tsrun.New(ctx, tsrun.ConsoleOption(func(level tsrun.ConsoleLevel, msg string) {
+    fmt.Printf("[%s] %s\n", level, msg)
+}))
+defer rt.Close(ctx)
+
+interp, _ := rt.NewContext(ctx)
+defer interp.Free(ctx)
+
+interp.Prepare(ctx, `console.log("Hello from Go!")`, "/main.ts")
+result, _ := interp.Run(ctx)
+```
+
+See [examples/go-wazero/](examples/go-wazero/) for complete examples including async operations, modules, and native functions.
+
+### Browser/Node.js API
 
 ```javascript
 import init, { TsRunner, STEP_CONTINUE, STEP_COMPLETE, STEP_ERROR } from './pkg/tsrun.js';
@@ -417,6 +437,7 @@ while (result.status == TSRUN_STEP_NEED_IMPORTS) {
 | `regex` | Regular expression support (requires `std`) | Yes |
 | `console` | Console.log builtin | Yes |
 | `c-api` | C FFI for embedding (requires `std`) | No |
+| `wasm` | WebAssembly target support | No |
 
 ```toml
 # Minimal build without regex
@@ -426,6 +447,11 @@ tsrun = { version = "0.1", default-features = false, features = ["std"] }
 # With C API
 [dependencies]
 tsrun = { version = "0.1", features = ["c-api"] }
+```
+
+```bash
+# Build for WASM
+cargo build --target wasm32-unknown-unknown --features wasm --no-default-features
 ```
 
 ## Use Case Examples

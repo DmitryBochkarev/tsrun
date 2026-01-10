@@ -47,7 +47,8 @@ cd examples/wasm-playground && ./build.sh --test             # Build and run pla
 | `src/wasm/mod.rs` | WASM API (feature-gated: `wasm`) |
 | `tests/interpreter/` | Integration tests by feature |
 | `examples/c-embedding/` | C API usage examples |
-| `examples/wasm-playground/` | WASM playground source |
+| `examples/wasm-playground/` | WASM browser/Node.js playground |
+| `examples/go-wazero/` | Go embedding via WASM (wazero) |
 
 ## Development Rules
 
@@ -445,29 +446,59 @@ TsRunResult tsrun_fulfill_orders(TsRunContext* ctx, const TsRunOrderResponse* re
                                   size_t count);
 ```
 
-## WASM Playground
+## WASM
 
-The interpreter compiles to WebAssembly for browser-based execution with a step-based API.
+The interpreter compiles to WebAssembly with a C-style FFI for use across multiple runtimes: browsers, Node.js, Go (via wazero), Rust (via wasmtime), and others.
 
 ### Building
 
 ```bash
 cd examples/wasm-playground
 ./build.sh              # Build WASM module and copy to site/playground/pkg
-./build.sh --test       # Build and run e2e tests
+./build.sh --test       # Build and run e2e tests (uses Puppeteer)
 ```
 
 ### Files
 
 | Location | Purpose |
 |----------|---------|
-| `examples/wasm-playground/` | **Source** - playground HTML, JS, and build scripts |
-| `examples/wasm-playground/pkg/` | Built WASM output |
-| `site/playground/` | **Copy** - synced by build.sh |
-| `src/wasm/mod.rs` | WASM API (TsRunner, step-based execution) |
+| `examples/wasm-playground/` | Browser/Node.js playground with HTML, JS, and build scripts |
+| `examples/wasm-playground/pkg/` | Built WASM output (`tsrun.wasm`, `tsrun.js`) |
+| `examples/go-wazero/` | Go embedding via wazero runtime |
+| `site/playground/` | Copy of playground for website (synced by build.sh) |
+| `src/wasm/mod.rs` | WASM API with C-style FFI exports |
 | `src/platform/wasm_impl.rs` | WASM-specific platform code |
 
-### Step-Based API
+### Go Embedding (wazero)
+
+The `examples/go-wazero/` directory provides a Go wrapper using the wazero runtime:
+
+```bash
+cd examples/go-wazero
+./build.sh              # Build the WASM module
+go run ./basic          # Run basic example
+go run ./async          # Run async orders example
+go run ./modules        # Run ES modules example
+go run ./native         # Run native functions example
+```
+
+```go
+import "github.com/example/tsrun-go/tsrun"
+
+ctx := context.Background()
+rt, _ := tsrun.New(ctx, tsrun.ConsoleOption(func(level tsrun.ConsoleLevel, msg string) {
+    fmt.Printf("[%s] %s\n", level, msg)
+}))
+defer rt.Close(ctx)
+
+interp, _ := rt.NewContext(ctx)
+defer interp.Free(ctx)
+
+interp.Prepare(ctx, `console.log("Hello from Go!")`, "/main.ts")
+result, _ := interp.Run(ctx)
+```
+
+### Browser/JavaScript API
 
 The WASM module exposes a step-based execution API where JavaScript controls the execution loop:
 
@@ -594,10 +625,11 @@ async function handleOrders(orders) {
 
 ### Notes
 
-- Uses `wasm-pack` with `--target web`
-- Feature-gated: builds with `--features wasm` and `--no-default-features`
+- Builds with `cargo build --target wasm32-unknown-unknown --features wasm --no-default-features`
+- Uses C-style FFI exports for compatibility across all WASM runtimes
+- Feature-gated: `--features wasm` and `--no-default-features`
 - Imports in builtins must use `crate::prelude::Box` (not `std::boxed::Box`) for `no_std` compatibility
-- Each `TsRunner` instance is independent (no shared state)
+- Each interpreter instance is independent (no shared state)
 
 ## Implementation Status
 
@@ -607,4 +639,4 @@ async function handleOrders(orders) {
 
 **Built-in Objects:** Array, String, Object, Number, Math, JSON, Map, Set, WeakMap, WeakSet, Date, RegExp, Function, Error types, Symbol, Proxy, Reflect, console.
 
-**Embedding:** Rust API, C FFI with native callbacks, module loading, async order system, and WASM support for browser execution.
+**Embedding:** Rust API, C FFI with native callbacks, module loading, async order system, and WASM support (browser, Node.js, Go/wazero, and other runtimes).
