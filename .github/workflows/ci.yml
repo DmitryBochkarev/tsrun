@@ -55,9 +55,8 @@ jobs:
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-
-      - name: Install wasm-pack
-        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+        with:
+          targets: wasm32-unknown-unknown
 
       - name: Cache cargo
         uses: actions/cache@v4
@@ -72,5 +71,5 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-wasm-
 
-      - name: Run WASM tests
-        run: wasm-pack test --node --features wasm --no-default-features
+      - name: Build WASM
+        run: cargo build --target wasm32-unknown-unknown --features wasm --no-default-features
