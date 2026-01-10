@@ -62,7 +62,8 @@ static ALLOCATOR: GlobalDlmalloc = GlobalDlmalloc;
 
 /// Panic handler for no_std WASM builds.
 /// Aborts execution - the host can detect this via wasm trap.
-#[cfg(not(feature = "std"))]
+/// Excluded during tests since the test harness provides its own panic handler.
+#[cfg(all(not(feature = "std"), not(test)))]
 #[panic_handler]
 fn panic(_info: &core::panic::PanicInfo) -> ! {
     core::arch::wasm32::unreachable()
