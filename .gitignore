@@ -16,3 +16,4 @@ examples/c-embedding/*.o
 
 # Node.js
 node_modules/
+examples/go-wazero/tsrun/tsrun.wasm

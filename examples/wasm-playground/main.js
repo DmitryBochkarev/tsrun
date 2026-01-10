@@ -1,7 +1,13 @@
 // tsrun Playground - Main JavaScript
 // Loads the WASM module and handles UI interaction
 
+import init, {
+    STEP_CONTINUE, STEP_COMPLETE, STEP_NEED_IMPORTS,
+    STEP_SUSPENDED, STEP_DONE, STEP_ERROR
+} from './pkg/tsrun.js';
+
 let runner = null;
+let TsRunner = null;
 let wasmLoaded = false;
 
 // DOM elements
@@ -12,14 +18,14 @@ const runBtn = document.getElementById('run-btn');
 const clearBtn = document.getElementById('clear-btn');
 const examplesSelect = document.getElementById('examples');
 
-// Step status constants (loaded from WASM module)
-let StepStatus = {
-    CONTINUE: 0,
-    COMPLETE: 1,
-    NEED_IMPORTS: 2,
-    SUSPENDED: 3,
-    DONE: 4,
-    ERROR: 5
+// Step status constants
+const StepStatus = {
+    CONTINUE: STEP_CONTINUE,
+    COMPLETE: STEP_COMPLETE,
+    NEED_IMPORTS: STEP_NEED_IMPORTS,
+    SUSPENDED: STEP_SUSPENDED,
+    DONE: STEP_DONE,
+    ERROR: STEP_ERROR
 };
 
 // Initialize WASM module
@@ -27,30 +33,24 @@ async function initWasm() {
     setStatus('loading', 'Loading WASM...');
 
     try {
-        const wasm = await import('./pkg/tsrun.js');
-        await wasm.default();
+        // Initialize the raw WASM wrapper
+        TsRunner = await init('./pkg/tsrun.wasm');
 
-        runner = new wasm.TsRunner();
+        // Create a runner instance
+        runner = new TsRunner();
         wasmLoaded = true;
 
-        // Load step status constants from WASM module (functions that return values)
-        StepStatus = {
-            CONTINUE: wasm.STEP_CONTINUE(),
-            COMPLETE: wasm.STEP_COMPLETE(),
-            NEED_IMPORTS: wasm.STEP_NEED_IMPORTS(),
-            SUSPENDED: wasm.STEP_SUSPENDED(),
-            DONE: wasm.STEP_DONE(),
-            ERROR: wasm.STEP_ERROR()
-        };
+        // Expose TsRunner globally for debugging/testing
+        window.TsRunner = TsRunner;
 
         setStatus('success', 'Ready');
         runBtn.disabled = false;
 
-        console.log('tsrun WASM module loaded successfully');
+        console.log('tsrun WASM module loaded successfully (raw API)');
     } catch (err) {
         setStatus('error', 'Failed to load WASM');
         console.error('Failed to load WASM module:', err);
-        appendOutput('error', `Failed to load WASM module: ${err.message}\n\nMake sure you have built the WASM module:\n  ./build.sh`);
+        appendOutput('error', `Failed to load WASM module: ${err.message}\n\nMake sure you have built the WASM module:\n  ./build.sh --raw`);
     }
 }
 
@@ -123,7 +123,7 @@ function displayResultValue(valueHandle) {
 
 // Run the code with step-based execution
 async function runCode() {
-    if (!wasmLoaded || !runner) {
+    if (!wasmLoaded || !TsRunner) {
         setStatus('error', 'WASM not loaded');
         return;
     }
@@ -138,6 +138,12 @@ async function runCode() {
     clearOutput();
     setStatus('loading', 'Running...');
     runBtn.disabled = true;
+
+    // Create fresh runner for each execution
+    if (runner) {
+        runner.free();
+    }
+    runner = new TsRunner();
 
     try {
         // Prepare execution
@@ -208,10 +214,13 @@ async function runCode() {
 function handleOrders(orderIds) {
     for (const orderId of orderIds) {
         const delay = 100 + Math.floor(Math.random() * 400); // 100-500ms
-        appendOutput('info', `[Order ${orderId}] Creating Promise, will resolve in ${delay}ms...`);
 
-        // Get the order payload as a handle
+        // Get the order payload as a handle and read it NOW (before fulfilling)
+        // After fulfill, the payload handle may be invalidated by GC
         const payloadHandle = runner.get_order_payload(orderId);
+        const payload = handleToJsValue(payloadHandle) || {};
+
+        appendOutput('info', `[Order ${orderId}] Creating Promise, will resolve in ${delay}ms...`);
 
         // Create an unresolved Promise in the interpreter (returns handle)
         const promiseHandle = runner.create_promise();
@@ -220,8 +229,9 @@ function handleOrders(orderIds) {
         runner.set_order_result(orderId, promiseHandle);
 
         // Schedule the actual async work - resolve the Promise later
+        // Use the already-read payload, not the stale handle
         setTimeout(() => {
-            const result = createMockResponseFromHandle(payloadHandle);
+            const result = createMockResponse(payload);
             appendOutput('info', `[Order ${orderId}] Resolving Promise with: ${JSON.stringify(result)}`);
 
             // Convert result to a handle
@@ -309,9 +319,8 @@ function handleToJsValue(handle) {
     }
 }
 
-// Generate mock response based on order payload handle
-function createMockResponseFromHandle(payloadHandle) {
-    const payload = handleToJsValue(payloadHandle) || {};
+// Generate mock response based on order payload (already read as JS object)
+function createMockResponse(payload) {
     const type = payload.type;
     const url = payload.url;
     let result;

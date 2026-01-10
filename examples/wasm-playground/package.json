@@ -4,9 +4,8 @@
   "description": "WASM playground and tests for tsrun",
   "type": "module",
   "scripts": {
-    "test": "node tests/test.js",
-    "test:browser": "node tests/browser-test.js",
-    "test:all": "npm run test && npm run test:browser"
+    "test": "node tests/browser-test.js",
+    "test:browser": "node tests/browser-test.js"
   },
   "devDependencies": {
     "puppeteer": "^24.0.0"

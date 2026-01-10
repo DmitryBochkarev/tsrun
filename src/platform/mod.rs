@@ -9,19 +9,11 @@ use core::fmt::Debug;
 #[cfg(feature = "std")]
 mod std_impl;
 
-#[cfg(all(target_arch = "wasm32", feature = "wasm"))]
-mod wasm_impl;
-
 #[cfg(feature = "std")]
 pub use std_impl::{StdConsoleProvider, StdRandomProvider, StdTimeProvider};
 
 #[cfg(feature = "regex")]
 pub use std_impl::FancyRegexProvider;
-
-#[cfg(all(target_arch = "wasm32", feature = "wasm"))]
-pub use wasm_impl::{
-    WasmConsoleProvider, WasmRandomProvider, WasmRegExpProvider, WasmTimeProvider,
-};
 
 /// Trait for providing time-related functionality.
 ///

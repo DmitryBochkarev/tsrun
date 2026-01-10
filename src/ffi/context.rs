@@ -90,15 +90,26 @@ pub extern "C" fn tsrun_prepare(
 
 /// Execute one step.
 ///
-/// Returns step result. Caller must call tsrun_step_result_free when done.
+/// The result is written to `out` which must point to valid memory for TsRunStepResult.
+/// Caller must call tsrun_step_result_free when done.
 #[unsafe(no_mangle)]
-pub extern "C" fn tsrun_step(ctx: *mut TsRunContext) -> TsRunStepResult {
+pub extern "C" fn tsrun_step(out: *mut TsRunStepResult, ctx: *mut TsRunContext) {
+    if out.is_null() {
+        return;
+    }
+
     if ctx.is_null() {
-        return TsRunStepResult {
-            status: TsRunStepStatus::Error,
-            error: c"NULL context".as_ptr(),
-            ..Default::default()
-        };
+        unsafe {
+            ptr::write(
+                out,
+                TsRunStepResult {
+                    status: TsRunStepStatus::Error,
+                    error: c"NULL context".as_ptr(),
+                    ..Default::default()
+                },
+            );
+        }
+        return;
     }
 
     let ctx_ref = unsafe { &mut *ctx };
@@ -119,20 +130,34 @@ pub extern "C" fn tsrun_step(ctx: *mut TsRunContext) -> TsRunStepResult {
     // Clear FFI context after stepping
     ctx_ref.interp.ffi_context = ptr::null_mut();
 
-    result
+    // Write result to output pointer
+    unsafe {
+        ptr::write(out, result);
+    }
 }
 
 /// Run until completion, needing imports, or suspension.
 ///
 /// Equivalent to calling step() in a loop until non-Continue result.
+/// The result is written to `out` which must point to valid memory for TsRunStepResult.
 #[unsafe(no_mangle)]
-pub extern "C" fn tsrun_run(ctx: *mut TsRunContext) -> TsRunStepResult {
+pub extern "C" fn tsrun_run(out: *mut TsRunStepResult, ctx: *mut TsRunContext) {
+    if out.is_null() {
+        return;
+    }
+
     if ctx.is_null() {
-        return TsRunStepResult {
-            status: TsRunStepStatus::Error,
-            error: c"NULL context".as_ptr(),
-            ..Default::default()
-        };
+        unsafe {
+            ptr::write(
+                out,
+                TsRunStepResult {
+                    status: TsRunStepStatus::Error,
+                    error: c"NULL context".as_ptr(),
+                    ..Default::default()
+                },
+            );
+        }
+        return;
     }
 
     let ctx_ref = unsafe { &mut *ctx };
@@ -144,7 +169,9 @@ pub extern "C" fn tsrun_run(ctx: *mut TsRunContext) -> TsRunStepResult {
     let result = loop {
         match ctx_ref.interp.step() {
             Ok(StepResult::Continue) => continue,
-            Ok(step_result) => break convert_step_result(ctx_ref, step_result),
+            Ok(step_result) => {
+                break convert_step_result(ctx_ref, step_result);
+            }
             Err(e) => {
                 break TsRunStepResult {
                     status: TsRunStepStatus::Error,
@@ -158,7 +185,10 @@ pub extern "C" fn tsrun_run(ctx: *mut TsRunContext) -> TsRunStepResult {
     // Clear FFI context after stepping
     ctx_ref.interp.ffi_context = ptr::null_mut();
 
-    result
+    // Write result to output pointer
+    unsafe {
+        ptr::write(out, result);
+    }
 }
 
 /// Free a step result's internal arrays.
@@ -174,10 +204,14 @@ pub extern "C" fn tsrun_step_result_free(result: *mut TsRunStepResult) {
         let result = &mut *result;
 
         // Free imports array
+        // Use Box::from_raw with slice to match how we allocated (via into_boxed_slice)
         if !result.imports.is_null() && result.import_count > 0 {
-            let imports =
-                Vec::from_raw_parts(result.imports, result.import_count, result.import_count);
-            for import in imports {
+            let slice_ptr = core::ptr::slice_from_raw_parts_mut(
+                result.imports,
+                result.import_count,
+            );
+            let imports = Box::from_raw(slice_ptr);
+            for import in imports.iter() {
                 // Free the strings inside each import request
                 if !import.specifier.is_null() {
                     drop(CString::from_raw(import.specifier as *mut c_char));
@@ -189,28 +223,31 @@ pub extern "C" fn tsrun_step_result_free(result: *mut TsRunStepResult) {
                     drop(CString::from_raw(import.importer as *mut c_char));
                 }
             }
+            // Box is dropped here, freeing the array memory
         }
         result.imports = ptr::null_mut();
         result.import_count = 0;
 
         // Free pending orders array (but NOT the payload values - they're owned by context)
+        // Use Box::from_raw with slice to match how we allocated (via into_boxed_slice)
         if !result.pending_orders.is_null() && result.pending_count > 0 {
-            drop(Vec::from_raw_parts(
+            let slice_ptr = core::ptr::slice_from_raw_parts_mut(
                 result.pending_orders,
                 result.pending_count,
-                result.pending_count,
-            ));
+            );
+            drop(Box::from_raw(slice_ptr));
         }
         result.pending_orders = ptr::null_mut();
         result.pending_count = 0;
 
         // Free cancelled orders array
+        // Use Box::from_raw with slice to match how we allocated (via into_boxed_slice)
         if !result.cancelled_orders.is_null() && result.cancelled_count > 0 {
-            drop(Vec::from_raw_parts(
+            let slice_ptr = core::ptr::slice_from_raw_parts_mut(
                 result.cancelled_orders,
                 result.cancelled_count,
-                result.cancelled_count,
-            ));
+            );
+            drop(Box::from_raw(slice_ptr));
         }
         result.cancelled_orders = ptr::null_mut();
         result.cancelled_count = 0;
@@ -240,7 +277,8 @@ fn convert_step_result(_ctx: &mut TsRunContext, result: StepResult) -> TsRunStep
         },
 
         StepResult::NeedImports(imports) => {
-            let mut c_imports: Vec<TsRunImportRequest> = imports
+            // Use into_boxed_slice to ensure capacity == length for correct deallocation
+            let c_imports: Vec<TsRunImportRequest> = imports
                 .iter()
                 .map(|req| TsRunImportRequest {
                     specifier: str_to_c_string(&req.specifier),
@@ -254,8 +292,8 @@ fn convert_step_result(_ctx: &mut TsRunContext, result: StepResult) -> TsRunStep
                 .collect();
 
             let import_count = c_imports.len();
-            let imports_ptr = c_imports.as_mut_ptr();
-            core::mem::forget(c_imports);
+            let boxed = c_imports.into_boxed_slice();
+            let imports_ptr = Box::into_raw(boxed) as *mut TsRunImportRequest;
 
             TsRunStepResult {
                 status: TsRunStepStatus::NeedImports,
@@ -266,24 +304,35 @@ fn convert_step_result(_ctx: &mut TsRunContext, result: StepResult) -> TsRunStep
         }
 
         StepResult::Suspended { pending, cancelled } => {
-            // Convert pending orders
-            let mut c_orders: Vec<TsRunOrder> = pending
-                .into_iter()
-                .map(|order| TsRunOrder {
-                    id: order.id.0,
-                    payload: Box::into_raw(TsRunValue::from_runtime_value(order.payload)),
-                })
-                .collect();
+            // Convert pending orders - use null pointer if empty
+            // Use into_boxed_slice to ensure capacity == length for correct deallocation
+            let (orders_ptr, pending_count) = if pending.is_empty() {
+                (ptr::null_mut(), 0)
+            } else {
+                let c_orders: Vec<TsRunOrder> = pending
+                    .into_iter()
+                    .map(|order| TsRunOrder {
+                        id: order.id.0,
+                        payload: Box::into_raw(TsRunValue::from_runtime_value(order.payload)),
+                    })
+                    .collect();
+                let count = c_orders.len();
+                let boxed = c_orders.into_boxed_slice();
+                let ptr = Box::into_raw(boxed) as *mut TsRunOrder;
+                (ptr, count)
+            };
 
-            let pending_count = c_orders.len();
-            let orders_ptr = c_orders.as_mut_ptr();
-            core::mem::forget(c_orders);
-
-            // Convert cancelled order IDs
-            let mut c_cancelled: Vec<u64> = cancelled.into_iter().map(|id| id.0).collect();
-            let cancelled_count = c_cancelled.len();
-            let cancelled_ptr = c_cancelled.as_mut_ptr();
-            core::mem::forget(c_cancelled);
+            // Convert cancelled order IDs - use null pointer if empty
+            // Use into_boxed_slice to ensure capacity == length for correct deallocation
+            let (cancelled_ptr, cancelled_count) = if cancelled.is_empty() {
+                (ptr::null_mut(), 0)
+            } else {
+                let c_cancelled: Vec<u64> = cancelled.into_iter().map(|id| id.0).collect();
+                let count = c_cancelled.len();
+                let boxed = c_cancelled.into_boxed_slice();
+                let ptr = Box::into_raw(boxed) as *mut u64;
+                (ptr, count)
+            };
 
             TsRunStepResult {
                 status: TsRunStepStatus::Suspended,

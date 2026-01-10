@@ -592,7 +592,7 @@ pub fn string_split(
                     let flags = flags.clone();
                     drop(obj_ref);
 
-                    #[cfg(any(feature = "regex", feature = "wasm"))]
+                    #[cfg(feature = "regex")]
                     {
                         let re = interp.compile_regexp(&pattern, &flags)?;
                         let split_result = re.split(s.as_str()).map_err(JsError::type_error)?;
@@ -614,7 +614,7 @@ pub fn string_split(
                             }
                         };
                     }
-                    #[cfg(not(any(feature = "regex", feature = "wasm")))]
+                    #[cfg(not(feature = "regex"))]
                     {
                         let _ = (pattern, flags);
                         return Err(JsError::type_error(
@@ -701,7 +701,7 @@ pub fn string_replace(
             let flags = flags.clone();
             drop(obj_ref);
 
-            #[cfg(any(feature = "regex", feature = "wasm"))]
+            #[cfg(feature = "regex")]
             {
                 let re = interp.compile_regexp(&pattern, &flags)?;
                 let is_global = flags.contains('g');
@@ -764,7 +764,7 @@ pub fn string_replace(
                     return Ok(Guarded::unguarded(JsValue::String(JsString::from(result))));
                 }
             }
-            #[cfg(not(any(feature = "regex", feature = "wasm")))]
+            #[cfg(not(feature = "regex"))]
             {
                 let _ = (pattern, flags);
                 return Err(JsError::type_error(
@@ -1029,7 +1029,7 @@ pub fn string_code_point_at(
 
 /// String.prototype.match(regexp)
 /// Returns an array of matches or null if no match
-#[cfg(not(any(feature = "regex", feature = "wasm")))]
+#[cfg(not(feature = "regex"))]
 pub fn string_match(
     _interp: &mut Interpreter,
     _this: JsValue,
@@ -1042,7 +1042,7 @@ pub fn string_match(
 
 /// String.prototype.match(regexp)
 /// Returns an array of matches or null if no match
-#[cfg(any(feature = "regex", feature = "wasm"))]
+#[cfg(feature = "regex")]
 pub fn string_match(
     interp: &mut Interpreter,
     this: JsValue,
@@ -1223,7 +1223,7 @@ pub fn string_match_all(
 
 /// String.prototype.search(regexp)
 /// Returns the index of the first match, or -1 if not found
-#[cfg(not(any(feature = "regex", feature = "wasm")))]
+#[cfg(not(feature = "regex"))]
 pub fn string_search(
     _interp: &mut Interpreter,
     _this: JsValue,
@@ -1236,7 +1236,7 @@ pub fn string_search(
 
 /// String.prototype.search(regexp)
 /// Returns the index of the first match, or -1 if not found
-#[cfg(any(feature = "regex", feature = "wasm"))]
+#[cfg(feature = "regex")]
 pub fn string_search(
     interp: &mut Interpreter,
     this: JsValue,

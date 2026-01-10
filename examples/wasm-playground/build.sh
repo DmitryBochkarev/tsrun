@@ -1,54 +1,53 @@
 #!/bin/bash
 # Build the tsrun WASM module for the playground
+#
+# Uses C-style FFI exports for unified API across all runtimes
+# (browser, Go/wazero, Rust/wasmtime, etc.)
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+WASM_TARGET="wasm32-unknown-unknown"
+WASM_OUTPUT="$PROJECT_DIR/target/$WASM_TARGET/release/tsrun.wasm"
 
 echo "Building tsrun WASM module..."
 echo "Project directory: $PROJECT_DIR"
 
-# Check if wasm-pack is installed
-if ! command -v wasm-pack &> /dev/null; then
-    echo "Error: wasm-pack is not installed."
-    echo "Install it with: cargo install wasm-pack"
-    exit 1
-fi
-
-# Build the WASM module for web target
+# Build the WASM module
 cd "$PROJECT_DIR"
-wasm-pack build \
-    --target web \
-    --out-dir "$SCRIPT_DIR/pkg" \
-    --no-default-features \
-    --features wasm
+cargo build --release \
+    --target "$WASM_TARGET" \
+    --features wasm \
+    --no-default-features
+
+# Ensure pkg directory exists
+mkdir -p "$SCRIPT_DIR/pkg"
+
+# Copy WASM file
+cp "$WASM_OUTPUT" "$SCRIPT_DIR/pkg/tsrun.wasm"
 
 echo ""
 echo "Build complete!"
-echo "Output: $SCRIPT_DIR/pkg/"
+echo "WASM output: $SCRIPT_DIR/pkg/tsrun.wasm"
+echo "Size: $(ls -lh "$SCRIPT_DIR/pkg/tsrun.wasm" | awk '{print $5}')"
 
 # Copy to site directory
 SITE_PLAYGROUND_DIR="$PROJECT_DIR/site/playground"
 if [[ -d "$SITE_PLAYGROUND_DIR" ]]; then
+    echo ""
     echo "Copying to site: $SITE_PLAYGROUND_DIR"
-    cp -r "$SCRIPT_DIR/pkg/"* "$SITE_PLAYGROUND_DIR/pkg/"
+    mkdir -p "$SITE_PLAYGROUND_DIR/pkg"
+    cp "$SCRIPT_DIR/pkg/tsrun.wasm" "$SITE_PLAYGROUND_DIR/pkg/"
+    cp "$SCRIPT_DIR/pkg/tsrun.js" "$SITE_PLAYGROUND_DIR/pkg/"
     cp "$SCRIPT_DIR/main.js" "$SITE_PLAYGROUND_DIR/"
     # Note: index.html is NOT copied - site has its own version with site navigation
 fi
-echo ""
 
 # Run tests if --test flag is provided
 if [[ "$1" == "--test" ]]; then
-    echo "Running e2e tests..."
     echo ""
-
-    # Build for Node.js target for testing
-    wasm-pack build \
-        --target nodejs \
-        --out-dir "$SCRIPT_DIR/tests/pkg" \
-        --no-default-features \
-        --features wasm
+    echo "Running e2e tests..."
 
     cd "$SCRIPT_DIR"
 
@@ -57,8 +56,8 @@ if [[ "$1" == "--test" ]]; then
         npm install
     fi
 
-    # Run all tests
-    npm run test:all
+    # Run tests
+    npm run test:browser
 fi
 
 echo ""
@@ -67,5 +66,5 @@ echo "  cd $SCRIPT_DIR"
 echo "  python3 -m http.server 8080"
 echo "  # Then open http://localhost:8080"
 echo ""
-echo "To run all tests (Node.js + browser):"
+echo "To run tests:"
 echo "  $0 --test"

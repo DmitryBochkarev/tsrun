@@ -4,7 +4,7 @@
 
 use crate::error::JsError;
 use crate::interpreter::Interpreter;
-use crate::value::{ExoticObject, Guarded, JsValue};
+use crate::value::{CheapClone, ExoticObject, Guarded, JsValue};
 use crate::{InternalModule, Order, OrderId, RuntimeValue};
 
 /// Create the tsrun:host module
@@ -46,7 +46,7 @@ fn order_syscall(
     // Create payload RuntimeValue with guard if it's an object
     let payload_rv = if let JsValue::Object(ref obj) = payload {
         let payload_guard = interp.heap.create_guard();
-        payload_guard.guard(obj.clone());
+        payload_guard.guard(obj.cheap_clone());
         RuntimeValue::with_guard(payload, payload_guard)
     } else {
         RuntimeValue::unguarded(payload)

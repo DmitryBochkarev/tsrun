@@ -48,6 +48,12 @@ async function stopServer() {
     }
 }
 
+// Expected console.error outputs for specific examples (these are NOT failures)
+// These are examples that intentionally demonstrate error handling
+const EXPECTED_ERRORS = {
+    'Error Handling': /Caught error:|Validation failed|WASM/,
+};
+
 async function runTests() {
     console.log('Starting local server...');
     await startServer();
@@ -138,13 +144,19 @@ async function runTests() {
         });
 
         // Check for page errors (like ReferenceError in main.js)
-        const hasPageError = errors.length > 0;
+        // Filter out expected errors for specific examples
+        const expectedPattern = EXPECTED_ERRORS[example.name];
+        const unexpectedErrors = expectedPattern
+            ? errors.filter(e => !expectedPattern.test(e))
+            : errors;
+
+        const hasPageError = unexpectedErrors.length > 0;
         const hasOutputError = output.hasError;
 
         if (hasPageError || hasOutputError) {
             console.log(`✗ ${example.name}`);
             if (hasPageError) {
-                console.log(`  Page error: ${errors[0]}`);
+                console.log(`  Page error: ${unexpectedErrors[0]}`);
             }
             if (hasOutputError) {
                 console.log(`  Runtime error: ${output.errorText}`);

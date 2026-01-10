@@ -941,9 +941,10 @@ impl BytecodeVM {
                     && let ExoticObject::PendingOrder { id, .. } = &obj.borrow().exotic
                 {
                     let order_id = crate::OrderId(*id);
+                    let state = self.save_state(interp);
                     return Ok(Some(VmResult::SuspendForOrder(VmOrderSuspension {
                         order_id,
-                        state: self.save_state(interp),
+                        state,
                         resume_register: return_register,
                     })));
                 }
@@ -2017,14 +2018,14 @@ impl BytecodeVM {
                         (JsValue::String(s.cheap_clone()), None::<Guard<JsObject>>)
                     }
                     Some(Constant::Number(n)) => (JsValue::Number(*n), None::<Guard<JsObject>>),
-                    #[cfg(any(feature = "regex", feature = "wasm"))]
+                    #[cfg(feature = "regex")]
                     Some(Constant::RegExp { pattern, flags }) => {
                         let guard = interp.heap.create_guard();
                         let obj =
                             interp.create_regexp_literal(&guard, pattern.as_str(), flags.as_str());
                         (JsValue::Object(obj), Some(guard))
                     }
-                    #[cfg(not(any(feature = "regex", feature = "wasm")))]
+                    #[cfg(not(feature = "regex"))]
                     Some(Constant::RegExp { .. }) => {
                         return Err(JsError::type_error(
                             "RegExp not available (enable 'regex' or 'wasm' feature)",

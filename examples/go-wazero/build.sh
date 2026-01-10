@@ -24,7 +24,7 @@ build_wasm() {
     cd "$PROJECT_ROOT"
     cargo build --release \
         --target "$WASM_TARGET" \
-        --features wasm-raw \
+        --features wasm \
         --no-default-features
 
     cp "$WASM_OUTPUT" "$SCRIPT_DIR/tsrun/tsrun.wasm"
