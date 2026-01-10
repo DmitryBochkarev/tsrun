@@ -15,6 +15,9 @@ tsrun is designed for configuration files where you want the full benefits of Ty
 ## Features
 
 ### TypeScript Support
+
+> **Note:** Types are parsed for IDE support but **not checked at runtime**. Type annotations, interfaces, and generics are stripped during execution. Use your editor's TypeScript language server for type checking.
+
 - **Enums** - Native support with numeric and string enums, including reverse mappings
 - **Type Annotations** - Full parsing of types, interfaces, type aliases, and generics
 - **Decorators** - Class, method, property, and parameter decorators
@@ -422,138 +425,190 @@ tsrun = { version = "0.1", default-features = false, features = ["std"] }
 tsrun = { version = "0.1", features = ["c-api"] }
 ```
 
-## TypeScript Examples
+## Use Case Examples
 
-### Enums
+> **Note:** The type annotations in these examples provide IDE autocompletion and editor-based type checking, but tsrun does not validate types at runtime. Passing a wrong type will not throw an error - it will simply execute with whatever value is provided.
 
-```typescript
-enum LogLevel {
-    Debug = 0,
-    Info = 1,
-    Warn = 2,
-    Error = 3
-}
+### Kubernetes Deployment Configuration
 
-enum Status {
-    Pending = "pending",
-    Active = "active",
-    Completed = "completed"
-}
-
-interface Config {
-    logLevel: LogLevel;
-    status: Status;
-    retries: number;
-}
-
-const config: Config = {
-    logLevel: LogLevel.Info,
-    status: Status.Active,
-    retries: 3
-};
-
-// Reverse mapping works for numeric enums
-LogLevel[1]; // "Info"
-```
-
-### Classes with Inheritance
+Generate type-safe Kubernetes manifests with IDE autocompletion:
 
 ```typescript
-class Entity {
-    static #count = 0;
-    #id: number;
-
-    constructor() {
-        this.#id = ++Entity.#count;
-    }
-
-    get id() { return this.#id; }
-    static getCount() { return Entity.#count; }
+interface DeploymentConfig {
+    name: string;
+    image: string;
+    replicas: number;
+    port: number;
 }
 
-class User extends Entity {
-    constructor(public name: string, public email: string) {
-        super();
-    }
-
-    toJSON() {
-        return { id: this.id, name: this.name, email: this.email };
-    }
-}
-
-const user = new User("Alice", "alice@example.com");
-JSON.stringify(user.toJSON());
-```
-
-### Generators
-
-```typescript
-function* fibonacci(): Generator<number> {
-    let [a, b] = [0, 1];
-    while (true) {
-        yield a;
-        [a, b] = [b, a + b];
-    }
-}
-
-function* take<T>(gen: Generator<T>, n: number): Generator<T> {
-    for (const value of gen) {
-        if (n-- <= 0) return;
-        yield value;
-    }
-}
-
-const first10 = [...take(fibonacci(), 10)];
-// [0, 1, 1, 2, 3, 5, 8, 13, 21, 34]
-```
-
-### Async/Await
-
-```typescript
-async function fetchUserWithPosts(userId: number) {
-    const [user, posts] = await Promise.all([
-        fetchUser(userId),
-        fetchUserPosts(userId)
-    ]);
-    return { user, posts };
-}
-
-async function processAll<T, R>(
-    items: T[],
-    fn: (item: T) => Promise<R>
-): Promise<R[]> {
-    const results: R[] = [];
-    for (const item of items) {
-        results.push(await fn(item));
-    }
-    return results;
-}
-```
-
-### Config Generation
-
-```typescript
-import { DEFAULT_CONFIG } from "./defaults";
-
-const envOverrides = {
-    production: {
-        database: { host: "prod-db.example.com", ssl: true },
-        logging: { level: "warn" }
-    },
-    development: {
-        database: { host: "localhost" },
-        logging: { level: "debug" }
-    }
-};
-
-function buildConfig(env: string) {
+function deployment(config: DeploymentConfig) {
     return {
-        ...DEFAULT_CONFIG,
-        ...(envOverrides[env] || {})
+        apiVersion: "apps/v1",
+        kind: "Deployment",
+        metadata: { name: config.name },
+        spec: {
+            replicas: config.replicas,
+            selector: { matchLabels: { app: config.name } },
+            template: {
+                metadata: { labels: { app: config.name } },
+                spec: {
+                    containers: [{
+                        name: config.name,
+                        image: config.image,
+                        ports: [{ containerPort: config.port }]
+                    }]
+                }
+            }
+        }
     };
 }
 
-JSON.stringify(buildConfig("production"), null, 2);
+deployment({ name: "api", image: "myapp:v1.2.0", replicas: 3, port: 8080 })
+```
+
+### Game Item Configuration
+
+Define game items with enums and computed loot tables:
+
+```typescript
+enum Rarity { Common, Rare, Epic, Legendary }
+
+interface Item {
+    name: string;
+    rarity: Rarity;
+    basePrice: number;
+    effects?: string[];
+}
+
+function createLootTable(items: Item[]) {
+    return items.map(item => ({
+        ...item,
+        dropWeight: item.rarity === Rarity.Legendary ? 1 :
+                    item.rarity === Rarity.Epic ? 5 :
+                    item.rarity === Rarity.Rare ? 15 : 50,
+        sellPrice: Math.floor(item.basePrice * (1 + item.rarity * 0.5))
+    }));
+}
+
+createLootTable([
+    { name: "Iron Sword", rarity: Rarity.Common, basePrice: 100 },
+    { name: "Dragon Scale", rarity: Rarity.Legendary, basePrice: 5000,
+      effects: ["Fire Resistance", "+50 Defense"] }
+])
+// Result: [{ dropWeight: 50, sellPrice: 100, ... }, { dropWeight: 1, sellPrice: 12500, ... }]
+```
+
+### API Router Configuration
+
+Configure REST endpoints with typed middleware and rate limits:
+
+```typescript
+interface Route {
+    method: "GET" | "POST" | "PUT" | "DELETE";
+    path: string;
+    handler: string;
+    middleware?: string[];
+    rateLimit?: { requests: number; window: string };
+}
+
+const routes: Route[] = [
+    {
+        method: "GET",
+        path: "/users/:id",
+        handler: "users::get",
+        middleware: ["auth", "cache"]
+    },
+    {
+        method: "POST",
+        path: "/users",
+        handler: "users::create",
+        middleware: ["auth", "validate"],
+        rateLimit: { requests: 10, window: "1m" }
+    },
+    {
+        method: "DELETE",
+        path: "/users/:id",
+        handler: "users::delete",
+        middleware: ["auth", "admin"]
+    }
+];
+
+routes
+```
+
+### Build Tool Configuration
+
+Create plugin-based build configurations like webpack or vite:
+
+```typescript
+interface Plugin {
+    name: string;
+    options?: Record<string, any>;
+}
+
+interface BuildConfig {
+    entry: string;
+    output: { path: string; filename: string };
+    plugins: Plugin[];
+    minify: boolean;
+}
+
+const config: BuildConfig = {
+    entry: "./src/index.ts",
+    output: {
+        path: "./dist",
+        filename: "[name].[hash].js"
+    },
+    plugins: [
+        { name: "typescript", options: { target: "ES2022" } },
+        { name: "minify", options: { dropConsole: true } },
+        { name: "bundle-analyzer" }
+    ],
+    minify: true
+};
+
+config
+```
+
+### Validation Schema
+
+Define form validation schemas with discriminated unions:
+
+```typescript
+type Rule =
+    | { type: "required" }
+    | { type: "minLength"; value: number }
+    | { type: "maxLength"; value: number }
+    | { type: "pattern"; regex: string; message: string }
+    | { type: "email" };
+
+interface FieldSchema {
+    name: string;
+    label: string;
+    rules: Rule[];
+}
+
+const userSchema: FieldSchema[] = [
+    {
+        name: "email",
+        label: "Email Address",
+        rules: [
+            { type: "required" },
+            { type: "email" }
+        ]
+    },
+    {
+        name: "password",
+        label: "Password",
+        rules: [
+            { type: "required" },
+            { type: "minLength", value: 8 },
+            { type: "pattern", regex: "[A-Z]", message: "Must contain uppercase" }
+        ]
+    }
+];
+
+userSchema
 ```
 
 ## Testing
