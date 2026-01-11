@@ -9,6 +9,10 @@ use crate::prelude::*;
 use crate::string_dict::StringDict;
 use crate::value::JsString;
 
+/// Maximum recursion depth for parsing nested expressions/statements.
+/// Prevents stack overflow on deeply nested or malicious input.
+const MAX_RECURSION_DEPTH: u16 = 96;
+
 /// Parser for TypeScript source code
 pub struct Parser<'a> {
     lexer: Lexer<'a>,
@@ -18,6 +22,8 @@ pub struct Parser<'a> {
     /// This is used in for-loop init expressions where 'in' separates
     /// the variable from the iterable (for x in obj).
     no_in: bool,
+    /// Current recursion depth for preventing stack overflow
+    depth: u16,
 }
 
 impl<'a> Parser<'a> {
@@ -29,7 +35,29 @@ impl<'a> Parser<'a> {
             current,
             previous: Token::eof(0, 1, 1),
             no_in: false,
+            depth: 0,
         }
+    }
+
+    /// Check and increment recursion depth, returning an error if too deep.
+    /// Call this at the start of recursive parsing functions.
+    #[inline]
+    fn enter_recursion(&mut self) -> Result<(), JsError> {
+        self.depth += 1;
+        if self.depth > MAX_RECURSION_DEPTH {
+            return Err(JsError::syntax_error(
+                "Maximum nesting depth exceeded".to_string(),
+                self.current.span.line,
+                self.current.span.column,
+            ));
+        }
+        Ok(())
+    }
+
+    /// Decrement recursion depth when leaving a recursive parsing function.
+    #[inline]
+    fn leave_recursion(&mut self) {
+        self.depth = self.depth.saturating_sub(1);
     }
 
     /// Helper to intern a string in the dictionary
@@ -2089,6 +2117,13 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_assignment_expression(&mut self) -> Result<Expression, JsError> {
+        self.enter_recursion()?;
+        let result = self.parse_assignment_expression_inner();
+        self.leave_recursion();
+        result
+    }
+
+    fn parse_assignment_expression_inner(&mut self) -> Result<Expression, JsError> {
         // Check for yield expression
         if self.check(&TokenKind::Yield) {
             return self.parse_yield_expression();
@@ -2609,6 +2644,13 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_primary_expression(&mut self) -> Result<Expression, JsError> {
+        self.enter_recursion()?;
+        let result = self.parse_primary_expression_inner();
+        self.leave_recursion();
+        result
+    }
+
+    fn parse_primary_expression_inner(&mut self) -> Result<Expression, JsError> {
         let start = self.current.span;
 
         match &self.current.kind {

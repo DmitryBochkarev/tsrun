@@ -1741,3 +1741,46 @@ fn test_object_with_multiple_contextual_keywords() {
     );
     assert_eq!(prog.body.len(), 1);
 }
+
+/// Regression test for fuzz slow-unit: deeply nested parentheses with decorators
+/// should not cause stack overflow.
+/// See: fuzz/artifacts/fuzz_parser/slow-unit-ab71c4f9e9400055c70e81f904002ecd135f0355
+#[test]
+fn test_fuzz_slow_unit_nested_parens_decorators() {
+    use std::time::{Duration, Instant};
+
+    // This input caused stack overflow due to deeply nested expressions
+    let input = "Z((~@(((@(~@((@((Z((~@(((@(~@((@((@(@((@(@(~@(((@(@(@((@(@(~@(((@(~@((@((@(@(@((@(@(~@(((@(@(@((@((@((Pa8~";
+
+    let start = Instant::now();
+    let mut dict = tsrun::StringDict::new();
+    let mut parser = tsrun::parser::Parser::new(input, &mut dict);
+    let result = parser.parse_program();
+    let elapsed = start.elapsed();
+
+    // Parsing should complete in under 1 second (typically < 10ms for this input)
+    assert!(
+        elapsed < Duration::from_secs(1),
+        "Parser took too long: {:?} (expected < 1s)",
+        elapsed
+    );
+
+    // Should get a depth exceeded error, not a stack overflow
+    let err = result.expect_err("Should fail with depth exceeded error");
+    assert!(
+        err.to_string().contains("Maximum nesting depth exceeded"),
+        "Expected depth error, got: {}",
+        err
+    );
+}
+
+/// Test that reasonable nesting depth is allowed
+#[test]
+fn test_reasonable_nesting_depth() {
+    // 20 levels of nesting should work fine
+    let input = "((((((((((((((((((((1))))))))))))))))))))";
+    let mut dict = tsrun::StringDict::new();
+    let mut parser = tsrun::parser::Parser::new(input, &mut dict);
+    let result = parser.parse_program();
+    assert!(result.is_ok(), "20 levels of nesting should be allowed");
+}
