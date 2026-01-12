@@ -528,7 +528,7 @@ dependencies = [
 
 [[package]]
 name = "tsrun"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "criterion",
  "dlmalloc",
