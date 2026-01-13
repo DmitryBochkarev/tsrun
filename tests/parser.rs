@@ -1784,3 +1784,53 @@ fn test_reasonable_nesting_depth() {
     let result = parser.parse_program();
     assert!(result.is_ok(), "20 levels of nesting should be allowed");
 }
+
+/// Regression test for fuzz slow-unit: deeply nested parens with void and identifiers
+/// See: fuzz/artifacts/fuzz_parser/slow-unit-de04980b7521199967d3ee21b40db9c36195a27c
+#[test]
+fn test_fuzz_slow_unit_de04980b() {
+    use std::time::{Duration, Instant};
+
+    let input = r#"$,void(@(@((@((ul=(l=(@tt((@(@(t((@(stst,(ul=(l=@(@((ql?(t!(@(((ul=(l=(@tt(((ul=(l=(@tt((@(@(t(@(stst,(ul=(l=(@tt(t0,sV!,ty0((ul ,"#;
+
+    let start = Instant::now();
+    let mut dict = tsrun::StringDict::new();
+    let mut parser = tsrun::parser::Parser::new(input, &mut dict);
+    let result = parser.parse_program();
+    let elapsed = start.elapsed();
+
+    // Parsing should complete in under 1 second
+    assert!(
+        elapsed < Duration::from_secs(1),
+        "Parser took too long: {:?} (expected < 1s)",
+        elapsed
+    );
+
+    // Should either parse or fail fast with an error - not hang
+    drop(result);
+}
+
+/// Regression test for fuzz slow-unit: variant with asterisk
+/// See: fuzz/artifacts/fuzz_parser/slow-unit-833e89a84a8ed8ba02328993d6f1b393d01cc751
+#[test]
+fn test_fuzz_slow_unit_833e89a8() {
+    use std::time::{Duration, Instant};
+
+    let input = r#"$,void(@(@((@((ul=(l=(@tt((@(@(t((@(stst,(ul=(l=@(@((ql?(t!*@(((ul=(l=(@tt(((ul=(l=(@tt((@(@(t((@(stst,/(ul=(l=(@tt(t0,sV!,ty0((ul ,"#;
+
+    let start = Instant::now();
+    let mut dict = tsrun::StringDict::new();
+    let mut parser = tsrun::parser::Parser::new(input, &mut dict);
+    let result = parser.parse_program();
+    let elapsed = start.elapsed();
+
+    // Parsing should complete in under 1 second
+    assert!(
+        elapsed < Duration::from_secs(1),
+        "Parser took too long: {:?} (expected < 1s)",
+        elapsed
+    );
+
+    // Should either parse or fail fast with an error - not hang
+    drop(result);
+}

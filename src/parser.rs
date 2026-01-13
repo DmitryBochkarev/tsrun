@@ -11,6 +11,12 @@ use crate::value::JsString;
 
 /// Maximum recursion depth for parsing nested expressions/statements.
 /// Prevents stack overflow on deeply nested or malicious input.
+/// Maximum recursion depth for debug builds (smaller stack frames)
+#[cfg(debug_assertions)]
+const MAX_RECURSION_DEPTH: u16 = 48;
+
+/// Maximum recursion depth for release builds (larger stack frames)
+#[cfg(not(debug_assertions))]
 const MAX_RECURSION_DEPTH: u16 = 96;
 
 /// Parser for TypeScript source code
@@ -58,6 +64,85 @@ impl<'a> Parser<'a> {
     #[inline]
     fn leave_recursion(&mut self) {
         self.depth = self.depth.saturating_sub(1);
+    }
+
+    /// Scan ahead to check if `=>` follows the closing `)` of a parenthesized expression.
+    /// This is O(n) scanning without AST building, used to decide between arrow function
+    /// and parenthesized expression parsing paths without backtracking.
+    ///
+    /// Assumes we've already consumed the opening `(`.
+    /// Also checks for TypeScript type annotations after `)` like `: ReturnType =>`.
+    fn scan_for_arrow_after_parens(&mut self) -> bool {
+        let checkpoint = self.lexer.checkpoint();
+        let saved_current = self.current.clone();
+        let saved_previous = self.previous.clone();
+
+        let mut depth = 1; // We've consumed the opening (
+
+        // Scan through balancing parens/brackets/braces
+        while depth > 0 {
+            match &self.current.kind {
+                TokenKind::LParen | TokenKind::LBracket | TokenKind::LBrace => {
+                    depth += 1;
+                    self.advance();
+                }
+                TokenKind::RParen => {
+                    depth -= 1;
+                    self.advance();
+                }
+                TokenKind::RBracket | TokenKind::RBrace => {
+                    depth -= 1;
+                    self.advance();
+                }
+                TokenKind::Eof => break,
+                _ => self.advance(),
+            }
+        }
+
+        // After the closing ), check for => or : ReturnType =>
+        let has_arrow = if self.check(&TokenKind::Arrow) {
+            true
+        } else if self.check(&TokenKind::Colon) {
+            // Could be return type annotation: ): ReturnType =>
+            // Skip the type and check for =>
+            self.advance(); // consume :
+            let mut type_depth = 0;
+            loop {
+                match &self.current.kind {
+                    TokenKind::Arrow if type_depth == 0 => break true,
+                    TokenKind::Lt | TokenKind::LParen | TokenKind::LBracket => {
+                        type_depth += 1;
+                        self.advance();
+                    }
+                    TokenKind::LBrace => {
+                        // Could be object type like { x: number } or function body
+                        if type_depth == 0 {
+                            break false; // Function body without =>
+                        }
+                        type_depth += 1;
+                        self.advance();
+                    }
+                    TokenKind::Gt | TokenKind::RParen | TokenKind::RBracket | TokenKind::RBrace => {
+                        if type_depth > 0 {
+                            type_depth -= 1;
+                        }
+                        self.advance();
+                    }
+                    // Stop scanning if we hit something that can't be part of a type
+                    TokenKind::Semicolon | TokenKind::Eof => break false,
+                    _ => self.advance(),
+                }
+            }
+        } else {
+            false
+        };
+
+        // Restore position
+        self.lexer.restore(checkpoint);
+        self.current = saved_current;
+        self.previous = saved_previous;
+
+        has_arrow
     }
 
     /// Helper to intern a string in the dictionary
@@ -3004,11 +3089,6 @@ impl<'a> Parser<'a> {
     fn parse_parenthesized_or_arrow(&mut self) -> Result<Expression, JsError> {
         let start = self.current.span;
 
-        // Save state for potential rollback
-        let lexer_checkpoint = self.lexer.checkpoint();
-        let saved_current = self.current.clone();
-        let saved_previous = self.previous.clone();
-
         self.require_token(&TokenKind::LParen)?;
 
         // Empty parens -> arrow function
@@ -3016,71 +3096,17 @@ impl<'a> Parser<'a> {
             return self.parse_arrow_function_from_params(vec![], start);
         }
 
-        // Try to parse as arrow function params (with type annotations)
-        if let Ok(params) = self.try_parse_arrow_params() {
-            // Arrow immediately after ) -> definitely arrow function
-            if self.check(&TokenKind::Arrow) {
-                return self.parse_arrow_function_from_params(params, start);
-            }
+        // Use O(n) lookahead to decide between arrow function and expression.
+        // This eliminates backtracking and prevents exponential parsing time.
+        let is_arrow = self.scan_for_arrow_after_parens();
 
-            // If we have type annotations in params, it must be an arrow function
-            let has_type_annotations = params.iter().any(|p| p.type_annotation.is_some());
-            if has_type_annotations {
-                // Try to parse return type annotation
-                if self.check(&TokenKind::Colon) {
-                    // Save position to rollback if this isn't an arrow function
-                    let type_checkpoint = self.lexer.checkpoint();
-                    let type_saved_current = self.current.clone();
-
-                    self.advance(); // consume ':'
-                    if let Ok(_type_ann) = self.parse_type_annotation()
-                        && self.check(&TokenKind::Arrow)
-                    {
-                        // Restore and let parse_arrow_function_from_params handle it
-                        self.lexer.restore(type_checkpoint);
-                        self.current = type_saved_current;
-                        return self.parse_arrow_function_from_params(params, start);
-                    }
-                    // Not an arrow function, rollback
-                    self.lexer.restore(type_checkpoint);
-                    self.current = type_saved_current;
-                }
-                return Err(self.unexpected_token("'=>'"));
-            }
-
-            // Colon after ) could be return type or ternary operator
-            // Only treat as arrow function if we see => after the type
-            if self.check(&TokenKind::Colon) {
-                let type_checkpoint = self.lexer.checkpoint();
-                let type_saved_current = self.current.clone();
-
-                self.advance(); // consume ':'
-                if let Ok(_type_ann) = self.parse_type_annotation()
-                    && self.check(&TokenKind::Arrow)
-                {
-                    // Restore and let parse_arrow_function_from_params handle it
-                    self.lexer.restore(type_checkpoint);
-                    self.current = type_saved_current;
-                    return self.parse_arrow_function_from_params(params, start);
-                }
-                // Not an arrow function (could be ternary), rollback
-                self.lexer.restore(type_checkpoint);
-                self.current = type_saved_current;
-            }
-
-            // No arrow - might be parenthesized expression, rollback and re-parse
-            self.lexer.restore(lexer_checkpoint);
-            self.current = saved_current;
-            self.previous = saved_previous;
-        } else {
-            // Failed to parse as params, rollback
-            self.lexer.restore(lexer_checkpoint);
-            self.current = saved_current;
-            self.previous = saved_previous;
+        if is_arrow {
+            // Parse as arrow function (handles TypeScript type annotations)
+            let params = self.try_parse_arrow_params()?;
+            return self.parse_arrow_function_from_params(params, start);
         }
 
-        // Parse as parenthesized expression
-        self.require_token(&TokenKind::LParen)?;
+        // Parse as parenthesized expression (we know it's not an arrow function)
 
         // Inside (...) parentheses, 'in' is allowed as binary operator even in for-loop context
         let saved_no_in = self.no_in;
@@ -3090,18 +3116,12 @@ impl<'a> Parser<'a> {
         let first = first?;
 
         if self.match_token(&TokenKind::RParen) {
-            // Check for arrow (simple identifier case)
-            if self.check(&TokenKind::Arrow) {
-                let param = self.expression_to_param(&first)?;
-                return self.parse_arrow_function_from_params(vec![param], start);
-            }
-
-            // Parenthesized expression
+            // Parenthesized expression (lookahead confirmed no =>)
             let span = self.span_from(start);
             return Ok(Expression::Parenthesized(Rc::new(first), span));
         }
 
-        // Comma - either sequence or arrow params
+        // Comma - sequence expression
         if self.match_token(&TokenKind::Comma) {
             let mut items = vec![first];
 
@@ -3110,41 +3130,6 @@ impl<'a> Parser<'a> {
             self.no_in = false;
 
             while !self.check(&TokenKind::RParen) && !self.is_at_end() {
-                if self.match_token(&TokenKind::DotDotDot) {
-                    // Rest parameter - definitely arrow function
-                    let rest_start = self.current.span;
-                    let pattern = self.parse_binding_pattern()?;
-                    let type_ann = if self.match_token(&TokenKind::Colon) {
-                        Some(Box::new(self.parse_type_annotation()?))
-                    } else {
-                        None
-                    };
-                    self.no_in = saved_no_in;
-                    self.require_token(&TokenKind::RParen)?;
-
-                    let mut params: Vec<FunctionParam> = items
-                        .into_iter()
-                        .map(|e| self.expression_to_param(&e))
-                        .collect::<Result<_, _>>()?;
-
-                    let rest_span = self.span_from(rest_start);
-                    params.push(FunctionParam {
-                        pattern: Pattern::Rest(RestElement {
-                            argument: Box::new(pattern),
-                            type_annotation: type_ann,
-                            span: rest_span,
-                        }),
-                        type_annotation: None,
-                        optional: false,
-                        decorators: vec![],
-                        accessibility: None,
-                        readonly: false,
-                        span: rest_span,
-                    });
-
-                    return self.parse_arrow_function_from_params(params, start);
-                }
-
                 items.push(self.parse_assignment_expression()?);
 
                 if !self.match_token(&TokenKind::Comma) {
@@ -3156,16 +3141,7 @@ impl<'a> Parser<'a> {
 
             self.require_token(&TokenKind::RParen)?;
 
-            // Check for arrow
-            if self.check(&TokenKind::Arrow) {
-                let params: Vec<FunctionParam> = items
-                    .into_iter()
-                    .map(|e| self.expression_to_param(&e))
-                    .collect::<Result<_, _>>()?;
-                return self.parse_arrow_function_from_params(params, start);
-            }
-
-            // Sequence expression in parentheses
+            // Sequence expression in parentheses (lookahead confirmed no =>)
             let span = self.span_from(start);
             let seq = Expression::Sequence(SequenceExpression {
                 expressions: items,
@@ -5208,51 +5184,5 @@ impl<'a> Parser<'a> {
                 expr.span().column,
             )),
         }
-    }
-
-    fn expression_to_param(&self, expr: &Expression) -> Result<FunctionParam, JsError> {
-        let span = expr.span();
-
-        // Handle assignment pattern (default value)
-        if let Expression::Assignment(assign) = expr
-            && assign.operator == AssignmentOp::Assign
-        {
-            let left = match &assign.left {
-                AssignmentTarget::Identifier(id) => Pattern::Identifier(id.clone()),
-                AssignmentTarget::Pattern(p) => p.clone(),
-                _ => {
-                    return Err(JsError::syntax_error(
-                        "Invalid parameter",
-                        span.line,
-                        span.column,
-                    ));
-                }
-            };
-
-            return Ok(FunctionParam {
-                pattern: Pattern::Assignment(AssignmentPattern {
-                    left: Box::new(left),
-                    right: assign.right.clone(),
-                    span,
-                }),
-                type_annotation: None,
-                optional: false,
-                decorators: vec![],
-                accessibility: None,
-                readonly: false,
-                span,
-            });
-        }
-
-        let pattern = self.expression_to_pattern(expr)?;
-        Ok(FunctionParam {
-            pattern,
-            type_annotation: None,
-            optional: false,
-            decorators: vec![],
-            accessibility: None,
-            readonly: false,
-            span,
-        })
     }
 }
