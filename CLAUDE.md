@@ -583,23 +583,32 @@ function fetch(url: string): Promise<any> {
 const data = await fetch("/api/users");
 ```
 
-JavaScript handles these orders and fulfills them:
+JavaScript handles orders by returning unresolved Promises immediately, enabling parallel async operations:
 
 ```javascript
-async function handleOrders(orders) {
-    const responses = [];
-    for (const order of orders) {
-        const { id, payload } = order;
-        // payload contains { type: "fetch", url: "..." }
+// Handle orders by returning unresolved Promises immediately.
+// This enables parallel async operations - each order gets a Promise that
+// resolves after async work, but execution continues immediately.
+function handleOrders(orderIds) {
+    for (const orderId of orderIds) {
+        const payload = runner.get_order_payload(orderId);
 
-        // Simulate async operation with setTimeout
-        await new Promise(r => setTimeout(r, 100));
+        // Create unresolved Promise and fulfill order immediately
+        const promiseHandle = runner.create_promise();
+        runner.set_order_result(orderId, promiseHandle);
 
-        // Mock response based on payload
-        const result = { data: "mock" };
-        responses.push({ id, result });
+        // Schedule resolution based on order type (runs concurrently!)
+        if (payload.type === "fetch") {
+            fetch(payload.url)
+                .then(r => r.json())
+                .then(data => runner.resolve_promise(promiseHandle, toHandle(data)));
+        } else if (payload.type === "timeout") {
+            setTimeout(() => runner.resolve_promise(promiseHandle, undefined), payload.ms);
+        } else {
+            runner.reject_promise(promiseHandle, `Unknown type: ${payload.type}`);
+        }
     }
-    return responses;
+    // Return immediately - don't wait for async operations
 }
 ```
 

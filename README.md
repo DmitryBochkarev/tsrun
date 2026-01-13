@@ -219,17 +219,17 @@ assert_eq!(joined.as_str(), Some("admin, developer"));
 
 ### Async/Await with Orders
 
-For async operations, the interpreter pauses with pending "orders" that the host fulfills:
+For async operations, the interpreter pauses with pending "orders" that the host fulfills. The host examines the order payload to determine what operation to perform:
 
 ```rust
-use tsrun::{Interpreter, StepResult, OrderResponse, RuntimeValue, api};
+use tsrun::{Interpreter, StepResult, OrderResponse, RuntimeValue, JsError, api};
 
 let mut interp = Interpreter::new();
 
 // Code that uses the order system for async I/O
 interp.prepare(r#"
     import { order } from "tsrun:host";
-    const response = await order({ url: "/api/users" });
+    const response = await order({ type: "fetch", url: "/api/users" });
     response.data
 "#, Some("/main.ts".into()))?;
 
@@ -239,14 +239,33 @@ loop {
         StepResult::Suspended { pending, cancelled } => {
             let mut responses = Vec::new();
             for order in pending {
-                // Examine order.payload to determine what to do
-                // Create response value
-                let response = api::create_response_object(&mut interp, &serde_json::json!({
-                    "data": [{"id": 1, "name": "Alice"}]
-                }))?;
+                // Extract order type from payload to dispatch
+                let order_type = api::get_property(order.payload.value(), "type")
+                    .ok()
+                    .and_then(|v| v.as_str().map(String::from));
+
+                let result = match order_type.as_deref() {
+                    Some("fetch") => {
+                        let url = api::get_property(order.payload.value(), "url")
+                            .ok()
+                            .and_then(|v| v.as_str().map(String::from))
+                            .unwrap_or_default();
+                        // In real code: perform actual HTTP fetch here
+                        api::create_response_object(&mut interp, &serde_json::json!({
+                            "data": [{"id": 1, "name": "Alice"}],
+                            "url": url
+                        }))
+                    }
+                    Some("timeout") => {
+                        // In real code: sleep for the requested duration
+                        Ok(RuntimeValue::unguarded(tsrun::JsValue::Undefined))
+                    }
+                    _ => Err(JsError::type_error("Unknown order type")),
+                };
+
                 responses.push(OrderResponse {
                     id: order.id,
-                    result: Ok(response),
+                    result,
                 });
             }
             interp.fulfill_orders(responses);
@@ -381,15 +400,32 @@ const [user, posts] = await Promise.all([
 ```javascript
 // In the step loop, handle STEP_SUSPENDED status:
 if (result.status === STEP_SUSPENDED()) {
-    const orders = runner.get_pending_orders();
-    // orders = [{ id: 1, payload: { type: "fetch", url: "/api/users/1" } }, ...]
+    const orderIds = runner.get_pending_order_ids();
 
-    const responses = await Promise.all(orders.map(async order => {
-        const data = await realFetch(order.payload.url);
-        return { id: order.id, result: data };
-    }));
+    for (const orderId of orderIds) {
+        // Read payload now (before fulfilling)
+        const payload = runner.get_order_payload(orderId);
 
-    runner.fulfill_orders(responses);
+        // Create an unresolved Promise - enables concurrent execution
+        const promiseHandle = runner.create_promise();
+
+        // Fulfill the order immediately with this Promise
+        runner.set_order_result(orderId, promiseHandle);
+
+        // Schedule async work based on order type - all run concurrently!
+        if (payload.type === "fetch") {
+            fetch(payload.url)
+                .then(r => r.json())
+                .then(data => runner.resolve_promise(promiseHandle, toHandle(data)));
+        } else if (payload.type === "timeout") {
+            setTimeout(() => {
+                runner.resolve_promise(promiseHandle, runner.create_undefined());
+            }, payload.ms);
+        } else {
+            runner.reject_promise(promiseHandle, `Unknown order type: ${payload.type}`);
+        }
+    }
+    runner.commit_fulfillments();
 }
 ```
 

@@ -2193,3 +2193,148 @@ fn test_three_way_race_cancels_two_losers() {
         cancelled
     );
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Documentation Example Pattern Tests
+// These tests demonstrate the patterns shown in README.md and CLAUDE.md:
+// - Multiple order types with type-based dispatch
+// - Returning unresolved Promises for concurrent execution
+// - Error handling for unknown order types
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_concurrent_mixed_order_types() {
+    // Demonstrates the pattern from documentation examples:
+    // 1. Multiple order types (fetch, timeout)
+    // 2. Host checks payload.type to dispatch
+    // 3. Returns unresolved Promises for concurrent execution
+    let mut interp = create_test_interp();
+
+    // Create Promises upfront for concurrent resolution
+    let fetch_promise = api::create_promise(&mut interp);
+    let timeout_promise = api::create_promise(&mut interp);
+
+    let result = run_with_globals(
+        &mut interp,
+        r#"
+        import { order } from "tsrun:host";
+
+        // Issue two orders with different types
+        const fetchPromise = order({ type: "fetch", url: "/api/users" });
+        const timeoutPromise = order({ type: "timeout", ms: 100 });
+
+        // Wait for both concurrently
+        const [data, _] = await Promise.all([fetchPromise, timeoutPromise]);
+        data.name;
+    "#,
+    );
+
+    // First order: fetch
+    let StepResult::Suspended { pending, .. } = result else {
+        panic!("Expected Suspended for fetch order");
+    };
+    assert_eq!(pending.len(), 1);
+
+    // Host checks type to dispatch
+    let payload = pending[0].payload.value();
+    let order_type = get_string_prop(payload, "type");
+    assert_eq!(order_type, Some("fetch".into()));
+
+    // Return unresolved Promise immediately
+    interp.fulfill_orders(vec![OrderResponse {
+        id: pending[0].id,
+        result: Ok(RuntimeValue::unguarded(fetch_promise.value().clone())),
+    }]);
+    let result = run_to_completion(&mut interp).unwrap();
+
+    // Second order: timeout
+    let StepResult::Suspended { pending, .. } = result else {
+        panic!("Expected Suspended for timeout order");
+    };
+    assert_eq!(pending.len(), 1);
+
+    // Host checks type to dispatch
+    let payload = pending[0].payload.value();
+    let order_type = get_string_prop(payload, "type");
+    assert_eq!(order_type, Some("timeout".into()));
+    let ms = get_number_prop(payload, "ms");
+    assert_eq!(ms, Some(100.0));
+
+    // Return unresolved Promise immediately
+    interp.fulfill_orders(vec![OrderResponse {
+        id: pending[0].id,
+        result: Ok(RuntimeValue::unguarded(timeout_promise.value().clone())),
+    }]);
+    let result = run_to_completion(&mut interp).unwrap();
+
+    // Now awaiting Promise.all - host can resolve concurrently
+    let StepResult::Suspended { pending, .. } = result else {
+        panic!("Expected Suspended for Promise.all");
+    };
+    assert!(pending.is_empty());
+
+    // Simulate concurrent resolution (timeout resolves first, then fetch)
+    api::resolve_promise(
+        &mut interp,
+        &timeout_promise,
+        RuntimeValue::unguarded(JsValue::Undefined),
+    )
+    .unwrap();
+
+    let fetch_data = api::create_response_object(&mut interp, &json!({ "name": "Alice" })).unwrap();
+    api::resolve_promise(&mut interp, &fetch_promise, fetch_data).unwrap();
+
+    let result = run_to_completion(&mut interp).unwrap();
+
+    let StepResult::Complete(value) = result else {
+        panic!("Expected Complete");
+    };
+    assert_eq!(*value, JsValue::String("Alice".into()));
+}
+
+#[test]
+fn test_unknown_order_type_rejection() {
+    // Test that unknown order types can be rejected by the host
+    let mut interp = create_test_interp();
+
+    let result = run_with_globals(
+        &mut interp,
+        r#"
+        import { order } from "tsrun:host";
+
+        try {
+            const result = await order({ type: "unknown_type" });
+            "success: " + result;
+        } catch (e) {
+            "error: " + e;
+        }
+    "#,
+    );
+
+    let StepResult::Suspended { pending, .. } = result else {
+        panic!("Expected Suspended");
+    };
+
+    // Host checks type - unknown type, return error
+    let order_type = get_string_prop(pending[0].payload.value(), "type");
+    assert_eq!(order_type, Some("unknown_type".into()));
+
+    // Reject with error for unknown type
+    interp.fulfill_orders(vec![OrderResponse {
+        id: pending[0].id,
+        result: Err(tsrun::JsError::type_error(
+            "Unknown order type: unknown_type",
+        )),
+    }]);
+    let result = run_to_completion(&mut interp).unwrap();
+
+    let StepResult::Complete(value) = result else {
+        panic!("Expected Complete with error");
+    };
+    let result_str = value.as_str().expect("Expected string result");
+    assert!(
+        result_str.contains("Unknown order type"),
+        "Expected error message, got: {}",
+        result_str
+    );
+}
