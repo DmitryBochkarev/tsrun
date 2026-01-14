@@ -229,7 +229,8 @@ fn test_call_depth_with_recursion() {
             r#"
         function recurse(n) {
             if (n <= 0) return 0;
-            return recurse(n - 1);
+            // NOT a tail call - addition after recursive call prevents TCO
+            return 1 + recurse(n - 1);
         }
         recurse(5)
         "#,
@@ -265,7 +266,8 @@ fn test_host_can_enforce_depth_limit() {
         .prepare(
             r#"
         function recurse(n) {
-            return recurse(n + 1);
+            // NOT a tail call - addition prevents TCO, so depth increases
+            return 1 + recurse(n + 1);
         }
         recurse(0)
         "#,
@@ -409,14 +411,15 @@ fn test_call_depth_with_nested_user_functions() {
     interp
         .prepare(
             r#"
+        // NOT tail calls - adding 0 after call prevents TCO, so depth increases
         function level1() {
-            return level2();
+            return 0 + level2();
         }
         function level2() {
-            return level3();
+            return 0 + level3();
         }
         function level3() {
-            return level4();
+            return 0 + level4();
         }
         function level4() {
             return 42;

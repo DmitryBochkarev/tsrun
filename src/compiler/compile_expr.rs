@@ -2044,7 +2044,11 @@ impl Compiler {
             return Ok(());
         }
 
-        // Regular call
+        // Regular call - check for tail call optimization
+        // Save tail position flag and clear it for sub-expression compilation
+        let is_tail_call = self.in_tail_position;
+        self.in_tail_position = false;
+
         let callee_reg = self.builder.alloc_register()?;
         self.compile_expression(&call.callee, callee_reg)?;
 
@@ -2055,7 +2059,12 @@ impl Compiler {
         // Compile arguments
         let (args_start, argc, has_spread) = self.compile_arguments(&call.arguments)?;
 
-        self.emit_call(dst, callee_reg, this_reg, args_start, argc, has_spread);
+        // Use tail call if in tail position (direct function calls only)
+        if is_tail_call {
+            self.emit_tail_call(dst, callee_reg, this_reg, args_start, argc, has_spread);
+        } else {
+            self.emit_call(dst, callee_reg, this_reg, args_start, argc, has_spread);
+        }
 
         self.builder.free_register(this_reg);
         self.builder.free_register(callee_reg);
@@ -2170,6 +2179,38 @@ impl Compiler {
                 argc,
             });
         }
+    }
+
+    /// Emit a TailCall or TailCallSpread opcode for tail call optimization
+    fn emit_tail_call(
+        &mut self,
+        dst: Register,
+        callee: Register,
+        this: Register,
+        args_start: Register,
+        argc: u8,
+        has_spread: bool,
+    ) {
+        if has_spread {
+            self.builder.emit(Op::TailCallSpread {
+                callee,
+                this,
+                args_start,
+                argc,
+            });
+        } else {
+            self.builder.emit(Op::TailCall {
+                callee,
+                this,
+                args_start,
+                argc,
+            });
+        }
+        // TailCall may fall back to regular call at runtime, so store result in dst
+        // The VM will handle this: if tail-optimized, the Return after this is never reached
+        // If not optimized (native function), VM stores result in dst and continues to Return
+        // Note: We emit this as a safety fallback, but for optimized tail calls it's dead code
+        let _ = dst; // dst is used by the caller's following Return instruction
     }
 
     /// Compile a new expression

@@ -1737,3 +1737,185 @@ fn test_call_bind_get_own_property_descriptor() {
         JsValue::Number(1.0)
     );
 }
+
+// ============================================================================
+// Tail Call Optimization Tests
+// ============================================================================
+
+#[test]
+fn test_tco_basic_tail_recursion() {
+    // Basic tail recursion: sum from 1 to n
+    assert_eq!(
+        eval(
+            r#"
+            function sum(n, acc = 0) {
+                if (n <= 0) return acc;
+                return sum(n - 1, acc + n);
+            }
+            sum(100)
+        "#
+        ),
+        JsValue::Number(5050.0)
+    );
+}
+
+#[test]
+fn test_tco_factorial() {
+    // Tail-recursive factorial
+    assert_eq!(
+        eval(
+            r#"
+            function factorial(n, acc = 1) {
+                if (n <= 1) return acc;
+                return factorial(n - 1, n * acc);
+            }
+            factorial(10)
+        "#
+        ),
+        JsValue::Number(3628800.0)
+    );
+}
+
+#[test]
+fn test_tco_mutual_recursion() {
+    // Mutual recursion between two functions
+    assert_eq!(
+        eval(
+            r#"
+            function isEven(n) {
+                if (n === 0) return true;
+                return isOdd(n - 1);
+            }
+            function isOdd(n) {
+                if (n === 0) return false;
+                return isEven(n - 1);
+            }
+            isEven(100)
+        "#
+        ),
+        JsValue::Boolean(true)
+    );
+    assert_eq!(
+        eval(
+            r#"
+            function isEven(n) {
+                if (n === 0) return true;
+                return isOdd(n - 1);
+            }
+            function isOdd(n) {
+                if (n === 0) return false;
+                return isEven(n - 1);
+            }
+            isOdd(99)
+        "#
+        ),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_tco_deep_recursion() {
+    // Deep recursion that would normally overflow the stack
+    // With TCO, this should work fine
+    assert_eq!(
+        eval(
+            r#"
+            function countdown(n) {
+                if (n <= 0) return "done";
+                return countdown(n - 1);
+            }
+            countdown(10000)
+        "#
+        ),
+        JsValue::from("done")
+    );
+}
+
+#[test]
+fn test_non_tail_call_not_optimized() {
+    // This is NOT a tail call because there's work after the recursive call
+    assert_eq!(
+        eval(
+            r#"
+            function factorial(n) {
+                if (n <= 1) return 1;
+                return n * factorial(n - 1);  // NOT tail call - multiplication after
+            }
+            factorial(10)
+        "#
+        ),
+        JsValue::Number(3628800.0)
+    );
+}
+
+#[test]
+fn test_tco_with_closures() {
+    // Tail call should work with closures
+    assert_eq!(
+        eval(
+            r#"
+            function makeCounter() {
+                let count = 0;
+                function loop(n) {
+                    if (n <= 0) return count;
+                    count += 1;
+                    return loop(n - 1);
+                }
+                return loop;
+            }
+            const counter = makeCounter();
+            counter(100)
+        "#
+        ),
+        JsValue::Number(100.0)
+    );
+}
+
+#[test]
+fn test_tco_returns_correct_value() {
+    // Ensure tail call returns the correct value through multiple levels
+    assert_eq!(
+        eval(
+            r#"
+            function a() { return b(); }
+            function b() { return c(); }
+            function c() { return 42; }
+            a()
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+#[test]
+fn test_tco_with_arguments() {
+    // Tail call with multiple arguments
+    assert_eq!(
+        eval(
+            r#"
+            function sum3(a, b, c, acc = 0, n = 10) {
+                if (n <= 0) return acc;
+                return sum3(a, b, c, acc + a + b + c, n - 1);
+            }
+            sum3(1, 2, 3)
+        "#
+        ),
+        JsValue::Number(60.0) // (1+2+3) * 10 = 60
+    );
+}
+
+#[test]
+fn test_tco_native_function_fallback() {
+    // Tail call to a native function should still work (falls back to regular call)
+    assert_eq!(
+        eval(
+            r#"
+            function test() {
+                return Math.abs(-42);
+            }
+            test()
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}

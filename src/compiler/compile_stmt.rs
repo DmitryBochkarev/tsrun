@@ -831,7 +831,22 @@ impl Compiler {
 
         if let Some(argument) = &return_stmt.argument {
             let reg = self.builder.alloc_register()?;
+
+            // Mark as tail position for TCO only if the return argument is a direct call expression
+            // (not a binary expression like `n * f()`, which is NOT a tail call)
+            let is_direct_call = match argument.as_ref() {
+                crate::ast::Expression::Call(_) => true,
+                crate::ast::Expression::Parenthesized(inner, _) => {
+                    matches!(inner.as_ref(), crate::ast::Expression::Call(_))
+                }
+                _ => false,
+            };
+            if is_direct_call && self.tco_eligible && self.try_depth == 0 {
+                self.in_tail_position = true;
+            }
             self.compile_expression(argument, reg)?;
+            self.in_tail_position = false;
+
             self.builder.emit(Op::Return { value: reg });
             self.builder.free_register(reg);
         } else {
@@ -1071,6 +1086,12 @@ impl Compiler {
 
         // Create a new compiler for the function body
         let mut func_compiler = Compiler::new();
+
+        // Disable TCO for generators and async functions
+        // (generators yield mid-function, async functions have implicit promise wrapping)
+        if is_generator || is_async {
+            func_compiler.tco_eligible = false;
+        }
 
         // Propagate source file for stack traces
         func_compiler.source_file = self.source_file.clone();

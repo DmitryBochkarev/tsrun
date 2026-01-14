@@ -354,6 +354,8 @@ impl BytecodeBuilder {
                 | Op::CallSpread { .. }
                 | Op::DirectEval { .. }
                 | Op::CallMethod { .. }
+                | Op::TailCall { .. }
+                | Op::TailCallSpread { .. }
                 | Op::Construct { .. }
                 | Op::ConstructSpread { .. }
                 | Op::Return { .. }

@@ -1342,6 +1342,280 @@ impl BytecodeVM {
         Ok(())
     }
 
+    /// Execute a tail call with frame reuse for bytecode functions.
+    /// For non-bytecode callees (native, proxy, etc.), falls back to regular call behavior.
+    fn execute_tail_call(
+        &mut self,
+        interp: &mut Interpreter,
+        callee: JsValue,
+        this_value: JsValue,
+        args: Vec<JsValue>,
+    ) -> Result<OpResult, JsError> {
+        use crate::value::{
+            BoundFunctionData, BytecodeFunction, ExoticObject, JsFunction, NativeFunction,
+        };
+
+        let func_obj = match &callee {
+            JsValue::Object(obj) => obj.cheap_clone(),
+            _ => return Err(JsError::type_error("Not a function")),
+        };
+
+        // Check if this is a bytecode function - only those can be tail-call optimized
+        // We need to get the function type before matching to avoid borrow issues
+        enum FuncType {
+            Bytecode(BytecodeFunction),
+            Native(NativeFunction),
+            Bound(Box<BoundFunctionData>),
+            FallbackToCall, // For proxy, generators, async, etc.
+            NotAFunction,
+        }
+
+        let func_type = {
+            let obj_ref = func_obj.borrow();
+            match &obj_ref.exotic {
+                ExoticObject::Function(f) => match f {
+                    JsFunction::Bytecode(bc) => FuncType::Bytecode(bc.clone()),
+                    JsFunction::Native(n) => FuncType::Native(n.clone()),
+                    JsFunction::Bound(b) => FuncType::Bound(b.clone()),
+                    _ => FuncType::FallbackToCall,
+                },
+                ExoticObject::Proxy(_) => FuncType::FallbackToCall,
+                _ => FuncType::NotAFunction,
+            }
+        };
+
+        match func_type {
+            FuncType::Bytecode(bc_func) => {
+                // Tail call optimization: replace current frame with called function
+                self.tail_call_bytecode(interp, func_obj, bc_func, this_value, args)?;
+                Ok(OpResult::Continue)
+            }
+            FuncType::Native(native) => {
+                // Native functions: call directly and store result
+                // The following Return instruction will return this value
+                let prev_ffi_id = interp.current_ffi_id;
+                interp.current_ffi_id = native.ffi_id;
+                let result = (native.func)(interp, this_value, &args);
+                interp.current_ffi_id = prev_ffi_id;
+                let result = result?;
+
+                // For native tail calls, store result in register 0 (Return will read it)
+                // Note: This register may not be the actual return_register from the TailCall
+                // instruction, but since TailCall doesn't have a dst, we use the VM's return path
+                if let JsValue::Object(obj) = &result.value {
+                    self.register_guard.guard(obj.cheap_clone());
+                }
+
+                // Return OpResult::Halt with the result - the caller's Return instruction
+                // is never reached, and this value is returned directly
+                Ok(OpResult::Halt(result))
+            }
+            FuncType::Bound(bound) => {
+                // Unwrap bound function and recurse
+                let target = JsValue::Object(bound.target.cheap_clone());
+                let bound_this = bound.this_arg.clone();
+                let mut full_args = bound.bound_args.clone();
+                full_args.extend(args);
+                self.execute_tail_call(interp, target, bound_this, full_args)
+            }
+            FuncType::FallbackToCall => {
+                // Fall back to regular call for proxies, generators, async, etc.
+                let guard = interp.heap.create_guard();
+                callee.guard_by(&guard);
+                this_value.guard_by(&guard);
+                for arg in &args {
+                    arg.guard_by(&guard);
+                }
+                Ok(OpResult::Call {
+                    callee,
+                    this_value,
+                    args,
+                    return_register: 0,
+                    new_target: JsValue::Undefined,
+                    is_super_call: false,
+                    guard,
+                })
+            }
+            FuncType::NotAFunction => Err(JsError::type_error("Not a function")),
+        }
+    }
+
+    /// Perform a tail call to a bytecode function by reusing the current frame.
+    /// This replaces the current VM state without pushing to trampoline_stack.
+    fn tail_call_bytecode(
+        &mut self,
+        interp: &mut Interpreter,
+        func_obj: Gc<JsObject>,
+        bc_func: BytecodeFunction,
+        this_value: JsValue,
+        args: Vec<JsValue>,
+    ) -> Result<(), JsError> {
+        use crate::interpreter::{Binding, VarKey, create_environment_unrooted_with_capacity};
+
+        // Get function info from the chunk
+        let func_info = bc_func.chunk.function_info.as_ref();
+
+        // Update call stack for stack traces (replace current entry, not push)
+        let func_name = func_info
+            .and_then(|info| info.name.as_ref())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "<anonymous>".to_string());
+
+        // Replace the current stack frame instead of pushing a new one
+        if let Some(frame) = interp.call_stack.last_mut() {
+            frame.function_name = func_name;
+            frame.location = None;
+        }
+
+        // Pop current function's environment
+        interp.pop_env_guard();
+
+        // Calculate environment capacity
+        let env_capacity = func_info
+            .map(|info| {
+                if info.binding_count > 0 {
+                    info.binding_count
+                } else {
+                    info.param_count + 4
+                }
+            })
+            .unwrap_or(8);
+
+        // Create new environment for the called function
+        let (func_env, func_guard) = create_environment_unrooted_with_capacity(
+            &interp.heap,
+            Some(bc_func.closure.cheap_clone()),
+            env_capacity,
+        );
+
+        // Bind `this` in the function environment
+        let effective_this = if let Some(captured) = bc_func.captured_this {
+            *captured
+        } else {
+            this_value.clone()
+        };
+
+        {
+            let this_name = interp.intern("this");
+            if let Some(data) = func_env.borrow_mut().as_environment_mut() {
+                data.bindings.insert(
+                    VarKey(this_name),
+                    Binding {
+                        value: effective_this.clone(),
+                        mutable: false,
+                        initialized: true,
+                        import_binding: None,
+                    },
+                );
+            }
+        }
+
+        // Bind `__super__` if present
+        {
+            let super_name = interp.intern("__super__");
+            let super_key = PropertyKey::String(super_name.cheap_clone());
+            if let Some(super_val) = func_obj.borrow().get_property(&super_key)
+                && let Some(data) = func_env.borrow_mut().as_environment_mut()
+            {
+                data.bindings.insert(
+                    VarKey(super_name),
+                    Binding {
+                        value: super_val,
+                        mutable: false,
+                        initialized: true,
+                        import_binding: None,
+                    },
+                );
+            }
+        }
+
+        // Bind `__super_target__` if present
+        {
+            let super_target_name = interp.intern("__super_target__");
+            let super_target_key = PropertyKey::String(super_target_name.cheap_clone());
+            if let Some(super_target_val) = func_obj.borrow().get_property(&super_target_key)
+                && let Some(data) = func_env.borrow_mut().as_environment_mut()
+            {
+                data.bindings.insert(
+                    VarKey(super_target_name),
+                    Binding {
+                        value: super_target_val,
+                        mutable: false,
+                        initialized: true,
+                        import_binding: None,
+                    },
+                );
+            }
+        }
+
+        // Set up new interpreter environment
+        interp.env = func_env;
+        interp.push_env_guard(func_guard);
+
+        // Handle rest parameters
+        let new_guard = interp.heap.create_guard();
+        let (processed_args, new_arguments): (Option<Vec<JsValue>>, Vec<JsValue>) =
+            if let Some(rest_idx) = func_info.and_then(|info| info.rest_param) {
+                let mut result_args = Vec::with_capacity(rest_idx + 1);
+                for i in 0..rest_idx {
+                    result_args.push(args.get(i).cloned().unwrap_or(JsValue::Undefined));
+                }
+                let rest_elements: Vec<JsValue> = args.get(rest_idx..).unwrap_or_default().to_vec();
+                let rest_array = interp.create_array_from(&new_guard, rest_elements);
+                result_args.push(JsValue::Object(rest_array));
+                (Some(result_args), args)
+            } else {
+                (None, args)
+            };
+        let register_args = processed_args.as_ref().unwrap_or(&new_arguments);
+
+        // Guard all values
+        if let JsValue::Object(obj) = &effective_this {
+            new_guard.guard(obj.cheap_clone());
+        }
+        for arg in register_args {
+            if let JsValue::Object(obj) = arg {
+                new_guard.guard(obj.cheap_clone());
+            }
+        }
+
+        // Release old registers and arguments back to pool
+        let old_registers = mem::take(&mut self.registers);
+        self.release_registers(old_registers);
+        let old_arguments = mem::take(&mut self.arguments);
+        self.release_arguments(old_arguments);
+
+        // Create new register file
+        let register_count = bc_func.chunk.register_count as usize;
+        let mut new_registers = self.acquire_registers(register_count);
+        for (i, arg) in register_args.iter().enumerate() {
+            if i < new_registers.len()
+                && let Some(slot) = new_registers.get_mut(i)
+            {
+                *slot = arg.clone();
+            }
+        }
+
+        // Update VM state (no trampoline push!)
+        self.register_guard = new_guard;
+        self.registers = new_registers;
+        self.this_value = effective_this;
+        self.arguments = new_arguments;
+        self.new_target = JsValue::Undefined;
+        self.ip = 0;
+        self.chunk = bc_func.chunk;
+
+        // Clear state that shouldn't carry over
+        self.call_stack.clear();
+        self.try_stack.clear();
+        self.exception_value = None;
+        self.saved_env_stack.clear();
+        self.current_constructor = None;
+        self.pending_completion = None;
+
+        Ok(())
+    }
+
     /// Push current state onto trampoline stack for a construct call
     /// This is like push_trampoline_frame_and_call_bytecode but stores the new_obj
     /// in the frame so it can be used if the constructor doesn't return an object
@@ -2803,6 +3077,47 @@ impl BytecodeVM {
                     is_super_call: false,
                     guard,
                 })
+            }
+
+            Op::TailCall {
+                callee,
+                this,
+                args_start,
+                argc,
+            } => {
+                // Tail call optimization: reuse current frame for bytecode functions
+                let mut args = self.acquire_arguments_vec(argc as usize);
+                for i in 0..argc {
+                    args.push(self.get_reg(args_start + i).clone());
+                }
+                let callee_val = self.get_reg(callee).clone();
+                let this_val = self.get_reg(this).clone();
+
+                self.execute_tail_call(interp, callee_val, this_val, args)
+            }
+
+            Op::TailCallSpread {
+                callee,
+                this,
+                args_start,
+                argc: _,
+            } => {
+                // Tail call with spread arguments
+                let callee_val = self.get_reg(callee).clone();
+                let this_val = self.get_reg(this).clone();
+                let args_val = self.get_reg(args_start).clone();
+
+                let args: Vec<JsValue> = if let JsValue::Object(arr_ref) = &args_val {
+                    if let Some(elems) = arr_ref.borrow().array_elements() {
+                        elems.to_vec()
+                    } else {
+                        Vec::new()
+                    }
+                } else {
+                    Vec::new()
+                };
+
+                self.execute_tail_call(interp, callee_val, this_val, args)
             }
 
             Op::DirectEval { dst, arg } => {

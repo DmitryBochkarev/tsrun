@@ -56,6 +56,12 @@ pub struct Compiler {
 
     /// Source file path for stack traces (propagated to all nested chunks)
     source_file: Option<String>,
+
+    /// Whether currently compiling an expression in tail position (for TCO)
+    in_tail_position: bool,
+
+    /// Whether TCO is allowed in current function (false for generators/async)
+    tco_eligible: bool,
 }
 
 /// Context for a class being compiled (for private field handling)
@@ -108,6 +114,8 @@ impl Compiler {
             next_class_brand: 0,
             track_completion: false,
             source_file: None,
+            in_tail_position: false,
+            tco_eligible: true,
         }
     }
 

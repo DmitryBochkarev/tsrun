@@ -386,6 +386,23 @@ pub enum Op {
         argc: u8,
     },
 
+    /// Tail call: reuse current frame instead of pushing new one
+    /// Used for tail call optimization when a call is directly returned
+    TailCall {
+        callee: Register,
+        this: Register,
+        args_start: Register,
+        argc: u8,
+    },
+
+    /// Tail call with spread arguments
+    TailCallSpread {
+        callee: Register,
+        this: Register,
+        args_start: Register,
+        argc: u8,
+    },
+
     /// Construct: r[dst] = new r[callee](r[args_start..args_start+argc])
     Construct {
         dst: Register,
