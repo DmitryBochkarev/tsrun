@@ -1,6 +1,6 @@
 [package]
 name = "tsrun"
-version = "0.1.13"
+version = "0.1.14"
 edition = "2024"
 description = "A TypeScript interpreter designed for embedding in applications"
 license = "MIT"
