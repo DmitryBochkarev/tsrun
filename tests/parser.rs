@@ -1834,3 +1834,30 @@ fn test_fuzz_slow_unit_833e89a8() {
     // Should either parse or fail fast with an error - not hang
     drop(result);
 }
+
+/// Regression test for fuzz slow-unit: many < characters causing backtracking
+/// See: fuzz/artifacts/fuzz_parser/slow-unit-840ff275771e130db2a4dcbe91e7243d502fb3ed
+#[test]
+fn test_fuzz_slow_unit_840ff275() {
+    use std::time::{Duration, Instant};
+
+    // This input has many < characters that triggered exponential backtracking
+    // in try_parse_call_with_type_args before the lookahead optimization
+    let input = r#"Sc<iaPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPIPPPPP<a<a<a<aabrwnb<$<b<{rnewnr(Uuu3uuuuuuuuuuuuu=uu-uuupb<$<b<{rnewnr(Uuspaticuuuuuuuuu=uuuuuupbrej/uuuuPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP<a<a<a<aabrwnb<$<b<{rnewnr(Uuu3uuuuuuuuuuuuu=uu-uuPPPPPPPPPPPPIPPPPP<a<a<a<aabrwnb<$<b<{rnewnr(Uuu3uuuuuuuuuuuuu=uu-uuupb<$<b<{rnewnr(Uuspaticuuuuuuuuu=uuuuuupbrej/uuuuPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP<a<a<a<aabrwnb<$<b<{rnewnr(Uuu3uuuuuuuuuuuuu=uu-uuupb<$<b<{rnewnr(Uustaticuuuuuuuuu=uuuuuupubliPPPPPPPP.PPPPPPPPPPPPPPPPPPPPPPPTTTTTTTT<a<!s<[aabbr"#;
+
+    let start = Instant::now();
+    let mut dict = tsrun::StringDict::new();
+    let mut parser = tsrun::parser::Parser::new(input, &mut dict);
+    let result = parser.parse_program();
+    let elapsed = start.elapsed();
+
+    // Parsing should complete in under 1 second (was ~14s before fix)
+    assert!(
+        elapsed < Duration::from_secs(1),
+        "Parser took too long: {:?} (expected < 1s)",
+        elapsed
+    );
+
+    // Should either parse or fail fast with an error - not hang
+    drop(result);
+}

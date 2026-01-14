@@ -145,6 +145,85 @@ impl<'a> Parser<'a> {
         has_arrow
     }
 
+    /// Scan ahead to check if `<` is followed by balanced type arguments ending with `>`
+    /// and then immediately followed by `(` for a function call.
+    /// This is O(n) scanning without AST building, used to decide between type arguments
+    /// and comparison operator without backtracking.
+    ///
+    /// Assumes current token is `<` (not yet consumed).
+    fn scan_for_type_args_then_paren(&mut self) -> bool {
+        let checkpoint = self.lexer.checkpoint();
+        let saved_current = self.current.clone();
+        let saved_previous = self.previous.clone();
+
+        // Consume the opening <
+        self.advance();
+        let mut angle_depth = 1;
+        let mut bracket_depth = 0; // Track (), [], {} for balanced nesting
+
+        // Scan through balancing angle brackets
+        while angle_depth > 0 {
+            match &self.current.kind {
+                // Angle brackets for type params
+                TokenKind::Lt => {
+                    angle_depth += 1;
+                    self.advance();
+                }
+                TokenKind::Gt => {
+                    angle_depth -= 1;
+                    self.advance();
+                }
+                // Handle >> and >>> tokens (from nested generics like Map<string, Array<number>>)
+                TokenKind::GtGt => {
+                    if angle_depth >= 2 {
+                        angle_depth -= 2;
+                        self.advance();
+                    } else {
+                        // Invalid nesting
+                        break;
+                    }
+                }
+                TokenKind::GtGtGt => {
+                    if angle_depth >= 3 {
+                        angle_depth -= 3;
+                        self.advance();
+                    } else {
+                        // Invalid nesting
+                        break;
+                    }
+                }
+                // Other brackets - must be balanced within type args
+                TokenKind::LParen | TokenKind::LBracket | TokenKind::LBrace => {
+                    bracket_depth += 1;
+                    self.advance();
+                }
+                TokenKind::RParen | TokenKind::RBracket | TokenKind::RBrace => {
+                    if bracket_depth > 0 {
+                        bracket_depth -= 1;
+                        self.advance();
+                    } else {
+                        // Unbalanced - not valid type arguments
+                        break;
+                    }
+                }
+                // Stop on tokens that can't appear in type arguments
+                TokenKind::Semicolon | TokenKind::Eof => break,
+                // Continue scanning for other tokens (identifiers, commas, colons, etc.)
+                _ => self.advance(),
+            }
+        }
+
+        // Check if we successfully closed all angle brackets and next token is (
+        let result = angle_depth == 0 && bracket_depth == 0 && self.check(&TokenKind::LParen);
+
+        // Restore position
+        self.lexer.restore(checkpoint);
+        self.current = saved_current;
+        self.previous = saved_previous;
+
+        result
+    }
+
     /// Helper to intern a string in the dictionary
     #[inline]
     fn intern(&mut self, s: &str) -> JsString {
@@ -3466,31 +3545,14 @@ impl<'a> Parser<'a> {
         callee: Expression,
         start: Span,
     ) -> Result<Option<Expression>, JsError> {
-        // Save state for backtracking
-        let checkpoint = self.lexer.checkpoint();
-        let saved_current = self.current.clone();
-        let saved_previous = self.previous.clone();
-
-        // Try to parse type arguments
-        let type_args = match self.parse_type_arguments() {
-            Ok(args) => args,
-            Err(_) => {
-                // Not valid type arguments, restore and return None
-                self.lexer.restore(checkpoint);
-                self.current = saved_current;
-                self.previous = saved_previous;
-                return Ok(None);
-            }
-        };
-
-        // Must be followed by ( for a call
-        if !self.check(&TokenKind::LParen) {
-            // Not a call, restore and return None
-            self.lexer.restore(checkpoint);
-            self.current = saved_current;
-            self.previous = saved_previous;
+        // Use O(n) lookahead to check if this is actually type arguments followed by call
+        // This avoids expensive backtracking on malformed input with many < characters
+        if !self.scan_for_type_args_then_paren() {
             return Ok(None);
         }
+
+        // Lookahead confirmed: parse type arguments (should succeed)
+        let type_args = self.parse_type_arguments()?;
 
         // Parse the call arguments (without type args since we already parsed them)
         self.advance(); // consume (
