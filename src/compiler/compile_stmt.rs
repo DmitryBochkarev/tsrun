@@ -841,11 +841,33 @@ impl Compiler {
                 }
                 _ => false,
             };
+
+            // Check for async TCO pattern: `return await directCall()` in async function
+            let is_return_await_direct_call = self.is_async_function
+                && self.try_depth == 0
+                && match argument.as_ref() {
+                    crate::ast::Expression::Await(await_expr) => {
+                        match await_expr.argument.as_ref() {
+                            crate::ast::Expression::Call(_) => true,
+                            crate::ast::Expression::Parenthesized(inner, _) => {
+                                matches!(inner.as_ref(), crate::ast::Expression::Call(_))
+                            }
+                            _ => false,
+                        }
+                    }
+                    _ => false,
+                };
+
             if is_direct_call && self.tco_eligible && self.try_depth == 0 {
                 self.in_tail_position = true;
             }
+            if is_return_await_direct_call {
+                self.in_async_tail_position = true;
+            }
+
             self.compile_expression(argument, reg)?;
             self.in_tail_position = false;
+            self.in_async_tail_position = false;
 
             self.builder.emit(Op::Return { value: reg });
             self.builder.free_register(reg);
@@ -1087,10 +1109,14 @@ impl Compiler {
         // Create a new compiler for the function body
         let mut func_compiler = Compiler::new();
 
-        // Disable TCO for generators and async functions
+        // Disable regular TCO for generators and async functions
         // (generators yield mid-function, async functions have implicit promise wrapping)
+        // But async functions can use async-specific TCO for `return await fn()` pattern
         if is_generator || is_async {
             func_compiler.tco_eligible = false;
+        }
+        if is_async {
+            func_compiler.is_async_function = true;
         }
 
         // Propagate source file for stack traces

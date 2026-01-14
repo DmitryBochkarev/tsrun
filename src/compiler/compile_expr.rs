@@ -2282,16 +2282,91 @@ impl Compiler {
         await_expr: &crate::ast::AwaitExpression,
         dst: Register,
     ) -> Result<(), JsError> {
-        let promise_reg = self.builder.alloc_register()?;
-        self.compile_expression(&await_expr.argument, promise_reg)?;
+        // Check for async TCO: `return await directCall()` pattern
+        let is_async_tail_call = self.in_async_tail_position;
 
-        self.builder.emit(Op::Await {
-            dst,
-            promise: promise_reg,
-        });
+        // Extract call expression if this is an async tail call pattern
+        let call_expr = if is_async_tail_call {
+            match await_expr.argument.as_ref() {
+                crate::ast::Expression::Call(call) => Some(call),
+                crate::ast::Expression::Parenthesized(inner, _) => {
+                    if let crate::ast::Expression::Call(call) = inner.as_ref() {
+                        Some(call)
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            }
+        } else {
+            None
+        };
 
-        self.builder.free_register(promise_reg);
+        if let Some(call) = call_expr {
+            // Async TCO: emit TailCallAwait instead of Call + Await
+            self.in_async_tail_position = false;
+
+            let callee_reg = self.builder.alloc_register()?;
+            self.compile_expression(&call.callee, callee_reg)?;
+
+            // `this` is undefined for regular calls
+            let this_reg = self.builder.alloc_register()?;
+            self.builder.emit(Op::LoadUndefined { dst: this_reg });
+
+            // Compile arguments
+            let (args_start, argc, has_spread) = self.compile_arguments(&call.arguments)?;
+
+            // Emit async tail call
+            self.emit_async_tail_call(dst, callee_reg, this_reg, args_start, argc, has_spread);
+
+            self.builder.free_register(this_reg);
+            self.builder.free_register(callee_reg);
+        } else {
+            // Normal await: compile the argument and emit Await opcode
+            let promise_reg = self.builder.alloc_register()?;
+            self.compile_expression(&await_expr.argument, promise_reg)?;
+
+            self.builder.emit(Op::Await {
+                dst,
+                promise: promise_reg,
+            });
+
+            self.builder.free_register(promise_reg);
+        }
+
         Ok(())
+    }
+
+    /// Emit a TailCallAwait or TailCallAwaitSpread opcode for async tail call optimization
+    fn emit_async_tail_call(
+        &mut self,
+        dst: Register,
+        callee: Register,
+        this: Register,
+        args_start: Register,
+        argc: u8,
+        has_spread: bool,
+    ) {
+        if has_spread {
+            self.builder.emit(Op::TailCallAwaitSpread {
+                dst,
+                callee,
+                this,
+                args_start,
+                argc,
+            });
+        } else {
+            self.builder.emit(Op::TailCallAwait {
+                dst,
+                callee,
+                this,
+                args_start,
+                argc,
+            });
+        }
+        // Similar to TailCall, this may fall back to regular call at runtime.
+        // The VM handles: if tail-optimized, the Return after this is never reached.
+        // If not optimized (native functions), VM stores result in dst and continues to Return.
     }
 
     /// Compile template literal

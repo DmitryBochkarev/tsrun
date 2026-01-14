@@ -1919,3 +1919,151 @@ fn test_tco_native_function_fallback() {
         JsValue::Number(42.0)
     );
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Async Tail Call Optimization Tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_async_tco_basic_recursion() {
+    // Basic async tail recursion: return await directCall()
+    assert_eq!(
+        eval(
+            r#"
+            let result = 0;
+            async function sum(n: number, acc: number = 0): Promise<number> {
+                if (n <= 0) return acc;
+                return await sum(n - 1, acc + n);
+            }
+            sum(100).then(x => { result = x; });
+            result
+        "#
+        ),
+        JsValue::Number(5050.0)
+    );
+}
+
+#[test]
+fn test_async_tco_deep_recursion() {
+    // Deep async recursion that would overflow without TCO
+    assert_eq!(
+        eval(
+            r#"
+            let result = "";
+            async function countdown(n: number): Promise<string> {
+                if (n <= 0) return "done";
+                return await countdown(n - 1);
+            }
+            countdown(10000).then(x => { result = x; });
+            result
+        "#
+        ),
+        JsValue::from("done")
+    );
+}
+
+#[test]
+fn test_async_tco_mutual_recursion() {
+    // Mutual recursion between async functions
+    assert_eq!(
+        eval(
+            r#"
+            let result = false;
+            async function isEven(n: number): Promise<boolean> {
+                if (n === 0) return true;
+                return await isOdd(n - 1);
+            }
+            async function isOdd(n: number): Promise<boolean> {
+                if (n === 0) return false;
+                return await isEven(n - 1);
+            }
+            isEven(1000).then(x => { result = x; });
+            result
+        "#
+        ),
+        JsValue::Boolean(true)
+    );
+}
+
+#[test]
+fn test_async_tco_returns_correct_value() {
+    // Verify tail-called async functions return correct values through the chain
+    assert_eq!(
+        eval(
+            r#"
+            let result = 0;
+            async function a(): Promise<number> {
+                return await b();
+            }
+            async function b(): Promise<number> {
+                return await c();
+            }
+            async function c(): Promise<number> {
+                return 42;
+            }
+            a().then(x => { result = x; });
+            result
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+#[test]
+fn test_async_tco_with_arguments() {
+    // Async TCO with multiple arguments
+    assert_eq!(
+        eval(
+            r#"
+            let result = 0;
+            async function process(a: number, b: number, c: number): Promise<number> {
+                if (a <= 0) return b + c;
+                return await process(a - 1, b + 1, c + 2);
+            }
+            process(10, 0, 0).then(x => { result = x; });
+            result
+        "#
+        ),
+        JsValue::Number(30.0) // 10 + 20 = 30
+    );
+}
+
+#[test]
+fn test_async_tco_calling_sync_function() {
+    // Async function tail-calling a sync function via await
+    assert_eq!(
+        eval(
+            r#"
+            let result = 0;
+            function sync(n: number): number {
+                return n * 2;
+            }
+            async function foo(): Promise<number> {
+                return await sync(21);
+            }
+            foo().then(x => { result = x; });
+            result
+        "#
+        ),
+        JsValue::Number(42.0)
+    );
+}
+
+#[test]
+fn test_async_tco_factorial() {
+    // Tail-recursive async factorial
+    assert_eq!(
+        eval(
+            r#"
+            let result = 0;
+            async function factorial(n: number, acc: number = 1): Promise<number> {
+                if (n <= 1) return acc;
+                return await factorial(n - 1, n * acc);
+            }
+            factorial(10).then(x => { result = x; });
+            result
+        "#
+        ),
+        JsValue::Number(3628800.0)
+    );
+}

@@ -62,6 +62,12 @@ pub struct Compiler {
 
     /// Whether TCO is allowed in current function (false for generators/async)
     tco_eligible: bool,
+
+    /// Whether currently compiling `return await call()` in an async function (for async TCO)
+    in_async_tail_position: bool,
+
+    /// Whether currently compiling an async function body
+    is_async_function: bool,
 }
 
 /// Context for a class being compiled (for private field handling)
@@ -116,6 +122,8 @@ impl Compiler {
             source_file: None,
             in_tail_position: false,
             tco_eligible: true,
+            in_async_tail_position: false,
+            is_async_function: false,
         }
     }
 

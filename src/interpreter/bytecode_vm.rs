@@ -1440,6 +1440,158 @@ impl BytecodeVM {
         }
     }
 
+    /// Execute an async tail call for `return await fn()` pattern.
+    /// Similar to execute_tail_call but for async functions.
+    /// The dst register is used when falling back to non-optimized path (native functions).
+    fn execute_async_tail_call(
+        &mut self,
+        interp: &mut Interpreter,
+        callee: JsValue,
+        this_value: JsValue,
+        args: Vec<JsValue>,
+        dst: Register,
+    ) -> Result<OpResult, JsError> {
+        use crate::value::{
+            BoundFunctionData, BytecodeFunction, ExoticObject, JsFunction, NativeFunction,
+        };
+
+        let func_obj = match &callee {
+            JsValue::Object(obj) => obj.cheap_clone(),
+            _ => return Err(JsError::type_error("Not a function")),
+        };
+
+        enum FuncType {
+            Bytecode(BytecodeFunction),
+            BytecodeAsync(BytecodeFunction),
+            Native(NativeFunction),
+            Bound(Box<BoundFunctionData>),
+            FallbackToCall,
+            NotAFunction,
+        }
+
+        let func_type = {
+            let obj_ref = func_obj.borrow();
+            match &obj_ref.exotic {
+                ExoticObject::Function(f) => match f {
+                    JsFunction::Bytecode(bc) => FuncType::Bytecode(bc.clone()),
+                    JsFunction::BytecodeAsync(bc) => FuncType::BytecodeAsync(bc.clone()),
+                    JsFunction::Native(n) => FuncType::Native(n.clone()),
+                    JsFunction::Bound(b) => FuncType::Bound(b.clone()),
+                    _ => FuncType::FallbackToCall,
+                },
+                ExoticObject::Proxy(_) => FuncType::FallbackToCall,
+                _ => FuncType::NotAFunction,
+            }
+        };
+
+        match func_type {
+            FuncType::Bytecode(bc_func) | FuncType::BytecodeAsync(bc_func) => {
+                // Async tail call optimization: replace current frame with called function
+                // For async functions (BytecodeAsync), we extract the bytecode and run it
+                // in the current frame. The is_async flag from the original trampoline frame
+                // ensures the final result is promise-wrapped correctly.
+                self.tail_call_bytecode(interp, func_obj, bc_func, this_value, args)?;
+                Ok(OpResult::Continue)
+            }
+            FuncType::Native(native) => {
+                // For native functions, we can't tail-call optimize by reusing the frame,
+                // but we can still call directly and handle the result here.
+                // This avoids an extra frame push for the call.
+                use crate::value::{ExoticObject, PromiseStatus};
+
+                let prev_ffi_id = interp.current_ffi_id;
+                interp.current_ffi_id = native.ffi_id;
+                let result = (native.func)(interp, this_value, &args);
+                interp.current_ffi_id = prev_ffi_id;
+                let result = result?;
+
+                // Now we need to "await" the result - handle PendingOrder, Promise, and plain values
+                let result_val = result.value;
+                if let JsValue::Object(obj) = &result_val {
+                    let obj_ref = obj.borrow();
+
+                    // Check for PendingOrder - suspend for host response
+                    if let ExoticObject::PendingOrder { id, .. } = &obj_ref.exotic {
+                        let order_id = crate::OrderId(*id);
+                        drop(obj_ref);
+                        // When suspended, the result will be stored in dst register
+                        // and the Return instruction will return it
+                        return Ok(OpResult::SuspendForOrder {
+                            order_id,
+                            resume_register: dst,
+                        });
+                    }
+
+                    // Check for Promise
+                    if let ExoticObject::Promise(state) = &obj_ref.exotic {
+                        let state_ref = state.borrow();
+                        match state_ref.status {
+                            PromiseStatus::Fulfilled => {
+                                // Extract the resolved value, store in dst, and continue
+                                let val = state_ref.result.clone().unwrap_or(JsValue::Undefined);
+                                drop(state_ref);
+                                drop(obj_ref);
+                                self.set_reg(dst, val);
+                                return Ok(OpResult::Continue);
+                            }
+                            PromiseStatus::Rejected => {
+                                // Throw the rejection reason
+                                let reason = state_ref.result.clone().unwrap_or(JsValue::Undefined);
+                                drop(state_ref);
+                                drop(obj_ref);
+                                let guarded = Guarded::from_value(reason, &interp.heap);
+                                return Err(JsError::thrown(guarded));
+                            }
+                            PromiseStatus::Pending => {
+                                // Suspend and wait for promise resolution
+                                drop(state_ref);
+                                drop(obj_ref);
+                                return Ok(OpResult::Suspend {
+                                    promise: Guarded::from_value(result_val, &interp.heap),
+                                    resume_register: dst,
+                                });
+                            }
+                        }
+                    }
+                }
+
+                // Plain value - store in dst and continue to Return instruction
+                self.set_reg(dst, result_val);
+                Ok(OpResult::Continue)
+            }
+            FuncType::Bound(bound) => {
+                // Unwrap bound function and recurse
+                let target = JsValue::Object(bound.target.cheap_clone());
+                let bound_this = bound.this_arg.clone();
+                let mut full_args = bound.bound_args.clone();
+                full_args.extend(args);
+                self.execute_async_tail_call(interp, target, bound_this, full_args, dst)
+            }
+            FuncType::FallbackToCall => {
+                // Fall back to regular call for proxies, generators, etc.
+                // Note: This won't properly await the result since there's no Await instruction
+                // after TailCallAwait. For proxies and generators, consider using regular
+                // call + await pattern in the source code.
+                let guard = interp.heap.create_guard();
+                callee.guard_by(&guard);
+                this_value.guard_by(&guard);
+                for arg in &args {
+                    arg.guard_by(&guard);
+                }
+                Ok(OpResult::Call {
+                    callee,
+                    this_value,
+                    args,
+                    return_register: dst,
+                    new_target: JsValue::Undefined,
+                    is_super_call: false,
+                    guard,
+                })
+            }
+            FuncType::NotAFunction => Err(JsError::type_error("Not a function")),
+        }
+    }
+
     /// Perform a tail call to a bytecode function by reusing the current frame.
     /// This replaces the current VM state without pushing to trampoline_stack.
     fn tail_call_bytecode(
@@ -3118,6 +3270,49 @@ impl BytecodeVM {
                 };
 
                 self.execute_tail_call(interp, callee_val, this_val, args)
+            }
+
+            Op::TailCallAwait {
+                dst,
+                callee,
+                this,
+                args_start,
+                argc,
+            } => {
+                // Async tail call optimization for `return await fn()` pattern
+                let mut args = self.acquire_arguments_vec(argc as usize);
+                for i in 0..argc {
+                    args.push(self.get_reg(args_start + i).clone());
+                }
+                let callee_val = self.get_reg(callee).clone();
+                let this_val = self.get_reg(this).clone();
+
+                self.execute_async_tail_call(interp, callee_val, this_val, args, dst)
+            }
+
+            Op::TailCallAwaitSpread {
+                dst,
+                callee,
+                this,
+                args_start,
+                argc: _,
+            } => {
+                // Async tail call with spread arguments
+                let callee_val = self.get_reg(callee).clone();
+                let this_val = self.get_reg(this).clone();
+                let args_val = self.get_reg(args_start).clone();
+
+                let args: Vec<JsValue> = if let JsValue::Object(arr_ref) = &args_val {
+                    if let Some(elems) = arr_ref.borrow().array_elements() {
+                        elems.to_vec()
+                    } else {
+                        Vec::new()
+                    }
+                } else {
+                    Vec::new()
+                };
+
+                self.execute_async_tail_call(interp, callee_val, this_val, args, dst)
             }
 
             Op::DirectEval { dst, arg } => {

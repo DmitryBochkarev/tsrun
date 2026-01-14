@@ -356,6 +356,8 @@ impl BytecodeBuilder {
                 | Op::CallMethod { .. }
                 | Op::TailCall { .. }
                 | Op::TailCallSpread { .. }
+                | Op::TailCallAwait { .. }
+                | Op::TailCallAwaitSpread { .. }
                 | Op::Construct { .. }
                 | Op::ConstructSpread { .. }
                 | Op::Return { .. }

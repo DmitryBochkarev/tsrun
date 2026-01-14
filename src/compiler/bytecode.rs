@@ -403,6 +403,26 @@ pub enum Op {
         argc: u8,
     },
 
+    /// Async tail call: reuse current frame for `return await fn()` pattern
+    /// Used for tail call optimization in async functions
+    /// The dst register is used when falling back to non-optimized path (native functions)
+    TailCallAwait {
+        dst: Register,
+        callee: Register,
+        this: Register,
+        args_start: Register,
+        argc: u8,
+    },
+
+    /// Async tail call with spread arguments
+    TailCallAwaitSpread {
+        dst: Register,
+        callee: Register,
+        this: Register,
+        args_start: Register,
+        argc: u8,
+    },
+
     /// Construct: r[dst] = new r[callee](r[args_start..args_start+argc])
     Construct {
         dst: Register,
