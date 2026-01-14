@@ -592,35 +592,25 @@ pub fn string_split(
                     let flags = flags.clone();
                     drop(obj_ref);
 
-                    #[cfg(feature = "regex")]
-                    {
-                        let re = interp.compile_regexp(&pattern, &flags)?;
-                        let split_result = re.split(s.as_str()).map_err(JsError::type_error)?;
-                        let split: Vec<JsValue> = split_result
-                            .into_iter()
-                            .map(|p| JsValue::String(JsString::from(p)))
-                            .collect();
-                        return match limit {
-                            Some(l) => {
-                                let limited: Vec<JsValue> = split.into_iter().take(l).collect();
-                                let guard = interp.heap.create_guard();
-                                let arr = interp.create_array_from(&guard, limited);
-                                Ok(Guarded::with_guard(JsValue::Object(arr), guard))
-                            }
-                            None => {
-                                let guard = interp.heap.create_guard();
-                                let arr = interp.create_array_from(&guard, split);
-                                Ok(Guarded::with_guard(JsValue::Object(arr), guard))
-                            }
-                        };
-                    }
-                    #[cfg(not(feature = "regex"))]
-                    {
-                        let _ = (pattern, flags);
-                        return Err(JsError::type_error(
-                            "RegExp not available (enable 'regex' or 'wasm' feature)",
-                        ));
-                    }
+                    let re = interp.compile_regexp(&pattern, &flags)?;
+                    let split_result = re.split(s.as_str()).map_err(JsError::type_error)?;
+                    let split: Vec<JsValue> = split_result
+                        .into_iter()
+                        .map(|p| JsValue::String(JsString::from(p)))
+                        .collect();
+                    return match limit {
+                        Some(l) => {
+                            let limited: Vec<JsValue> = split.into_iter().take(l).collect();
+                            let guard = interp.heap.create_guard();
+                            let arr = interp.create_array_from(&guard, limited);
+                            Ok(Guarded::with_guard(JsValue::Object(arr), guard))
+                        }
+                        None => {
+                            let guard = interp.heap.create_guard();
+                            let arr = interp.create_array_from(&guard, split);
+                            Ok(Guarded::with_guard(JsValue::Object(arr), guard))
+                        }
+                    };
                 }
             }
 
@@ -701,75 +691,65 @@ pub fn string_replace(
             let flags = flags.clone();
             drop(obj_ref);
 
-            #[cfg(feature = "regex")]
-            {
-                let re = interp.compile_regexp(&pattern, &flags)?;
-                let is_global = flags.contains('g');
+            let re = interp.compile_regexp(&pattern, &flags)?;
+            let is_global = flags.contains('g');
 
-                if is_replacement_function {
-                    // Function replacement - iterate over matches
-                    let mut result = String::new();
-                    let mut last_end = 0;
+            if is_replacement_function {
+                // Function replacement - iterate over matches
+                let mut result = String::new();
+                let mut last_end = 0;
 
-                    let matches = if is_global {
-                        re.find_iter(&s).map_err(JsError::type_error)?
-                    } else {
-                        // Single match
-                        match re.find(&s, 0).map_err(JsError::type_error)? {
-                            Some(m) => vec![m],
-                            None => vec![],
-                        }
-                    };
-
-                    for m in matches {
-                        result.push_str(s.get(last_end..m.start).unwrap_or(""));
-
-                        // Build args: match, capture groups..., index, input
-                        let matched_str = s.get(m.start..m.end).unwrap_or("");
-                        let mut call_args = vec![JsValue::String(JsString::from(matched_str))];
-                        // Add capture groups (skip index 0 which is the full match)
-                        for cap in m.captures.iter().skip(1) {
-                            match cap {
-                                Some((start, end)) => {
-                                    let cap_str = s.get(*start..*end).unwrap_or("");
-                                    call_args.push(JsValue::String(JsString::from(cap_str)));
-                                }
-                                None => call_args.push(JsValue::Undefined),
-                            }
-                        }
-                        call_args.push(JsValue::Number(m.start as f64));
-                        call_args.push(JsValue::String(JsString::from(s.clone())));
-
-                        let replace_result = interp.call_function(
-                            replacement_arg.clone(),
-                            JsValue::Undefined,
-                            &call_args,
-                        )?;
-                        result.push_str(interp.to_js_string(&replace_result.value).as_ref());
-
-                        last_end = m.end;
-                    }
-                    result.push_str(s.get(last_end..).unwrap_or(""));
-                    return Ok(Guarded::unguarded(JsValue::String(JsString::from(result))));
+                let matches = if is_global {
+                    re.find_iter(&s).map_err(JsError::type_error)?
                 } else {
-                    // String replacement - use CompiledRegex replace methods
-                    let replacement_template = interp.to_js_string(&replacement_arg).to_string();
-                    let result = if is_global {
-                        re.replace_all(&s, &replacement_template)
-                            .map_err(JsError::type_error)?
-                    } else {
-                        re.replace(&s, &replacement_template)
-                            .map_err(JsError::type_error)?
-                    };
-                    return Ok(Guarded::unguarded(JsValue::String(JsString::from(result))));
+                    // Single match
+                    match re.find(&s, 0).map_err(JsError::type_error)? {
+                        Some(m) => vec![m],
+                        None => vec![],
+                    }
+                };
+
+                for m in matches {
+                    result.push_str(s.get(last_end..m.start).unwrap_or(""));
+
+                    // Build args: match, capture groups..., index, input
+                    let matched_str = s.get(m.start..m.end).unwrap_or("");
+                    let mut call_args = vec![JsValue::String(JsString::from(matched_str))];
+                    // Add capture groups (skip index 0 which is the full match)
+                    for cap in m.captures.iter().skip(1) {
+                        match cap {
+                            Some((start, end)) => {
+                                let cap_str = s.get(*start..*end).unwrap_or("");
+                                call_args.push(JsValue::String(JsString::from(cap_str)));
+                            }
+                            None => call_args.push(JsValue::Undefined),
+                        }
+                    }
+                    call_args.push(JsValue::Number(m.start as f64));
+                    call_args.push(JsValue::String(JsString::from(s.clone())));
+
+                    let replace_result = interp.call_function(
+                        replacement_arg.clone(),
+                        JsValue::Undefined,
+                        &call_args,
+                    )?;
+                    result.push_str(interp.to_js_string(&replace_result.value).as_ref());
+
+                    last_end = m.end;
                 }
-            }
-            #[cfg(not(feature = "regex"))]
-            {
-                let _ = (pattern, flags);
-                return Err(JsError::type_error(
-                    "RegExp not available (enable 'regex' or 'wasm' feature)",
-                ));
+                result.push_str(s.get(last_end..).unwrap_or(""));
+                return Ok(Guarded::unguarded(JsValue::String(JsString::from(result))));
+            } else {
+                // String replacement - use CompiledRegex replace methods
+                let replacement_template = interp.to_js_string(&replacement_arg).to_string();
+                let result = if is_global {
+                    re.replace_all(&s, &replacement_template)
+                        .map_err(JsError::type_error)?
+                } else {
+                    re.replace(&s, &replacement_template)
+                        .map_err(JsError::type_error)?
+                };
+                return Ok(Guarded::unguarded(JsValue::String(JsString::from(result))));
             }
         }
     }
@@ -1029,20 +1009,6 @@ pub fn string_code_point_at(
 
 /// String.prototype.match(regexp)
 /// Returns an array of matches or null if no match
-#[cfg(not(feature = "regex"))]
-pub fn string_match(
-    _interp: &mut Interpreter,
-    _this: JsValue,
-    _args: &[JsValue],
-) -> Result<Guarded, JsError> {
-    Err(JsError::type_error(
-        "String.prototype.match requires 'regex' or 'wasm' feature",
-    ))
-}
-
-/// String.prototype.match(regexp)
-/// Returns an array of matches or null if no match
-#[cfg(feature = "regex")]
 pub fn string_match(
     interp: &mut Interpreter,
     this: JsValue,
@@ -1135,26 +1101,11 @@ pub fn string_match(
 
 /// String.prototype.matchAll(regexp)
 /// Returns an iterator of all matches (we return an array for simplicity)
-#[cfg(not(feature = "regex"))]
-pub fn string_match_all(
-    _interp: &mut Interpreter,
-    _this: JsValue,
-    _args: &[JsValue],
-) -> Result<Guarded, JsError> {
-    Err(JsError::type_error(
-        "String.prototype.matchAll requires 'regex' feature",
-    ))
-}
-
-/// String.prototype.matchAll(regexp)
-/// Returns an iterator of all matches (we return an array for simplicity)
-#[cfg(feature = "regex")]
 pub fn string_match_all(
     interp: &mut Interpreter,
     this: JsValue,
     args: &[JsValue],
 ) -> Result<Guarded, JsError> {
-    use super::regexp::build_regex;
     use crate::value::ExoticObject;
 
     let s = interp.to_js_string(&this).to_string();
@@ -1187,27 +1138,34 @@ pub fn string_match_all(
         (interp.to_js_string(&arg).to_string(), "g".to_string())
     };
 
-    let re = build_regex(&pattern, &flags)?;
+    let re = interp.compile_regexp(&pattern, &flags)?;
+    let matches = re.find_iter(&s).map_err(JsError::type_error)?;
 
     // Collect all matches with capture groups
     // Use single guard for all match arrays
     let guard = interp.heap.create_guard();
     let mut all_matches = Vec::new();
-    for caps in re.captures_iter(&s).filter_map(|r| r.ok()) {
+
+    for m in matches {
         let mut match_result = Vec::new();
-        for cap in caps.iter() {
+
+        // Build match result from captures
+        for cap in &m.captures {
             match cap {
-                Some(m) => match_result.push(JsValue::String(JsString::from(m.as_str()))),
+                Some((start, end)) => {
+                    let cap_str = s.get(*start..*end).unwrap_or("");
+                    match_result.push(JsValue::String(JsString::from(cap_str)));
+                }
                 None => match_result.push(JsValue::Undefined),
             }
         }
+
         let arr = interp.create_array_from(&guard, match_result);
 
         // Add index property
         let index_key = PropertyKey::String(interp.intern("index"));
-        let match_start = caps.get(0).map(|m| m.start()).unwrap_or(0);
         arr.borrow_mut()
-            .set_property(index_key, JsValue::Number(match_start as f64));
+            .set_property(index_key, JsValue::Number(m.start as f64));
 
         // Add input property
         let input_key = PropertyKey::String(interp.intern("input"));
@@ -1223,20 +1181,6 @@ pub fn string_match_all(
 
 /// String.prototype.search(regexp)
 /// Returns the index of the first match, or -1 if not found
-#[cfg(not(feature = "regex"))]
-pub fn string_search(
-    _interp: &mut Interpreter,
-    _this: JsValue,
-    _args: &[JsValue],
-) -> Result<Guarded, JsError> {
-    Err(JsError::type_error(
-        "String.prototype.search requires 'regex' or 'wasm' feature",
-    ))
-}
-
-/// String.prototype.search(regexp)
-/// Returns the index of the first match, or -1 if not found
-#[cfg(feature = "regex")]
 pub fn string_search(
     interp: &mut Interpreter,
     this: JsValue,
@@ -1305,18 +1249,17 @@ pub fn string_normalize(
     Ok(Guarded::unguarded(JsValue::String(s)))
 }
 
-/// Expand JavaScript replacement string $ patterns (no captures version)
+/// Expand JavaScript replacement string $ patterns for non-regex string replacements
 /// $$ -> $
 /// $& -> matched substring
 /// $` -> portion before match
 /// $' -> portion after match
-#[cfg(not(feature = "regex"))]
 fn expand_replacement_pattern(
     replacement: &str,
     matched: &str,
     before_match: &str,
     after_match: &str,
-    _captures: Option<()>, // Placeholder for API compatibility
+    _captures: Option<()>, // No capture groups for string search
 ) -> String {
     let mut result = String::with_capacity(replacement.len());
     let chars: Vec<char> = replacement.chars().collect();
@@ -1347,101 +1290,6 @@ fn expand_replacement_pattern(
                     i += 1;
                 }
                 _ => {
-                    result.push('$');
-                    i += 1;
-                }
-            }
-        } else {
-            if let Some(&c) = chars.get(i) {
-                result.push(c);
-            }
-            i += 1;
-        }
-    }
-
-    result
-}
-
-/// Expand JavaScript replacement string $ patterns
-/// $$ -> $
-/// $& -> matched substring
-/// $` -> portion before match
-/// $' -> portion after match
-/// $n or $nn -> nth capture group (1-99)
-#[cfg(feature = "regex")]
-fn expand_replacement_pattern(
-    replacement: &str,
-    matched: &str,
-    before_match: &str,
-    after_match: &str,
-    captures: Option<&fancy_regex::Captures>,
-) -> String {
-    let mut result = String::with_capacity(replacement.len());
-    let chars: Vec<char> = replacement.chars().collect();
-    let mut i = 0;
-
-    while i < chars.len() {
-        if chars.get(i) == Some(&'$') && i + 1 < chars.len() {
-            match chars.get(i + 1) {
-                Some('$') => {
-                    // $$ -> literal $
-                    result.push('$');
-                    i += 2;
-                }
-                Some('&') => {
-                    // $& -> matched substring
-                    result.push_str(matched);
-                    i += 2;
-                }
-                Some('`') => {
-                    // $` -> portion before match
-                    result.push_str(before_match);
-                    i += 2;
-                }
-                Some('\'') => {
-                    // $' -> portion after match
-                    result.push_str(after_match);
-                    i += 2;
-                }
-                Some(c) if c.is_ascii_digit() => {
-                    // $n or $nn -> capture group
-                    let first_digit = *c;
-                    let mut group_num = (first_digit as u32 - '0' as u32) as usize;
-                    let mut consumed = 2;
-
-                    // Check for second digit (for $10-$99)
-                    if i + 2 < chars.len()
-                        && let Some(second) = chars.get(i + 2)
-                        && second.is_ascii_digit()
-                    {
-                        let two_digit = group_num * 10 + (*second as u32 - '0' as u32) as usize;
-                        // Only use two-digit if it's a valid group reference
-                        if let Some(caps) = captures
-                            && two_digit <= caps.len().saturating_sub(1)
-                            && two_digit > 0
-                        {
-                            group_num = two_digit;
-                            consumed = 3;
-                        }
-                    }
-
-                    // Get the capture group (group 0 is the whole match, groups are 1-indexed in JS)
-                    if group_num > 0 {
-                        if let Some(caps) = captures
-                            && let Some(m) = caps.get(group_num)
-                        {
-                            result.push_str(m.as_str());
-                        }
-                        // Undefined group -> empty string (nothing to push)
-                    } else {
-                        // $0 is not valid, treat as literal
-                        result.push('$');
-                        result.push(first_digit);
-                    }
-                    i += consumed;
-                }
-                _ => {
-                    // Unknown $ sequence, treat as literal
                     result.push('$');
                     i += 1;
                 }

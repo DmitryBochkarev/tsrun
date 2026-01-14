@@ -2444,18 +2444,11 @@ impl BytecodeVM {
                         (JsValue::String(s.cheap_clone()), None::<Guard<JsObject>>)
                     }
                     Some(Constant::Number(n)) => (JsValue::Number(*n), None::<Guard<JsObject>>),
-                    #[cfg(feature = "regex")]
                     Some(Constant::RegExp { pattern, flags }) => {
                         let guard = interp.heap.create_guard();
                         let obj =
                             interp.create_regexp_literal(&guard, pattern.as_str(), flags.as_str());
                         (JsValue::Object(obj), Some(guard))
-                    }
-                    #[cfg(not(feature = "regex"))]
-                    Some(Constant::RegExp { .. }) => {
-                        return Err(JsError::type_error(
-                            "RegExp not available (enable 'regex' or 'wasm' feature)",
-                        ));
                     }
                     Some(Constant::Chunk(_)) => {
                         return Err(JsError::internal_error("Cannot load chunk as value"));

@@ -674,14 +674,11 @@ impl Interpreter {
             JsValue::Object(object_constructor),
         );
 
-        // Initialize RegExp prototype and constructor (when regex or wasm feature is enabled)
-        #[cfg(feature = "regex")]
-        {
-            builtins::regexp::init_regexp_prototype(self);
-            let regexp_constructor = builtins::regexp::create_regexp_constructor(self);
-            let regexp_name = self.intern("RegExp");
-            self.env_define(regexp_name, JsValue::Object(regexp_constructor), false);
-        }
+        // Initialize RegExp prototype and constructor
+        builtins::regexp::init_regexp_prototype(self);
+        let regexp_constructor = builtins::regexp::create_regexp_constructor(self);
+        let regexp_name = self.intern("RegExp");
+        self.env_define(regexp_name, JsValue::Object(regexp_constructor), false);
 
         // Initialize Number constructor (global Number function)
         let number_constructor = builtins::create_number_constructor(self);
@@ -2269,7 +2266,6 @@ impl Interpreter {
 
     /// Create a RegExp literal object.
     /// Caller provides the guard to control object lifetime.
-    #[cfg(feature = "regex")]
     fn create_regexp_literal(
         &mut self,
         guard: &Guard<JsObject>,
