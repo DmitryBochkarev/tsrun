@@ -47,8 +47,12 @@ use core::alloc::Layout;
 use core::ffi::c_void;
 
 use crate::platform::{ConsoleLevel, ConsoleProvider, RandomProvider, TimeProvider};
+use crate::prelude::Rc;
 
 use crate::ffi::{TsRunContext, console::FfiConsoleProvider};
+
+mod regexp;
+pub use regexp::WasmRegExpProvider;
 
 // ============================================================================
 // Global Allocator and Panic Handler
@@ -93,6 +97,86 @@ unsafe extern "C" {
 
     /// Clear the console.
     fn host_console_clear();
+
+    // ========================================================================
+    // RegExp Host Imports
+    // ========================================================================
+
+    /// Compile a regex pattern with flags.
+    /// Returns a handle (>0) on success, 0 on error.
+    /// On error, error message pointer/length are written to out params.
+    pub fn host_regex_compile(
+        pattern_ptr: *const u8,
+        pattern_len: u32,
+        flags_ptr: *const u8,
+        flags_len: u32,
+        error_ptr_out: *mut u32,
+        error_len_out: *mut u32,
+    ) -> u32;
+
+    /// Free a compiled regex handle.
+    pub fn host_regex_free(handle: u32);
+
+    /// Test if regex matches input string.
+    /// Returns: 1 = match, 0 = no match
+    pub fn host_regex_test(handle: u32, input_ptr: *const u8, input_len: u32) -> i32;
+
+    /// Find a match starting at start_pos (byte offset).
+    /// Returns: 1 = found, 0 = not found
+    /// Out params filled on success:
+    /// - match_start, match_end: byte offsets of full match
+    /// - captures_ptr: pointer to array of i32 pairs (start, end), -1 = non-participating
+    /// - captures_count: number of capture groups (including group 0)
+    /// Caller must free captures via host_free_captures.
+    pub fn host_regex_exec(
+        handle: u32,
+        input_ptr: *const u8,
+        input_len: u32,
+        start_pos: u32,
+        match_start_out: *mut u32,
+        match_end_out: *mut u32,
+        captures_ptr_out: *mut u32,
+        captures_count_out: *mut u32,
+    ) -> i32;
+
+    /// Free captures array allocated by host_regex_exec.
+    pub fn host_free_captures(ptr: u32, count: u32);
+
+    /// Replace matches with replacement string.
+    /// global: 0 = first match only, 1 = all matches
+    /// Returns result string via out params (ptr, len).
+    /// Returns: 1 = success, 0 = error
+    /// Caller must free result via host_free_string.
+    pub fn host_regex_replace(
+        handle: u32,
+        input_ptr: *const u8,
+        input_len: u32,
+        replacement_ptr: *const u8,
+        replacement_len: u32,
+        global: u32,
+        result_ptr_out: *mut u32,
+        result_len_out: *mut u32,
+    ) -> i32;
+
+    /// Split input by regex matches.
+    /// Returns array of string parts via out params:
+    /// - parts_ptr: pointer to array of (ptr: u32, len: u32) pairs
+    /// - parts_count: number of parts
+    /// Returns: 1 = success, 0 = error
+    /// Caller must free each part string and the array via host_free_split_result.
+    pub fn host_regex_split(
+        handle: u32,
+        input_ptr: *const u8,
+        input_len: u32,
+        parts_ptr_out: *mut u32,
+        parts_count_out: *mut u32,
+    ) -> i32;
+
+    /// Free split result: the parts array and all strings within it.
+    pub fn host_free_split_result(parts_ptr: u32, parts_count: u32);
+
+    /// Free a host-allocated string.
+    pub fn host_free_string(ptr: u32, len: u32);
 }
 
 // ============================================================================
@@ -214,6 +298,11 @@ pub extern "C" fn tsrun_wasm_new() -> *mut TsRunContext {
     // For console, we can either use the raw provider or the FFI callback system.
     // Using the raw provider directly for simplicity in WASM context.
     ctx_ref.interp.set_console(Box::new(WasmRawConsoleProvider));
+
+    // Install WASM regex provider that delegates to host's native RegExp
+    ctx_ref
+        .interp
+        .set_regexp_provider(Rc::new(WasmRegExpProvider));
 
     ctx_ptr
 }

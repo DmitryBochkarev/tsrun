@@ -35,6 +35,10 @@ const _consoleBuffer = Symbol('consoleBuffer');
 const _pendingOrders = Symbol('pendingOrders');
 const _importRequests = Symbol('importRequests');
 
+// RegExp handle storage for host-side regex objects
+const regexHandles = new Map();
+let nextRegexHandle = 1;
+
 /**
  * Initialize the tsrun WASM module.
  * @param {string|URL|Request} [wasmPath] - Path to the WASM file (defaults to 'tsrun.wasm')
@@ -95,6 +99,212 @@ export async function init(wasmPath = 'tsrun.wasm') {
             host_console_clear() {
                 if (activeConsoleBuffer) {
                     activeConsoleBuffer.push({ level: 'clear', message: '--- Console cleared ---' });
+                }
+            },
+
+            // ================================================================
+            // RegExp Host Functions
+            // ================================================================
+
+            // Compile a regex pattern with flags
+            host_regex_compile(patternPtr, patternLen, flagsPtr, flagsLen, errorPtrOut, errorLenOut) {
+                const memory = wasmInstance.exports.memory;
+                const pattern = textDecoder.decode(new Uint8Array(memory.buffer, patternPtr, patternLen));
+                const flags = textDecoder.decode(new Uint8Array(memory.buffer, flagsPtr, flagsLen));
+
+                try {
+                    const regex = new RegExp(pattern, flags);
+                    const handle = nextRegexHandle++;
+                    regexHandles.set(handle, { regex, pattern, flags });
+                    return handle;
+                } catch (e) {
+                    // Write error to WASM memory
+                    const errorMsg = textEncoder.encode(e.message);
+                    const errorPtr = wasmInstance.exports.tsrun_alloc(errorMsg.length);
+                    new Uint8Array(memory.buffer, errorPtr, errorMsg.length).set(errorMsg);
+
+                    const view = new DataView(memory.buffer);
+                    view.setUint32(errorPtrOut, errorPtr, true);
+                    view.setUint32(errorLenOut, errorMsg.length, true);
+                    return 0;
+                }
+            },
+
+            // Free a compiled regex handle
+            host_regex_free(handle) {
+                regexHandles.delete(handle);
+            },
+
+            // Test if regex matches input string
+            host_regex_test(handle, inputPtr, inputLen) {
+                const entry = regexHandles.get(handle);
+                if (!entry) return 0;
+
+                const memory = wasmInstance.exports.memory;
+                const input = textDecoder.decode(new Uint8Array(memory.buffer, inputPtr, inputLen));
+
+                // Reset lastIndex for consistent behavior
+                entry.regex.lastIndex = 0;
+                return entry.regex.test(input) ? 1 : 0;
+            },
+
+            // Execute regex and return match info via binary protocol
+            host_regex_exec(handle, inputPtr, inputLen, startPos, matchStartOut, matchEndOut, capturesPtrOut, capturesCountOut) {
+                const entry = regexHandles.get(handle);
+                if (!entry) return 0;
+
+                const memory = wasmInstance.exports.memory;
+                const fullInput = textDecoder.decode(new Uint8Array(memory.buffer, inputPtr, inputLen));
+
+                // Search from startPos
+                const inputFromStart = fullInput.slice(startPos);
+
+                // Create a non-global regex for single match
+                const searchRegex = new RegExp(entry.pattern, entry.flags.replace('g', ''));
+                const match = searchRegex.exec(inputFromStart);
+
+                if (!match) {
+                    return 0; // Not found
+                }
+
+                // Calculate offsets
+                const matchStart = startPos + match.index;
+                const matchEnd = matchStart + match[0].length;
+
+                // Write match start/end
+                let view = new DataView(memory.buffer);
+                view.setUint32(matchStartOut, matchStart, true);
+                view.setUint32(matchEndOut, matchEnd, true);
+
+                // Build captures array: pairs of i32 (start, end), -1 for non-participating
+                const capturesCount = match.length;
+                const capturesBytes = capturesCount * 2 * 4; // pairs of i32
+                const capturesPtr = wasmInstance.exports.tsrun_alloc(capturesBytes);
+
+                view = new DataView(wasmInstance.exports.memory.buffer);
+                for (let i = 0; i < capturesCount; i++) {
+                    const offset = capturesPtr + i * 8;
+                    if (match[i] === undefined) {
+                        view.setInt32(offset, -1, true);
+                        view.setInt32(offset + 4, -1, true);
+                    } else if (i === 0) {
+                        view.setInt32(offset, matchStart, true);
+                        view.setInt32(offset + 4, matchEnd, true);
+                    } else {
+                        // For capture groups, find their position
+                        const groupText = match[i];
+                        const groupIdx = inputFromStart.indexOf(groupText, match.index);
+                        if (groupIdx >= 0) {
+                            view.setInt32(offset, startPos + groupIdx, true);
+                            view.setInt32(offset + 4, startPos + groupIdx + groupText.length, true);
+                        } else {
+                            view.setInt32(offset, -1, true);
+                            view.setInt32(offset + 4, -1, true);
+                        }
+                    }
+                }
+
+                view.setUint32(capturesPtrOut, capturesPtr, true);
+                view.setUint32(capturesCountOut, capturesCount, true);
+
+                return 1; // Found
+            },
+
+            // Free captures array
+            host_free_captures(ptr, count) {
+                if (ptr !== 0 && count > 0) {
+                    wasmInstance.exports.tsrun_dealloc(ptr, count * 2 * 4);
+                }
+            },
+
+            // Replace matches with replacement string
+            host_regex_replace(handle, inputPtr, inputLen, replPtr, replLen, global, resultPtrOut, resultLenOut) {
+                const entry = regexHandles.get(handle);
+                if (!entry) return 0;
+
+                const memory = wasmInstance.exports.memory;
+                const input = textDecoder.decode(new Uint8Array(memory.buffer, inputPtr, inputLen));
+                const replacement = textDecoder.decode(new Uint8Array(memory.buffer, replPtr, replLen));
+
+                // Build regex with correct flags
+                let flags = entry.flags;
+                if (global && !flags.includes('g')) {
+                    flags += 'g';
+                } else if (!global) {
+                    flags = flags.replace('g', '');
+                }
+                const replaceRegex = new RegExp(entry.pattern, flags);
+
+                const result = input.replace(replaceRegex, replacement);
+                const bytes = textEncoder.encode(result);
+                const ptr = wasmInstance.exports.tsrun_alloc(bytes.length);
+                new Uint8Array(wasmInstance.exports.memory.buffer, ptr, bytes.length).set(bytes);
+
+                new DataView(wasmInstance.exports.memory.buffer).setUint32(resultPtrOut, ptr, true);
+                new DataView(wasmInstance.exports.memory.buffer).setUint32(resultLenOut, bytes.length, true);
+                return 1;
+            },
+
+            // Split input by regex matches - returns binary array of (ptr, len) pairs
+            host_regex_split(handle, inputPtr, inputLen, partsPtrOut, partsCountOut) {
+                const entry = regexHandles.get(handle);
+                if (!entry) return 0;
+
+                const memory = wasmInstance.exports.memory;
+                const input = textDecoder.decode(new Uint8Array(memory.buffer, inputPtr, inputLen));
+
+                const parts = input.split(entry.regex);
+                const partsCount = parts.length;
+
+                // Allocate array of (ptr: u32, len: u32) pairs
+                const arrayBytes = partsCount * 2 * 4;
+                const arrayPtr = wasmInstance.exports.tsrun_alloc(arrayBytes);
+
+                let view = new DataView(wasmInstance.exports.memory.buffer);
+
+                // Allocate each string and write to array
+                for (let i = 0; i < partsCount; i++) {
+                    const bytes = textEncoder.encode(parts[i]);
+                    const strPtr = wasmInstance.exports.tsrun_alloc(bytes.length || 1); // At least 1 byte
+                    if (bytes.length > 0) {
+                        new Uint8Array(wasmInstance.exports.memory.buffer, strPtr, bytes.length).set(bytes);
+                    }
+
+                    // Write (ptr, len) pair - get fresh view after each alloc
+                    view = new DataView(wasmInstance.exports.memory.buffer);
+                    view.setUint32(arrayPtr + i * 8, strPtr, true);
+                    view.setUint32(arrayPtr + i * 8 + 4, bytes.length, true);
+                }
+
+                view = new DataView(wasmInstance.exports.memory.buffer);
+                view.setUint32(partsPtrOut, arrayPtr, true);
+                view.setUint32(partsCountOut, partsCount, true);
+                return 1;
+            },
+
+            // Free split result: the parts array and all strings within it
+            host_free_split_result(partsPtr, partsCount) {
+                if (partsPtr === 0 || partsCount === 0) return;
+
+                const view = new DataView(wasmInstance.exports.memory.buffer);
+
+                // Free each string
+                for (let i = 0; i < partsCount; i++) {
+                    const strPtr = view.getUint32(partsPtr + i * 8, true);
+                    const strLen = view.getUint32(partsPtr + i * 8 + 4, true);
+                    if (strPtr !== 0) {
+                        wasmInstance.exports.tsrun_dealloc(strPtr, strLen || 1);
+                    }
+                }
+
+                // Free the array itself
+                wasmInstance.exports.tsrun_dealloc(partsPtr, partsCount * 2 * 4);
+            },
+
+            // Free a host-allocated string
+            host_free_string(ptr, len) {
+                if (ptr !== 0 && len > 0) {
+                    wasmInstance.exports.tsrun_dealloc(ptr, len);
                 }
             }
         }
