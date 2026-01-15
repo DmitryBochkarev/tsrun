@@ -2306,10 +2306,170 @@ impl Compiler {
             // Async TCO: emit TailCallAwait instead of Call + Await
             self.in_async_tail_position = false;
 
+            // Handle super.method() or super[expr]() in async tail position
+            if let Expression::Member(member) = call.callee.as_ref()
+                && matches!(member.object.as_ref(), Expression::Super(_))
+            {
+                match &member.property {
+                    MemberProperty::Identifier(method_name) => {
+                        let method_idx = self.builder.add_string(method_name.name.cheap_clone())?;
+
+                        // Get super.method
+                        let method_reg = self.builder.alloc_register()?;
+                        self.builder.emit(Op::SuperGetConst {
+                            dst: method_reg,
+                            key: method_idx,
+                        });
+
+                        let (args_start, argc, has_spread) =
+                            self.compile_arguments(&call.arguments)?;
+
+                        // Call with `this` as the receiver
+                        let this_reg = self.builder.alloc_register()?;
+                        self.builder.emit(Op::LoadThis { dst: this_reg });
+
+                        self.emit_async_tail_call(
+                            dst, method_reg, this_reg, args_start, argc, has_spread,
+                        );
+
+                        self.builder.free_register(this_reg);
+                        self.builder.free_register(method_reg);
+                        return Ok(());
+                    }
+                    MemberProperty::Expression(key_expr) => {
+                        // Computed super property access: super[name]()
+                        let key_reg = self.builder.alloc_register()?;
+                        self.compile_expression(key_expr, key_reg)?;
+
+                        // Get super[key]
+                        let method_reg = self.builder.alloc_register()?;
+                        self.builder.emit(Op::SuperGet {
+                            dst: method_reg,
+                            key: key_reg,
+                        });
+
+                        let (args_start, argc, has_spread) =
+                            self.compile_arguments(&call.arguments)?;
+
+                        // Call with `this` as the receiver
+                        let this_reg = self.builder.alloc_register()?;
+                        self.builder.emit(Op::LoadThis { dst: this_reg });
+
+                        self.emit_async_tail_call(
+                            dst, method_reg, this_reg, args_start, argc, has_spread,
+                        );
+
+                        self.builder.free_register(this_reg);
+                        self.builder.free_register(method_reg);
+                        self.builder.free_register(key_reg);
+                        return Ok(());
+                    }
+                    MemberProperty::PrivateIdentifier(_) => {
+                        return Err(JsError::syntax_error_simple(
+                            "Private fields not supported on super",
+                        ));
+                    }
+                }
+            }
+
+            // Check if this is a method call (obj.method() or obj[expr]())
+            // If so, we need to preserve `this` binding
+            if let Expression::Member(member) = call.callee.as_ref() {
+                match &member.property {
+                    MemberProperty::Identifier(method_name) => {
+                        // obj.method() pattern
+                        let obj_reg = self.builder.alloc_register()?;
+                        self.compile_expression(&member.object, obj_reg)?;
+
+                        let method_key = self.builder.add_string(method_name.name.cheap_clone())?;
+                        let method_reg = self.builder.alloc_register()?;
+                        self.builder.emit(Op::GetPropertyConst {
+                            dst: method_reg,
+                            obj: obj_reg,
+                            key: method_key,
+                        });
+
+                        let (args_start, argc, has_spread) =
+                            self.compile_arguments(&call.arguments)?;
+
+                        // Call with obj as this
+                        self.emit_async_tail_call(
+                            dst, method_reg, obj_reg, args_start, argc, has_spread,
+                        );
+
+                        self.builder.free_register(method_reg);
+                        self.builder.free_register(obj_reg);
+                        return Ok(());
+                    }
+                    MemberProperty::Expression(key_expr) => {
+                        // obj[expr]() pattern
+                        let obj_reg = self.builder.alloc_register()?;
+                        self.compile_expression(&member.object, obj_reg)?;
+
+                        let key_reg = self.builder.alloc_register()?;
+                        self.compile_expression(key_expr, key_reg)?;
+
+                        let method_reg = self.builder.alloc_register()?;
+                        self.builder.emit(Op::GetProperty {
+                            dst: method_reg,
+                            obj: obj_reg,
+                            key: key_reg,
+                        });
+
+                        let (args_start, argc, has_spread) =
+                            self.compile_arguments(&call.arguments)?;
+
+                        // Call with obj as this
+                        self.emit_async_tail_call(
+                            dst, method_reg, obj_reg, args_start, argc, has_spread,
+                        );
+
+                        self.builder.free_register(method_reg);
+                        self.builder.free_register(key_reg);
+                        self.builder.free_register(obj_reg);
+                        return Ok(());
+                    }
+                    MemberProperty::PrivateIdentifier(id) => {
+                        // obj.#method() pattern
+                        let (class_brand, _info) =
+                            self.lookup_private_member(&id.name).ok_or_else(|| {
+                                JsError::syntax_error_simple(format!(
+                                    "Private method '{}' must be declared in an enclosing class",
+                                    id.name
+                                ))
+                            })?;
+
+                        let obj_reg = self.builder.alloc_register()?;
+                        self.compile_expression(&member.object, obj_reg)?;
+
+                        let field_name_idx = self.builder.add_string(id.name.cheap_clone())?;
+                        let method_reg = self.builder.alloc_register()?;
+                        self.builder.emit(Op::GetPrivateField {
+                            dst: method_reg,
+                            obj: obj_reg,
+                            class_brand,
+                            field_name: field_name_idx,
+                        });
+
+                        let (args_start, argc, has_spread) =
+                            self.compile_arguments(&call.arguments)?;
+
+                        // Call with obj as this
+                        self.emit_async_tail_call(
+                            dst, method_reg, obj_reg, args_start, argc, has_spread,
+                        );
+
+                        self.builder.free_register(method_reg);
+                        self.builder.free_register(obj_reg);
+                        return Ok(());
+                    }
+                }
+            }
+
+            // Regular function call (not method call) - this is undefined
             let callee_reg = self.builder.alloc_register()?;
             self.compile_expression(&call.callee, callee_reg)?;
 
-            // `this` is undefined for regular calls
             let this_reg = self.builder.alloc_register()?;
             self.builder.emit(Op::LoadUndefined { dst: this_reg });
 

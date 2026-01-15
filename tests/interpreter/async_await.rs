@@ -803,3 +803,126 @@ fn test_async_nested_promise() {
     );
     assert_eq!(result, JsValue::Number(100.0));
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Return await with .then() - regression tests for tail call optimization
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_return_await_then_with_intermediate_variable() {
+    // This pattern works: assign to variable, then return
+    let result = eval(
+        r#"
+        async function process(): Promise<string> {
+            let r = await Promise.resolve("hello").then(s => s.toUpperCase());
+            return r;
+        }
+        await process()
+    "#,
+    );
+    assert_eq!(result, JsValue::String("HELLO".into()));
+}
+
+#[test]
+fn test_return_await_then_direct() {
+    // This pattern should also work: return await expr.then(...)
+    let result = eval(
+        r#"
+        async function process(): Promise<string> {
+            return await Promise.resolve("hello").then(s => s.toUpperCase());
+        }
+        await process()
+    "#,
+    );
+    assert_eq!(result, JsValue::String("HELLO".into()));
+}
+
+#[test]
+fn test_return_await_then_chain() {
+    // Multiple .then() calls in chain
+    let result = eval(
+        r#"
+        async function process(): Promise<number> {
+            return await Promise.resolve(5)
+                .then(n => n * 2)
+                .then(n => n + 1);
+        }
+        await process()
+    "#,
+    );
+    assert_eq!(result, JsValue::Number(11.0));
+}
+
+#[test]
+fn test_return_await_then_with_method_chain() {
+    // Simulating a real-world pattern like exec().then(o => o.stdout.trim())
+    let result = eval(
+        r#"
+        async function exec(): Promise<{ stdout: string }> {
+            return { stdout: "  hello world  " };
+        }
+
+        async function du(): Promise<string> {
+            return await exec().then(o => o.stdout.trim());
+        }
+        await du()
+    "#,
+    );
+    assert_eq!(result, JsValue::String("hello world".into()));
+}
+
+#[test]
+fn test_return_await_then_with_method_chain_intermediate() {
+    // Same pattern with intermediate variable (should work)
+    let result = eval(
+        r#"
+        async function exec(): Promise<{ stdout: string }> {
+            return { stdout: "  hello world  " };
+        }
+
+        async function du(): Promise<string> {
+            let r = await exec().then(o => o.stdout.trim());
+            return r;
+        }
+        await du()
+    "#,
+    );
+    assert_eq!(result, JsValue::String("hello world".into()));
+}
+
+#[test]
+fn test_return_await_then_with_replace() {
+    // Pattern from user's bug report: exec().then(o => o.stdout.replace(...).trim())
+    let result = eval(
+        r#"
+        async function exec(): Promise<{ stdout: string }> {
+            return { stdout: "100K\ttarget/release" };
+        }
+
+        async function du(): Promise<string> {
+            return await exec().then(o => o.stdout.replace(/\s+/g, ' ').trim());
+        }
+        await du()
+    "#,
+    );
+    assert_eq!(result, JsValue::String("100K target/release".into()));
+}
+
+#[test]
+fn test_return_await_then_with_replace_intermediate() {
+    // Same pattern with intermediate variable
+    let result = eval(
+        r#"
+        async function exec(): Promise<{ stdout: string }> {
+            return { stdout: "100K\ttarget/release" };
+        }
+
+        async function du(): Promise<string> {
+            let r = await exec().then(o => o.stdout.replace(/\s+/g, ' ').trim());
+            return r;
+        }
+        await du()
+    "#,
+    );
+    assert_eq!(result, JsValue::String("100K target/release".into()));
+}
