@@ -590,6 +590,60 @@ pub fn as_object(value: &JsValue) -> Option<Gc<JsObject>> {
     value.as_object().map(|o| o.cheap_clone())
 }
 
+/// Get the parameter names of a function.
+///
+/// Returns `Some(vec)` containing parameter names for bytecode functions
+/// (compiled from TypeScript/JavaScript source). Returns `None` for:
+/// - Native functions (Rust callbacks don't have named parameters)
+/// - Non-function values
+/// - Functions without debug info
+///
+/// For bound functions, returns the parameter names of the target function.
+pub fn get_function_param_names(func: &JsValue) -> Option<Vec<String>> {
+    let obj = func.as_object()?;
+    let borrowed = obj.borrow();
+
+    match &borrowed.exotic {
+        value::ExoticObject::Function(js_func) => get_param_names_from_js_function(js_func),
+        _ => None,
+    }
+}
+
+fn get_param_names_from_js_function(js_func: &value::JsFunction) -> Option<Vec<String>> {
+    match js_func {
+        value::JsFunction::Bytecode(bc)
+        | value::JsFunction::BytecodeGenerator(bc)
+        | value::JsFunction::BytecodeAsync(bc)
+        | value::JsFunction::BytecodeAsyncGenerator(bc) => bc
+            .chunk
+            .function_info
+            .as_ref()
+            .map(|info| info.param_names.iter().map(|s| s.to_string()).collect()),
+
+        value::JsFunction::Bound(bound_data) => {
+            let target_borrowed = bound_data.target.borrow();
+            if let value::ExoticObject::Function(target_func) = &target_borrowed.exotic {
+                get_param_names_from_js_function(target_func)
+            } else {
+                None
+            }
+        }
+
+        // All other function types don't have named parameters
+        value::JsFunction::Native(_)
+        | value::JsFunction::PromiseResolve(_)
+        | value::JsFunction::PromiseReject(_)
+        | value::JsFunction::PromiseAllFulfill { .. }
+        | value::JsFunction::PromiseAllReject(_)
+        | value::JsFunction::PromiseRaceSettle { .. }
+        | value::JsFunction::AccessorGetter
+        | value::JsFunction::AccessorSetter
+        | value::JsFunction::ModuleExportGetter { .. }
+        | value::JsFunction::ModuleReExportGetter { .. }
+        | value::JsFunction::ProxyRevoke(_) => None,
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // Module Export Access
 // ═══════════════════════════════════════════════════════════════════════════════

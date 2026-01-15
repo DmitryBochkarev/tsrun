@@ -2373,3 +2373,283 @@ fn test_prepare_call_interleaved_sync_and_async() {
         _ => panic!("Expected Complete"),
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Function Parameter Name Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_get_function_param_names_regular() {
+    let mut runtime = create_test_runtime();
+    let result = run(
+        &mut runtime,
+        "function add(a, b, c) { return a + b + c; } add",
+        None,
+    )
+    .unwrap();
+
+    if let StepResult::Complete(rv) = result {
+        let params = api::get_function_param_names(rv.value());
+        assert_eq!(
+            params,
+            Some(vec!["a".to_string(), "b".to_string(), "c".to_string()])
+        );
+    } else {
+        panic!("Expected Complete");
+    }
+}
+
+#[test]
+fn test_get_function_param_names_arrow() {
+    let mut runtime = create_test_runtime();
+    let result = run(&mut runtime, "const fn = (x, y) => x + y; fn", None).unwrap();
+
+    if let StepResult::Complete(rv) = result {
+        let params = api::get_function_param_names(rv.value());
+        assert_eq!(params, Some(vec!["x".to_string(), "y".to_string()]));
+    } else {
+        panic!("Expected Complete");
+    }
+}
+
+#[test]
+fn test_get_function_param_names_no_params() {
+    let mut runtime = create_test_runtime();
+    let result = run(
+        &mut runtime,
+        "function noArgs() { return 42; } noArgs",
+        None,
+    )
+    .unwrap();
+
+    if let StepResult::Complete(rv) = result {
+        let params = api::get_function_param_names(rv.value());
+        assert_eq!(params, Some(vec![]));
+    } else {
+        panic!("Expected Complete");
+    }
+}
+
+#[test]
+fn test_get_function_param_names_async() {
+    let mut runtime = create_test_runtime();
+    let result = run(
+        &mut runtime,
+        "async function fetch(url, options) { return url; } fetch",
+        None,
+    )
+    .unwrap();
+
+    if let StepResult::Complete(rv) = result {
+        let params = api::get_function_param_names(rv.value());
+        assert_eq!(params, Some(vec!["url".to_string(), "options".to_string()]));
+    } else {
+        panic!("Expected Complete");
+    }
+}
+
+#[test]
+fn test_get_function_param_names_generator() {
+    let mut runtime = create_test_runtime();
+    let result = run(
+        &mut runtime,
+        "function* gen(start, end) { yield start; } gen",
+        None,
+    )
+    .unwrap();
+
+    if let StepResult::Complete(rv) = result {
+        let params = api::get_function_param_names(rv.value());
+        assert_eq!(params, Some(vec!["start".to_string(), "end".to_string()]));
+    } else {
+        panic!("Expected Complete");
+    }
+}
+
+#[test]
+fn test_get_function_param_names_async_generator() {
+    let mut runtime = create_test_runtime();
+    let result = run(
+        &mut runtime,
+        "async function* asyncGen(items) { for (const item of items) yield item; } asyncGen",
+        None,
+    )
+    .unwrap();
+
+    if let StepResult::Complete(rv) = result {
+        let params = api::get_function_param_names(rv.value());
+        assert_eq!(params, Some(vec!["items".to_string()]));
+    } else {
+        panic!("Expected Complete");
+    }
+}
+
+#[test]
+fn test_get_function_param_names_native() {
+    let mut runtime = create_test_runtime();
+    // Array.prototype.push is a native function
+    let result = run(&mut runtime, "[].push", None).unwrap();
+
+    if let StepResult::Complete(rv) = result {
+        let params = api::get_function_param_names(rv.value());
+        assert_eq!(params, None);
+    } else {
+        panic!("Expected Complete");
+    }
+}
+
+#[test]
+fn test_get_function_param_names_bound() {
+    let mut runtime = create_test_runtime();
+    let result = run(
+        &mut runtime,
+        "function greet(name, greeting) { return greeting + ' ' + name; } greet.bind(null, 'World')",
+        None,
+    )
+    .unwrap();
+
+    if let StepResult::Complete(rv) = result {
+        // Bound function should still return the original function's param names
+        let params = api::get_function_param_names(rv.value());
+        assert_eq!(
+            params,
+            Some(vec!["name".to_string(), "greeting".to_string()])
+        );
+    } else {
+        panic!("Expected Complete");
+    }
+}
+
+#[test]
+fn test_get_function_param_names_non_function() {
+    // Non-function values should return None
+    let num = JsValue::from(42);
+    assert_eq!(api::get_function_param_names(&num), None);
+
+    let s = JsValue::from("hello");
+    assert_eq!(api::get_function_param_names(&s), None);
+
+    assert_eq!(api::get_function_param_names(&JsValue::Null), None);
+    assert_eq!(api::get_function_param_names(&JsValue::Undefined), None);
+}
+
+#[test]
+fn test_get_function_param_names_non_function_object() {
+    let mut runtime = create_test_runtime();
+    let guard = api::create_guard(&runtime);
+    let obj = api::create_from_json(&mut runtime, &guard, &serde_json::json!({"x": 1})).unwrap();
+
+    // Regular object is not a function
+    assert_eq!(api::get_function_param_names(&obj), None);
+}
+
+#[test]
+fn test_get_function_param_names_typescript_types() {
+    let mut runtime = create_test_runtime();
+    // TypeScript type annotations should be stripped, only names remain
+    let result = run(
+        &mut runtime,
+        "function typed(name: string, age: number, active: boolean): string { return name; } typed",
+        None,
+    )
+    .unwrap();
+
+    if let StepResult::Complete(rv) = result {
+        let params = api::get_function_param_names(rv.value());
+        assert_eq!(
+            params,
+            Some(vec![
+                "name".to_string(),
+                "age".to_string(),
+                "active".to_string()
+            ])
+        );
+    } else {
+        panic!("Expected Complete");
+    }
+}
+
+#[test]
+fn test_get_function_param_names_default_params() {
+    let mut runtime = create_test_runtime();
+    let result = run(
+        &mut runtime,
+        "function withDefaults(a, b = 10, c = 'hello') { return a; } withDefaults",
+        None,
+    )
+    .unwrap();
+
+    if let StepResult::Complete(rv) = result {
+        let params = api::get_function_param_names(rv.value());
+        assert_eq!(
+            params,
+            Some(vec!["a".to_string(), "b".to_string(), "c".to_string()])
+        );
+    } else {
+        panic!("Expected Complete");
+    }
+}
+
+#[test]
+fn test_get_function_param_names_rest_param() {
+    let mut runtime = create_test_runtime();
+    let result = run(
+        &mut runtime,
+        "function withRest(first, ...rest) { return first; } withRest",
+        None,
+    )
+    .unwrap();
+
+    if let StepResult::Complete(rv) = result {
+        let params = api::get_function_param_names(rv.value());
+        assert_eq!(params, Some(vec!["first".to_string(), "rest".to_string()]));
+    } else {
+        panic!("Expected Complete");
+    }
+}
+
+#[test]
+fn test_get_function_param_names_class_method() {
+    let mut runtime = create_test_runtime();
+    let result = run(
+        &mut runtime,
+        r#"
+        class Calculator {
+            add(a, b) { return a + b; }
+        }
+        const calc = new Calculator();
+        calc.add
+        "#,
+        None,
+    )
+    .unwrap();
+
+    if let StepResult::Complete(rv) = result {
+        let params = api::get_function_param_names(rv.value());
+        assert_eq!(params, Some(vec!["a".to_string(), "b".to_string()]));
+    } else {
+        panic!("Expected Complete");
+    }
+}
+
+#[test]
+fn test_get_function_param_names_exported_function() {
+    let mut runtime = create_test_runtime();
+    run(
+        &mut runtime,
+        r#"
+        export function processData(input: string, options: object): string {
+            return input;
+        }
+        "#,
+        Some("/main.ts"),
+    )
+    .unwrap();
+
+    let func = api::get_export(&runtime, "processData").unwrap();
+    let params = api::get_function_param_names(&func);
+    assert_eq!(
+        params,
+        Some(vec!["input".to_string(), "options".to_string()])
+    );
+}
