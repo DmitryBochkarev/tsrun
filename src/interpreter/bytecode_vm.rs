@@ -2463,6 +2463,14 @@ impl BytecodeVM {
                             "Cannot load excluded keys as value",
                         ));
                     }
+                    Some(Constant::JsValue(val)) => {
+                        // For JsValue constants, we need to guard objects
+                        let value = val.clone();
+                        if let Some(obj) = value.as_object() {
+                            self.register_guard.guard(obj.cheap_clone());
+                        }
+                        (value, None::<Guard<JsObject>>)
+                    }
                     None => return Err(JsError::internal_error("Invalid constant index")),
                 };
                 self.set_reg(dst, value);

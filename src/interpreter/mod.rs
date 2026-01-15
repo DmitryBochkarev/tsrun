@@ -1430,6 +1430,17 @@ impl Interpreter {
         Ok(StepResult::Continue)
     }
 
+    /// Set the active VM for step-based execution.
+    ///
+    /// This is used by `api::prepare_call` to set up the interpreter for
+    /// executing a function call via the step loop.
+    pub(crate) fn set_active_vm(&mut self, vm: bytecode_vm::BytecodeVM) {
+        self.active_vm = Some(Box::new(vm));
+        self.active_module_path = None;
+        self.active_saved_env = None;
+        self.active_module_env = None;
+    }
+
     /// Process any pending module sources that are ready to execute.
     /// This executes modules in dependency order until all are executed
     /// or some still have missing imports.

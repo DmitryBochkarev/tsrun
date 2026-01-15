@@ -1,7 +1,7 @@
 //! Tests for the public API ergonomics
 
-use super::{create_test_runtime, run};
-use tsrun::{JsValue, StepResult, api};
+use super::{create_test_runtime, run, run_to_completion};
+use tsrun::{JsValue, OrderResponse, StepResult, api};
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // JsValue Type Check Tests
@@ -1852,6 +1852,524 @@ fn test_get_export_live_binding() {
             let counter = api::get_export(&runtime, "counter");
             assert_eq!(counter.unwrap().as_number(), Some(2.0));
         }
+        _ => panic!("Expected Complete"),
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// prepare_call Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_prepare_call_sync_function() {
+    let mut runtime = create_test_runtime();
+
+    // First, load a module with an exported function
+    run(
+        &mut runtime,
+        r#"
+        export function add(a: number, b: number): number {
+            return a + b;
+        }
+    "#,
+        Some("/main.ts"),
+    )
+    .unwrap();
+
+    // Get the exported function
+    let add_fn = api::get_export(&runtime, "add").unwrap();
+
+    // Prepare to call the function
+    api::prepare_call(
+        &mut runtime,
+        &add_fn,
+        None,
+        &[JsValue::from(10), JsValue::from(20)],
+    )
+    .unwrap();
+
+    // Run to completion
+    let result = run_to_completion(&mut runtime).unwrap();
+
+    match result {
+        StepResult::Complete(rv) => {
+            assert_eq!(rv.as_number(), Some(30.0));
+        }
+        _ => panic!("Expected Complete, got {:?}", result),
+    }
+}
+
+#[test]
+fn test_prepare_call_async_function() {
+    let mut runtime = create_test_runtime();
+
+    // Load a module with an async function
+    run(
+        &mut runtime,
+        r#"
+        export async function greet(name: string): Promise<string> {
+            return `Hello, ${name}!`;
+        }
+    "#,
+        Some("/main.ts"),
+    )
+    .unwrap();
+
+    // Get the exported function
+    let greet_fn = api::get_export(&runtime, "greet").unwrap();
+
+    // Prepare to call the function
+    api::prepare_call(&mut runtime, &greet_fn, None, &[JsValue::from("World")]).unwrap();
+
+    // Run to completion - should await the Promise automatically
+    let result = run_to_completion(&mut runtime).unwrap();
+
+    match result {
+        StepResult::Complete(rv) => {
+            assert_eq!(rv.as_str(), Some("Hello, World!"));
+        }
+        _ => panic!("Expected Complete, got {:?}", result),
+    }
+}
+
+#[test]
+fn test_prepare_call_with_this() {
+    let mut runtime = create_test_runtime();
+
+    // Load a module with a function that uses `this`
+    run(
+        &mut runtime,
+        r#"
+        export function getValue(): number {
+            return this.value;
+        }
+    "#,
+        Some("/main.ts"),
+    )
+    .unwrap();
+
+    let guard = api::create_guard(&runtime);
+
+    // Get the exported function
+    let get_value_fn = api::get_export(&runtime, "getValue").unwrap();
+
+    // Create an object to use as `this`
+    let this_obj =
+        api::create_from_json(&mut runtime, &guard, &serde_json::json!({"value": 42})).unwrap();
+
+    // Prepare to call the function with explicit `this`
+    api::prepare_call(&mut runtime, &get_value_fn, Some(&this_obj), &[]).unwrap();
+
+    // Run to completion
+    let result = run_to_completion(&mut runtime).unwrap();
+
+    match result {
+        StepResult::Complete(rv) => {
+            assert_eq!(rv.as_number(), Some(42.0));
+        }
+        _ => panic!("Expected Complete, got {:?}", result),
+    }
+}
+
+#[test]
+fn test_prepare_call_error_not_callable() {
+    let mut runtime = create_test_runtime();
+
+    // A non-callable value
+    let num = JsValue::from(42);
+
+    // Should return an error
+    let result = api::prepare_call(&mut runtime, &num, None, &[]);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_prepare_call_thrown_error() {
+    let mut runtime = create_test_runtime();
+
+    // Load a module with a function that throws
+    run(
+        &mut runtime,
+        r#"
+        export function throwError(): void {
+            throw new Error("Test error");
+        }
+    "#,
+        Some("/main.ts"),
+    )
+    .unwrap();
+
+    // Get the exported function
+    let throw_fn = api::get_export(&runtime, "throwError").unwrap();
+
+    // Prepare to call the function
+    api::prepare_call(&mut runtime, &throw_fn, None, &[]).unwrap();
+
+    // Run to completion - should propagate the error
+    let result = run_to_completion(&mut runtime);
+
+    assert!(result.is_err());
+    let error = result.unwrap_err();
+    assert!(format!("{:?}", error).contains("Test error"));
+}
+
+#[test]
+fn test_prepare_call_with_orders() {
+    use tsrun::{InterpreterConfig, create_eval_internal_module};
+
+    // Create an interpreter with the host module for orders
+    let config = InterpreterConfig {
+        internal_modules: vec![create_eval_internal_module()],
+        ..Default::default()
+    };
+    let mut runtime = tsrun::Interpreter::with_config(config);
+
+    // Set aggressive GC for testing
+    let gc_threshold = std::env::var("GC_THRESHOLD")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(1);
+    runtime.set_gc_threshold(gc_threshold);
+
+    // Load a module with an async function that uses orders
+    run(
+        &mut runtime,
+        r#"
+        import { order } from "tsrun:host";
+
+        export async function fetchData(url: string): Promise<string> {
+            const result = await order({ type: "fetch", url });
+            return result.data;
+        }
+    "#,
+        Some("/main.ts"),
+    )
+    .unwrap();
+
+    // Get the exported function
+    let fetch_fn = api::get_export(&runtime, "fetchData").unwrap();
+
+    // Prepare to call the function
+    api::prepare_call(&mut runtime, &fetch_fn, None, &[JsValue::from("/api")]).unwrap();
+
+    // Run until suspended
+    loop {
+        match runtime.step().unwrap() {
+            StepResult::Continue => continue,
+            StepResult::Suspended { pending, .. } => {
+                assert_eq!(pending.len(), 1);
+
+                // Verify the order payload
+                let payload = &pending[0].payload;
+                assert!(payload.is_object());
+
+                // Fulfill with mock response
+                let response = api::create_response_object(
+                    &mut runtime,
+                    &serde_json::json!({"data": "fetched"}),
+                )
+                .unwrap();
+                runtime.fulfill_orders(vec![OrderResponse {
+                    id: pending[0].id,
+                    result: Ok(response),
+                }]);
+            }
+            StepResult::Complete(rv) => {
+                assert_eq!(rv.as_str(), Some("fetched"));
+                break;
+            }
+            other => panic!("Unexpected step result: {:?}", other),
+        }
+    }
+}
+
+#[test]
+fn test_prepare_call_multiple_args() {
+    let mut runtime = create_test_runtime();
+
+    // Load a module with a function that takes many arguments
+    run(
+        &mut runtime,
+        r#"
+        export function sum(a: number, b: number, c: number, d: number): number {
+            return a + b + c + d;
+        }
+    "#,
+        Some("/main.ts"),
+    )
+    .unwrap();
+
+    // Get the exported function
+    let sum_fn = api::get_export(&runtime, "sum").unwrap();
+
+    // Prepare to call the function with 4 arguments
+    api::prepare_call(
+        &mut runtime,
+        &sum_fn,
+        None,
+        &[
+            JsValue::from(1),
+            JsValue::from(2),
+            JsValue::from(3),
+            JsValue::from(4),
+        ],
+    )
+    .unwrap();
+
+    // Run to completion
+    let result = run_to_completion(&mut runtime).unwrap();
+
+    match result {
+        StepResult::Complete(rv) => {
+            assert_eq!(rv.as_number(), Some(10.0));
+        }
+        _ => panic!("Expected Complete, got {:?}", result),
+    }
+}
+
+#[test]
+fn test_prepare_call_no_args() {
+    let mut runtime = create_test_runtime();
+
+    // Load a module with a function that takes no arguments
+    run(
+        &mut runtime,
+        r#"
+        export function getConstant(): number {
+            return 42;
+        }
+    "#,
+        Some("/main.ts"),
+    )
+    .unwrap();
+
+    // Get the exported function
+    let get_constant_fn = api::get_export(&runtime, "getConstant").unwrap();
+
+    // Prepare to call the function with no arguments
+    api::prepare_call(&mut runtime, &get_constant_fn, None, &[]).unwrap();
+
+    // Run to completion
+    let result = run_to_completion(&mut runtime).unwrap();
+
+    match result {
+        StepResult::Complete(rv) => {
+            assert_eq!(rv.as_number(), Some(42.0));
+        }
+        _ => panic!("Expected Complete, got {:?}", result),
+    }
+}
+
+#[test]
+fn test_prepare_call_same_function_multiple_times() {
+    let mut runtime = create_test_runtime();
+
+    // Load a module with a function that increments a counter
+    run(
+        &mut runtime,
+        r#"
+        let counter = 0;
+        export function increment(): number {
+            counter += 1;
+            return counter;
+        }
+    "#,
+        Some("/main.ts"),
+    )
+    .unwrap();
+
+    // Get the exported function
+    let increment_fn = api::get_export(&runtime, "increment").unwrap();
+
+    // Call the function multiple times
+    for expected in 1..=5 {
+        api::prepare_call(&mut runtime, &increment_fn, None, &[]).unwrap();
+
+        let result = run_to_completion(&mut runtime).unwrap();
+
+        match result {
+            StepResult::Complete(rv) => {
+                assert_eq!(rv.as_number(), Some(expected as f64));
+            }
+            _ => panic!("Expected Complete, got {:?}", result),
+        }
+    }
+}
+
+#[test]
+fn test_prepare_call_different_functions() {
+    let mut runtime = create_test_runtime();
+
+    // Load a module with multiple functions
+    run(
+        &mut runtime,
+        r#"
+        export function add(a: number, b: number): number {
+            return a + b;
+        }
+
+        export function multiply(a: number, b: number): number {
+            return a * b;
+        }
+
+        export function greet(name: string): string {
+            return `Hello, ${name}!`;
+        }
+    "#,
+        Some("/main.ts"),
+    )
+    .unwrap();
+
+    // Get the exported functions
+    let add_fn = api::get_export(&runtime, "add").unwrap();
+    let multiply_fn = api::get_export(&runtime, "multiply").unwrap();
+    let greet_fn = api::get_export(&runtime, "greet").unwrap();
+
+    // Call add
+    api::prepare_call(
+        &mut runtime,
+        &add_fn,
+        None,
+        &[JsValue::from(10), JsValue::from(20)],
+    )
+    .unwrap();
+    let result = run_to_completion(&mut runtime).unwrap();
+    match result {
+        StepResult::Complete(rv) => assert_eq!(rv.as_number(), Some(30.0)),
+        _ => panic!("Expected Complete"),
+    }
+
+    // Call multiply
+    api::prepare_call(
+        &mut runtime,
+        &multiply_fn,
+        None,
+        &[JsValue::from(5), JsValue::from(6)],
+    )
+    .unwrap();
+    let result = run_to_completion(&mut runtime).unwrap();
+    match result {
+        StepResult::Complete(rv) => assert_eq!(rv.as_number(), Some(30.0)),
+        _ => panic!("Expected Complete"),
+    }
+
+    // Call greet
+    api::prepare_call(&mut runtime, &greet_fn, None, &[JsValue::from("World")]).unwrap();
+    let result = run_to_completion(&mut runtime).unwrap();
+    match result {
+        StepResult::Complete(rv) => assert_eq!(rv.as_str(), Some("Hello, World!")),
+        _ => panic!("Expected Complete"),
+    }
+
+    // Call add again with different args
+    api::prepare_call(
+        &mut runtime,
+        &add_fn,
+        None,
+        &[JsValue::from(100), JsValue::from(200)],
+    )
+    .unwrap();
+    let result = run_to_completion(&mut runtime).unwrap();
+    match result {
+        StepResult::Complete(rv) => assert_eq!(rv.as_number(), Some(300.0)),
+        _ => panic!("Expected Complete"),
+    }
+}
+
+#[test]
+fn test_prepare_call_async_functions_multiple_times() {
+    let mut runtime = create_test_runtime();
+
+    // Load a module with an async function
+    run(
+        &mut runtime,
+        r#"
+        let callCount = 0;
+        export async function asyncIncrement(): Promise<number> {
+            callCount += 1;
+            return callCount;
+        }
+    "#,
+        Some("/main.ts"),
+    )
+    .unwrap();
+
+    // Get the exported function
+    let async_fn = api::get_export(&runtime, "asyncIncrement").unwrap();
+
+    // Call the async function multiple times
+    for expected in 1..=3 {
+        api::prepare_call(&mut runtime, &async_fn, None, &[]).unwrap();
+
+        let result = run_to_completion(&mut runtime).unwrap();
+
+        match result {
+            StepResult::Complete(rv) => {
+                assert_eq!(rv.as_number(), Some(expected as f64));
+            }
+            _ => panic!("Expected Complete, got {:?}", result),
+        }
+    }
+}
+
+#[test]
+fn test_prepare_call_interleaved_sync_and_async() {
+    let mut runtime = create_test_runtime();
+
+    // Load a module with both sync and async functions
+    run(
+        &mut runtime,
+        r#"
+        let counter = 0;
+
+        export function syncAdd(x: number): number {
+            counter += x;
+            return counter;
+        }
+
+        export async function asyncAdd(x: number): Promise<number> {
+            counter += x;
+            return counter;
+        }
+    "#,
+        Some("/main.ts"),
+    )
+    .unwrap();
+
+    // Get the exported functions
+    let sync_fn = api::get_export(&runtime, "syncAdd").unwrap();
+    let async_fn = api::get_export(&runtime, "asyncAdd").unwrap();
+
+    // Interleave sync and async calls
+    // sync: counter = 0 + 1 = 1
+    api::prepare_call(&mut runtime, &sync_fn, None, &[JsValue::from(1)]).unwrap();
+    let result = run_to_completion(&mut runtime).unwrap();
+    match result {
+        StepResult::Complete(rv) => assert_eq!(rv.as_number(), Some(1.0)),
+        _ => panic!("Expected Complete"),
+    }
+
+    // async: counter = 1 + 10 = 11
+    api::prepare_call(&mut runtime, &async_fn, None, &[JsValue::from(10)]).unwrap();
+    let result = run_to_completion(&mut runtime).unwrap();
+    match result {
+        StepResult::Complete(rv) => assert_eq!(rv.as_number(), Some(11.0)),
+        _ => panic!("Expected Complete"),
+    }
+
+    // sync: counter = 11 + 100 = 111
+    api::prepare_call(&mut runtime, &sync_fn, None, &[JsValue::from(100)]).unwrap();
+    let result = run_to_completion(&mut runtime).unwrap();
+    match result {
+        StepResult::Complete(rv) => assert_eq!(rv.as_number(), Some(111.0)),
+        _ => panic!("Expected Complete"),
+    }
+
+    // async: counter = 111 + 1000 = 1111
+    api::prepare_call(&mut runtime, &async_fn, None, &[JsValue::from(1000)]).unwrap();
+    let result = run_to_completion(&mut runtime).unwrap();
+    match result {
+        StepResult::Complete(rv) => assert_eq!(rv.as_number(), Some(1111.0)),
         _ => panic!("Expected Complete"),
     }
 }

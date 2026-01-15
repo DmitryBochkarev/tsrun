@@ -5,7 +5,7 @@
 
 use crate::lexer::Span;
 use crate::prelude::*;
-use crate::value::JsString;
+use crate::value::{JsString, JsValue};
 
 /// Virtual register index (0-255)
 pub type Register = u8;
@@ -935,6 +935,10 @@ pub enum Constant {
 
     /// List of keys to exclude in object rest destructuring
     ExcludedKeys(Vec<JsString>),
+
+    /// Arbitrary JsValue (used by prepare_call for runtime values)
+    /// This allows storing function references and arguments in the constant pool.
+    JsValue(JsValue),
 }
 
 /// Function metadata

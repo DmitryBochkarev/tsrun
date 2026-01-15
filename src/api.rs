@@ -797,3 +797,132 @@ pub fn reject_promise(
 
     Ok(())
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Step-Based Function Calls
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Prepare to call a function, setting up the interpreter for step-based execution.
+///
+/// After calling this function, use `interp.step()` in a loop to execute the call.
+/// For async functions or functions returning Promises, the await is handled
+/// automatically - `StepResult::Suspended` will be returned for orders.
+///
+/// # Arguments
+/// * `interp` - The interpreter instance
+/// * `func` - The function to call (must be callable)
+/// * `this` - Optional `this` binding (defaults to undefined)
+/// * `args` - Arguments to pass to the function
+///
+/// # Returns
+/// `Ok(())` if preparation succeeded, `Err` if the value is not callable.
+///
+/// # Example
+/// ```
+/// use tsrun::{Interpreter, StepResult, api, JsValue};
+///
+/// let mut interp = Interpreter::new();
+/// interp.prepare("export function add(a, b) { return a + b; }", Some("/main.ts".into())).unwrap();
+///
+/// // Run to load module
+/// loop {
+///     match interp.step().unwrap() {
+///         StepResult::Continue => continue,
+///         StepResult::Complete(_) | StepResult::Done => break,
+///         _ => panic!("unexpected"),
+///     }
+/// }
+///
+/// // Get exported function
+/// let add_fn = api::get_export(&interp, "add").unwrap();
+///
+/// // Prepare to call it
+/// api::prepare_call(&mut interp, &add_fn, None, &[JsValue::from(10), JsValue::from(20)]).unwrap();
+///
+/// // Run to completion
+/// let result = loop {
+///     match interp.step().unwrap() {
+///         StepResult::Continue => continue,
+///         StepResult::Complete(v) => break v,
+///         _ => panic!("unexpected"),
+///     }
+/// };
+///
+/// assert_eq!(result.as_number(), Some(30.0));
+/// ```
+pub fn prepare_call(
+    interp: &mut Interpreter,
+    func: &JsValue,
+    this: Option<&JsValue>,
+    args: &[JsValue],
+) -> Result<(), JsError> {
+    use crate::compiler::{BytecodeChunk, Constant, Op};
+    use crate::interpreter::bytecode_vm::BytecodeVM;
+    use crate::prelude::Rc;
+
+    if !func.is_callable() {
+        return Err(JsError::type_error("Value is not callable"));
+    }
+
+    // Build constants: [func, this, arg0, arg1, ...]
+    let mut constants = Vec::with_capacity(2 + args.len());
+    constants.push(Constant::JsValue(func.clone())); // idx 0: function
+    constants.push(Constant::JsValue(
+        this.cloned().unwrap_or(JsValue::Undefined),
+    )); // idx 1: this
+
+    for arg in args {
+        constants.push(Constant::JsValue(arg.clone()));
+    }
+
+    // Build bytecode:
+    // R0 = func, R1 = this, R2..R(2+n-1) = args
+    // R_result = call(R0, R1, R2, n)
+    // R_result = await R_result
+    // return R_result
+    let mut code = Vec::new();
+    let result_reg = (2 + args.len()) as u8;
+
+    // Load func → R0
+    code.push(Op::LoadConst { dst: 0, idx: 0 });
+    // Load this → R1
+    code.push(Op::LoadConst { dst: 1, idx: 1 });
+    // Load args → R2, R3, ...
+    for (i, _) in args.iter().enumerate() {
+        code.push(Op::LoadConst {
+            dst: (2 + i) as u8,
+            idx: (2 + i) as u16,
+        });
+    }
+    // Call the function
+    code.push(Op::Call {
+        dst: result_reg,
+        callee: 0,
+        this: 1,
+        args_start: 2,
+        argc: args.len() as u8,
+    });
+    // Await the result (handles both Promise and non-Promise values)
+    code.push(Op::Await {
+        dst: result_reg,
+        promise: result_reg,
+    });
+    // Return the result
+    code.push(Op::Return { value: result_reg });
+
+    let chunk = BytecodeChunk {
+        code,
+        constants,
+        source_map: vec![],
+        register_count: result_reg + 1,
+        function_info: None,
+        source_file: Some("<prepare_call>".to_string()),
+    };
+
+    // Create VM and set as active
+    let guard = interp.heap.create_guard();
+    let vm = BytecodeVM::with_guard(Rc::new(chunk), JsValue::Undefined, guard);
+    interp.set_active_vm(vm);
+
+    Ok(())
+}
