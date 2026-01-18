@@ -36,7 +36,7 @@ cd examples/wasm-playground && ./build.sh --test             # Build and run pla
 | `src/lib.rs` | Public API - `Interpreter`, `InterpreterConfig` |
 | `src/api.rs` | High-level API for stepping execution |
 | `src/lexer.rs` | Tokenizer |
-| `src/parser.rs` | Recursive descent + Pratt parsing |
+| `src/parser.rs` | **REWRITE IN PROGRESS** - Non-recursive stack-based parser (see `my/new_parser.md`) |
 | `src/ast.rs` | AST node types |
 | `src/value.rs` | Runtime values, object model |
 | `src/gc.rs` | Garbage collector, Guard system, Heap |
@@ -65,11 +65,12 @@ cd examples/wasm-playground && ./build.sh --test             # Build and run pla
 
 ### TDD Workflow
 
-1. **Verify parser support** - write parser test first, implement if needed
-2. Write failing interpreter test
-3. Implement minimal code to pass
-4. Refactor while keeping tests green
-5. Run `cargo test && cargo fmt && cargo clippy` before committing
+1. Write failing test in `tests/parser.rs` or `tests/interpreter/`
+2. Implement minimal code to pass
+3. Refactor while keeping tests green
+4. Run `cargo test && cargo fmt && cargo clippy` before committing
+
+**Note:** The parser is currently being rewritten to be fully non-recursive (stack-based). See `my/new_parser.md` for the implementation plan.
 
 ## Code Safety
 
@@ -341,7 +342,6 @@ let result = interp.call_function(
 | `tests/compiler.rs` | Compiler integration tests |
 | `tests/parser.rs` | Parser integration tests |
 | `tests/lexer.rs` | Lexer integration tests |
-| `src/parser.rs` (bottom) | Parser unit tests |
 | `src/value.rs` (bottom) | Value type unit tests |
 
 Each test file uses the shared `eval()` helper:
