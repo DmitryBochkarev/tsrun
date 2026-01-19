@@ -4446,7 +4446,7 @@ impl<'src> Parser<'src> {
     /// Parse function parameters: (a: T, b: U, c?: V)
     fn parse_function_params(&mut self) -> Result<Vec<FunctionParam>, JsError> {
         let mut params = Vec::new();
-        let mut seen_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut seen_names: crate::prelude::FxHashSet<JsString> = crate::prelude::FxHashSet::default();
 
         while !self.check(&TokenKind::RParen) && !self.check(&TokenKind::Eof) {
             let param_span = self.current.span;
@@ -4504,8 +4504,7 @@ impl<'src> Parser<'src> {
                     ));
                 }
                 // Check for duplicate parameter names (strict mode)
-                let name_string = name_str.to_string();
-                if seen_names.contains(&name_string) {
+                if seen_names.contains(&name) {
                     return Err(JsError::syntax_error(
                         format!(
                             "Duplicate parameter name '{}' not allowed in strict mode",
@@ -4515,7 +4514,7 @@ impl<'src> Parser<'src> {
                         span.column,
                     ));
                 }
-                seen_names.insert(name_string);
+                seen_names.insert(name.cheap_clone());
                 Pattern::Identifier(Identifier { name, span })
             } else if self.check(&TokenKind::LBrace) || self.check(&TokenKind::LBracket) {
                 // Destructuring pattern in function parameter: function foo({ a, b }) { }
@@ -6543,7 +6542,7 @@ impl<'src> Parser<'src> {
 
     fn parse_arrow_params_or_expression(&mut self) -> Result<Vec<FunctionParam>, JsError> {
         let mut params = Vec::new();
-        let mut seen_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut seen_names: crate::prelude::FxHashSet<JsString> = crate::prelude::FxHashSet::default();
 
         while !self.check(&TokenKind::RParen) && !self.check(&TokenKind::Eof) {
             let param_span = self.current.span;
@@ -6574,8 +6573,7 @@ impl<'src> Parser<'src> {
                         ));
                     }
                     // Check for duplicate parameter names (strict mode)
-                    let name_string = name_str.to_string();
-                    if seen_names.contains(&name_string) {
+                    if seen_names.contains(&name) {
                         return Err(JsError::syntax_error(
                             format!(
                                 "Duplicate parameter name '{}' not allowed in strict mode",
@@ -6585,7 +6583,7 @@ impl<'src> Parser<'src> {
                             span.column,
                         ));
                     }
-                    seen_names.insert(name_string);
+                    seen_names.insert(name.cheap_clone());
 
                     Pattern::Identifier(Identifier { name, span })
                 }
