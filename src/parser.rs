@@ -5,7 +5,7 @@
 use crate::ast::{
     Argument, ArrayElement, ArrayExpression, ArrayType, ArrowFunctionBody, ArrowFunctionExpression,
     AssignmentExpression, AssignmentOp, AssignmentTarget, AwaitExpression, BinaryExpression, BinaryOp, BlockStatement,
-    BreakStatement, CallExpression, CatchClause, ClassBody, ClassConstructor, ClassDeclaration,
+    BreakStatement, CallExpression, CatchClause, ClassBody, ClassConstructor, ClassDeclaration, ClassExpression,
     ClassMember, ClassMethod, ClassProperty, ContinueStatement, ConditionalExpression,
     Decorator, DoWhileStatement, EnumDeclaration, EnumMember, Expression, ExportDeclaration,
     ExportSpecifier, ExpressionStatement, ForInOfLeft, ForInStatement, ForInit, ForOfStatement,
@@ -47,6 +47,7 @@ enum Work {
     ParseVariableInit {
         kind: VariableKind,
         id: Pattern,
+        type_annotation: Option<Box<TypeAnnotation>>,
         id_span: Span,
         start_span: Span,
         statements: Vec<Statement>,
@@ -68,6 +69,10 @@ enum ParseResult {
 // ============================================================================
 
 /// Trampoline-style parser that avoids recursion
+/// Maximum nesting depth for expressions
+/// Keep this low enough to prevent stack overflow in recursive parsing
+const MAX_NESTING_DEPTH: usize = 50;
+
 pub struct Parser<'src> {
     lexer: Lexer<'src>,
     current: Token,
@@ -75,6 +80,8 @@ pub struct Parser<'src> {
     results: Vec<ParseResult>,
     /// The final program, set when parsing completes
     program: Option<Program>,
+    /// Current expression nesting depth
+    depth: usize,
 }
 
 impl<'src> Parser<'src> {
@@ -88,7 +95,27 @@ impl<'src> Parser<'src> {
             work: Vec::new(),
             results: Vec::new(),
             program: None,
+            depth: 0,
         }
+    }
+
+    /// Increment nesting depth, return error if exceeded
+    fn enter_nesting(&mut self) -> Result<(), JsError> {
+        self.depth += 1;
+        if self.depth > MAX_NESTING_DEPTH {
+            Err(JsError::syntax_error(
+                "Maximum nesting depth exceeded",
+                self.current.span.line,
+                self.current.span.column,
+            ))
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Decrement nesting depth
+    fn exit_nesting(&mut self) {
+        self.depth = self.depth.saturating_sub(1);
     }
 
     /// Parse the source code into a Program AST
@@ -121,10 +148,11 @@ impl<'src> Parser<'src> {
             Work::ParseVariableInit {
                 kind,
                 id,
+                type_annotation,
                 id_span,
                 start_span,
                 statements,
-            } => self.step_parse_variable_init(kind, id, id_span, start_span, statements),
+            } => self.step_parse_variable_init(kind, id, type_annotation, id_span, start_span, statements),
         }
     }
 
@@ -407,9 +435,35 @@ impl<'src> Parser<'src> {
         Ok(())
     }
 
-    /// Skip type members inside an object type: { a: T; b: U }
+    /// Skip type members inside an object type: { a: T; b: U } or index signatures { [key: T]: U }
     fn skip_type_members(&mut self) -> Result<(), JsError> {
         while !self.check(&TokenKind::RBrace) && !self.check(&TokenKind::Eof) {
+            // Check for index signature: [key: T]: U
+            if self.check(&TokenKind::LBracket) {
+                self.advance(); // consume '['
+                // Skip to matching ']'
+                let mut depth = 1;
+                while depth > 0 && !self.check(&TokenKind::Eof) {
+                    if self.check(&TokenKind::LBracket) {
+                        depth += 1;
+                    } else if self.check(&TokenKind::RBracket) {
+                        depth -= 1;
+                    }
+                    self.advance();
+                }
+                // Skip ':'
+                if self.check(&TokenKind::Colon) {
+                    self.advance();
+                }
+                // Skip value type
+                self.skip_type_annotation()?;
+                // Skip semicolon if present
+                if self.check(&TokenKind::Semicolon) || self.check(&TokenKind::Comma) {
+                    self.advance();
+                }
+                continue;
+            }
+
             // Skip property key (identifier or string)
             match &self.current.kind {
                 TokenKind::Identifier(_) | TokenKind::String(_) => {
@@ -570,55 +624,59 @@ impl<'src> Parser<'src> {
         start_span: Span,
         statements: Vec<Statement>,
     ) -> Result<(), JsError> {
-        // Expect identifier (including contextual keywords like module, namespace)
-        let (name, id_span) = self.expect_identifier().map_err(|_| {
-            JsError::syntax_error(
-                "Expected identifier in variable declaration",
-                self.current.span.line,
-                self.current.span.column,
-            )
-        })?;
+        let mut declarations = Vec::new();
 
-        let id = Pattern::Identifier(Identifier { name, span: id_span });
+        loop {
+            let id_span = self.current.span;
 
-        // Skip type annotation if present (: type)
-        if self.eat(&TokenKind::Colon) {
-            // For now, just skip the type - consume identifier
-            self.skip_type_annotation()?;
-        }
+            // Parse binding pattern (identifier, array destructuring, or object destructuring)
+            let id = self.parse_binding_pattern()?;
 
-        // Check for initializer
-        if self.eat(&TokenKind::Eq) {
-            // Need to parse expression
-            self.work.push(Work::ParseVariableInit {
-                kind,
-                id,
-                id_span,
-                start_span,
-                statements,
-            });
-        } else {
-            // No initializer - handle semicolon and continue
-            self.eat(&TokenKind::Semicolon);
-            let decl = VariableDeclaration {
-                kind,
-                declarations: Rc::from([VariableDeclarator {
-                    id,
-                    type_annotation: None,
-                    init: None,
-                    span: id_span,
-                }]),
-                span: Span::new(
-                    start_span.start,
-                    self.current.span.start,
-                    start_span.line,
-                    start_span.column,
-                ),
+            // Parse type annotation if present (: type)
+            let type_annotation = if self.eat(&TokenKind::Colon) {
+                Some(Box::new(self.parse_type_annotation()?))
+            } else {
+                None
             };
-            let mut statements = statements;
-            statements.push(Statement::VariableDeclaration(decl));
-            self.work.push(Work::ParseStatements { statements });
+
+            // Check for initializer
+            let init = if self.eat(&TokenKind::Eq) {
+                Some(Rc::new(self.parse_expression()?))
+            } else {
+                None
+            };
+
+            declarations.push(VariableDeclarator {
+                id,
+                type_annotation,
+                init,
+                span: id_span,
+            });
+
+            // Check for more declarators
+            if self.check(&TokenKind::Comma) {
+                self.advance();
+            } else {
+                break;
+            }
         }
+
+        // Handle semicolon and continue
+        self.eat(&TokenKind::Semicolon);
+        let decl = VariableDeclaration {
+            kind,
+            declarations: Rc::from(declarations),
+            span: Span::new(
+                start_span.start,
+                self.current.span.start,
+                start_span.line,
+                start_span.column,
+            ),
+        };
+        let mut statements = statements;
+        statements.push(Statement::VariableDeclaration(decl));
+        self.work.push(Work::ParseStatements { statements });
+
         Ok(())
     }
 
@@ -627,6 +685,7 @@ impl<'src> Parser<'src> {
         &mut self,
         kind: VariableKind,
         id: Pattern,
+        type_annotation: Option<Box<TypeAnnotation>>,
         id_span: Span,
         start_span: Span,
         statements: Vec<Statement>,
@@ -643,7 +702,7 @@ impl<'src> Parser<'src> {
             kind,
             declarations: Rc::from([VariableDeclarator {
                 id,
-                type_annotation: None,
+                type_annotation,
                 init: Some(Rc::new(init)),
                 span: Span::new(id_span.start, end_span.start, id_span.line, id_span.column),
             }]),
@@ -718,8 +777,169 @@ impl<'src> Parser<'src> {
         match expr {
             Expression::Identifier(id) => Ok(AssignmentTarget::Identifier(id.clone())),
             Expression::Member(m) => Ok(AssignmentTarget::Member((**m).clone())),
+            // Array destructuring: [a, b] = ...
+            Expression::Array(arr) => {
+                use crate::ast::ArrayElement;
+                let mut elements = Vec::new();
+                for elem in &arr.elements {
+                    match elem {
+                        None => elements.push(None),
+                        Some(ArrayElement::Expression(e)) => {
+                            let pattern = self.expr_to_pattern(e)?;
+                            elements.push(Some(pattern));
+                        }
+                        Some(ArrayElement::Spread(s)) => {
+                            let pattern = self.expr_to_pattern(&s.argument)?;
+                            elements.push(Some(Pattern::Rest(RestElement {
+                                argument: Box::new(pattern),
+                                type_annotation: None,
+                                span: s.span,
+                            })));
+                        }
+                    }
+                }
+                Ok(AssignmentTarget::Pattern(Pattern::Array(crate::ast::ArrayPattern {
+                    elements,
+                    type_annotation: None,
+                    span: arr.span,
+                })))
+            }
+            // Object destructuring: { a, b } = ...
+            Expression::Object(obj) => {
+                use crate::ast::ObjectProperty;
+                let mut properties = Vec::new();
+                for prop in &obj.properties {
+                    match prop {
+                        ObjectProperty::Property(p) => {
+                            if p.method {
+                                return Err(JsError::syntax_error(
+                                    "Method shorthand in destructuring not supported",
+                                    p.span.line,
+                                    p.span.column,
+                                ));
+                            }
+                            let value = self.expr_to_pattern(&p.value)?;
+                            properties.push(crate::ast::ObjectPatternProperty::KeyValue {
+                                key: p.key.clone(),
+                                value,
+                                shorthand: p.shorthand,
+                                span: p.span,
+                            });
+                        }
+                        ObjectProperty::Spread(s) => {
+                            let pattern = self.expr_to_pattern(&s.argument)?;
+                            properties.push(crate::ast::ObjectPatternProperty::Rest(RestElement {
+                                argument: Box::new(pattern),
+                                type_annotation: None,
+                                span: s.span,
+                            }));
+                        }
+                    }
+                }
+                Ok(AssignmentTarget::Pattern(Pattern::Object(crate::ast::ObjectPattern {
+                    properties,
+                    type_annotation: None,
+                    span: obj.span,
+                })))
+            }
+            // Parenthesized expression: (expr) = ...
+            Expression::Parenthesized(inner, _) => self.expr_to_assignment_target(inner),
             _ => Err(JsError::syntax_error(
                 "Invalid assignment target",
+                expr.span().line,
+                expr.span().column,
+            )),
+        }
+    }
+
+    /// Convert expression to pattern (for destructuring)
+    fn expr_to_pattern(&self, expr: &Expression) -> Result<Pattern, JsError> {
+        match expr {
+            Expression::Identifier(id) => Ok(Pattern::Identifier(id.clone())),
+            Expression::Array(arr) => {
+                use crate::ast::ArrayElement;
+                let mut elements = Vec::new();
+                for elem in &arr.elements {
+                    match elem {
+                        None => elements.push(None),
+                        Some(ArrayElement::Expression(e)) => {
+                            let pattern = self.expr_to_pattern(e)?;
+                            elements.push(Some(pattern));
+                        }
+                        Some(ArrayElement::Spread(s)) => {
+                            let pattern = self.expr_to_pattern(&s.argument)?;
+                            elements.push(Some(Pattern::Rest(RestElement {
+                                argument: Box::new(pattern),
+                                type_annotation: None,
+                                span: s.span,
+                            })));
+                        }
+                    }
+                }
+                Ok(Pattern::Array(crate::ast::ArrayPattern {
+                    elements,
+                    type_annotation: None,
+                    span: arr.span,
+                }))
+            }
+            Expression::Object(obj) => {
+                use crate::ast::ObjectProperty;
+                let mut properties = Vec::new();
+                for prop in &obj.properties {
+                    match prop {
+                        ObjectProperty::Property(p) => {
+                            if p.method {
+                                return Err(JsError::syntax_error(
+                                    "Method shorthand in destructuring not supported",
+                                    p.span.line,
+                                    p.span.column,
+                                ));
+                            }
+                            let value = self.expr_to_pattern(&p.value)?;
+                            properties.push(crate::ast::ObjectPatternProperty::KeyValue {
+                                key: p.key.clone(),
+                                value,
+                                shorthand: p.shorthand,
+                                span: p.span,
+                            });
+                        }
+                        ObjectProperty::Spread(s) => {
+                            let pattern = self.expr_to_pattern(&s.argument)?;
+                            properties.push(crate::ast::ObjectPatternProperty::Rest(RestElement {
+                                argument: Box::new(pattern),
+                                type_annotation: None,
+                                span: s.span,
+                            }));
+                        }
+                    }
+                }
+                Ok(Pattern::Object(crate::ast::ObjectPattern {
+                    properties,
+                    type_annotation: None,
+                    span: obj.span,
+                }))
+            }
+            Expression::Assignment(assign) => {
+                // Handle default values: { a = 1 } or [a = 1]
+                let left = match &assign.left {
+                    AssignmentTarget::Identifier(id) => Pattern::Identifier(id.clone()),
+                    AssignmentTarget::Member(m) => {
+                        return Err(JsError::syntax_error(
+                            "Member expression not allowed in destructuring default",
+                            m.span.line,
+                            m.span.column,
+                        ));
+                    }
+                    AssignmentTarget::Pattern(p) => p.clone(),
+                };
+                Ok(Pattern::Assignment(crate::ast::AssignmentPattern {
+                    left: Box::new(left),
+                    right: assign.right.clone(),
+                    span: assign.span,
+                }))
+            }
+            _ => Err(JsError::syntax_error(
+                "Invalid destructuring pattern",
                 expr.span().line,
                 expr.span().column,
             )),
@@ -832,6 +1052,13 @@ impl<'src> Parser<'src> {
 
     /// Parse unary expressions (!, -, +, typeof, void, delete, ++, --)
     fn parse_unary_expression(&mut self) -> Result<Expression, JsError> {
+        self.enter_nesting()?;
+        let result = self.parse_unary_expression_inner();
+        self.exit_nesting();
+        result
+    }
+
+    fn parse_unary_expression_inner(&mut self) -> Result<Expression, JsError> {
         let span = self.current.span;
 
         // Check for prefix increment/decrement
@@ -1116,6 +1343,28 @@ impl<'src> Parser<'src> {
                         optional: false,
                         span: Span::new(expr_span.start, end_span.end, expr_span.line, expr_span.column),
                     }));
+                }
+                // Type arguments followed by call: expr<T>(args)
+                TokenKind::Lt => {
+                    // Check if this looks like type arguments followed by `(`
+                    // by using lookahead
+                    if self.looks_like_type_arguments_call() {
+                        let type_arguments = Some(self.parse_type_arguments()?);
+                        self.expect(&TokenKind::LParen)?;
+                        let arguments = self.parse_call_arguments()?;
+                        let end_span = self.expect(&TokenKind::RParen)?;
+                        let expr_span = expr.span();
+                        expr = Expression::Call(Box::new(CallExpression {
+                            callee: Rc::new(expr),
+                            arguments,
+                            type_arguments,
+                            optional: false,
+                            span: Span::new(expr_span.start, end_span.end, expr_span.line, expr_span.column),
+                        }));
+                    } else {
+                        // Not type arguments - let binary expression parsing handle it
+                        break;
+                    }
                 }
                 // Type assertion: expr as Type
                 TokenKind::As => {
@@ -1467,10 +1716,27 @@ impl<'src> Parser<'src> {
                 self.advance(); // consume '{'
 
                 // Check for mapped type: { readonly? [P in K]: T } or { [P in K]: T }
-                let is_mapped = self.check(&TokenKind::LBracket)
-                    || self.check(&TokenKind::Readonly)
+                // But NOT index signature: { [key: string]: T } (has : after identifier, not in)
+                let is_mapped = if self.check(&TokenKind::Readonly)
                     || self.check(&TokenKind::Plus)
-                    || self.check(&TokenKind::Minus);
+                    || self.check(&TokenKind::Minus)
+                {
+                    // These modifiers only appear in mapped types
+                    true
+                } else if self.check(&TokenKind::LBracket) {
+                    // Need to look ahead: [P in K] vs [key: T]
+                    // Mapped type has 'in' after identifier, index signature has ':'
+                    let checkpoint = self.lexer.checkpoint();
+                    let current_saved = self.current.clone();
+                    self.advance(); // consume '['
+                    self.advance(); // consume identifier
+                    let is_in = self.check(&TokenKind::In);
+                    self.lexer.restore(checkpoint);
+                    self.current = current_saved;
+                    is_in
+                } else {
+                    false
+                };
 
                 if is_mapped {
                     self.parse_mapped_type(span)
@@ -1552,7 +1818,7 @@ impl<'src> Parser<'src> {
                     span,
                 }))
             }
-            // Parenthesized type or function type: (T) or () => T
+            // Parenthesized type or function type: (T) or () => T or (a: T) => U
             TokenKind::LParen => {
                 let paren_span = self.current.span;
                 self.advance();
@@ -1579,19 +1845,52 @@ impl<'src> Parser<'src> {
                     ));
                 }
 
-                // Parse inner type
+                // Check if this looks like function parameters: identifier followed by : or ?
+                // vs a parenthesized type
+                let is_function_params = {
+                    let checkpoint = self.lexer.checkpoint();
+                    let current_saved = self.current.clone();
+                    // Check if first element is identifier followed by : or ? or ,
+                    let looks_like_param = if let TokenKind::Identifier(_) = &self.current.kind {
+                        self.advance();
+                        self.check(&TokenKind::Colon) || self.check(&TokenKind::Question) || self.check(&TokenKind::Comma)
+                    } else if self.check(&TokenKind::DotDotDot) {
+                        // Rest parameter
+                        true
+                    } else {
+                        false
+                    };
+                    self.lexer.restore(checkpoint);
+                    self.current = current_saved;
+                    looks_like_param
+                };
+
+                if is_function_params {
+                    // Parse function type parameters
+                    let params = self.parse_function_type_params()?;
+                    self.expect(&TokenKind::RParen)?;
+                    self.expect(&TokenKind::Arrow)?;
+                    let return_type = self.parse_type_annotation()?;
+                    let end_span = self.current.span;
+                    return Ok(TypeAnnotation::Function(crate::ast::FunctionType {
+                        params,
+                        return_type: Box::new(return_type),
+                        type_parameters: None,
+                        span: Span::new(paren_span.start, end_span.start, paren_span.line, paren_span.column),
+                    }));
+                }
+
+                // Parse inner type (parenthesized type)
                 let inner = self.parse_type_annotation()?;
                 self.expect(&TokenKind::RParen)?;
 
-                // Check for function type - skip for now, just return parenthesized
-                // TODO: proper function type parsing
+                // Check for function type: (T) => U
                 if self.check(&TokenKind::Arrow) {
-                    // Skip the arrow and return type for now - treat as parenthesized
                     self.advance();
                     let return_type = self.parse_type_annotation()?;
                     let end_span = self.current.span;
                     return Ok(TypeAnnotation::Function(crate::ast::FunctionType {
-                        params: Vec::new(), // Simplified - no params
+                        params: Vec::new(),
                         return_type: Box::new(return_type),
                         type_parameters: None,
                         span: Span::new(paren_span.start, end_span.start, paren_span.line, paren_span.column),
@@ -1689,6 +1988,82 @@ impl<'src> Parser<'src> {
             params,
             span: Span::new(start_span.start, end_span.end, start_span.line, start_span.column),
         })
+    }
+
+    /// Parse function type parameters: (a: T, b?: U, ...rest: V[])
+    /// Used in function type annotations like (item: T) => string
+    fn parse_function_type_params(&mut self) -> Result<Vec<FunctionParam>, JsError> {
+        let mut params = Vec::new();
+
+        while !self.check(&TokenKind::RParen) && !self.check(&TokenKind::Eof) {
+            let param_span = self.current.span;
+
+            // Check for rest parameter: ...param
+            let is_rest = self.check(&TokenKind::DotDotDot);
+            if is_rest {
+                self.advance(); // consume ...
+            }
+
+            // Parse parameter name
+            let inner_pattern = if let Some((name, span)) = self.try_get_identifier_name() {
+                Pattern::Identifier(Identifier { name, span })
+            } else {
+                return Err(JsError::syntax_error(
+                    format!("Expected parameter name in function type, found {:?}", self.current.kind),
+                    self.current.span.line,
+                    self.current.span.column,
+                ));
+            };
+
+            // Check for optional marker '?'
+            let optional = if self.check(&TokenKind::Question) {
+                self.advance();
+                true
+            } else {
+                false
+            };
+
+            // Parse type annotation (required for function type params - colon and type)
+            let type_annotation = if self.check(&TokenKind::Colon) {
+                self.advance();
+                Some(Box::new(self.parse_type_annotation()?))
+            } else {
+                None
+            };
+
+            let end_span = self.current.span;
+            let full_span = Span::new(param_span.start, end_span.start, param_span.line, param_span.column);
+
+            // Create pattern (with rest wrapper if needed)
+            let pattern = if is_rest {
+                Pattern::Rest(RestElement {
+                    argument: Box::new(inner_pattern),
+                    type_annotation: type_annotation.clone(),
+                    span: full_span,
+                })
+            } else {
+                inner_pattern
+            };
+
+            params.push(FunctionParam {
+                pattern,
+                type_annotation,
+                optional,
+                decorators: Vec::new(),
+                accessibility: None,
+                readonly: false,
+                span: full_span,
+            });
+
+            // Check for comma
+            if self.check(&TokenKind::Comma) {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+
+        Ok(params)
     }
 
     /// Parse a mapped type: { [P in K]: T } or { readonly [P in K]?: T }
@@ -1801,6 +2176,28 @@ impl<'src> Parser<'src> {
 
         while !self.check(&TokenKind::RBrace) && !self.check(&TokenKind::Eof) {
             let member_span = self.current.span;
+
+            // Check for index signature: [key: string]: Type
+            if self.check(&TokenKind::LBracket) {
+                self.advance(); // consume '['
+                let (key_name, key_span) = self.expect_identifier()?;
+                self.expect(&TokenKind::Colon)?;
+                let key_type = Box::new(self.parse_type_annotation()?);
+                self.expect(&TokenKind::RBracket)?;
+                self.expect(&TokenKind::Colon)?;
+                let value_type = Box::new(self.parse_type_annotation()?);
+                let end_span = self.current.span;
+                members.push(TypeMember::Index(IndexSignature {
+                    key: Identifier { name: key_name, span: key_span },
+                    key_type,
+                    value_type,
+                    readonly: false,
+                    span: Span::new(member_span.start, end_span.start, member_span.line, member_span.column),
+                }));
+                // Consume semicolon if present
+                self.eat(&TokenKind::Semicolon);
+                continue;
+            }
 
             // Parse the property key (identifier, string, or keyword that can be used as property name)
             let key = match &self.current.kind {
@@ -1992,6 +2389,72 @@ impl<'src> Parser<'src> {
             body,
             decorators: Vec::new(),
             abstract_: false,
+            span: Span::new(start_span.start, body_end.end, start_span.line, start_span.column),
+        })
+    }
+
+    /// Parse a class expression (in expression context)
+    fn parse_class_expression(
+        &mut self,
+        start_span: Span,
+        decorators: Vec<Decorator>,
+    ) -> Result<ClassExpression, JsError> {
+
+        // Parse optional class name
+        let id = match &self.current.kind {
+            TokenKind::Identifier(name) => {
+                let name = name.cheap_clone();
+                let span = self.current.span;
+                self.advance();
+                Some(Identifier { name, span })
+            }
+            _ => None,
+        };
+
+        // Parse optional extends clause
+        let super_class = if self.check(&TokenKind::Extends) {
+            self.advance();
+            Some(Rc::new(self.parse_expression()?))
+        } else {
+            None
+        };
+
+        // Parse optional implements clause
+        if let TokenKind::Identifier(name) = &self.current.kind {
+            if name.as_str() == "implements" {
+                self.advance();
+                // Skip the implements list
+                loop {
+                    if let TokenKind::Identifier(_) = &self.current.kind {
+                        self.advance();
+                    }
+                    if self.check(&TokenKind::Comma) {
+                        self.advance();
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Parse class body
+        let body_start = self.current.span;
+        self.expect(&TokenKind::LBrace)?;
+        let members = self.parse_class_members()?;
+        let body_end = self.expect(&TokenKind::RBrace)?;
+
+        let body = ClassBody {
+            members,
+            span: Span::new(body_start.start, body_end.end, body_start.line, body_start.column),
+        };
+
+        Ok(ClassExpression {
+            id,
+            type_parameters: None,
+            super_class,
+            implements: Vec::new(),
+            body,
+            decorators,
             span: Span::new(start_span.start, body_end.end, start_span.line, start_span.column),
         })
     }
@@ -2856,6 +3319,7 @@ impl<'src> Parser<'src> {
     fn parse_decorators(&mut self) -> Result<Vec<Decorator>, JsError> {
         let mut decorators = Vec::new();
         while self.check(&TokenKind::At) {
+            self.enter_nesting()?;
             let start_span = self.current.span;
             self.advance(); // consume '@'
             // Parse the decorator expression (identifier, member access, or call)
@@ -2865,15 +3329,30 @@ impl<'src> Parser<'src> {
                 expression: expr,
                 span: Span::new(start_span.start, end_span.start, start_span.line, start_span.column),
             });
+            self.exit_nesting();
         }
         Ok(decorators)
     }
 
-    /// Parse decorator expression: identifier, member access, or call
+    /// Parse decorator expression: identifier, member access, call, or parenthesized
     fn parse_decorator_expression(&mut self) -> Result<Expression, JsError> {
-        // Parse the base identifier
-        let (name, id_span) = self.expect_identifier()?;
-        let mut expr = Expression::Identifier(Identifier { name, span: id_span });
+        // Check for parenthesized decorator expression: @(expr)
+        let mut expr = if self.check(&TokenKind::LParen) {
+            self.enter_nesting()?;
+            let paren_span = self.current.span;
+            self.advance();
+            let inner = self.parse_expression()?;
+            let end_span = self.expect(&TokenKind::RParen)?;
+            self.exit_nesting();
+            Expression::Parenthesized(
+                Rc::new(inner),
+                Span::new(paren_span.start, end_span.end, paren_span.line, paren_span.column),
+            )
+        } else {
+            // Parse the base identifier
+            let (name, id_span) = self.expect_identifier()?;
+            Expression::Identifier(Identifier { name, span: id_span })
+        };
 
         // Handle member access: @decorator.property
         while self.check(&TokenKind::Dot) {
@@ -3773,28 +4252,17 @@ impl<'src> Parser<'src> {
     fn parse_variable_declaration_for_init(&mut self, kind: VariableKind) -> Result<VariableDeclaration, JsError> {
         let start_span = self.current.span;
 
-        // Parse identifier
-        let (name, id_span) = match &self.current.kind {
-            TokenKind::Identifier(name) => {
-                let n = name.cheap_clone();
-                let span = self.current.span;
-                self.advance();
-                (n, span)
-            }
-            _ => {
-                return Err(JsError::syntax_error(
-                    format!("Expected identifier, found {:?}", self.current.kind),
-                    self.current.span.line,
-                    self.current.span.column,
-                ));
-            }
-        };
+        // Parse binding pattern (identifier, array, or object destructuring)
+        let pattern = self.parse_binding_pattern()?;
+        let pattern_span = pattern.span();
 
         // Check for type annotation
-        if self.check(&TokenKind::Colon) {
+        let type_annotation = if self.check(&TokenKind::Colon) {
             self.advance();
-            self.skip_type_annotation()?;
-        }
+            Some(Box::new(self.parse_type_annotation()?))
+        } else {
+            None
+        };
 
         // Check for initializer (only for regular for loops, not for-in/for-of)
         let init = if self.check(&TokenKind::Eq) {
@@ -3807,10 +4275,10 @@ impl<'src> Parser<'src> {
         let end_span = self.current.span;
 
         let declarator = VariableDeclarator {
-            id: Pattern::Identifier(Identifier { name, span: id_span }),
+            id: pattern,
             init,
-            type_annotation: None,
-            span: Span::new(id_span.start, end_span.start, id_span.line, id_span.column),
+            type_annotation,
+            span: Span::new(pattern_span.start, end_span.start, pattern_span.line, pattern_span.column),
         };
 
         Ok(VariableDeclaration {
@@ -3826,51 +4294,213 @@ impl<'src> Parser<'src> {
         kind: VariableKind,
         start_span: Span,
     ) -> Result<Statement, JsError> {
-        // Parse identifier
-        let (name, id_span) = match &self.current.kind {
-            TokenKind::Identifier(name) => {
-                let n = name.cheap_clone();
-                let span = self.current.span;
+        let mut declarations = Vec::new();
+
+        loop {
+            let pattern_span = self.current.span;
+
+            // Parse binding pattern (identifier, array destructuring, or object destructuring)
+            let pattern = self.parse_binding_pattern()?;
+
+            // Check for type annotation
+            let type_annotation = if self.check(&TokenKind::Colon) {
                 self.advance();
-                (n, span)
-            }
-            _ => {
-                return Err(JsError::syntax_error(
-                    format!("Expected identifier, found {:?}", self.current.kind),
-                    self.current.span.line,
-                    self.current.span.column,
-                ));
-            }
-        };
+                Some(Box::new(self.parse_type_annotation()?))
+            } else {
+                None
+            };
 
-        // Check for type annotation
-        if self.check(&TokenKind::Colon) {
-            self.advance();
-            self.skip_type_annotation()?;
+            // Check for initializer
+            let init = if self.check(&TokenKind::Eq) {
+                self.advance();
+                Some(Rc::new(self.parse_expression()?))
+            } else {
+                None
+            };
+
+            let end_span = self.current.span;
+            declarations.push(VariableDeclarator {
+                id: pattern,
+                init,
+                type_annotation,
+                span: Span::new(pattern_span.start, end_span.start, pattern_span.line, pattern_span.column),
+            });
+
+            // Check for multiple declarations: const a = 1, b = 2
+            if self.check(&TokenKind::Comma) {
+                self.advance();
+            } else {
+                break;
+            }
         }
-
-        // Check for initializer
-        let init = if self.check(&TokenKind::Eq) {
-            self.advance();
-            Some(Rc::new(self.parse_expression()?))
-        } else {
-            None
-        };
 
         self.eat(&TokenKind::Semicolon);
         let end_span = self.current.span;
 
-        let declarator = VariableDeclarator {
-            id: Pattern::Identifier(Identifier { name, span: id_span }),
-            init,
-            type_annotation: None,
-            span: Span::new(id_span.start, end_span.start, id_span.line, id_span.column),
-        };
-
         Ok(Statement::VariableDeclaration(VariableDeclaration {
             kind,
-            declarations: Rc::from(vec![declarator]),
+            declarations: Rc::from(declarations),
             span: Span::new(start_span.start, end_span.start, start_span.line, start_span.column),
+        }))
+    }
+
+    /// Parse a binding pattern (identifier, array pattern, or object pattern)
+    fn parse_binding_pattern(&mut self) -> Result<Pattern, JsError> {
+        match &self.current.kind {
+            // Array destructuring: [a, b, c]
+            TokenKind::LBracket => self.parse_array_pattern(),
+            // Object destructuring: { a, b: c }
+            TokenKind::LBrace => self.parse_object_pattern(),
+            // Simple identifier
+            _ => {
+                if let Some((name, span)) = self.try_get_identifier_name() {
+                    Ok(Pattern::Identifier(Identifier { name, span }))
+                } else {
+                    Err(JsError::syntax_error(
+                        format!("Expected binding pattern, found {:?}", self.current.kind),
+                        self.current.span.line,
+                        self.current.span.column,
+                    ))
+                }
+            }
+        }
+    }
+
+    /// Parse array destructuring pattern: [a, b, ...rest]
+    fn parse_array_pattern(&mut self) -> Result<Pattern, JsError> {
+        use crate::ast::ArrayPattern;
+
+        let start_span = self.current.span;
+        self.expect(&TokenKind::LBracket)?;
+
+        let mut elements = Vec::new();
+
+        while !self.check(&TokenKind::RBracket) && !self.check(&TokenKind::Eof) {
+            // Check for hole (elision): [a, , b]
+            if self.check(&TokenKind::Comma) {
+                elements.push(None);
+                self.advance();
+                continue;
+            }
+
+            // Check for rest element: [...rest]
+            if self.check(&TokenKind::DotDotDot) {
+                let rest_span = self.current.span;
+                self.advance();
+                let argument = Box::new(self.parse_binding_pattern()?);
+                let end_span = self.current.span;
+                elements.push(Some(Pattern::Rest(RestElement {
+                    argument,
+                    type_annotation: None,
+                    span: Span::new(rest_span.start, end_span.start, rest_span.line, rest_span.column),
+                })));
+                break; // Rest must be last
+            }
+
+            // Parse binding element
+            let elem_pattern = self.parse_binding_pattern()?;
+
+            // Check for default value: [a = 1]
+            let pattern = if self.check(&TokenKind::Eq) {
+                self.advance();
+                let default_value = self.parse_expression()?;
+                let elem_span = elem_pattern.span();
+                Pattern::Assignment(crate::ast::AssignmentPattern {
+                    left: Box::new(elem_pattern),
+                    right: Rc::new(default_value),
+                    span: Span::new(elem_span.start, self.current.span.start, elem_span.line, elem_span.column),
+                })
+            } else {
+                elem_pattern
+            };
+
+            elements.push(Some(pattern));
+
+            if !self.check(&TokenKind::RBracket) {
+                self.expect(&TokenKind::Comma)?;
+            }
+        }
+
+        let end_span = self.expect(&TokenKind::RBracket)?;
+
+        Ok(Pattern::Array(ArrayPattern {
+            elements,
+            type_annotation: None,
+            span: Span::new(start_span.start, end_span.end, start_span.line, start_span.column),
+        }))
+    }
+
+    /// Parse object destructuring pattern: { a, b: c, ...rest }
+    fn parse_object_pattern(&mut self) -> Result<Pattern, JsError> {
+        use crate::ast::{ObjectPattern, ObjectPatternProperty};
+
+        let start_span = self.current.span;
+        self.expect(&TokenKind::LBrace)?;
+
+        let mut properties = Vec::new();
+
+        while !self.check(&TokenKind::RBrace) && !self.check(&TokenKind::Eof) {
+            let prop_span = self.current.span;
+
+            // Check for rest element: { ...rest }
+            if self.check(&TokenKind::DotDotDot) {
+                self.advance();
+                let argument = Box::new(self.parse_binding_pattern()?);
+                let end_span = self.current.span;
+                properties.push(ObjectPatternProperty::Rest(RestElement {
+                    argument,
+                    type_annotation: None,
+                    span: Span::new(prop_span.start, end_span.start, prop_span.line, prop_span.column),
+                }));
+                break; // Rest must be last
+            }
+
+            // Parse property key
+            let (key_name, key_span) = self.expect_identifier()?;
+            let key = Identifier { name: key_name.cheap_clone(), span: key_span };
+
+            // Check for : value (rename)
+            let value = if self.check(&TokenKind::Colon) {
+                self.advance();
+                self.parse_binding_pattern()?
+            } else {
+                // Shorthand: { a } means { a: a }
+                Pattern::Identifier(key.clone())
+            };
+
+            // Check for default value: { a = 1 } or { a: b = 1 }
+            let final_value = if self.check(&TokenKind::Eq) {
+                self.advance();
+                let default_value = self.parse_expression()?;
+                let val_span = value.span();
+                Pattern::Assignment(crate::ast::AssignmentPattern {
+                    left: Box::new(value),
+                    right: Rc::new(default_value),
+                    span: Span::new(val_span.start, self.current.span.start, val_span.line, val_span.column),
+                })
+            } else {
+                value
+            };
+
+            let end_span = self.current.span;
+            properties.push(ObjectPatternProperty::KeyValue {
+                key: ObjectPropertyKey::Identifier(key),
+                value: final_value,
+                shorthand: false, // Simplified for now
+                span: Span::new(prop_span.start, end_span.start, prop_span.line, prop_span.column),
+            });
+
+            if !self.check(&TokenKind::RBrace) {
+                self.expect(&TokenKind::Comma)?;
+            }
+        }
+
+        let end_span = self.expect(&TokenKind::RBrace)?;
+
+        Ok(Pattern::Object(ObjectPattern {
+            properties,
+            type_annotation: None,
+            span: Span::new(start_span.start, end_span.end, start_span.line, start_span.column),
         }))
     }
 
@@ -4100,6 +4730,74 @@ impl<'src> Parser<'src> {
         Ok(params)
     }
 
+    /// Check if the current `<` token starts type arguments followed by `(`
+    /// This distinguishes `fn<T>(...)` from `a < b`
+    fn looks_like_type_arguments_call(&mut self) -> bool {
+        // Must start with `<`
+        if !self.check(&TokenKind::Lt) {
+            return false;
+        }
+
+        // Save state
+        let checkpoint = self.lexer.checkpoint();
+        let current_saved = self.current.clone();
+
+        // Try to skip balanced <...>
+        self.advance(); // consume '<'
+        let mut depth = 1;
+        let mut found_close = false;
+
+        while depth > 0 && !self.check(&TokenKind::Eof) {
+            match &self.current.kind {
+                TokenKind::Lt => depth += 1,
+                TokenKind::Gt => {
+                    depth -= 1;
+                    if depth == 0 {
+                        found_close = true;
+                    }
+                }
+                TokenKind::GtGt => {
+                    // >> can close two levels
+                    if depth >= 2 {
+                        depth -= 2;
+                        if depth == 0 {
+                            found_close = true;
+                        }
+                    } else {
+                        depth -= 1;
+                        if depth == 0 {
+                            found_close = true;
+                        }
+                    }
+                }
+                TokenKind::GtGtGt => {
+                    // >>> can close three levels
+                    if depth >= 3 {
+                        depth -= 3;
+                    } else {
+                        depth = 0;
+                    }
+                    found_close = true;
+                }
+                // These tokens wouldn't appear in type arguments
+                TokenKind::Semicolon | TokenKind::LBrace | TokenKind::RBrace => {
+                    break;
+                }
+                _ => {}
+            }
+            self.advance();
+        }
+
+        // Check if followed by `(`
+        let result = found_close && self.check(&TokenKind::LParen);
+
+        // Restore state
+        self.lexer.restore(checkpoint);
+        self.current = current_saved;
+
+        result
+    }
+
     /// Get binary operator and its precedence from current token
     fn get_binary_op_and_prec(&self) -> Option<(BinaryOp, u8)> {
         match &self.current.kind {
@@ -4288,6 +4986,7 @@ impl<'src> Parser<'src> {
             }
             // Parenthesized expression or arrow function
             TokenKind::LParen => {
+                self.enter_nesting()?;
                 self.advance();
 
                 // Check for empty params: () => ...
@@ -4451,6 +5150,27 @@ impl<'src> Parser<'src> {
                 let name = self.lexer.string_dict().get_or_insert("abstract");
                 self.advance();
                 Ok(Expression::Identifier(Identifier { name, span }))
+            }
+            // Class expression: class { } or class Foo { }
+            TokenKind::Class => {
+                self.advance();
+                let class_expr = self.parse_class_expression(span, Vec::new())?;
+                Ok(Expression::Class(Box::new(class_expr)))
+            }
+            // Decorated class expression: @decorator class { }
+            TokenKind::At => {
+                let decorators = self.parse_decorators()?;
+                // Must be followed by class
+                if !self.check(&TokenKind::Class) {
+                    return Err(JsError::syntax_error(
+                        format!("Expected class after decorators, found {:?}", self.current.kind),
+                        self.current.span.line,
+                        self.current.span.column,
+                    ));
+                }
+                self.advance(); // consume 'class'
+                let class_expr = self.parse_class_expression(span, decorators)?;
+                Ok(Expression::Class(Box::new(class_expr)))
             }
             _ => Err(JsError::syntax_error(
                 format!("Expected expression, found {:?}", self.current.kind),
