@@ -137,19 +137,25 @@ export async function init(wasmPath = 'tsrun.wasm') {
 
             // Test if regex matches input string
             host_regex_test(handle, inputPtr, inputLen) {
-                const entry = regexHandles.get(handle);
-                if (!entry) return 0;
+                try {
+                    const entry = regexHandles.get(handle);
+                    if (!entry) return 0;
 
-                const memory = wasmInstance.exports.memory;
-                const input = textDecoder.decode(new Uint8Array(memory.buffer, inputPtr, inputLen));
+                    const memory = wasmInstance.exports.memory;
+                    const input = textDecoder.decode(new Uint8Array(memory.buffer, inputPtr, inputLen));
 
-                // Reset lastIndex for consistent behavior
-                entry.regex.lastIndex = 0;
-                return entry.regex.test(input) ? 1 : 0;
+                    // Reset lastIndex for consistent behavior
+                    entry.regex.lastIndex = 0;
+                    return entry.regex.test(input) ? 1 : 0;
+                } catch (e) {
+                    console.error('[host_regex_test] Error:', e);
+                    return 0;
+                }
             },
 
             // Execute regex and return match info via binary protocol
             host_regex_exec(handle, inputPtr, inputLen, startPos, matchStartOut, matchEndOut, capturesPtrOut, capturesCountOut) {
+                try {
                 const entry = regexHandles.get(handle);
                 if (!entry) return 0;
 
@@ -208,6 +214,10 @@ export async function init(wasmPath = 'tsrun.wasm') {
                 view.setUint32(capturesCountOut, capturesCount, true);
 
                 return 1; // Found
+                } catch (e) {
+                    console.error('[host_regex_exec] Error:', e);
+                    return 0;
+                }
             },
 
             // Free captures array
@@ -219,6 +229,7 @@ export async function init(wasmPath = 'tsrun.wasm') {
 
             // Replace matches with replacement string
             host_regex_replace(handle, inputPtr, inputLen, replPtr, replLen, global, resultPtrOut, resultLenOut) {
+                try {
                 const entry = regexHandles.get(handle);
                 if (!entry) return 0;
 
@@ -243,10 +254,15 @@ export async function init(wasmPath = 'tsrun.wasm') {
                 new DataView(wasmInstance.exports.memory.buffer).setUint32(resultPtrOut, ptr, true);
                 new DataView(wasmInstance.exports.memory.buffer).setUint32(resultLenOut, bytes.length, true);
                 return 1;
+                } catch (e) {
+                    console.error('[host_regex_replace] Error:', e);
+                    return 0;
+                }
             },
 
             // Split input by regex matches - returns binary array of (ptr, len) pairs
             host_regex_split(handle, inputPtr, inputLen, partsPtrOut, partsCountOut) {
+                try {
                 const entry = regexHandles.get(handle);
                 if (!entry) return 0;
 
@@ -280,6 +296,10 @@ export async function init(wasmPath = 'tsrun.wasm') {
                 view.setUint32(partsPtrOut, arrayPtr, true);
                 view.setUint32(partsCountOut, partsCount, true);
                 return 1;
+                } catch (e) {
+                    console.error('[host_regex_split] Error:', e);
+                    return 0;
+                }
             },
 
             // Free split result: the parts array and all strings within it
