@@ -214,6 +214,65 @@ impl<'src> Parser<'src> {
         })
     }
 
+    /// Check if current token is a keyword that can be used as a property name
+    /// Returns the name string if so, None otherwise. Does NOT advance the token.
+    fn keyword_as_property_name(&mut self) -> Option<JsString> {
+        match &self.current.kind {
+            TokenKind::From => Some(self.lexer.string_dict().get_or_insert("from")),
+            TokenKind::As => Some(self.lexer.string_dict().get_or_insert("as")),
+            TokenKind::Of => Some(self.lexer.string_dict().get_or_insert("of")),
+            TokenKind::Type => Some(self.lexer.string_dict().get_or_insert("type")),
+            TokenKind::Declare => Some(self.lexer.string_dict().get_or_insert("declare")),
+            TokenKind::Readonly => Some(self.lexer.string_dict().get_or_insert("readonly")),
+            TokenKind::Abstract => Some(self.lexer.string_dict().get_or_insert("abstract")),
+            TokenKind::Module => Some(self.lexer.string_dict().get_or_insert("module")),
+            TokenKind::Namespace => Some(self.lexer.string_dict().get_or_insert("namespace")),
+            TokenKind::Async => Some(self.lexer.string_dict().get_or_insert("async")),
+            TokenKind::Delete => Some(self.lexer.string_dict().get_or_insert("delete")),
+            TokenKind::In => Some(self.lexer.string_dict().get_or_insert("in")),
+            TokenKind::Instanceof => Some(self.lexer.string_dict().get_or_insert("instanceof")),
+            TokenKind::Typeof => Some(self.lexer.string_dict().get_or_insert("typeof")),
+            TokenKind::Void => Some(self.lexer.string_dict().get_or_insert("void")),
+            TokenKind::New => Some(self.lexer.string_dict().get_or_insert("new")),
+            TokenKind::Return => Some(self.lexer.string_dict().get_or_insert("return")),
+            TokenKind::This => Some(self.lexer.string_dict().get_or_insert("this")),
+            TokenKind::Super => Some(self.lexer.string_dict().get_or_insert("super")),
+            TokenKind::Class => Some(self.lexer.string_dict().get_or_insert("class")),
+            TokenKind::Function => Some(self.lexer.string_dict().get_or_insert("function")),
+            TokenKind::If => Some(self.lexer.string_dict().get_or_insert("if")),
+            TokenKind::Else => Some(self.lexer.string_dict().get_or_insert("else")),
+            TokenKind::For => Some(self.lexer.string_dict().get_or_insert("for")),
+            TokenKind::While => Some(self.lexer.string_dict().get_or_insert("while")),
+            TokenKind::Do => Some(self.lexer.string_dict().get_or_insert("do")),
+            TokenKind::Switch => Some(self.lexer.string_dict().get_or_insert("switch")),
+            TokenKind::Case => Some(self.lexer.string_dict().get_or_insert("case")),
+            TokenKind::Default => Some(self.lexer.string_dict().get_or_insert("default")),
+            TokenKind::Break => Some(self.lexer.string_dict().get_or_insert("break")),
+            TokenKind::Continue => Some(self.lexer.string_dict().get_or_insert("continue")),
+            TokenKind::Try => Some(self.lexer.string_dict().get_or_insert("try")),
+            TokenKind::Catch => Some(self.lexer.string_dict().get_or_insert("catch")),
+            TokenKind::Finally => Some(self.lexer.string_dict().get_or_insert("finally")),
+            TokenKind::Throw => Some(self.lexer.string_dict().get_or_insert("throw")),
+            TokenKind::True => Some(self.lexer.string_dict().get_or_insert("true")),
+            TokenKind::False => Some(self.lexer.string_dict().get_or_insert("false")),
+            TokenKind::Null => Some(self.lexer.string_dict().get_or_insert("null")),
+            TokenKind::Let => Some(self.lexer.string_dict().get_or_insert("let")),
+            TokenKind::Const => Some(self.lexer.string_dict().get_or_insert("const")),
+            TokenKind::Var => Some(self.lexer.string_dict().get_or_insert("var")),
+            TokenKind::Static => Some(self.lexer.string_dict().get_or_insert("static")),
+            TokenKind::Public => Some(self.lexer.string_dict().get_or_insert("public")),
+            TokenKind::Private => Some(self.lexer.string_dict().get_or_insert("private")),
+            TokenKind::Protected => Some(self.lexer.string_dict().get_or_insert("protected")),
+            TokenKind::Extends => Some(self.lexer.string_dict().get_or_insert("extends")),
+            TokenKind::Implements => Some(self.lexer.string_dict().get_or_insert("implements")),
+            TokenKind::Import => Some(self.lexer.string_dict().get_or_insert("import")),
+            TokenKind::Export => Some(self.lexer.string_dict().get_or_insert("export")),
+            TokenKind::Yield => Some(self.lexer.string_dict().get_or_insert("yield")),
+            TokenKind::Await => Some(self.lexer.string_dict().get_or_insert("await")),
+            _ => None,
+        }
+    }
+
     /// Skip a type annotation (skips the entire type, including complex types)
     fn skip_type_annotation(&mut self) -> Result<(), JsError> {
         // Skip primary type
@@ -946,12 +1005,18 @@ impl<'src> Parser<'src> {
                                 }
                             }
                         }
+                        // Keywords that can be used as property names
                         _ => {
-                            return Err(JsError::syntax_error(
-                                format!("Expected property name, found {:?}", self.current.kind),
-                                self.current.span.line,
-                                self.current.span.column,
-                            ));
+                            if let Some(name) = self.keyword_as_property_name() {
+                                self.advance();
+                                MemberProperty::Identifier(Identifier { name, span: prop_span })
+                            } else {
+                                return Err(JsError::syntax_error(
+                                    format!("Expected property name, found {:?}", self.current.kind),
+                                    self.current.span.line,
+                                    self.current.span.column,
+                                ));
+                            }
                         }
                     };
                     let end_span = self.current.span;
@@ -1397,15 +1462,26 @@ impl<'src> Parser<'src> {
                     }))
                 }
             }
-            // Object type: { a: T; b: U }
+            // Object type: { a: T; b: U } or Mapped type: { [P in K]: T }
             TokenKind::LBrace => {
                 self.advance(); // consume '{'
-                let members = self.parse_type_members()?;
-                let end_span = self.expect(&TokenKind::RBrace)?;
-                Ok(TypeAnnotation::Object(ObjectType {
-                    members,
-                    span: Span::new(span.start, end_span.end, span.line, span.column),
-                }))
+
+                // Check for mapped type: { readonly? [P in K]: T } or { [P in K]: T }
+                let is_mapped = self.check(&TokenKind::LBracket)
+                    || self.check(&TokenKind::Readonly)
+                    || self.check(&TokenKind::Plus)
+                    || self.check(&TokenKind::Minus);
+
+                if is_mapped {
+                    self.parse_mapped_type(span)
+                } else {
+                    let members = self.parse_type_members()?;
+                    let end_span = self.expect(&TokenKind::RBrace)?;
+                    Ok(TypeAnnotation::Object(ObjectType {
+                        members,
+                        span: Span::new(span.start, end_span.end, span.line, span.column),
+                    }))
+                }
             }
             // Keyword types (lexer-recognized)
             TokenKind::Any => {
@@ -1615,6 +1691,108 @@ impl<'src> Parser<'src> {
         })
     }
 
+    /// Parse a mapped type: { [P in K]: T } or { readonly [P in K]?: T }
+    fn parse_mapped_type(&mut self, start_span: Span) -> Result<TypeAnnotation, JsError> {
+        use crate::ast::{MappedType, MappedTypeModifier};
+
+        // Parse optional readonly modifier: readonly, +readonly, -readonly
+        let readonly = if self.check(&TokenKind::Plus) {
+            self.advance();
+            if self.check(&TokenKind::Readonly) {
+                self.advance();
+                Some(MappedTypeModifier::Add)
+            } else {
+                None
+            }
+        } else if self.check(&TokenKind::Minus) {
+            self.advance();
+            if self.check(&TokenKind::Readonly) {
+                self.advance();
+                Some(MappedTypeModifier::Remove)
+            } else {
+                None
+            }
+        } else if self.check(&TokenKind::Readonly) {
+            self.advance();
+            Some(MappedTypeModifier::Add)
+        } else {
+            None
+        };
+
+        // Expect '[' for the type parameter
+        self.expect(&TokenKind::LBracket)?;
+
+        // Parse type parameter name: P
+        let (param_name, param_span) = self.expect_identifier()?;
+
+        // Expect 'in'
+        self.expect(&TokenKind::In)?;
+
+        // Parse constraint type: K or keyof T
+        let constraint = self.parse_type_annotation()?;
+
+        // Check for 'as' clause (name remapping): [P in K as NewName]
+        let name_type = if self.check(&TokenKind::As) {
+            self.advance();
+            Some(Box::new(self.parse_type_annotation()?))
+        } else {
+            None
+        };
+
+        // Expect ']'
+        self.expect(&TokenKind::RBracket)?;
+
+        // Parse optional modifier: ?, +?, -?
+        let optional = if self.check(&TokenKind::Plus) {
+            self.advance();
+            if self.check(&TokenKind::Question) {
+                self.advance();
+                Some(MappedTypeModifier::Add)
+            } else {
+                None
+            }
+        } else if self.check(&TokenKind::Minus) {
+            self.advance();
+            if self.check(&TokenKind::Question) {
+                self.advance();
+                Some(MappedTypeModifier::Remove)
+            } else {
+                None
+            }
+        } else if self.check(&TokenKind::Question) {
+            self.advance();
+            Some(MappedTypeModifier::Add)
+        } else {
+            None
+        };
+
+        // Expect ':'
+        self.expect(&TokenKind::Colon)?;
+
+        // Parse the value type
+        let type_annotation = Some(Box::new(self.parse_type_annotation()?));
+
+        // Consume optional semicolon
+        self.eat(&TokenKind::Semicolon);
+
+        // Expect '}'
+        let end_span = self.expect(&TokenKind::RBrace)?;
+
+        Ok(TypeAnnotation::Mapped(MappedType {
+            type_parameter: TypeParameter {
+                name: Identifier { name: param_name, span: param_span },
+                constraint: Some(Box::new(constraint)),
+                default: None,
+                span: param_span,
+            },
+            name_type,
+            type_annotation,
+            readonly,
+            optional,
+            span: Span::new(start_span.start, end_span.end, start_span.line, start_span.column),
+        }))
+    }
+
     /// Parse type members inside an object type: { a: T; b: U }
     fn parse_type_members(&mut self) -> Result<Vec<TypeMember>, JsError> {
         use crate::ast::{PropertySignature, TypeMember};
@@ -1720,6 +1898,13 @@ impl<'src> Parser<'src> {
             }
         };
 
+        // Parse optional type parameters: <T, U>
+        let type_parameters = if self.check(&TokenKind::Lt) {
+            Some(self.parse_type_parameters()?)
+        } else {
+            None
+        };
+
         // Parse parameters
         self.expect(&TokenKind::LParen)?;
         let params = self.parse_function_params()?;
@@ -1741,7 +1926,7 @@ impl<'src> Parser<'src> {
             id,
             params: Rc::from(params),
             return_type,
-            type_parameters: None,
+            type_parameters,
             body: Rc::new(body),
             generator,
             async_: is_async,
@@ -2290,7 +2475,7 @@ impl<'src> Parser<'src> {
             }));
         }
 
-        // Parse member name
+        // Parse member name (including contextual keywords that can be property names)
         let key = match &self.current.kind {
             TokenKind::Identifier(s) => {
                 let s = s.cheap_clone();
@@ -2303,6 +2488,39 @@ impl<'src> Parser<'src> {
                 let span = self.current.span;
                 self.advance();
                 ObjectPropertyKey::String(StringLiteral { value: s, span })
+            }
+            // Contextual keywords can be used as property names
+            TokenKind::Type => {
+                let span = self.current.span;
+                self.advance();
+                ObjectPropertyKey::Identifier(Identifier {
+                    name: self.lexer.string_dict().get_or_insert("type"),
+                    span,
+                })
+            }
+            TokenKind::Readonly => {
+                let span = self.current.span;
+                self.advance();
+                ObjectPropertyKey::Identifier(Identifier {
+                    name: self.lexer.string_dict().get_or_insert("readonly"),
+                    span,
+                })
+            }
+            TokenKind::From => {
+                let span = self.current.span;
+                self.advance();
+                ObjectPropertyKey::Identifier(Identifier {
+                    name: self.lexer.string_dict().get_or_insert("from"),
+                    span,
+                })
+            }
+            TokenKind::As => {
+                let span = self.current.span;
+                self.advance();
+                ObjectPropertyKey::Identifier(Identifier {
+                    name: self.lexer.string_dict().get_or_insert("as"),
+                    span,
+                })
             }
             _ => {
                 return Err(JsError::syntax_error(
@@ -3080,6 +3298,11 @@ impl<'src> Parser<'src> {
                     span: Span::new(start_span.start, end_span.end, start_span.line, start_span.column),
                 }))
             }
+            // Import statement
+            TokenKind::Import => {
+                self.advance();
+                self.parse_import_declaration(start_span)
+            }
             // Export statement
             TokenKind::Export => {
                 self.advance();
@@ -3096,6 +3319,148 @@ impl<'src> Parser<'src> {
                 }))
             }
         }
+    }
+
+    /// Parse an import declaration
+    fn parse_import_declaration(&mut self, start_span: Span) -> Result<Statement, JsError> {
+        use crate::ast::{ImportDeclaration, ImportSpecifier};
+
+        // Check for type-only import: import type ...
+        let type_only = if self.check(&TokenKind::Type) {
+            let peeked = self.peek_token();
+            // import type X from "..." or import type { X } from "..."
+            if matches!(peeked.kind, TokenKind::Identifier(_) | TokenKind::LBrace | TokenKind::Star) {
+                self.advance(); // consume 'type'
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
+        let mut specifiers = Vec::new();
+
+        // import "module" (side-effect import)
+        if let TokenKind::String(source_value) = &self.current.kind {
+            let source = StringLiteral {
+                value: source_value.cheap_clone(),
+                span: self.current.span,
+            };
+            self.advance();
+            self.eat(&TokenKind::Semicolon);
+            let end_span = self.current.span;
+            return Ok(Statement::Import(Box::new(ImportDeclaration {
+                specifiers,
+                source,
+                type_only,
+                span: Span::new(start_span.start, end_span.start, start_span.line, start_span.column),
+            })));
+        }
+
+        // import * as ns from "module"
+        if self.check(&TokenKind::Star) {
+            self.advance(); // consume '*'
+            self.expect(&TokenKind::As)?;
+            let (local_name, local_span) = self.expect_identifier()?;
+            specifiers.push(ImportSpecifier::Namespace {
+                local: Identifier { name: local_name, span: local_span },
+                span: local_span,
+            });
+        }
+        // import defaultExport from "module" or import { named } from "module"
+        else if let Some((name, span)) = self.try_get_identifier_name() {
+            // Default import
+            specifiers.push(ImportSpecifier::Default {
+                local: Identifier { name, span },
+                span,
+            });
+
+            // Check for additional named imports: import Default, { named } from "..."
+            if self.check(&TokenKind::Comma) {
+                self.advance();
+                if self.check(&TokenKind::LBrace) {
+                    self.parse_named_imports(&mut specifiers)?;
+                } else if self.check(&TokenKind::Star) {
+                    // import Default, * as ns from "..."
+                    self.advance();
+                    self.expect(&TokenKind::As)?;
+                    let (local_name, local_span) = self.expect_identifier()?;
+                    specifiers.push(ImportSpecifier::Namespace {
+                        local: Identifier { name: local_name, span: local_span },
+                        span: local_span,
+                    });
+                }
+            }
+        }
+        // import { named } from "module"
+        else if self.check(&TokenKind::LBrace) {
+            self.parse_named_imports(&mut specifiers)?;
+        }
+
+        // Expect 'from'
+        self.expect(&TokenKind::From)?;
+
+        // Parse module specifier
+        let source = self.parse_string_literal()?;
+        self.eat(&TokenKind::Semicolon);
+        let end_span = self.current.span;
+
+        Ok(Statement::Import(Box::new(ImportDeclaration {
+            specifiers,
+            source,
+            type_only,
+            span: Span::new(start_span.start, end_span.start, start_span.line, start_span.column),
+        })))
+    }
+
+    /// Parse named imports: { a, b as c, type d }
+    fn parse_named_imports(&mut self, specifiers: &mut Vec<crate::ast::ImportSpecifier>) -> Result<(), JsError> {
+        use crate::ast::ImportSpecifier;
+
+        self.expect(&TokenKind::LBrace)?;
+
+        while !self.check(&TokenKind::RBrace) && !self.check(&TokenKind::Eof) {
+            let spec_start = self.current.span;
+
+            // Check for type modifier: import { type X } from "..."
+            let _is_type = if self.check(&TokenKind::Type) {
+                let peeked = self.peek_token();
+                if matches!(peeked.kind, TokenKind::Identifier(_) | TokenKind::As) {
+                    self.advance();
+                    true
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+
+            let (imported_name, imported_span) = self.expect_identifier()?;
+
+            // Check for 'as local'
+            let local = if self.check(&TokenKind::As) {
+                self.advance();
+                let (local_name, local_span) = self.expect_identifier()?;
+                Identifier { name: local_name, span: local_span }
+            } else {
+                Identifier { name: imported_name.cheap_clone(), span: imported_span }
+            };
+
+            let spec_end = self.current.span;
+            specifiers.push(ImportSpecifier::Named {
+                local,
+                imported: Identifier { name: imported_name, span: imported_span },
+                span: Span::new(spec_start.start, spec_end.start, spec_start.line, spec_start.column),
+            });
+
+            if !self.check(&TokenKind::RBrace) {
+                self.expect(&TokenKind::Comma)?;
+            }
+        }
+        self.expect(&TokenKind::RBrace)?;
+
+        Ok(())
     }
 
     /// Parse an export declaration
