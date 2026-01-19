@@ -68,9 +68,13 @@ async function runTests() {
 
     // Collect console errors
     const errors = [];
-    page.on('pageerror', err => errors.push(err.message));
+    page.on('pageerror', err => {
+        console.log('  [PAGE ERROR]', err.message);
+        errors.push(err.message);
+    });
     page.on('console', msg => {
         if (msg.type() === 'error') {
+            console.log('  [CONSOLE ERROR]', msg.text());
             errors.push(msg.text());
         }
     });
@@ -98,6 +102,9 @@ async function runTests() {
 
     for (const example of examples) {
         errors.length = 0; // Clear errors
+
+        // Small delay before selecting to let browser GC if needed
+        await setTimeout(300);
 
         // Select the example
         await page.select('#examples', example.value);

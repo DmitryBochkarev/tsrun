@@ -121,9 +121,10 @@ export async function init(wasmPath = 'tsrun.wasm') {
                     // Write error to WASM memory
                     const errorMsg = textEncoder.encode(e.message);
                     const errorPtr = wasmInstance.exports.tsrun_alloc(errorMsg.length);
-                    new Uint8Array(memory.buffer, errorPtr, errorMsg.length).set(errorMsg);
+                    // Get fresh buffer reference after allocation (memory may have grown)
+                    new Uint8Array(wasmInstance.exports.memory.buffer, errorPtr, errorMsg.length).set(errorMsg);
 
-                    const view = new DataView(memory.buffer);
+                    const view = new DataView(wasmInstance.exports.memory.buffer);
                     view.setUint32(errorPtrOut, errorPtr, true);
                     view.setUint32(errorLenOut, errorMsg.length, true);
                     return 0;
@@ -177,17 +178,21 @@ export async function init(wasmPath = 'tsrun.wasm') {
                 const matchStart = startPos + match.index;
                 const matchEnd = matchStart + match[0].length;
 
-                // Write match start/end
-                let view = new DataView(memory.buffer);
-                view.setUint32(matchStartOut, matchStart, true);
-                view.setUint32(matchEndOut, matchEnd, true);
-
                 // Build captures array: pairs of i32 (start, end), -1 for non-participating
                 const capturesCount = match.length;
                 const capturesBytes = capturesCount * 2 * 4; // pairs of i32
+
+                // IMPORTANT: Allocate FIRST, then get fresh DataView
+                // Memory might grow during allocation, invalidating any previous views
                 const capturesPtr = wasmInstance.exports.tsrun_alloc(capturesBytes);
 
-                view = new DataView(wasmInstance.exports.memory.buffer);
+                // Get fresh view AFTER allocation (memory may have grown)
+                let view = new DataView(wasmInstance.exports.memory.buffer);
+
+                // NOW write all output parameters with the fresh view
+                view.setUint32(matchStartOut, matchStart, true);
+                view.setUint32(matchEndOut, matchEnd, true);
+
                 for (let i = 0; i < capturesCount; i++) {
                     const offset = capturesPtr + i * 8;
                     if (match[i] === undefined) {
@@ -419,6 +424,9 @@ export async function init(wasmPath = 'tsrun.wasm') {
                 this[_wasm].exports.tsrun_free(this[_context]);
                 this[_context] = 0;
             }
+            // Clean up all regex handles to prevent memory leaks across TsRunner instances
+            regexHandles.clear();
+            nextRegexHandle = 1;
         }
 
         /**
