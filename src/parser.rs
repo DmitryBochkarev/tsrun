@@ -3,9 +3,10 @@
 //! Uses an explicit work stack instead of recursion to avoid stack overflow.
 
 use crate::ast::{
-    BinaryExpression, BinaryOp, Expression, ExpressionStatement, Identifier, Literal,
-    LiteralValue, Pattern, Program, SourceType, Statement, VariableDeclaration,
-    VariableDeclarator, VariableKind,
+    BinaryExpression, BinaryOp, ConditionalExpression, Expression, ExpressionStatement,
+    Identifier, Literal, LiteralValue, LogicalExpression, LogicalOp, Pattern, Program,
+    SourceType, Statement, TypeAnnotation, TypeAssertionExpression, UnaryExpression, UnaryOp,
+    VariableDeclaration, VariableDeclarator, VariableKind,
 };
 use crate::error::JsError;
 use crate::lexer::{Lexer, Span, Token, TokenKind};
@@ -359,14 +360,68 @@ impl<'src> Parser<'src> {
 
     /// Parse an expression with operator precedence (Pratt parsing)
     fn parse_expression(&mut self) -> Result<Expression, JsError> {
-        self.parse_binary_expression(0)
+        self.parse_conditional_expression()
+    }
+
+    /// Parse conditional (ternary) expression: test ? consequent : alternate
+    fn parse_conditional_expression(&mut self) -> Result<Expression, JsError> {
+        let test = self.parse_binary_expression(0)?;
+
+        if !self.check(&TokenKind::Question) {
+            return Ok(test);
+        }
+
+        self.advance(); // consume ?
+        let consequent = self.parse_expression()?; // Allow full expression in consequent
+        self.expect(&TokenKind::Colon)?;
+        let alternate = self.parse_conditional_expression()?; // Right-associative
+
+        let span = Span::new(
+            test.span().start,
+            alternate.span().end,
+            test.span().line,
+            test.span().column,
+        );
+
+        Ok(Expression::Conditional(ConditionalExpression {
+            test: Rc::new(test),
+            consequent: Rc::new(consequent),
+            alternate: Rc::new(alternate),
+            span,
+        }))
     }
 
     /// Parse binary expression with minimum precedence
     fn parse_binary_expression(&mut self, min_prec: u8) -> Result<Expression, JsError> {
-        let mut left = self.parse_primary_expression()?;
+        let mut left = self.parse_unary_expression()?;
 
         loop {
+            // Check for logical operator first (lower precedence)
+            if let Some((op, prec)) = self.get_logical_op_and_prec() {
+                if prec < min_prec {
+                    break;
+                }
+
+                self.advance();
+                let next_prec = prec + 1; // left-associative
+                let right = self.parse_binary_expression(next_prec)?;
+
+                let span = Span::new(
+                    left.span().start,
+                    right.span().end,
+                    left.span().line,
+                    left.span().column,
+                );
+
+                left = Expression::Logical(LogicalExpression {
+                    operator: op,
+                    left: Rc::new(left),
+                    right: Rc::new(right),
+                    span,
+                });
+                continue;
+            }
+
             // Check for binary operator
             let Some((op, prec)) = self.get_binary_op_and_prec() else {
                 break;
@@ -376,7 +431,7 @@ impl<'src> Parser<'src> {
                 break;
             }
 
-            let op_span = self.current.span;
+            let _op_span = self.current.span;
             self.advance(); // consume operator
 
             // Parse right-hand side with higher precedence (for left-associativity)
@@ -400,6 +455,138 @@ impl<'src> Parser<'src> {
         }
 
         Ok(left)
+    }
+
+    /// Get logical operator and its precedence from current token
+    fn get_logical_op_and_prec(&self) -> Option<(LogicalOp, u8)> {
+        match &self.current.kind {
+            TokenKind::QuestionQuestion => Some((LogicalOp::NullishCoalescing, 3)),
+            TokenKind::PipePipe => Some((LogicalOp::Or, 4)),
+            TokenKind::AmpAmp => Some((LogicalOp::And, 5)),
+            _ => None,
+        }
+    }
+
+    /// Parse unary expressions (!, -, +, typeof, void, delete)
+    fn parse_unary_expression(&mut self) -> Result<Expression, JsError> {
+        let span = self.current.span;
+
+        // Check for unary prefix operators
+        let op = match &self.current.kind {
+            TokenKind::Bang => Some(UnaryOp::Not),
+            TokenKind::Minus => Some(UnaryOp::Minus),
+            TokenKind::Plus => Some(UnaryOp::Plus),
+            TokenKind::Tilde => Some(UnaryOp::BitNot),
+            TokenKind::Typeof => Some(UnaryOp::Typeof),
+            TokenKind::Void => Some(UnaryOp::Void),
+            TokenKind::Delete => Some(UnaryOp::Delete),
+            _ => None,
+        };
+
+        if let Some(op) = op {
+            self.advance();
+            let argument = self.parse_unary_expression()?; // Recursive for multiple prefixes
+            let full_span = Span::new(
+                span.start,
+                argument.span().end,
+                span.line,
+                span.column,
+            );
+            return Ok(Expression::Unary(UnaryExpression {
+                operator: op,
+                argument: Rc::new(argument),
+                prefix: true,
+                span: full_span,
+            }));
+        }
+
+        self.parse_postfix_expression()
+    }
+
+    /// Parse postfix expressions (type assertions, member access, calls, etc.)
+    fn parse_postfix_expression(&mut self) -> Result<Expression, JsError> {
+        let mut expr = self.parse_primary_expression()?;
+
+        // Handle type assertions: expr as Type
+        while self.check(&TokenKind::As) {
+            self.advance();
+            let _type_start = self.current.span;
+            let type_ann = self.parse_type_annotation()?;
+            // Use the span from start of type to current position
+            let type_end = self.current.span;
+            let span = Span::new(
+                expr.span().start,
+                type_end.start, // end at current token start (after type)
+                expr.span().line,
+                expr.span().column,
+            );
+            expr = Expression::TypeAssertion(TypeAssertionExpression {
+                expression: Rc::new(expr),
+                type_annotation: Box::new(type_ann),
+                span,
+            });
+        }
+
+        Ok(expr)
+    }
+
+    /// Parse a type annotation (minimal implementation)
+    fn parse_type_annotation(&mut self) -> Result<TypeAnnotation, JsError> {
+        use crate::ast::{TypeKeyword, TypeKeywordKind, TypeReference};
+
+        let span = self.current.span;
+        match &self.current.kind {
+            TokenKind::Identifier(name) => {
+                let name = name.cheap_clone();
+                self.advance();
+                Ok(TypeAnnotation::Reference(TypeReference {
+                    name: Identifier { name, span },
+                    type_arguments: None,
+                    span,
+                }))
+            }
+            // Keyword types
+            TokenKind::Any => {
+                self.advance();
+                Ok(TypeAnnotation::Keyword(TypeKeyword {
+                    keyword: TypeKeywordKind::Any,
+                    span,
+                }))
+            }
+            TokenKind::Unknown => {
+                self.advance();
+                Ok(TypeAnnotation::Keyword(TypeKeyword {
+                    keyword: TypeKeywordKind::Unknown,
+                    span,
+                }))
+            }
+            TokenKind::Never => {
+                self.advance();
+                Ok(TypeAnnotation::Keyword(TypeKeyword {
+                    keyword: TypeKeywordKind::Never,
+                    span,
+                }))
+            }
+            TokenKind::Void => {
+                self.advance();
+                Ok(TypeAnnotation::Keyword(TypeKeyword {
+                    keyword: TypeKeywordKind::Void,
+                    span,
+                }))
+            }
+            TokenKind::Null => {
+                self.advance();
+                Ok(TypeAnnotation::Keyword(TypeKeyword {
+                    keyword: TypeKeywordKind::Null,
+                    span,
+                }))
+            }
+            _ => Err(JsError::syntax_error(
+                format!("Expected type annotation, found {:?}", self.current.kind),
+                self.current.span.line,
+                self.current.span.column,
+            )),
+        }
     }
 
     /// Get binary operator and its precedence from current token
