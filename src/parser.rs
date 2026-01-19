@@ -186,6 +186,19 @@ impl<'src> Parser<'src> {
         peeked
     }
 
+    /// Peek at the nth token ahead (1 = next token, 2 = token after that, etc.)
+    fn peek_nth_token(&mut self, n: usize) -> Token {
+        let checkpoint = self.lexer.checkpoint();
+        let current_saved = self.current.clone();
+        for _ in 0..n {
+            self.advance();
+        }
+        let peeked = self.current.clone();
+        self.lexer.restore(checkpoint);
+        self.current = current_saved;
+        peeked
+    }
+
     /// Check if current token matches the given kind
     fn check(&self, kind: &TokenKind) -> bool {
         core::mem::discriminant(&self.current.kind) == core::mem::discriminant(kind)
@@ -6414,10 +6427,28 @@ impl<'src> Parser<'src> {
         // Arrow params: identifier followed by `:`, `?`, `,`, `)`
         // Expressions: identifier followed by `=`, `+`, `-`, `*`, `/`, `[`, `.`, `(`, etc.
         let next = self.peek_token();
+
+        // Special case for `?`: could be optional param (x?) or ternary (x ? y : z)
+        // For optional param, `?` must be followed by `:`, `,`, `)`, or `=`
+        // For ternary, `?` is followed by an expression
+        if matches!(next.kind, TokenKind::Question) {
+            // Look at what follows the `?`
+            let after_question = self.peek_nth_token(2);
+            // Optional param: (x?: type), (x?, y), (x?), (x? = default)
+            // NOT ternary: (x ? expr : expr)
+            let is_optional_param = matches!(
+                after_question.kind,
+                TokenKind::Colon    // (x?: number)
+                | TokenKind::Comma  // (x?, y)
+                | TokenKind::RParen // (x?)
+                | TokenKind::Eq     // (x? = default) - unlikely but valid
+            );
+            return is_optional_param && !self.is_assignment_in_parens();
+        }
+
         matches!(
             next.kind,
             TokenKind::Colon      // type annotation: (x: number) =>
-            | TokenKind::Question // optional param: (x?) =>
             | TokenKind::Comma    // multiple params: (x, y) =>
             | TokenKind::RParen   // single param: (x) => or end of params
             | TokenKind::Eq // default value: (x = 1) => - but NOT assignment expression!

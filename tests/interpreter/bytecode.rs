@@ -210,6 +210,22 @@ fn test_bytecode_ternary() {
     );
 }
 
+#[test]
+fn test_bytecode_ternary_with_member_access() {
+    // Ternary with member access in parentheses - from data-pipeline example
+    assert_eq!(
+        eval_bytecode(
+            r#"
+            const product = { price: 10 };
+            const quantity = 2;
+            const result = (product ? product.price * quantity : 0);
+            result
+            "#
+        ),
+        JsValue::Number(20.0)
+    );
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Variable Declarations and Access
 // ═══════════════════════════════════════════════════════════════════════════
