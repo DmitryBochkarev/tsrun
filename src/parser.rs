@@ -325,6 +325,7 @@ impl<'src> Parser<'src> {
             TokenKind::Any => Some(self.lexer.string_dict().get_or_insert("any")),
             TokenKind::Unknown => Some(self.lexer.string_dict().get_or_insert("unknown")),
             TokenKind::Never => Some(self.lexer.string_dict().get_or_insert("never")),
+            TokenKind::Enum => Some(self.lexer.string_dict().get_or_insert("enum")),
             _ => None,
         }
     }
@@ -4000,6 +4001,14 @@ impl<'src> Parser<'src> {
                 self.advance();
                 ObjectPropertyKey::Identifier(Identifier {
                     name: self.lexer.string_dict().get_or_insert("as"),
+                    span,
+                })
+            }
+            TokenKind::Enum => {
+                let span = self.current.span;
+                self.advance();
+                ObjectPropertyKey::Identifier(Identifier {
+                    name: self.lexer.string_dict().get_or_insert("enum"),
                     span,
                 })
             }

@@ -2852,10 +2852,55 @@ impl Compiler {
                     param_names.push(JsString::from(format!("__param{}__", idx)));
                     func_compiler.compile_pattern_binding(&param.pattern, arg_reg, true, false)?;
                 }
-                crate::ast::Pattern::Assignment(_) => {
-                    // Parameter with default value - not fully supported in expression-bodied arrows
-                    // For now, just use a placeholder name
-                    param_names.push(JsString::from(format!("__param{}__", idx)));
+                crate::ast::Pattern::Assignment(assign_pat) => {
+                    // Parameter with default value: param = defaultValue
+                    // If argument is undefined, use default value
+                    let arg_reg = idx as u8;
+                    let actual_value = func_compiler.builder.alloc_register()?;
+
+                    // Check if arg is undefined
+                    let is_undefined = func_compiler.builder.alloc_register()?;
+                    func_compiler
+                        .builder
+                        .emit(Op::LoadUndefined { dst: is_undefined });
+                    func_compiler.builder.emit(Op::StrictEq {
+                        dst: is_undefined,
+                        left: arg_reg,
+                        right: is_undefined,
+                    });
+
+                    let skip_default = func_compiler.builder.emit_jump_if_false(is_undefined);
+                    func_compiler.builder.free_register(is_undefined);
+
+                    // Use default value
+                    func_compiler.compile_expression(&assign_pat.right, actual_value)?;
+                    let skip_arg = func_compiler.builder.emit_jump();
+
+                    // Use provided argument
+                    func_compiler.builder.patch_jump(skip_default);
+                    func_compiler.builder.emit(Op::Move {
+                        dst: actual_value,
+                        src: arg_reg,
+                    });
+
+                    func_compiler.builder.patch_jump(skip_arg);
+
+                    // Bind the inner pattern
+                    func_compiler.compile_pattern_binding(
+                        &assign_pat.left,
+                        actual_value,
+                        true,
+                        false,
+                    )?;
+
+                    // Extract name for param_names
+                    if let crate::ast::Pattern::Identifier(id) = assign_pat.left.as_ref() {
+                        param_names.push(id.name.cheap_clone());
+                    } else {
+                        param_names.push(JsString::from(format!("__param{}__", idx)));
+                    }
+
+                    func_compiler.builder.free_register(actual_value);
                 }
             }
         }

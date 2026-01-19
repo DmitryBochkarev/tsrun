@@ -936,6 +936,32 @@ fn test_bytecode_arrow_multiple_params() {
     );
 }
 
+#[test]
+fn test_bytecode_arrow_default_param_nested_closure() {
+    // Default parameter must be captured in nested arrow function
+    assert_eq!(
+        eval_bytecode(
+            "
+            const sortByPrice = (arr: number[], ascending: boolean = true) =>
+                arr.sort((a, b) => ascending ? a - b : b - a);
+            sortByPrice([3, 1, 2]).join(',')
+            "
+        ),
+        JsValue::from("1,2,3")
+    );
+    // With explicit false
+    assert_eq!(
+        eval_bytecode(
+            "
+            const sortByPrice = (arr: number[], ascending: boolean = true) =>
+                arr.sort((a, b) => ascending ? a - b : b - a);
+            sortByPrice([3, 1, 2], false).join(',')
+            "
+        ),
+        JsValue::from("3,2,1")
+    );
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Closures
 // ═══════════════════════════════════════════════════════════════════════════

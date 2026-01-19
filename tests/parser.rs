@@ -2019,6 +2019,21 @@ fn test_true_as_property_key() {
 }
 
 #[test]
+fn test_enum_as_property_key() {
+    // enum keyword as property key (for JSON Schema-like interfaces)
+    let prog = parse(
+        r#"
+        interface SchemaDefinition {
+            type: string;
+            enum?: any[];
+        }
+        const schema: SchemaDefinition = { type: "string", enum: ["a", "b"] };
+    "#,
+    );
+    assert_eq!(prog.body.len(), 2);
+}
+
+#[test]
 fn test_object_spread() {
     // spread in object literal
     let prog = parse("const obj = { ...a, ...b, c: 1 };");
