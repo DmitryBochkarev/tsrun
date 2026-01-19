@@ -1334,7 +1334,7 @@ impl<'src> Parser<'src> {
     /// Apply postfix operations to an expression (member access, calls, type assertions)
     fn parse_postfix_operations(&mut self, mut expr: Expression) -> Result<Expression, JsError> {
         let start_span = expr.span();
-        let mut has_optional_call = false;
+        let mut has_optional_chain = false;
 
         // Handle postfix operations: member access, calls, type assertions
         loop {
@@ -1425,6 +1425,7 @@ impl<'src> Parser<'src> {
                 // Optional chaining: expr?.prop or expr?.[key] or expr?.(args)
                 TokenKind::QuestionDot => {
                     self.advance();
+                    has_optional_chain = true;
 
                     // Check what follows: identifier, [, or (
                     if self.check(&TokenKind::LBracket) {
@@ -1451,7 +1452,6 @@ impl<'src> Parser<'src> {
                         let arguments = self.parse_call_arguments()?;
                         let end_span = self.expect(&TokenKind::RParen)?;
                         let expr_span = expr.span();
-                        has_optional_call = true;
                         expr = Expression::Call(Box::new(CallExpression {
                             callee: Rc::new(expr),
                             arguments,
@@ -1692,8 +1692,8 @@ impl<'src> Parser<'src> {
             }
         }
 
-        // If we had an optional call, wrap in OptionalChain
-        if has_optional_call {
+        // If we had any optional chaining (?.prop, ?.[key], or ?.()), wrap in OptionalChain
+        if has_optional_chain {
             let end_span = expr.span();
             expr = Expression::OptionalChain(OptionalChainExpression {
                 base: Rc::new(expr),
@@ -7716,6 +7716,107 @@ impl<'src> Parser<'src> {
                     }
                 }
             };
+
+            // Check for getter/setter: { get name() { ... } } or { set name(v) { ... } }
+            // This happens when key is "get" or "set" and followed by another property name
+            if let Some(ref name) = key_name {
+                let name_str = name.as_str();
+                if (name_str == "get" || name_str == "set")
+                    && !self.check(&TokenKind::Colon)
+                    && !self.check(&TokenKind::LParen)
+                    && !self.check(&TokenKind::Comma)
+                    && !self.check(&TokenKind::RBrace)
+                {
+                    // This is a getter or setter
+                    let is_getter = name_str == "get";
+
+                    // Parse the actual property name
+                    let (actual_key, _actual_name, actual_computed) = if self.check(&TokenKind::LBracket) {
+                        self.advance();
+                        let key_expr = self.parse_expression()?;
+                        self.expect(&TokenKind::RBracket)?;
+                        (ObjectPropertyKey::Computed(Rc::new(key_expr)), None, true)
+                    } else if let Some((name, span)) = self.try_get_identifier_name() {
+                        (
+                            ObjectPropertyKey::Identifier(Identifier {
+                                name: name.cheap_clone(),
+                                span,
+                            }),
+                            Some(name),
+                            false,
+                        )
+                    } else if let Some(kw_name) = self.keyword_as_property_name() {
+                        let span = self.current.span;
+                        self.advance();
+                        (
+                            ObjectPropertyKey::Identifier(Identifier {
+                                name: kw_name.cheap_clone(),
+                                span,
+                            }),
+                            Some(kw_name),
+                            false,
+                        )
+                    } else {
+                        return Err(JsError::syntax_error(
+                            format!(
+                                "Expected property name after '{}', found {:?}",
+                                name_str, self.current.kind
+                            ),
+                            self.current.span.line,
+                            self.current.span.column,
+                        ));
+                    };
+
+                    // Parse parameter list
+                    self.expect(&TokenKind::LParen)?;
+                    let params = self.parse_function_params()?;
+                    self.expect(&TokenKind::RParen)?;
+
+                    // Optional return type
+                    let return_type = if self.check(&TokenKind::Colon) {
+                        self.advance();
+                        Some(Box::new(self.parse_type_annotation()?))
+                    } else {
+                        None
+                    };
+
+                    // Parse body
+                    let body = self.parse_block_statement()?;
+                    let end_span = self.current.span;
+
+                    let func_expr = Expression::Function(Box::new(FunctionExpression {
+                        id: None,
+                        params: Rc::from(params),
+                        body: Rc::new(body),
+                        async_: false,
+                        generator: false,
+                        return_type,
+                        type_parameters: None,
+                        span: Span::new(prop_span.start, end_span.start, prop_span.line, prop_span.column),
+                    }));
+
+                    let kind = if is_getter {
+                        PropertyKind::Get
+                    } else {
+                        PropertyKind::Set
+                    };
+
+                    properties.push(ObjectProperty::Property(Box::new(Property {
+                        key: actual_key,
+                        value: func_expr,
+                        kind,
+                        computed: actual_computed,
+                        shorthand: false,
+                        method: false,
+                        span: Span::new(prop_span.start, end_span.start, prop_span.line, prop_span.column),
+                    })));
+
+                    if self.check(&TokenKind::Comma) {
+                        self.advance();
+                    }
+                    continue;
+                }
+            }
 
             // Check for method shorthand: { method() { ... } } or { method(): Type { ... } }
             if self.check(&TokenKind::LParen) {

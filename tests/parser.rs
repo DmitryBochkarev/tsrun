@@ -2107,6 +2107,13 @@ fn test_keyword_as_property_name() {
 }
 
 #[test]
+fn test_object_literal_getter_setter() {
+    // Getter and setter in object literal
+    let prog = parse("const obj = { get value() { return 1; }, set value(v) { } };");
+    assert_eq!(prog.body.len(), 1);
+}
+
+#[test]
 fn test_namespace_declaration() {
     // namespace declaration
     let prog = parse("namespace MyNamespace { export const x = 1; }");
