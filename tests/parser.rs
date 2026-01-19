@@ -2221,3 +2221,37 @@ fn test_angle_bracket_type_assertion() {
     let prog = parse("let x = <number>value;");
     assert_eq!(prog.body.len(), 1);
 }
+
+/// Regression test for fuzz crash: deeply nested block statements
+/// See: fuzz crashes crash-aef78366831cef4e959723e476283c21b6f652e2
+/// and crash-16f3b33f47bd013b30e2ae4f29ee96fc53935049
+/// Note: This test is ignored in debug mode due to larger stack frames
+#[test]
+#[cfg_attr(debug_assertions, ignore)]
+fn test_fuzz_crash_deeply_nested_block_statements() {
+    use std::time::{Duration, Instant};
+
+    // Input with 230+ nested braces (from fuzz corpus)
+    let input = "{".repeat(230);
+
+    let start = Instant::now();
+    let mut dict = tsrun::StringDict::new();
+    let mut parser = tsrun::parser::Parser::new(&input, &mut dict);
+    let result = parser.parse_program();
+    let elapsed = start.elapsed();
+
+    // Parsing should complete in under 1 second (not stack overflow)
+    assert!(
+        elapsed < Duration::from_secs(1),
+        "Parser took too long: {:?} (expected < 1s)",
+        elapsed
+    );
+
+    // Should get a depth exceeded error, not a stack overflow
+    let err = result.expect_err("Should fail with depth exceeded error");
+    assert!(
+        err.to_string().contains("Maximum nesting depth exceeded"),
+        "Expected depth error, got: {}",
+        err
+    );
+}

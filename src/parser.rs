@@ -4606,6 +4606,7 @@ impl<'src> Parser<'src> {
 
     /// Parse a block statement: { statements }
     fn parse_block_statement(&mut self) -> Result<BlockStatement, JsError> {
+        self.enter_nesting()?;
         let start_span = self.current.span;
         self.expect(&TokenKind::LBrace)?;
 
@@ -4617,6 +4618,7 @@ impl<'src> Parser<'src> {
         }
 
         let end_span = self.expect(&TokenKind::RBrace)?;
+        self.exit_nesting();
 
         Ok(BlockStatement {
             body: Rc::from(statements),
