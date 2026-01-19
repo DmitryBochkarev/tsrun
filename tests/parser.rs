@@ -3,7 +3,8 @@
 //! These tests verify that the parser correctly parses TypeScript/JavaScript source into AST.
 
 use tsrun::ast::{
-    ClassMember, Expression, MemberProperty, MethodKind, ObjectPropertyKey, Program, Statement,
+    ClassMember, Expression, ForInit, MemberProperty, MethodKind, ObjectPropertyKey, Program,
+    Statement,
 };
 use tsrun::parser::Parser;
 use tsrun::string_dict::StringDict;
@@ -1860,4 +1861,356 @@ fn test_fuzz_slow_unit_840ff275() {
 
     // Should either parse or fail fast with an error - not hang
     drop(result);
+}
+
+// ============================================================================
+// Tests for features needed by interpreter tests
+// ============================================================================
+
+#[test]
+fn test_async_arrow_function_expression() {
+    // async arrow function in expression position
+    let prog = parse("const foo = async () => 42;");
+    assert_eq!(prog.body.len(), 1);
+}
+
+#[test]
+fn test_async_arrow_function_with_params() {
+    // async arrow function with parameters
+    let prog = parse("const add = async (a, b) => a + b;");
+    assert_eq!(prog.body.len(), 1);
+}
+
+#[test]
+fn test_function_expression() {
+    // function expression assigned to variable
+    let prog = parse("const foo = function() { return 42; };");
+    assert_eq!(prog.body.len(), 1);
+}
+
+#[test]
+fn test_function_expression_named() {
+    // named function expression
+    let prog = parse("const foo = function bar() { return 42; };");
+    assert_eq!(prog.body.len(), 1);
+}
+
+#[test]
+fn test_function_expression_in_callback() {
+    // function expression as callback argument
+    let prog = parse("arr.map(function(x) { return x * 2; });");
+    assert_eq!(prog.body.len(), 1);
+}
+
+#[test]
+fn test_super_in_class_method() {
+    // super call in constructor
+    let prog = parse(
+        r#"
+        class Child extends Parent {
+            constructor() {
+                super();
+            }
+        }
+    "#,
+    );
+    assert_eq!(prog.body.len(), 1);
+}
+
+#[test]
+fn test_super_property_access() {
+    // super property access
+    let prog = parse(
+        r#"
+        class Child extends Parent {
+            method() {
+                return super.method();
+            }
+        }
+    "#,
+    );
+    assert_eq!(prog.body.len(), 1);
+}
+
+#[test]
+fn test_numeric_literal_type_property() {
+    // numeric literal in type/interface property
+    let prog = parse(
+        r#"
+        interface ArrayLike {
+            0: string;
+            1: number;
+            length: number;
+        }
+    "#,
+    );
+    assert_eq!(prog.body.len(), 1);
+}
+
+#[test]
+fn test_declare_as_identifier() {
+    // declare used as identifier (not keyword in expression context)
+    let prog = parse("const declare = 42;");
+    assert_eq!(prog.body.len(), 1);
+}
+
+#[test]
+fn test_is_as_property_name() {
+    // is used as property name
+    let prog = parse("const obj = { is: true };");
+    assert_eq!(prog.body.len(), 1);
+}
+
+#[test]
+fn test_new_expression_with_member_access() {
+    // new expression followed by member access
+    let prog = parse("new Boolean(true).toString()");
+    assert_eq!(prog.body.len(), 1);
+}
+
+#[test]
+fn test_for_await_of() {
+    // for await loop
+    let prog = parse(
+        r#"
+        async function test() {
+            for await (const x of gen) {
+                console.log(x);
+            }
+        }
+    "#,
+    );
+    assert_eq!(prog.body.len(), 1);
+}
+
+#[test]
+fn test_destructuring_function_param() {
+    // destructuring pattern in function parameter
+    let prog = parse("function foo({ a, b }: { a: number; b: number }) { return a + b; }");
+    assert_eq!(prog.body.len(), 1);
+}
+
+#[test]
+fn test_array_destructuring_function_param() {
+    // array destructuring pattern in function parameter
+    let prog = parse("function foo([a, b]: number[]) { return a + b; }");
+    assert_eq!(prog.body.len(), 1);
+}
+
+#[test]
+fn test_default_parameter_value() {
+    // default parameter value
+    let prog = parse("function foo(x: number = 1, y: number = x): number { return x + y; }");
+    assert_eq!(prog.body.len(), 1);
+}
+
+#[test]
+fn test_keyword_as_property_key() {
+    // return keyword as property key
+    let prog = parse("const obj = { return: function() { return 1; } };");
+    assert_eq!(prog.body.len(), 1);
+}
+
+#[test]
+fn test_true_as_property_key() {
+    // true keyword as property key
+    let prog = parse("const obj = { true: 1, false: 0 };");
+    assert_eq!(prog.body.len(), 1);
+}
+
+#[test]
+fn test_object_spread() {
+    // spread in object literal
+    let prog = parse("const obj = { ...a, ...b, c: 1 };");
+    assert_eq!(prog.body.len(), 1);
+}
+
+#[test]
+fn test_generator_method_in_object() {
+    // generator method in object literal
+    let prog = parse("const obj = { *gen() { yield 1; } };");
+    assert_eq!(prog.body.len(), 1);
+}
+
+#[test]
+fn test_export_namespace() {
+    // export namespace
+    let prog = parse(
+        r#"
+        export namespace Foo {
+            export const x = 1;
+        }
+    "#,
+    );
+    assert_eq!(prog.body.len(), 1);
+}
+
+#[test]
+fn test_class_accessor() {
+    // accessor keyword in class
+    let prog = parse(
+        r#"
+        class Point {
+            accessor x: number = 10;
+            accessor y: number = 20;
+        }
+    "#,
+    );
+    assert_eq!(prog.body.len(), 1);
+}
+
+#[test]
+fn test_labeled_statement() {
+    // labeled block statement
+    let prog = parse("outer: { break outer; }");
+    assert_eq!(prog.body.len(), 1);
+    assert!(matches!(prog.body[0], Statement::Labeled(_)));
+}
+
+#[test]
+fn test_async_function_declaration() {
+    // async function declaration
+    let prog = parse("async function foo() { return 42; }");
+    assert_eq!(prog.body.len(), 1);
+    assert!(matches!(prog.body[0], Statement::FunctionDeclaration(_)));
+}
+
+#[test]
+fn test_async_method_in_object_literal() {
+    // async method in object literal
+    let prog = parse("const obj = { async getValue() { return 42; } };");
+    assert_eq!(prog.body.len(), 1);
+}
+
+#[test]
+fn test_async_method_in_class() {
+    // async method in class
+    let prog = parse("class Foo { async getValue() { return 42; } }");
+    assert_eq!(prog.body.len(), 1);
+    assert!(matches!(prog.body[0], Statement::ClassDeclaration(_)));
+}
+
+#[test]
+fn test_generic_method_in_class() {
+    // generic method in class: method<T>(param: T): T
+    let prog = parse("class Foo { getValue<T>(x: T): T { return x; } }");
+    assert_eq!(prog.body.len(), 1);
+    assert!(matches!(prog.body[0], Statement::ClassDeclaration(_)));
+}
+
+#[test]
+fn test_keyword_as_property_name() {
+    // Keywords like 'accessor' can be used as property names
+    let prog = parse("class Foo { get accessor(): number { return 1; } }");
+    assert_eq!(prog.body.len(), 1);
+    assert!(matches!(prog.body[0], Statement::ClassDeclaration(_)));
+}
+
+#[test]
+fn test_namespace_declaration() {
+    // namespace declaration
+    let prog = parse("namespace MyNamespace { export const x = 1; }");
+    assert_eq!(prog.body.len(), 1);
+    assert!(matches!(prog.body[0], Statement::NamespaceDeclaration(_)));
+}
+
+#[test]
+fn test_for_in_with_predeclared_var() {
+    // for-in with pre-declared variable
+    let prog = parse("let x; let obj = {}; for (x in obj) { }");
+    assert_eq!(prog.body.len(), 3);
+    assert!(matches!(prog.body[2], Statement::ForIn(_)));
+}
+
+#[test]
+fn test_for_multiple_variables() {
+    // for loop with multiple variable declarations
+    let prog = parse("for (let i = 0, j = 10; i < j; i++, j--) { }");
+    assert_eq!(prog.body.len(), 1);
+    if let Statement::For(for_stmt) = &prog.body[0] {
+        // Check init has 2 declarations
+        if let Some(ForInit::Variable(decl)) = &for_stmt.init {
+            assert_eq!(decl.declarations.len(), 2);
+        } else {
+            panic!("Expected variable declaration in for init");
+        }
+        // Check update is a sequence expression
+        if let Some(update) = &for_stmt.update {
+            assert!(matches!(update.as_ref(), Expression::Sequence(_)));
+        } else {
+            panic!("Expected update expression");
+        }
+    } else {
+        panic!("Expected for statement");
+    }
+}
+
+#[test]
+fn test_declare_const() {
+    // declare const should be parsed
+    let prog = parse("declare const x: number;");
+    assert_eq!(prog.body.len(), 1);
+}
+
+#[test]
+fn test_declare_function() {
+    // declare function should be parsed
+    let prog = parse("declare function foo(x: number): string;");
+    assert_eq!(prog.body.len(), 1);
+}
+
+#[test]
+fn test_conditional_type() {
+    // conditional type with infer
+    let prog = parse("type ReturnType<T> = T extends (...args: any[]) => infer R ? R : never;");
+    assert_eq!(prog.body.len(), 1);
+}
+
+#[test]
+fn test_type_predicate() {
+    // type predicate return type
+    let prog = parse("function isCat(pet: any): pet is Cat { return true; }");
+    assert_eq!(prog.body.len(), 1);
+}
+
+#[test]
+fn test_asserts_type_predicate() {
+    // asserts type predicate return type
+    let prog = parse("function assertIsCat(pet: any): asserts pet is Cat { }");
+    assert_eq!(prog.body.len(), 1);
+}
+
+#[test]
+fn test_const_assertion() {
+    // const assertion type
+    let prog = parse("const arr = [1, 2, 3] as const;");
+    assert_eq!(prog.body.len(), 1);
+}
+
+#[test]
+fn test_constructor_type() {
+    // Constructor type annotation: new (...args: any[]) => T
+    let prog = parse("type Ctor<T> = new (...args: any[]) => T;");
+    assert_eq!(prog.body.len(), 1);
+}
+
+#[test]
+fn test_template_literal_type() {
+    // Template literal type annotation: `Hello ${string}`
+    let prog = parse("type Greeting = `Hello ${string}`;");
+    assert_eq!(prog.body.len(), 1);
+}
+
+#[test]
+fn test_declare_module_string() {
+    // declare module with string literal name
+    let prog = parse(r#"declare module "express" { export interface Request {} }"#);
+    assert_eq!(prog.body.len(), 1);
+}
+
+#[test]
+fn test_angle_bracket_type_assertion() {
+    // angle bracket type assertion
+    let prog = parse("let x = <number>value;");
+    assert_eq!(prog.body.len(), 1);
 }

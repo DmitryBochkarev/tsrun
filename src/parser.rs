@@ -2,21 +2,25 @@
 //!
 //! Uses an explicit work stack instead of recursion to avoid stack overflow.
 
+use crate::JsString;
 use crate::ast::{
     Argument, ArrayElement, ArrayExpression, ArrayType, ArrowFunctionBody, ArrowFunctionExpression,
-    AssignmentExpression, AssignmentOp, AssignmentTarget, AwaitExpression, BinaryExpression, BinaryOp, BlockStatement,
-    BreakStatement, CallExpression, CatchClause, ClassBody, ClassConstructor, ClassDeclaration, ClassExpression,
-    ClassMember, ClassMethod, ClassProperty, ContinueStatement, ConditionalExpression,
-    Decorator, DoWhileStatement, EnumDeclaration, EnumMember, Expression, ExportDeclaration,
-    ExportSpecifier, ExpressionStatement, ForInOfLeft, ForInStatement, ForInit, ForOfStatement,
-    ForStatement, FunctionDeclaration, FunctionExpression, FunctionParam, Identifier, IfStatement,
-    IndexedAccessType, IndexSignature, InterfaceDeclaration, IntersectionType, KeyofType, Literal, LiteralValue,
-    LogicalExpression, LogicalOp, MemberExpression, MemberProperty, MethodKind, MethodSignature,
-    NewExpression, NonNullExpression, ObjectExpression, ObjectProperty, ObjectPropertyKey, ObjectType,
-    OptionalChainExpression, Pattern, Program, Property, PropertyKind, PropertySignature, RestElement,
-    ReturnStatement, SourceType, SequenceExpression, SpreadElement, Statement, StringLiteral, SwitchCase,
-    SwitchStatement, TaggedTemplateExpression, TemplateElement, TemplateLiteral, ThrowStatement, TryStatement,
-    TypeAliasDeclaration, TypeAnnotation, TypeMember, TypeAssertionExpression, TypeParameter, TypeParameters,
+    AssignmentExpression, AssignmentOp, AssignmentPattern, AssignmentTarget, AwaitExpression,
+    BinaryExpression, BinaryOp, BlockStatement, BreakStatement, CallExpression, CatchClause,
+    ClassBody, ClassConstructor, ClassDeclaration, ClassExpression, ClassMember, ClassMethod,
+    ClassProperty, ConditionalExpression, ConditionalType, ContinueStatement, Decorator,
+    DoWhileStatement, EnumDeclaration, EnumMember, ExportDeclaration, ExportSpecifier, Expression,
+    ExpressionStatement, ForInOfLeft, ForInStatement, ForInit, ForOfStatement, ForStatement,
+    FunctionDeclaration, FunctionExpression, FunctionParam, Identifier, IfStatement,
+    IndexSignature, IndexedAccessType, InferType, InterfaceDeclaration, IntersectionType,
+    KeyofType, LabeledStatement, Literal, LiteralValue, LogicalExpression, LogicalOp,
+    MemberExpression, MemberProperty, MethodKind, MethodSignature, NamespaceDeclaration,
+    NewExpression, NonNullExpression, ObjectExpression, ObjectProperty, ObjectPropertyKey,
+    ObjectType, OptionalChainExpression, Pattern, Program, Property, PropertyKind,
+    PropertySignature, RestElement, ReturnStatement, SequenceExpression, SourceType, SpreadElement,
+    Statement, StringLiteral, SwitchCase, SwitchStatement, TaggedTemplateExpression,
+    TemplateElement, TemplateLiteral, ThrowStatement, TryStatement, TypeAliasDeclaration,
+    TypeAnnotation, TypeAssertionExpression, TypeMember, TypeParameter, TypeParameters,
     UnaryExpression, UnaryOp, UpdateExpression, UpdateOp, VariableDeclaration, VariableDeclarator,
     VariableKind, WhileStatement, YieldExpression,
 };
@@ -24,7 +28,6 @@ use crate::error::JsError;
 use crate::lexer::{Lexer, Span, Token, TokenKind};
 use crate::prelude::*;
 use crate::string_dict::StringDict;
-use crate::JsString;
 use crate::value::CheapClone;
 
 // ============================================================================
@@ -152,7 +155,14 @@ impl<'src> Parser<'src> {
                 id_span,
                 start_span,
                 statements,
-            } => self.step_parse_variable_init(kind, id, type_annotation, id_span, start_span, statements),
+            } => self.step_parse_variable_init(
+                kind,
+                id,
+                type_annotation,
+                id_span,
+                start_span,
+                statements,
+            ),
         }
     }
 
@@ -248,6 +258,7 @@ impl<'src> Parser<'src> {
         match &self.current.kind {
             TokenKind::From => Some(self.lexer.string_dict().get_or_insert("from")),
             TokenKind::As => Some(self.lexer.string_dict().get_or_insert("as")),
+            TokenKind::Is => Some(self.lexer.string_dict().get_or_insert("is")),
             TokenKind::Of => Some(self.lexer.string_dict().get_or_insert("of")),
             TokenKind::Type => Some(self.lexer.string_dict().get_or_insert("type")),
             TokenKind::Declare => Some(self.lexer.string_dict().get_or_insert("declare")),
@@ -297,6 +308,10 @@ impl<'src> Parser<'src> {
             TokenKind::Export => Some(self.lexer.string_dict().get_or_insert("export")),
             TokenKind::Yield => Some(self.lexer.string_dict().get_or_insert("yield")),
             TokenKind::Await => Some(self.lexer.string_dict().get_or_insert("await")),
+            // TypeScript type keywords that can be property names
+            TokenKind::Any => Some(self.lexer.string_dict().get_or_insert("any")),
+            TokenKind::Unknown => Some(self.lexer.string_dict().get_or_insert("unknown")),
+            TokenKind::Never => Some(self.lexer.string_dict().get_or_insert("never")),
             _ => None,
         }
     }
@@ -464,14 +479,17 @@ impl<'src> Parser<'src> {
                 continue;
             }
 
-            // Skip property key (identifier or string)
+            // Skip property key (identifier, string, or number)
             match &self.current.kind {
-                TokenKind::Identifier(_) | TokenKind::String(_) => {
+                TokenKind::Identifier(_) | TokenKind::String(_) | TokenKind::Number(_) => {
                     self.advance();
                 }
                 _ => {
                     return Err(JsError::syntax_error(
-                        format!("Expected property name in type, found {:?}", self.current.kind),
+                        format!(
+                            "Expected property name in type, found {:?}",
+                            self.current.kind
+                        ),
                         self.current.span.line,
                         self.current.span.column,
                     ));
@@ -591,7 +609,10 @@ impl<'src> Parser<'src> {
             // Return statement
             TokenKind::Return => {
                 self.advance();
-                let argument = if self.check(&TokenKind::Semicolon) || self.check(&TokenKind::RBrace) || self.check(&TokenKind::Eof) {
+                let argument = if self.check(&TokenKind::Semicolon)
+                    || self.check(&TokenKind::RBrace)
+                    || self.check(&TokenKind::Eof)
+                {
                     None
                 } else {
                     Some(Rc::new(self.parse_expression()?))
@@ -600,7 +621,12 @@ impl<'src> Parser<'src> {
                 let end_span = self.current.span;
                 let stmt = Statement::Return(ReturnStatement {
                     argument,
-                    span: Span::new(start_span.start, end_span.start, start_span.line, start_span.column),
+                    span: Span::new(
+                        start_span.start,
+                        end_span.start,
+                        start_span.line,
+                        start_span.column,
+                    ),
                 });
                 let mut statements = statements;
                 statements.push(stmt);
@@ -727,7 +753,44 @@ impl<'src> Parser<'src> {
     /// Parse an expression with operator precedence (Pratt parsing)
     fn parse_expression(&mut self) -> Result<Expression, JsError> {
         let expr = self.parse_conditional_expression()?;
+        self.parse_assignment_expression_with_lhs(expr)
+    }
 
+    /// Parse a sequence expression (comma-separated expressions).
+    /// Used for for-loop update and other contexts where comma operator is allowed.
+    fn parse_sequence_expression(&mut self) -> Result<Expression, JsError> {
+        let start_span = self.current.span;
+        let first = self.parse_expression()?;
+
+        // Check for comma (sequence expression)
+        if !self.check(&TokenKind::Comma) {
+            return Ok(first);
+        }
+
+        let mut expressions = vec![first];
+        while self.check(&TokenKind::Comma) {
+            self.advance();
+            expressions.push(self.parse_expression()?);
+        }
+
+        let end_span = expressions.last().map(|e| e.span()).unwrap_or(start_span);
+
+        Ok(Expression::Sequence(SequenceExpression {
+            expressions,
+            span: Span::new(
+                start_span.start,
+                end_span.end,
+                start_span.line,
+                start_span.column,
+            ),
+        }))
+    }
+
+    /// Parse assignment expression starting with an already-parsed left operand
+    fn parse_assignment_expression_with_lhs(
+        &mut self,
+        expr: Expression,
+    ) -> Result<Expression, JsError> {
         // Check for assignment operators
         if let Some(op) = self.get_assignment_op() {
             self.advance();
@@ -742,7 +805,12 @@ impl<'src> Parser<'src> {
                 operator: op,
                 left: target,
                 right: Rc::new(right),
-                span: Span::new(expr_span.start, right_span.end, expr_span.line, expr_span.column),
+                span: Span::new(
+                    expr_span.start,
+                    right_span.end,
+                    expr_span.line,
+                    expr_span.column,
+                ),
             })));
         }
 
@@ -798,11 +866,13 @@ impl<'src> Parser<'src> {
                         }
                     }
                 }
-                Ok(AssignmentTarget::Pattern(Pattern::Array(crate::ast::ArrayPattern {
-                    elements,
-                    type_annotation: None,
-                    span: arr.span,
-                })))
+                Ok(AssignmentTarget::Pattern(Pattern::Array(
+                    crate::ast::ArrayPattern {
+                        elements,
+                        type_annotation: None,
+                        span: arr.span,
+                    },
+                )))
             }
             // Object destructuring: { a, b } = ...
             Expression::Object(obj) => {
@@ -836,11 +906,13 @@ impl<'src> Parser<'src> {
                         }
                     }
                 }
-                Ok(AssignmentTarget::Pattern(Pattern::Object(crate::ast::ObjectPattern {
-                    properties,
-                    type_annotation: None,
-                    span: obj.span,
-                })))
+                Ok(AssignmentTarget::Pattern(Pattern::Object(
+                    crate::ast::ObjectPattern {
+                        properties,
+                        type_annotation: None,
+                        span: obj.span,
+                    },
+                )))
             }
             // Parenthesized expression: (expr) = ...
             Expression::Parenthesized(inner, _) => self.expr_to_assignment_target(inner),
@@ -949,7 +1021,14 @@ impl<'src> Parser<'src> {
     /// Parse conditional (ternary) expression: test ? consequent : alternate
     fn parse_conditional_expression(&mut self) -> Result<Expression, JsError> {
         let test = self.parse_binary_expression(0)?;
+        self.parse_conditional_expression_with_lhs(test)
+    }
 
+    /// Parse conditional expression starting with an already-parsed test expression
+    fn parse_conditional_expression_with_lhs(
+        &mut self,
+        test: Expression,
+    ) -> Result<Expression, JsError> {
         if !self.check(&TokenKind::Question) {
             return Ok(test);
         }
@@ -1040,6 +1119,73 @@ impl<'src> Parser<'src> {
         Ok(left)
     }
 
+    /// Parse binary expression starting with an already-parsed left operand
+    fn parse_binary_expression_with_lhs(
+        &mut self,
+        mut left: Expression,
+        min_prec: u8,
+    ) -> Result<Expression, JsError> {
+        loop {
+            // Check for logical operator first (lower precedence)
+            if let Some((op, prec)) = self.get_logical_op_and_prec() {
+                if prec < min_prec {
+                    break;
+                }
+
+                self.advance();
+                let next_prec = prec + 1; // left-associative
+                let right = self.parse_binary_expression(next_prec)?;
+
+                let span = Span::new(
+                    left.span().start,
+                    right.span().end,
+                    left.span().line,
+                    left.span().column,
+                );
+
+                left = Expression::Logical(LogicalExpression {
+                    operator: op,
+                    left: Rc::new(left),
+                    right: Rc::new(right),
+                    span,
+                });
+                continue;
+            }
+
+            // Check for binary operator
+            let Some((op, prec)) = self.get_binary_op_and_prec() else {
+                break;
+            };
+
+            if prec < min_prec {
+                break;
+            }
+
+            self.advance(); // consume operator
+
+            // Parse right-hand side with higher precedence (for left-associativity)
+            // Exponentiation is right-associative, so use same precedence
+            let next_prec = if op == BinaryOp::Exp { prec } else { prec + 1 };
+            let right = self.parse_binary_expression(next_prec)?;
+
+            let span = Span::new(
+                left.span().start,
+                right.span().end,
+                left.span().line,
+                left.span().column,
+            );
+
+            left = Expression::Binary(BinaryExpression {
+                operator: op,
+                left: Rc::new(left),
+                right: Rc::new(right),
+                span,
+            });
+        }
+
+        Ok(left)
+    }
+
     /// Get logical operator and its precedence from current token
     fn get_logical_op_and_prec(&self) -> Option<(LogicalOp, u8)> {
         match &self.current.kind {
@@ -1070,12 +1216,7 @@ impl<'src> Parser<'src> {
             };
             self.advance();
             let argument = self.parse_unary_expression()?;
-            let full_span = Span::new(
-                span.start,
-                argument.span().end,
-                span.line,
-                span.column,
-            );
+            let full_span = Span::new(span.start, argument.span().end, span.line, span.column);
             return Ok(Expression::Update(UpdateExpression {
                 operator: update_op,
                 argument: Rc::new(argument),
@@ -1119,12 +1260,7 @@ impl<'src> Parser<'src> {
         if self.current.kind == TokenKind::Await {
             self.advance();
             let argument = self.parse_unary_expression()?;
-            let full_span = Span::new(
-                span.start,
-                argument.span().end,
-                span.line,
-                span.column,
-            );
+            let full_span = Span::new(span.start, argument.span().end, span.line, span.column);
             return Ok(Expression::Await(AwaitExpression {
                 argument: Rc::new(argument),
                 span: full_span,
@@ -1152,12 +1288,14 @@ impl<'src> Parser<'src> {
                 Vec::new()
             };
             let end_span = self.current.span;
-            return Ok(Expression::New(Box::new(NewExpression {
+            let new_expr = Expression::New(Box::new(NewExpression {
                 callee: Rc::new(callee),
                 arguments,
                 type_arguments,
                 span: Span::new(span.start, end_span.start, span.line, span.column),
-            })));
+            }));
+            // Allow postfix operations like .toString() after new expressions
+            return self.parse_postfix_operations(new_expr);
         }
 
         // Check for unary prefix operators
@@ -1175,12 +1313,7 @@ impl<'src> Parser<'src> {
         if let Some(op) = op {
             self.advance();
             let argument = self.parse_unary_expression()?; // Recursive for multiple prefixes
-            let full_span = Span::new(
-                span.start,
-                argument.span().end,
-                span.line,
-                span.column,
-            );
+            let full_span = Span::new(span.start, argument.span().end, span.line, span.column);
             return Ok(Expression::Unary(UnaryExpression {
                 operator: op,
                 argument: Rc::new(argument),
@@ -1194,7 +1327,12 @@ impl<'src> Parser<'src> {
 
     /// Parse postfix expressions (type assertions, member access, calls, etc.)
     fn parse_postfix_expression(&mut self) -> Result<Expression, JsError> {
-        let mut expr = self.parse_primary_expression()?;
+        let expr = self.parse_primary_expression()?;
+        self.parse_postfix_operations(expr)
+    }
+
+    /// Apply postfix operations to an expression (member access, calls, type assertions)
+    fn parse_postfix_operations(&mut self, mut expr: Expression) -> Result<Expression, JsError> {
         let start_span = expr.span();
         let mut has_optional_call = false;
 
@@ -1209,7 +1347,10 @@ impl<'src> Parser<'src> {
                         TokenKind::Identifier(name) => {
                             let name = name.cheap_clone();
                             self.advance();
-                            MemberProperty::Identifier(Identifier { name, span: prop_span })
+                            MemberProperty::Identifier(Identifier {
+                                name,
+                                span: prop_span,
+                            })
                         }
                         // Private member access: expr.#name
                         TokenKind::Hash => {
@@ -1218,14 +1359,28 @@ impl<'src> Parser<'src> {
                             match &self.current.kind {
                                 TokenKind::Identifier(name) => {
                                     // Include the # in the name
-                                    let name_with_hash = self.lexer.string_dict().get_or_insert(&format!("#{}", name.as_str()));
+                                    let name_with_hash = self
+                                        .lexer
+                                        .string_dict()
+                                        .get_or_insert(&format!("#{}", name.as_str()));
                                     self.advance();
-                                    let full_span = Span::new(prop_span.start, id_span.end, prop_span.line, prop_span.column);
-                                    MemberProperty::PrivateIdentifier(Identifier { name: name_with_hash, span: full_span })
+                                    let full_span = Span::new(
+                                        prop_span.start,
+                                        id_span.end,
+                                        prop_span.line,
+                                        prop_span.column,
+                                    );
+                                    MemberProperty::PrivateIdentifier(Identifier {
+                                        name: name_with_hash,
+                                        span: full_span,
+                                    })
                                 }
                                 _ => {
                                     return Err(JsError::syntax_error(
-                                        format!("Expected identifier after #, found {:?}", self.current.kind),
+                                        format!(
+                                            "Expected identifier after #, found {:?}",
+                                            self.current.kind
+                                        ),
                                         self.current.span.line,
                                         self.current.span.column,
                                     ));
@@ -1236,10 +1391,16 @@ impl<'src> Parser<'src> {
                         _ => {
                             if let Some(name) = self.keyword_as_property_name() {
                                 self.advance();
-                                MemberProperty::Identifier(Identifier { name, span: prop_span })
+                                MemberProperty::Identifier(Identifier {
+                                    name,
+                                    span: prop_span,
+                                })
                             } else {
                                 return Err(JsError::syntax_error(
-                                    format!("Expected property name, found {:?}", self.current.kind),
+                                    format!(
+                                        "Expected property name, found {:?}",
+                                        self.current.kind
+                                    ),
                                     self.current.span.line,
                                     self.current.span.column,
                                 ));
@@ -1253,7 +1414,12 @@ impl<'src> Parser<'src> {
                         property,
                         computed: false,
                         optional: false,
-                        span: Span::new(expr_span.start, end_span.start, expr_span.line, expr_span.column),
+                        span: Span::new(
+                            expr_span.start,
+                            end_span.start,
+                            expr_span.line,
+                            expr_span.column,
+                        ),
                     }));
                 }
                 // Optional chaining: expr?.prop or expr?.[key] or expr?.(args)
@@ -1272,7 +1438,12 @@ impl<'src> Parser<'src> {
                             property: MemberProperty::Expression(Rc::new(key)),
                             computed: true,
                             optional: true,
-                            span: Span::new(expr_span.start, end_span.end, expr_span.line, expr_span.column),
+                            span: Span::new(
+                                expr_span.start,
+                                end_span.end,
+                                expr_span.line,
+                                expr_span.column,
+                            ),
                         }));
                     } else if self.check(&TokenKind::LParen) {
                         // Optional call: expr?.(args)
@@ -1286,7 +1457,12 @@ impl<'src> Parser<'src> {
                             arguments,
                             type_arguments: None,
                             optional: true,
-                            span: Span::new(expr_span.start, end_span.end, expr_span.line, expr_span.column),
+                            span: Span::new(
+                                expr_span.start,
+                                end_span.end,
+                                expr_span.line,
+                                expr_span.column,
+                            ),
                         }));
                     } else {
                         // Optional member: expr?.prop
@@ -1295,11 +1471,17 @@ impl<'src> Parser<'src> {
                             TokenKind::Identifier(name) => {
                                 let name = name.cheap_clone();
                                 self.advance();
-                                MemberProperty::Identifier(Identifier { name, span: prop_span })
+                                MemberProperty::Identifier(Identifier {
+                                    name,
+                                    span: prop_span,
+                                })
                             }
                             _ => {
                                 return Err(JsError::syntax_error(
-                                    format!("Expected property name, found {:?}", self.current.kind),
+                                    format!(
+                                        "Expected property name, found {:?}",
+                                        self.current.kind
+                                    ),
                                     self.current.span.line,
                                     self.current.span.column,
                                 ));
@@ -1312,7 +1494,12 @@ impl<'src> Parser<'src> {
                             property,
                             computed: false,
                             optional: true,
-                            span: Span::new(expr_span.start, end_span.start, expr_span.line, expr_span.column),
+                            span: Span::new(
+                                expr_span.start,
+                                end_span.start,
+                                expr_span.line,
+                                expr_span.column,
+                            ),
                         }));
                     }
                 }
@@ -1327,7 +1514,12 @@ impl<'src> Parser<'src> {
                         property: MemberProperty::Expression(Rc::new(key)),
                         computed: true,
                         optional: false,
-                        span: Span::new(expr_span.start, end_span.end, expr_span.line, expr_span.column),
+                        span: Span::new(
+                            expr_span.start,
+                            end_span.end,
+                            expr_span.line,
+                            expr_span.column,
+                        ),
                     }));
                 }
                 // Function call: expr(args)
@@ -1341,7 +1533,12 @@ impl<'src> Parser<'src> {
                         arguments,
                         type_arguments: None,
                         optional: false,
-                        span: Span::new(expr_span.start, end_span.end, expr_span.line, expr_span.column),
+                        span: Span::new(
+                            expr_span.start,
+                            end_span.end,
+                            expr_span.line,
+                            expr_span.column,
+                        ),
                     }));
                 }
                 // Type arguments followed by call: expr<T>(args)
@@ -1359,7 +1556,12 @@ impl<'src> Parser<'src> {
                             arguments,
                             type_arguments,
                             optional: false,
-                            span: Span::new(expr_span.start, end_span.end, expr_span.line, expr_span.column),
+                            span: Span::new(
+                                expr_span.start,
+                                end_span.end,
+                                expr_span.line,
+                                expr_span.column,
+                            ),
                         }));
                     } else {
                         // Not type arguments - let binary expression parsing handle it
@@ -1393,7 +1595,12 @@ impl<'src> Parser<'src> {
                         operator: UpdateOp::Increment,
                         argument: Rc::new(expr),
                         prefix: false,
-                        span: Span::new(expr_span.start, end_span.end, expr_span.line, expr_span.column),
+                        span: Span::new(
+                            expr_span.start,
+                            end_span.end,
+                            expr_span.line,
+                            expr_span.column,
+                        ),
                     });
                 }
                 // Postfix decrement: expr--
@@ -1405,7 +1612,12 @@ impl<'src> Parser<'src> {
                         operator: UpdateOp::Decrement,
                         argument: Rc::new(expr),
                         prefix: false,
-                        span: Span::new(expr_span.start, end_span.end, expr_span.line, expr_span.column),
+                        span: Span::new(
+                            expr_span.start,
+                            end_span.end,
+                            expr_span.line,
+                            expr_span.column,
+                        ),
                     });
                 }
                 // Tagged template: expr`template`
@@ -1426,7 +1638,12 @@ impl<'src> Parser<'src> {
                     expr = Expression::TaggedTemplate(Box::new(TaggedTemplateExpression {
                         tag: Rc::new(expr),
                         quasi,
-                        span: Span::new(expr_span.start, template_span.end, expr_span.line, expr_span.column),
+                        span: Span::new(
+                            expr_span.start,
+                            template_span.end,
+                            expr_span.line,
+                            expr_span.column,
+                        ),
                     }));
                 }
                 TokenKind::TemplateHead(s) => {
@@ -1441,7 +1658,12 @@ impl<'src> Parser<'src> {
                         expr = Expression::TaggedTemplate(Box::new(TaggedTemplateExpression {
                             tag: Rc::new(expr),
                             quasi,
-                            span: Span::new(expr_span.start, end_span.end, expr_span.line, expr_span.column),
+                            span: Span::new(
+                                expr_span.start,
+                                end_span.end,
+                                expr_span.line,
+                                expr_span.column,
+                            ),
                         }));
                     } else {
                         return Err(JsError::syntax_error(
@@ -1458,7 +1680,12 @@ impl<'src> Parser<'src> {
                     let expr_span = expr.span();
                     expr = Expression::NonNull(NonNullExpression {
                         expression: Rc::new(expr),
-                        span: Span::new(expr_span.start, end_span.end, expr_span.line, expr_span.column),
+                        span: Span::new(
+                            expr_span.start,
+                            end_span.end,
+                            expr_span.line,
+                            expr_span.column,
+                        ),
                     });
                 }
                 _ => break,
@@ -1470,7 +1697,12 @@ impl<'src> Parser<'src> {
             let end_span = expr.span();
             expr = Expression::OptionalChain(OptionalChainExpression {
                 base: Rc::new(expr),
-                span: Span::new(start_span.start, end_span.end, start_span.line, start_span.column),
+                span: Span::new(
+                    start_span.start,
+                    end_span.end,
+                    start_span.line,
+                    start_span.column,
+                ),
             });
         }
 
@@ -1491,7 +1723,10 @@ impl<'src> Parser<'src> {
                         TokenKind::Identifier(name) => {
                             let name = name.cheap_clone();
                             self.advance();
-                            MemberProperty::Identifier(Identifier { name, span: prop_span })
+                            MemberProperty::Identifier(Identifier {
+                                name,
+                                span: prop_span,
+                            })
                         }
                         _ => {
                             return Err(JsError::syntax_error(
@@ -1508,7 +1743,12 @@ impl<'src> Parser<'src> {
                         property,
                         computed: false,
                         optional: false,
-                        span: Span::new(expr_span.start, end_span.start, expr_span.line, expr_span.column),
+                        span: Span::new(
+                            expr_span.start,
+                            end_span.start,
+                            expr_span.line,
+                            expr_span.column,
+                        ),
                     }));
                 }
                 TokenKind::LBracket => {
@@ -1521,7 +1761,12 @@ impl<'src> Parser<'src> {
                         property: MemberProperty::Expression(Rc::new(key)),
                         computed: true,
                         optional: false,
-                        span: Span::new(expr_span.start, end_span.end, expr_span.line, expr_span.column),
+                        span: Span::new(
+                            expr_span.start,
+                            end_span.end,
+                            expr_span.line,
+                            expr_span.column,
+                        ),
                     }));
                 }
                 _ => break,
@@ -1536,8 +1781,25 @@ impl<'src> Parser<'src> {
         let mut args = Vec::new();
 
         while !self.check(&TokenKind::RParen) && !self.check(&TokenKind::Eof) {
-            let expr = self.parse_expression()?;
-            args.push(Argument::Expression(expr));
+            // Check for spread argument: ...expr
+            if self.check(&TokenKind::DotDotDot) {
+                let spread_span = self.current.span;
+                self.advance();
+                let argument = Rc::new(self.parse_conditional_expression()?);
+                let end_span = argument.span();
+                args.push(Argument::Spread(SpreadElement {
+                    argument,
+                    span: Span::new(
+                        spread_span.start,
+                        end_span.end,
+                        spread_span.line,
+                        spread_span.column,
+                    ),
+                }));
+            } else {
+                let expr = self.parse_expression()?;
+                args.push(Argument::Expression(expr));
+            }
 
             if self.check(&TokenKind::Comma) {
                 self.advance();
@@ -1565,7 +1827,12 @@ impl<'src> Parser<'src> {
                 let end_span = self.expect(&TokenKind::RBracket)?;
                 first_member = TypeAnnotation::Array(ArrayType {
                     element_type: Box::new(first_member),
-                    span: Span::new(start_span.start, end_span.end, start_span.line, start_span.column),
+                    span: Span::new(
+                        start_span.start,
+                        end_span.end,
+                        start_span.line,
+                        start_span.column,
+                    ),
                 });
             }
 
@@ -1579,7 +1846,12 @@ impl<'src> Parser<'src> {
                     let end_span = self.expect(&TokenKind::RBracket)?;
                     member = TypeAnnotation::Array(ArrayType {
                         element_type: Box::new(member),
-                        span: Span::new(start_span.start, end_span.end, start_span.line, start_span.column),
+                        span: Span::new(
+                            start_span.start,
+                            end_span.end,
+                            start_span.line,
+                            start_span.column,
+                        ),
                     });
                 }
                 types.push(member);
@@ -1587,7 +1859,12 @@ impl<'src> Parser<'src> {
             let end_span = self.current.span;
             return Ok(TypeAnnotation::Union(crate::ast::UnionType {
                 types,
-                span: Span::new(start_span.start, end_span.start, start_span.line, start_span.column),
+                span: Span::new(
+                    start_span.start,
+                    end_span.start,
+                    start_span.line,
+                    start_span.column,
+                ),
             }));
         }
 
@@ -1602,7 +1879,12 @@ impl<'src> Parser<'src> {
                 let end_span = self.expect(&TokenKind::RBracket)?; // consume ']'
                 type_ann = TypeAnnotation::Array(ArrayType {
                     element_type: Box::new(type_ann),
-                    span: Span::new(start_span.start, end_span.end, start_span.line, start_span.column),
+                    span: Span::new(
+                        start_span.start,
+                        end_span.end,
+                        start_span.line,
+                        start_span.column,
+                    ),
                 });
             } else {
                 // Has content: indexed access type T["key"] or T[K]
@@ -1611,7 +1893,12 @@ impl<'src> Parser<'src> {
                 type_ann = TypeAnnotation::Indexed(IndexedAccessType {
                     object_type: Box::new(type_ann),
                     index_type: Box::new(index_type),
-                    span: Span::new(start_span.start, end_span.end, start_span.line, start_span.column),
+                    span: Span::new(
+                        start_span.start,
+                        end_span.end,
+                        start_span.line,
+                        start_span.column,
+                    ),
                 });
             }
         }
@@ -1629,7 +1916,12 @@ impl<'src> Parser<'src> {
                     let end_span = self.expect(&TokenKind::RBracket)?;
                     member = TypeAnnotation::Array(ArrayType {
                         element_type: Box::new(member),
-                        span: Span::new(start_span.start, end_span.end, start_span.line, start_span.column),
+                        span: Span::new(
+                            start_span.start,
+                            end_span.end,
+                            start_span.line,
+                            start_span.column,
+                        ),
                     });
                 }
                 types.push(member);
@@ -1637,7 +1929,12 @@ impl<'src> Parser<'src> {
             let end_span = self.current.span;
             return Ok(TypeAnnotation::Union(crate::ast::UnionType {
                 types,
-                span: Span::new(start_span.start, end_span.start, start_span.line, start_span.column),
+                span: Span::new(
+                    start_span.start,
+                    end_span.start,
+                    start_span.line,
+                    start_span.column,
+                ),
             }));
         }
 
@@ -1654,19 +1951,126 @@ impl<'src> Parser<'src> {
                     let end_span = self.expect(&TokenKind::RBracket)?;
                     member = TypeAnnotation::Array(ArrayType {
                         element_type: Box::new(member),
-                        span: Span::new(start_span.start, end_span.end, start_span.line, start_span.column),
+                        span: Span::new(
+                            start_span.start,
+                            end_span.end,
+                            start_span.line,
+                            start_span.column,
+                        ),
                     });
                 }
                 types.push(member);
             }
             let end_span = self.current.span;
-            return Ok(TypeAnnotation::Intersection(IntersectionType {
+            type_ann = TypeAnnotation::Intersection(IntersectionType {
                 types,
-                span: Span::new(start_span.start, end_span.start, start_span.line, start_span.column),
+                span: Span::new(
+                    start_span.start,
+                    end_span.start,
+                    start_span.line,
+                    start_span.column,
+                ),
+            });
+        }
+
+        // Check for conditional type: T extends U ? X : Y
+        if self.check(&TokenKind::Extends) {
+            self.advance(); // consume 'extends'
+            let extends_type = self.parse_type_annotation()?;
+            self.expect(&TokenKind::Question)?;
+            let true_type = self.parse_type_annotation()?;
+            self.expect(&TokenKind::Colon)?;
+            let false_type = self.parse_type_annotation()?;
+            let end_span = self.current.span;
+            return Ok(TypeAnnotation::Conditional(ConditionalType {
+                check_type: Box::new(type_ann),
+                extends_type: Box::new(extends_type),
+                true_type: Box::new(true_type),
+                false_type: Box::new(false_type),
+                span: Span::new(
+                    start_span.start,
+                    end_span.start,
+                    start_span.line,
+                    start_span.column,
+                ),
             }));
         }
 
         Ok(type_ann)
+    }
+
+    /// Parse a return type annotation, which may be a type predicate
+    /// Handles: `Type`, `param is Type`, `asserts param`, `asserts param is Type`
+    fn parse_return_type_annotation(&mut self) -> Result<TypeAnnotation, JsError> {
+        use crate::ast::TypePredicateType;
+        let start_span = self.current.span;
+
+        // Check for asserts keyword
+        if self.check(&TokenKind::Asserts) {
+            self.advance(); // consume 'asserts'
+            // Must be followed by parameter name
+            let (param_name, param_span) = self.expect_identifier()?;
+            // Check for optional 'is Type'
+            let type_annotation = if self.check(&TokenKind::Is) {
+                self.advance(); // consume 'is'
+                Some(Box::new(self.parse_type_annotation()?))
+            } else {
+                None
+            };
+            let end_span = self.current.span;
+            return Ok(TypeAnnotation::TypePredicate(TypePredicateType {
+                parameter_name: Identifier {
+                    name: param_name,
+                    span: param_span,
+                },
+                type_annotation,
+                asserts: true,
+                span: Span::new(
+                    start_span.start,
+                    end_span.start,
+                    start_span.line,
+                    start_span.column,
+                ),
+            }));
+        }
+
+        // Check for type predicate: param is Type
+        // Need to lookahead: if we see an identifier followed by 'is', it's a type predicate
+        if let TokenKind::Identifier(_) = &self.current.kind {
+            let checkpoint = self.lexer.checkpoint();
+            let saved_token = self.current.clone();
+            self.advance();
+            if self.check(&TokenKind::Is) {
+                // It's a type predicate
+                self.lexer.restore(checkpoint);
+                self.current = saved_token;
+
+                let (param_name, param_span) = self.expect_identifier()?;
+                self.advance(); // consume 'is'
+                let type_annotation = self.parse_type_annotation()?;
+                let end_span = self.current.span;
+                return Ok(TypeAnnotation::TypePredicate(TypePredicateType {
+                    parameter_name: Identifier {
+                        name: param_name,
+                        span: param_span,
+                    },
+                    type_annotation: Some(Box::new(type_annotation)),
+                    asserts: false,
+                    span: Span::new(
+                        start_span.start,
+                        end_span.start,
+                        start_span.line,
+                        start_span.column,
+                    ),
+                }));
+            }
+            // Not a type predicate, restore and parse as normal type
+            self.lexer.restore(checkpoint);
+            self.current = saved_token;
+        }
+
+        // Regular type annotation
+        self.parse_type_annotation()
     }
 
     /// Parse a primary type (identifier, keyword, object type)
@@ -1771,6 +2175,24 @@ impl<'src> Parser<'src> {
                     span,
                 }))
             }
+            // Infer type: infer R (used in conditional types)
+            TokenKind::Infer => {
+                self.advance(); // consume 'infer'
+                let (name, name_span) = self.expect_identifier()?;
+                let end_span = self.current.span;
+                Ok(TypeAnnotation::Infer(InferType {
+                    type_parameter: TypeParameter {
+                        name: Identifier {
+                            name,
+                            span: name_span,
+                        },
+                        constraint: None,
+                        default: None,
+                        span: name_span,
+                    },
+                    span: Span::new(span.start, end_span.start, span.line, span.column),
+                }))
+            }
             TokenKind::Void => {
                 self.advance();
                 Ok(TypeAnnotation::Keyword(TypeKeyword {
@@ -1782,6 +2204,15 @@ impl<'src> Parser<'src> {
                 self.advance();
                 Ok(TypeAnnotation::Keyword(TypeKeyword {
                     keyword: TypeKeywordKind::Null,
+                    span,
+                }))
+            }
+            // Const assertion type: as const
+            TokenKind::Const => {
+                self.advance();
+                // Treat 'const' as a keyword type for const assertions
+                Ok(TypeAnnotation::Keyword(TypeKeyword {
+                    keyword: TypeKeywordKind::Unknown, // Use Unknown as placeholder, runtime ignores this
                     span,
                 }))
             }
@@ -1818,6 +2249,102 @@ impl<'src> Parser<'src> {
                     span,
                 }))
             }
+            // Template literal type without substitutions: `hello`
+            TokenKind::TemplateNoSub(s) => {
+                let value = s.cheap_clone();
+                self.advance();
+                Ok(TypeAnnotation::TemplateLiteral(
+                    crate::ast::TemplateLiteralType {
+                        quasis: vec![value],
+                        types: Vec::new(),
+                        span,
+                    },
+                ))
+            }
+            // Template literal type with substitutions: `Hello ${string}`
+            TokenKind::TemplateHead(s) => {
+                let head_value = s.cheap_clone();
+                self.advance(); // consume TemplateHead
+
+                let mut quasis = vec![head_value];
+                let mut types = Vec::new();
+
+                loop {
+                    // Parse the type annotation inside ${...}
+                    let type_ann = self.parse_type_annotation()?;
+                    types.push(type_ann);
+
+                    // Expect } and rescan as template continuation
+                    if !self.check(&TokenKind::RBrace) {
+                        return Err(JsError::syntax_error(
+                            "Expected } in template literal type",
+                            self.current.span.line,
+                            self.current.span.column,
+                        ));
+                    }
+
+                    let rbrace_span = self.current.span;
+                    let continuation = self.lexer.rescan_template_continuation(rbrace_span);
+
+                    match continuation {
+                        TokenKind::TemplateTail(tail_value) => {
+                            quasis.push(tail_value);
+                            self.advance();
+                            break;
+                        }
+                        TokenKind::TemplateMiddle(middle_value) => {
+                            quasis.push(middle_value);
+                            self.advance();
+                            // Continue to parse next type
+                        }
+                        _ => {
+                            return Err(JsError::syntax_error(
+                                "Expected template continuation",
+                                self.current.span.line,
+                                self.current.span.column,
+                            ));
+                        }
+                    }
+                }
+
+                let end_span = self.current.span;
+                Ok(TypeAnnotation::TemplateLiteral(
+                    crate::ast::TemplateLiteralType {
+                        quasis,
+                        types,
+                        span: Span::new(span.start, end_span.start, span.line, span.column),
+                    },
+                ))
+            }
+            // Constructor type: new (...args: any[]) => T
+            // Treated as a function type since types are stripped at runtime
+            TokenKind::New => {
+                self.advance(); // consume 'new'
+
+                // Optional type parameters: new <T>(...) => T
+                let type_parameters = if self.check(&TokenKind::Lt) {
+                    Some(self.parse_type_parameters()?)
+                } else {
+                    None
+                };
+
+                // Parse the parameter list
+                self.expect(&TokenKind::LParen)?;
+                let params = self.parse_function_type_params()?;
+                self.expect(&TokenKind::RParen)?;
+
+                // Expect => and return type
+                self.expect(&TokenKind::Arrow)?;
+                let return_type = self.parse_type_annotation()?;
+                let end_span = self.current.span;
+
+                Ok(TypeAnnotation::Function(crate::ast::FunctionType {
+                    params,
+                    return_type: Box::new(return_type),
+                    type_parameters,
+                    span: Span::new(span.start, end_span.start, span.line, span.column),
+                }))
+            }
             // Parenthesized type or function type: (T) or () => T or (a: T) => U
             TokenKind::LParen => {
                 let paren_span = self.current.span;
@@ -1835,7 +2362,12 @@ impl<'src> Parser<'src> {
                             params: Vec::new(),
                             return_type: Box::new(return_type),
                             type_parameters: None,
-                            span: Span::new(paren_span.start, end_span.start, paren_span.line, paren_span.column),
+                            span: Span::new(
+                                paren_span.start,
+                                end_span.start,
+                                paren_span.line,
+                                paren_span.column,
+                            ),
                         }));
                     }
                     return Err(JsError::syntax_error(
@@ -1853,7 +2385,9 @@ impl<'src> Parser<'src> {
                     // Check if first element is identifier followed by : or ? or ,
                     let looks_like_param = if let TokenKind::Identifier(_) = &self.current.kind {
                         self.advance();
-                        self.check(&TokenKind::Colon) || self.check(&TokenKind::Question) || self.check(&TokenKind::Comma)
+                        self.check(&TokenKind::Colon)
+                            || self.check(&TokenKind::Question)
+                            || self.check(&TokenKind::Comma)
                     } else if self.check(&TokenKind::DotDotDot) {
                         // Rest parameter
                         true
@@ -1876,7 +2410,12 @@ impl<'src> Parser<'src> {
                         params,
                         return_type: Box::new(return_type),
                         type_parameters: None,
-                        span: Span::new(paren_span.start, end_span.start, paren_span.line, paren_span.column),
+                        span: Span::new(
+                            paren_span.start,
+                            end_span.start,
+                            paren_span.line,
+                            paren_span.column,
+                        ),
                     }));
                 }
 
@@ -1893,7 +2432,12 @@ impl<'src> Parser<'src> {
                         params: Vec::new(),
                         return_type: Box::new(return_type),
                         type_parameters: None,
-                        span: Span::new(paren_span.start, end_span.start, paren_span.line, paren_span.column),
+                        span: Span::new(
+                            paren_span.start,
+                            end_span.start,
+                            paren_span.line,
+                            paren_span.column,
+                        ),
                     }));
                 }
 
@@ -1917,7 +2461,10 @@ impl<'src> Parser<'src> {
                 let (name, id_span) = self.expect_identifier()?;
                 let end_span = self.current.span;
                 Ok(TypeAnnotation::Typeof(crate::ast::TypeofType {
-                    expression: Identifier { name, span: id_span },
+                    expression: Identifier {
+                        name,
+                        span: id_span,
+                    },
                     span: Span::new(span.start, end_span.start, span.line, span.column),
                 }))
             }
@@ -1955,7 +2502,10 @@ impl<'src> Parser<'src> {
 
         let mut params = Vec::new();
 
-        while !self.check(&TokenKind::Gt) && !self.check(&TokenKind::GtGt) && !self.check(&TokenKind::Eof) {
+        while !self.check(&TokenKind::Gt)
+            && !self.check(&TokenKind::GtGt)
+            && !self.check(&TokenKind::Eof)
+        {
             let type_ann = self.parse_type_annotation()?;
             params.push(type_ann);
 
@@ -1972,13 +2522,19 @@ impl<'src> Parser<'src> {
             // We update the current token to be Gt at the position of the second >
             let span = self.current.span;
             let new_span = Span::new(span.start + 1, span.end, span.line, span.column + 1);
-            self.current = Token { kind: TokenKind::Gt, span: new_span };
+            self.current = Token {
+                kind: TokenKind::Gt,
+                span: new_span,
+            };
             Span::new(span.start, span.start + 1, span.line, span.column)
         } else if self.check(&TokenKind::GtGtGt) {
             // Handle >>> similarly
             let span = self.current.span;
             let new_span = Span::new(span.start + 1, span.end, span.line, span.column + 1);
-            self.current = Token { kind: TokenKind::GtGt, span: new_span };
+            self.current = Token {
+                kind: TokenKind::GtGt,
+                span: new_span,
+            };
             Span::new(span.start, span.start + 1, span.line, span.column)
         } else {
             self.expect(&TokenKind::Gt)? // consume '>'
@@ -1986,7 +2542,12 @@ impl<'src> Parser<'src> {
 
         Ok(crate::ast::TypeArguments {
             params,
-            span: Span::new(start_span.start, end_span.end, start_span.line, start_span.column),
+            span: Span::new(
+                start_span.start,
+                end_span.end,
+                start_span.line,
+                start_span.column,
+            ),
         })
     }
 
@@ -2009,7 +2570,10 @@ impl<'src> Parser<'src> {
                 Pattern::Identifier(Identifier { name, span })
             } else {
                 return Err(JsError::syntax_error(
-                    format!("Expected parameter name in function type, found {:?}", self.current.kind),
+                    format!(
+                        "Expected parameter name in function type, found {:?}",
+                        self.current.kind
+                    ),
                     self.current.span.line,
                     self.current.span.column,
                 ));
@@ -2032,7 +2596,12 @@ impl<'src> Parser<'src> {
             };
 
             let end_span = self.current.span;
-            let full_span = Span::new(param_span.start, end_span.start, param_span.line, param_span.column);
+            let full_span = Span::new(
+                param_span.start,
+                end_span.start,
+                param_span.line,
+                param_span.column,
+            );
 
             // Create pattern (with rest wrapper if needed)
             let pattern = if is_rest {
@@ -2155,7 +2724,10 @@ impl<'src> Parser<'src> {
 
         Ok(TypeAnnotation::Mapped(MappedType {
             type_parameter: TypeParameter {
-                name: Identifier { name: param_name, span: param_span },
+                name: Identifier {
+                    name: param_name,
+                    span: param_span,
+                },
                 constraint: Some(Box::new(constraint)),
                 default: None,
                 span: param_span,
@@ -2164,7 +2736,12 @@ impl<'src> Parser<'src> {
             type_annotation,
             readonly,
             optional,
-            span: Span::new(start_span.start, end_span.end, start_span.line, start_span.column),
+            span: Span::new(
+                start_span.start,
+                end_span.end,
+                start_span.line,
+                start_span.column,
+            ),
         }))
     }
 
@@ -2188,11 +2765,19 @@ impl<'src> Parser<'src> {
                 let value_type = Box::new(self.parse_type_annotation()?);
                 let end_span = self.current.span;
                 members.push(TypeMember::Index(IndexSignature {
-                    key: Identifier { name: key_name, span: key_span },
+                    key: Identifier {
+                        name: key_name,
+                        span: key_span,
+                    },
                     key_type,
                     value_type,
                     readonly: false,
-                    span: Span::new(member_span.start, end_span.start, member_span.line, member_span.column),
+                    span: Span::new(
+                        member_span.start,
+                        end_span.start,
+                        member_span.line,
+                        member_span.column,
+                    ),
                 }));
                 // Consume semicolon if present
                 self.eat(&TokenKind::Semicolon);
@@ -2204,12 +2789,18 @@ impl<'src> Parser<'src> {
                 TokenKind::Identifier(name) => {
                     let name = name.cheap_clone();
                     self.advance();
-                    ObjectPropertyKey::Identifier(Identifier { name, span: member_span })
+                    ObjectPropertyKey::Identifier(Identifier {
+                        name,
+                        span: member_span,
+                    })
                 }
                 TokenKind::String(s) => {
                     let value = s.cheap_clone();
                     self.advance();
-                    ObjectPropertyKey::String(StringLiteral { value, span: member_span })
+                    ObjectPropertyKey::String(StringLiteral {
+                        value,
+                        span: member_span,
+                    })
                 }
                 // Allow keywords as property names
                 TokenKind::Type => {
@@ -2219,9 +2810,21 @@ impl<'src> Parser<'src> {
                         span: member_span,
                     })
                 }
+                // Allow numeric property names (e.g., { 0: string; 1: number })
+                TokenKind::Number(n) => {
+                    let n = *n;
+                    self.advance();
+                    ObjectPropertyKey::Number(Literal {
+                        value: LiteralValue::Number(n),
+                        span: member_span,
+                    })
+                }
                 _ => {
                     return Err(JsError::syntax_error(
-                        format!("Expected property name in type, found {:?}", self.current.kind),
+                        format!(
+                            "Expected property name in type, found {:?}",
+                            self.current.kind
+                        ),
                         self.current.span.line,
                         self.current.span.column,
                     ));
@@ -2248,7 +2851,12 @@ impl<'src> Parser<'src> {
                 type_annotation: Some(Box::new(type_annotation)),
                 optional,
                 readonly: false,
-                span: Span::new(member_span.start, end_span.start, member_span.line, member_span.column),
+                span: Span::new(
+                    member_span.start,
+                    end_span.start,
+                    member_span.line,
+                    member_span.column,
+                ),
             }));
 
             // Consume semicolon or comma separator if present
@@ -2307,10 +2915,10 @@ impl<'src> Parser<'src> {
         let params = self.parse_function_params()?;
         self.expect(&TokenKind::RParen)?;
 
-        // Parse optional return type: : Type
+        // Parse optional return type: : Type or : param is Type or : asserts param
         let return_type = if self.check(&TokenKind::Colon) {
             self.advance();
-            Some(Box::new(self.parse_type_annotation()?))
+            Some(Box::new(self.parse_return_type_annotation()?))
         } else {
             None
         };
@@ -2327,7 +2935,12 @@ impl<'src> Parser<'src> {
             body: Rc::new(body),
             generator,
             async_: is_async,
-            span: Span::new(start_span.start, end_span.start, start_span.line, start_span.column),
+            span: Span::new(
+                start_span.start,
+                end_span.start,
+                start_span.line,
+                start_span.column,
+            ),
         })
     }
 
@@ -2344,6 +2957,13 @@ impl<'src> Parser<'src> {
             _ => None,
         };
 
+        // Parse optional type parameters: class Foo<T, U> { }
+        let _type_parameters = if self.check(&TokenKind::Lt) {
+            Some(self.parse_type_parameters()?)
+        } else {
+            None
+        };
+
         // Parse optional extends clause
         let super_class = if self.check(&TokenKind::Extends) {
             self.advance();
@@ -2352,20 +2972,23 @@ impl<'src> Parser<'src> {
             None
         };
 
-        // Parse optional implements clause (skip for now)
-        if let TokenKind::Identifier(name) = &self.current.kind {
-            if name.as_str() == "implements" {
-                self.advance();
-                // Skip the implements list - parse as identifiers separated by commas
-                loop {
-                    if let TokenKind::Identifier(_) = &self.current.kind {
-                        self.advance();
+        // Parse optional implements clause (skip for now - just parse and discard)
+        if self.check(&TokenKind::Implements) {
+            self.advance();
+            // Skip the implements list - parse type references separated by commas
+            loop {
+                // Parse type reference (identifier + optional type arguments)
+                if let TokenKind::Identifier(_) = &self.current.kind {
+                    self.advance();
+                    // Skip type arguments if present: implements Foo<T>
+                    if self.check(&TokenKind::Lt) {
+                        let _ = self.parse_type_arguments();
                     }
-                    if self.check(&TokenKind::Comma) {
-                        self.advance();
-                    } else {
-                        break;
-                    }
+                }
+                if self.check(&TokenKind::Comma) {
+                    self.advance();
+                } else {
+                    break;
                 }
             }
         }
@@ -2378,7 +3001,12 @@ impl<'src> Parser<'src> {
 
         let body = ClassBody {
             members,
-            span: Span::new(body_start.start, body_end.end, body_start.line, body_start.column),
+            span: Span::new(
+                body_start.start,
+                body_end.end,
+                body_start.line,
+                body_start.column,
+            ),
         };
 
         Ok(ClassDeclaration {
@@ -2389,7 +3017,12 @@ impl<'src> Parser<'src> {
             body,
             decorators: Vec::new(),
             abstract_: false,
-            span: Span::new(start_span.start, body_end.end, start_span.line, start_span.column),
+            span: Span::new(
+                start_span.start,
+                body_end.end,
+                start_span.line,
+                start_span.column,
+            ),
         })
     }
 
@@ -2399,7 +3032,6 @@ impl<'src> Parser<'src> {
         start_span: Span,
         decorators: Vec<Decorator>,
     ) -> Result<ClassExpression, JsError> {
-
         // Parse optional class name
         let id = match &self.current.kind {
             TokenKind::Identifier(name) => {
@@ -2445,7 +3077,12 @@ impl<'src> Parser<'src> {
 
         let body = ClassBody {
             members,
-            span: Span::new(body_start.start, body_end.end, body_start.line, body_start.column),
+            span: Span::new(
+                body_start.start,
+                body_end.end,
+                body_start.line,
+                body_start.column,
+            ),
         };
 
         Ok(ClassExpression {
@@ -2455,8 +3092,80 @@ impl<'src> Parser<'src> {
             implements: Vec::new(),
             body,
             decorators,
-            span: Span::new(start_span.start, body_end.end, start_span.line, start_span.column),
+            span: Span::new(
+                start_span.start,
+                body_end.end,
+                start_span.line,
+                start_span.column,
+            ),
         })
+    }
+
+    /// Parse a function expression (in expression context)
+    fn parse_function_expression(
+        &mut self,
+        start_span: Span,
+        is_async: bool,
+        generator: bool,
+    ) -> Result<Expression, JsError> {
+        // Check for generator: function* ...
+        let generator = generator
+            || if self.check(&TokenKind::Star) {
+                self.advance();
+                true
+            } else {
+                false
+            };
+
+        // Parse optional function name
+        let id = if let TokenKind::Identifier(name) = &self.current.kind {
+            let name = name.cheap_clone();
+            let span = self.current.span;
+            self.advance();
+            Some(Identifier { name, span })
+        } else {
+            None
+        };
+
+        // Parse optional type parameters: <T, U>
+        let type_parameters = if self.check(&TokenKind::Lt) {
+            Some(self.parse_type_parameters()?)
+        } else {
+            None
+        };
+
+        // Parse parameters
+        self.expect(&TokenKind::LParen)?;
+        let params = self.parse_function_params()?;
+        self.expect(&TokenKind::RParen)?;
+
+        // Parse optional return type: : Type or : param is Type or : asserts param
+        let return_type = if self.check(&TokenKind::Colon) {
+            self.advance();
+            Some(Box::new(self.parse_return_type_annotation()?))
+        } else {
+            None
+        };
+
+        // Parse function body
+        let body = self.parse_block_statement()?;
+        let end_span = self.current.span;
+
+        Ok(Expression::Function(Box::new(FunctionExpression {
+            id,
+            params: Rc::from(params),
+            return_type,
+            type_parameters,
+            body: Rc::new(body),
+            generator,
+            async_: is_async,
+            span: Span::new(
+                start_span.start,
+                end_span.start,
+                start_span.line,
+                start_span.column,
+            ),
+        })))
     }
 
     /// Parse class members
@@ -2473,6 +3182,8 @@ impl<'src> Parser<'src> {
 
             let member_span = self.current.span;
             let mut is_static = false;
+            let mut is_accessor = false;
+            let mut is_abstract = false;
             let mut method_kind = MethodKind::Method;
 
             // Handle the static keyword (lexed as TokenKind::Static, not Identifier)
@@ -2488,13 +3199,27 @@ impl<'src> Parser<'src> {
                 }
 
                 // If followed by (, :, =, or ;, then "static" was the member name
-                if self.check(&TokenKind::LParen) || self.check(&TokenKind::Colon)
-                   || self.check(&TokenKind::Eq) || self.check(&TokenKind::Semicolon) {
+                if self.check(&TokenKind::LParen)
+                    || self.check(&TokenKind::Colon)
+                    || self.check(&TokenKind::Eq)
+                    || self.check(&TokenKind::Semicolon)
+                {
                     let key = ObjectPropertyKey::Identifier(Identifier {
                         name: self.lexer.string_dict().get_or_insert("static"),
                         span: member_span,
                     });
-                    let member = self.parse_class_member_with_key(member_span, key, false, false, MethodKind::Method, decorators.clone())?;
+                    let member = self.parse_class_member_with_key(
+                        member_span,
+                        key,
+                        false,
+                        false,
+                        false,
+                        false,
+                        false,
+                        false,
+                        MethodKind::Method,
+                        decorators.clone(),
+                    )?;
                     members.push(member);
                     continue;
                 }
@@ -2527,15 +3252,29 @@ impl<'src> Parser<'src> {
                     }
 
                     // If followed by (, :, =, or ;, then "static" was the member name
-                    if self.check(&TokenKind::LParen) || self.check(&TokenKind::Colon)
-                       || self.check(&TokenKind::Eq) || self.check(&TokenKind::Semicolon) {
+                    if self.check(&TokenKind::LParen)
+                        || self.check(&TokenKind::Colon)
+                        || self.check(&TokenKind::Eq)
+                        || self.check(&TokenKind::Semicolon)
+                    {
                         // Rewind: treat "static" as the member name
                         // Since we already consumed it, we'll handle it specially below
                         let key = ObjectPropertyKey::Identifier(Identifier {
                             name: name.cheap_clone(),
                             span: member_span,
                         });
-                        let member = self.parse_class_member_with_key(member_span, key, false, false, MethodKind::Method, decorators.clone())?;
+                        let member = self.parse_class_member_with_key(
+                            member_span,
+                            key,
+                            false,
+                            false,
+                            false,
+                            false,
+                            false,
+                            false,
+                            MethodKind::Method,
+                            decorators.clone(),
+                        )?;
                         members.push(member);
                         continue;
                     }
@@ -2543,6 +3282,41 @@ impl<'src> Parser<'src> {
                     // Otherwise "static" is a modifier
                     is_static = true;
                 }
+            }
+
+            // Check for accessibility modifiers (public, private, protected)
+            let _accessibility = match &self.current.kind {
+                TokenKind::Public => {
+                    self.advance();
+                    Some(crate::ast::Accessibility::Public)
+                }
+                TokenKind::Private => {
+                    self.advance();
+                    Some(crate::ast::Accessibility::Private)
+                }
+                TokenKind::Protected => {
+                    self.advance();
+                    Some(crate::ast::Accessibility::Protected)
+                }
+                _ => None,
+            };
+
+            // Check for readonly modifier
+            if self.check(&TokenKind::Readonly) {
+                self.advance();
+                // readonly is consumed but we don't track it separately for now
+            }
+
+            // Check for abstract keyword
+            if self.check(&TokenKind::Abstract) {
+                self.advance();
+                is_abstract = true;
+            }
+
+            // Check for accessor keyword (auto-accessor property)
+            if self.check(&TokenKind::Accessor) {
+                self.advance();
+                is_accessor = true;
             }
 
             // Check for get/set modifier (only if we haven't already handled static as a member name)
@@ -2559,7 +3333,23 @@ impl<'src> Parser<'src> {
                     self.advance();
 
                     // Check if followed by something that looks like a member key
-                    if matches!(self.current.kind, TokenKind::Identifier(_) | TokenKind::String(_) | TokenKind::Number(_) | TokenKind::LBracket) {
+                    // Note: Keywords like 'accessor', 'static', etc. can also be property names
+                    if matches!(
+                        self.current.kind,
+                        TokenKind::Identifier(_)
+                            | TokenKind::String(_)
+                            | TokenKind::Number(_)
+                            | TokenKind::LBracket
+                            | TokenKind::Accessor
+                            | TokenKind::Static
+                            | TokenKind::Async
+                            | TokenKind::Abstract
+                            | TokenKind::Readonly
+                            | TokenKind::Public
+                            | TokenKind::Private
+                            | TokenKind::Protected
+                            | TokenKind::Type
+                    ) {
                         method_kind = if name_str == "get" {
                             MethodKind::Get
                         } else {
@@ -2572,16 +3362,97 @@ impl<'src> Parser<'src> {
                             name: name.cheap_clone(),
                             span: saved_span,
                         });
-                        let member = self.parse_class_member_with_key(member_span, key, false, is_static, MethodKind::Method, decorators.clone())?;
+                        let member = self.parse_class_member_with_key(
+                            member_span,
+                            key,
+                            false,
+                            is_static,
+                            false,
+                            false,
+                            false,
+                            false,
+                            MethodKind::Method,
+                            decorators.clone(),
+                        )?;
                         members.push(member);
                         continue;
                     }
                 }
             }
 
+            // Check for async method: async methodName() { }
+            let is_async = if self.check(&TokenKind::Async) {
+                let saved_span = self.current.span;
+                self.advance();
+                // Check if followed by something that looks like a method or generator
+                // Note: Keywords like 'accessor', 'static', etc. can also be property names
+                if matches!(
+                    self.current.kind,
+                    TokenKind::Identifier(_)
+                        | TokenKind::String(_)
+                        | TokenKind::Number(_)
+                        | TokenKind::LBracket
+                        | TokenKind::Star
+                        | TokenKind::Accessor
+                        | TokenKind::Static
+                        | TokenKind::Abstract
+                        | TokenKind::Readonly
+                        | TokenKind::Public
+                        | TokenKind::Private
+                        | TokenKind::Protected
+                        | TokenKind::Type
+                ) {
+                    true
+                } else if self.check(&TokenKind::LParen) {
+                    // "async" is the method name followed by (
+                    let key = ObjectPropertyKey::Identifier(Identifier {
+                        name: self.lexer.string_dict().get_or_insert("async"),
+                        span: saved_span,
+                    });
+                    let member = self.parse_class_member_with_key(
+                        member_span,
+                        key,
+                        false,
+                        is_static,
+                        false,
+                        false,
+                        false,
+                        false,
+                        MethodKind::Method,
+                        decorators.clone(),
+                    )?;
+                    members.push(member);
+                    continue;
+                } else {
+                    // async is a modifier
+                    true
+                }
+            } else {
+                false
+            };
+
+            // Check for generator method: *methodName() { }
+            let is_generator = if self.check(&TokenKind::Star) {
+                self.advance();
+                true
+            } else {
+                false
+            };
+
             // Parse the member key
             let (key, computed) = self.parse_class_member_key()?;
-            let member = self.parse_class_member_with_key(member_span, key, computed, is_static, method_kind, decorators)?;
+            let member = self.parse_class_member_with_key(
+                member_span,
+                key,
+                computed,
+                is_static,
+                is_accessor,
+                is_abstract,
+                is_generator,
+                is_async,
+                method_kind,
+                decorators,
+            )?;
             members.push(member);
         }
 
@@ -2595,6 +3466,10 @@ impl<'src> Parser<'src> {
         key: ObjectPropertyKey,
         computed: bool,
         is_static: bool,
+        is_accessor: bool,
+        is_abstract: bool,
+        is_generator: bool,
+        is_async: bool,
         method_kind: MethodKind,
         decorators: Vec<Decorator>,
     ) -> Result<ClassMember, JsError> {
@@ -2616,34 +3491,63 @@ impl<'src> Parser<'src> {
                 params,
                 body,
                 accessibility: None,
-                span: Span::new(member_span.start, end_span.start, member_span.line, member_span.column),
+                span: Span::new(
+                    member_span.start,
+                    end_span.start,
+                    member_span.line,
+                    member_span.column,
+                ),
             })))
-        } else if self.check(&TokenKind::LParen) {
-            // This is a method
-            self.advance();
+        } else if self.check(&TokenKind::LParen) || self.check(&TokenKind::Lt) {
+            // This is a method (possibly with generic type parameters)
+
+            // Parse optional type parameters: method<T>() or method<T extends U>()
+            let type_parameters = if self.check(&TokenKind::Lt) {
+                Some(self.parse_type_parameters()?)
+            } else {
+                None
+            };
+
+            self.expect(&TokenKind::LParen)?;
             let params = self.parse_function_params()?;
             self.expect(&TokenKind::RParen)?;
 
             // Parse optional return type
             let return_type = if self.check(&TokenKind::Colon) {
                 self.advance();
-                Some(Box::new(self.parse_type_annotation()?))
+                Some(Box::new(self.parse_return_type_annotation()?))
             } else {
                 None
             };
 
-            let body = self.parse_block_statement()?;
-            let end_span = self.current.span;
+            // Abstract methods have no body
+            let (body, end_span) = if is_abstract {
+                // Just consume semicolon if present
+                self.eat(&TokenKind::Semicolon);
+                let empty_body = BlockStatement {
+                    body: Rc::from([]),
+                    span: member_span,
+                };
+                (empty_body, self.current.span)
+            } else {
+                let body = self.parse_block_statement()?;
+                (body, self.current.span)
+            };
 
             let value = FunctionExpression {
                 id: None,
                 params: Rc::from(params),
                 return_type,
-                type_parameters: None,
+                type_parameters,
                 body: Rc::new(body),
-                generator: false,
-                async_: false,
-                span: Span::new(member_span.start, end_span.start, member_span.line, member_span.column),
+                generator: is_generator,
+                async_: is_async,
+                span: Span::new(
+                    member_span.start,
+                    end_span.start,
+                    member_span.line,
+                    member_span.column,
+                ),
             };
 
             Ok(ClassMember::Method(Box::new(ClassMethod {
@@ -2654,7 +3558,12 @@ impl<'src> Parser<'src> {
                 static_: is_static,
                 accessibility: None,
                 decorators,
-                span: Span::new(member_span.start, end_span.start, member_span.line, member_span.column),
+                span: Span::new(
+                    member_span.start,
+                    end_span.start,
+                    member_span.line,
+                    member_span.column,
+                ),
             })))
         } else {
             // This is a property
@@ -2685,10 +3594,15 @@ impl<'src> Parser<'src> {
                 static_: is_static,
                 readonly: false,
                 optional: false,
-                accessor: false,
+                accessor: is_accessor,
                 accessibility: None,
                 decorators,
-                span: Span::new(member_span.start, end_span.start, member_span.line, member_span.column),
+                span: Span::new(
+                    member_span.start,
+                    end_span.start,
+                    member_span.line,
+                    member_span.column,
+                ),
             })))
         }
     }
@@ -2700,7 +3614,10 @@ impl<'src> Parser<'src> {
             TokenKind::Identifier(name) => {
                 let name = name.cheap_clone();
                 self.advance();
-                Ok((ObjectPropertyKey::Identifier(Identifier { name, span }), false))
+                Ok((
+                    ObjectPropertyKey::Identifier(Identifier { name, span }),
+                    false,
+                ))
             }
             // Private identifier: #name
             TokenKind::Hash => {
@@ -2709,36 +3626,79 @@ impl<'src> Parser<'src> {
                 match &self.current.kind {
                     TokenKind::Identifier(name) => {
                         // Include the # in the name
-                        let name_with_hash = self.lexer.string_dict().get_or_insert(&format!("#{}", name.as_str()));
+                        let name_with_hash = self
+                            .lexer
+                            .string_dict()
+                            .get_or_insert(&format!("#{}", name.as_str()));
                         self.advance();
                         let full_span = Span::new(span.start, id_span.end, span.line, span.column);
-                        Ok((ObjectPropertyKey::PrivateIdentifier(Identifier { name: name_with_hash, span: full_span }), false))
+                        Ok((
+                            ObjectPropertyKey::PrivateIdentifier(Identifier {
+                                name: name_with_hash,
+                                span: full_span,
+                            }),
+                            false,
+                        ))
                     }
                     _ => Err(JsError::syntax_error(
                         format!("Expected identifier after #, found {:?}", self.current.kind),
                         self.current.span.line,
                         self.current.span.column,
-                    ))
+                    )),
                 }
             }
             TokenKind::String(s) => {
                 let value = s.cheap_clone();
                 self.advance();
-                Ok((ObjectPropertyKey::String(StringLiteral { value, span }), false))
+                Ok((
+                    ObjectPropertyKey::String(StringLiteral { value, span }),
+                    false,
+                ))
             }
             TokenKind::Number(n) => {
                 let value = *n;
                 self.advance();
-                Ok((ObjectPropertyKey::Number(Literal {
-                    value: LiteralValue::Number(value),
-                    span,
-                }), false))
+                Ok((
+                    ObjectPropertyKey::Number(Literal {
+                        value: LiteralValue::Number(value),
+                        span,
+                    }),
+                    false,
+                ))
             }
             TokenKind::LBracket => {
                 self.advance();
                 let expr = self.parse_expression()?;
                 self.expect(&TokenKind::RBracket)?;
                 Ok((ObjectPropertyKey::Computed(Rc::new(expr)), true))
+            }
+            // Keywords that can be used as property names
+            TokenKind::Accessor
+            | TokenKind::Static
+            | TokenKind::Async
+            | TokenKind::Abstract
+            | TokenKind::Readonly
+            | TokenKind::Public
+            | TokenKind::Private
+            | TokenKind::Protected
+            | TokenKind::Type => {
+                let name = match &self.current.kind {
+                    TokenKind::Accessor => self.lexer.string_dict().get_or_insert("accessor"),
+                    TokenKind::Static => self.lexer.string_dict().get_or_insert("static"),
+                    TokenKind::Async => self.lexer.string_dict().get_or_insert("async"),
+                    TokenKind::Abstract => self.lexer.string_dict().get_or_insert("abstract"),
+                    TokenKind::Readonly => self.lexer.string_dict().get_or_insert("readonly"),
+                    TokenKind::Public => self.lexer.string_dict().get_or_insert("public"),
+                    TokenKind::Private => self.lexer.string_dict().get_or_insert("private"),
+                    TokenKind::Protected => self.lexer.string_dict().get_or_insert("protected"),
+                    TokenKind::Type => self.lexer.string_dict().get_or_insert("type"),
+                    _ => self.lexer.string_dict().get_or_insert(""),
+                };
+                self.advance();
+                Ok((
+                    ObjectPropertyKey::Identifier(Identifier { name, span }),
+                    false,
+                ))
             }
             _ => Err(JsError::syntax_error(
                 format!("Expected class member key, found {:?}", self.current.kind),
@@ -2749,7 +3709,11 @@ impl<'src> Parser<'src> {
     }
 
     /// Parse an enum declaration
-    fn parse_enum_declaration(&mut self, start_span: Span, const_: bool) -> Result<EnumDeclaration, JsError> {
+    fn parse_enum_declaration(
+        &mut self,
+        start_span: Span,
+        const_: bool,
+    ) -> Result<EnumDeclaration, JsError> {
         // Parse enum name
         let id = match &self.current.kind {
             TokenKind::Identifier(name) => {
@@ -2803,7 +3767,12 @@ impl<'src> Parser<'src> {
             members.push(EnumMember {
                 id: member_id,
                 initializer,
-                span: Span::new(member_span.start, member_end.start, member_span.line, member_span.column),
+                span: Span::new(
+                    member_span.start,
+                    member_end.start,
+                    member_span.line,
+                    member_span.column,
+                ),
             });
 
             // Handle comma
@@ -2820,12 +3789,20 @@ impl<'src> Parser<'src> {
             id,
             members,
             const_,
-            span: Span::new(start_span.start, end_span.end, start_span.line, start_span.column),
+            span: Span::new(
+                start_span.start,
+                end_span.end,
+                start_span.line,
+                start_span.column,
+            ),
         })
     }
 
     /// Parse interface declaration: interface Name { members }
-    fn parse_interface_declaration(&mut self, start_span: Span) -> Result<InterfaceDeclaration, JsError> {
+    fn parse_interface_declaration(
+        &mut self,
+        start_span: Span,
+    ) -> Result<InterfaceDeclaration, JsError> {
         // Parse interface name
         let id = match &self.current.kind {
             TokenKind::Identifier(name) => {
@@ -2878,7 +3855,12 @@ impl<'src> Parser<'src> {
             type_parameters,
             extends,
             body,
-            span: Span::new(start_span.start, end_span.end, start_span.line, start_span.column),
+            span: Span::new(
+                start_span.start,
+                end_span.end,
+                start_span.line,
+                start_span.column,
+            ),
         })
     }
 
@@ -2930,11 +3912,19 @@ impl<'src> Parser<'src> {
 
             let end_span = self.current.span;
             return Ok(TypeMember::Index(IndexSignature {
-                key: Identifier { name: key_name, span: key_span },
+                key: Identifier {
+                    name: key_name,
+                    span: key_span,
+                },
                 key_type,
                 value_type,
                 readonly: false,
-                span: Span::new(member_span.start, end_span.start, member_span.line, member_span.column),
+                span: Span::new(
+                    member_span.start,
+                    end_span.start,
+                    member_span.line,
+                    member_span.column,
+                ),
             }));
         }
 
@@ -2985,6 +3975,15 @@ impl<'src> Parser<'src> {
                     span,
                 })
             }
+            TokenKind::Number(n) => {
+                let n = *n;
+                let span = self.current.span;
+                self.advance();
+                ObjectPropertyKey::Number(Literal {
+                    value: LiteralValue::Number(n),
+                    span,
+                })
+            }
             _ => {
                 return Err(JsError::syntax_error(
                     format!("Expected member name, found {:?}", self.current.kind),
@@ -3021,7 +4020,12 @@ impl<'src> Parser<'src> {
                 return_type,
                 type_parameters: None,
                 optional,
-                span: Span::new(member_span.start, end_span.start, member_span.line, member_span.column),
+                span: Span::new(
+                    member_span.start,
+                    end_span.start,
+                    member_span.line,
+                    member_span.column,
+                ),
             }));
         }
 
@@ -3039,7 +4043,12 @@ impl<'src> Parser<'src> {
             type_annotation,
             optional,
             readonly: false,
-            span: Span::new(member_span.start, end_span.start, member_span.line, member_span.column),
+            span: Span::new(
+                member_span.start,
+                end_span.start,
+                member_span.line,
+                member_span.column,
+            ),
         }))
     }
 
@@ -3071,14 +4080,25 @@ impl<'src> Parser<'src> {
 
         let end_span = self.current.span;
         Ok(crate::ast::TypeReference {
-            name: Identifier { name, span: start_span },
+            name: Identifier {
+                name,
+                span: start_span,
+            },
             type_arguments,
-            span: Span::new(start_span.start, end_span.start, start_span.line, start_span.column),
+            span: Span::new(
+                start_span.start,
+                end_span.start,
+                start_span.line,
+                start_span.column,
+            ),
         })
     }
 
     /// Parse type alias declaration: type Name = Type
-    fn parse_type_alias_declaration(&mut self, start_span: Span) -> Result<TypeAliasDeclaration, JsError> {
+    fn parse_type_alias_declaration(
+        &mut self,
+        start_span: Span,
+    ) -> Result<TypeAliasDeclaration, JsError> {
         // Parse type alias name
         let id = match &self.current.kind {
             TokenKind::Identifier(name) => {
@@ -3117,8 +4137,215 @@ impl<'src> Parser<'src> {
             id,
             type_parameters,
             type_annotation: Box::new(type_annotation),
-            span: Span::new(start_span.start, end_span.start, start_span.line, start_span.column),
+            span: Span::new(
+                start_span.start,
+                end_span.start,
+                start_span.line,
+                start_span.column,
+            ),
         })
+    }
+
+    /// Parse a declare statement (TypeScript ambient declaration)
+    /// These have no runtime effect but need to be parsed and skipped
+    fn parse_declare_statement(&mut self, start_span: Span) -> Result<Statement, JsError> {
+        // Handle different kinds of ambient declarations
+        match &self.current.kind {
+            TokenKind::Const | TokenKind::Let | TokenKind::Var => {
+                // declare const/let/var
+                let kind = match &self.current.kind {
+                    TokenKind::Const => VariableKind::Const,
+                    TokenKind::Let => VariableKind::Let,
+                    TokenKind::Var => VariableKind::Var,
+                    _ => VariableKind::Var,
+                };
+                self.advance();
+                // Parse variable name and optional type annotation
+                let _decl = self.parse_variable_declaration_stmt(kind, start_span)?;
+                // Return empty statement (ambient declaration has no effect)
+                Ok(Statement::Empty)
+            }
+            TokenKind::Function => {
+                self.advance();
+                // Parse function declaration without body
+                let _id = self.expect_identifier()?;
+                // Optional type parameters
+                if self.check(&TokenKind::Lt) {
+                    let _ = self.parse_type_parameters()?;
+                }
+                // Parameter list
+                self.expect(&TokenKind::LParen)?;
+                let _ = self.parse_function_params()?;
+                self.expect(&TokenKind::RParen)?;
+                // Optional return type
+                if self.check(&TokenKind::Colon) {
+                    self.advance();
+                    self.skip_type_annotation()?;
+                }
+                self.eat(&TokenKind::Semicolon);
+                Ok(Statement::Empty)
+            }
+            TokenKind::Class => {
+                self.advance();
+                // Parse class name and skip body
+                let _id = self.expect_identifier()?;
+                // Optional type parameters
+                if self.check(&TokenKind::Lt) {
+                    let _ = self.parse_type_parameters()?;
+                }
+                // Optional extends
+                if self.check(&TokenKind::Extends) {
+                    self.advance();
+                    self.skip_type_annotation()?;
+                }
+                // Optional implements
+                if self.check(&TokenKind::Implements) {
+                    self.advance();
+                    loop {
+                        self.skip_type_annotation()?;
+                        if !self.eat(&TokenKind::Comma) {
+                            break;
+                        }
+                    }
+                }
+                // Skip class body
+                self.expect(&TokenKind::LBrace)?;
+                let mut brace_depth = 1;
+                while brace_depth > 0 && !self.check(&TokenKind::Eof) {
+                    if self.check(&TokenKind::LBrace) {
+                        brace_depth += 1;
+                    } else if self.check(&TokenKind::RBrace) {
+                        brace_depth -= 1;
+                    }
+                    if brace_depth > 0 {
+                        self.advance();
+                    }
+                }
+                self.expect(&TokenKind::RBrace)?;
+                Ok(Statement::Empty)
+            }
+            TokenKind::Interface => {
+                self.advance();
+                let iface = self.parse_interface_declaration(start_span)?;
+                Ok(Statement::InterfaceDeclaration(Box::new(iface)))
+            }
+            TokenKind::Type => {
+                self.advance();
+                let type_alias = self.parse_type_alias_declaration(start_span)?;
+                Ok(Statement::TypeAlias(Box::new(type_alias)))
+            }
+            TokenKind::Enum => {
+                self.advance();
+                let enum_decl = self.parse_enum_declaration(start_span, false)?;
+                Ok(Statement::EnumDeclaration(Box::new(enum_decl)))
+            }
+            TokenKind::Namespace | TokenKind::Module => {
+                self.advance();
+                // Parse namespace/module name (can be identifier or string literal for module augmentation)
+                let (name, name_span) = if let TokenKind::String(s) = &self.current.kind {
+                    let name = s.cheap_clone();
+                    let span = self.current.span;
+                    self.advance();
+                    (name, span)
+                } else {
+                    self.expect_identifier()?
+                };
+                // Parse body { }
+                if self.check(&TokenKind::LBrace) {
+                    self.expect(&TokenKind::LBrace)?;
+                    // Skip contents
+                    let mut brace_depth = 1;
+                    while brace_depth > 0 && !self.check(&TokenKind::Eof) {
+                        if self.check(&TokenKind::LBrace) {
+                            brace_depth += 1;
+                        } else if self.check(&TokenKind::RBrace) {
+                            brace_depth -= 1;
+                        }
+                        if brace_depth > 0 {
+                            self.advance();
+                        }
+                    }
+                    self.expect(&TokenKind::RBrace)?;
+                }
+                let end_span = self.current.span;
+                Ok(Statement::NamespaceDeclaration(Box::new(
+                    NamespaceDeclaration {
+                        id: Identifier {
+                            name,
+                            span: name_span,
+                        },
+                        body: Rc::from([]),
+                        span: Span::new(
+                            start_span.start,
+                            end_span.start,
+                            start_span.line,
+                            start_span.column,
+                        ),
+                    },
+                )))
+            }
+            TokenKind::Abstract => {
+                self.advance();
+                // declare abstract class
+                self.expect(&TokenKind::Class)?;
+                let _id = self.expect_identifier()?;
+                // Skip class body
+                if self.check(&TokenKind::Lt) {
+                    let _ = self.parse_type_parameters()?;
+                }
+                if self.check(&TokenKind::Extends) {
+                    self.advance();
+                    self.skip_type_annotation()?;
+                }
+                if self.check(&TokenKind::Implements) {
+                    self.advance();
+                    loop {
+                        self.skip_type_annotation()?;
+                        if !self.eat(&TokenKind::Comma) {
+                            break;
+                        }
+                    }
+                }
+                self.expect(&TokenKind::LBrace)?;
+                let mut brace_depth = 1;
+                while brace_depth > 0 && !self.check(&TokenKind::Eof) {
+                    if self.check(&TokenKind::LBrace) {
+                        brace_depth += 1;
+                    } else if self.check(&TokenKind::RBrace) {
+                        brace_depth -= 1;
+                    }
+                    if brace_depth > 0 {
+                        self.advance();
+                    }
+                }
+                self.expect(&TokenKind::RBrace)?;
+                Ok(Statement::Empty)
+            }
+            // Handle declare global { } - global is an identifier, not a keyword
+            TokenKind::Identifier(name) if name.as_str() == "global" => {
+                self.advance();
+                // declare global { }
+                self.expect(&TokenKind::LBrace)?;
+                let mut brace_depth = 1;
+                while brace_depth > 0 && !self.check(&TokenKind::Eof) {
+                    if self.check(&TokenKind::LBrace) {
+                        brace_depth += 1;
+                    } else if self.check(&TokenKind::RBrace) {
+                        brace_depth -= 1;
+                    }
+                    if brace_depth > 0 {
+                        self.advance();
+                    }
+                }
+                self.expect(&TokenKind::RBrace)?;
+                Ok(Statement::Empty)
+            }
+            _ => Err(JsError::syntax_error(
+                format!("Unexpected token after 'declare': {:?}", self.current.kind),
+                self.current.span.line,
+                self.current.span.column,
+            )),
+        }
     }
 
     /// Parse type parameters: <T, U extends V, W = Default>
@@ -3141,7 +4368,10 @@ impl<'src> Parser<'src> {
                 }
                 _ => {
                     return Err(JsError::syntax_error(
-                        format!("Expected type parameter name, found {:?}", self.current.kind),
+                        format!(
+                            "Expected type parameter name, found {:?}",
+                            self.current.kind
+                        ),
                         self.current.span.line,
                         self.current.span.column,
                     ));
@@ -3169,7 +4399,12 @@ impl<'src> Parser<'src> {
                 name,
                 constraint,
                 default,
-                span: Span::new(param_span.start, end_span.start, param_span.line, param_span.column),
+                span: Span::new(
+                    param_span.start,
+                    end_span.start,
+                    param_span.line,
+                    param_span.column,
+                ),
             });
 
             // Handle comma separator
@@ -3184,7 +4419,12 @@ impl<'src> Parser<'src> {
 
         Ok(TypeParameters {
             params,
-            span: Span::new(start_span.start, end_span.end, start_span.line, start_span.column),
+            span: Span::new(
+                start_span.start,
+                end_span.end,
+                start_span.line,
+                start_span.column,
+            ),
         })
     }
 
@@ -3233,9 +4473,12 @@ impl<'src> Parser<'src> {
                 false
             };
 
-            // Parse parameter name (contextual keywords allowed)
+            // Parse parameter name (contextual keywords allowed) or destructuring pattern
             let inner_pattern = if let Some((name, span)) = self.try_get_identifier_name() {
                 Pattern::Identifier(Identifier { name, span })
+            } else if self.check(&TokenKind::LBrace) || self.check(&TokenKind::LBracket) {
+                // Destructuring pattern in function parameter: function foo({ a, b }) { }
+                self.parse_binding_pattern()?
             } else {
                 return Err(JsError::syntax_error(
                     format!("Expected parameter name, found {:?}", self.current.kind),
@@ -3260,8 +4503,33 @@ impl<'src> Parser<'src> {
                 None
             };
 
+            // Parse optional default value: param = expression
+            let inner_pattern = if self.check(&TokenKind::Eq) {
+                self.advance();
+                let default_value = Rc::new(self.parse_conditional_expression()?);
+                let end_span = self.current.span;
+                let full_span = Span::new(
+                    param_span.start,
+                    end_span.start,
+                    param_span.line,
+                    param_span.column,
+                );
+                Pattern::Assignment(AssignmentPattern {
+                    left: Box::new(inner_pattern),
+                    right: default_value,
+                    span: full_span,
+                })
+            } else {
+                inner_pattern
+            };
+
             let end_span = self.current.span;
-            let full_span = Span::new(param_span.start, end_span.start, param_span.line, param_span.column);
+            let full_span = Span::new(
+                param_span.start,
+                end_span.start,
+                param_span.line,
+                param_span.column,
+            );
 
             // Create pattern (with rest wrapper if needed)
             let pattern = if is_rest {
@@ -3311,7 +4579,12 @@ impl<'src> Parser<'src> {
 
         Ok(BlockStatement {
             body: Rc::from(statements),
-            span: Span::new(start_span.start, end_span.end, start_span.line, start_span.column),
+            span: Span::new(
+                start_span.start,
+                end_span.end,
+                start_span.line,
+                start_span.column,
+            ),
         })
     }
 
@@ -3327,7 +4600,12 @@ impl<'src> Parser<'src> {
             let end_span = self.current.span;
             decorators.push(Decorator {
                 expression: expr,
-                span: Span::new(start_span.start, end_span.start, start_span.line, start_span.column),
+                span: Span::new(
+                    start_span.start,
+                    end_span.start,
+                    start_span.line,
+                    start_span.column,
+                ),
             });
             self.exit_nesting();
         }
@@ -3346,12 +4624,20 @@ impl<'src> Parser<'src> {
             self.exit_nesting();
             Expression::Parenthesized(
                 Rc::new(inner),
-                Span::new(paren_span.start, end_span.end, paren_span.line, paren_span.column),
+                Span::new(
+                    paren_span.start,
+                    end_span.end,
+                    paren_span.line,
+                    paren_span.column,
+                ),
             )
         } else {
             // Parse the base identifier
             let (name, id_span) = self.expect_identifier()?;
-            Expression::Identifier(Identifier { name, span: id_span })
+            Expression::Identifier(Identifier {
+                name,
+                span: id_span,
+            })
         };
 
         // Handle member access: @decorator.property
@@ -3361,10 +4647,18 @@ impl<'src> Parser<'src> {
             let expr_span = expr.span();
             expr = Expression::Member(Box::new(MemberExpression {
                 object: Rc::new(expr),
-                property: MemberProperty::Identifier(Identifier { name: prop_name, span: prop_span }),
+                property: MemberProperty::Identifier(Identifier {
+                    name: prop_name,
+                    span: prop_span,
+                }),
                 computed: false,
                 optional: false,
-                span: Span::new(expr_span.start, prop_span.end, expr_span.line, expr_span.column),
+                span: Span::new(
+                    expr_span.start,
+                    prop_span.end,
+                    expr_span.line,
+                    expr_span.column,
+                ),
             }));
         }
 
@@ -3379,7 +4673,12 @@ impl<'src> Parser<'src> {
                 arguments,
                 type_arguments: None,
                 optional: false,
-                span: Span::new(expr_span.start, end_span.end, expr_span.line, expr_span.column),
+                span: Span::new(
+                    expr_span.start,
+                    end_span.end,
+                    expr_span.line,
+                    expr_span.column,
+                ),
             }));
         }
 
@@ -3414,7 +4713,10 @@ impl<'src> Parser<'src> {
                     Ok(Statement::ClassDeclaration(Box::new(class_decl)))
                 }
                 _ => Err(JsError::syntax_error(
-                    format!("Expected class after decorators, found {:?}", self.current.kind),
+                    format!(
+                        "Expected class after decorators, found {:?}",
+                        self.current.kind
+                    ),
                     self.current.span.line,
                     self.current.span.column,
                 )),
@@ -3459,7 +4761,12 @@ impl<'src> Parser<'src> {
                 let end_span = self.current.span;
                 Ok(Statement::Return(ReturnStatement {
                     argument,
-                    span: Span::new(start_span.start, end_span.start, start_span.line, start_span.column),
+                    span: Span::new(
+                        start_span.start,
+                        end_span.start,
+                        start_span.line,
+                        start_span.column,
+                    ),
                 }))
             }
             TokenKind::Break => {
@@ -3469,7 +4776,10 @@ impl<'src> Parser<'src> {
                     let n = name.cheap_clone();
                     let label_span = self.current.span;
                     self.advance();
-                    Some(Identifier { name: n, span: label_span })
+                    Some(Identifier {
+                        name: n,
+                        span: label_span,
+                    })
                 } else {
                     None
                 };
@@ -3477,7 +4787,12 @@ impl<'src> Parser<'src> {
                 let end_span = self.current.span;
                 Ok(Statement::Break(BreakStatement {
                     label,
-                    span: Span::new(start_span.start, end_span.start, start_span.line, start_span.column),
+                    span: Span::new(
+                        start_span.start,
+                        end_span.start,
+                        start_span.line,
+                        start_span.column,
+                    ),
                 }))
             }
             TokenKind::Continue => {
@@ -3487,7 +4802,10 @@ impl<'src> Parser<'src> {
                     let n = name.cheap_clone();
                     let label_span = self.current.span;
                     self.advance();
-                    Some(Identifier { name: n, span: label_span })
+                    Some(Identifier {
+                        name: n,
+                        span: label_span,
+                    })
                 } else {
                     None
                 };
@@ -3495,7 +4813,12 @@ impl<'src> Parser<'src> {
                 let end_span = self.current.span;
                 Ok(Statement::Continue(ContinueStatement {
                     label,
-                    span: Span::new(start_span.start, end_span.start, start_span.line, start_span.column),
+                    span: Span::new(
+                        start_span.start,
+                        end_span.start,
+                        start_span.line,
+                        start_span.column,
+                    ),
                 }))
             }
             TokenKind::Throw => {
@@ -3505,7 +4828,12 @@ impl<'src> Parser<'src> {
                 let end_span = self.current.span;
                 Ok(Statement::Throw(ThrowStatement {
                     argument,
-                    span: Span::new(start_span.start, end_span.start, start_span.line, start_span.column),
+                    span: Span::new(
+                        start_span.start,
+                        end_span.start,
+                        start_span.line,
+                        start_span.column,
+                    ),
                 }))
             }
             TokenKind::Function => {
@@ -3513,8 +4841,36 @@ impl<'src> Parser<'src> {
                 let func_decl = self.parse_function_declaration(start_span, false)?;
                 Ok(Statement::FunctionDeclaration(Box::new(func_decl)))
             }
+            TokenKind::Async => {
+                // Check if this is `async function` declaration
+                if self.peek_token().kind == TokenKind::Function {
+                    self.advance(); // consume 'async'
+                    self.advance(); // consume 'function'
+                    let func_decl = self.parse_function_declaration(start_span, true)?;
+                    return Ok(Statement::FunctionDeclaration(Box::new(func_decl)));
+                }
+                // Otherwise, parse as expression statement (e.g., async arrow function)
+                let expr = Rc::new(self.parse_expression()?);
+                self.eat(&TokenKind::Semicolon);
+                let end_span = self.current.span;
+                Ok(Statement::Expression(ExpressionStatement {
+                    expression: expr,
+                    span: Span::new(
+                        start_span.start,
+                        end_span.start,
+                        start_span.line,
+                        start_span.column,
+                    ),
+                }))
+            }
             TokenKind::Class => {
                 self.advance();
+                let class_decl = self.parse_class_declaration(start_span)?;
+                Ok(Statement::ClassDeclaration(Box::new(class_decl)))
+            }
+            TokenKind::Abstract => {
+                self.advance();
+                self.expect(&TokenKind::Class)?;
                 let class_decl = self.parse_class_declaration(start_span)?;
                 Ok(Statement::ClassDeclaration(Box::new(class_decl)))
             }
@@ -3545,18 +4901,28 @@ impl<'src> Parser<'src> {
                     test,
                     consequent,
                     alternate,
-                    span: Span::new(start_span.start, end_span.start, start_span.line, start_span.column),
+                    span: Span::new(
+                        start_span.start,
+                        end_span.start,
+                        start_span.line,
+                        start_span.column,
+                    ),
                 }))
             }
             // For loop
             TokenKind::For => {
                 self.advance();
+                // Check for "for await" (for-await-of)
+                let is_await = self.eat(&TokenKind::Await);
                 self.expect(&TokenKind::LParen)?;
 
                 // Parse init
                 let init = if self.check(&TokenKind::Semicolon) {
                     None
-                } else if self.check(&TokenKind::Let) || self.check(&TokenKind::Const) || self.check(&TokenKind::Var) {
+                } else if self.check(&TokenKind::Let)
+                    || self.check(&TokenKind::Const)
+                    || self.check(&TokenKind::Var)
+                {
                     let kind = match &self.current.kind {
                         TokenKind::Let => VariableKind::Let,
                         TokenKind::Const => VariableKind::Const,
@@ -3577,7 +4943,12 @@ impl<'src> Parser<'src> {
                             left: ForInOfLeft::Variable(decl),
                             right,
                             body,
-                            span: Span::new(start_span.start, end_span.start, start_span.line, start_span.column),
+                            span: Span::new(
+                                start_span.start,
+                                end_span.start,
+                                start_span.line,
+                                start_span.column,
+                            ),
                         })));
                     }
                     if self.check(&TokenKind::Of) {
@@ -3590,14 +4961,87 @@ impl<'src> Parser<'src> {
                             left: ForInOfLeft::Variable(decl),
                             right,
                             body,
-                            await_: false,
-                            span: Span::new(start_span.start, end_span.start, start_span.line, start_span.column),
+                            await_: is_await,
+                            span: Span::new(
+                                start_span.start,
+                                end_span.start,
+                                start_span.line,
+                                start_span.column,
+                            ),
                         })));
                     }
 
                     Some(ForInit::Variable(decl))
                 } else {
-                    Some(ForInit::Expression(Rc::new(self.parse_expression()?)))
+                    // Parse left-hand-side first (unary expression) to check for for-in/for-of
+                    // without allowing 'in' to be parsed as a binary operator
+                    let lhs = self.parse_unary_expression()?;
+
+                    // Check for for-in/for-of with expression left side
+                    if self.check(&TokenKind::In) {
+                        self.advance();
+                        let pattern = match &lhs {
+                            Expression::Identifier(id) => Pattern::Identifier(id.clone()),
+                            _ => {
+                                return Err(JsError::syntax_error(
+                                    "Invalid left-hand side in for-in",
+                                    start_span.line,
+                                    start_span.column,
+                                ));
+                            }
+                        };
+                        let right = Rc::new(self.parse_expression()?);
+                        self.expect(&TokenKind::RParen)?;
+                        let body = Rc::new(self.parse_statement()?);
+                        let end_span = self.current.span;
+                        return Ok(Statement::ForIn(Box::new(ForInStatement {
+                            left: ForInOfLeft::Pattern(pattern),
+                            right,
+                            body,
+                            span: Span::new(
+                                start_span.start,
+                                end_span.start,
+                                start_span.line,
+                                start_span.column,
+                            ),
+                        })));
+                    }
+                    if self.check(&TokenKind::Of) {
+                        self.advance();
+                        let pattern = match &lhs {
+                            Expression::Identifier(id) => Pattern::Identifier(id.clone()),
+                            _ => {
+                                return Err(JsError::syntax_error(
+                                    "Invalid left-hand side in for-of",
+                                    start_span.line,
+                                    start_span.column,
+                                ));
+                            }
+                        };
+                        let right = Rc::new(self.parse_expression()?);
+                        self.expect(&TokenKind::RParen)?;
+                        let body = Rc::new(self.parse_statement()?);
+                        let end_span = self.current.span;
+                        return Ok(Statement::ForOf(Box::new(ForOfStatement {
+                            left: ForInOfLeft::Pattern(pattern),
+                            right,
+                            body,
+                            await_: is_await,
+                            span: Span::new(
+                                start_span.start,
+                                end_span.start,
+                                start_span.line,
+                                start_span.column,
+                            ),
+                        })));
+                    }
+
+                    // Not a for-in/for-of, continue parsing as a full expression
+                    // starting from the lhs we already have
+                    let expr = self.parse_binary_expression_with_lhs(lhs, 0)?;
+                    let expr = self.parse_conditional_expression_with_lhs(expr)?;
+                    let expr = self.parse_assignment_expression_with_lhs(expr)?;
+                    Some(ForInit::Expression(Rc::new(expr)))
                 };
 
                 self.expect(&TokenKind::Semicolon)?;
@@ -3610,11 +5054,11 @@ impl<'src> Parser<'src> {
                 };
                 self.expect(&TokenKind::Semicolon)?;
 
-                // Parse update
+                // Parse update (may be a sequence expression with comma operator)
                 let update = if self.check(&TokenKind::RParen) {
                     None
                 } else {
-                    Some(Rc::new(self.parse_expression()?))
+                    Some(Rc::new(self.parse_sequence_expression()?))
                 };
                 self.expect(&TokenKind::RParen)?;
 
@@ -3625,7 +5069,12 @@ impl<'src> Parser<'src> {
                     test,
                     update,
                     body,
-                    span: Span::new(start_span.start, end_span.start, start_span.line, start_span.column),
+                    span: Span::new(
+                        start_span.start,
+                        end_span.start,
+                        start_span.line,
+                        start_span.column,
+                    ),
                 })))
             }
             // While loop
@@ -3639,7 +5088,12 @@ impl<'src> Parser<'src> {
                 Ok(Statement::While(WhileStatement {
                     test,
                     body,
-                    span: Span::new(start_span.start, end_span.start, start_span.line, start_span.column),
+                    span: Span::new(
+                        start_span.start,
+                        end_span.start,
+                        start_span.line,
+                        start_span.column,
+                    ),
                 }))
             }
             // Do-while loop
@@ -3655,7 +5109,12 @@ impl<'src> Parser<'src> {
                 Ok(Statement::DoWhile(DoWhileStatement {
                     body,
                     test,
-                    span: Span::new(start_span.start, end_span.start, start_span.line, start_span.column),
+                    span: Span::new(
+                        start_span.start,
+                        end_span.start,
+                        start_span.line,
+                        start_span.column,
+                    ),
                 }))
             }
             // Try-catch-finally
@@ -3680,7 +5139,10 @@ impl<'src> Parser<'src> {
                             }
                             _ => {
                                 return Err(JsError::syntax_error(
-                                    format!("Expected identifier in catch clause, found {:?}", self.current.kind),
+                                    format!(
+                                        "Expected identifier in catch clause, found {:?}",
+                                        self.current.kind
+                                    ),
                                     self.current.span.line,
                                     self.current.span.column,
                                 ));
@@ -3692,7 +5154,10 @@ impl<'src> Parser<'src> {
                             self.skip_type_annotation()?;
                         }
                         self.expect(&TokenKind::RParen)?;
-                        Some(Pattern::Identifier(Identifier { name: param_name, span: param_span }))
+                        Some(Pattern::Identifier(Identifier {
+                            name: param_name,
+                            span: param_span,
+                        }))
                     } else {
                         None
                     };
@@ -3702,7 +5167,12 @@ impl<'src> Parser<'src> {
                     Some(CatchClause {
                         param,
                         body,
-                        span: Span::new(catch_start.start, catch_end.start, catch_start.line, catch_start.column),
+                        span: Span::new(
+                            catch_start.start,
+                            catch_end.start,
+                            catch_start.line,
+                            catch_start.column,
+                        ),
                     })
                 } else {
                     None
@@ -3721,7 +5191,12 @@ impl<'src> Parser<'src> {
                     block,
                     handler,
                     finalizer,
-                    span: Span::new(start_span.start, end_span.start, start_span.line, start_span.column),
+                    span: Span::new(
+                        start_span.start,
+                        end_span.start,
+                        start_span.line,
+                        start_span.column,
+                    ),
                 })))
             }
             // Switch statement
@@ -3746,7 +5221,10 @@ impl<'src> Parser<'src> {
                         None
                     } else {
                         return Err(JsError::syntax_error(
-                            format!("Expected 'case' or 'default', found {:?}", self.current.kind),
+                            format!(
+                                "Expected 'case' or 'default', found {:?}",
+                                self.current.kind
+                            ),
                             self.current.span.line,
                             self.current.span.column,
                         ));
@@ -3766,7 +5244,12 @@ impl<'src> Parser<'src> {
                     cases.push(SwitchCase {
                         test,
                         consequent: consequent.into(),
-                        span: Span::new(case_start.start, case_end.start, case_start.line, case_start.column),
+                        span: Span::new(
+                            case_start.start,
+                            case_end.start,
+                            case_start.line,
+                            case_start.column,
+                        ),
                     });
                 }
 
@@ -3774,7 +5257,12 @@ impl<'src> Parser<'src> {
                 Ok(Statement::Switch(SwitchStatement {
                     discriminant,
                     cases: cases.into(),
-                    span: Span::new(start_span.start, end_span.end, start_span.line, start_span.column),
+                    span: Span::new(
+                        start_span.start,
+                        end_span.end,
+                        start_span.line,
+                        start_span.column,
+                    ),
                 }))
             }
             // Import statement
@@ -3787,14 +5275,115 @@ impl<'src> Parser<'src> {
                 self.advance();
                 self.parse_export_declaration(start_span)
             }
+            // Namespace declaration (only if followed by identifier and {)
+            TokenKind::Namespace | TokenKind::Module => {
+                // Check if this looks like a namespace declaration: namespace Name { }
+                // vs using namespace/module as an identifier
+                let next = self.peek_token();
+                let is_namespace_decl = matches!(next.kind, TokenKind::Identifier(_));
+
+                if is_namespace_decl {
+                    self.advance();
+                    let (name, name_span) = self.expect_identifier()?;
+                    // Parse namespace body { ... }
+                    self.expect(&TokenKind::LBrace)?;
+                    let mut body = Vec::new();
+                    while !self.check(&TokenKind::RBrace) && !self.check(&TokenKind::Eof) {
+                        body.push(self.parse_statement()?);
+                    }
+                    self.expect(&TokenKind::RBrace)?;
+                    let end_span = self.current.span;
+                    Ok(Statement::NamespaceDeclaration(Box::new(
+                        NamespaceDeclaration {
+                            id: Identifier {
+                                name,
+                                span: name_span,
+                            },
+                            body: Rc::from(body),
+                            span: Span::new(
+                                start_span.start,
+                                end_span.start,
+                                start_span.line,
+                                start_span.column,
+                            ),
+                        },
+                    )))
+                } else {
+                    // Treat as expression statement
+                    let expr = Rc::new(self.parse_expression()?);
+                    self.eat(&TokenKind::Semicolon);
+                    let end_span = self.current.span;
+                    Ok(Statement::Expression(ExpressionStatement {
+                        expression: expr,
+                        span: Span::new(
+                            start_span.start,
+                            end_span.start,
+                            start_span.line,
+                            start_span.column,
+                        ),
+                    }))
+                }
+            }
+            // TypeScript ambient declaration: declare const/let/var/function/class/etc.
+            TokenKind::Declare => {
+                self.advance();
+                // Parse and skip the declaration (ambient declarations have no runtime effect)
+                self.parse_declare_statement(start_span)
+            }
+            // TypeScript interface declaration
+            TokenKind::Interface => {
+                self.advance();
+                let iface = self.parse_interface_declaration(start_span)?;
+                Ok(Statement::InterfaceDeclaration(Box::new(iface)))
+            }
+            // TypeScript type alias declaration
+            TokenKind::Type => {
+                self.advance();
+                let type_alias = self.parse_type_alias_declaration(start_span)?;
+                Ok(Statement::TypeAlias(Box::new(type_alias)))
+            }
             _ => {
+                // Check for labeled statement: identifier followed by colon
+                // Note: we must check BEFORE consuming the identifier since try_get_identifier_name advances
+                let is_labeled = if let TokenKind::Identifier(_) = &self.current.kind {
+                    self.peek_token().kind == TokenKind::Colon
+                } else {
+                    false
+                };
+
+                if is_labeled {
+                    if let Some((label_name, label_span)) = self.try_get_identifier_name() {
+                        self.advance(); // consume colon (identifier already consumed by try_get_identifier_name)
+                        let body = Rc::new(self.parse_statement()?);
+                        let end_span = self.current.span;
+                        return Ok(Statement::Labeled(LabeledStatement {
+                            label: Identifier {
+                                name: label_name,
+                                span: label_span,
+                            },
+                            body,
+                            span: Span::new(
+                                start_span.start,
+                                end_span.start,
+                                start_span.line,
+                                start_span.column,
+                            ),
+                        }));
+                    }
+                }
+
                 // Parse as expression statement
                 let expr = self.parse_expression()?;
                 self.eat(&TokenKind::Semicolon);
                 let end_span = self.current.span;
                 Ok(Statement::Expression(ExpressionStatement {
                     expression: Rc::new(expr),
-                    span: Span::new(start_span.start, end_span.start, start_span.line, start_span.column),
+                    span: Span::new(
+                        start_span.start,
+                        end_span.start,
+                        start_span.line,
+                        start_span.column,
+                    ),
                 }))
             }
         }
@@ -3808,7 +5397,10 @@ impl<'src> Parser<'src> {
         let type_only = if self.check(&TokenKind::Type) {
             let peeked = self.peek_token();
             // import type X from "..." or import type { X } from "..."
-            if matches!(peeked.kind, TokenKind::Identifier(_) | TokenKind::LBrace | TokenKind::Star) {
+            if matches!(
+                peeked.kind,
+                TokenKind::Identifier(_) | TokenKind::LBrace | TokenKind::Star
+            ) {
                 self.advance(); // consume 'type'
                 true
             } else {
@@ -3833,7 +5425,12 @@ impl<'src> Parser<'src> {
                 specifiers,
                 source,
                 type_only,
-                span: Span::new(start_span.start, end_span.start, start_span.line, start_span.column),
+                span: Span::new(
+                    start_span.start,
+                    end_span.start,
+                    start_span.line,
+                    start_span.column,
+                ),
             })));
         }
 
@@ -3843,7 +5440,10 @@ impl<'src> Parser<'src> {
             self.expect(&TokenKind::As)?;
             let (local_name, local_span) = self.expect_identifier()?;
             specifiers.push(ImportSpecifier::Namespace {
-                local: Identifier { name: local_name, span: local_span },
+                local: Identifier {
+                    name: local_name,
+                    span: local_span,
+                },
                 span: local_span,
             });
         }
@@ -3866,7 +5466,10 @@ impl<'src> Parser<'src> {
                     self.expect(&TokenKind::As)?;
                     let (local_name, local_span) = self.expect_identifier()?;
                     specifiers.push(ImportSpecifier::Namespace {
-                        local: Identifier { name: local_name, span: local_span },
+                        local: Identifier {
+                            name: local_name,
+                            span: local_span,
+                        },
                         span: local_span,
                     });
                 }
@@ -3889,12 +5492,20 @@ impl<'src> Parser<'src> {
             specifiers,
             source,
             type_only,
-            span: Span::new(start_span.start, end_span.start, start_span.line, start_span.column),
+            span: Span::new(
+                start_span.start,
+                end_span.start,
+                start_span.line,
+                start_span.column,
+            ),
         })))
     }
 
     /// Parse named imports: { a, b as c, type d }
-    fn parse_named_imports(&mut self, specifiers: &mut Vec<crate::ast::ImportSpecifier>) -> Result<(), JsError> {
+    fn parse_named_imports(
+        &mut self,
+        specifiers: &mut Vec<crate::ast::ImportSpecifier>,
+    ) -> Result<(), JsError> {
         use crate::ast::ImportSpecifier;
 
         self.expect(&TokenKind::LBrace)?;
@@ -3921,16 +5532,30 @@ impl<'src> Parser<'src> {
             let local = if self.check(&TokenKind::As) {
                 self.advance();
                 let (local_name, local_span) = self.expect_identifier()?;
-                Identifier { name: local_name, span: local_span }
+                Identifier {
+                    name: local_name,
+                    span: local_span,
+                }
             } else {
-                Identifier { name: imported_name.cheap_clone(), span: imported_span }
+                Identifier {
+                    name: imported_name.cheap_clone(),
+                    span: imported_span,
+                }
             };
 
             let spec_end = self.current.span;
             specifiers.push(ImportSpecifier::Named {
                 local,
-                imported: Identifier { name: imported_name, span: imported_span },
-                span: Span::new(spec_start.start, spec_end.start, spec_start.line, spec_start.column),
+                imported: Identifier {
+                    name: imported_name,
+                    span: imported_span,
+                },
+                span: Span::new(
+                    spec_start.start,
+                    spec_end.start,
+                    spec_start.line,
+                    spec_start.column,
+                ),
             });
 
             if !self.check(&TokenKind::RBrace) {
@@ -3993,12 +5618,22 @@ impl<'src> Parser<'src> {
             namespace_export: None,
             default: false,
             type_only,
-            span: Span::new(start_span.start, end_span.start, start_span.line, start_span.column),
+            span: Span::new(
+                start_span.start,
+                end_span.start,
+                start_span.line,
+                start_span.column,
+            ),
         })))
     }
 
     /// Parse export default ...
-    fn parse_export_default(&mut self, start_span: Span, decorators: Vec<Decorator>, type_only: bool) -> Result<Statement, JsError> {
+    fn parse_export_default(
+        &mut self,
+        start_span: Span,
+        decorators: Vec<Decorator>,
+        type_only: bool,
+    ) -> Result<Statement, JsError> {
         // Check for decorators on default export
         let decorators = if decorators.is_empty() && self.check(&TokenKind::At) {
             self.parse_decorators()?
@@ -4019,7 +5654,12 @@ impl<'src> Parser<'src> {
                 namespace_export: None,
                 default: true,
                 type_only,
-                span: Span::new(start_span.start, end_span.start, start_span.line, start_span.column),
+                span: Span::new(
+                    start_span.start,
+                    end_span.start,
+                    start_span.line,
+                    start_span.column,
+                ),
             })));
         }
 
@@ -4031,13 +5671,20 @@ impl<'src> Parser<'src> {
                 let func_decl = self.parse_function_declaration(start_span, true)?;
                 let end_span = self.current.span;
                 return Ok(Statement::Export(Box::new(ExportDeclaration {
-                    declaration: Some(Box::new(Statement::FunctionDeclaration(Box::new(func_decl)))),
+                    declaration: Some(Box::new(Statement::FunctionDeclaration(Box::new(
+                        func_decl,
+                    )))),
                     specifiers: Vec::new(),
                     source: None,
                     namespace_export: None,
                     default: true,
                     type_only,
-                    span: Span::new(start_span.start, end_span.start, start_span.line, start_span.column),
+                    span: Span::new(
+                        start_span.start,
+                        end_span.start,
+                        start_span.line,
+                        start_span.column,
+                    ),
                 })));
             }
         }
@@ -4048,13 +5695,20 @@ impl<'src> Parser<'src> {
             let func_decl = self.parse_function_declaration(start_span, false)?;
             let end_span = self.current.span;
             return Ok(Statement::Export(Box::new(ExportDeclaration {
-                declaration: Some(Box::new(Statement::FunctionDeclaration(Box::new(func_decl)))),
+                declaration: Some(Box::new(Statement::FunctionDeclaration(Box::new(
+                    func_decl,
+                )))),
                 specifiers: Vec::new(),
                 source: None,
                 namespace_export: None,
                 default: true,
                 type_only,
-                span: Span::new(start_span.start, end_span.start, start_span.line, start_span.column),
+                span: Span::new(
+                    start_span.start,
+                    end_span.start,
+                    start_span.line,
+                    start_span.column,
+                ),
             })));
         }
 
@@ -4066,24 +5720,41 @@ impl<'src> Parser<'src> {
         Ok(Statement::Export(Box::new(ExportDeclaration {
             declaration: Some(Box::new(Statement::Expression(ExpressionStatement {
                 expression: Rc::new(expr),
-                span: Span::new(start_span.start, end_span.start, start_span.line, start_span.column),
+                span: Span::new(
+                    start_span.start,
+                    end_span.start,
+                    start_span.line,
+                    start_span.column,
+                ),
             }))),
             specifiers: Vec::new(),
             source: None,
             namespace_export: None,
             default: true,
             type_only,
-            span: Span::new(start_span.start, end_span.start, start_span.line, start_span.column),
+            span: Span::new(
+                start_span.start,
+                end_span.start,
+                start_span.line,
+                start_span.column,
+            ),
         })))
     }
 
     /// Parse export * from "..." or export * as ns from "..."
-    fn parse_export_star(&mut self, start_span: Span, type_only: bool) -> Result<Statement, JsError> {
+    fn parse_export_star(
+        &mut self,
+        start_span: Span,
+        type_only: bool,
+    ) -> Result<Statement, JsError> {
         // Check for `export * as namespace from "..."`
         let namespace_export = if self.check(&TokenKind::As) {
             self.advance();
             let (name, name_span) = self.expect_identifier()?;
-            Some(Identifier { name, span: name_span })
+            Some(Identifier {
+                name,
+                span: name_span,
+            })
         } else {
             None
         };
@@ -4103,34 +5774,57 @@ impl<'src> Parser<'src> {
             namespace_export,
             default: false,
             type_only,
-            span: Span::new(start_span.start, end_span.start, start_span.line, start_span.column),
+            span: Span::new(
+                start_span.start,
+                end_span.start,
+                start_span.line,
+                start_span.column,
+            ),
         })))
     }
 
     /// Parse export { ... } or export { ... } from "..."
-    fn parse_export_named(&mut self, start_span: Span, type_only: bool) -> Result<Statement, JsError> {
+    fn parse_export_named(
+        &mut self,
+        start_span: Span,
+        type_only: bool,
+    ) -> Result<Statement, JsError> {
         self.expect(&TokenKind::LBrace)?;
 
         let mut specifiers = Vec::new();
         while !self.check(&TokenKind::RBrace) && !self.check(&TokenKind::Eof) {
             let spec_start = self.current.span;
             let (local_name, local_span) = self.expect_identifier()?;
-            let local = Identifier { name: local_name.cheap_clone(), span: local_span };
+            let local = Identifier {
+                name: local_name.cheap_clone(),
+                span: local_span,
+            };
 
             // Check for `as exported`
             let exported = if self.check(&TokenKind::As) {
                 self.advance();
                 let (exported_name, exported_span) = self.expect_identifier()?;
-                Identifier { name: exported_name, span: exported_span }
+                Identifier {
+                    name: exported_name,
+                    span: exported_span,
+                }
             } else {
-                Identifier { name: local_name, span: local_span }
+                Identifier {
+                    name: local_name,
+                    span: local_span,
+                }
             };
 
             let spec_end = self.current.span;
             specifiers.push(ExportSpecifier {
                 local,
                 exported,
-                span: Span::new(spec_start.start, spec_end.start, spec_start.line, spec_start.column),
+                span: Span::new(
+                    spec_start.start,
+                    spec_end.start,
+                    spec_start.line,
+                    spec_start.column,
+                ),
             });
 
             if !self.check(&TokenKind::RBrace) {
@@ -4157,12 +5851,20 @@ impl<'src> Parser<'src> {
             namespace_export: None,
             default: false,
             type_only,
-            span: Span::new(start_span.start, end_span.start, start_span.line, start_span.column),
+            span: Span::new(
+                start_span.start,
+                end_span.start,
+                start_span.line,
+                start_span.column,
+            ),
         })))
     }
 
     /// Parse a declaration after export keyword (function, class, const, etc.)
-    fn parse_export_declaration_statement(&mut self, decorators: Vec<Decorator>) -> Result<Statement, JsError> {
+    fn parse_export_declaration_statement(
+        &mut self,
+        decorators: Vec<Decorator>,
+    ) -> Result<Statement, JsError> {
         let start_span = self.current.span;
 
         match &self.current.kind {
@@ -4223,8 +5925,38 @@ impl<'src> Parser<'src> {
                 let type_alias = self.parse_type_alias_declaration(start_span)?;
                 Ok(Statement::TypeAlias(Box::new(type_alias)))
             }
+            TokenKind::Namespace | TokenKind::Module => {
+                self.advance();
+                let (name, name_span) = self.expect_identifier()?;
+                // Parse namespace body { ... }
+                self.expect(&TokenKind::LBrace)?;
+                let mut body = Vec::new();
+                while !self.check(&TokenKind::RBrace) && !self.check(&TokenKind::Eof) {
+                    body.push(self.parse_statement()?);
+                }
+                self.expect(&TokenKind::RBrace)?;
+                let end_span = self.current.span;
+                Ok(Statement::NamespaceDeclaration(Box::new(
+                    NamespaceDeclaration {
+                        id: Identifier {
+                            name,
+                            span: name_span,
+                        },
+                        body: Rc::from(body),
+                        span: Span::new(
+                            start_span.start,
+                            end_span.start,
+                            start_span.line,
+                            start_span.column,
+                        ),
+                    },
+                )))
+            }
             _ => Err(JsError::syntax_error(
-                format!("Expected declaration after export, found {:?}", self.current.kind),
+                format!(
+                    "Expected declaration after export, found {:?}",
+                    self.current.kind
+                ),
                 self.current.span.line,
                 self.current.span.column,
             )),
@@ -4249,42 +5981,72 @@ impl<'src> Parser<'src> {
     }
 
     /// Parse a variable declaration for for-loop init (without semicolon)
-    fn parse_variable_declaration_for_init(&mut self, kind: VariableKind) -> Result<VariableDeclaration, JsError> {
+    fn parse_variable_declaration_for_init(
+        &mut self,
+        kind: VariableKind,
+    ) -> Result<VariableDeclaration, JsError> {
         let start_span = self.current.span;
+        let mut declarations = Vec::new();
 
-        // Parse binding pattern (identifier, array, or object destructuring)
-        let pattern = self.parse_binding_pattern()?;
-        let pattern_span = pattern.span();
+        loop {
+            // Parse binding pattern (identifier, array, or object destructuring)
+            let pattern = self.parse_binding_pattern()?;
+            let pattern_span = pattern.span();
 
-        // Check for type annotation
-        let type_annotation = if self.check(&TokenKind::Colon) {
-            self.advance();
-            Some(Box::new(self.parse_type_annotation()?))
-        } else {
-            None
-        };
+            // Check for type annotation
+            let type_annotation = if self.check(&TokenKind::Colon) {
+                self.advance();
+                Some(Box::new(self.parse_type_annotation()?))
+            } else {
+                None
+            };
 
-        // Check for initializer (only for regular for loops, not for-in/for-of)
-        let init = if self.check(&TokenKind::Eq) {
-            self.advance();
-            Some(Rc::new(self.parse_expression()?))
-        } else {
-            None
-        };
+            // Check for initializer
+            let init = if self.check(&TokenKind::Eq) {
+                self.advance();
+                Some(Rc::new(self.parse_expression()?))
+            } else {
+                None
+            };
+
+            let decl_end_span = self.current.span;
+
+            let declarator = VariableDeclarator {
+                id: pattern,
+                init,
+                type_annotation,
+                span: Span::new(
+                    pattern_span.start,
+                    decl_end_span.start,
+                    pattern_span.line,
+                    pattern_span.column,
+                ),
+            };
+            declarations.push(declarator);
+
+            // Check for more declarators (comma-separated) or end of init
+            // For for-in/for-of, we'll have `in` or `of` next - stop here
+            // For regular for, we'll have either `;` or more variables with `,`
+            if self.check(&TokenKind::Comma) {
+                self.advance();
+                // Continue to parse next declarator
+            } else {
+                // End of declarations (either semicolon, 'in', 'of', or ')' for malformed)
+                break;
+            }
+        }
 
         let end_span = self.current.span;
 
-        let declarator = VariableDeclarator {
-            id: pattern,
-            init,
-            type_annotation,
-            span: Span::new(pattern_span.start, end_span.start, pattern_span.line, pattern_span.column),
-        };
-
         Ok(VariableDeclaration {
             kind,
-            declarations: Rc::from(vec![declarator]),
-            span: Span::new(start_span.start, end_span.start, start_span.line, start_span.column),
+            declarations: Rc::from(declarations),
+            span: Span::new(
+                start_span.start,
+                end_span.start,
+                start_span.line,
+                start_span.column,
+            ),
         })
     }
 
@@ -4323,7 +6085,12 @@ impl<'src> Parser<'src> {
                 id: pattern,
                 init,
                 type_annotation,
-                span: Span::new(pattern_span.start, end_span.start, pattern_span.line, pattern_span.column),
+                span: Span::new(
+                    pattern_span.start,
+                    end_span.start,
+                    pattern_span.line,
+                    pattern_span.column,
+                ),
             });
 
             // Check for multiple declarations: const a = 1, b = 2
@@ -4340,7 +6107,12 @@ impl<'src> Parser<'src> {
         Ok(Statement::VariableDeclaration(VariableDeclaration {
             kind,
             declarations: Rc::from(declarations),
-            span: Span::new(start_span.start, end_span.start, start_span.line, start_span.column),
+            span: Span::new(
+                start_span.start,
+                end_span.start,
+                start_span.line,
+                start_span.column,
+            ),
         }))
     }
 
@@ -4392,7 +6164,12 @@ impl<'src> Parser<'src> {
                 elements.push(Some(Pattern::Rest(RestElement {
                     argument,
                     type_annotation: None,
-                    span: Span::new(rest_span.start, end_span.start, rest_span.line, rest_span.column),
+                    span: Span::new(
+                        rest_span.start,
+                        end_span.start,
+                        rest_span.line,
+                        rest_span.column,
+                    ),
                 })));
                 break; // Rest must be last
             }
@@ -4408,7 +6185,12 @@ impl<'src> Parser<'src> {
                 Pattern::Assignment(crate::ast::AssignmentPattern {
                     left: Box::new(elem_pattern),
                     right: Rc::new(default_value),
-                    span: Span::new(elem_span.start, self.current.span.start, elem_span.line, elem_span.column),
+                    span: Span::new(
+                        elem_span.start,
+                        self.current.span.start,
+                        elem_span.line,
+                        elem_span.column,
+                    ),
                 })
             } else {
                 elem_pattern
@@ -4426,7 +6208,12 @@ impl<'src> Parser<'src> {
         Ok(Pattern::Array(ArrayPattern {
             elements,
             type_annotation: None,
-            span: Span::new(start_span.start, end_span.end, start_span.line, start_span.column),
+            span: Span::new(
+                start_span.start,
+                end_span.end,
+                start_span.line,
+                start_span.column,
+            ),
         }))
     }
 
@@ -4450,14 +6237,22 @@ impl<'src> Parser<'src> {
                 properties.push(ObjectPatternProperty::Rest(RestElement {
                     argument,
                     type_annotation: None,
-                    span: Span::new(prop_span.start, end_span.start, prop_span.line, prop_span.column),
+                    span: Span::new(
+                        prop_span.start,
+                        end_span.start,
+                        prop_span.line,
+                        prop_span.column,
+                    ),
                 }));
                 break; // Rest must be last
             }
 
             // Parse property key
             let (key_name, key_span) = self.expect_identifier()?;
-            let key = Identifier { name: key_name.cheap_clone(), span: key_span };
+            let key = Identifier {
+                name: key_name.cheap_clone(),
+                span: key_span,
+            };
 
             // Check for : value (rename)
             let value = if self.check(&TokenKind::Colon) {
@@ -4476,7 +6271,12 @@ impl<'src> Parser<'src> {
                 Pattern::Assignment(crate::ast::AssignmentPattern {
                     left: Box::new(value),
                     right: Rc::new(default_value),
-                    span: Span::new(val_span.start, self.current.span.start, val_span.line, val_span.column),
+                    span: Span::new(
+                        val_span.start,
+                        self.current.span.start,
+                        val_span.line,
+                        val_span.column,
+                    ),
                 })
             } else {
                 value
@@ -4487,7 +6287,12 @@ impl<'src> Parser<'src> {
                 key: ObjectPropertyKey::Identifier(key),
                 value: final_value,
                 shorthand: false, // Simplified for now
-                span: Span::new(prop_span.start, end_span.start, prop_span.line, prop_span.column),
+                span: Span::new(
+                    prop_span.start,
+                    end_span.start,
+                    prop_span.line,
+                    prop_span.column,
+                ),
             });
 
             if !self.check(&TokenKind::RBrace) {
@@ -4500,7 +6305,12 @@ impl<'src> Parser<'src> {
         Ok(Pattern::Object(ObjectPattern {
             properties,
             type_annotation: None,
-            span: Span::new(start_span.start, end_span.end, start_span.line, start_span.column),
+            span: Span::new(
+                start_span.start,
+                end_span.end,
+                start_span.line,
+                start_span.column,
+            ),
         }))
     }
 
@@ -4534,6 +6344,13 @@ impl<'src> Parser<'src> {
             return true;
         }
 
+        // Array/object destructuring parameter: ([a, b]) => or ({x, y}) =>
+        // We need to use lookahead to check if there's an arrow after the closing paren
+        // because ([1, 2, 3]).method() is an array literal, not arrow params
+        if self.check(&TokenKind::LBracket) || self.check(&TokenKind::LBrace) {
+            return self.scan_for_arrow_after_parens();
+        }
+
         // Must start with an identifier for arrow params
         if !matches!(self.current.kind, TokenKind::Identifier(_)) {
             return false;
@@ -4549,7 +6366,7 @@ impl<'src> Parser<'src> {
             | TokenKind::Question // optional param: (x?) =>
             | TokenKind::Comma    // multiple params: (x, y) =>
             | TokenKind::RParen   // single param: (x) => or end of params
-            | TokenKind::Eq       // default value: (x = 1) => - but NOT assignment expression!
+            | TokenKind::Eq // default value: (x = 1) => - but NOT assignment expression!
         ) && !self.is_assignment_in_parens()
     }
 
@@ -4675,14 +6492,21 @@ impl<'src> Parser<'src> {
         while !self.check(&TokenKind::RParen) && !self.check(&TokenKind::Eof) {
             let param_span = self.current.span;
 
-            // Parse parameter name
-            let pattern = match &self.current.kind {
+            // Check for rest parameter: ...param
+            let is_rest = self.check(&TokenKind::DotDotDot);
+            if is_rest {
+                self.advance(); // consume ...
+            }
+
+            // Parse parameter pattern (identifier or destructuring)
+            let inner_pattern = match &self.current.kind {
                 TokenKind::Identifier(name) => {
                     let name = name.cheap_clone();
                     let span = self.current.span;
                     self.advance();
                     Pattern::Identifier(Identifier { name, span })
                 }
+                TokenKind::LBrace | TokenKind::LBracket => self.parse_binding_pattern()?,
                 _ => {
                     return Err(JsError::syntax_error(
                         format!("Expected parameter name, found {:?}", self.current.kind),
@@ -4708,6 +6532,37 @@ impl<'src> Parser<'src> {
                 None
             };
 
+            // Parse optional default value: param = expression
+            let inner_pattern = if self.check(&TokenKind::Eq) {
+                self.advance();
+                let default_value = Rc::new(self.parse_conditional_expression()?);
+                let end_span = self.current.span;
+                let full_span = Span::new(
+                    param_span.start,
+                    end_span.start,
+                    param_span.line,
+                    param_span.column,
+                );
+                Pattern::Assignment(AssignmentPattern {
+                    left: Box::new(inner_pattern),
+                    right: default_value,
+                    span: full_span,
+                })
+            } else {
+                inner_pattern
+            };
+
+            // Wrap in rest element if needed
+            let pattern = if is_rest {
+                Pattern::Rest(RestElement {
+                    argument: Box::new(inner_pattern),
+                    type_annotation: None, // type annotation is on the param, not the rest element
+                    span: param_span,
+                })
+            } else {
+                inner_pattern
+            };
+
             let end_span = self.current.span;
             params.push(FunctionParam {
                 pattern,
@@ -4716,7 +6571,12 @@ impl<'src> Parser<'src> {
                 decorators: Vec::new(),
                 accessibility: None,
                 readonly: false,
-                span: Span::new(param_span.start, end_span.start, param_span.line, param_span.column),
+                span: Span::new(
+                    param_span.start,
+                    end_span.start,
+                    param_span.line,
+                    param_span.column,
+                ),
             });
 
             // Check for comma
@@ -4912,9 +6772,7 @@ impl<'src> Parser<'src> {
                 Ok(Expression::Template(Box::new(template)))
             }
             // Template literal with substitutions - `hello ${name}!`
-            TokenKind::TemplateHead(s) => {
-                self.parse_template_literal(s.cheap_clone(), span)
-            }
+            TokenKind::TemplateHead(s) => self.parse_template_literal(s.cheap_clone(), span),
             // Boolean literals
             TokenKind::True => {
                 self.advance();
@@ -4964,22 +6822,27 @@ impl<'src> Parser<'src> {
                     self.advance(); // consume '=>'
                     let body = self.parse_arrow_function_body()?;
                     let end_span = self.current.span;
-                    return Ok(Expression::ArrowFunction(Box::new(ArrowFunctionExpression {
-                        params: Rc::from(vec![FunctionParam {
-                            pattern: Pattern::Identifier(Identifier { name: name.cheap_clone(), span }),
-                            type_annotation: None,
-                            optional: false,
-                            decorators: Vec::new(),
-                            accessibility: None,
-                            readonly: false,
-                            span,
-                        }]),
-                        return_type: None,
-                        type_parameters: None,
-                        body: Box::new(body),
-                        async_: false,
-                        span: Span::new(span.start, end_span.start, span.line, span.column),
-                    })));
+                    return Ok(Expression::ArrowFunction(Box::new(
+                        ArrowFunctionExpression {
+                            params: Rc::from(vec![FunctionParam {
+                                pattern: Pattern::Identifier(Identifier {
+                                    name: name.cheap_clone(),
+                                    span,
+                                }),
+                                type_annotation: None,
+                                optional: false,
+                                decorators: Vec::new(),
+                                accessibility: None,
+                                readonly: false,
+                                span,
+                            }]),
+                            return_type: None,
+                            type_parameters: None,
+                            body: Box::new(body),
+                            async_: false,
+                            span: Span::new(span.start, end_span.start, span.line, span.column),
+                        },
+                    )));
                 }
 
                 Ok(Expression::Identifier(Identifier { name, span }))
@@ -5005,14 +6868,16 @@ impl<'src> Parser<'src> {
                         self.advance(); // consume '=>'
                         let body = self.parse_arrow_function_body()?;
                         let end_span = self.current.span;
-                        return Ok(Expression::ArrowFunction(Box::new(ArrowFunctionExpression {
-                            params: Rc::from(Vec::new()),
-                            return_type,
-                            type_parameters: None,
-                            body: Box::new(body),
-                            async_: false,
-                            span: Span::new(span.start, end_span.start, span.line, span.column),
-                        })));
+                        return Ok(Expression::ArrowFunction(Box::new(
+                            ArrowFunctionExpression {
+                                params: Rc::from(Vec::new()),
+                                return_type,
+                                type_parameters: None,
+                                body: Box::new(body),
+                                async_: false,
+                                span: Span::new(span.start, end_span.start, span.line, span.column),
+                            },
+                        )));
                     }
                 }
 
@@ -5037,14 +6902,21 @@ impl<'src> Parser<'src> {
                         self.advance(); // consume '=>'
                         let body = self.parse_arrow_function_body()?;
                         let body_end_span = self.current.span;
-                        return Ok(Expression::ArrowFunction(Box::new(ArrowFunctionExpression {
-                            params: Rc::from(params),
-                            return_type,
-                            type_parameters: None,
-                            body: Box::new(body),
-                            async_: false,
-                            span: Span::new(span.start, body_end_span.start, span.line, span.column),
-                        })));
+                        return Ok(Expression::ArrowFunction(Box::new(
+                            ArrowFunctionExpression {
+                                params: Rc::from(params),
+                                return_type,
+                                type_parameters: None,
+                                body: Box::new(body),
+                                async_: false,
+                                span: Span::new(
+                                    span.start,
+                                    body_end_span.start,
+                                    span.line,
+                                    span.column,
+                                ),
+                            },
+                        )));
                     }
 
                     // Not an arrow function - convert params back to identifier expression if possible
@@ -5054,7 +6926,8 @@ impl<'src> Parser<'src> {
                         })?;
                         if let Pattern::Identifier(id) = param.pattern {
                             if param.type_annotation.is_none() && !param.optional {
-                                let full_span = Span::new(span.start, end_span.end, span.line, span.column);
+                                let full_span =
+                                    Span::new(span.start, end_span.end, span.line, span.column);
                                 return Ok(Expression::Parenthesized(
                                     Rc::new(Expression::Identifier(id)),
                                     full_span,
@@ -5163,7 +7036,10 @@ impl<'src> Parser<'src> {
                 // Must be followed by class
                 if !self.check(&TokenKind::Class) {
                     return Err(JsError::syntax_error(
-                        format!("Expected class after decorators, found {:?}", self.current.kind),
+                        format!(
+                            "Expected class after decorators, found {:?}",
+                            self.current.kind
+                        ),
                         self.current.span.line,
                         self.current.span.column,
                     ));
@@ -5171,6 +7047,66 @@ impl<'src> Parser<'src> {
                 self.advance(); // consume 'class'
                 let class_expr = self.parse_class_expression(span, decorators)?;
                 Ok(Expression::Class(Box::new(class_expr)))
+            }
+            // Async arrow function: async () => ... or async (x) => ...
+            TokenKind::Async => {
+                self.advance(); // consume 'async'
+                // Check for async function expression
+                if self.check(&TokenKind::Function) {
+                    self.advance(); // consume 'function'
+                    return self.parse_function_expression(span, true, false);
+                }
+                // Parse async arrow function params
+                self.expect(&TokenKind::LParen)?;
+                let params = if self.check(&TokenKind::RParen) {
+                    Vec::new()
+                } else {
+                    self.parse_arrow_params_or_expression()?
+                };
+                self.expect(&TokenKind::RParen)?;
+                // Check for return type
+                let return_type = if self.check(&TokenKind::Colon) {
+                    self.advance();
+                    Some(Box::new(self.parse_type_annotation()?))
+                } else {
+                    None
+                };
+                self.expect(&TokenKind::Arrow)?;
+                let body = self.parse_arrow_function_body()?;
+                let end_span = self.current.span;
+                Ok(Expression::ArrowFunction(Box::new(
+                    ArrowFunctionExpression {
+                        params: Rc::from(params),
+                        return_type,
+                        type_parameters: None,
+                        body: Box::new(body),
+                        async_: true,
+                        span: Span::new(span.start, end_span.start, span.line, span.column),
+                    },
+                )))
+            }
+            // Function expression: function() { } or function name() { }
+            TokenKind::Function => {
+                self.advance(); // consume 'function'
+                self.parse_function_expression(span, false, false)
+            }
+            // Super expression: super() or super.property
+            TokenKind::Super => {
+                self.advance(); // consume 'super'
+                Ok(Expression::Super(span))
+            }
+            // Angle bracket type assertion: <Type>expr
+            TokenKind::Lt => {
+                self.advance(); // consume '<'
+                let type_ann = self.parse_type_annotation()?;
+                self.expect(&TokenKind::Gt)?;
+                let expr = self.parse_unary_expression()?;
+                let end_span = expr.span();
+                Ok(Expression::TypeAssertion(TypeAssertionExpression {
+                    expression: Rc::new(expr),
+                    type_annotation: Box::new(type_ann),
+                    span: Span::new(span.start, end_span.end, span.line, span.column),
+                }))
             }
             _ => Err(JsError::syntax_error(
                 format!("Expected expression, found {:?}", self.current.kind),
@@ -5246,7 +7182,12 @@ impl<'src> Parser<'src> {
         }
 
         let end_span = self.current.span;
-        let full_span = Span::new(start_span.start, end_span.start, start_span.line, start_span.column);
+        let full_span = Span::new(
+            start_span.start,
+            end_span.start,
+            start_span.line,
+            start_span.column,
+        );
 
         Ok(Expression::Template(Box::new(TemplateLiteral {
             quasis,
@@ -5273,7 +7214,12 @@ impl<'src> Parser<'src> {
                 self.advance(); // consume ...
                 let argument = self.parse_expression()?;
                 let end_span = argument.span();
-                let full_span = Span::new(spread_span.start, end_span.end, spread_span.line, spread_span.column);
+                let full_span = Span::new(
+                    spread_span.start,
+                    end_span.end,
+                    spread_span.line,
+                    spread_span.column,
+                );
                 elements.push(Some(ArrayElement::Spread(SpreadElement {
                     argument: Rc::new(argument),
                     span: full_span,
@@ -5299,6 +7245,322 @@ impl<'src> Parser<'src> {
 
         while !self.check(&TokenKind::RBrace) && !self.check(&TokenKind::Eof) {
             let prop_span = self.current.span;
+
+            // Handle spread element: { ...expr }
+            if self.check(&TokenKind::DotDotDot) {
+                self.advance();
+                let argument = Rc::new(self.parse_conditional_expression()?);
+                let end_span = self.current.span;
+                properties.push(ObjectProperty::Spread(SpreadElement {
+                    argument,
+                    span: Span::new(
+                        prop_span.start,
+                        end_span.start,
+                        prop_span.line,
+                        prop_span.column,
+                    ),
+                }));
+                if self.check(&TokenKind::Comma) {
+                    self.advance();
+                }
+                continue;
+            }
+
+            // Handle generator method: { *method() { } }
+            if self.check(&TokenKind::Star) {
+                self.advance();
+                // Get method name
+                let (key, _key_name, computed) = if self.check(&TokenKind::LBracket) {
+                    self.advance();
+                    let key_expr = self.parse_expression()?;
+                    self.expect(&TokenKind::RBracket)?;
+                    (ObjectPropertyKey::Computed(Rc::new(key_expr)), None, true)
+                } else if let Some((name, span)) = self.try_get_identifier_name() {
+                    (
+                        ObjectPropertyKey::Identifier(Identifier {
+                            name: name.cheap_clone(),
+                            span,
+                        }),
+                        Some(name),
+                        false,
+                    )
+                } else if let Some(name) = self.keyword_as_property_name() {
+                    let span = self.current.span;
+                    self.advance();
+                    (
+                        ObjectPropertyKey::Identifier(Identifier {
+                            name: name.cheap_clone(),
+                            span,
+                        }),
+                        Some(name),
+                        false,
+                    )
+                } else {
+                    return Err(JsError::syntax_error(
+                        format!(
+                            "Expected generator method name, found {:?}",
+                            self.current.kind
+                        ),
+                        self.current.span.line,
+                        self.current.span.column,
+                    ));
+                };
+                // Parse params
+                self.expect(&TokenKind::LParen)?;
+                let params = self.parse_function_params()?;
+                self.expect(&TokenKind::RParen)?;
+                // Optional return type
+                let return_type = if self.check(&TokenKind::Colon) {
+                    self.advance();
+                    Some(Box::new(self.parse_type_annotation()?))
+                } else {
+                    None
+                };
+                // Parse body
+                let body = self.parse_block_statement()?;
+                let end_span = self.current.span;
+                let func_span = Span::new(
+                    prop_span.start,
+                    end_span.start,
+                    prop_span.line,
+                    prop_span.column,
+                );
+                let func_expr = Expression::Function(Box::new(FunctionExpression {
+                    id: None,
+                    params: Rc::from(params),
+                    body: Rc::new(body),
+                    async_: false,
+                    generator: true,
+                    return_type,
+                    type_parameters: None,
+                    span: func_span,
+                }));
+                properties.push(ObjectProperty::Property(Box::new(Property {
+                    key,
+                    value: func_expr,
+                    kind: PropertyKind::Init,
+                    computed,
+                    shorthand: false,
+                    method: true,
+                    span: Span::new(
+                        prop_span.start,
+                        end_span.start,
+                        prop_span.line,
+                        prop_span.column,
+                    ),
+                })));
+                if self.check(&TokenKind::Comma) {
+                    self.advance();
+                }
+                continue;
+            }
+
+            // Handle async method: { async method() { } } or { async *method() { } }
+            if self.check(&TokenKind::Async) {
+                let async_span = self.current.span;
+                self.advance();
+                // Check for async generator: async *method() { }
+                let is_generator = if self.check(&TokenKind::Star) {
+                    self.advance();
+                    true
+                } else {
+                    false
+                };
+                // Check if followed by method name (identifier, string, number, or computed)
+                if matches!(
+                    self.current.kind,
+                    TokenKind::Identifier(_)
+                        | TokenKind::String(_)
+                        | TokenKind::Number(_)
+                        | TokenKind::LBracket
+                ) {
+                    // Get method name
+                    let (key, _key_name, computed) = if self.check(&TokenKind::LBracket) {
+                        self.advance();
+                        let key_expr = self.parse_expression()?;
+                        self.expect(&TokenKind::RBracket)?;
+                        (ObjectPropertyKey::Computed(Rc::new(key_expr)), None, true)
+                    } else if let Some((name, span)) = self.try_get_identifier_name() {
+                        (
+                            ObjectPropertyKey::Identifier(Identifier {
+                                name: name.cheap_clone(),
+                                span,
+                            }),
+                            Some(name),
+                            false,
+                        )
+                    } else if let Some(name) = self.keyword_as_property_name() {
+                        let span = self.current.span;
+                        self.advance();
+                        (
+                            ObjectPropertyKey::Identifier(Identifier {
+                                name: name.cheap_clone(),
+                                span,
+                            }),
+                            Some(name),
+                            false,
+                        )
+                    } else if let TokenKind::String(s) = &self.current.kind {
+                        let value = s.cheap_clone();
+                        let lit = crate::ast::StringLiteral {
+                            value: value.cheap_clone(),
+                            span: self.current.span,
+                        };
+                        self.advance();
+                        (ObjectPropertyKey::String(lit), None, false)
+                    } else if let TokenKind::Number(n) = &self.current.kind {
+                        let value = *n;
+                        let lit = Literal {
+                            value: LiteralValue::Number(value),
+                            span: self.current.span,
+                        };
+                        self.advance();
+                        (ObjectPropertyKey::Number(lit), None, false)
+                    } else {
+                        return Err(JsError::syntax_error(
+                            format!("Expected async method name, found {:?}", self.current.kind),
+                            self.current.span.line,
+                            self.current.span.column,
+                        ));
+                    };
+                    // Parse params
+                    self.expect(&TokenKind::LParen)?;
+                    let params = self.parse_function_params()?;
+                    self.expect(&TokenKind::RParen)?;
+                    // Optional return type
+                    let return_type = if self.check(&TokenKind::Colon) {
+                        self.advance();
+                        Some(Box::new(self.parse_type_annotation()?))
+                    } else {
+                        None
+                    };
+                    // Parse body
+                    let body = self.parse_block_statement()?;
+                    let end_span = self.current.span;
+                    let func_span = Span::new(
+                        prop_span.start,
+                        end_span.start,
+                        prop_span.line,
+                        prop_span.column,
+                    );
+                    let func_expr = Expression::Function(Box::new(FunctionExpression {
+                        id: None,
+                        params: Rc::from(params),
+                        body: Rc::new(body),
+                        async_: true,
+                        generator: is_generator,
+                        return_type,
+                        type_parameters: None,
+                        span: func_span,
+                    }));
+                    properties.push(ObjectProperty::Property(Box::new(Property {
+                        key,
+                        value: func_expr,
+                        kind: PropertyKind::Init,
+                        computed,
+                        shorthand: false,
+                        method: true,
+                        span: Span::new(
+                            prop_span.start,
+                            end_span.start,
+                            prop_span.line,
+                            prop_span.column,
+                        ),
+                    })));
+                    if self.check(&TokenKind::Comma) {
+                        self.advance();
+                    }
+                    continue;
+                } else {
+                    // "async" is a property name, treat it like identifier - restore position by handling below
+                    // Actually we already consumed 'async', so we handle it here as a property named "async"
+                    let key = ObjectPropertyKey::Identifier(Identifier {
+                        name: self.lexer.string_dict().get_or_insert("async"),
+                        span: async_span,
+                    });
+                    // Check for shorthand, colon, or method
+                    if self.check(&TokenKind::LParen) {
+                        // async()
+                        self.advance();
+                        let params = self.parse_function_params()?;
+                        self.expect(&TokenKind::RParen)?;
+                        let return_type = if self.check(&TokenKind::Colon) {
+                            self.advance();
+                            Some(Box::new(self.parse_type_annotation()?))
+                        } else {
+                            None
+                        };
+                        let body = self.parse_block_statement()?;
+                        let end_span = self.current.span;
+                        let func_expr = Expression::Function(Box::new(FunctionExpression {
+                            id: None,
+                            params: Rc::from(params),
+                            body: Rc::new(body),
+                            async_: false,
+                            generator: false,
+                            return_type,
+                            type_parameters: None,
+                            span: Span::new(
+                                prop_span.start,
+                                end_span.start,
+                                prop_span.line,
+                                prop_span.column,
+                            ),
+                        }));
+                        properties.push(ObjectProperty::Property(Box::new(Property {
+                            key,
+                            value: func_expr,
+                            kind: PropertyKind::Init,
+                            computed: false,
+                            shorthand: false,
+                            method: true,
+                            span: Span::new(
+                                prop_span.start,
+                                end_span.start,
+                                prop_span.line,
+                                prop_span.column,
+                            ),
+                        })));
+                    } else if self.check(&TokenKind::Colon) {
+                        self.advance();
+                        let value = self.parse_conditional_expression()?;
+                        let end_span = self.current.span;
+                        properties.push(ObjectProperty::Property(Box::new(Property {
+                            key,
+                            value,
+                            kind: PropertyKind::Init,
+                            computed: false,
+                            shorthand: false,
+                            method: false,
+                            span: Span::new(
+                                prop_span.start,
+                                end_span.start,
+                                prop_span.line,
+                                prop_span.column,
+                            ),
+                        })));
+                    } else {
+                        // shorthand: { async } means { async: async }
+                        let value = Expression::Identifier(Identifier {
+                            name: self.lexer.string_dict().get_or_insert("async"),
+                            span: async_span,
+                        });
+                        properties.push(ObjectProperty::Property(Box::new(Property {
+                            key,
+                            value,
+                            kind: PropertyKind::Init,
+                            computed: false,
+                            shorthand: true,
+                            method: false,
+                            span: async_span,
+                        })));
+                    }
+                    if self.check(&TokenKind::Comma) {
+                        self.advance();
+                    }
+                    continue;
+                }
+            }
 
             // Parse property key
             let (key, key_name, computed) = match &self.current.kind {
@@ -5339,70 +7601,119 @@ impl<'src> Parser<'src> {
                 // Contextual keywords can be used as property names
                 TokenKind::Module => {
                     let name = self.lexer.string_dict().get_or_insert("module");
-                    let id = Identifier { name: name.cheap_clone(), span: self.current.span };
+                    let id = Identifier {
+                        name: name.cheap_clone(),
+                        span: self.current.span,
+                    };
                     self.advance();
                     (ObjectPropertyKey::Identifier(id), Some(name), false)
                 }
                 TokenKind::Namespace => {
                     let name = self.lexer.string_dict().get_or_insert("namespace");
-                    let id = Identifier { name: name.cheap_clone(), span: self.current.span };
+                    let id = Identifier {
+                        name: name.cheap_clone(),
+                        span: self.current.span,
+                    };
                     self.advance();
                     (ObjectPropertyKey::Identifier(id), Some(name), false)
                 }
                 TokenKind::Type => {
                     let name = self.lexer.string_dict().get_or_insert("type");
-                    let id = Identifier { name: name.cheap_clone(), span: self.current.span };
+                    let id = Identifier {
+                        name: name.cheap_clone(),
+                        span: self.current.span,
+                    };
                     self.advance();
                     (ObjectPropertyKey::Identifier(id), Some(name), false)
                 }
                 TokenKind::Async => {
                     let name = self.lexer.string_dict().get_or_insert("async");
-                    let id = Identifier { name: name.cheap_clone(), span: self.current.span };
+                    let id = Identifier {
+                        name: name.cheap_clone(),
+                        span: self.current.span,
+                    };
                     self.advance();
                     (ObjectPropertyKey::Identifier(id), Some(name), false)
                 }
                 TokenKind::From => {
                     let name = self.lexer.string_dict().get_or_insert("from");
-                    let id = Identifier { name: name.cheap_clone(), span: self.current.span };
+                    let id = Identifier {
+                        name: name.cheap_clone(),
+                        span: self.current.span,
+                    };
                     self.advance();
                     (ObjectPropertyKey::Identifier(id), Some(name), false)
                 }
                 TokenKind::Of => {
                     let name = self.lexer.string_dict().get_or_insert("of");
-                    let id = Identifier { name: name.cheap_clone(), span: self.current.span };
+                    let id = Identifier {
+                        name: name.cheap_clone(),
+                        span: self.current.span,
+                    };
                     self.advance();
                     (ObjectPropertyKey::Identifier(id), Some(name), false)
                 }
                 TokenKind::Readonly => {
                     let name = self.lexer.string_dict().get_or_insert("readonly");
-                    let id = Identifier { name: name.cheap_clone(), span: self.current.span };
+                    let id = Identifier {
+                        name: name.cheap_clone(),
+                        span: self.current.span,
+                    };
                     self.advance();
                     (ObjectPropertyKey::Identifier(id), Some(name), false)
                 }
                 TokenKind::Declare => {
                     let name = self.lexer.string_dict().get_or_insert("declare");
-                    let id = Identifier { name: name.cheap_clone(), span: self.current.span };
+                    let id = Identifier {
+                        name: name.cheap_clone(),
+                        span: self.current.span,
+                    };
                     self.advance();
                     (ObjectPropertyKey::Identifier(id), Some(name), false)
                 }
                 TokenKind::Abstract => {
                     let name = self.lexer.string_dict().get_or_insert("abstract");
-                    let id = Identifier { name: name.cheap_clone(), span: self.current.span };
+                    let id = Identifier {
+                        name: name.cheap_clone(),
+                        span: self.current.span,
+                    };
                     self.advance();
                     (ObjectPropertyKey::Identifier(id), Some(name), false)
                 }
                 TokenKind::As => {
                     let name = self.lexer.string_dict().get_or_insert("as");
-                    let id = Identifier { name: name.cheap_clone(), span: self.current.span };
+                    let id = Identifier {
+                        name: name.cheap_clone(),
+                        span: self.current.span,
+                    };
                     self.advance();
                     (ObjectPropertyKey::Identifier(id), Some(name), false)
                 }
+                TokenKind::Is => {
+                    let name = self.lexer.string_dict().get_or_insert("is");
+                    let id = Identifier {
+                        name: name.cheap_clone(),
+                        span: self.current.span,
+                    };
+                    self.advance();
+                    (ObjectPropertyKey::Identifier(id), Some(name), false)
+                }
+                // Allow other keywords as property keys using keyword_as_property_name
                 _ => {
-                    return Err(JsError::syntax_error(
-                        format!("Expected property key, found {:?}", self.current.kind),
-                        self.current.span.line,
-                        self.current.span.column,
-                    ));
+                    if let Some(name) = self.keyword_as_property_name() {
+                        let id = Identifier {
+                            name: name.cheap_clone(),
+                            span: self.current.span,
+                        };
+                        self.advance();
+                        (ObjectPropertyKey::Identifier(id), Some(name), false)
+                    } else {
+                        return Err(JsError::syntax_error(
+                            format!("Expected property key, found {:?}", self.current.kind),
+                            self.current.span.line,
+                            self.current.span.column,
+                        ));
+                    }
                 }
             };
 
@@ -5434,7 +7745,12 @@ impl<'src> Parser<'src> {
                     body: Rc::new(body),
                     generator: false,
                     async_: false,
-                    span: Span::new(prop_span.start, body_end_span.start, prop_span.line, prop_span.column),
+                    span: Span::new(
+                        prop_span.start,
+                        body_end_span.start,
+                        prop_span.line,
+                        prop_span.column,
+                    ),
                 }));
 
                 let prop = Property {
@@ -5444,7 +7760,12 @@ impl<'src> Parser<'src> {
                     computed,
                     shorthand: false,
                     method: true,
-                    span: Span::new(prop_span.start, body_end_span.start, prop_span.line, prop_span.column),
+                    span: Span::new(
+                        prop_span.start,
+                        body_end_span.start,
+                        prop_span.line,
+                        prop_span.column,
+                    ),
                 };
                 properties.push(ObjectProperty::Property(Box::new(prop)));
 
@@ -5490,7 +7811,12 @@ impl<'src> Parser<'src> {
                 computed,
                 shorthand,
                 method: false,
-                span: Span::new(prop_span.start, prop_end_span.start, prop_span.line, prop_span.column),
+                span: Span::new(
+                    prop_span.start,
+                    prop_end_span.start,
+                    prop_span.line,
+                    prop_span.column,
+                ),
             };
             properties.push(ObjectProperty::Property(Box::new(prop)));
 
