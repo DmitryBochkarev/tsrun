@@ -1313,6 +1313,21 @@ impl<'src> Parser<'src> {
         if let Some(op) = op {
             self.advance();
             let argument = self.parse_unary_expression()?; // Recursive for multiple prefixes
+
+            // In strict mode, delete on an unqualified identifier is a SyntaxError
+            if matches!(op, UnaryOp::Delete) {
+                if let Expression::Identifier(id) = &argument {
+                    return Err(JsError::syntax_error(
+                        format!(
+                            "Delete of an unqualified identifier '{}' is not allowed in strict mode",
+                            id.name.as_str()
+                        ),
+                        id.span.line,
+                        id.span.column,
+                    ));
+                }
+            }
+
             let full_span = Span::new(span.start, argument.span().end, span.line, span.column);
             return Ok(Expression::Unary(UnaryExpression {
                 operator: op,
@@ -4431,6 +4446,7 @@ impl<'src> Parser<'src> {
     /// Parse function parameters: (a: T, b: U, c?: V)
     fn parse_function_params(&mut self) -> Result<Vec<FunctionParam>, JsError> {
         let mut params = Vec::new();
+        let mut seen_names: std::collections::HashSet<String> = std::collections::HashSet::new();
 
         while !self.check(&TokenKind::RParen) && !self.check(&TokenKind::Eof) {
             let param_span = self.current.span;
@@ -4475,6 +4491,31 @@ impl<'src> Parser<'src> {
 
             // Parse parameter name (contextual keywords allowed) or destructuring pattern
             let inner_pattern = if let Some((name, span)) = self.try_get_identifier_name() {
+                // Check for strict mode restricted identifiers
+                let name_str = name.as_str();
+                if name_str == "eval" || name_str == "arguments" {
+                    return Err(JsError::syntax_error(
+                        format!(
+                            "'{}' cannot be used as a parameter name in strict mode",
+                            name_str
+                        ),
+                        span.line,
+                        span.column,
+                    ));
+                }
+                // Check for duplicate parameter names (strict mode)
+                let name_string = name_str.to_string();
+                if seen_names.contains(&name_string) {
+                    return Err(JsError::syntax_error(
+                        format!(
+                            "Duplicate parameter name '{}' not allowed in strict mode",
+                            name_str
+                        ),
+                        span.line,
+                        span.column,
+                    ));
+                }
+                seen_names.insert(name_string);
                 Pattern::Identifier(Identifier { name, span })
             } else if self.check(&TokenKind::LBrace) || self.check(&TokenKind::LBracket) {
                 // Destructuring pattern in function parameter: function foo({ a, b }) { }
@@ -6126,6 +6167,18 @@ impl<'src> Parser<'src> {
             // Simple identifier
             _ => {
                 if let Some((name, span)) = self.try_get_identifier_name() {
+                    // Check for strict mode restricted identifiers
+                    let name_str = name.as_str();
+                    if name_str == "eval" || name_str == "arguments" {
+                        return Err(JsError::syntax_error(
+                            format!(
+                                "'{}' cannot be used as a binding name in strict mode",
+                                name_str
+                            ),
+                            span.line,
+                            span.column,
+                        ));
+                    }
                     Ok(Pattern::Identifier(Identifier { name, span }))
                 } else {
                     Err(JsError::syntax_error(
@@ -6488,6 +6541,7 @@ impl<'src> Parser<'src> {
 
     fn parse_arrow_params_or_expression(&mut self) -> Result<Vec<FunctionParam>, JsError> {
         let mut params = Vec::new();
+        let mut seen_names: std::collections::HashSet<String> = std::collections::HashSet::new();
 
         while !self.check(&TokenKind::RParen) && !self.check(&TokenKind::Eof) {
             let param_span = self.current.span;
@@ -6504,6 +6558,33 @@ impl<'src> Parser<'src> {
                     let name = name.cheap_clone();
                     let span = self.current.span;
                     self.advance();
+
+                    // Check for strict mode restricted identifiers
+                    let name_str = name.as_str();
+                    if name_str == "eval" || name_str == "arguments" {
+                        return Err(JsError::syntax_error(
+                            format!(
+                                "'{}' cannot be used as a parameter name in strict mode",
+                                name_str
+                            ),
+                            span.line,
+                            span.column,
+                        ));
+                    }
+                    // Check for duplicate parameter names (strict mode)
+                    let name_string = name_str.to_string();
+                    if seen_names.contains(&name_string) {
+                        return Err(JsError::syntax_error(
+                            format!(
+                                "Duplicate parameter name '{}' not allowed in strict mode",
+                                name_str
+                            ),
+                            span.line,
+                            span.column,
+                        ));
+                    }
+                    seen_names.insert(name_string);
+
                     Pattern::Identifier(Identifier { name, span })
                 }
                 TokenKind::LBrace | TokenKind::LBracket => self.parse_binding_pattern()?,
@@ -7731,41 +7812,42 @@ impl<'src> Parser<'src> {
                     let is_getter = name_str == "get";
 
                     // Parse the actual property name
-                    let (actual_key, _actual_name, actual_computed) = if self.check(&TokenKind::LBracket) {
-                        self.advance();
-                        let key_expr = self.parse_expression()?;
-                        self.expect(&TokenKind::RBracket)?;
-                        (ObjectPropertyKey::Computed(Rc::new(key_expr)), None, true)
-                    } else if let Some((name, span)) = self.try_get_identifier_name() {
-                        (
-                            ObjectPropertyKey::Identifier(Identifier {
-                                name: name.cheap_clone(),
-                                span,
-                            }),
-                            Some(name),
-                            false,
-                        )
-                    } else if let Some(kw_name) = self.keyword_as_property_name() {
-                        let span = self.current.span;
-                        self.advance();
-                        (
-                            ObjectPropertyKey::Identifier(Identifier {
-                                name: kw_name.cheap_clone(),
-                                span,
-                            }),
-                            Some(kw_name),
-                            false,
-                        )
-                    } else {
-                        return Err(JsError::syntax_error(
-                            format!(
-                                "Expected property name after '{}', found {:?}",
-                                name_str, self.current.kind
-                            ),
-                            self.current.span.line,
-                            self.current.span.column,
-                        ));
-                    };
+                    let (actual_key, _actual_name, actual_computed) =
+                        if self.check(&TokenKind::LBracket) {
+                            self.advance();
+                            let key_expr = self.parse_expression()?;
+                            self.expect(&TokenKind::RBracket)?;
+                            (ObjectPropertyKey::Computed(Rc::new(key_expr)), None, true)
+                        } else if let Some((name, span)) = self.try_get_identifier_name() {
+                            (
+                                ObjectPropertyKey::Identifier(Identifier {
+                                    name: name.cheap_clone(),
+                                    span,
+                                }),
+                                Some(name),
+                                false,
+                            )
+                        } else if let Some(kw_name) = self.keyword_as_property_name() {
+                            let span = self.current.span;
+                            self.advance();
+                            (
+                                ObjectPropertyKey::Identifier(Identifier {
+                                    name: kw_name.cheap_clone(),
+                                    span,
+                                }),
+                                Some(kw_name),
+                                false,
+                            )
+                        } else {
+                            return Err(JsError::syntax_error(
+                                format!(
+                                    "Expected property name after '{}', found {:?}",
+                                    name_str, self.current.kind
+                                ),
+                                self.current.span.line,
+                                self.current.span.column,
+                            ));
+                        };
 
                     // Parse parameter list
                     self.expect(&TokenKind::LParen)?;
@@ -7792,7 +7874,12 @@ impl<'src> Parser<'src> {
                         generator: false,
                         return_type,
                         type_parameters: None,
-                        span: Span::new(prop_span.start, end_span.start, prop_span.line, prop_span.column),
+                        span: Span::new(
+                            prop_span.start,
+                            end_span.start,
+                            prop_span.line,
+                            prop_span.column,
+                        ),
                     }));
 
                     let kind = if is_getter {
@@ -7808,7 +7895,12 @@ impl<'src> Parser<'src> {
                         computed: actual_computed,
                         shorthand: false,
                         method: false,
-                        span: Span::new(prop_span.start, end_span.start, prop_span.line, prop_span.column),
+                        span: Span::new(
+                            prop_span.start,
+                            end_span.start,
+                            prop_span.line,
+                            prop_span.column,
+                        ),
                     })));
 
                     if self.check(&TokenKind::Comma) {
