@@ -2453,7 +2453,13 @@ impl<'src> Parser<'src> {
                 self.expect(&TokenKind::RParen)?;
 
                 // Check for function type: (T) => U
-                if self.check(&TokenKind::Arrow) {
+                // But NOT if inner is already a function type - then the => is likely
+                // the arrow function body marker, not part of the type annotation.
+                // E.g., in `(): (() => number) => { ... }`, the outer => is the body,
+                // not a continuation of the return type.
+                if self.check(&TokenKind::Arrow)
+                    && !matches!(inner, TypeAnnotation::Function(_))
+                {
                     self.advance();
                     let return_type = self.parse_type_annotation()?;
                     let end_span = self.current.span;

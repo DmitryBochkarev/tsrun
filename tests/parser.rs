@@ -721,6 +721,28 @@ fn test_arrow_function_with_generic_return_type() {
 }
 
 #[test]
+fn test_arrow_function_with_parenthesized_function_return_type() {
+    // Arrow function returning a function type - parenthesized for clarity
+    // e.g., (): (() => number) => { return () => 1; }
+    let prog = parse("const fn = (): (() => number) => { return () => 1; };");
+    assert_eq!(prog.body.len(), 1);
+}
+
+#[test]
+fn test_arrow_function_returning_function_with_body() {
+    // Arrow function with function return type and block body
+    let prog = parse(
+        r#"
+        const outerFn = (): (() => number) => {
+            const inner = 1;
+            return (): number => inner * 2;
+        };
+    "#,
+    );
+    assert_eq!(prog.body.len(), 1);
+}
+
+#[test]
 fn test_indexed_access_type() {
     // Test indexed access type like Order["status"]
     let prog = parse("const x: Order[\"status\"] = \"pending\";");
