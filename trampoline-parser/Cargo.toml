@@ -1,0 +1,9 @@
+[package]
+name = "trampoline-parser"
+version = "0.1.0"
+edition = "2021"
+description = "DSL for generating trampoline-based lexers and parsers"
+
+[dependencies]
+
+[dev-dependencies]
