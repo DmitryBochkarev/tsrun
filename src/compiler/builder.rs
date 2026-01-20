@@ -562,6 +562,14 @@ impl BytecodeBuilder {
     pub fn reserve_registers(&mut self, count: u8) -> Result<Register, JsError> {
         self.registers.reserve_range(count)
     }
+
+    /// Free a range of consecutive registers (frees from end to start for optimal reuse)
+    pub fn free_registers(&mut self, start: Register, count: u8) {
+        // Free in reverse order so the allocator can reclaim them contiguously
+        for i in (0..count).rev() {
+            self.registers.free(start + i);
+        }
+    }
 }
 
 impl Default for BytecodeBuilder {

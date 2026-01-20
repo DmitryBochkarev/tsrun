@@ -1713,13 +1713,20 @@ impl Compiler {
         // Handle super() call
         if matches!(call.callee.as_ref(), Expression::Super(_)) {
             // Compile arguments (spread not supported for super calls yet)
-            let (args_start, argc, _has_spread) = self.compile_arguments(&call.arguments)?;
+            let (args_start, argc, has_spread) = self.compile_arguments(&call.arguments)?;
 
             self.builder.emit(Op::SuperCall {
                 dst,
                 args_start,
                 argc,
             });
+
+            // Free argument registers
+            if has_spread {
+                self.builder.free_register(args_start);
+            } else if argc > 0 {
+                self.builder.free_registers(args_start, argc);
+            }
             return Ok(());
         }
 
@@ -2159,6 +2166,8 @@ impl Compiler {
                 args_start,
                 argc,
             });
+            // For spread calls, args_start is a single array register
+            self.builder.free_register(args_start);
         } else {
             self.builder.emit(Op::Call {
                 dst,
@@ -2167,6 +2176,10 @@ impl Compiler {
                 args_start,
                 argc,
             });
+            // Free the argument registers after the call
+            if argc > 0 {
+                self.builder.free_registers(args_start, argc);
+            }
         }
     }
 
@@ -2220,6 +2233,8 @@ impl Compiler {
                 args_start,
                 argc,
             });
+            // For spread, args_start is a single array register
+            self.builder.free_register(args_start);
         } else {
             self.builder.emit(Op::Construct {
                 dst,
@@ -2227,6 +2242,10 @@ impl Compiler {
                 args_start,
                 argc,
             });
+            // Free the argument registers after the construct
+            if argc > 0 {
+                self.builder.free_registers(args_start, argc);
+            }
         }
 
         self.builder.free_register(callee_reg);

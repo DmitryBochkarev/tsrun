@@ -17,6 +17,17 @@ fn eval_bytecode(source: &str) -> JsValue {
     }
 }
 
+/// Helper to evaluate and return error message if any
+#[allow(clippy::expect_used, clippy::panic)]
+fn eval_bytecode_result(source: &str) -> Result<JsValue, String> {
+    let mut interp = create_test_runtime();
+    match run(&mut interp, source, None) {
+        Ok(StepResult::Complete(rv)) => Ok(rv.value().clone()),
+        Ok(other) => Err(format!("Unexpected result: {:?}", other)),
+        Err(e) => Err(format!("{:?}", e)),
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Basic Literals
 // ═══════════════════════════════════════════════════════════════════════════
@@ -3272,4 +3283,1451 @@ fn test_bytecode_args_not_evaluated_when_callee_throws() {
     "#,
     );
     assert_eq!(result, JsValue::Boolean(false));
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Register Limit Tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_bytecode_collections_like_code() {
+    // This reproduces the collections/main.ts pattern that was hitting register limits
+    let result = eval_bytecode_result(
+        r#"
+        // Map/Set Collections Demo
+        console.log("=== Map/Set Collections Demo ===");
+
+        // --- Basic Map Operations ---
+        const map = new Map();
+        map.set("one", 1);
+        map.set("two", 2);
+        map.set("three", 3);
+
+        console.log("Map size:", map.size);
+        console.log("get('two'):", map.get("two"));
+
+        // Map initialization with array of entries
+        const fruitPrices = new Map([
+            ["apple", 1.5],
+            ["banana", 0.75],
+            ["orange", 2.0],
+            ["grape", 3.25]
+        ]);
+        console.log("Fruit prices map:");
+        fruitPrices.forEach((price, fruit) => {
+            console.log("  " + fruit + ": $" + price);
+        });
+
+        // --- Basic Set Operations ---
+        const set = new Set();
+        set.add(1);
+        set.add(2);
+        set.add(3);
+
+        console.log("Set size:", set.size);
+
+        // Set initialization with array
+        const colors = new Set(["red", "green", "blue", "red", "yellow"]);
+        console.log("Colors set size:", colors.size);
+
+        // --- Set Operations ---
+        const setA = new Set([1, 2, 3, 4, 5]);
+        const setB = new Set([4, 5, 6, 7, 8]);
+
+        function union(a, b) {
+            const result = new Set(a);
+            for (const item of b) {
+                result.add(item);
+            }
+            return result;
+        }
+
+        function intersection(a, b) {
+            const result = new Set();
+            for (const item of a) {
+                if (b.has(item)) {
+                    result.add(item);
+                }
+            }
+            return result;
+        }
+
+        console.log("Set A:", JSON.stringify(Array.from(setA)));
+        console.log("Set B:", JSON.stringify(Array.from(setB)));
+        console.log("Union:", JSON.stringify(Array.from(union(setA, setB))));
+        console.log("Intersection:", JSON.stringify(Array.from(intersection(setA, setB))));
+
+        // --- Using Map for Caching ---
+        const cache = new Map();
+        let computeCount = 0;
+
+        function expensiveCompute(n) {
+            if (cache.has(n)) {
+                return cache.get(n);
+            }
+            computeCount++;
+            const result = n * n + n;
+            cache.set(n, result);
+            return result;
+        }
+
+        console.log("Computing 5:", expensiveCompute(5));
+        console.log("Computing 10:", expensiveCompute(10));
+        console.log("Computing 5 (cached):", expensiveCompute(5));
+        console.log("Compute count:", computeCount);
+
+        "done"
+    "#,
+    );
+
+    match result {
+        Ok(v) => assert_eq!(v, JsValue::from("done")),
+        Err(e) => panic!("Collections-like code failed: {}", e),
+    }
+}
+
+#[test]
+fn test_bytecode_combined_module_code() {
+    // Combine code from graph.ts, counter.ts and main.ts to simulate
+    // what happens when all modules are loaded together
+    let result = eval_bytecode_result(
+        r#"
+        // === graph.ts code ===
+        function createGraph() { return { nodes: new Map() }; }
+        function addNode(graph, node) { if (!graph.nodes.has(node)) { graph.nodes.set(node, new Set()); } }
+        function addEdge(graph, from, to) { addNode(graph, from); addNode(graph, to); graph.nodes.get(from).add(to); }
+        function getNeighbors(graph, node) { return graph.nodes.get(node) || new Set(); }
+        function bfs(graph, start) {
+            const visited = new Set();
+            const result = [];
+            const queue = [start];
+            while (queue.length > 0) {
+                const current = queue.shift();
+                if (visited.has(current)) continue;
+                visited.add(current);
+                result.push(current);
+                for (const neighbor of getNeighbors(graph, current)) {
+                    if (!visited.has(neighbor)) queue.push(neighbor);
+                }
+            }
+            return result;
+        }
+        function dfs(graph, start) {
+            const visited = new Set();
+            const result = [];
+            function visit(node) {
+                if (visited.has(node)) return;
+                visited.add(node);
+                result.push(node);
+                for (const neighbor of getNeighbors(graph, node)) visit(neighbor);
+            }
+            visit(start);
+            return result;
+        }
+        function buildGraph() {
+            const graph = createGraph();
+            addEdge(graph, "A", "B");
+            addEdge(graph, "A", "C");
+            addEdge(graph, "B", "D");
+            addEdge(graph, "B", "E");
+            addEdge(graph, "C", "F");
+            return graph;
+        }
+
+        // === counter.ts code ===
+        function createWordCounter() {
+            return { frequencies: new Map(), uniqueWords: new Set(), totalWords: 0 };
+        }
+        function addWord(counter, word) {
+            const normalized = word.toLowerCase();
+            counter.totalWords++;
+            counter.uniqueWords.add(normalized);
+            const count = counter.frequencies.get(normalized) || 0;
+            counter.frequencies.set(normalized, count + 1);
+        }
+        function analyzeText(text) {
+            const counter = createWordCounter();
+            const words = text.split(/[\s,.!?;:'"()\[\]{}]+/);
+            for (const word of words) {
+                if (word.length > 0) addWord(counter, word);
+            }
+            return counter;
+        }
+
+        // === main.ts code (simplified) ===
+        console.log("=== Combined Module Test ===");
+
+        const map = new Map();
+        map.set("one", 1);
+        map.set("two", 2);
+        console.log("Map size:", map.size);
+
+        const fruitPrices = new Map([
+            ["apple", 1.5], ["banana", 0.75], ["orange", 2.0], ["grape", 3.25]
+        ]);
+
+        const set = new Set();
+        set.add(1); set.add(2); set.add(3);
+        console.log("Set size:", set.size);
+
+        const colors = new Set(["red", "green", "blue"]);
+        const setA = new Set([1, 2, 3, 4, 5]);
+        const setB = new Set([4, 5, 6, 7, 8]);
+
+        function union(a, b) {
+            const result = new Set(a);
+            for (const item of b) result.add(item);
+            return result;
+        }
+
+        const cache = new Map();
+        function expensiveCompute(n) {
+            if (cache.has(n)) return cache.get(n);
+            const result = n * n + n;
+            cache.set(n, result);
+            return result;
+        }
+
+        const graph = buildGraph();
+        console.log("BFS from A:", JSON.stringify(bfs(graph, "A")));
+
+        const text = "the quick brown fox jumps over the lazy dog";
+        const counter = analyzeText(text);
+        console.log("Unique words:", counter.uniqueWords.size);
+
+        "done"
+    "#,
+    );
+
+    match result {
+        Ok(v) => assert_eq!(v, JsValue::from("done")),
+        Err(e) => panic!("Combined module code failed: {}", e),
+    }
+}
+
+#[test]
+fn test_bytecode_employees_array() {
+    // Test the employees array pattern from collections/main.ts
+    let result = eval_bytecode_result(
+        r#"
+        const employees = [
+            { name: "Alice", department: "Engineering", salary: 75000 },
+            { name: "Bob", department: "Sales", salary: 60000 },
+            { name: "Charlie", department: "Engineering", salary: 80000 },
+            { name: "Diana", department: "Sales", salary: 65000 },
+            { name: "Eve", department: "Marketing", salary: 55000 }
+        ];
+
+        function groupBy(items, keyFn) {
+            const groups = new Map();
+            for (const item of items) {
+                const key = keyFn(item);
+                if (!groups.has(key)) {
+                    groups.set(key, []);
+                }
+                groups.get(key).push(item);
+            }
+            return groups;
+        }
+
+        const byDepartment = groupBy(employees, e => e.department);
+        console.log("Groups:", byDepartment.size);
+        byDepartment.forEach((people, dept) => {
+            const names = people.map(p => p.name).join(", ");
+            console.log("  " + dept + ": " + names);
+        });
+
+        const data = [
+            { id: 1, value: "a" },
+            { id: 2, value: "b" },
+            { id: 1, value: "c" },
+            { id: 3, value: "d" },
+            { id: 2, value: "e" }
+        ];
+
+        const seenIds = new Set();
+        const uniqueById = [];
+
+        for (const item of data) {
+            if (!seenIds.has(item.id)) {
+                seenIds.add(item.id);
+                uniqueById.push(item);
+            }
+        }
+
+        console.log("Unique:", uniqueById.length);
+        uniqueById.length
+    "#,
+    );
+
+    match result {
+        Ok(v) => assert_eq!(v, JsValue::Number(3.0)),
+        Err(e) => panic!("Employees array code failed: {}", e),
+    }
+}
+
+#[test]
+fn test_bytecode_collections_part1_maps_sets() {
+    // Just the basic map and set operations
+    let result = eval_bytecode_result(
+        r#"
+        const map = new Map();
+        map.set("one", 1);
+        map.set("two", 2);
+        map.set("three", 3);
+
+        const fruitPrices = new Map([
+            ["apple", 1.5],
+            ["banana", 0.75],
+            ["orange", 2.0],
+            ["grape", 3.25]
+        ]);
+        fruitPrices.forEach((price, fruit) => {
+            console.log("  " + fruit + ": $" + price);
+        });
+
+        for (const [key, value] of fruitPrices.entries()) {
+            console.log("  " + key + " => " + value);
+        }
+
+        const set = new Set();
+        set.add(1);
+        set.add(2);
+        set.add(3);
+        set.add(2);
+
+        const colors = new Set(["red", "green", "blue", "red", "yellow"]);
+
+        for (const color of colors) {
+            console.log("  " + color);
+        }
+
+        colors.forEach(color => {
+            console.log("  Color: " + color);
+        });
+
+        "part1_done"
+    "#,
+    );
+
+    match result {
+        Ok(v) => assert_eq!(v, JsValue::from("part1_done")),
+        Err(e) => panic!("Part 1 (maps/sets) failed: {}", e),
+    }
+}
+
+#[test]
+fn test_bytecode_collections_part2_set_operations() {
+    // Set operations: union, intersection, difference
+    let result = eval_bytecode_result(
+        r#"
+        const setA = new Set([1, 2, 3, 4, 5]);
+        const setB = new Set([4, 5, 6, 7, 8]);
+
+        function union(a, b) {
+            const result = new Set(a);
+            for (const item of b) {
+                result.add(item);
+            }
+            return result;
+        }
+
+        function intersection(a, b) {
+            const result = new Set();
+            for (const item of a) {
+                if (b.has(item)) {
+                    result.add(item);
+                }
+            }
+            return result;
+        }
+
+        function difference(a, b) {
+            const result = new Set();
+            for (const item of a) {
+                if (!b.has(item)) {
+                    result.add(item);
+                }
+            }
+            return result;
+        }
+
+        function symmetricDifference(a, b) {
+            return union(difference(a, b), difference(b, a));
+        }
+
+        function isSubset(a, b) {
+            for (const item of a) {
+                if (!b.has(item)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        console.log("Union:", JSON.stringify(Array.from(union(setA, setB))));
+        console.log("Intersection:", JSON.stringify(Array.from(intersection(setA, setB))));
+        console.log("Difference:", JSON.stringify(Array.from(difference(setA, setB))));
+        console.log("SymmetricDiff:", JSON.stringify(Array.from(symmetricDifference(setA, setB))));
+
+        const setC = new Set([1, 2, 3]);
+        console.log("Is C subset of A?", isSubset(setC, setA));
+
+        "part2_done"
+    "#,
+    );
+
+    match result {
+        Ok(v) => assert_eq!(v, JsValue::from("part2_done")),
+        Err(e) => panic!("Part 2 (set operations) failed: {}", e),
+    }
+}
+
+#[test]
+fn test_bytecode_collections_part3_graph_and_counter() {
+    // Graph and word counter functions
+    let result = eval_bytecode_result(
+        r#"
+        function createGraph() {
+            return { nodes: new Map() };
+        }
+
+        function addNode(graph, node) {
+            if (!graph.nodes.has(node)) {
+                graph.nodes.set(node, new Set());
+            }
+        }
+
+        function addEdge(graph, from, to) {
+            addNode(graph, from);
+            addNode(graph, to);
+            graph.nodes.get(from).add(to);
+        }
+
+        function getNeighbors(graph, node) {
+            return graph.nodes.get(node) || new Set();
+        }
+
+        function bfs(graph, start) {
+            const visited = new Set();
+            const result = [];
+            const queue = [start];
+
+            while (queue.length > 0) {
+                const current = queue.shift();
+                if (visited.has(current)) continue;
+                visited.add(current);
+                result.push(current);
+
+                const neighbors = getNeighbors(graph, current);
+                for (const neighbor of neighbors) {
+                    if (!visited.has(neighbor)) {
+                        queue.push(neighbor);
+                    }
+                }
+            }
+            return result;
+        }
+
+        function dfs(graph, start) {
+            const visited = new Set();
+            const result = [];
+
+            function visit(node) {
+                if (visited.has(node)) return;
+                visited.add(node);
+                result.push(node);
+                const neighbors = getNeighbors(graph, node);
+                for (const neighbor of neighbors) {
+                    visit(neighbor);
+                }
+            }
+
+            visit(start);
+            return result;
+        }
+
+        const graph = createGraph();
+        addEdge(graph, "A", "B");
+        addEdge(graph, "A", "C");
+        addEdge(graph, "B", "D");
+        addEdge(graph, "B", "E");
+        addEdge(graph, "C", "F");
+
+        console.log("BFS:", JSON.stringify(bfs(graph, "A")));
+        console.log("DFS:", JSON.stringify(dfs(graph, "A")));
+
+        // Word counter
+        function createWordCounter() {
+            return { frequencies: new Map(), uniqueWords: new Set(), totalWords: 0 };
+        }
+
+        function addWord(counter, word) {
+            const normalized = word.toLowerCase();
+            counter.totalWords++;
+            counter.uniqueWords.add(normalized);
+            const count = counter.frequencies.get(normalized) || 0;
+            counter.frequencies.set(normalized, count + 1);
+        }
+
+        function analyzeText(text) {
+            const counter = createWordCounter();
+            const words = text.split(/[\s,.!?;:'"()\[\]{}]+/);
+            for (const word of words) {
+                if (word.length > 0) addWord(counter, word);
+            }
+            return counter;
+        }
+
+        const text = "the quick brown fox jumps over the lazy dog the fox is quick";
+        const counter = analyzeText(text);
+        console.log("Unique words:", counter.uniqueWords.size);
+
+        "part3_done"
+    "#,
+    );
+
+    match result {
+        Ok(v) => assert_eq!(v, JsValue::from("part3_done")),
+        Err(e) => panic!("Part 3 (graph/counter) failed: {}", e),
+    }
+}
+
+#[test]
+fn test_bytecode_collections_part4_conversions() {
+    // Converting between collections
+    let result = eval_bytecode_result(
+        r#"
+        const arr = [1, 2, 2, 3, 3, 3, 4, 4, 4, 4];
+        const uniqueSet = new Set(arr);
+        console.log("Unique values:", JSON.stringify(Array.from(uniqueSet)));
+
+        const userMap = new Map([["alice", 30], ["bob", 25], ["charlie", 35]]);
+        const userObj = {};
+        userMap.forEach((value, key) => { userObj[key] = value; });
+        console.log("Map to Object:", JSON.stringify(userObj));
+
+        const configObj = { host: "localhost", port: "8080", protocol: "https" };
+        const configMap = new Map(Object.entries(configObj));
+        console.log("Object to Map size:", configMap.size);
+
+        const employees = [
+            { name: "Alice", department: "Engineering", salary: 75000 },
+            { name: "Bob", department: "Sales", salary: 60000 },
+            { name: "Charlie", department: "Engineering", salary: 80000 },
+            { name: "Diana", department: "Sales", salary: 65000 },
+            { name: "Eve", department: "Marketing", salary: 55000 }
+        ];
+
+        function groupBy(items, keyFn) {
+            const groups = new Map();
+            for (const item of items) {
+                const key = keyFn(item);
+                if (!groups.has(key)) groups.set(key, []);
+                groups.get(key).push(item);
+            }
+            return groups;
+        }
+
+        const byDepartment = groupBy(employees, e => e.department);
+        console.log("Groups:", byDepartment.size);
+
+        const data = [
+            { id: 1, value: "a" },
+            { id: 2, value: "b" },
+            { id: 1, value: "c" },
+            { id: 3, value: "d" },
+            { id: 2, value: "e" }
+        ];
+
+        const seenIds = new Set();
+        const uniqueById = [];
+
+        for (const item of data) {
+            if (!seenIds.has(item.id)) {
+                seenIds.add(item.id);
+                uniqueById.push(item);
+            }
+        }
+
+        console.log("Unique by id length:", uniqueById.length);
+        "part4_done"
+    "#,
+    );
+
+    match result {
+        Ok(v) => assert_eq!(v, JsValue::from("part4_done")),
+        Err(e) => panic!("Part 4 (conversions) failed: {}", e),
+    }
+}
+
+#[test]
+fn test_bytecode_collections_parts_1_and_2() {
+    // Combine parts 1 and 2
+    let result = eval_bytecode_result(
+        r#"
+        // Part 1: basic map and set operations
+        const map = new Map();
+        map.set("one", 1);
+        map.set("two", 2);
+        map.set("three", 3);
+
+        const fruitPrices = new Map([
+            ["apple", 1.5],
+            ["banana", 0.75],
+            ["orange", 2.0],
+            ["grape", 3.25]
+        ]);
+        fruitPrices.forEach((price, fruit) => {
+            console.log("  " + fruit + ": $" + price);
+        });
+
+        for (const [key, value] of fruitPrices.entries()) {
+            console.log("  " + key + " => " + value);
+        }
+
+        const set = new Set();
+        set.add(1);
+        set.add(2);
+        set.add(3);
+        set.add(2);
+
+        const colors = new Set(["red", "green", "blue", "red", "yellow"]);
+
+        for (const color of colors) {
+            console.log("  " + color);
+        }
+
+        colors.forEach(color => {
+            console.log("  Color: " + color);
+        });
+
+        // Part 2: set operations
+        const setA = new Set([1, 2, 3, 4, 5]);
+        const setB = new Set([4, 5, 6, 7, 8]);
+
+        function union(a, b) {
+            const result = new Set(a);
+            for (const item of b) {
+                result.add(item);
+            }
+            return result;
+        }
+
+        function intersection(a, b) {
+            const result = new Set();
+            for (const item of a) {
+                if (b.has(item)) {
+                    result.add(item);
+                }
+            }
+            return result;
+        }
+
+        function difference(a, b) {
+            const result = new Set();
+            for (const item of a) {
+                if (!b.has(item)) {
+                    result.add(item);
+                }
+            }
+            return result;
+        }
+
+        function symmetricDifference(a, b) {
+            return union(difference(a, b), difference(b, a));
+        }
+
+        function isSubset(a, b) {
+            for (const item of a) {
+                if (!b.has(item)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        console.log("Union:", JSON.stringify(Array.from(union(setA, setB))));
+        console.log("Intersection:", JSON.stringify(Array.from(intersection(setA, setB))));
+
+        const setC = new Set([1, 2, 3]);
+        console.log("Is C subset of A?", isSubset(setC, setA));
+
+        "parts_1_2_done"
+    "#,
+    );
+
+    match result {
+        Ok(v) => assert_eq!(v, JsValue::from("parts_1_2_done")),
+        Err(e) => panic!("Parts 1+2 failed: {}", e),
+    }
+}
+
+#[test]
+fn test_bytecode_collections_parts_1_2_3() {
+    // Combine parts 1, 2, and 3
+    let result = eval_bytecode_result(
+        r#"
+        // Part 1
+        const map = new Map();
+        map.set("one", 1);
+        const fruitPrices = new Map([["apple", 1.5], ["banana", 0.75], ["orange", 2.0], ["grape", 3.25]]);
+        const set = new Set();
+        set.add(1);
+        const colors = new Set(["red", "green", "blue", "red", "yellow"]);
+
+        // Part 2
+        const setA = new Set([1, 2, 3, 4, 5]);
+        const setB = new Set([4, 5, 6, 7, 8]);
+
+        function union(a, b) { const result = new Set(a); for (const item of b) result.add(item); return result; }
+        function intersection(a, b) { const result = new Set(); for (const item of a) if (b.has(item)) result.add(item); return result; }
+        function difference(a, b) { const result = new Set(); for (const item of a) if (!b.has(item)) result.add(item); return result; }
+        function symmetricDifference(a, b) { return union(difference(a, b), difference(b, a)); }
+        function isSubset(a, b) { for (const item of a) if (!b.has(item)) return false; return true; }
+
+        const setC = new Set([1, 2, 3]);
+
+        // Part 3
+        function createGraph() { return { nodes: new Map() }; }
+        function addNode(graph, node) { if (!graph.nodes.has(node)) graph.nodes.set(node, new Set()); }
+        function addEdge(graph, from, to) { addNode(graph, from); addNode(graph, to); graph.nodes.get(from).add(to); }
+        function getNeighbors(graph, node) { return graph.nodes.get(node) || new Set(); }
+
+        function bfs(graph, start) {
+            const visited = new Set();
+            const result = [];
+            const queue = [start];
+            while (queue.length > 0) {
+                const current = queue.shift();
+                if (visited.has(current)) continue;
+                visited.add(current);
+                result.push(current);
+                const neighbors = getNeighbors(graph, current);
+                for (const neighbor of neighbors) if (!visited.has(neighbor)) queue.push(neighbor);
+            }
+            return result;
+        }
+
+        function dfs(graph, start) {
+            const visited = new Set();
+            const result = [];
+            function visit(node) {
+                if (visited.has(node)) return;
+                visited.add(node);
+                result.push(node);
+                const neighbors = getNeighbors(graph, node);
+                for (const neighbor of neighbors) visit(neighbor);
+            }
+            visit(start);
+            return result;
+        }
+
+        const graph = createGraph();
+        addEdge(graph, "A", "B");
+        addEdge(graph, "A", "C");
+        addEdge(graph, "B", "D");
+
+        function createWordCounter() { return { frequencies: new Map(), uniqueWords: new Set(), totalWords: 0 }; }
+        function addWord(counter, word) {
+            const normalized = word.toLowerCase();
+            counter.totalWords++;
+            counter.uniqueWords.add(normalized);
+            const count = counter.frequencies.get(normalized) || 0;
+            counter.frequencies.set(normalized, count + 1);
+        }
+        function analyzeText(text) {
+            const counter = createWordCounter();
+            const words = text.split(/[\s,.!?;:'"()\[\]{}]+/);
+            for (const word of words) if (word.length > 0) addWord(counter, word);
+            return counter;
+        }
+
+        const text = "the quick brown fox";
+        const counter = analyzeText(text);
+        console.log("Unique words:", counter.uniqueWords.size);
+
+        "parts_1_2_3_done"
+    "#,
+    );
+
+    match result {
+        Ok(v) => assert_eq!(v, JsValue::from("parts_1_2_3_done")),
+        Err(e) => panic!("Parts 1+2+3 failed: {}", e),
+    }
+}
+
+#[test]
+fn test_bytecode_many_console_logs() {
+    // Test if many console.log calls exhaust registers
+    let result = eval_bytecode_result(
+        r#"
+        console.log("1");
+        console.log("2");
+        console.log("3");
+        console.log("4");
+        console.log("5");
+        console.log("6");
+        console.log("7");
+        console.log("8");
+        console.log("9");
+        console.log("10");
+        console.log("11");
+        console.log("12");
+        console.log("13");
+        console.log("14");
+        console.log("15");
+        console.log("16");
+        console.log("17");
+        console.log("18");
+        console.log("19");
+        console.log("20");
+        console.log("21");
+        console.log("22");
+        console.log("23");
+        console.log("24");
+        console.log("25");
+        console.log("26");
+        console.log("27");
+        console.log("28");
+        console.log("29");
+        console.log("30");
+        console.log("31");
+        console.log("32");
+        console.log("33");
+        console.log("34");
+        console.log("35");
+        console.log("36");
+        console.log("37");
+        console.log("38");
+        console.log("39");
+        console.log("40");
+        console.log("41");
+        console.log("42");
+        console.log("43");
+        console.log("44");
+        console.log("45");
+        console.log("46");
+        console.log("47");
+        console.log("48");
+        console.log("49");
+        console.log("50");
+        console.log("51");
+        console.log("52");
+        console.log("53");
+        console.log("54");
+        console.log("55");
+        console.log("56");
+        console.log("57");
+        console.log("58");
+        console.log("59");
+        console.log("60");
+        console.log("61");
+        console.log("62");
+        console.log("63");
+        console.log("64");
+        console.log("65");
+        console.log("66");
+        console.log("67");
+        console.log("68");
+        console.log("69");
+        console.log("70");
+        console.log("71");
+        console.log("72");
+        console.log("73");
+        console.log("74");
+        console.log("75");
+        console.log("76");
+        console.log("77");
+        console.log("78");
+        console.log("79");
+        console.log("80");
+        console.log("81");
+        console.log("82");
+        console.log("83");
+        console.log("84");
+        console.log("85");
+        console.log("86");
+        console.log("87");
+        console.log("88");
+        console.log("89");
+        console.log("90");
+        console.log("91");
+        console.log("92");
+        console.log("93");
+        console.log("94");
+        console.log("95");
+        console.log("96");
+        console.log("97");
+        console.log("98");
+        console.log("99");
+        console.log("100");
+        "done"
+    "#,
+    );
+
+    match result {
+        Ok(v) => assert_eq!(v, JsValue::from("done")),
+        Err(e) => panic!("Many console logs failed: {}", e),
+    }
+}
+
+#[test]
+fn test_bytecode_collections_all_parts_compact() {
+    // Combine all 4 parts in compact form
+    let result = eval_bytecode_result(
+        r#"
+        // Part 1
+        const map = new Map();
+        map.set("one", 1);
+        const fruitPrices = new Map([["apple", 1.5], ["banana", 0.75], ["orange", 2.0], ["grape", 3.25]]);
+        const set = new Set();
+        set.add(1);
+        const colors = new Set(["red", "green", "blue", "red", "yellow"]);
+
+        // Part 2
+        const setA = new Set([1, 2, 3, 4, 5]);
+        const setB = new Set([4, 5, 6, 7, 8]);
+
+        function union(a, b) { const result = new Set(a); for (const item of b) result.add(item); return result; }
+        function intersection(a, b) { const result = new Set(); for (const item of a) if (b.has(item)) result.add(item); return result; }
+        function difference(a, b) { const result = new Set(); for (const item of a) if (!b.has(item)) result.add(item); return result; }
+        function symmetricDifference(a, b) { return union(difference(a, b), difference(b, a)); }
+        function isSubset(a, b) { for (const item of a) if (!b.has(item)) return false; return true; }
+
+        const setC = new Set([1, 2, 3]);
+
+        // Part 3
+        function createGraph() { return { nodes: new Map() }; }
+        function addNode(graph, node) { if (!graph.nodes.has(node)) graph.nodes.set(node, new Set()); }
+        function addEdge(graph, from, to) { addNode(graph, from); addNode(graph, to); graph.nodes.get(from).add(to); }
+        function getNeighbors(graph, node) { return graph.nodes.get(node) || new Set(); }
+
+        function bfs(graph, start) {
+            const visited = new Set();
+            const result = [];
+            const queue = [start];
+            while (queue.length > 0) {
+                const current = queue.shift();
+                if (visited.has(current)) continue;
+                visited.add(current);
+                result.push(current);
+                const neighbors = getNeighbors(graph, current);
+                for (const neighbor of neighbors) if (!visited.has(neighbor)) queue.push(neighbor);
+            }
+            return result;
+        }
+
+        function dfs(graph, start) {
+            const visited = new Set();
+            const result = [];
+            function visit(node) {
+                if (visited.has(node)) return;
+                visited.add(node);
+                result.push(node);
+                const neighbors = getNeighbors(graph, node);
+                for (const neighbor of neighbors) visit(neighbor);
+            }
+            visit(start);
+            return result;
+        }
+
+        const graph = createGraph();
+        addEdge(graph, "A", "B");
+        addEdge(graph, "A", "C");
+        addEdge(graph, "B", "D");
+
+        function createWordCounter() { return { frequencies: new Map(), uniqueWords: new Set(), totalWords: 0 }; }
+        function addWord(counter, word) {
+            const normalized = word.toLowerCase();
+            counter.totalWords++;
+            counter.uniqueWords.add(normalized);
+            const count = counter.frequencies.get(normalized) || 0;
+            counter.frequencies.set(normalized, count + 1);
+        }
+        function analyzeText(text) {
+            const counter = createWordCounter();
+            const words = text.split(/[\s,.!?;:'"()\[\]{}]+/);
+            for (const word of words) if (word.length > 0) addWord(counter, word);
+            return counter;
+        }
+
+        const text = "the quick brown fox";
+        const counter = analyzeText(text);
+
+        // Part 4 - conversions
+        const arr = [1, 2, 2, 3, 3, 3, 4, 4, 4, 4];
+        const uniqueSet = new Set(arr);
+
+        const userMap = new Map([["alice", 30], ["bob", 25], ["charlie", 35]]);
+        const userObj = {};
+        userMap.forEach((value, key) => { userObj[key] = value; });
+
+        const configObj = { host: "localhost", port: "8080", protocol: "https" };
+        const configMap = new Map(Object.entries(configObj));
+
+        const employees = [
+            { name: "Alice", department: "Engineering", salary: 75000 },
+            { name: "Bob", department: "Sales", salary: 60000 },
+            { name: "Charlie", department: "Engineering", salary: 80000 },
+            { name: "Diana", department: "Sales", salary: 65000 },
+            { name: "Eve", department: "Marketing", salary: 55000 }
+        ];
+
+        function groupBy(items, keyFn) {
+            const groups = new Map();
+            for (const item of items) {
+                const key = keyFn(item);
+                if (!groups.has(key)) groups.set(key, []);
+                groups.get(key).push(item);
+            }
+            return groups;
+        }
+
+        const byDepartment = groupBy(employees, e => e.department);
+
+        const data = [
+            { id: 1, value: "a" },
+            { id: 2, value: "b" },
+            { id: 1, value: "c" },
+            { id: 3, value: "d" },
+            { id: 2, value: "e" }
+        ];
+
+        const seenIds = new Set();
+        const uniqueById = [];
+
+        for (const item of data) {
+            if (!seenIds.has(item.id)) {
+                seenIds.add(item.id);
+                uniqueById.push(item);
+            }
+        }
+
+        console.log("All done:", uniqueById.length);
+        "all_parts_done"
+    "#,
+    );
+
+    match result {
+        Ok(v) => assert_eq!(v, JsValue::from("all_parts_done")),
+        Err(e) => panic!("All parts compact failed: {}", e),
+    }
+}
+
+#[test]
+fn test_bytecode_full_collections_main() {
+    // Test ALL the collections/main.ts code (minus imports) to find register exhaustion
+    let result = eval_bytecode_result(
+        r#"
+        console.log("=== Map/Set Collections Demo ===\n");
+
+        // --- Basic Map Operations ---
+        console.log("--- Basic Map Operations ---");
+
+        const map = new Map();
+        map.set("one", 1);
+        map.set("two", 2);
+        map.set("three", 3);
+
+        console.log("Map size:", map.size);
+        console.log("get('two'):", map.get("two"));
+        console.log("has('three'):", map.has("three"));
+        console.log("has('four'):", map.has("four"));
+
+        // Map initialization with array of entries
+        const fruitPrices = new Map([
+            ["apple", 1.5],
+            ["banana", 0.75],
+            ["orange", 2.0],
+            ["grape", 3.25]
+        ]);
+        console.log("\nFruit prices map:");
+        fruitPrices.forEach((price, fruit) => {
+            console.log("  " + fruit + ": $" + price);
+        });
+
+        // --- Map Iteration ---
+        console.log("\n--- Map Iteration ---");
+
+        console.log("\nMap entries:");
+        for (const [key, value] of fruitPrices.entries()) {
+            console.log("  " + key + " => " + value);
+        }
+
+        console.log("\nMap keys:", JSON.stringify(Array.from(fruitPrices.keys())));
+        console.log("Map values:", JSON.stringify(Array.from(fruitPrices.values())));
+
+        // --- Map Operations ---
+        console.log("\n--- Map Operations ---");
+
+        fruitPrices.set("mango", 2.5);
+        console.log("After adding mango:", fruitPrices.size);
+
+        fruitPrices.delete("banana");
+        console.log("After deleting banana:", fruitPrices.size);
+        console.log("has('banana'):", fruitPrices.has("banana"));
+
+        // --- Basic Set Operations ---
+        console.log("\n--- Basic Set Operations ---");
+
+        const set = new Set();
+        set.add(1);
+        set.add(2);
+        set.add(3);
+        set.add(2);
+
+        console.log("Set size (after adding 1, 2, 3, 2):", set.size);
+        console.log("has(2):", set.has(2));
+        console.log("has(4):", set.has(4));
+
+        // Set initialization with array
+        const colors = new Set(["red", "green", "blue", "red", "yellow"]);
+        console.log("\nColors set size:", colors.size);
+        console.log("Colors:", JSON.stringify(Array.from(colors)));
+
+        // --- Set Iteration ---
+        console.log("\n--- Set Iteration ---");
+
+        console.log("Set values:");
+        for (const color of colors) {
+            console.log("  " + color);
+        }
+
+        // forEach
+        console.log("\nUsing forEach:");
+        colors.forEach(color => {
+            console.log("  Color: " + color);
+        });
+
+        // --- Set Operations (Union, Intersection, Difference) ---
+        console.log("\n--- Set Operations ---");
+
+        const setA = new Set([1, 2, 3, 4, 5]);
+        const setB = new Set([4, 5, 6, 7, 8]);
+
+        // Union
+        function union(a, b) {
+            const result = new Set(a);
+            for (const item of b) {
+                result.add(item);
+            }
+            return result;
+        }
+
+        // Intersection
+        function intersection(a, b) {
+            const result = new Set();
+            for (const item of a) {
+                if (b.has(item)) {
+                    result.add(item);
+                }
+            }
+            return result;
+        }
+
+        // Difference (a - b)
+        function difference(a, b) {
+            const result = new Set();
+            for (const item of a) {
+                if (!b.has(item)) {
+                    result.add(item);
+                }
+            }
+            return result;
+        }
+
+        // Symmetric difference
+        function symmetricDifference(a, b) {
+            return union(difference(a, b), difference(b, a));
+        }
+
+        console.log("Set A:", JSON.stringify(Array.from(setA)));
+        console.log("Set B:", JSON.stringify(Array.from(setB)));
+        console.log("Union:", JSON.stringify(Array.from(union(setA, setB))));
+        console.log("Intersection:", JSON.stringify(Array.from(intersection(setA, setB))));
+        console.log("Difference (A - B):", JSON.stringify(Array.from(difference(setA, setB))));
+        console.log("Symmetric Difference:", JSON.stringify(Array.from(symmetricDifference(setA, setB))));
+
+        // Subset check
+        function isSubset(a, b) {
+            for (const item of a) {
+                if (!b.has(item)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        const setC = new Set([1, 2, 3]);
+        console.log("\nSet C:", JSON.stringify(Array.from(setC)));
+        console.log("Is C subset of A?", isSubset(setC, setA));
+        console.log("Is A subset of C?", isSubset(setA, setC));
+
+        // --- Using Map for Caching ---
+        console.log("\n--- Using Map for Caching ---");
+
+        const cache = new Map();
+        let computeCount = 0;
+
+        function expensiveCompute(n) {
+            if (cache.has(n)) {
+                return cache.get(n);
+            }
+            computeCount++;
+            const result = n * n + n;
+            cache.set(n, result);
+            return result;
+        }
+
+        console.log("Computing 5:", expensiveCompute(5));
+        console.log("Computing 10:", expensiveCompute(10));
+        console.log("Computing 5 (cached):", expensiveCompute(5));
+        console.log("Computing 10 (cached):", expensiveCompute(10));
+        console.log("Compute count (should be 2):", computeCount);
+        console.log("Cache size:", cache.size);
+
+        // --- Graph Example (inline) ---
+        console.log("\n--- Graph with Map<node, Set<neighbor>> ---");
+
+        function createGraph() {
+            return { nodes: new Map() };
+        }
+
+        function addNode(graph, node) {
+            if (!graph.nodes.has(node)) {
+                graph.nodes.set(node, new Set());
+            }
+        }
+
+        function addEdge(graph, from, to) {
+            addNode(graph, from);
+            addNode(graph, to);
+            graph.nodes.get(from).add(to);
+        }
+
+        function getNeighbors(graph, node) {
+            return graph.nodes.get(node) || new Set();
+        }
+
+        function bfs(graph, start) {
+            const visited = new Set();
+            const result = [];
+            const queue = [start];
+
+            while (queue.length > 0) {
+                const current = queue.shift();
+
+                if (visited.has(current)) {
+                    continue;
+                }
+
+                visited.add(current);
+                result.push(current);
+
+                const neighbors = getNeighbors(graph, current);
+                for (const neighbor of neighbors) {
+                    if (!visited.has(neighbor)) {
+                        queue.push(neighbor);
+                    }
+                }
+            }
+
+            return result;
+        }
+
+        function dfs(graph, start) {
+            const visited = new Set();
+            const result = [];
+
+            function visit(node) {
+                if (visited.has(node)) {
+                    return;
+                }
+
+                visited.add(node);
+                result.push(node);
+
+                const neighbors = getNeighbors(graph, node);
+                for (const neighbor of neighbors) {
+                    visit(neighbor);
+                }
+            }
+
+            visit(start);
+            return result;
+        }
+
+        const graph = createGraph();
+        addEdge(graph, "A", "B");
+        addEdge(graph, "A", "C");
+        addEdge(graph, "B", "D");
+        addEdge(graph, "B", "E");
+        addEdge(graph, "C", "F");
+
+        console.log("\nGraph structure:");
+        graph.nodes.forEach((neighbors, node) => {
+            console.log("  " + node + " -> " + JSON.stringify(Array.from(neighbors)));
+        });
+
+        console.log("\nBFS from A:", JSON.stringify(bfs(graph, "A")));
+        console.log("DFS from A:", JSON.stringify(dfs(graph, "A")));
+
+        // --- Word Frequency Counter (inline) ---
+        console.log("\n--- Word Frequency Counter ---");
+
+        function createWordCounter() {
+            return {
+                frequencies: new Map(),
+                uniqueWords: new Set(),
+                totalWords: 0
+            };
+        }
+
+        function addWord(counter, word) {
+            const normalized = word.toLowerCase();
+            counter.totalWords++;
+            counter.uniqueWords.add(normalized);
+            const count = counter.frequencies.get(normalized) || 0;
+            counter.frequencies.set(normalized, count + 1);
+        }
+
+        function analyzeText(text) {
+            const counter = createWordCounter();
+            const words = text.split(/[\s,.!?;:'"()\[\]{}]+/);
+            for (const word of words) {
+                if (word.length > 0) {
+                    addWord(counter, word);
+                }
+            }
+            return counter;
+        }
+
+        const text = "the quick brown fox jumps over the lazy dog the fox is quick";
+        const counter = analyzeText(text);
+
+        console.log("\nWord frequencies:");
+        const sorted = Array.from(counter.frequencies.entries())
+            .sort((a, b) => b[1] - a[1]);
+        for (const [word, count] of sorted) {
+            console.log("  " + word + ": " + count);
+        }
+
+        console.log("\nUnique words:", counter.uniqueWords.size);
+        console.log("Total words:", counter.totalWords);
+
+        // --- Map with Complex Keys ---
+        console.log("\n--- Map with Complex Keys ---");
+
+        const pointMap = new Map();
+
+        function pointKey(x, y) {
+            return x + "," + y;
+        }
+
+        pointMap.set(pointKey(0, 0), "origin");
+        pointMap.set(pointKey(1, 0), "unit-x");
+        pointMap.set(pointKey(0, 1), "unit-y");
+        pointMap.set(pointKey(1, 1), "diagonal");
+
+        console.log("Point (0,0):", pointMap.get(pointKey(0, 0)));
+        console.log("Point (1,1):", pointMap.get(pointKey(1, 1)));
+
+        // --- Converting Between Collections ---
+        console.log("\n--- Converting Between Collections ---");
+
+        // Array to Set (removes duplicates)
+        const arr = [1, 2, 2, 3, 3, 3, 4, 4, 4, 4];
+        const uniqueSet = new Set(arr);
+        console.log("Array:", JSON.stringify(arr));
+        console.log("Unique values:", JSON.stringify(Array.from(uniqueSet)));
+
+        // Map to Object
+        const userMap = new Map([
+            ["alice", 30],
+            ["bob", 25],
+            ["charlie", 35]
+        ]);
+        const userObj = {};
+        userMap.forEach((value, key) => {
+            userObj[key] = value;
+        });
+        console.log("\nMap to Object:", JSON.stringify(userObj));
+
+        // Object to Map
+        const configObj = {
+            host: "localhost",
+            port: "8080",
+            protocol: "https"
+        };
+        const configMap = new Map(Object.entries(configObj));
+        console.log("Object to Map size:", configMap.size);
+        configMap.forEach((value, key) => {
+            console.log("  " + key + " = " + value);
+        });
+
+        // --- Practical Example: Grouping ---
+        console.log("\n--- Grouping with Map ---");
+
+        const employees = [
+            { name: "Alice", department: "Engineering", salary: 75000 },
+            { name: "Bob", department: "Sales", salary: 60000 },
+            { name: "Charlie", department: "Engineering", salary: 80000 },
+            { name: "Diana", department: "Sales", salary: 65000 },
+            { name: "Eve", department: "Marketing", salary: 55000 }
+        ];
+
+        function groupBy(items, keyFn) {
+            const groups = new Map();
+            for (const item of items) {
+                const key = keyFn(item);
+                if (!groups.has(key)) {
+                    groups.set(key, []);
+                }
+                groups.get(key).push(item);
+            }
+            return groups;
+        }
+
+        const byDepartment = groupBy(employees, e => e.department);
+        console.log("Employees by department:");
+        byDepartment.forEach((people, dept) => {
+            const names = people.map(p => p.name).join(", ");
+            console.log("  " + dept + ": " + names);
+        });
+
+        // --- Set for Deduplication and Filtering ---
+        console.log("\n--- Set for Deduplication ---");
+
+        const data = [
+            { id: 1, value: "a" },
+            { id: 2, value: "b" },
+            { id: 1, value: "c" },
+            { id: 3, value: "d" },
+            { id: 2, value: "e" }
+        ];
+
+        const seenIds = new Set();
+        const uniqueById = [];
+
+        for (const item of data) {
+            if (!seenIds.has(item.id)) {
+                seenIds.add(item.id);
+                uniqueById.push(item);
+            }
+        }
+
+        console.log("Original data length:", data.length);
+        console.log("Unique by id length:", uniqueById.length);
+        console.log("Unique items:", JSON.stringify(uniqueById));
+
+        console.log("\n=== Demo Complete ===");
+        "all_done"
+    "#,
+    );
+
+    match result {
+        Ok(v) => assert_eq!(v, JsValue::from("all_done")),
+        Err(e) => panic!("Full collections main failed: {}", e),
+    }
 }

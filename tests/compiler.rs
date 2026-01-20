@@ -705,3 +705,84 @@ fn test_register_usage_many_variables() {
         }
     }
 }
+
+#[test]
+fn test_register_usage_many_functions() {
+    // Many function declarations at module level
+    let mut code = String::new();
+    for i in 0..50 {
+        code.push_str(&format!(
+            "function func{}(x: number): number {{ return x + {}; }}\n",
+            i, i
+        ));
+    }
+    code.push_str("func49(1)");
+
+    let result = std::panic::catch_unwind(|| compile(&code));
+    match result {
+        Ok(chunk) => {
+            println!("50 functions register count: {}", chunk.register_count);
+            assert!(
+                chunk.register_count < 100,
+                "Register count {} too high for 50 function declarations",
+                chunk.register_count
+            );
+        }
+        Err(e) => {
+            panic!("Compilation failed with 50 functions: {:?}", e);
+        }
+    }
+}
+
+#[test]
+fn test_register_usage_graph_like_module() {
+    // Simulate the graph.ts pattern - many exported functions
+    let chunk = compile(
+        r#"
+        function createGraph() { return { nodes: new Map() }; }
+        function addNode(graph, node) { if (!graph.nodes.has(node)) { graph.nodes.set(node, new Set()); } }
+        function addEdge(graph, from, to) { addNode(graph, from); addNode(graph, to); graph.nodes.get(from).add(to); }
+        function hasEdge(graph, from, to) { const n = graph.nodes.get(from); return n !== undefined && n.has(to); }
+        function getNeighbors(graph, node) { return graph.nodes.get(node) || new Set(); }
+        function removeEdge(graph, from, to) { const n = graph.nodes.get(from); if (n) { n.delete(to); } }
+        function bfs(graph, start) {
+            const visited = new Set();
+            const result = [];
+            const queue = [start];
+            while (queue.length > 0) {
+                const current = queue.shift();
+                if (visited.has(current)) continue;
+                visited.add(current);
+                result.push(current);
+                const neighbors = getNeighbors(graph, current);
+                for (const neighbor of neighbors) {
+                    if (!visited.has(neighbor)) queue.push(neighbor);
+                }
+            }
+            return result;
+        }
+        function dfs(graph, start) {
+            const visited = new Set();
+            const result = [];
+            function visit(node) {
+                if (visited.has(node)) return;
+                visited.add(node);
+                result.push(node);
+                for (const neighbor of getNeighbors(graph, node)) visit(neighbor);
+            }
+            visit(start);
+            return result;
+        }
+        const g = createGraph();
+        addEdge(g, "A", "B");
+        bfs(g, "A");
+    "#,
+    );
+
+    println!("Graph-like module register count: {}", chunk.register_count);
+    assert!(
+        chunk.register_count < 150,
+        "Register count {} too high for graph-like module",
+        chunk.register_count
+    );
+}
