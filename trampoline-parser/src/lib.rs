@@ -24,6 +24,7 @@
 //! ```
 
 mod codegen;
+pub mod grammars;
 mod ir;
 mod lexer_dsl;
 mod parser_dsl;
