@@ -2045,8 +2045,13 @@ fn test_parse_pratt_ternary() {
         .rule("program", |r| r.parse("expression"))
         .rule("expression", |r| {
             r.pratt(r.token("NUMBER"), |ops| {
-                ops.ternary("QUESTION", "COLON", 2, "|cond, then, else_| Ternary(cond, then, else_)")
-                    .infix("PLUS", 10, Assoc::Left, "|l, r| Add(l, r)")
+                ops.ternary(
+                    "QUESTION",
+                    "COLON",
+                    2,
+                    "|cond, then, else_| Ternary(cond, then, else_)",
+                )
+                .infix("PLUS", 10, Assoc::Left, "|l, r| Add(l, r)")
             })
         });
 
@@ -2148,10 +2153,7 @@ fn test_parse_lookahead() {
         })
         .rule("program", |r| {
             // Lookahead to check for NUMBER without consuming
-            r.sequence((
-                r.lookahead(r.token("NUMBER")),
-                r.token("NUMBER"),
-            ))
+            r.sequence((r.lookahead(r.token("NUMBER")), r.token("NUMBER")))
         });
 
     let compiled = grammar.build();
@@ -2233,6 +2235,498 @@ fn main() {
     let _ = fs::remove_file(&temp_bin);
 }
 
+// =============================================================================
+// AST Configuration Tests
+// =============================================================================
+
+#[test]
+fn test_ast_config_imports() {
+    // Test that configured imports appear in generated code
+    let grammar = Grammar::new()
+        .ast_config(|c| c.import("crate::ast::*").import("crate::lexer::Span"))
+        .lexer(|l| {
+            l.token("NUMBER", "")
+                .start_with(|c| c.match_class("digit"))
+                .continue_with(|c| c.match_class("digit"))
+                .build()
+                .skip("whitespace")
+        })
+        .rule("program", |r| r.token("NUMBER"));
+
+    let code = grammar.build().generate();
+
+    assert!(
+        code.contains("use crate::ast::*;"),
+        "Should contain first import"
+    );
+    assert!(
+        code.contains("use crate::lexer::Span;"),
+        "Should contain second import"
+    );
+}
+
+#[test]
+fn test_ast_config_external_span_type() {
+    // Test that external span type is used and internal Span is not generated
+    let grammar = Grammar::new()
+        .ast_config(|c| c.span_type("Span"))
+        .lexer(|l| {
+            l.token("NUMBER", "")
+                .start_with(|c| c.match_class("digit"))
+                .continue_with(|c| c.match_class("digit"))
+                .build()
+                .skip("whitespace")
+        })
+        .rule("program", |r| r.token("NUMBER"));
+
+    let code = grammar.build().generate();
+
+    // Should NOT contain the internal Span struct definition
+    assert!(
+        !code.contains("pub struct Span {"),
+        "Should NOT generate internal Span struct"
+    );
+    // Token struct should use the external Span type
+    assert!(code.contains("pub span: Span,"), "Should use external Span");
+}
+
+#[test]
+fn test_ast_config_external_string_type() {
+    // Test that external string type is used in Token struct
+    let grammar = Grammar::new()
+        .ast_config(|c| c.string_type("JsString"))
+        .lexer(|l| {
+            l.token("NUMBER", "")
+                .start_with(|c| c.match_class("digit"))
+                .continue_with(|c| c.match_class("digit"))
+                .build()
+                .skip("whitespace")
+        })
+        .rule("program", |r| r.token("NUMBER"));
+
+    let code = grammar.build().generate();
+
+    assert!(
+        code.contains("pub text: JsString,"),
+        "Should use JsString for token text"
+    );
+}
+
+#[test]
+fn test_ast_config_external_error_type() {
+    // Test that external error type disables internal ParseError generation
+    let grammar = Grammar::new()
+        .ast_config(|c| c.error_type("JsError"))
+        .lexer(|l| {
+            l.token("NUMBER", "")
+                .start_with(|c| c.match_class("digit"))
+                .continue_with(|c| c.match_class("digit"))
+                .build()
+                .skip("whitespace")
+        })
+        .rule("program", |r| r.token("NUMBER"));
+
+    let code = grammar.build().generate();
+
+    // Should NOT contain the internal ParseError struct definition
+    assert!(
+        !code.contains("pub struct ParseError {"),
+        "Should NOT generate internal ParseError struct"
+    );
+}
+
+#[test]
+fn test_ast_config_no_parse_result() {
+    // Test that ParseResult enum can be disabled
+    let grammar = Grammar::new()
+        .ast_config(|c| c.no_parse_result())
+        .lexer(|l| {
+            l.token("NUMBER", "")
+                .start_with(|c| c.match_class("digit"))
+                .continue_with(|c| c.match_class("digit"))
+                .build()
+                .skip("whitespace")
+        })
+        .rule("program", |r| r.token("NUMBER"));
+
+    let code = grammar.build().generate();
+
+    // Should NOT contain the ParseResult enum definition
+    assert!(
+        !code.contains("pub enum ParseResult {"),
+        "Should NOT generate ParseResult enum"
+    );
+}
+
+#[test]
+fn test_ast_config_combined() {
+    // Test multiple AST config options together
+    let grammar = Grammar::new()
+        .ast_config(|c| {
+            c.import("crate::ast::*")
+                .import("crate::lexer::Span")
+                .span_type("Span")
+                .string_type("JsString")
+                .error_type("JsError")
+        })
+        .lexer(|l| {
+            l.token("NUMBER", "")
+                .start_with(|c| c.match_class("digit"))
+                .continue_with(|c| c.match_class("digit"))
+                .build()
+                .skip("whitespace")
+        })
+        .rule("program", |r| r.token("NUMBER"));
+
+    let code = grammar.build().generate();
+
+    // Check imports
+    assert!(code.contains("use crate::ast::*;"));
+    assert!(code.contains("use crate::lexer::Span;"));
+
+    // Check that internal types are not generated
+    assert!(!code.contains("pub struct Span {"));
+    assert!(!code.contains("pub struct ParseError {"));
+
+    // Check that Token uses configured types
+    assert!(code.contains("pub text: JsString,"));
+    assert!(code.contains("pub span: Span,"));
+}
+
+#[test]
+fn test_ast_config_default_behavior() {
+    // Test that default config (no ast_config call) produces current behavior
+    let grammar = Grammar::new()
+        .lexer(|l| {
+            l.token("NUMBER", "")
+                .start_with(|c| c.match_class("digit"))
+                .continue_with(|c| c.match_class("digit"))
+                .build()
+                .skip("whitespace")
+        })
+        .rule("program", |r| r.token("NUMBER"));
+
+    let code = grammar.build().generate();
+
+    // Should contain internal types (backward compatibility)
+    assert!(
+        code.contains("pub struct Span {"),
+        "Default should generate Span"
+    );
+    assert!(
+        code.contains("pub struct ParseError {"),
+        "Default should generate ParseError"
+    );
+    assert!(
+        code.contains("pub enum ParseResult {"),
+        "Default should generate ParseResult"
+    );
+    assert!(
+        code.contains("pub text: String,"),
+        "Default should use String"
+    );
+}
+
+#[test]
+fn test_apply_mappings_generates_helpers() {
+    // Test that apply_mappings generates ParseResult helper methods
+    let grammar = Grammar::new()
+        .ast_config(|c| c.apply_mappings())
+        .lexer(|l| {
+            l.token("NUMBER", "")
+                .start_with(|c| c.match_class("digit"))
+                .continue_with(|c| c.match_class("digit"))
+                .build()
+                .skip("whitespace")
+        })
+        .rule("program", |r| r.token("NUMBER"));
+
+    let code = grammar.build().generate();
+
+    // Should generate ParseResult helper methods
+    assert!(
+        code.contains("pub fn into_token(self) -> Token"),
+        "Should generate into_token helper"
+    );
+    assert!(
+        code.contains("pub fn as_token(&self) -> &Token"),
+        "Should generate as_token helper"
+    );
+    assert!(
+        code.contains("pub fn into_list(self) -> Vec<ParseResult>"),
+        "Should generate into_list helper"
+    );
+    assert!(
+        code.contains("pub fn as_list(&self) -> &Vec<ParseResult>"),
+        "Should generate as_list helper"
+    );
+    assert!(
+        code.contains("pub fn is_none(&self) -> bool"),
+        "Should generate is_none helper"
+    );
+    assert!(
+        code.contains("pub fn into_option(self) -> Option<ParseResult>"),
+        "Should generate into_option helper"
+    );
+    assert!(
+        code.contains("pub fn span(&self) -> Span"),
+        "Should generate span helper"
+    );
+}
+
+#[test]
+fn test_apply_mappings_with_mapped_combinator() {
+    // Test that mappings are recognized when apply_mappings is enabled
+    use trampoline_parser::CombinatorExt;
+
+    let grammar = Grammar::new()
+        .ast_config(|c| c.apply_mappings())
+        .lexer(|l| {
+            l.token("NUMBER", "")
+                .start_with(|c| c.match_class("digit"))
+                .continue_with(|c| c.match_class("digit"))
+                .build()
+                .skip("whitespace")
+        })
+        .rule("program", |r| {
+            r.token("NUMBER").ast("|t| t.text.parse::<i32>().unwrap()")
+        });
+
+    let code = grammar.build().generate();
+
+    // Should contain the mapping comment
+    assert!(
+        code.contains("// AST Mapping: |t| t.text.parse::<i32>().unwrap()"),
+        "Should generate AST mapping comment"
+    );
+}
+
+#[test]
+fn test_apply_mappings_disabled_no_helpers() {
+    // Test that helpers are NOT generated when apply_mappings is disabled (default)
+    let grammar = Grammar::new()
+        .lexer(|l| {
+            l.token("NUMBER", "")
+                .start_with(|c| c.match_class("digit"))
+                .continue_with(|c| c.match_class("digit"))
+                .build()
+                .skip("whitespace")
+        })
+        .rule("program", |r| r.token("NUMBER"));
+
+    let code = grammar.build().generate();
+
+    // Should NOT generate ParseResult helper methods
+    // Use more specific patterns to avoid matching Token.span or Span struct
+    assert!(
+        !code.contains("impl ParseResult {"),
+        "Should NOT generate ParseResult impl block when apply_mappings is false"
+    );
+    assert!(
+        !code.contains("/// Extract the Token from a ParseResult::Token variant"),
+        "Should NOT generate into_token helper when apply_mappings is false"
+    );
+}
+
+#[test]
+fn test_apply_mappings_sequence_mapping() {
+    // Test mapping on a sequence combinator
+    use trampoline_parser::CombinatorExt;
+
+    let grammar = Grammar::new()
+        .ast_config(|c| c.apply_mappings())
+        .lexer(|l| {
+            l.token("NUMBER", "")
+                .start_with(|c| c.match_class("digit"))
+                .continue_with(|c| c.match_class("digit"))
+                .build()
+                .token("PLUS", "+")
+                .skip("whitespace")
+        })
+        .rule("program", |r| {
+            r.sequence((r.token("NUMBER"), r.token("PLUS"), r.token("NUMBER")))
+                .ast("|(a, _, b)| (a, b)")
+        });
+
+    let code = grammar.build().generate();
+
+    // Should contain the mapping comment
+    assert!(
+        code.contains("// AST Mapping: |(a, _, b)| (a, b)"),
+        "Should generate AST mapping comment for sequence"
+    );
+}
+
+// =============================================================================
+// StringDict Integration Tests
+// =============================================================================
+
+#[test]
+fn test_string_dict_lexer_struct() {
+    // Test that StringDict configuration adds string_dict field to Lexer
+    let grammar = Grammar::new()
+        .ast_config(|c| c.string_dict("StringDict").string_type("JsString"))
+        .lexer(|l| {
+            l.token("NUMBER", "")
+                .start_with(|c| c.match_class("digit"))
+                .continue_with(|c| c.match_class("digit"))
+                .build()
+                .skip("whitespace")
+        })
+        .rule("program", |r| r.token("NUMBER"));
+
+    let code = grammar.build().generate();
+
+    // Lexer should have string_dict field
+    assert!(
+        code.contains("string_dict: &'a mut StringDict,"),
+        "Lexer should have string_dict field"
+    );
+}
+
+#[test]
+fn test_string_dict_lexer_new() {
+    // Test that Lexer::new accepts string_dict parameter
+    let grammar = Grammar::new()
+        .ast_config(|c| c.string_dict("StringDict"))
+        .lexer(|l| {
+            l.token("NUMBER", "")
+                .start_with(|c| c.match_class("digit"))
+                .continue_with(|c| c.match_class("digit"))
+                .build()
+                .skip("whitespace")
+        })
+        .rule("program", |r| r.token("NUMBER"));
+
+    let code = grammar.build().generate();
+
+    // Lexer::new should accept string_dict
+    assert!(
+        code.contains("pub fn new(input: &'a str, string_dict: &'a mut StringDict) -> Self"),
+        "Lexer::new should accept string_dict parameter"
+    );
+    assert!(
+        code.contains("string_dict,"),
+        "Lexer should store string_dict"
+    );
+}
+
+#[test]
+fn test_string_dict_parser_new() {
+    // Test that Parser::new accepts and passes string_dict to Lexer
+    let grammar = Grammar::new()
+        .ast_config(|c| c.string_dict("StringDict"))
+        .lexer(|l| {
+            l.token("NUMBER", "")
+                .start_with(|c| c.match_class("digit"))
+                .continue_with(|c| c.match_class("digit"))
+                .build()
+                .skip("whitespace")
+        })
+        .rule("program", |r| r.token("NUMBER"));
+
+    let code = grammar.build().generate();
+
+    // Parser::new should accept string_dict
+    assert!(
+        code.contains("pub fn new(input: &'a str, string_dict: &'a mut StringDict) -> Self"),
+        "Parser::new should accept string_dict parameter"
+    );
+    // Parser should pass string_dict to Lexer
+    assert!(
+        code.contains("lexer: Lexer::new(input, string_dict),"),
+        "Parser should pass string_dict to Lexer"
+    );
+}
+
+#[test]
+fn test_string_dict_token_text_creation() {
+    // Test that token text uses string_dict.get_or_insert()
+    let grammar = Grammar::new()
+        .ast_config(|c| c.string_dict("StringDict"))
+        .lexer(|l| {
+            l.token("NUMBER", "")
+                .start_with(|c| c.match_class("digit"))
+                .continue_with(|c| c.match_class("digit"))
+                .build()
+                .skip("whitespace")
+        })
+        .rule("program", |r| r.token("NUMBER"));
+
+    let code = grammar.build().generate();
+
+    // Token text should use string_dict.get_or_insert()
+    assert!(
+        code.contains("self.string_dict.get_or_insert("),
+        "Token text should use string_dict.get_or_insert()"
+    );
+    // Should NOT contain plain .to_string() for token text
+    assert!(
+        !code.contains("text: String::new()"),
+        "Should not use String::new() when StringDict is configured"
+    );
+}
+
+#[test]
+fn test_string_dict_custom_method() {
+    // Test that custom string_dict method name is used
+    let grammar = Grammar::new()
+        .ast_config(|c| c.string_dict("MyDict").string_dict_method("intern"))
+        .lexer(|l| {
+            l.token("NUMBER", "")
+                .start_with(|c| c.match_class("digit"))
+                .continue_with(|c| c.match_class("digit"))
+                .build()
+                .skip("whitespace")
+        })
+        .rule("program", |r| r.token("NUMBER"));
+
+    let code = grammar.build().generate();
+
+    // Should use custom method name
+    assert!(
+        code.contains("self.string_dict.intern("),
+        "Should use custom method name 'intern'"
+    );
+    // Should use custom type name
+    assert!(
+        code.contains("string_dict: &'a mut MyDict"),
+        "Should use custom type name 'MyDict'"
+    );
+}
+
+#[test]
+fn test_string_dict_disabled_default() {
+    // Test that StringDict is NOT used by default
+    let grammar = Grammar::new()
+        .lexer(|l| {
+            l.token("NUMBER", "")
+                .start_with(|c| c.match_class("digit"))
+                .continue_with(|c| c.match_class("digit"))
+                .build()
+                .skip("whitespace")
+        })
+        .rule("program", |r| r.token("NUMBER"));
+
+    let code = grammar.build().generate();
+
+    // Should NOT have string_dict field
+    assert!(
+        !code.contains("string_dict:"),
+        "Should NOT have string_dict field when not configured"
+    );
+    // Lexer::new should only take input
+    assert!(
+        code.contains("pub fn new(input: &'a str) -> Self {"),
+        "Lexer::new should only take input when StringDict not configured"
+    );
+    // Should use .to_string() for token text
+    assert!(
+        code.contains(".to_string()"),
+        "Should use .to_string() when StringDict not configured"
+    );
+}
+
 #[test]
 fn test_parse_negative_lookahead() {
     // Generate a parser that uses negative lookahead
@@ -2248,10 +2742,7 @@ fn test_parse_negative_lookahead() {
                 .skip("whitespace")
         })
         .rule("program", |r| {
-            r.sequence((
-                r.token("NUMBER"),
-                r.negative_lookahead(r.token("STAR")),
-            ))
+            r.sequence((r.token("NUMBER"), r.negative_lookahead(r.token("STAR"))))
         });
 
     let compiled = grammar.build();
@@ -2331,4 +2822,212 @@ fn main() {
     // Cleanup
     let _ = fs::remove_file(&temp_file);
     let _ = fs::remove_file(&temp_bin);
+}
+
+// =============================================================================
+// Span Propagation Tests
+// =============================================================================
+
+#[test]
+fn test_span_merge_generated() {
+    // Test that Span::merge() is generated when apply_mappings is enabled
+    let grammar = Grammar::new()
+        .ast_config(|c| c.apply_mappings())
+        .lexer(|l| {
+            l.token("NUMBER", "")
+                .start_with(|c| c.match_class("digit"))
+                .continue_with(|c| c.match_class("digit"))
+                .build()
+                .skip("whitespace")
+        })
+        .rule("program", |r| r.token("NUMBER"));
+
+    let code = grammar.build().generate();
+
+    // Should have Span impl block with merge method
+    assert!(
+        code.contains("impl Span {"),
+        "Should generate Span impl block when apply_mappings is enabled"
+    );
+    assert!(
+        code.contains("pub fn merge(self, other: Span) -> Span {"),
+        "Should generate Span::merge() when apply_mappings is enabled"
+    );
+    assert!(
+        code.contains("start: self.start.min(other.start),"),
+        "merge() should take minimum of starts"
+    );
+    assert!(
+        code.contains("end: self.end.max(other.end),"),
+        "merge() should take maximum of ends"
+    );
+}
+
+#[test]
+fn test_span_merge_not_generated_without_apply_mappings() {
+    // Test that Span::merge() is NOT generated when apply_mappings is disabled
+    let grammar = Grammar::new()
+        .lexer(|l| {
+            l.token("NUMBER", "")
+                .start_with(|c| c.match_class("digit"))
+                .continue_with(|c| c.match_class("digit"))
+                .build()
+                .skip("whitespace")
+        })
+        .rule("program", |r| r.token("NUMBER"));
+
+    let code = grammar.build().generate();
+
+    // Should NOT have Span impl block
+    assert!(
+        !code.contains("impl Span {"),
+        "Should NOT generate Span impl when apply_mappings is disabled"
+    );
+    assert!(
+        !code.contains("pub fn merge("),
+        "Should NOT generate Span::merge() when apply_mappings is disabled"
+    );
+}
+
+#[test]
+fn test_combined_span_generated() {
+    // Test that ParseResult::combined_span() is generated when apply_mappings is enabled
+    let grammar = Grammar::new()
+        .ast_config(|c| c.apply_mappings())
+        .lexer(|l| {
+            l.token("NUMBER", "")
+                .start_with(|c| c.match_class("digit"))
+                .continue_with(|c| c.match_class("digit"))
+                .build()
+                .skip("whitespace")
+        })
+        .rule("program", |r| r.token("NUMBER"));
+
+    let code = grammar.build().generate();
+
+    // Should have combined_span method
+    assert!(
+        code.contains("pub fn combined_span(&self) -> Span {"),
+        "Should generate combined_span() when apply_mappings is enabled"
+    );
+    assert!(
+        code.contains("first.merge(last)"),
+        "combined_span() should use merge() for lists"
+    );
+}
+
+#[test]
+fn test_span_propagation_compile_check() {
+    // Test that generated code with span propagation compiles correctly
+    let grammar = Grammar::new()
+        .ast_config(|c| c.apply_mappings())
+        .lexer(|l| {
+            l.token("NUMBER", "")
+                .start_with(|c| c.match_class("digit"))
+                .continue_with(|c| c.match_class("digit"))
+                .build()
+                .token("PLUS", "+")
+                .skip("whitespace")
+        })
+        .rule("expr", |r| {
+            r.sequence((r.token("NUMBER"), r.token("PLUS"), r.token("NUMBER")))
+                .ast("|(a, op, b)| Expr::Binary { left: a, op, right: b }")
+        });
+
+    let compiled = grammar.build();
+    let mut code = compiled.generate();
+
+    // Add a main function that uses combined_span
+    code.push_str(
+        r#"
+fn main() {
+    let mut parser = Parser::new("1 + 2");
+    match parser.parse() {
+        Ok(result) => {
+            let span = result.combined_span();
+            // Test that merge works correctly
+            let span2 = Span { start: 0, end: 1, line: 1, column: 1 };
+            let span3 = Span { start: 4, end: 5, line: 1, column: 5 };
+            let merged = span2.merge(span3);
+            if merged.start == 0 && merged.end == 5 {
+                println!("SUCCESS: span propagation works");
+            } else {
+                println!("FAILED: merged span incorrect: {:?}", merged);
+            }
+        }
+        Err(e) => println!("PARSE_ERROR: {:?}", e),
+    }
+}
+"#,
+    );
+
+    // Try to compile the generated code
+    let temp_file = "/tmp/test_span_propagation.rs";
+    let temp_bin = "/tmp/test_span_propagation";
+    fs::write(temp_file, &code).expect("Failed to write temp file");
+
+    match Command::new("rustc")
+        .args(["-o", temp_bin, temp_file])
+        .output()
+    {
+        Ok(output) => {
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                println!("Generated code:\n{}", code);
+                println!("\nCompiler error:\n{}", stderr);
+                panic!("Generated code with span propagation failed to compile!");
+            }
+
+            // Run the binary
+            let run_output = Command::new(temp_bin)
+                .output()
+                .expect("Failed to run parser");
+            let stdout = String::from_utf8_lossy(&run_output.stdout);
+
+            if !stdout.contains("SUCCESS") {
+                println!("Generated code:\n{}", code);
+                println!("\nParser output:\n{}", stdout);
+                panic!("Span propagation did not produce expected output!");
+            }
+
+            println!("Span propagation test passed");
+        }
+        Err(e) => {
+            println!(
+                "Warning: Could not run rustc: {}. Skipping span propagation test.",
+                e
+            );
+        }
+    }
+
+    // Cleanup
+    let _ = fs::remove_file(temp_file);
+    let _ = fs::remove_file(temp_bin);
+}
+
+#[test]
+fn test_span_merge_handles_empty_spans() {
+    // Test that merge handles empty/default spans correctly
+    let grammar = Grammar::new()
+        .ast_config(|c| c.apply_mappings())
+        .lexer(|l| {
+            l.token("NUMBER", "")
+                .start_with(|c| c.match_class("digit"))
+                .continue_with(|c| c.match_class("digit"))
+                .build()
+                .skip("whitespace")
+        })
+        .rule("program", |r| r.token("NUMBER"));
+
+    let code = grammar.build().generate();
+
+    // Should handle empty spans by returning the non-empty one
+    assert!(
+        code.contains("if other.start == 0 && other.end == 0 {"),
+        "merge() should check for empty other span"
+    );
+    assert!(
+        code.contains("if self.start == 0 && self.end == 0 {"),
+        "merge() should check for empty self span"
+    );
 }

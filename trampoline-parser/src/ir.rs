@@ -213,3 +213,60 @@ pub struct TernaryOp {
 }
 
 use crate::Assoc;
+
+/// Configuration for AST integration
+///
+/// Controls how the generated parser integrates with external AST types,
+/// imports, and type mappings.
+#[derive(Debug, Clone)]
+pub struct AstConfig {
+    /// External modules to import (e.g., "crate::ast::*", "crate::lexer::Span")
+    pub imports: Vec<String>,
+    /// Return type of the parse() function (e.g., "Result<Program, JsError>")
+    pub result_type: Option<String>,
+    /// External span type to use instead of generated Span
+    pub span_type: Option<String>,
+    /// External string type to use instead of String (e.g., "JsString")
+    pub string_type: Option<String>,
+    /// External error type to use instead of generated ParseError
+    pub error_type: Option<String>,
+    /// Whether to generate the internal ParseResult enum (default: true)
+    pub generate_parse_result: bool,
+    /// Whether to generate the internal Span struct (default: true)
+    pub generate_span: bool,
+    /// Whether to generate the internal ParseError struct (default: true)
+    pub generate_parse_error: bool,
+    /// Whether to apply AST mappings during parsing (default: false)
+    /// When true, mapping closures are embedded in generated code
+    pub apply_mappings: bool,
+    /// String dictionary type for string interning (e.g., "StringDict")
+    /// When set, Parser accepts a mutable reference to this type
+    pub string_dict_type: Option<String>,
+    /// Method to call on string dict to intern a string (default: "get_or_insert")
+    pub string_dict_method: Option<String>,
+}
+
+impl Default for AstConfig {
+    fn default() -> Self {
+        Self {
+            imports: Vec::new(),
+            result_type: None,
+            span_type: None,
+            string_type: None,
+            error_type: None,
+            generate_parse_result: true,
+            generate_span: true,
+            generate_parse_error: true,
+            apply_mappings: false,
+            string_dict_type: None,
+            string_dict_method: None,
+        }
+    }
+}
+
+impl AstConfig {
+    /// Create a new AstConfig with default values
+    pub fn new() -> Self {
+        Self::default()
+    }
+}

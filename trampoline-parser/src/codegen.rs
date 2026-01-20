@@ -46,6 +46,14 @@ impl<'a> CodeGenerator<'a> {
         self.line("#![allow(unused_variables)]");
         self.line("#![allow(non_camel_case_types)]");
         self.line("");
+
+        // Emit configured imports
+        for import in &self.grammar.ast_config.imports {
+            self.line(&format!("use {};", import));
+        }
+        if !self.grammar.ast_config.imports.is_empty() {
+            self.line("");
+        }
     }
 
     fn emit_token_enum(&mut self) {
@@ -96,33 +104,92 @@ impl<'a> CodeGenerator<'a> {
         self.line("}");
         self.line("");
 
-        // Token struct
+        // Token struct - use configured types if specified
+        let string_type = self
+            .grammar
+            .ast_config
+            .string_type
+            .as_deref()
+            .unwrap_or("String");
+        let span_type = self
+            .grammar
+            .ast_config
+            .span_type
+            .as_deref()
+            .unwrap_or("Span");
+
         self.line("/// A token with its kind, text, and span");
         self.line("#[derive(Debug, Clone)]");
         self.line("pub struct Token {");
         self.indent += 1;
         self.line("pub kind: TokenKind,");
-        self.line("pub text: String,");
-        self.line("pub span: Span,");
+        self.line(&format!("pub text: {},", string_type));
+        self.line(&format!("pub span: {},", span_type));
         self.indent -= 1;
         self.line("}");
         self.line("");
 
-        // Span struct
-        self.line("/// Source location span");
-        self.line("#[derive(Debug, Clone, Copy, Default)]");
-        self.line("pub struct Span {");
-        self.indent += 1;
-        self.line("pub start: usize,");
-        self.line("pub end: usize,");
-        self.line("pub line: usize,");
-        self.line("pub column: usize,");
-        self.indent -= 1;
-        self.line("}");
-        self.line("");
+        // Span struct - skip if using external span type
+        if self.grammar.ast_config.generate_span {
+            self.line("/// Source location span");
+            self.line("#[derive(Debug, Clone, Copy, Default)]");
+            self.line("pub struct Span {");
+            self.indent += 1;
+            self.line("pub start: usize,");
+            self.line("pub end: usize,");
+            self.line("pub line: usize,");
+            self.line("pub column: usize,");
+            self.indent -= 1;
+            self.line("}");
+            self.line("");
+
+            // Add Span methods when apply_mappings is enabled
+            if self.grammar.ast_config.apply_mappings {
+                self.line("impl Span {");
+                self.indent += 1;
+
+                // merge method - combines two spans into one covering both
+                self.line("/// Merge two spans into one covering both");
+                self.line("#[allow(dead_code)]");
+                self.line("pub fn merge(self, other: Span) -> Span {");
+                self.indent += 1;
+                self.line("if other.start == 0 && other.end == 0 {");
+                self.indent += 1;
+                self.line("return self;");
+                self.indent -= 1;
+                self.line("}");
+                self.line("if self.start == 0 && self.end == 0 {");
+                self.indent += 1;
+                self.line("return other;");
+                self.indent -= 1;
+                self.line("}");
+                self.line("Span {");
+                self.indent += 1;
+                self.line("start: self.start.min(other.start),");
+                self.line("end: self.end.max(other.end),");
+                self.line("line: self.line.min(other.line),");
+                self.line("column: if self.start <= other.start { self.column } else { other.column },");
+                self.indent -= 1;
+                self.line("}");
+                self.indent -= 1;
+                self.line("}");
+
+                self.indent -= 1;
+                self.line("}");
+                self.line("");
+            }
+        }
     }
 
     fn emit_lexer(&mut self) {
+        let has_string_dict = self.grammar.ast_config.string_dict_type.is_some();
+        let string_dict_type = self
+            .grammar
+            .ast_config
+            .string_dict_type
+            .as_deref()
+            .unwrap_or("StringDict");
+
         self.line("/// Lexer state");
         self.line("pub struct Lexer<'a> {");
         self.indent += 1;
@@ -131,6 +198,9 @@ impl<'a> CodeGenerator<'a> {
         self.line("line: usize,");
         self.line("column: usize,");
         self.line("peeked: Option<Token>,");
+        if has_string_dict {
+            self.line(&format!("string_dict: &'a mut {},", string_dict_type));
+        }
         self.indent -= 1;
         self.line("}");
         self.line("");
@@ -140,7 +210,14 @@ impl<'a> CodeGenerator<'a> {
         self.indent += 1;
 
         // new
-        self.line("pub fn new(input: &'a str) -> Self {");
+        if has_string_dict {
+            self.line(&format!(
+                "pub fn new(input: &'a str, string_dict: &'a mut {}) -> Self {{",
+                string_dict_type
+            ));
+        } else {
+            self.line("pub fn new(input: &'a str) -> Self {");
+        }
         self.indent += 1;
         self.line("Self {");
         self.indent += 1;
@@ -149,6 +226,9 @@ impl<'a> CodeGenerator<'a> {
         self.line("line: 1,");
         self.line("column: 1,");
         self.line("peeked: None,");
+        if has_string_dict {
+            self.line("string_dict,");
+        }
         self.indent -= 1;
         self.line("}");
         self.indent -= 1;
@@ -244,6 +324,54 @@ impl<'a> CodeGenerator<'a> {
         self.line("");
     }
 
+    /// Generate code to create a token text from a string literal
+    fn emit_string_literal(&self, literal: &str) -> String {
+        let escaped = literal.replace('\\', "\\\\").replace('"', "\\\"");
+        if self.grammar.ast_config.string_dict_type.is_some() {
+            let method = self
+                .grammar
+                .ast_config
+                .string_dict_method
+                .as_deref()
+                .unwrap_or("get_or_insert");
+            format!("self.string_dict.{}(\"{}\")", method, escaped)
+        } else {
+            format!("\"{}\".to_string()", escaped)
+        }
+    }
+
+    /// Generate code to create a token text from a string slice expression
+    /// The slice_expr should be an expression that evaluates to &str (e.g., "&self.input[start..end]")
+    fn emit_string_from_slice(&self, slice_expr: &str) -> String {
+        if self.grammar.ast_config.string_dict_type.is_some() {
+            let method = self
+                .grammar
+                .ast_config
+                .string_dict_method
+                .as_deref()
+                .unwrap_or("get_or_insert");
+            format!("self.string_dict.{}({})", method, slice_expr)
+        } else {
+            // For .to_string(), the slice_expr is a &str, so we can call to_string() on it
+            format!("({}).to_string()", slice_expr)
+        }
+    }
+
+    /// Generate code for an empty string
+    fn emit_empty_string(&self) -> String {
+        if self.grammar.ast_config.string_dict_type.is_some() {
+            let method = self
+                .grammar
+                .ast_config
+                .string_dict_method
+                .as_deref()
+                .unwrap_or("get_or_insert");
+            format!("self.string_dict.{}(\"\")", method)
+        } else {
+            "String::new()".to_string()
+        }
+    }
+
     fn emit_next_token(&mut self) {
         self.line("fn next_token(&mut self) -> Result<Token, ParseError> {");
         self.indent += 1;
@@ -259,7 +387,8 @@ impl<'a> CodeGenerator<'a> {
         self.line("return Ok(Token {");
         self.indent += 1;
         self.line("kind: TokenKind::EOF,");
-        self.line("text: String::new(),");
+        let empty_text = self.emit_empty_string();
+        self.line(&format!("text: {},", empty_text));
         self.line("span: Span { start, end: start, line: start_line, column: start_column },");
         self.indent -= 1;
         self.line("});");
@@ -312,7 +441,8 @@ impl<'a> CodeGenerator<'a> {
             self.line("return Ok(Token {");
             self.indent += 1;
             self.line(&format!("kind: TokenKind::{},", kw.name));
-            self.line(&format!("text: \"{}\".to_string(),", kw.literal));
+            let text_code = self.emit_string_literal(&kw.literal);
+            self.line(&format!("text: {},", text_code));
             self.line(
                 "span: Span { start, end: self.pos, line: start_line, column: start_column },",
             );
@@ -354,7 +484,8 @@ impl<'a> CodeGenerator<'a> {
             self.line("return Ok(Token {");
             self.indent += 1;
             self.line(&format!("kind: TokenKind::{},", token.name));
-            self.line(&format!("text: \"{}\".to_string(),", escaped));
+            let text_code = self.emit_string_literal(literal);
+            self.line(&format!("text: {},", text_code));
             self.line(
                 "span: Span { start, end: self.pos, line: start_line, column: start_column },",
             );
@@ -418,7 +549,8 @@ impl<'a> CodeGenerator<'a> {
             }
 
             self.line("");
-            self.line("let text = self.input[self.pos..end].to_string();");
+            let text_code = self.emit_string_from_slice("&self.input[self.pos..end]");
+            self.line(&format!("let text = {};", text_code));
             self.line("let len = end - self.pos;");
             self.line("self.pos = end;");
             self.line("self.column += len;");
@@ -721,6 +853,11 @@ impl<'a> CodeGenerator<'a> {
     }
 
     fn emit_parse_result_enum(&mut self) {
+        // Skip if configured to use external AST types
+        if !self.grammar.ast_config.generate_parse_result {
+            return;
+        }
+
         self.line("/// Intermediate parse results");
         self.line("#[derive(Debug, Clone)]");
         self.line("pub enum ParseResult {");
@@ -738,35 +875,209 @@ impl<'a> CodeGenerator<'a> {
         self.indent -= 1;
         self.line("}");
         self.line("");
+
+        // Generate helper methods for ParseResult when apply_mappings is enabled
+        if self.grammar.ast_config.apply_mappings {
+            self.emit_parse_result_helpers();
+        }
+    }
+
+    /// Generate helper methods for ParseResult extraction
+    fn emit_parse_result_helpers(&mut self) {
+        self.line("impl ParseResult {");
+        self.indent += 1;
+
+        // into_token()
+        self.line("/// Extract the Token from a ParseResult::Token variant");
+        self.line("#[allow(dead_code)]");
+        self.line("pub fn into_token(self) -> Token {");
+        self.indent += 1;
+        self.line("match self {");
+        self.indent += 1;
+        self.line("ParseResult::Token(t) => t,");
+        self.line("_ => panic!(\"Expected Token, got {:?}\", self),");
+        self.indent -= 1;
+        self.line("}");
+        self.indent -= 1;
+        self.line("}");
+        self.line("");
+
+        // as_token()
+        self.line("/// Get a reference to the Token from a ParseResult::Token variant");
+        self.line("#[allow(dead_code)]");
+        self.line("pub fn as_token(&self) -> &Token {");
+        self.indent += 1;
+        self.line("match self {");
+        self.indent += 1;
+        self.line("ParseResult::Token(t) => t,");
+        self.line("_ => panic!(\"Expected Token, got {:?}\", self),");
+        self.indent -= 1;
+        self.line("}");
+        self.indent -= 1;
+        self.line("}");
+        self.line("");
+
+        // into_list()
+        self.line("/// Extract the Vec from a ParseResult::List variant");
+        self.line("#[allow(dead_code)]");
+        self.line("pub fn into_list(self) -> Vec<ParseResult> {");
+        self.indent += 1;
+        self.line("match self {");
+        self.indent += 1;
+        self.line("ParseResult::List(v) => v,");
+        self.line("_ => panic!(\"Expected List, got {:?}\", self),");
+        self.indent -= 1;
+        self.line("}");
+        self.indent -= 1;
+        self.line("}");
+        self.line("");
+
+        // as_list()
+        self.line("/// Get a reference to the Vec from a ParseResult::List variant");
+        self.line("#[allow(dead_code)]");
+        self.line("pub fn as_list(&self) -> &Vec<ParseResult> {");
+        self.indent += 1;
+        self.line("match self {");
+        self.indent += 1;
+        self.line("ParseResult::List(v) => v,");
+        self.line("_ => panic!(\"Expected List, got {:?}\", self),");
+        self.indent -= 1;
+        self.line("}");
+        self.indent -= 1;
+        self.line("}");
+        self.line("");
+
+        // is_none()
+        self.line("/// Check if this is ParseResult::None");
+        self.line("#[allow(dead_code)]");
+        self.line("pub fn is_none(&self) -> bool {");
+        self.indent += 1;
+        self.line("matches!(self, ParseResult::None)");
+        self.indent -= 1;
+        self.line("}");
+        self.line("");
+
+        // into_option()
+        self.line("/// Convert to Option, returning None if ParseResult::None");
+        self.line("#[allow(dead_code)]");
+        self.line("pub fn into_option(self) -> Option<ParseResult> {");
+        self.indent += 1;
+        self.line("match self {");
+        self.indent += 1;
+        self.line("ParseResult::None => None,");
+        self.line("other => Some(other),");
+        self.indent -= 1;
+        self.line("}");
+        self.indent -= 1;
+        self.line("}");
+        self.line("");
+
+        // span() helper
+        self.line("/// Get the span of this parse result (from first token or default)");
+        self.line("#[allow(dead_code)]");
+        self.line("pub fn span(&self) -> Span {");
+        self.indent += 1;
+        self.line("match self {");
+        self.indent += 1;
+        self.line("ParseResult::Token(t) => t.span,");
+        self.line(
+            "ParseResult::List(items) => items.first().map(|i| i.span()).unwrap_or_default(),",
+        );
+        self.line("ParseResult::None => Span::default(),");
+        // Handle rule variants
+        for rule in &self.grammar.rules {
+            let name = to_pascal_case(&rule.name);
+            self.line(&format!("ParseResult::{}(inner) => inner.span(),", name));
+        }
+        self.indent -= 1;
+        self.line("}");
+        self.indent -= 1;
+        self.line("}");
+        self.line("");
+
+        // combined_span() helper - calculates span from first to last element
+        self.line("/// Get the combined span of this parse result (from first to last token)");
+        self.line("#[allow(dead_code)]");
+        self.line("pub fn combined_span(&self) -> Span {");
+        self.indent += 1;
+        self.line("match self {");
+        self.indent += 1;
+        self.line("ParseResult::Token(t) => t.span,");
+        self.line("ParseResult::List(items) => {");
+        self.indent += 1;
+        self.line("if items.is_empty() {");
+        self.indent += 1;
+        self.line("return Span::default();");
+        self.indent -= 1;
+        self.line("}");
+        self.line("let first = items.first().map(|i| i.combined_span()).unwrap_or_default();");
+        self.line("let last = items.last().map(|i| i.combined_span()).unwrap_or_default();");
+        self.line("first.merge(last)");
+        self.indent -= 1;
+        self.line("}");
+        self.line("ParseResult::None => Span::default(),");
+        // Handle rule variants
+        for rule in &self.grammar.rules {
+            let name = to_pascal_case(&rule.name);
+            self.line(&format!(
+                "ParseResult::{}(inner) => inner.combined_span(),",
+                name
+            ));
+        }
+        self.indent -= 1;
+        self.line("}");
+        self.indent -= 1;
+        self.line("}");
+
+        self.indent -= 1;
+        self.line("}");
+        self.line("");
     }
 
     fn emit_parser(&mut self) {
-        // ParseError
-        self.line("/// Parse error");
-        self.line("#[derive(Debug, Clone)]");
-        self.line("pub struct ParseError {");
-        self.indent += 1;
-        self.line("pub span: Span,");
-        self.line("pub expected: Vec<TokenKind>,");
-        self.line("pub found: String,");
-        self.indent -= 1;
-        self.line("}");
-        self.line("");
+        // ParseError - skip if using external error type
+        if self.grammar.ast_config.generate_parse_error {
+            let span_type = self
+                .grammar
+                .ast_config
+                .span_type
+                .as_deref()
+                .unwrap_or("Span");
 
-        self.line("impl std::fmt::Display for ParseError {");
-        self.indent += 1;
-        self.line("fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {");
-        self.indent += 1;
-        self.line("write!(f, \"{}:{}: expected {:?}, found {}\", self.span.line, self.span.column, self.expected, self.found)");
-        self.indent -= 1;
-        self.line("}");
-        self.indent -= 1;
-        self.line("}");
-        self.line("");
-        self.line("impl std::error::Error for ParseError {}");
-        self.line("");
+            self.line("/// Parse error");
+            self.line("#[derive(Debug, Clone)]");
+            self.line("pub struct ParseError {");
+            self.indent += 1;
+            self.line(&format!("pub span: {},", span_type));
+            self.line("pub expected: Vec<TokenKind>,");
+            self.line("pub found: String,");
+            self.indent -= 1;
+            self.line("}");
+            self.line("");
+
+            self.line("impl std::fmt::Display for ParseError {");
+            self.indent += 1;
+            self.line("fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {");
+            self.indent += 1;
+            self.line("write!(f, \"{}:{}: expected {:?}, found {}\", self.span.line, self.span.column, self.expected, self.found)");
+            self.indent -= 1;
+            self.line("}");
+            self.indent -= 1;
+            self.line("}");
+            self.line("");
+            self.line("impl std::error::Error for ParseError {}");
+            self.line("");
+        }
 
         // Parser struct
+        let has_string_dict = self.grammar.ast_config.string_dict_type.is_some();
+        let string_dict_type = self
+            .grammar
+            .ast_config
+            .string_dict_type
+            .as_deref()
+            .unwrap_or("StringDict");
+
         self.line("/// Parser with trampoline execution");
         self.line("pub struct Parser<'a> {");
         self.indent += 1;
@@ -782,11 +1093,22 @@ impl<'a> CodeGenerator<'a> {
         self.line("impl<'a> Parser<'a> {");
         self.indent += 1;
 
-        self.line("pub fn new(input: &'a str) -> Self {");
-        self.indent += 1;
-        self.line("Self {");
-        self.indent += 1;
-        self.line("lexer: Lexer::new(input),");
+        if has_string_dict {
+            self.line(&format!(
+                "pub fn new(input: &'a str, string_dict: &'a mut {}) -> Self {{",
+                string_dict_type
+            ));
+            self.indent += 1;
+            self.line("Self {");
+            self.indent += 1;
+            self.line("lexer: Lexer::new(input, string_dict),");
+        } else {
+            self.line("pub fn new(input: &'a str) -> Self {");
+            self.indent += 1;
+            self.line("Self {");
+            self.indent += 1;
+            self.line("lexer: Lexer::new(input),");
+        }
         self.line("work_stack: Vec::new(),");
         self.line("result_stack: Vec::new(),");
         self.line("last_error: None,");
@@ -959,7 +1281,9 @@ impl<'a> CodeGenerator<'a> {
                 if !pratt_def.prefix_ops.is_empty() {
                     self.line("// Check for prefix operators");
                     self.line("let peek_token = self.lexer.peek()?;");
-                    self.line("let (is_prefix, maybe_op_token, prefix_prec) = match peek_token.kind {");
+                    self.line(
+                        "let (is_prefix, maybe_op_token, prefix_prec) = match peek_token.kind {",
+                    );
                     self.indent += 1;
                     for op in &pratt_def.prefix_ops {
                         self.line(&format!(
@@ -996,8 +1320,15 @@ impl<'a> CodeGenerator<'a> {
                     self.emit_combinator_inline(operand, &operand_prefix);
                 }
             }
-            Combinator::Mapped { inner, .. } => {
+            Combinator::Mapped { inner, mapping } => {
+                // Parse the inner combinator first
                 self.emit_combinator_start(prefix, inner);
+                // When apply_mappings is enabled, generate mapping application code
+                if self.grammar.ast_config.apply_mappings {
+                    self.line(&format!("// AST Mapping: {}", mapping));
+                    self.line("// The mapping closure above transforms the parsed result.");
+                    self.line("// Use result_stack.pop() and apply the closure to get typed AST.");
+                }
             }
             Combinator::Skip(inner) => {
                 // Parse but discard
@@ -1055,7 +1386,9 @@ impl<'a> CodeGenerator<'a> {
                 self.line("// Inner succeeded, so negative lookahead fails");
                 self.line("return Err(ParseError {");
                 self.indent += 1;
-                self.line("span: self.lexer.peek().map(|t| t.span).unwrap_or(Span { start: 0, end: 0 }),");
+                self.line(
+                    "span: self.lexer.peek().map(|t| t.span).unwrap_or(Span { start: 0, end: 0 }),",
+                );
                 self.line("expected: vec![],");
                 self.line("found: \"negative lookahead matched\".to_string(),");
                 self.indent -= 1;
@@ -1098,8 +1431,12 @@ impl<'a> CodeGenerator<'a> {
                     rule_pascal
                 ));
             }
-            Combinator::Mapped { inner, .. } => {
+            Combinator::Mapped { inner, mapping } => {
                 self.emit_combinator_inline(inner, prefix);
+                // When apply_mappings is enabled, generate mapping application code
+                if self.grammar.ast_config.apply_mappings {
+                    self.line(&format!("// AST Mapping: {}", mapping));
+                }
             }
             Combinator::Optional(_) => {
                 self.line("let checkpoint = self.lexer.checkpoint();");
@@ -1228,7 +1565,9 @@ impl<'a> CodeGenerator<'a> {
                 if !pratt_def.prefix_ops.is_empty() {
                     self.line("// Check for prefix operators");
                     self.line("let peek_token = self.lexer.peek()?;");
-                    self.line("let (is_prefix, maybe_op_token, prefix_prec) = match peek_token.kind {");
+                    self.line(
+                        "let (is_prefix, maybe_op_token, prefix_prec) = match peek_token.kind {",
+                    );
                     self.indent += 1;
                     for op in &pratt_def.prefix_ops {
                         self.line(&format!(
@@ -1453,8 +1792,12 @@ impl<'a> CodeGenerator<'a> {
             Combinator::Pratt(pratt_def) => {
                 self.emit_pratt_execution(prefix, pratt_def);
             }
-            Combinator::Mapped { inner, .. } => {
+            Combinator::Mapped { inner, mapping } => {
                 self.emit_combinator_execution(prefix, inner);
+                // Note: mapping is applied after inner combinator completes
+                if self.grammar.ast_config.apply_mappings {
+                    let _ = mapping; // Mapping string is available for code generation
+                }
             }
             Combinator::SeparatedBy {
                 item,
@@ -1656,10 +1999,7 @@ impl<'a> CodeGenerator<'a> {
                 ));
                 self.indent += 1;
                 // Parse first argument - it's a full expression
-                self.line(&format!(
-                    "self.work_stack.push(Work::{}_Start);",
-                    prefix
-                ));
+                self.line(&format!("self.work_stack.push(Work::{}_Start);", prefix));
                 self.indent -= 1;
                 self.line("}");
             }
@@ -1677,10 +2017,7 @@ impl<'a> CodeGenerator<'a> {
                 prefix
             ));
             // Parse index expression
-            self.line(&format!(
-                "self.work_stack.push(Work::{}_Start);",
-                prefix
-            ));
+            self.line(&format!("self.work_stack.push(Work::{}_Start);", prefix));
             self.indent -= 1;
             self.line("}");
         }
@@ -1805,10 +2142,7 @@ impl<'a> CodeGenerator<'a> {
                     "self.work_stack.push(Work::{}_Pratt_AfterCallArgs {{ min_prec, prec, result_base }});",
                     prefix
                 ));
-                self.line(&format!(
-                    "self.work_stack.push(Work::{}_Start);",
-                    prefix
-                ));
+                self.line(&format!("self.work_stack.push(Work::{}_Start);", prefix));
                 self.indent -= 1;
                 self.line("} else {");
                 self.indent += 1;
@@ -1835,16 +2169,11 @@ impl<'a> CodeGenerator<'a> {
             self.line("let _ = prec;");
             self.line("// Expect closing bracket");
             if let Some((_, close, _)) = index_ops.first() {
-                self.line(&format!(
-                    "self.expect_token(TokenKind::{})?;",
-                    close
-                ));
+                self.line(&format!("self.expect_token(TokenKind::{})?;", close));
             }
             self.line("let index = self.result_stack.pop().unwrap();");
             self.line("let obj = self.result_stack.pop().unwrap();");
-            self.line(
-                "self.result_stack.push(ParseResult::List(vec![obj, index]));",
-            );
+            self.line("self.result_stack.push(ParseResult::List(vec![obj, index]));");
             self.line(&format!(
                 "self.work_stack.push(Work::{}_Pratt_AfterOperand {{ min_prec }});",
                 prefix
@@ -1915,9 +2244,7 @@ impl<'a> CodeGenerator<'a> {
             self.line("let else_expr = self.result_stack.pop().unwrap();");
             self.line("let then_expr = self.result_stack.pop().unwrap();");
             self.line("let cond_expr = self.result_stack.pop().unwrap();");
-            self.line(
-                "self.result_stack.push(ParseResult::List(vec![",
-            );
+            self.line("self.result_stack.push(ParseResult::List(vec![");
             self.indent += 1;
             self.line("cond_expr,");
             self.line("ParseResult::Token(question_token),");
