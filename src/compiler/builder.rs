@@ -343,6 +343,7 @@ impl BytecodeBuilder {
                 | Op::SetGlobal { .. }
                 | Op::CreateObject { .. }
                 | Op::CreateArray { .. }
+                | Op::ArrayPush { .. }
                 | Op::GetProperty { .. }
                 | Op::GetPropertyConst { .. }
                 | Op::SetProperty { .. }

@@ -560,3 +560,148 @@ fn test_compile_nullish_coalescing() {
     });
     assert!(has_valid_jump, "JumpIfNotNullish has invalid target");
 }
+
+#[test]
+fn test_register_usage_array_of_objects() {
+    // Array literal with multiple object elements - each object needs temp registers
+    let chunk = compile(
+        r#"
+        const arr = [
+            { id: 1, name: "a" },
+            { id: 2, name: "b" },
+            { id: 3, name: "c" },
+            { id: 4, name: "d" },
+            { id: 5, name: "e" }
+        ];
+    "#,
+    );
+
+    // Register count should be reasonable, not exploding
+    println!("Array of 5 objects register count: {}", chunk.register_count);
+    assert!(
+        chunk.register_count < 50,
+        "Register count {} is unexpectedly high for array of 5 objects",
+        chunk.register_count
+    );
+}
+
+#[test]
+fn test_register_usage_large_array_of_objects() {
+    // Larger array to check if registers accumulate
+    let chunk = compile(
+        r#"
+        const arr = [
+            { id: 1, name: "a" }, { id: 2, name: "b" }, { id: 3, name: "c" },
+            { id: 4, name: "d" }, { id: 5, name: "e" }, { id: 6, name: "f" },
+            { id: 7, name: "g" }, { id: 8, name: "h" }, { id: 9, name: "i" },
+            { id: 10, name: "j" }, { id: 11, name: "k" }, { id: 12, name: "l" },
+            { id: 13, name: "m" }, { id: 14, name: "n" }, { id: 15, name: "o" },
+            { id: 16, name: "p" }, { id: 17, name: "q" }, { id: 18, name: "r" },
+            { id: 19, name: "s" }, { id: 20, name: "t" }
+        ];
+    "#,
+    );
+
+    println!("Array of 20 objects register count: {}", chunk.register_count);
+    // If registers are freed properly, count should still be low
+    // If there's a leak, this would approach 20*3 = 60+ registers
+    assert!(
+        chunk.register_count < 50,
+        "Register count {} suggests register leak in array compilation",
+        chunk.register_count
+    );
+}
+
+#[test]
+fn test_register_reuse_in_array_elements() {
+    // Registers for each array element should be reused after pushing to array
+    // With proper reuse, a 100-element array should NOT need 100+ registers
+    let mut elements = String::new();
+    for i in 0..100 {
+        if i > 0 {
+            elements.push_str(", ");
+        }
+        elements.push_str(&format!("{{ id: {}, name: \"item{}\" }}", i, i));
+    }
+    let code = format!("const arr = [{}];", elements);
+
+    let result = std::panic::catch_unwind(|| compile(&code));
+    match result {
+        Ok(chunk) => {
+            println!("Array of 100 objects register count: {}", chunk.register_count);
+            // With proper register reuse, we should need far fewer than 100 registers
+            assert!(
+                chunk.register_count < 50,
+                "Register count {} for 100-element array suggests registers aren't being reused",
+                chunk.register_count
+            );
+        }
+        Err(_) => {
+            panic!("Compilation failed - likely hit 255 register limit, confirming register leak");
+        }
+    }
+}
+
+#[test]
+fn test_register_usage_many_statements() {
+    // Test many statements at module level (similar to collections/main.ts pattern)
+    let chunk = compile(
+        r#"
+        const map = new Map();
+        map.set("one", 1);
+        map.set("two", 2);
+        map.set("three", 3);
+        console.log("Map size:", map.size);
+        console.log("get('two'):", map.get("two"));
+        console.log("has('three'):", map.has("three"));
+        console.log("has('four'):", map.has("four"));
+        const fruitPrices = new Map([
+            ["apple", 1.5],
+            ["banana", 0.75],
+            ["orange", 2.0],
+            ["grape", 3.25]
+        ]);
+        console.log("Fruit prices map:");
+        fruitPrices.forEach((price, fruit) => {
+            console.log("  " + fruit + ": $" + price);
+        });
+    "#,
+    );
+
+    println!("Many statements register count: {}", chunk.register_count);
+    assert!(
+        chunk.register_count < 100,
+        "Register count {} too high for module-level statements",
+        chunk.register_count
+    );
+}
+
+#[test]
+fn test_register_usage_many_variables() {
+    // Each module-level variable might consume a register if not freed
+    let mut code = String::new();
+    for i in 0..100 {
+        code.push_str(&format!("const v{} = {};\n", i, i));
+    }
+    code.push_str("v99");
+
+    let result = std::panic::catch_unwind(|| compile(&code));
+    match result {
+        Ok(chunk) => {
+            println!(
+                "100 module-level variables register count: {}",
+                chunk.register_count
+            );
+            // Variables should NOT each consume a permanent register
+            // They're stored in the environment, not registers
+            assert!(
+                chunk.register_count < 50,
+                "Register count {} suggests variables are using permanent registers",
+                chunk.register_count
+            );
+        }
+        Err(_) => {
+            panic!("Compilation failed - hit register limit with just 100 variables");
+        }
+    }
+}

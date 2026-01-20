@@ -300,6 +300,9 @@ pub enum Op {
         count: u16,
     },
 
+    /// Push element onto array: r[arr].push(r[value])
+    ArrayPush { arr: Register, value: Register },
+
     /// Get property with computed key: r[dst] = r[obj][r[key]]
     GetProperty {
         dst: Register,

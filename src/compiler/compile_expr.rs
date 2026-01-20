@@ -216,8 +216,13 @@ impl Compiler {
             .iter()
             .any(|elem| matches!(elem, Some(ArrayElement::Spread(_))));
 
-        if !has_spread {
-            // Fast path: no spreads, use simple CreateArray
+        // Use fast path only for small arrays without spreads.
+        // Large arrays would exhaust the 255 register limit, so we use
+        // incremental building instead (same as spread path).
+        const MAX_FAST_PATH_ELEMENTS: usize = 50;
+
+        if !has_spread && count <= MAX_FAST_PATH_ELEMENTS {
+            // Fast path: no spreads and small enough, use simple CreateArray
             let start = self.builder.reserve_registers(count as u8)?;
 
             for (i, elem) in arr.elements.iter().enumerate() {
@@ -242,54 +247,38 @@ impl Compiler {
                 count: count as u16,
             });
         } else {
-            // Slow path: array has spreads, build incrementally
-            // Start with an empty array
+            // Incremental path: large array or has spreads
+            // Start with an empty array and push elements one by one
             self.builder.emit(Op::CreateArray {
                 dst,
                 start: 0,
                 count: 0,
             });
 
-            // Process each element
+            // Process each element using ArrayPush for efficiency
             let temp_reg = self.builder.alloc_register()?;
             for elem in &arr.elements {
                 match elem {
                     Some(ArrayElement::Expression(expr)) => {
-                        // Compile the expression
+                        // Compile the expression and push onto array
                         self.compile_expression(expr, temp_reg)?;
-                        // Wrap in single-element array and spread onto dst
-                        let single_arr = self.builder.alloc_register()?;
-                        self.builder.emit(Op::CreateArray {
-                            dst: single_arr,
-                            start: temp_reg,
-                            count: 1,
+                        self.builder.emit(Op::ArrayPush {
+                            arr: dst,
+                            value: temp_reg,
                         });
-                        self.builder.emit(Op::SpreadArray {
-                            dst,
-                            src: single_arr,
-                        });
-                        self.builder.free_register(single_arr);
                     }
                     Some(ArrayElement::Spread(spread)) => {
-                        // Compile the spread argument
+                        // Compile the spread argument and spread it
                         self.compile_expression(&spread.argument, temp_reg)?;
-                        // Spread it onto the array
                         self.builder.emit(Op::SpreadArray { dst, src: temp_reg });
                     }
                     None => {
-                        // Hole in array - add undefined
+                        // Hole in array - push undefined
                         self.builder.emit(Op::LoadUndefined { dst: temp_reg });
-                        let single_arr = self.builder.alloc_register()?;
-                        self.builder.emit(Op::CreateArray {
-                            dst: single_arr,
-                            start: temp_reg,
-                            count: 1,
+                        self.builder.emit(Op::ArrayPush {
+                            arr: dst,
+                            value: temp_reg,
                         });
-                        self.builder.emit(Op::SpreadArray {
-                            dst,
-                            src: single_arr,
-                        });
-                        self.builder.free_register(single_arr);
                     }
                 }
             }

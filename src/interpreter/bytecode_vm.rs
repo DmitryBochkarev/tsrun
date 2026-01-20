@@ -2974,6 +2974,19 @@ impl BytecodeVM {
                 Ok(OpResult::Continue)
             }
 
+            Op::ArrayPush { arr, value } => {
+                use crate::value::ExoticObject;
+                let arr_val = self.get_reg(arr);
+                let val = self.get_reg(value).clone();
+                if let JsValue::Object(arr_obj) = arr_val {
+                    let mut arr_ref = arr_obj.borrow_mut();
+                    if let ExoticObject::Array { ref mut elements } = arr_ref.exotic {
+                        elements.push(val);
+                    }
+                }
+                Ok(OpResult::Continue)
+            }
+
             Op::GetProperty { dst, obj, key } => {
                 let obj_val = self.get_reg(obj);
                 let key_val = self.get_reg(key);
