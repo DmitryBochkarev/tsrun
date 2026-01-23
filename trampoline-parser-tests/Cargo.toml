@@ -1,0 +1,10 @@
+[package]
+name = "trampoline-parser-tests"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[build-dependencies]
+trampoline-parser = { path = "../trampoline-parser" }
+
+[dev-dependencies]
