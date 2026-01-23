@@ -79,6 +79,8 @@ impl<'a> CodeGenerator<'a> {
         self.indent += 1;
         self.line("pub start: usize,");
         self.line("pub end: usize,");
+        self.line("pub line: u32,");
+        self.line("pub column: u32,");
         self.indent -= 1;
         self.line("}");
         self.blank();
@@ -155,9 +157,9 @@ impl<'a> CodeGenerator<'a> {
         self.line("ParseResult::List(items) => {");
         self.indent += 1;
         self.line("if items.is_empty() { return Span::default(); }");
-        self.line("let start = items.first().map(|i| i.span().start).unwrap_or(0);");
-        self.line("let end = items.last().map(|i| i.span().end).unwrap_or(0);");
-        self.line("Span { start, end }");
+        self.line("let first_span = items.first().map(|i| i.span()).unwrap_or_default();");
+        self.line("let last_span = items.last().map(|i| i.span()).unwrap_or_default();");
+        self.line("Span { start: first_span.start, end: last_span.end, line: first_span.line, column: first_span.column }");
         self.indent -= 1;
         self.line("}");
         for variant in &self.grammar.ast_config.result_variants {
@@ -280,16 +282,16 @@ impl<'a> CodeGenerator<'a> {
             }
             Combinator::Capture(inner) => {
                 self.line(&format!(
-                    "{}_Start {{ result_base: usize, start_pos: usize }},",
+                    "{}_Start {{ result_base: usize }},",
                     prefix
                 ));
-                self.line(&format!("{}_Complete {{ result_base: usize, start_pos: usize }},", prefix));
+                self.line(&format!("{}_Complete {{ result_base: usize, start_pos: usize, start_line: u32, start_column: u32 }},", prefix));
                 let child_prefix = format!("{}_Inner", prefix);
                 self.emit_work_variants(&child_prefix, inner);
             }
             Combinator::NotFollowedBy(inner) => {
                 self.line(&format!(
-                    "{}_Start {{ result_base: usize, checkpoint: usize }},",
+                    "{}_Start {{ result_base: usize }},",
                     prefix
                 ));
                 self.line(&format!(
@@ -301,7 +303,7 @@ impl<'a> CodeGenerator<'a> {
             }
             Combinator::FollowedBy(inner) => {
                 self.line(&format!(
-                    "{}_Start {{ result_base: usize, checkpoint: usize }},",
+                    "{}_Start {{ result_base: usize }},",
                     prefix
                 ));
                 self.line(&format!(
@@ -352,14 +354,27 @@ impl<'a> CodeGenerator<'a> {
             .as_deref()
             .unwrap_or("String");
 
+        let has_string_dict = self.grammar.ast_config.string_dict_type.is_some();
+        let string_dict_type = self
+            .grammar
+            .ast_config
+            .string_dict_type
+            .as_deref()
+            .unwrap_or("StringDict");
+
         self.line("/// Scannerless parser");
         self.line("pub struct Parser<'a> {");
         self.indent += 1;
         self.line("input: &'a str,");
         self.line("pos: usize,");
+        self.line("line: u32,");
+        self.line("column: u32,");
         self.line("work_stack: Vec<Work>,");
         self.line("result_stack: Vec<ParseResult>,");
         self.line("last_error: Option<ParseError>,");
+        if has_string_dict {
+            self.line(&format!("string_dict: &'a mut {},", string_dict_type));
+        }
         self.indent -= 1;
         self.line("}");
         self.blank();
@@ -368,15 +383,27 @@ impl<'a> CodeGenerator<'a> {
         self.indent += 1;
 
         // Constructor
-        self.line("pub fn new(input: &'a str) -> Self {");
+        if has_string_dict {
+            self.line(&format!(
+                "pub fn new(input: &'a str, string_dict: &'a mut {}) -> Self {{",
+                string_dict_type
+            ));
+        } else {
+            self.line("pub fn new(input: &'a str) -> Self {");
+        }
         self.indent += 1;
         self.line("Self {");
         self.indent += 1;
         self.line("input,");
         self.line("pos: 0,");
+        self.line("line: 1,");
+        self.line("column: 1,");
         self.line("work_stack: Vec::new(),");
         self.line("result_stack: Vec::new(),");
         self.line("last_error: None,");
+        if has_string_dict {
+            self.line("string_dict,");
+        }
         self.indent -= 1;
         self.line("}");
         self.indent -= 1;
@@ -398,7 +425,7 @@ impl<'a> CodeGenerator<'a> {
             self.line("self.result_stack.pop().ok_or_else(|| ParseError {");
             self.indent += 1;
             self.line("message: \"No result\".to_string(),");
-            self.line("span: Span { start: 0, end: self.pos },");
+            self.line("span: Span { start: 0, end: self.pos, line: self.line, column: self.column },");
             self.indent -= 1;
             self.line("})");
             self.indent -= 1;
@@ -425,12 +452,48 @@ impl<'a> CodeGenerator<'a> {
         self.line("}");
         self.blank();
 
-        // Match literal
+        // Advance by one character and track line/column
+        self.line("fn advance(&mut self) {");
+        self.indent += 1;
+        self.line("if let Some(c) = self.current_char() {");
+        self.indent += 1;
+        self.line("self.pos += c.len_utf8();");
+        self.line("if c == '\\n' {");
+        self.indent += 1;
+        self.line("self.line += 1;");
+        self.line("self.column = 1;");
+        self.indent -= 1;
+        self.line("} else {");
+        self.indent += 1;
+        self.line("self.column += 1;");
+        self.indent -= 1;
+        self.line("}");
+        self.indent -= 1;
+        self.line("}");
+        self.indent -= 1;
+        self.line("}");
+        self.blank();
+
+        // Match literal with line tracking
         self.line("fn match_literal(&mut self, lit: &str) -> bool {");
         self.indent += 1;
         self.line("if self.input[self.pos..].starts_with(lit) {");
         self.indent += 1;
-        self.line("self.pos += lit.len();");
+        self.line("for c in lit.chars() {");
+        self.indent += 1;
+        self.line("self.pos += c.len_utf8();");
+        self.line("if c == '\\n' {");
+        self.indent += 1;
+        self.line("self.line += 1;");
+        self.line("self.column = 1;");
+        self.indent -= 1;
+        self.line("} else {");
+        self.indent += 1;
+        self.line("self.column += 1;");
+        self.indent -= 1;
+        self.line("}");
+        self.indent -= 1;
+        self.line("}");
         self.line("true");
         self.indent -= 1;
         self.line("} else {");
@@ -442,7 +505,7 @@ impl<'a> CodeGenerator<'a> {
         self.line("}");
         self.blank();
 
-        // Match char class
+        // Match char class with line tracking
         self.line("fn match_char_class(&mut self, class: fn(char) -> bool) -> Option<char> {");
         self.indent += 1;
         self.line("if let Some(c) = self.current_char() {");
@@ -450,12 +513,37 @@ impl<'a> CodeGenerator<'a> {
         self.line("if class(c) {");
         self.indent += 1;
         self.line("self.pos += c.len_utf8();");
+        self.line("if c == '\\n' {");
+        self.indent += 1;
+        self.line("self.line += 1;");
+        self.line("self.column = 1;");
+        self.indent -= 1;
+        self.line("} else {");
+        self.indent += 1;
+        self.line("self.column += 1;");
+        self.indent -= 1;
+        self.line("}");
         self.line("return Some(c);");
         self.indent -= 1;
         self.line("}");
         self.indent -= 1;
         self.line("}");
         self.line("None");
+        self.indent -= 1;
+        self.line("}");
+        self.blank();
+
+        // Create span at current position
+        self.line("fn make_span(&self, start: usize) -> Span {");
+        self.indent += 1;
+        self.line("Span {");
+        self.indent += 1;
+        self.line("start,");
+        self.line("end: self.pos,");
+        self.line("line: self.line,");
+        self.line("column: self.column,");
+        self.indent -= 1;
+        self.line("}");
         self.indent -= 1;
         self.line("}");
         self.blank();
@@ -485,7 +573,7 @@ impl<'a> CodeGenerator<'a> {
         self.line("ParseError {");
         self.indent += 1;
         self.line("message: msg.to_string(),");
-        self.line("span: Span { start: self.pos, end: self.pos },");
+        self.line("span: Span { start: self.pos, end: self.pos, line: self.line, column: self.column },");
         self.indent -= 1;
         self.line("}");
         self.indent -= 1;
@@ -569,7 +657,7 @@ impl<'a> CodeGenerator<'a> {
                     c
                 ));
                 self.indent += 1;
-                self.line(&format!("self.pos += {:?}.len_utf8();", c));
+                self.line("self.advance();");
                 self.line("self.result_stack.push(ParseResult::None);");
                 self.indent -= 1;
                 self.line("} else {");
@@ -612,7 +700,7 @@ impl<'a> CodeGenerator<'a> {
                 self.indent += 1;
                 self.line(&format!("if c >= {:?} && c <= {:?} {{", from, to));
                 self.indent += 1;
-                self.line("self.pos += c.len_utf8();");
+                self.line("self.advance();");
                 self.line("self.result_stack.push(ParseResult::None);");
                 self.indent -= 1;
                 self.line("} else {");
@@ -636,9 +724,9 @@ impl<'a> CodeGenerator<'a> {
             Combinator::AnyChar => {
                 self.line(&format!("Work::{}_Start {{ result_base }} => {{", prefix));
                 self.indent += 1;
-                self.line("if let Some(c) = self.current_char() {");
+                self.line("if self.current_char().is_some() {");
                 self.indent += 1;
-                self.line("self.pos += c.len_utf8();");
+                self.line("self.advance();");
                 self.line("self.result_stack.push(ParseResult::None);");
                 self.indent -= 1;
                 self.line("} else {");
@@ -961,13 +1049,15 @@ impl<'a> CodeGenerator<'a> {
 
                 // Start
                 self.line(&format!(
-                    "Work::{}_Start {{ result_base, start_pos }} => {{",
+                    "Work::{}_Start {{ result_base }} => {{",
                     prefix
                 ));
                 self.indent += 1;
                 self.line("let start_pos = self.pos;");
+                self.line("let start_line = self.line;");
+                self.line("let start_column = self.column;");
                 self.line(&format!(
-                    "self.work_stack.push(Work::{}_Complete {{ result_base, start_pos }});",
+                    "self.work_stack.push(Work::{}_Complete {{ result_base, start_pos, start_line, start_column }});",
                     prefix
                 ));
                 self.line(&format!(
@@ -979,7 +1069,7 @@ impl<'a> CodeGenerator<'a> {
 
                 // Complete
                 self.line(&format!(
-                    "Work::{}_Complete {{ result_base, start_pos }} => {{",
+                    "Work::{}_Complete {{ result_base, start_pos, start_line, start_column }} => {{",
                     prefix
                 ));
                 self.indent += 1;
@@ -988,7 +1078,7 @@ impl<'a> CodeGenerator<'a> {
                 self.line("// Remove inner results, replace with captured text");
                 self.line("self.result_stack.truncate(result_base);");
                 self.line("let text = self.text_result(start_pos, self.pos);");
-                self.line("let span = Span { start: start_pos, end: self.pos };");
+                self.line("let span = Span { start: start_pos, end: self.pos, line: start_line, column: start_column };");
                 self.line("self.result_stack.push(ParseResult::Text(text, span));");
                 self.indent -= 1;
                 self.line("}");
@@ -1003,7 +1093,7 @@ impl<'a> CodeGenerator<'a> {
 
                 // Start
                 self.line(&format!(
-                    "Work::{}_Start {{ result_base, checkpoint }} => {{",
+                    "Work::{}_Start {{ result_base }} => {{",
                     prefix
                 ));
                 self.indent += 1;
@@ -1050,7 +1140,7 @@ impl<'a> CodeGenerator<'a> {
 
                 // Start
                 self.line(&format!(
-                    "Work::{}_Start {{ result_base, checkpoint }} => {{",
+                    "Work::{}_Start {{ result_base }} => {{",
                     prefix
                 ));
                 self.indent += 1;

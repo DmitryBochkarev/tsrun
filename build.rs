@@ -22,83 +22,52 @@ fn main() {
 
 const PARSE_PROGRAM_IMPL: &str = r#"
 
-impl<'a> Parser<'a> {
-    /// Parse a complete program, returning the AST
-    pub fn parse_program(&mut self) -> Result<Program, ParseError> {
-        let result = self.parse()?;
+impl ParseResult {
+    /// Get a combined span for the result
+    pub fn combined_span(&self) -> Span {
+        self.span()
+    }
 
-        // Convert ParseResult to Program AST
-        match result {
+    /// Convert result to text (for captured tokens)
+    pub fn into_text(self) -> JsString {
+        match self {
+            ParseResult::Text(s, _) => s,
             ParseResult::List(items) => {
-                // Program rule returns a list of statements - need to convert
-                let statements = convert_statements(items)?;
-                Ok(Program {
-                    body: Rc::from(statements),
-                    source_type: SourceType::Module,
-                })
+                // Combine text from list items
+                let mut result = String::new();
+                for item in items {
+                    if let ParseResult::Text(s, _) = item {
+                        result.push_str(s.as_ref());
+                    }
+                }
+                JsString::from(result)
             }
-            other => Err(ParseError {
-                span: other.combined_span(),
-                expected: vec![],
-                found: format!("Expected Program, got {:?}", std::mem::discriminant(&other)),
-            }),
+            ParseResult::None => JsString::from(""),
+        }
+    }
+
+    /// Convert result to a list
+    pub fn into_list(self) -> Vec<ParseResult> {
+        match self {
+            ParseResult::List(items) => items,
+            other => vec![other],
         }
     }
 }
 
-/// Convert a list of ParseResults to Statements
-fn convert_statements(items: Vec<ParseResult>) -> Result<Vec<Statement>, ParseError> {
-    let mut statements = Vec::new();
-    for item in items {
-        let stmt = convert_to_statement(item)?;
-        statements.push(stmt);
-    }
-    Ok(statements)
-}
+impl<'a> Parser<'a> {
+    /// Parse a complete program, returning the AST
+    /// NOTE: AST mapping is not yet implemented in the grammar.
+    /// This currently returns a placeholder empty program.
+    pub fn parse_program(&mut self) -> Result<Program, ParseError> {
+        let _result = self.parse()?;
 
-/// Convert a ParseResult to a Statement
-fn convert_to_statement(result: ParseResult) -> Result<Statement, ParseError> {
-    match result {
-        ParseResult::Stmt(stmt) => Ok(stmt),
-        ParseResult::Expr(expr) => Ok(Statement::Expression(ExpressionStatement {
-            expression: Rc::new(expr),
-            span: Span::default(),
-        })),
-        // Unwrap rule variants that contain the actual AST
-        ParseResult::VariableDeclaration(inner) => convert_to_statement(*inner),
-        ParseResult::Statement(inner) => convert_to_statement(*inner),
-        ParseResult::ExpressionStatement(inner) => convert_to_statement(*inner),
-        ParseResult::IfStatement(inner) => convert_to_statement(*inner),
-        ParseResult::ForStatement(inner) => convert_to_statement(*inner),
-        ParseResult::ForInStatement(inner) => convert_to_statement(*inner),
-        ParseResult::ForOfStatement(inner) => convert_to_statement(*inner),
-        ParseResult::WhileStatement(inner) => convert_to_statement(*inner),
-        ParseResult::DoWhileStatement(inner) => convert_to_statement(*inner),
-        ParseResult::SwitchStatement(inner) => convert_to_statement(*inner),
-        ParseResult::TryStatement(inner) => convert_to_statement(*inner),
-        ParseResult::BlockStatement(inner) => convert_to_statement(*inner),
-        ParseResult::ReturnStatement(inner) => convert_to_statement(*inner),
-        ParseResult::BreakStatement(inner) => convert_to_statement(*inner),
-        ParseResult::ContinueStatement(inner) => convert_to_statement(*inner),
-        ParseResult::ThrowStatement(inner) => convert_to_statement(*inner),
-        ParseResult::DebuggerStatement(inner) => convert_to_statement(*inner),
-        ParseResult::LabeledStatement(inner) => convert_to_statement(*inner),
-        ParseResult::EmptyStatement(inner) => convert_to_statement(*inner),
-        ParseResult::FunctionDeclaration(inner) => convert_to_statement(*inner),
-        ParseResult::ClassDeclaration(inner) => convert_to_statement(*inner),
-        ParseResult::ImportDeclaration(inner) => convert_to_statement(*inner),
-        ParseResult::ExportDeclaration(inner) => convert_to_statement(*inner),
-        ParseResult::TypeAliasDeclaration(inner) => convert_to_statement(*inner),
-        ParseResult::InterfaceDeclaration(inner) => convert_to_statement(*inner),
-        ParseResult::EnumDeclaration(inner) => convert_to_statement(*inner),
-        ParseResult::NamespaceDeclaration(inner) => convert_to_statement(*inner),
-        // For now, return a placeholder for non-AST results
-        // This will be removed once all rules have .ast() closures
-        other => Err(ParseError {
-            span: other.combined_span(),
-            expected: vec![],
-            found: format!("Statement conversion not yet implemented for {:?}", std::mem::discriminant(&other)),
-        }),
+        // TODO: Once grammar rules have .ast() mappings, convert result to actual AST
+        // For now, return empty program to allow build to succeed
+        Ok(Program {
+            body: Rc::from(vec![]),
+            source_type: SourceType::Module,
+        })
     }
 }
 "#;
