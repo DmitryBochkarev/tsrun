@@ -66,3 +66,8 @@ pub mod arithmetic_parser {
 pub mod nested_parser {
     include!(concat!(env!("OUT_DIR"), "/nested_parser.rs"));
 }
+
+#[allow(dead_code, unused_variables, clippy::all)]
+pub mod json_parser {
+    include!(concat!(env!("OUT_DIR"), "/json_parser.rs"));
+}

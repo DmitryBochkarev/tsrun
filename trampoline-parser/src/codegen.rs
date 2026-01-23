@@ -222,10 +222,13 @@ impl<'a> CodeGenerator<'a> {
             Combinator::Sequence(items) => {
                 self.line(&format!("{}Start {{ result_base: usize }},", prefix));
                 for i in 1..items.len() {
-                    self.line(&format!("{}SeqStep{} {{ result_base: usize }},", prefix, i));
+                    self.line(&format!(
+                        "{}SeqStep{} {{ result_base: usize, seq_base: usize }},",
+                        prefix, i
+                    ));
                 }
                 self.line(&format!(
-                    "{}SeqComplete {{ result_base: usize, count: usize }},",
+                    "{}SeqComplete {{ result_base: usize, seq_base: usize, count: usize }},",
                     prefix
                 ));
                 // Recurse into children
@@ -238,7 +241,7 @@ impl<'a> CodeGenerator<'a> {
                 self.line(&format!("{}Start {{ result_base: usize }},", prefix));
                 for i in 0..items.len() {
                     self.line(&format!(
-                        "{}Choice{}Try {{ result_base: usize, checkpoint: usize }},",
+                        "{}Choice{}Try {{ result_base: usize, checkpoint: usize, stack_base: usize }},",
                         prefix, i
                     ));
                 }
@@ -251,27 +254,33 @@ impl<'a> CodeGenerator<'a> {
             Combinator::ZeroOrMore(inner) => {
                 self.line(&format!("{}Start {{ result_base: usize }},", prefix));
                 self.line(&format!(
-                    "{}Loop {{ result_base: usize, checkpoint: usize }},",
+                    "{}Loop {{ result_base: usize, loop_base: usize, checkpoint: usize }},",
                     prefix
                 ));
-                self.line(&format!("{}Complete {{ result_base: usize }},", prefix));
+                self.line(&format!(
+                    "{}Complete {{ result_base: usize, loop_base: usize }},",
+                    prefix
+                ));
                 let child_prefix = format!("{}Item", prefix);
                 self.emit_work_variants(&child_prefix, inner);
             }
             Combinator::OneOrMore(inner) => {
                 self.line(&format!("{}Start {{ result_base: usize }},", prefix));
                 self.line(&format!(
-                    "{}Loop {{ result_base: usize, checkpoint: usize, count: usize }},",
+                    "{}Loop {{ result_base: usize, loop_base: usize, checkpoint: usize, count: usize }},",
                     prefix
                 ));
-                self.line(&format!("{}Complete {{ result_base: usize }},", prefix));
+                self.line(&format!(
+                    "{}Complete {{ result_base: usize, loop_base: usize }},",
+                    prefix
+                ));
                 let child_prefix = format!("{}Item", prefix);
                 self.emit_work_variants(&child_prefix, inner);
             }
             Combinator::Optional(inner) => {
                 self.line(&format!("{}Start {{ result_base: usize }},", prefix));
                 self.line(&format!(
-                    "{}Check {{ result_base: usize, checkpoint: usize }},",
+                    "{}Check {{ result_base: usize, opt_base: usize, checkpoint: usize }},",
                     prefix
                 ));
                 let child_prefix = format!("{}Inner", prefix);
@@ -297,7 +306,7 @@ impl<'a> CodeGenerator<'a> {
                     "{}Start {{ result_base: usize }},",
                     prefix
                 ));
-                self.line(&format!("{}Complete {{ result_base: usize, start_pos: usize, start_line: u32, start_column: u32 }},", prefix));
+                self.line(&format!("{}Complete {{ result_base: usize, capture_base: usize, start_pos: usize, start_line: u32, start_column: u32 }},", prefix));
                 let child_prefix = format!("{}Inner", prefix);
                 self.emit_work_variants(&child_prefix, inner);
             }
@@ -307,7 +316,7 @@ impl<'a> CodeGenerator<'a> {
                     prefix
                 ));
                 self.line(&format!(
-                    "{}Check {{ result_base: usize, checkpoint: usize }},",
+                    "{}Check {{ result_base: usize, nfb_base: usize, checkpoint: usize }},",
                     prefix
                 ));
                 let child_prefix = format!("{}Inner", prefix);
@@ -319,7 +328,7 @@ impl<'a> CodeGenerator<'a> {
                     prefix
                 ));
                 self.line(&format!(
-                    "{}Check {{ result_base: usize, checkpoint: usize }},",
+                    "{}Check {{ result_base: usize, fb_base: usize, checkpoint: usize }},",
                     prefix
                 ));
                 let child_prefix = format!("{}Inner", prefix);
@@ -327,21 +336,24 @@ impl<'a> CodeGenerator<'a> {
             }
             Combinator::Skip(inner) => {
                 self.line(&format!("{}Start {{ result_base: usize }},", prefix));
-                self.line(&format!("{}Complete {{ result_base: usize }},", prefix));
+                self.line(&format!(
+                    "{}Complete {{ result_base: usize, skip_base: usize }},",
+                    prefix
+                ));
                 let child_prefix = format!("{}Inner", prefix);
                 self.emit_work_variants(&child_prefix, inner);
             }
             Combinator::SeparatedBy { item, separator, .. } => {
                 self.line(&format!("{}Start {{ result_base: usize }},", prefix));
                 self.line(&format!(
-                    "{}Sep {{ result_base: usize, checkpoint: usize }},",
+                    "{}Sep {{ result_base: usize, list_base: usize, checkpoint: usize }},",
                     prefix
                 ));
                 self.line(&format!(
-                    "{}Item {{ result_base: usize, checkpoint: usize }},",
+                    "{}Item {{ result_base: usize, list_base: usize, checkpoint: usize }},",
                     prefix
                 ));
-                self.line(&format!("{}Complete {{ result_base: usize }},", prefix));
+                self.line(&format!("{}Complete {{ result_base: usize, list_base: usize }},", prefix));
                 let item_prefix = format!("{}ItemRule", prefix);
                 self.emit_work_variants(&item_prefix, item);
                 let sep_prefix = format!("{}SepRule", prefix);
@@ -370,7 +382,7 @@ impl<'a> CodeGenerator<'a> {
                     prefix
                 ));
                 self.line(&format!(
-                    "{}Map {{ result_base: usize, start_pos: usize, start_line: u32, start_column: u32 }},",
+                    "{}Map {{ result_base: usize, map_base: usize, start_pos: usize, start_line: u32, start_column: u32 }},",
                     prefix
                 ));
             }
@@ -828,18 +840,19 @@ impl<'a> CodeGenerator<'a> {
                 self.line("}");
             }
             Combinator::Sequence(items) => {
-                // Start: push completion, then first item
+                // Start: capture seq_base, push completion, then first item
                 self.line(&format!("Work::{}Start {{ result_base }} => {{", prefix));
                 self.indent += 1;
+                self.line("let seq_base = self.result_stack.len();");
                 self.line(&format!(
-                    "self.work_stack.push(Work::{}SeqComplete {{ result_base, count: {} }});",
+                    "self.work_stack.push(Work::{}SeqComplete {{ result_base, seq_base, count: {} }});",
                     prefix,
                     items.len()
                 ));
                 // Push items in reverse order
                 for i in (1..items.len()).rev() {
                     self.line(&format!(
-                        "self.work_stack.push(Work::{}SeqStep{} {{ result_base }});",
+                        "self.work_stack.push(Work::{}SeqStep{} {{ result_base, seq_base }});",
                         prefix, i
                     ));
                 }
@@ -855,7 +868,7 @@ impl<'a> CodeGenerator<'a> {
                 // Step handlers
                 for i in 1..items.len() {
                     self.line(&format!(
-                        "Work::{}SeqStep{} {{ result_base }} => {{",
+                        "Work::{}SeqStep{} {{ result_base, seq_base }} => {{",
                         prefix, i
                     ));
                     self.indent += 1;
@@ -869,20 +882,20 @@ impl<'a> CodeGenerator<'a> {
                     self.line("}");
                 }
 
-                // Complete handler
+                // Complete handler - use seq_base for drain/truncate
                 self.line(&format!(
-                    "Work::{}SeqComplete {{ result_base, count }} => {{",
+                    "Work::{}SeqComplete {{ result_base, seq_base, count }} => {{",
                     prefix
                 ));
                 self.indent += 1;
                 self.line("if self.last_error.is_none() {");
                 self.indent += 1;
-                self.line("let results: Vec<_> = self.result_stack.drain(result_base..).collect();");
+                self.line("let results: Vec<_> = self.result_stack.drain(seq_base..).collect();");
                 self.line("self.result_stack.push(ParseResult::List(results));");
                 self.indent -= 1;
                 self.line("} else {");
                 self.indent += 1;
-                self.line("self.result_stack.truncate(result_base);");
+                self.line("self.result_stack.truncate(seq_base);");
                 self.indent -= 1;
                 self.line("}");
                 self.indent -= 1;
@@ -895,12 +908,13 @@ impl<'a> CodeGenerator<'a> {
                 }
             }
             Combinator::Choice(items) => {
-                // Start: try first alternative
+                // Start: capture stack base and try first alternative
                 self.line(&format!("Work::{}Start {{ result_base }} => {{", prefix));
                 self.indent += 1;
                 self.line("let checkpoint = self.pos;");
+                self.line("let stack_base = self.result_stack.len();");
                 self.line(&format!(
-                    "self.work_stack.push(Work::{}Choice0Try {{ result_base, checkpoint }});",
+                    "self.work_stack.push(Work::{}Choice0Try {{ result_base, checkpoint, stack_base }});",
                     prefix
                 ));
                 let first_prefix = format!("{}Choice0", prefix);
@@ -911,10 +925,10 @@ impl<'a> CodeGenerator<'a> {
                 self.indent -= 1;
                 self.line("}");
 
-                // Try handlers
+                // Try handlers - use stack_base for truncation, not result_base
                 for i in 0..items.len() {
                     self.line(&format!(
-                        "Work::{}Choice{}Try {{ result_base, checkpoint }} => {{",
+                        "Work::{}Choice{}Try {{ result_base, checkpoint, stack_base }} => {{",
                         prefix, i
                     ));
                     self.indent += 1;
@@ -922,11 +936,11 @@ impl<'a> CodeGenerator<'a> {
                     self.indent += 1;
                     self.line("self.last_error = None;");
                     self.line("self.pos = checkpoint;");
-                    self.line("self.result_stack.truncate(result_base);");
+                    self.line("self.result_stack.truncate(stack_base);");
                     if i + 1 < items.len() {
                         // Try next alternative
                         self.line(&format!(
-                            "self.work_stack.push(Work::{}Choice{}Try {{ result_base, checkpoint }});",
+                            "self.work_stack.push(Work::{}Choice{}Try {{ result_base, checkpoint, stack_base }});",
                             prefix,
                             i + 1
                         ));
@@ -955,12 +969,13 @@ impl<'a> CodeGenerator<'a> {
             Combinator::ZeroOrMore(inner) => {
                 let item_prefix = format!("{}Item", prefix);
 
-                // Start
+                // Start - capture loop_base to track where this loop's results start
                 self.line(&format!("Work::{}Start {{ result_base }} => {{", prefix));
                 self.indent += 1;
                 self.line("let checkpoint = self.pos;");
+                self.line("let loop_base = self.result_stack.len();");
                 self.line(&format!(
-                    "self.work_stack.push(Work::{}Loop {{ result_base, checkpoint }});",
+                    "self.work_stack.push(Work::{}Loop {{ result_base, loop_base, checkpoint }});",
                     prefix
                 ));
                 self.line(&format!(
@@ -970,9 +985,9 @@ impl<'a> CodeGenerator<'a> {
                 self.indent -= 1;
                 self.line("}");
 
-                // Loop
+                // Loop - use loop_base for result tracking
                 self.line(&format!(
-                    "Work::{}Loop {{ result_base, checkpoint }} => {{",
+                    "Work::{}Loop {{ result_base, loop_base, checkpoint }} => {{",
                     prefix
                 ));
                 self.indent += 1;
@@ -980,14 +995,14 @@ impl<'a> CodeGenerator<'a> {
                 self.indent += 1;
                 self.line("self.last_error = None;");
                 self.line("self.pos = checkpoint;");
-                // Pop the failed item result if any
-                self.line("if self.result_stack.len() > result_base {");
+                // Pop the failed item result if any (use loop_base, not result_base)
+                self.line("if self.result_stack.len() > loop_base {");
                 self.indent += 1;
                 self.line("self.result_stack.pop();");
                 self.indent -= 1;
                 self.line("}");
                 self.line(&format!(
-                    "self.work_stack.push(Work::{}Complete {{ result_base }});",
+                    "self.work_stack.push(Work::{}Complete {{ result_base, loop_base }});",
                     prefix
                 ));
                 self.indent -= 1;
@@ -995,7 +1010,7 @@ impl<'a> CodeGenerator<'a> {
                 self.indent += 1;
                 self.line("let checkpoint = self.pos;");
                 self.line(&format!(
-                    "self.work_stack.push(Work::{}Loop {{ result_base, checkpoint }});",
+                    "self.work_stack.push(Work::{}Loop {{ result_base, loop_base, checkpoint }});",
                     prefix
                 ));
                 self.line(&format!(
@@ -1007,13 +1022,13 @@ impl<'a> CodeGenerator<'a> {
                 self.indent -= 1;
                 self.line("}");
 
-                // Complete
+                // Complete - drain only this loop's results using loop_base
                 self.line(&format!(
-                    "Work::{}Complete {{ result_base }} => {{",
+                    "Work::{}Complete {{ result_base, loop_base }} => {{",
                     prefix
                 ));
                 self.indent += 1;
-                self.line("let results: Vec<_> = self.result_stack.drain(result_base..).collect();");
+                self.line("let results: Vec<_> = self.result_stack.drain(loop_base..).collect();");
                 self.line("self.result_stack.push(ParseResult::List(results));");
                 self.indent -= 1;
                 self.line("}");
@@ -1024,12 +1039,13 @@ impl<'a> CodeGenerator<'a> {
             Combinator::OneOrMore(inner) => {
                 let item_prefix = format!("{}Item", prefix);
 
-                // Start - must match at least one
+                // Start - must match at least one, capture loop_base
                 self.line(&format!("Work::{}Start {{ result_base }} => {{", prefix));
                 self.indent += 1;
                 self.line("let checkpoint = self.pos;");
+                self.line("let loop_base = self.result_stack.len();");
                 self.line(&format!(
-                    "self.work_stack.push(Work::{}Loop {{ result_base, checkpoint, count: 0 }});",
+                    "self.work_stack.push(Work::{}Loop {{ result_base, loop_base, checkpoint, count: 0 }});",
                     prefix
                 ));
                 self.line(&format!(
@@ -1039,9 +1055,9 @@ impl<'a> CodeGenerator<'a> {
                 self.indent -= 1;
                 self.line("}");
 
-                // Loop
+                // Loop - use loop_base for result tracking
                 self.line(&format!(
-                    "Work::{}Loop {{ result_base, checkpoint, count }} => {{",
+                    "Work::{}Loop {{ result_base, loop_base, checkpoint, count }} => {{",
                     prefix
                 ));
                 self.indent += 1;
@@ -1055,13 +1071,13 @@ impl<'a> CodeGenerator<'a> {
                 self.line("}");
                 self.line("self.last_error = None;");
                 self.line("self.pos = checkpoint;");
-                self.line("if self.result_stack.len() > result_base {");
+                self.line("if self.result_stack.len() > loop_base {");
                 self.indent += 1;
                 self.line("self.result_stack.pop();");
                 self.indent -= 1;
                 self.line("}");
                 self.line(&format!(
-                    "self.work_stack.push(Work::{}Complete {{ result_base }});",
+                    "self.work_stack.push(Work::{}Complete {{ result_base, loop_base }});",
                     prefix
                 ));
                 self.indent -= 1;
@@ -1069,7 +1085,7 @@ impl<'a> CodeGenerator<'a> {
                 self.indent += 1;
                 self.line("let checkpoint = self.pos;");
                 self.line(&format!(
-                    "self.work_stack.push(Work::{}Loop {{ result_base, checkpoint, count: count + 1 }});",
+                    "self.work_stack.push(Work::{}Loop {{ result_base, loop_base, checkpoint, count: count + 1 }});",
                     prefix
                 ));
                 self.line(&format!(
@@ -1081,13 +1097,13 @@ impl<'a> CodeGenerator<'a> {
                 self.indent -= 1;
                 self.line("}");
 
-                // Complete
+                // Complete - drain only this loop's results using loop_base
                 self.line(&format!(
-                    "Work::{}Complete {{ result_base }} => {{",
+                    "Work::{}Complete {{ result_base, loop_base }} => {{",
                     prefix
                 ));
                 self.indent += 1;
-                self.line("let results: Vec<_> = self.result_stack.drain(result_base..).collect();");
+                self.line("let results: Vec<_> = self.result_stack.drain(loop_base..).collect();");
                 self.line("self.result_stack.push(ParseResult::List(results));");
                 self.indent -= 1;
                 self.line("}");
@@ -1098,12 +1114,13 @@ impl<'a> CodeGenerator<'a> {
             Combinator::Optional(inner) => {
                 let inner_prefix = format!("{}Inner", prefix);
 
-                // Start
+                // Start - capture opt_base to track where this optional's results start
                 self.line(&format!("Work::{}Start {{ result_base }} => {{", prefix));
                 self.indent += 1;
                 self.line("let checkpoint = self.pos;");
+                self.line("let opt_base = self.result_stack.len();");
                 self.line(&format!(
-                    "self.work_stack.push(Work::{}Check {{ result_base, checkpoint }});",
+                    "self.work_stack.push(Work::{}Check {{ result_base, opt_base, checkpoint }});",
                     prefix
                 ));
                 self.line(&format!(
@@ -1113,9 +1130,9 @@ impl<'a> CodeGenerator<'a> {
                 self.indent -= 1;
                 self.line("}");
 
-                // Check
+                // Check - use opt_base for truncation, not result_base
                 self.line(&format!(
-                    "Work::{}Check {{ result_base, checkpoint }} => {{",
+                    "Work::{}Check {{ result_base, opt_base, checkpoint }} => {{",
                     prefix
                 ));
                 self.indent += 1;
@@ -1123,7 +1140,7 @@ impl<'a> CodeGenerator<'a> {
                 self.indent += 1;
                 self.line("self.last_error = None;");
                 self.line("self.pos = checkpoint;");
-                self.line("self.result_stack.truncate(result_base);");
+                self.line("self.result_stack.truncate(opt_base);");
                 self.line("self.result_stack.push(ParseResult::None);");
                 self.indent -= 1;
                 self.line("}");
@@ -1137,7 +1154,7 @@ impl<'a> CodeGenerator<'a> {
             Combinator::Capture(inner) => {
                 let inner_prefix = format!("{}Inner", prefix);
 
-                // Start
+                // Start - capture base for truncation
                 self.line(&format!(
                     "Work::{}Start {{ result_base }} => {{",
                     prefix
@@ -1146,8 +1163,9 @@ impl<'a> CodeGenerator<'a> {
                 self.line("let start_pos = self.pos;");
                 self.line("let start_line = self.line;");
                 self.line("let start_column = self.column;");
+                self.line("let capture_base = self.result_stack.len();");
                 self.line(&format!(
-                    "self.work_stack.push(Work::{}Complete {{ result_base, start_pos, start_line, start_column }});",
+                    "self.work_stack.push(Work::{}Complete {{ result_base, capture_base, start_pos, start_line, start_column }});",
                     prefix
                 ));
                 self.line(&format!(
@@ -1157,16 +1175,16 @@ impl<'a> CodeGenerator<'a> {
                 self.indent -= 1;
                 self.line("}");
 
-                // Complete
+                // Complete - use capture_base for truncation
                 self.line(&format!(
-                    "Work::{}Complete {{ result_base, start_pos, start_line, start_column }} => {{",
+                    "Work::{}Complete {{ result_base, capture_base, start_pos, start_line, start_column }} => {{",
                     prefix
                 ));
                 self.indent += 1;
                 self.line("if self.last_error.is_none() {");
                 self.indent += 1;
                 self.line("// Remove inner results, replace with captured text");
-                self.line("self.result_stack.truncate(result_base);");
+                self.line("self.result_stack.truncate(capture_base);");
                 self.line("let text = self.text_result(start_pos, self.pos);");
                 self.line("let span = Span { start: start_pos, end: self.pos, line: start_line, column: start_column };");
                 self.line("self.result_stack.push(ParseResult::Text(text, span));");
@@ -1181,15 +1199,16 @@ impl<'a> CodeGenerator<'a> {
             Combinator::NotFollowedBy(inner) => {
                 let inner_prefix = format!("{}Inner", prefix);
 
-                // Start
+                // Start - capture nfb_base for truncation
                 self.line(&format!(
                     "Work::{}Start {{ result_base }} => {{",
                     prefix
                 ));
                 self.indent += 1;
                 self.line("let checkpoint = self.pos;");
+                self.line("let nfb_base = self.result_stack.len();");
                 self.line(&format!(
-                    "self.work_stack.push(Work::{}Check {{ result_base, checkpoint }});",
+                    "self.work_stack.push(Work::{}Check {{ result_base, nfb_base, checkpoint }});",
                     prefix
                 ));
                 self.line(&format!(
@@ -1199,14 +1218,14 @@ impl<'a> CodeGenerator<'a> {
                 self.indent -= 1;
                 self.line("}");
 
-                // Check - success if inner failed
+                // Check - success if inner failed, use nfb_base for truncation
                 self.line(&format!(
-                    "Work::{}Check {{ result_base, checkpoint }} => {{",
+                    "Work::{}Check {{ result_base: _, nfb_base, checkpoint }} => {{",
                     prefix
                 ));
                 self.indent += 1;
                 self.line("self.pos = checkpoint;");
-                self.line("self.result_stack.truncate(result_base);");
+                self.line("self.result_stack.truncate(nfb_base);");
                 self.line("if self.last_error.is_some() {");
                 self.indent += 1;
                 self.line("// Inner failed - that's what we want");
@@ -1228,15 +1247,16 @@ impl<'a> CodeGenerator<'a> {
             Combinator::FollowedBy(inner) => {
                 let inner_prefix = format!("{}Inner", prefix);
 
-                // Start
+                // Start - capture fb_base for truncation
                 self.line(&format!(
                     "Work::{}Start {{ result_base }} => {{",
                     prefix
                 ));
                 self.indent += 1;
                 self.line("let checkpoint = self.pos;");
+                self.line("let fb_base = self.result_stack.len();");
                 self.line(&format!(
-                    "self.work_stack.push(Work::{}Check {{ result_base, checkpoint }});",
+                    "self.work_stack.push(Work::{}Check {{ result_base, fb_base, checkpoint }});",
                     prefix
                 ));
                 self.line(&format!(
@@ -1246,14 +1266,14 @@ impl<'a> CodeGenerator<'a> {
                 self.indent -= 1;
                 self.line("}");
 
-                // Check - restore position but keep success/failure
+                // Check - restore position but keep success/failure, use fb_base for truncation
                 self.line(&format!(
-                    "Work::{}Check {{ result_base, checkpoint }} => {{",
+                    "Work::{}Check {{ result_base: _, fb_base, checkpoint }} => {{",
                     prefix
                 ));
                 self.indent += 1;
                 self.line("self.pos = checkpoint;");
-                self.line("self.result_stack.truncate(result_base);");
+                self.line("self.result_stack.truncate(fb_base);");
                 self.line("if self.last_error.is_none() {");
                 self.indent += 1;
                 self.line("self.result_stack.push(ParseResult::None);");
@@ -1268,11 +1288,12 @@ impl<'a> CodeGenerator<'a> {
             Combinator::Skip(inner) => {
                 let inner_prefix = format!("{}Inner", prefix);
 
-                // Start
+                // Start - capture current stack length as skip_base
                 self.line(&format!("Work::{}Start {{ result_base }} => {{", prefix));
                 self.indent += 1;
+                self.line("let skip_base = self.result_stack.len();");
                 self.line(&format!(
-                    "self.work_stack.push(Work::{}Complete {{ result_base }});",
+                    "self.work_stack.push(Work::{}Complete {{ result_base, skip_base }});",
                     prefix
                 ));
                 self.line(&format!(
@@ -1282,15 +1303,15 @@ impl<'a> CodeGenerator<'a> {
                 self.indent -= 1;
                 self.line("}");
 
-                // Complete - discard result
+                // Complete - discard inner results only, not previous sequence elements
                 self.line(&format!(
-                    "Work::{}Complete {{ result_base }} => {{",
+                    "Work::{}Complete {{ result_base, skip_base }} => {{",
                     prefix
                 ));
                 self.indent += 1;
                 self.line("if self.last_error.is_none() {");
                 self.indent += 1;
-                self.line("self.result_stack.truncate(result_base);");
+                self.line("self.result_stack.truncate(skip_base);");
                 self.line("self.result_stack.push(ParseResult::None);");
                 self.indent -= 1;
                 self.line("}");
@@ -1304,12 +1325,13 @@ impl<'a> CodeGenerator<'a> {
                 let item_prefix = format!("{}ItemRule", prefix);
                 let sep_prefix = format!("{}SepRule", prefix);
 
-                // Start - try first item
+                // Start - try first item, capture list_base
                 self.line(&format!("Work::{}Start {{ result_base }} => {{", prefix));
                 self.indent += 1;
                 self.line("let checkpoint = self.pos;");
+                self.line("let list_base = self.result_stack.len();");
                 self.line(&format!(
-                    "self.work_stack.push(Work::{}Sep {{ result_base, checkpoint }});",
+                    "self.work_stack.push(Work::{}Sep {{ result_base, list_base, checkpoint }});",
                     prefix
                 ));
                 self.line(&format!(
@@ -1321,7 +1343,7 @@ impl<'a> CodeGenerator<'a> {
 
                 // Sep - after item, try separator
                 self.line(&format!(
-                    "Work::{}Sep {{ result_base, checkpoint }} => {{",
+                    "Work::{}Sep {{ result_base, list_base, checkpoint }} => {{",
                     prefix
                 ));
                 self.indent += 1;
@@ -1330,9 +1352,9 @@ impl<'a> CodeGenerator<'a> {
                 self.line("// First item failed - return empty list");
                 self.line("self.last_error = None;");
                 self.line("self.pos = checkpoint;");
-                self.line("self.result_stack.truncate(result_base);");
+                self.line("self.result_stack.truncate(list_base);");
                 self.line(&format!(
-                    "self.work_stack.push(Work::{}Complete {{ result_base }});",
+                    "self.work_stack.push(Work::{}Complete {{ result_base, list_base }});",
                     prefix
                 ));
                 self.indent -= 1;
@@ -1340,7 +1362,7 @@ impl<'a> CodeGenerator<'a> {
                 self.indent += 1;
                 self.line("let checkpoint = self.pos;");
                 self.line(&format!(
-                    "self.work_stack.push(Work::{}Item {{ result_base, checkpoint }});",
+                    "self.work_stack.push(Work::{}Item {{ result_base, list_base, checkpoint }});",
                     prefix
                 ));
                 self.line(&format!(
@@ -1354,23 +1376,17 @@ impl<'a> CodeGenerator<'a> {
 
                 // Item - after separator, try next item
                 self.line(&format!(
-                    "Work::{}Item {{ result_base, checkpoint }} => {{",
+                    "Work::{}Item {{ result_base, list_base, checkpoint }} => {{",
                     prefix
                 ));
                 self.indent += 1;
                 self.line("if self.last_error.is_some() {");
                 self.indent += 1;
-                self.line("// Separator failed - done");
+                self.line("// Separator failed - done (no need to pop, failed combinator doesn't push)");
                 self.line("self.last_error = None;");
                 self.line("self.pos = checkpoint;");
-                // Pop the failed separator result
-                self.line("if self.result_stack.len() > result_base {");
-                self.indent += 1;
-                self.line("self.result_stack.pop();");
-                self.indent -= 1;
-                self.line("}");
                 self.line(&format!(
-                    "self.work_stack.push(Work::{}Complete {{ result_base }});",
+                    "self.work_stack.push(Work::{}Complete {{ result_base, list_base }});",
                     prefix
                 ));
                 self.indent -= 1;
@@ -1381,7 +1397,7 @@ impl<'a> CodeGenerator<'a> {
                     self.line("// Allow trailing separator");
                     self.line("let checkpoint = self.pos;");
                     self.line(&format!(
-                        "self.work_stack.push(Work::{}Sep {{ result_base, checkpoint }});",
+                        "self.work_stack.push(Work::{}Sep {{ result_base, list_base, checkpoint }});",
                         prefix
                     ));
                     self.line(&format!(
@@ -1391,7 +1407,7 @@ impl<'a> CodeGenerator<'a> {
                 } else {
                     self.line("let checkpoint = self.pos;");
                     self.line(&format!(
-                        "self.work_stack.push(Work::{}Sep {{ result_base, checkpoint }});",
+                        "self.work_stack.push(Work::{}Sep {{ result_base, list_base, checkpoint }});",
                         prefix
                     ));
                     self.line(&format!(
@@ -1404,14 +1420,14 @@ impl<'a> CodeGenerator<'a> {
                 self.indent -= 1;
                 self.line("}");
 
-                // Complete
+                // Complete - use list_base for drain
                 self.line(&format!(
-                    "Work::{}Complete {{ result_base }} => {{",
+                    "Work::{}Complete {{ result_base: _, list_base }} => {{",
                     prefix
                 ));
                 self.indent += 1;
                 self.line("// Filter out separator results (None values between items)");
-                self.line("let results: Vec<_> = self.result_stack.drain(result_base..)");
+                self.line("let results: Vec<_> = self.result_stack.drain(list_base..)");
                 self.indent += 1;
                 self.line(".enumerate()");
                 self.line(".filter(|(i, _)| i % 2 == 0)  // Keep items, skip separators");
@@ -1656,8 +1672,9 @@ impl<'a> CodeGenerator<'a> {
                 self.line("let start_pos = self.pos;");
                 self.line("let start_line = self.line;");
                 self.line("let start_column = self.column;");
+                self.line("let map_base = self.result_stack.len();");
                 self.line(&format!(
-                    "self.work_stack.push(Work::{}Map {{ result_base, start_pos, start_line, start_column }});",
+                    "self.work_stack.push(Work::{}Map {{ result_base, map_base, start_pos, start_line, start_column }});",
                     prefix
                 ));
                 self.line(&format!(
@@ -1669,14 +1686,14 @@ impl<'a> CodeGenerator<'a> {
 
                 // Map handler - applies the mapping closure to the result
                 self.line(&format!(
-                    "Work::{}Map {{ result_base, start_pos, start_line, start_column }} => {{",
+                    "Work::{}Map {{ result_base, map_base, start_pos, start_line, start_column }} => {{",
                     prefix
                 ));
                 self.indent += 1;
                 self.line("if self.last_error.is_none() {");
                 self.indent += 1;
-                // Collect results from inner into a single result
-                self.line("let inner_results: Vec<ParseResult> = self.result_stack.drain(result_base..).collect();");
+                // Collect results from inner into a single result (use map_base, not result_base)
+                self.line("let inner_results: Vec<ParseResult> = self.result_stack.drain(map_base..).collect();");
                 self.line("let result = if inner_results.len() == 1 {");
                 self.indent += 1;
                 self.line("inner_results.into_iter().next().unwrap_or(ParseResult::None)");
