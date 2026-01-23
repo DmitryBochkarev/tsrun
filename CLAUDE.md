@@ -24,6 +24,10 @@ timeout 30 cargo test --test interpreter # Run interpreter integration tests
 timeout 30 cargo test test_name          # Run specific test
 timeout 30 cargo test -- --nocapture     # Show test output
 
+# Parser generator tests
+cargo test -p trampoline-parser          # Library tests
+cargo test -p trampoline-parser-tests    # Generated parser integration tests
+
 # WASM tests
 wasm-pack test --node --features wasm --no-default-features  # Run native WASM tests
 cd examples/wasm-playground && ./build.sh --test             # Build and run playground e2e tests
@@ -46,6 +50,9 @@ cd examples/wasm-playground && ./build.sh --test             # Build and run pla
 | `src/ffi/` | C FFI module (feature-gated: `c-api`) |
 | `src/wasm/mod.rs` | WASM API (feature-gated: `wasm`) |
 | `tests/interpreter/` | Integration tests by feature |
+| `trampoline-parser/` | Parser generator DSL for scannerless parsing |
+| `trampoline-parser-tests/` | Integration tests for trampoline-parser |
+| `grammar/` | TypeScript grammar definition using trampoline-parser |
 | `examples/c-embedding/` | C API usage examples |
 | `examples/wasm-playground/` | WASM browser/Node.js playground |
 | `examples/go-wazero/` | Go embedding via WASM (wazero) |
@@ -272,6 +279,88 @@ pub enum RuntimeResult {
 - `native.rs` - Native C function callback system
 - `module.rs` - Module system (provide_module, exports)
 - `order.rs` - Async order system (pending orders, fulfillment)
+
+## Trampoline Parser
+
+A DSL for generating scannerless, trampoline-based parsers. Uses iterative work stacks instead of recursion to prevent stack overflow on deeply nested input.
+
+### Structure
+
+| Location | Purpose |
+|----------|---------|
+| `trampoline-parser/src/lib.rs` | Public API (`Grammar`, `Assoc`) |
+| `trampoline-parser/src/parser_dsl.rs` | DSL builder methods |
+| `trampoline-parser/src/codegen.rs` | Rust code generator |
+| `trampoline-parser/src/ir.rs` | Intermediate representation |
+| `trampoline-parser-tests/` | Integration test crate |
+| `grammar/` | TypeScript grammar using the DSL |
+
+### Usage
+
+```rust
+use trampoline_parser::{Grammar, Assoc};
+
+let grammar = Grammar::new()
+    .rule("expr", |r| {
+        r.pratt(r.parse("number"), |ops| {
+            ops.infix("+", 1, Assoc::Left, "|l, r, _| Ok(binary(l, r))")
+               .infix("*", 2, Assoc::Left, "|l, r, _| Ok(binary(l, r))")
+        })
+    })
+    .rule("number", |r| r.capture(r.one_or_more(r.digit())))
+    .build();
+
+let code = grammar.generate();  // Generates Rust parser code
+```
+
+### Testing Flow
+
+The `trampoline-parser-tests` crate tests the generated parsers:
+
+```bash
+cargo test -p trampoline-parser        # Library unit tests (10 tests)
+cargo test -p trampoline-parser-tests  # Integration tests (54 tests)
+```
+
+Tests are organized by feature:
+- `tests/combinators.rs` - Basic combinators (literal, sequence, choice, repetition)
+- `tests/pratt.rs` - Pratt expression parsing (precedence, associativity, prefix ops)
+- `tests/edge_cases.rs` - Deep nesting, long input, error handling
+
+The test crate uses `build.rs` to generate parsers at compile time, then tests them:
+
+```rust
+// In build.rs - generates parser code
+let grammar = Grammar::new()
+    .rule("number", |r| r.capture(r.one_or_more(r.digit())))
+    .build();
+write_parser(out_path, "number_parser", &grammar.generate());
+
+// In src/lib.rs - includes generated code
+pub mod number_parser {
+    include!(concat!(env!("OUT_DIR"), "/number_parser.rs"));
+}
+
+// In tests - uses the generated parser
+let mut parser = number_parser::Parser::new("123");
+let result = parser.parse().expect("should parse");
+```
+
+### Key Combinators
+
+| Method | Description |
+|--------|-------------|
+| `lit("x")` | Match literal string |
+| `digit()`, `alpha()` | Character classes |
+| `sequence((a, b, c))` | Match in order |
+| `choice((a, b))` | Try alternatives with backtracking |
+| `zero_or_more(x)` | Match 0+ times |
+| `one_or_more(x)` | Match 1+ times |
+| `optional(x)` | Match 0 or 1 time |
+| `capture(x)` | Capture matched text as `ParseResult::Text` |
+| `parse("rule")` | Reference another rule |
+| `pratt(operand, ops)` | Pratt parsing for expressions |
+| `separated_by(item, sep)` | Comma-separated lists |
 
 ## Implementation Patterns
 
