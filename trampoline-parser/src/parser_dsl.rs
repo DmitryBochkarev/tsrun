@@ -397,11 +397,40 @@ impl PrattBuilder {
         self
     }
 
+    /// Define a prefix operator for a keyword (ensures not followed by identifier char)
+    /// Example: `ops.prefix_kw("typeof", 16, "|e| unary(e, Typeof)")`
+    pub fn prefix_kw(mut self, keyword: &str, precedence: u8, mapping: &str) -> Self {
+        self.prefix_ops.push(PrefixOp {
+            pattern: Box::new(Combinator::Sequence(vec![
+                Combinator::Literal(keyword.to_string()),
+                Combinator::NotFollowedBy(Box::new(Combinator::CharClass(CharClass::IdentCont))),
+            ])),
+            precedence,
+            mapping: mapping.to_string(),
+        });
+        self
+    }
+
     /// Define an infix operator with a literal pattern
     /// Example: `ops.infix("+", 13, Assoc::Left, "|l, r| binary(l, r, Add)")`
     pub fn infix(mut self, literal: &str, precedence: u8, assoc: Assoc, mapping: &str) -> Self {
         self.infix_ops.push(InfixOp {
             pattern: Box::new(Combinator::Literal(literal.to_string())),
+            precedence,
+            assoc,
+            mapping: mapping.to_string(),
+        });
+        self
+    }
+
+    /// Define an infix operator for a keyword (ensures not followed by identifier char)
+    /// Example: `ops.infix_kw("in", 11, Assoc::Left, "|l, r| binary(l, r, In)")`
+    pub fn infix_kw(mut self, keyword: &str, precedence: u8, assoc: Assoc, mapping: &str) -> Self {
+        self.infix_ops.push(InfixOp {
+            pattern: Box::new(Combinator::Sequence(vec![
+                Combinator::Literal(keyword.to_string()),
+                Combinator::NotFollowedBy(Box::new(Combinator::CharClass(CharClass::IdentCont))),
+            ])),
             precedence,
             assoc,
             mapping: mapping.to_string(),

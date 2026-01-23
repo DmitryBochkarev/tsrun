@@ -3,13 +3,23 @@
 //! This module defines the complete TypeScript grammar using the trampoline-parser DSL.
 //! The grammar generates a fully trampoline-based lexer and parser.
 
-use trampoline_parser::{Assoc, AstConfigBuilder, Combinator, CombinatorExt, Grammar, LexerBuilder, RuleBuilder};
+use trampoline_parser::{Assoc, AstConfigBuilder, Combinator, CombinatorExt, Grammar, RuleBuilder};
 
 /// Build the TypeScript grammar
 pub fn typescript_grammar() -> Grammar {
     Grammar::new()
         .ast_config(ast_config)
-        .lexer(typescript_lexer)
+        // Whitespace and comments
+        .rule("ws", rule_ws)
+        .rule("line_comment", rule_line_comment)
+        .rule("block_comment", rule_block_comment)
+        // Literals
+        .rule("number_literal", rule_number_literal)
+        .rule("string_literal", rule_string_literal)
+        .rule("template_string", rule_template_string)
+        .rule("template_head", rule_template_head)
+        .rule("template_middle", rule_template_middle)
+        .rule("template_tail", rule_template_tail)
         // Program
         .rule("program", rule_program)
         // Statements
@@ -221,187 +231,188 @@ fn unary(operand: ParseResult, op: UnaryOp, span: Span) -> Expression {
 }
 "#;
 
-// === Lexer ===
+// === Whitespace and Comments ===
 
-fn typescript_lexer(l: LexerBuilder) -> LexerBuilder {
-    l
-        // === Operators (multi-char first for proper matching) ===
-        .token("QUESTION_QUESTION_EQ", "??=")
-        .token("GT_GT_GT_EQ", ">>>=")
-        .token("STAR_STAR_EQ", "**=")
-        .token("AMP_AMP_EQ", "&&=")
-        .token("PIPE_PIPE_EQ", "||=")
-        .token("GT_GT_EQ", ">>=")
-        .token("LT_LT_EQ", "<<=")
-        .token("GT_GT_GT", ">>>")
-        .token("EQ_EQ_EQ", "===")
-        .token("BANG_EQ_EQ", "!==")
-        .token("QUESTION_QUESTION", "??")
-        .token("QUESTION_DOT", "?.")
-        .token("DOT_DOT_DOT", "...")
-        .token("STAR_STAR", "**")
-        .token("PLUS_PLUS", "++")
-        .token("MINUS_MINUS", "--")
-        .token("AMP_AMP", "&&")
-        .token("PIPE_PIPE", "||")
-        .token("LT_LT", "<<")
-        .token("GT_GT", ">>")
-        .token("LT_EQ", "<=")
-        .token("GT_EQ", ">=")
-        .token("EQ_EQ", "==")
-        .token("BANG_EQ", "!=")
-        .token("PLUS_EQ", "+=")
-        .token("MINUS_EQ", "-=")
-        .token("STAR_EQ", "*=")
-        .token("SLASH_EQ", "/=")
-        .token("PERCENT_EQ", "%=")
-        .token("AMP_EQ", "&=")
-        .token("PIPE_EQ", "|=")
-        .token("CARET_EQ", "^=")
-        .token("ARROW", "=>")
-        // Single-char operators
-        .token("PLUS", "+")
-        .token("MINUS", "-")
-        .token("STAR", "*")
-        .token("SLASH", "/")
-        .token("PERCENT", "%")
-        .token("AMP", "&")
-        .token("PIPE", "|")
-        .token("CARET", "^")
-        .token("TILDE", "~")
-        .token("BANG", "!")
-        .token("LT", "<")
-        .token("GT", ">")
-        .token("EQ", "=")
-        .token("QUESTION", "?")
-        .token("COLON", ":")
-        .token("DOT", ".")
-        .token("COMMA", ",")
-        .token("SEMICOLON", ";")
-        .token("AT", "@")
-        // Brackets
-        .token("LPAREN", "(")
-        .token("RPAREN", ")")
-        .token("LBRACKET", "[")
-        .token("RBRACKET", "]")
-        .token("LBRACE", "{")
-        .token("RBRACE", "}")
-        // === Keywords ===
-        .keyword("ABSTRACT", "abstract")
-        .keyword("ACCESSOR", "accessor")
-        .keyword("ANY", "any")
-        .keyword("AS", "as")
-        .keyword("ASSERTS", "asserts")
-        .keyword("ASYNC", "async")
-        .keyword("AWAIT", "await")
-        .keyword("BIGINT", "bigint")
-        .keyword("BOOLEAN", "boolean")
-        .keyword("BREAK", "break")
-        .keyword("CASE", "case")
-        .keyword("CATCH", "catch")
-        .keyword("CLASS", "class")
-        .keyword("CONST", "const")
-        .keyword("CONSTRUCTOR", "constructor")
-        .keyword("CONTINUE", "continue")
-        .keyword("DEBUGGER", "debugger")
-        .keyword("DECLARE", "declare")
-        .keyword("DEFAULT", "default")
-        .keyword("DELETE", "delete")
-        .keyword("DO", "do")
-        .keyword("ELSE", "else")
-        .keyword("ENUM", "enum")
-        .keyword("EXPORT", "export")
-        .keyword("EXTENDS", "extends")
-        .keyword("FALSE", "false")
-        .keyword("FINALLY", "finally")
-        .keyword("FOR", "for")
-        .keyword("FROM", "from")
-        .keyword("FUNCTION", "function")
-        .keyword("GET", "get")
-        .keyword("IF", "if")
-        .keyword("IMPLEMENTS", "implements")
-        .keyword("IMPORT", "import")
-        .keyword("IN", "in")
-        .keyword("INFER", "infer")
-        .keyword("INSTANCEOF", "instanceof")
-        .keyword("INTERFACE", "interface")
-        .keyword("IS", "is")
-        .keyword("KEYOF", "keyof")
-        .keyword("LET", "let")
-        .keyword("NAMESPACE", "namespace")
-        .keyword("NEVER", "never")
-        .keyword("NEW", "new")
-        .keyword("NULL", "null")
-        .keyword("NUMBER_KW", "number")
-        .keyword("OBJECT_KW", "object")
-        .keyword("OF", "of")
-        .keyword("PRIVATE", "private")
-        .keyword("PROTECTED", "protected")
-        .keyword("PUBLIC", "public")
-        .keyword("READONLY", "readonly")
-        .keyword("RETURN", "return")
-        .keyword("SET", "set")
-        .keyword("STATIC", "static")
-        .keyword("STRING_KW", "string")
-        .keyword("SUPER", "super")
-        .keyword("SWITCH", "switch")
-        .keyword("SYMBOL", "symbol")
-        .keyword("THIS", "this")
-        .keyword("THROW", "throw")
-        .keyword("TRUE", "true")
-        .keyword("TRY", "try")
-        .keyword("TYPE", "type")
-        .keyword("TYPEOF", "typeof")
-        .keyword("UNDEFINED", "undefined")
-        .keyword("UNKNOWN", "unknown")
-        .keyword("VAR", "var")
-        .keyword("VOID", "void")
-        .keyword("WHILE", "while")
-        .keyword("WITH", "with")
-        .keyword("YIELD", "yield")
-        // === Pattern-based tokens ===
-        .token("IDENTIFIER", "")
-        .start_with(|c| c.match_class("alpha").or().char('_').or().char('$'))
-        .continue_with(|c| c.match_class("alphanumeric").or().char('_').or().char('$'))
-        .build()
-        .token("NUMBER", "")
-        .start_with(|c| c.match_class("digit"))
-        .continue_with(|c| {
-            c.match_class("digit")
-                .or().char('.')
-                .or().char('x').or().char('X')
-                .or().char('b').or().char('B')
-                .or().char('o').or().char('O')
-                .or().char('e').or().char('E')
-                .or().char('+').or().char('-')
-                .or().match_class("hex")
-                .or().char('n')
-                .or().char('_')
-        })
-        .build()
-        .token("STRING", "")
-        .start_with(|c| c.char('"').or().char('\''))
-        .scan_until_matching_quote()
-        .build()
-        .token("TEMPLATE_STRING", "")
-        .start_with(|c| c.char('`'))
-        .scan_until_matching_quote()
-        .build()
-        .token("TEMPLATE_HEAD", "")
-        .start_with(|c| c.char('`'))
-        .scan_template_head()
-        .build()
-        .token("TEMPLATE_MIDDLE", "")
-        .start_with(|c| c.char('}'))
-        .scan_template_middle()
-        .build()
-        .token("TEMPLATE_TAIL", "")
-        .start_with(|c| c.char('}'))
-        .scan_template_tail()
-        .build()
-        .skip("whitespace")
-        .skip("line_comment")
-        .skip("block_comment")
+fn rule_ws(r: &RuleBuilder) -> Combinator {
+    r.skip(r.zero_or_more(r.choice((
+        r.one_or_more(r.ws()),
+        r.parse("line_comment"),
+        r.parse("block_comment"),
+    ))))
+}
+
+fn rule_line_comment(r: &RuleBuilder) -> Combinator {
+    r.sequence((
+        r.lit("//"),
+        r.zero_or_more(r.sequence((
+            r.not_followed_by(r.char('\n')),
+            r.any_char(),
+        ))),
+    ))
+}
+
+fn rule_block_comment(r: &RuleBuilder) -> Combinator {
+    r.sequence((
+        r.lit("/*"),
+        r.zero_or_more(r.sequence((
+            r.not_followed_by(r.lit("*/")),
+            r.any_char(),
+        ))),
+        r.lit("*/"),
+    ))
+}
+
+// === Literals ===
+
+fn rule_number_literal(r: &RuleBuilder) -> Combinator {
+    r.capture(r.choice((
+        // Hex: 0x...
+        r.sequence((
+            r.lit("0"),
+            r.choice((r.char('x'), r.char('X'))),
+            r.one_or_more(r.choice((r.hex_digit(), r.char('_')))),
+            r.optional(r.char('n')), // BigInt suffix
+        )),
+        // Binary: 0b...
+        r.sequence((
+            r.lit("0"),
+            r.choice((r.char('b'), r.char('B'))),
+            r.one_or_more(r.choice((r.range('0', '1'), r.char('_')))),
+            r.optional(r.char('n')),
+        )),
+        // Octal: 0o...
+        r.sequence((
+            r.lit("0"),
+            r.choice((r.char('o'), r.char('O'))),
+            r.one_or_more(r.choice((r.range('0', '7'), r.char('_')))),
+            r.optional(r.char('n')),
+        )),
+        // Decimal (possibly with exponent)
+        r.sequence((
+            r.one_or_more(r.choice((r.digit(), r.char('_')))),
+            r.optional(r.sequence((
+                r.char('.'),
+                r.zero_or_more(r.choice((r.digit(), r.char('_')))),
+            ))),
+            r.optional(r.sequence((
+                r.choice((r.char('e'), r.char('E'))),
+                r.optional(r.choice((r.char('+'), r.char('-')))),
+                r.one_or_more(r.choice((r.digit(), r.char('_')))),
+            ))),
+            r.optional(r.char('n')),
+        )),
+        // Decimal starting with dot
+        r.sequence((
+            r.char('.'),
+            r.one_or_more(r.choice((r.digit(), r.char('_')))),
+            r.optional(r.sequence((
+                r.choice((r.char('e'), r.char('E'))),
+                r.optional(r.choice((r.char('+'), r.char('-')))),
+                r.one_or_more(r.choice((r.digit(), r.char('_')))),
+            ))),
+        )),
+    )))
+}
+
+fn rule_string_literal(r: &RuleBuilder) -> Combinator {
+    r.capture(r.choice((
+        // Double-quoted
+        r.sequence((
+            r.char('"'),
+            r.zero_or_more(r.choice((
+                r.sequence((r.char('\\'), r.any_char())), // Escape sequence
+                r.sequence((
+                    r.not_followed_by(r.choice((r.char('"'), r.char('\\'), r.char('\n')))),
+                    r.any_char(),
+                )),
+            ))),
+            r.char('"'),
+        )),
+        // Single-quoted
+        r.sequence((
+            r.char('\''),
+            r.zero_or_more(r.choice((
+                r.sequence((r.char('\\'), r.any_char())), // Escape sequence
+                r.sequence((
+                    r.not_followed_by(r.choice((r.char('\''), r.char('\\'), r.char('\n')))),
+                    r.any_char(),
+                )),
+            ))),
+            r.char('\''),
+        )),
+    )))
+}
+
+// Template strings
+fn rule_template_string(r: &RuleBuilder) -> Combinator {
+    r.capture(r.sequence((
+        r.char('`'),
+        r.zero_or_more(r.choice((
+            r.sequence((r.char('\\'), r.any_char())),
+            r.sequence((
+                r.not_followed_by(r.choice((r.char('`'), r.char('\\'), r.lit("${")))),
+                r.any_char(),
+            )),
+        ))),
+        r.char('`'),
+    )))
+}
+
+fn rule_template_head(r: &RuleBuilder) -> Combinator {
+    r.capture(r.sequence((
+        r.char('`'),
+        r.zero_or_more(r.choice((
+            r.sequence((r.char('\\'), r.any_char())),
+            r.sequence((
+                r.not_followed_by(r.choice((r.char('`'), r.char('\\'), r.lit("${")))),
+                r.any_char(),
+            )),
+        ))),
+        r.lit("${"),
+    )))
+}
+
+fn rule_template_middle(r: &RuleBuilder) -> Combinator {
+    r.capture(r.sequence((
+        r.char('}'),
+        r.zero_or_more(r.choice((
+            r.sequence((r.char('\\'), r.any_char())),
+            r.sequence((
+                r.not_followed_by(r.choice((r.char('`'), r.char('\\'), r.lit("${")))),
+                r.any_char(),
+            )),
+        ))),
+        r.lit("${"),
+    )))
+}
+
+fn rule_template_tail(r: &RuleBuilder) -> Combinator {
+    r.capture(r.sequence((
+        r.char('}'),
+        r.zero_or_more(r.choice((
+            r.sequence((r.char('\\'), r.any_char())),
+            r.sequence((
+                r.not_followed_by(r.choice((r.char('`'), r.char('\\'), r.lit("${")))),
+                r.any_char(),
+            )),
+        ))),
+        r.char('`'),
+    )))
+}
+
+// === Helper: Keyword matching ===
+// Keywords must not be followed by identifier continuation characters
+
+fn kw(r: &RuleBuilder, keyword: &str) -> Combinator {
+    r.sequence((
+        r.lit(keyword),
+        r.not_followed_by(r.ident_cont()),
+        r.parse("ws"),
+    ))
+}
+
+fn op(r: &RuleBuilder, operator: &str) -> Combinator {
+    r.sequence((r.lit(operator), r.parse("ws")))
 }
 
 // === Rule Functions ===
@@ -447,8 +458,8 @@ fn rule_statement(r: &RuleBuilder) -> Combinator {
 
 fn rule_variable_declaration(r: &RuleBuilder) -> Combinator {
     r.sequence((
-        r.choice((r.token("LET"), r.token("CONST"), r.token("VAR"))),
-        r.separated_by(r.parse("variable_declarator"), r.token("COMMA")),
+        r.choice((kw(r, "let"), kw(r, "const"), kw(r, "var"))),
+        r.separated_by(r.parse("variable_declarator"), op(r, ",")),
         r.parse("semicolon"),
     ))
 }
@@ -457,27 +468,27 @@ fn rule_variable_declarator(r: &RuleBuilder) -> Combinator {
     r.sequence((
         r.parse("pattern"),
         r.optional(r.parse("type_annotation")),
-        r.optional(r.sequence((r.token("EQ"), r.parse("expression")))),
+        r.optional(r.sequence((op(r, "="), r.parse("expression")))),
     ))
 }
 
 fn rule_variable_declaration_no_semi(r: &RuleBuilder) -> Combinator {
     r.sequence((
-        r.choice((r.token("LET"), r.token("CONST"), r.token("VAR"))),
-        r.separated_by(r.parse("variable_declarator"), r.token("COMMA")),
+        r.choice((kw(r, "let"), kw(r, "const"), kw(r, "var"))),
+        r.separated_by(r.parse("variable_declarator"), op(r, ",")),
     ))
 }
 
 fn rule_function_declaration(r: &RuleBuilder) -> Combinator {
     r.sequence((
-        r.optional(r.token("ASYNC")),
-        r.token("FUNCTION"),
-        r.optional(r.token("STAR")),
+        r.optional(kw(r, "async")),
+        kw(r, "function"),
+        r.optional(op(r, "*")),
         r.optional(r.parse("identifier")),
         r.optional(r.parse("type_parameters")),
-        r.token("LPAREN"),
+        op(r, "("),
         r.optional(r.parse("parameter_list")),
-        r.token("RPAREN"),
+        op(r, ")"),
         r.optional(r.parse("type_annotation")),
         r.parse("block_statement"),
     ))
@@ -486,14 +497,14 @@ fn rule_function_declaration(r: &RuleBuilder) -> Combinator {
 fn rule_class_declaration(r: &RuleBuilder) -> Combinator {
     r.sequence((
         r.zero_or_more(r.parse("decorator")),
-        r.optional(r.token("ABSTRACT")),
-        r.token("CLASS"),
+        r.optional(kw(r, "abstract")),
+        kw(r, "class"),
         r.optional(r.parse("identifier")),
         r.optional(r.parse("type_parameters")),
-        r.optional(r.sequence((r.token("EXTENDS"), r.parse("expression")))),
+        r.optional(r.sequence((kw(r, "extends"), r.parse("expression")))),
         r.optional(r.sequence((
-            r.token("IMPLEMENTS"),
-            r.separated_by(r.parse("type_reference"), r.token("COMMA")),
+            kw(r, "implements"),
+            r.separated_by(r.parse("type_reference"), op(r, ",")),
         ))),
         r.parse("class_body"),
     ))
@@ -501,9 +512,9 @@ fn rule_class_declaration(r: &RuleBuilder) -> Combinator {
 
 fn rule_class_body(r: &RuleBuilder) -> Combinator {
     r.sequence((
-        r.token("LBRACE"),
+        op(r, "{"),
         r.zero_or_more(r.parse("class_member")),
-        r.token("RBRACE"),
+        op(r, "}"),
     ))
 }
 
@@ -519,10 +530,10 @@ fn rule_class_member(r: &RuleBuilder) -> Combinator {
 fn rule_class_constructor(r: &RuleBuilder) -> Combinator {
     r.sequence((
         r.optional(r.parse("accessibility_modifier")),
-        r.token("CONSTRUCTOR"),
-        r.token("LPAREN"),
+        kw(r, "constructor"),
+        op(r, "("),
         r.optional(r.parse("parameter_list")),
-        r.token("RPAREN"),
+        op(r, ")"),
         r.parse("block_statement"),
     ))
 }
@@ -531,16 +542,16 @@ fn rule_class_method(r: &RuleBuilder) -> Combinator {
     r.sequence((
         r.zero_or_more(r.parse("decorator")),
         r.optional(r.parse("accessibility_modifier")),
-        r.optional(r.token("STATIC")),
-        r.optional(r.token("ASYNC")),
-        r.optional(r.token("STAR")),
-        r.optional(r.choice((r.token("GET"), r.token("SET")))),
+        r.optional(kw(r, "static")),
+        r.optional(kw(r, "async")),
+        r.optional(op(r, "*")),
+        r.optional(r.choice((kw(r, "get"), kw(r, "set")))),
         r.parse("property_key"),
         r.optional(r.parse("type_parameters")),
         r.sequence((
-            r.token("LPAREN"),
+            op(r, "("),
             r.optional(r.parse("parameter_list")),
-            r.token("RPAREN"),
+            op(r, ")"),
             r.optional(r.parse("type_annotation")),
             r.parse("block_statement"),
         )),
@@ -551,42 +562,42 @@ fn rule_class_property(r: &RuleBuilder) -> Combinator {
     r.sequence((
         r.zero_or_more(r.parse("decorator")),
         r.optional(r.parse("accessibility_modifier")),
-        r.optional(r.token("STATIC")),
-        r.optional(r.token("READONLY")),
-        r.optional(r.token("ACCESSOR")),
+        r.optional(kw(r, "static")),
+        r.optional(kw(r, "readonly")),
+        r.optional(kw(r, "accessor")),
         r.parse("property_key"),
-        r.optional(r.token("QUESTION")),
+        r.optional(op(r, "?")),
         r.optional(r.parse("type_annotation")),
-        r.optional(r.sequence((r.token("EQ"), r.parse("expression")))),
+        r.optional(r.sequence((op(r, "="), r.parse("expression")))),
         r.parse("semicolon"),
     ))
 }
 
 fn rule_static_block(r: &RuleBuilder) -> Combinator {
-    r.sequence((r.token("STATIC"), r.parse("block_statement")))
+    r.sequence((kw(r, "static"), r.parse("block_statement")))
 }
 
 fn rule_if_statement(r: &RuleBuilder) -> Combinator {
     r.sequence((
-        r.token("IF"),
-        r.token("LPAREN"),
+        kw(r, "if"),
+        op(r, "("),
         r.parse("expression"),
-        r.token("RPAREN"),
+        op(r, ")"),
         r.parse("statement"),
-        r.optional(r.sequence((r.token("ELSE"), r.parse("statement")))),
+        r.optional(r.sequence((kw(r, "else"), r.parse("statement")))),
     ))
 }
 
 fn rule_for_statement(r: &RuleBuilder) -> Combinator {
     r.sequence((
-        r.token("FOR"),
-        r.token("LPAREN"),
+        kw(r, "for"),
+        op(r, "("),
         r.optional(r.parse("for_init")),
-        r.token("SEMICOLON"),
+        op(r, ";"),
         r.optional(r.parse("expression")),
-        r.token("SEMICOLON"),
+        op(r, ";"),
         r.optional(r.parse("expression")),
-        r.token("RPAREN"),
+        op(r, ")"),
         r.parse("statement"),
     ))
 }
@@ -600,25 +611,25 @@ fn rule_for_init(r: &RuleBuilder) -> Combinator {
 
 fn rule_for_in_statement(r: &RuleBuilder) -> Combinator {
     r.sequence((
-        r.token("FOR"),
-        r.token("LPAREN"),
+        kw(r, "for"),
+        op(r, "("),
         r.parse("for_in_of_left"),
-        r.token("IN"),
+        kw(r, "in"),
         r.parse("expression"),
-        r.token("RPAREN"),
+        op(r, ")"),
         r.parse("statement"),
     ))
 }
 
 fn rule_for_of_statement(r: &RuleBuilder) -> Combinator {
     r.sequence((
-        r.token("FOR"),
-        r.optional(r.token("AWAIT")),
-        r.token("LPAREN"),
+        kw(r, "for"),
+        r.optional(kw(r, "await")),
+        op(r, "("),
         r.parse("for_in_of_left"),
-        r.token("OF"),
+        kw(r, "of"),
         r.parse("expression"),
-        r.token("RPAREN"),
+        op(r, ")"),
         r.parse("statement"),
     ))
 }
@@ -629,49 +640,49 @@ fn rule_for_in_of_left(r: &RuleBuilder) -> Combinator {
 
 fn rule_while_statement(r: &RuleBuilder) -> Combinator {
     r.sequence((
-        r.token("WHILE"),
-        r.token("LPAREN"),
+        kw(r, "while"),
+        op(r, "("),
         r.parse("expression"),
-        r.token("RPAREN"),
+        op(r, ")"),
         r.parse("statement"),
     ))
 }
 
 fn rule_do_while_statement(r: &RuleBuilder) -> Combinator {
     r.sequence((
-        r.token("DO"),
+        kw(r, "do"),
         r.parse("statement"),
-        r.token("WHILE"),
-        r.token("LPAREN"),
+        kw(r, "while"),
+        op(r, "("),
         r.parse("expression"),
-        r.token("RPAREN"),
+        op(r, ")"),
         r.parse("semicolon"),
     ))
 }
 
 fn rule_switch_statement(r: &RuleBuilder) -> Combinator {
     r.sequence((
-        r.token("SWITCH"),
-        r.token("LPAREN"),
+        kw(r, "switch"),
+        op(r, "("),
         r.parse("expression"),
-        r.token("RPAREN"),
-        r.token("LBRACE"),
+        op(r, ")"),
+        op(r, "{"),
         r.zero_or_more(r.parse("switch_case")),
-        r.token("RBRACE"),
+        op(r, "}"),
     ))
 }
 
 fn rule_switch_case(r: &RuleBuilder) -> Combinator {
     r.choice((
         r.sequence((
-            r.token("CASE"),
+            kw(r, "case"),
             r.parse("expression"),
-            r.token("COLON"),
+            op(r, ":"),
             r.zero_or_more(r.parse("statement")),
         )),
         r.sequence((
-            r.token("DEFAULT"),
-            r.token("COLON"),
+            kw(r, "default"),
+            op(r, ":"),
             r.zero_or_more(r.parse("statement")),
         )),
     ))
@@ -679,32 +690,32 @@ fn rule_switch_case(r: &RuleBuilder) -> Combinator {
 
 fn rule_try_statement(r: &RuleBuilder) -> Combinator {
     r.sequence((
-        r.token("TRY"),
+        kw(r, "try"),
         r.parse("block_statement"),
         r.optional(r.parse("catch_clause")),
-        r.optional(r.sequence((r.token("FINALLY"), r.parse("block_statement")))),
+        r.optional(r.sequence((kw(r, "finally"), r.parse("block_statement")))),
     ))
 }
 
 fn rule_catch_clause(r: &RuleBuilder) -> Combinator {
     r.sequence((
-        r.token("CATCH"),
-        r.optional(r.sequence((r.token("LPAREN"), r.parse("pattern"), r.token("RPAREN")))),
+        kw(r, "catch"),
+        r.optional(r.sequence((op(r, "("), r.parse("pattern"), op(r, ")")))),
         r.parse("block_statement"),
     ))
 }
 
 fn rule_block_statement(r: &RuleBuilder) -> Combinator {
     r.sequence((
-        r.token("LBRACE"),
+        op(r, "{"),
         r.zero_or_more(r.parse("statement")),
-        r.token("RBRACE"),
+        op(r, "}"),
     ))
 }
 
 fn rule_return_statement(r: &RuleBuilder) -> Combinator {
     r.sequence((
-        r.token("RETURN"),
+        kw(r, "return"),
         r.optional(r.parse("expression")),
         r.parse("semicolon"),
     ))
@@ -712,7 +723,7 @@ fn rule_return_statement(r: &RuleBuilder) -> Combinator {
 
 fn rule_break_statement(r: &RuleBuilder) -> Combinator {
     r.sequence((
-        r.token("BREAK"),
+        kw(r, "break"),
         r.optional(r.parse("identifier")),
         r.parse("semicolon"),
     ))
@@ -720,7 +731,7 @@ fn rule_break_statement(r: &RuleBuilder) -> Combinator {
 
 fn rule_continue_statement(r: &RuleBuilder) -> Combinator {
     r.sequence((
-        r.token("CONTINUE"),
+        kw(r, "continue"),
         r.optional(r.parse("identifier")),
         r.parse("semicolon"),
     ))
@@ -728,20 +739,20 @@ fn rule_continue_statement(r: &RuleBuilder) -> Combinator {
 
 fn rule_throw_statement(r: &RuleBuilder) -> Combinator {
     r.sequence((
-        r.token("THROW"),
+        kw(r, "throw"),
         r.parse("expression"),
         r.parse("semicolon"),
     ))
 }
 
 fn rule_debugger_statement(r: &RuleBuilder) -> Combinator {
-    r.sequence((r.token("DEBUGGER"), r.parse("semicolon")))
+    r.sequence((kw(r, "debugger"), r.parse("semicolon")))
 }
 
 fn rule_labeled_statement(r: &RuleBuilder) -> Combinator {
     r.sequence((
         r.parse("identifier"),
-        r.token("COLON"),
+        op(r, ":"),
         r.parse("statement"),
     ))
 }
@@ -759,84 +770,86 @@ fn rule_expression_statement(r: &RuleBuilder) -> Combinator {
 }
 
 fn rule_empty_statement(r: &RuleBuilder) -> Combinator {
-    r.token("SEMICOLON")
+    op(r, ";")
 }
 
 fn rule_semicolon(r: &RuleBuilder) -> Combinator {
-    r.token("SEMICOLON")
+    op(r, ";")
 }
 
 // Import/Export
 
 fn rule_import_declaration(r: &RuleBuilder) -> Combinator {
     r.sequence((
-        r.token("IMPORT"),
-        r.optional(r.token("TYPE")),
+        kw(r, "import"),
+        r.optional(kw(r, "type")),
         r.parse("import_clause"),
-        r.token("FROM"),
-        r.token("STRING"),
+        kw(r, "from"),
+        r.parse("string_literal"),
+        r.parse("ws"),
         r.parse("semicolon"),
     ))
 }
 
 fn rule_import_clause(r: &RuleBuilder) -> Combinator {
     r.choice((
-        r.sequence((r.token("STAR"), r.token("AS"), r.parse("identifier"))),
+        r.sequence((op(r, "*"), kw(r, "as"), r.parse("identifier"))),
         r.parse("named_imports"),
         r.sequence((
             r.parse("identifier"),
-            r.optional(r.sequence((r.token("COMMA"), r.parse("import_clause_rest")))),
+            r.optional(r.sequence((op(r, ","), r.parse("import_clause_rest")))),
         )),
     ))
 }
 
 fn rule_import_clause_rest(r: &RuleBuilder) -> Combinator {
     r.choice((
-        r.sequence((r.token("STAR"), r.token("AS"), r.parse("identifier"))),
+        r.sequence((op(r, "*"), kw(r, "as"), r.parse("identifier"))),
         r.parse("named_imports"),
     ))
 }
 
 fn rule_named_imports(r: &RuleBuilder) -> Combinator {
     r.sequence((
-        r.token("LBRACE"),
-        r.optional(r.separated_by_trailing(r.parse("import_specifier"), r.token("COMMA"))),
-        r.token("RBRACE"),
+        op(r, "{"),
+        r.optional(r.separated_by_trailing(r.parse("import_specifier"), op(r, ","))),
+        op(r, "}"),
     ))
 }
 
 fn rule_import_specifier(r: &RuleBuilder) -> Combinator {
     r.sequence((
         r.parse("identifier"),
-        r.optional(r.sequence((r.token("AS"), r.parse("identifier")))),
+        r.optional(r.sequence((kw(r, "as"), r.parse("identifier")))),
     ))
 }
 
 fn rule_export_declaration(r: &RuleBuilder) -> Combinator {
     r.choice((
         r.sequence((
-            r.token("EXPORT"),
-            r.token("DEFAULT"),
+            kw(r, "export"),
+            kw(r, "default"),
             r.parse("export_default_expression"),
         )),
         r.sequence((
-            r.token("EXPORT"),
-            r.optional(r.token("TYPE")),
+            kw(r, "export"),
+            r.optional(kw(r, "type")),
             r.parse("named_exports"),
-            r.optional(r.sequence((r.token("FROM"), r.token("STRING")))),
+            r.optional(r.sequence((kw(r, "from"), r.parse("string_literal"), r.parse("ws")))),
             r.parse("semicolon"),
         )),
         r.sequence((
-            r.token("EXPORT"),
-            r.token("STAR"),
-            r.optional(r.sequence((r.token("AS"), r.parse("identifier")))),
-            r.token("FROM"),
-            r.token("STRING"),
+            kw(r, "export"),
+            op(r, "*"),
+            r.optional(r.sequence((kw(r, "as"), r.parse("identifier")))),
+            kw(r, "from"),
+            r.parse("string_literal"),
+            r.parse("ws"),
             r.parse("semicolon"),
         )),
         r.sequence((
-            r.token("EXPORT"),
-            r.optional(r.token("TYPE")),
+            kw(r, "export"),
+            r.optional(kw(r, "type")),
             r.parse("exportable_declaration"),
         )),
     ))
@@ -852,16 +865,16 @@ fn rule_export_default_expression(r: &RuleBuilder) -> Combinator {
 
 fn rule_named_exports(r: &RuleBuilder) -> Combinator {
     r.sequence((
-        r.token("LBRACE"),
-        r.optional(r.separated_by_trailing(r.parse("export_specifier"), r.token("COMMA"))),
-        r.token("RBRACE"),
+        op(r, "{"),
+        r.optional(r.separated_by_trailing(r.parse("export_specifier"), op(r, ","))),
+        op(r, "}"),
     ))
 }
 
 fn rule_export_specifier(r: &RuleBuilder) -> Combinator {
     r.sequence((
         r.parse("identifier"),
-        r.optional(r.sequence((r.token("AS"), r.parse("identifier")))),
+        r.optional(r.sequence((kw(r, "as"), r.parse("identifier")))),
     ))
 }
 
@@ -880,10 +893,10 @@ fn rule_exportable_declaration(r: &RuleBuilder) -> Combinator {
 
 fn rule_type_alias_declaration(r: &RuleBuilder) -> Combinator {
     r.sequence((
-        r.token("TYPE"),
+        kw(r, "type"),
         r.parse("identifier"),
         r.optional(r.parse("type_parameters")),
-        r.token("EQ"),
+        op(r, "="),
         r.parse("type"),
         r.parse("semicolon"),
     ))
@@ -891,12 +904,12 @@ fn rule_type_alias_declaration(r: &RuleBuilder) -> Combinator {
 
 fn rule_interface_declaration(r: &RuleBuilder) -> Combinator {
     r.sequence((
-        r.token("INTERFACE"),
+        kw(r, "interface"),
         r.parse("identifier"),
         r.optional(r.parse("type_parameters")),
         r.optional(r.sequence((
-            r.token("EXTENDS"),
-            r.separated_by(r.parse("type_reference"), r.token("COMMA")),
+            kw(r, "extends"),
+            r.separated_by(r.parse("type_reference"), op(r, ",")),
         ))),
         r.parse("object_type"),
     ))
@@ -904,25 +917,25 @@ fn rule_interface_declaration(r: &RuleBuilder) -> Combinator {
 
 fn rule_enum_declaration(r: &RuleBuilder) -> Combinator {
     r.sequence((
-        r.optional(r.token("CONST")),
-        r.token("ENUM"),
+        r.optional(kw(r, "const")),
+        kw(r, "enum"),
         r.parse("identifier"),
-        r.token("LBRACE"),
-        r.optional(r.separated_by_trailing(r.parse("enum_member"), r.token("COMMA"))),
-        r.token("RBRACE"),
+        op(r, "{"),
+        r.optional(r.separated_by_trailing(r.parse("enum_member"), op(r, ","))),
+        op(r, "}"),
     ))
 }
 
 fn rule_enum_member(r: &RuleBuilder) -> Combinator {
     r.sequence((
         r.parse("identifier"),
-        r.optional(r.sequence((r.token("EQ"), r.parse("expression")))),
+        r.optional(r.sequence((op(r, "="), r.parse("expression")))),
     ))
 }
 
 fn rule_namespace_declaration(r: &RuleBuilder) -> Combinator {
     r.sequence((
-        r.token("NAMESPACE"),
+        kw(r, "namespace"),
         r.parse("identifier"),
         r.parse("block_statement"),
     ))
@@ -936,50 +949,50 @@ fn rule_expression(r: &RuleBuilder) -> Combinator {
             // Assignment - skip for now (complex, need assignment target conversion)
             // Ternary - skip for now
             // Nullish coalescing
-            .infix("QUESTION_QUESTION", 4, Assoc::Left, "|l, r, s| logical(l, r, LogicalOp::NullishCoalescing, s)")
+            .infix("??", 4, Assoc::Left, "|l, r, s| logical(l, r, LogicalOp::NullishCoalescing, s)")
             // Logical OR
-            .infix("PIPE_PIPE", 5, Assoc::Left, "|l, r, s| logical(l, r, LogicalOp::Or, s)")
+            .infix("||", 5, Assoc::Left, "|l, r, s| logical(l, r, LogicalOp::Or, s)")
             // Logical AND
-            .infix("AMP_AMP", 6, Assoc::Left, "|l, r, s| logical(l, r, LogicalOp::And, s)")
+            .infix("&&", 6, Assoc::Left, "|l, r, s| logical(l, r, LogicalOp::And, s)")
             // Bitwise OR
-            .infix("PIPE", 7, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::BitOr, s)")
+            .infix("|", 7, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::BitOr, s)")
             // Bitwise XOR
-            .infix("CARET", 8, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::BitXor, s)")
+            .infix("^", 8, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::BitXor, s)")
             // Bitwise AND
-            .infix("AMP", 9, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::BitAnd, s)")
+            .infix("&", 9, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::BitAnd, s)")
             // Equality
-            .infix("EQ_EQ", 10, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::Eq, s)")
-            .infix("BANG_EQ", 10, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::NotEq, s)")
-            .infix("EQ_EQ_EQ", 10, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::StrictEq, s)")
-            .infix("BANG_EQ_EQ", 10, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::StrictNotEq, s)")
+            .infix("==", 10, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::Eq, s)")
+            .infix("!=", 10, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::NotEq, s)")
+            .infix("===", 10, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::StrictEq, s)")
+            .infix("!==", 10, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::StrictNotEq, s)")
             // Relational
-            .infix("LT", 11, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::Lt, s)")
-            .infix("GT", 11, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::Gt, s)")
-            .infix("LT_EQ", 11, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::LtEq, s)")
-            .infix("GT_EQ", 11, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::GtEq, s)")
-            .infix("IN", 11, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::In, s)")
-            .infix("INSTANCEOF", 11, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::Instanceof, s)")
+            .infix("<", 11, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::Lt, s)")
+            .infix(">", 11, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::Gt, s)")
+            .infix("<=", 11, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::LtEq, s)")
+            .infix(">=", 11, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::GtEq, s)")
+            .infix_kw("in", 11, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::In, s)")
+            .infix_kw("instanceof", 11, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::Instanceof, s)")
             // Shift
-            .infix("LT_LT", 12, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::LShift, s)")
-            .infix("GT_GT", 12, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::RShift, s)")
-            .infix("GT_GT_GT", 12, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::URShift, s)")
+            .infix("<<", 12, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::LShift, s)")
+            .infix(">>", 12, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::RShift, s)")
+            .infix(">>>", 12, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::URShift, s)")
             // Additive
-            .infix("PLUS", 13, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::Add, s)")
-            .infix("MINUS", 13, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::Sub, s)")
+            .infix("+", 13, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::Add, s)")
+            .infix("-", 13, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::Sub, s)")
             // Multiplicative
-            .infix("STAR", 14, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::Mul, s)")
-            .infix("SLASH", 14, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::Div, s)")
-            .infix("PERCENT", 14, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::Mod, s)")
+            .infix("*", 14, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::Mul, s)")
+            .infix("/", 14, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::Div, s)")
+            .infix("%", 14, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::Mod, s)")
             // Exponentiation (right-to-left)
-            .infix("STAR_STAR", 15, Assoc::Right, "|l, r, s| binary(l, r, BinaryOp::Exp, s)")
+            .infix("**", 15, Assoc::Right, "|l, r, s| binary(l, r, BinaryOp::Exp, s)")
             // Prefix operators (unary)
-            .prefix("MINUS", 16, "|e, s| unary(e, UnaryOp::Minus, s)")
-            .prefix("PLUS", 16, "|e, s| unary(e, UnaryOp::Plus, s)")
-            .prefix("BANG", 16, "|e, s| unary(e, UnaryOp::Not, s)")
-            .prefix("TILDE", 16, "|e, s| unary(e, UnaryOp::BitNot, s)")
-            .prefix("TYPEOF", 16, "|e, s| unary(e, UnaryOp::Typeof, s)")
-            .prefix("VOID", 16, "|e, s| unary(e, UnaryOp::Void, s)")
-            .prefix("DELETE", 16, "|e, s| unary(e, UnaryOp::Delete, s)")
+            .prefix("-", 16, "|e, s| unary(e, UnaryOp::Minus, s)")
+            .prefix("+", 16, "|e, s| unary(e, UnaryOp::Plus, s)")
+            .prefix("!", 16, "|e, s| unary(e, UnaryOp::Not, s)")
+            .prefix("~", 16, "|e, s| unary(e, UnaryOp::BitNot, s)")
+            .prefix_kw("typeof", 16, "|e, s| unary(e, UnaryOp::Typeof, s)")
+            .prefix_kw("void", 16, "|e, s| unary(e, UnaryOp::Void, s)")
+            .prefix_kw("delete", 16, "|e, s| unary(e, UnaryOp::Delete, s)")
             // Postfix - skip for now
             // Call and member access - skip for now
     })
@@ -1010,41 +1023,47 @@ fn rule_primary(r: &RuleBuilder) -> Combinator {
 
 fn rule_literal(r: &RuleBuilder) -> Combinator {
     r.choice((
-        r.token("NUMBER").ast("|result: ParseResult, span: Span| {
-            let text = result.into_token().text;
+        r.sequence((r.parse("number_literal"), r.parse("ws"))).ast("|result: ParseResult, span: Span| {
+            let text = result.into_text();
             let value = parse_number(&text);
             Expression::Literal(Box::new(Literal { value: LiteralValue::Number(value), span }))
         }"),
-        r.token("STRING").ast("|result: ParseResult, span: Span| {
-            let text = result.into_token().text;
+        r.sequence((r.parse("string_literal"), r.parse("ws"))).ast("|result: ParseResult, span: Span| {
+            let text = result.into_text();
             let value = parse_string_literal(&text);
             Expression::Literal(Box::new(Literal { value: LiteralValue::String(value), span }))
         }"),
-        r.token("TRUE").ast("|_: ParseResult, span: Span| Expression::Literal(Box::new(Literal { value: LiteralValue::Boolean(true), span }))"),
-        r.token("FALSE").ast("|_: ParseResult, span: Span| Expression::Literal(Box::new(Literal { value: LiteralValue::Boolean(false), span }))"),
-        r.token("NULL").ast("|_: ParseResult, span: Span| Expression::Literal(Box::new(Literal { value: LiteralValue::Null, span }))"),
-        r.token("UNDEFINED").ast("|_: ParseResult, span: Span| Expression::Literal(Box::new(Literal { value: LiteralValue::Undefined, span }))"),
+        kw(r, "true").ast("|_: ParseResult, span: Span| Expression::Literal(Box::new(Literal { value: LiteralValue::Boolean(true), span }))"),
+        kw(r, "false").ast("|_: ParseResult, span: Span| Expression::Literal(Box::new(Literal { value: LiteralValue::Boolean(false), span }))"),
+        kw(r, "null").ast("|_: ParseResult, span: Span| Expression::Literal(Box::new(Literal { value: LiteralValue::Null, span }))"),
+        kw(r, "undefined").ast("|_: ParseResult, span: Span| Expression::Literal(Box::new(Literal { value: LiteralValue::Undefined, span }))"),
     ))
 }
 
 fn rule_identifier(r: &RuleBuilder) -> Combinator {
-    r.token("IDENTIFIER")
-        .ast("|result: ParseResult, span: Span| Identifier { name: result.into_token().text, span }")
+    r.sequence((
+        r.capture(r.sequence((
+            r.ident_start(),
+            r.zero_or_more(r.ident_cont()),
+        ))),
+        r.parse("ws"),
+    ))
+    .ast("|result: ParseResult, span: Span| Identifier { name: result.into_text(), span }")
 }
 
 fn rule_this_expression(r: &RuleBuilder) -> Combinator {
-    r.token("THIS")
+    kw(r, "this")
 }
 
 fn rule_super_expression(r: &RuleBuilder) -> Combinator {
-    r.token("SUPER")
+    kw(r, "super")
 }
 
 fn rule_array_expression(r: &RuleBuilder) -> Combinator {
     r.sequence((
-        r.token("LBRACKET"),
-        r.optional(r.separated_by_trailing(r.parse("array_element"), r.token("COMMA"))),
-        r.token("RBRACKET"),
+        op(r, "["),
+        r.optional(r.separated_by_trailing(r.parse("array_element"), op(r, ","))),
+        op(r, "]"),
     ))
 }
 
@@ -1054,9 +1073,9 @@ fn rule_array_element(r: &RuleBuilder) -> Combinator {
 
 fn rule_object_expression(r: &RuleBuilder) -> Combinator {
     r.sequence((
-        r.token("LBRACE"),
-        r.optional(r.separated_by_trailing(r.parse("object_property"), r.token("COMMA"))),
-        r.token("RBRACE"),
+        op(r, "{"),
+        r.optional(r.separated_by_trailing(r.parse("object_property"), op(r, ","))),
+        op(r, "}"),
     ))
 }
 
@@ -1074,7 +1093,7 @@ fn rule_object_property(r: &RuleBuilder) -> Combinator {
 fn rule_key_value_property(r: &RuleBuilder) -> Combinator {
     r.sequence((
         r.parse("property_key"),
-        r.token("COLON"),
+        op(r, ":"),
         r.parse("expression"),
     ))
 }
@@ -1085,33 +1104,33 @@ fn rule_shorthand_property(r: &RuleBuilder) -> Combinator {
 
 fn rule_method_property(r: &RuleBuilder) -> Combinator {
     r.sequence((
-        r.optional(r.token("ASYNC")),
-        r.optional(r.token("STAR")),
+        r.optional(kw(r, "async")),
+        r.optional(op(r, "*")),
         r.parse("property_key"),
-        r.token("LPAREN"),
+        op(r, "("),
         r.optional(r.parse("parameter_list")),
-        r.token("RPAREN"),
+        op(r, ")"),
         r.parse("block_statement"),
     ))
 }
 
 fn rule_getter_property(r: &RuleBuilder) -> Combinator {
     r.sequence((
-        r.token("GET"),
+        kw(r, "get"),
         r.parse("property_key"),
-        r.token("LPAREN"),
-        r.token("RPAREN"),
+        op(r, "("),
+        op(r, ")"),
         r.parse("block_statement"),
     ))
 }
 
 fn rule_setter_property(r: &RuleBuilder) -> Combinator {
     r.sequence((
-        r.token("SET"),
+        kw(r, "set"),
         r.parse("property_key"),
-        r.token("LPAREN"),
+        op(r, "("),
         r.parse("pattern"),
-        r.token("RPAREN"),
+        op(r, ")"),
         r.parse("block_statement"),
     ))
 }
@@ -1119,30 +1138,30 @@ fn rule_setter_property(r: &RuleBuilder) -> Combinator {
 fn rule_property_key(r: &RuleBuilder) -> Combinator {
     r.choice((
         r.parse("identifier"),
-        r.token("STRING"),
-        r.token("NUMBER"),
+        r.sequence((r.parse("string_literal"), r.parse("ws"))),
+        r.sequence((r.parse("number_literal"), r.parse("ws"))),
         r.sequence((
-            r.token("LBRACKET"),
+            op(r, "["),
             r.parse("expression"),
-            r.token("RBRACKET"),
+            op(r, "]"),
         )),
     ))
 }
 
 fn rule_spread_element(r: &RuleBuilder) -> Combinator {
-    r.sequence((r.token("DOT_DOT_DOT"), r.parse("expression")))
+    r.sequence((op(r, "..."), r.parse("expression")))
 }
 
 fn rule_function_expression(r: &RuleBuilder) -> Combinator {
     r.sequence((
-        r.optional(r.token("ASYNC")),
-        r.token("FUNCTION"),
-        r.optional(r.token("STAR")),
+        r.optional(kw(r, "async")),
+        kw(r, "function"),
+        r.optional(op(r, "*")),
         r.optional(r.parse("identifier")),
         r.optional(r.parse("type_parameters")),
-        r.token("LPAREN"),
+        op(r, "("),
         r.optional(r.parse("parameter_list")),
-        r.token("RPAREN"),
+        op(r, ")"),
         r.optional(r.parse("type_annotation")),
         r.parse("block_statement"),
     ))
@@ -1151,19 +1170,19 @@ fn rule_function_expression(r: &RuleBuilder) -> Combinator {
 fn rule_arrow_function(r: &RuleBuilder) -> Combinator {
     r.choice((
         r.sequence((
-            r.optional(r.token("ASYNC")),
+            r.optional(kw(r, "async")),
             r.optional(r.parse("type_parameters")),
-            r.token("LPAREN"),
+            op(r, "("),
             r.optional(r.parse("parameter_list")),
-            r.token("RPAREN"),
+            op(r, ")"),
             r.optional(r.parse("type_annotation")),
-            r.token("ARROW"),
+            op(r, "=>"),
             r.parse("arrow_body"),
         )),
         r.sequence((
-            r.optional(r.token("ASYNC")),
+            r.optional(kw(r, "async")),
             r.parse("identifier"),
-            r.token("ARROW"),
+            op(r, "=>"),
             r.parse("arrow_body"),
         )),
     ))
@@ -1175,13 +1194,13 @@ fn rule_arrow_body(r: &RuleBuilder) -> Combinator {
 
 fn rule_class_expression(r: &RuleBuilder) -> Combinator {
     r.sequence((
-        r.token("CLASS"),
+        kw(r, "class"),
         r.optional(r.parse("identifier")),
         r.optional(r.parse("type_parameters")),
-        r.optional(r.sequence((r.token("EXTENDS"), r.parse("expression")))),
+        r.optional(r.sequence((kw(r, "extends"), r.parse("expression")))),
         r.optional(r.sequence((
-            r.token("IMPLEMENTS"),
-            r.separated_by(r.parse("type_reference"), r.token("COMMA")),
+            kw(r, "implements"),
+            r.separated_by(r.parse("type_reference"), op(r, ",")),
         ))),
         r.parse("class_body"),
     ))
@@ -1189,42 +1208,44 @@ fn rule_class_expression(r: &RuleBuilder) -> Combinator {
 
 fn rule_template_literal(r: &RuleBuilder) -> Combinator {
     r.choice((
-        r.token("TEMPLATE_STRING"),
+        r.sequence((r.parse("template_string"), r.parse("ws"))),
         r.sequence((
-            r.token("TEMPLATE_HEAD"),
+            r.parse("template_head"),
+            r.parse("ws"),
             r.parse("expression"),
-            r.zero_or_more(r.sequence((r.token("TEMPLATE_MIDDLE"), r.parse("expression")))),
-            r.token("TEMPLATE_TAIL"),
+            r.zero_or_more(r.sequence((r.parse("template_middle"), r.parse("ws"), r.parse("expression")))),
+            r.parse("template_tail"),
+            r.parse("ws"),
         )),
     ))
 }
 
 fn rule_new_expression(r: &RuleBuilder) -> Combinator {
     r.sequence((
-        r.token("NEW"),
+        kw(r, "new"),
         r.parse("expression"),
         r.optional(r.sequence((
-            r.token("LPAREN"),
+            op(r, "("),
             r.optional(r.parse("argument_list")),
-            r.token("RPAREN"),
+            op(r, ")"),
         ))),
     ))
 }
 
 fn rule_yield_expression(r: &RuleBuilder) -> Combinator {
     r.sequence((
-        r.token("YIELD"),
-        r.optional(r.token("STAR")),
+        kw(r, "yield"),
+        r.optional(op(r, "*")),
         r.optional(r.parse("expression")),
     ))
 }
 
 fn rule_parenthesized(r: &RuleBuilder) -> Combinator {
-    r.sequence((r.token("LPAREN"), r.parse("expression"), r.token("RPAREN")))
+    r.sequence((op(r, "("), r.parse("expression"), op(r, ")")))
 }
 
 fn rule_argument_list(r: &RuleBuilder) -> Combinator {
-    r.separated_by(r.parse("argument"), r.token("COMMA"))
+    r.separated_by(r.parse("argument"), op(r, ","))
 }
 
 fn rule_argument(r: &RuleBuilder) -> Combinator {
@@ -1234,27 +1255,27 @@ fn rule_argument(r: &RuleBuilder) -> Combinator {
 // Parameters
 
 fn rule_parameter_list(r: &RuleBuilder) -> Combinator {
-    r.separated_by_trailing(r.parse("parameter"), r.token("COMMA"))
+    r.separated_by_trailing(r.parse("parameter"), op(r, ","))
 }
 
 fn rule_parameter(r: &RuleBuilder) -> Combinator {
     r.sequence((
         r.zero_or_more(r.parse("decorator")),
         r.optional(r.parse("accessibility_modifier")),
-        r.optional(r.token("READONLY")),
+        r.optional(kw(r, "readonly")),
         r.parse("pattern"),
-        r.optional(r.token("QUESTION")),
+        r.optional(op(r, "?")),
         r.optional(r.parse("type_annotation")),
-        r.optional(r.sequence((r.token("EQ"), r.parse("expression")))),
+        r.optional(r.sequence((op(r, "="), r.parse("expression")))),
     ))
 }
 
 fn rule_accessibility_modifier(r: &RuleBuilder) -> Combinator {
-    r.choice((r.token("PUBLIC"), r.token("PRIVATE"), r.token("PROTECTED")))
+    r.choice((kw(r, "public"), kw(r, "private"), kw(r, "protected")))
 }
 
 fn rule_decorator(r: &RuleBuilder) -> Combinator {
-    r.sequence((r.token("AT"), r.parse("expression")))
+    r.sequence((op(r, "@"), r.parse("expression")))
 }
 
 // Patterns
@@ -1274,9 +1295,9 @@ fn rule_identifier_pattern(r: &RuleBuilder) -> Combinator {
 
 fn rule_object_pattern(r: &RuleBuilder) -> Combinator {
     r.sequence((
-        r.token("LBRACE"),
-        r.optional(r.separated_by_trailing(r.parse("object_pattern_property"), r.token("COMMA"))),
-        r.token("RBRACE"),
+        op(r, "{"),
+        r.optional(r.separated_by_trailing(r.parse("object_pattern_property"), op(r, ","))),
+        op(r, "}"),
     ))
 }
 
@@ -1285,38 +1306,38 @@ fn rule_object_pattern_property(r: &RuleBuilder) -> Combinator {
         r.parse("rest_pattern"),
         r.sequence((
             r.parse("property_key"),
-            r.optional(r.sequence((r.token("COLON"), r.parse("pattern")))),
-            r.optional(r.sequence((r.token("EQ"), r.parse("expression")))),
+            r.optional(r.sequence((op(r, ":"), r.parse("pattern")))),
+            r.optional(r.sequence((op(r, "="), r.parse("expression")))),
         )),
     ))
 }
 
 fn rule_array_pattern(r: &RuleBuilder) -> Combinator {
     r.sequence((
-        r.token("LBRACKET"),
+        op(r, "["),
         r.optional(r.separated_by_trailing(
             r.optional(r.parse("array_pattern_element")),
-            r.token("COMMA"),
+            op(r, ","),
         )),
-        r.token("RBRACKET"),
+        op(r, "]"),
     ))
 }
 
 fn rule_array_pattern_element(r: &RuleBuilder) -> Combinator {
     r.sequence((
         r.parse("pattern"),
-        r.optional(r.sequence((r.token("EQ"), r.parse("expression")))),
+        r.optional(r.sequence((op(r, "="), r.parse("expression")))),
     ))
 }
 
 fn rule_rest_pattern(r: &RuleBuilder) -> Combinator {
-    r.sequence((r.token("DOT_DOT_DOT"), r.parse("pattern")))
+    r.sequence((op(r, "..."), r.parse("pattern")))
 }
 
 // Type Annotations
 
 fn rule_type_annotation(r: &RuleBuilder) -> Combinator {
-    r.sequence((r.token("COLON"), r.parse("type")))
+    r.sequence((op(r, ":"), r.parse("type")))
 }
 
 fn rule_type(r: &RuleBuilder) -> Combinator {
@@ -1347,18 +1368,18 @@ fn rule_primary_type(r: &RuleBuilder) -> Combinator {
 
 fn rule_keyword_type(r: &RuleBuilder) -> Combinator {
     r.choice((
-        r.token("ANY"),
-        r.token("UNKNOWN"),
-        r.token("NEVER"),
-        r.token("VOID"),
-        r.token("NULL"),
-        r.token("UNDEFINED"),
-        r.token("BOOLEAN"),
-        r.token("NUMBER_KW"),
-        r.token("STRING_KW"),
-        r.token("SYMBOL"),
-        r.token("BIGINT"),
-        r.token("OBJECT_KW"),
+        kw(r, "any"),
+        kw(r, "unknown"),
+        kw(r, "never"),
+        kw(r, "void"),
+        kw(r, "null"),
+        kw(r, "undefined"),
+        kw(r, "boolean"),
+        kw(r, "number"),
+        kw(r, "string"),
+        kw(r, "symbol"),
+        kw(r, "bigint"),
+        kw(r, "object"),
     ))
 }
 
@@ -1368,43 +1389,43 @@ fn rule_type_reference(r: &RuleBuilder) -> Combinator {
 
 fn rule_type_arguments(r: &RuleBuilder) -> Combinator {
     r.sequence((
-        r.token("LT"),
-        r.separated_by(r.parse("type"), r.token("COMMA")),
-        r.token("GT"),
+        op(r, "<"),
+        r.separated_by(r.parse("type"), op(r, ",")),
+        op(r, ">"),
     ))
 }
 
 fn rule_type_parameters(r: &RuleBuilder) -> Combinator {
     r.sequence((
-        r.token("LT"),
-        r.separated_by(r.parse("type_parameter"), r.token("COMMA")),
-        r.token("GT"),
+        op(r, "<"),
+        r.separated_by(r.parse("type_parameter"), op(r, ",")),
+        op(r, ">"),
     ))
 }
 
 fn rule_type_parameter(r: &RuleBuilder) -> Combinator {
     r.sequence((
         r.parse("identifier"),
-        r.optional(r.sequence((r.token("EXTENDS"), r.parse("type")))),
-        r.optional(r.sequence((r.token("EQ"), r.parse("type")))),
+        r.optional(r.sequence((kw(r, "extends"), r.parse("type")))),
+        r.optional(r.sequence((op(r, "="), r.parse("type")))),
     ))
 }
 
 fn rule_literal_type(r: &RuleBuilder) -> Combinator {
     r.choice((
-        r.token("STRING"),
-        r.token("NUMBER"),
-        r.token("TRUE"),
-        r.token("FALSE"),
-        r.token("NULL"),
+        r.sequence((r.parse("string_literal"), r.parse("ws"))),
+        r.sequence((r.parse("number_literal"), r.parse("ws"))),
+        kw(r, "true"),
+        kw(r, "false"),
+        kw(r, "null"),
     ))
 }
 
 fn rule_object_type(r: &RuleBuilder) -> Combinator {
     r.sequence((
-        r.token("LBRACE"),
+        op(r, "{"),
         r.zero_or_more(r.parse("type_member")),
-        r.token("RBRACE"),
+        op(r, "}"),
     ))
 }
 
@@ -1420,9 +1441,9 @@ fn rule_type_member(r: &RuleBuilder) -> Combinator {
 
 fn rule_property_signature(r: &RuleBuilder) -> Combinator {
     r.sequence((
-        r.optional(r.token("READONLY")),
+        r.optional(kw(r, "readonly")),
         r.parse("property_key"),
-        r.optional(r.token("QUESTION")),
+        r.optional(op(r, "?")),
         r.optional(r.parse("type_annotation")),
         r.parse("type_member_separator"),
     ))
@@ -1431,11 +1452,11 @@ fn rule_property_signature(r: &RuleBuilder) -> Combinator {
 fn rule_method_signature(r: &RuleBuilder) -> Combinator {
     r.sequence((
         r.parse("property_key"),
-        r.optional(r.token("QUESTION")),
+        r.optional(op(r, "?")),
         r.optional(r.parse("type_parameters")),
-        r.token("LPAREN"),
+        op(r, "("),
         r.optional(r.parse("parameter_list")),
-        r.token("RPAREN"),
+        op(r, ")"),
         r.optional(r.parse("type_annotation")),
         r.parse("type_member_separator"),
     ))
@@ -1443,13 +1464,13 @@ fn rule_method_signature(r: &RuleBuilder) -> Combinator {
 
 fn rule_index_signature(r: &RuleBuilder) -> Combinator {
     r.sequence((
-        r.optional(r.token("READONLY")),
-        r.token("LBRACKET"),
+        r.optional(kw(r, "readonly")),
+        op(r, "["),
         r.parse("identifier"),
-        r.token("COLON"),
+        op(r, ":"),
         r.parse("type"),
-        r.token("RBRACKET"),
-        r.token("COLON"),
+        op(r, "]"),
+        op(r, ":"),
         r.parse("type"),
         r.parse("type_member_separator"),
     ))
@@ -1458,9 +1479,9 @@ fn rule_index_signature(r: &RuleBuilder) -> Combinator {
 fn rule_call_signature(r: &RuleBuilder) -> Combinator {
     r.sequence((
         r.optional(r.parse("type_parameters")),
-        r.token("LPAREN"),
+        op(r, "("),
         r.optional(r.parse("parameter_list")),
-        r.token("RPAREN"),
+        op(r, ")"),
         r.optional(r.parse("type_annotation")),
         r.parse("type_member_separator"),
     ))
@@ -1468,57 +1489,57 @@ fn rule_call_signature(r: &RuleBuilder) -> Combinator {
 
 fn rule_construct_signature(r: &RuleBuilder) -> Combinator {
     r.sequence((
-        r.token("NEW"),
+        kw(r, "new"),
         r.optional(r.parse("type_parameters")),
-        r.token("LPAREN"),
+        op(r, "("),
         r.optional(r.parse("parameter_list")),
-        r.token("RPAREN"),
+        op(r, ")"),
         r.optional(r.parse("type_annotation")),
         r.parse("type_member_separator"),
     ))
 }
 
 fn rule_type_member_separator(r: &RuleBuilder) -> Combinator {
-    r.choice((r.token("SEMICOLON"), r.token("COMMA")))
+    r.choice((op(r, ";"), op(r, ",")))
 }
 
 fn rule_array_type(r: &RuleBuilder) -> Combinator {
     r.sequence((
         r.parse("primary_type"),
-        r.token("LBRACKET"),
-        r.token("RBRACKET"),
+        op(r, "["),
+        op(r, "]"),
     ))
 }
 
 fn rule_tuple_type(r: &RuleBuilder) -> Combinator {
     r.sequence((
-        r.token("LBRACKET"),
-        r.optional(r.separated_by(r.parse("type"), r.token("COMMA"))),
-        r.token("RBRACKET"),
+        op(r, "["),
+        r.optional(r.separated_by(r.parse("type"), op(r, ","))),
+        op(r, "]"),
     ))
 }
 
 fn rule_union_type(r: &RuleBuilder) -> Combinator {
     r.sequence((
         r.parse("primary_type"),
-        r.one_or_more(r.sequence((r.token("PIPE"), r.parse("primary_type")))),
+        r.one_or_more(r.sequence((op(r, "|"), r.parse("primary_type")))),
     ))
 }
 
 fn rule_intersection_type(r: &RuleBuilder) -> Combinator {
     r.sequence((
         r.parse("primary_type"),
-        r.one_or_more(r.sequence((r.token("AMP"), r.parse("primary_type")))),
+        r.one_or_more(r.sequence((op(r, "&"), r.parse("primary_type")))),
     ))
 }
 
 fn rule_function_type(r: &RuleBuilder) -> Combinator {
     r.sequence((
         r.optional(r.parse("type_parameters")),
-        r.token("LPAREN"),
+        op(r, "("),
         r.optional(r.parse("parameter_list")),
-        r.token("RPAREN"),
-        r.token("ARROW"),
+        op(r, ")"),
+        op(r, "=>"),
         r.parse("type"),
     ))
 }
@@ -1526,49 +1547,49 @@ fn rule_function_type(r: &RuleBuilder) -> Combinator {
 fn rule_conditional_type(r: &RuleBuilder) -> Combinator {
     r.sequence((
         r.parse("primary_type"),
-        r.token("EXTENDS"),
+        kw(r, "extends"),
         r.parse("type"),
-        r.token("QUESTION"),
+        op(r, "?"),
         r.parse("type"),
-        r.token("COLON"),
+        op(r, ":"),
         r.parse("type"),
     ))
 }
 
 fn rule_typeof_type(r: &RuleBuilder) -> Combinator {
-    r.sequence((r.token("TYPEOF"), r.parse("identifier")))
+    r.sequence((kw(r, "typeof"), r.parse("identifier")))
 }
 
 fn rule_keyof_type(r: &RuleBuilder) -> Combinator {
-    r.sequence((r.token("KEYOF"), r.parse("type")))
+    r.sequence((kw(r, "keyof"), r.parse("type")))
 }
 
 fn rule_infer_type(r: &RuleBuilder) -> Combinator {
-    r.sequence((r.token("INFER"), r.parse("type_parameter")))
+    r.sequence((kw(r, "infer"), r.parse("type_parameter")))
 }
 
 fn rule_mapped_type(r: &RuleBuilder) -> Combinator {
     r.sequence((
-        r.token("LBRACE"),
+        op(r, "{"),
         r.optional(r.choice((
-            r.sequence((r.token("PLUS"), r.token("READONLY"))),
-            r.sequence((r.token("MINUS"), r.token("READONLY"))),
-            r.token("READONLY"),
+            r.sequence((op(r, "+"), kw(r, "readonly"))),
+            r.sequence((op(r, "-"), kw(r, "readonly"))),
+            kw(r, "readonly"),
         ))),
-        r.token("LBRACKET"),
+        op(r, "["),
         r.parse("type_parameter"),
-        r.optional(r.sequence((r.token("AS"), r.parse("type")))),
-        r.token("RBRACKET"),
+        r.optional(r.sequence((kw(r, "as"), r.parse("type")))),
+        op(r, "]"),
         r.optional(r.choice((
-            r.sequence((r.token("PLUS"), r.token("QUESTION"))),
-            r.sequence((r.token("MINUS"), r.token("QUESTION"))),
-            r.token("QUESTION"),
+            r.sequence((op(r, "+"), op(r, "?"))),
+            r.sequence((op(r, "-"), op(r, "?"))),
+            op(r, "?"),
         ))),
         r.optional(r.parse("type_annotation")),
-        r.token("RBRACE"),
+        op(r, "}"),
     ))
 }
 
 fn rule_parenthesized_type(r: &RuleBuilder) -> Combinator {
-    r.sequence((r.token("LPAREN"), r.parse("type"), r.token("RPAREN")))
+    r.sequence((op(r, "("), r.parse("type"), op(r, ")")))
 }
