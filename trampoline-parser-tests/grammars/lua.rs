@@ -20,7 +20,11 @@ pub fn grammar() -> CompiledGrammar {
                     r.parse("ws"),
                 ))),
             ))
-            .ast("|r, _| { if let ParseResult::List(items) = r { let stmts: Vec<Stmt> = items.into_iter().skip(1).flat_map(|item| { if let ParseResult::List(parts) = item { parts.into_iter().filter_map(|p| if let ParseResult::Stmt(s) = p { Some(s) } else { None }).collect::<Vec<_>>() } else { vec![] } }).collect(); Ok(ParseResult::Stmts(stmts)) } else { Ok(ParseResult::Stmts(vec![])) } }")
+            // Structure: List([ws_result, List([List([Stmt, ws]), List([Stmt, ws]), ...])])
+            // items[0] = ws result (None due to skip)
+            // items[1] = zero_or_more result: List of iterations
+            // Each iteration is List([Stmt, ws])
+            .ast("|r, _| { if let ParseResult::List(items) = r { if let Some(ParseResult::List(iterations)) = items.into_iter().nth(1) { let stmts: Vec<Stmt> = iterations.into_iter().filter_map(|iter| { if let ParseResult::List(parts) = iter { parts.into_iter().find_map(|p| if let ParseResult::Stmt(s) = p { Some(s) } else { None }) } else { None } }).collect(); Ok(ParseResult::Stmts(stmts)) } else { Ok(ParseResult::Stmts(vec![])) } } else { Ok(ParseResult::Stmts(vec![])) } }")
         })
 
         // Statements
@@ -59,7 +63,7 @@ pub fn grammar() -> CompiledGrammar {
                 r.parse("kw_if"),
                 r.parse("ws1"),
                 r.parse("expr"),
-                r.parse("ws1"),
+                r.parse("ws"),  // ws not ws1: trailing ws already consumed by expr
                 r.parse("kw_then"),
                 r.parse("ws"),
                 r.parse("block"),
@@ -68,7 +72,7 @@ pub fn grammar() -> CompiledGrammar {
                     r.parse("kw_elseif"),
                     r.parse("ws1"),
                     r.parse("expr"),
-                    r.parse("ws1"),
+                    r.parse("ws"),  // ws not ws1: trailing ws already consumed by expr
                     r.parse("kw_then"),
                     r.parse("ws"),
                     r.parse("block"),
@@ -91,7 +95,7 @@ pub fn grammar() -> CompiledGrammar {
                 r.parse("kw_while"),
                 r.parse("ws1"),
                 r.parse("expr"),
-                r.parse("ws1"),
+                r.parse("ws"),  // ws not ws1: trailing ws already consumed by expr
                 r.parse("kw_do"),
                 r.parse("ws"),
                 r.parse("block"),
@@ -121,7 +125,7 @@ pub fn grammar() -> CompiledGrammar {
                     r.parse("ws"),
                     r.parse("expr"),
                 ))),
-                r.parse("ws1"),
+                r.parse("ws"),  // ws not ws1: trailing ws already consumed by expr
                 r.parse("kw_do"),
                 r.parse("ws"),
                 r.parse("block"),
@@ -200,9 +204,11 @@ pub fn grammar() -> CompiledGrammar {
             .ast("|_, _| Ok(ParseResult::None)")
         })
 
-        // Expression using Pratt parsing
+        // Expression using Pratt parsing - infix/postfix only
+        // Prefix operators handled in grammar rules for proper ws handling
+        // Infix operators use patterns with leading ws rule to handle "a.x * b" patterns
         .rule("expr", |r| {
-            r.pratt(r.parse("primary"), |ops| {
+            r.pratt(r.parse("unary"), |ops| {
                 ops
                     // Postfix operators (highest binding)
                     .postfix_call("(", ")", ",", 18, "|callee, args, _| Ok(call_expr(callee, args))")
@@ -210,39 +216,76 @@ pub fn grammar() -> CompiledGrammar {
                     .postfix_member(".", 18, "|obj, prop, _| Ok(member_expr(obj, prop))")
 
                     // Power (right-associative, very high precedence)
-                    .infix("^", 12, Assoc::Right, "|l, r, _| Ok(binary_expr(l, r, BinOp::Pow))")
-
-                    // Unary (high precedence)
-                    .prefix_kw("not", 11, "|e, _| Ok(unary_expr(e, UnOp::Not))")
-                    .prefix("-", 11, "|e, _| Ok(unary_expr(e, UnOp::Neg))")
-                    .prefix("#", 11, "|e, _| Ok(unary_expr(e, UnOp::Len))")
+                    .infix(r.sequence((r.parse("ws"), r.lit("^"))), 12, Assoc::Right, "|l, r, _| Ok(binary_expr(l, r, BinOp::Pow))")
 
                     // Multiplicative
-                    .infix("*", 10, Assoc::Left, "|l, r, _| Ok(binary_expr(l, r, BinOp::Mul))")
-                    .infix("//", 10, Assoc::Left, "|l, r, _| Ok(binary_expr(l, r, BinOp::FloorDiv))")
-                    .infix("/", 10, Assoc::Left, "|l, r, _| Ok(binary_expr(l, r, BinOp::Div))")
-                    .infix("%", 10, Assoc::Left, "|l, r, _| Ok(binary_expr(l, r, BinOp::Mod))")
+                    .infix(r.sequence((r.parse("ws"), r.lit("*"))), 10, Assoc::Left, "|l, r, _| Ok(binary_expr(l, r, BinOp::Mul))")
+                    .infix(r.sequence((r.parse("ws"), r.lit("//"))), 10, Assoc::Left, "|l, r, _| Ok(binary_expr(l, r, BinOp::FloorDiv))")
+                    .infix(r.sequence((r.parse("ws"), r.lit("/"))), 10, Assoc::Left, "|l, r, _| Ok(binary_expr(l, r, BinOp::Div))")
+                    .infix(r.sequence((r.parse("ws"), r.lit("%"))), 10, Assoc::Left, "|l, r, _| Ok(binary_expr(l, r, BinOp::Mod))")
 
                     // Additive
-                    .infix("+", 9, Assoc::Left, "|l, r, _| Ok(binary_expr(l, r, BinOp::Add))")
-                    // Note: "-" as infix needs to be handled carefully with prefix
-                    .infix("-", 9, Assoc::Left, "|l, r, _| Ok(binary_expr(l, r, BinOp::Sub))")
+                    .infix(r.sequence((r.parse("ws"), r.lit("+"))), 9, Assoc::Left, "|l, r, _| Ok(binary_expr(l, r, BinOp::Add))")
+                    // Use pattern to ensure "-" isn't followed by "-" (which would be a comment)
+                    .infix(r.sequence((r.parse("ws"), r.lit("-"), r.not_followed_by(r.lit("-")))), 9, Assoc::Left, "|l, r, _| Ok(binary_expr(l, r, BinOp::Sub))")
 
                     // String concatenation (right-associative)
-                    .infix("..", 8, Assoc::Right, "|l, r, _| Ok(binary_expr(l, r, BinOp::Concat))")
+                    .infix(r.sequence((r.parse("ws"), r.lit(".."))), 8, Assoc::Right, "|l, r, _| Ok(binary_expr(l, r, BinOp::Concat))")
 
                     // Comparison
-                    .infix("==", 4, Assoc::Left, "|l, r, _| Ok(binary_expr(l, r, BinOp::Eq))")
-                    .infix("~=", 4, Assoc::Left, "|l, r, _| Ok(binary_expr(l, r, BinOp::NotEq))")
-                    .infix("<=", 4, Assoc::Left, "|l, r, _| Ok(binary_expr(l, r, BinOp::Le))")
-                    .infix(">=", 4, Assoc::Left, "|l, r, _| Ok(binary_expr(l, r, BinOp::Ge))")
-                    .infix("<", 4, Assoc::Left, "|l, r, _| Ok(binary_expr(l, r, BinOp::Lt))")
-                    .infix(">", 4, Assoc::Left, "|l, r, _| Ok(binary_expr(l, r, BinOp::Gt))")
+                    .infix(r.sequence((r.parse("ws"), r.lit("=="))), 4, Assoc::Left, "|l, r, _| Ok(binary_expr(l, r, BinOp::Eq))")
+                    .infix(r.sequence((r.parse("ws"), r.lit("~="))), 4, Assoc::Left, "|l, r, _| Ok(binary_expr(l, r, BinOp::NotEq))")
+                    .infix(r.sequence((r.parse("ws"), r.lit("<="))), 4, Assoc::Left, "|l, r, _| Ok(binary_expr(l, r, BinOp::Le))")
+                    .infix(r.sequence((r.parse("ws"), r.lit(">="))), 4, Assoc::Left, "|l, r, _| Ok(binary_expr(l, r, BinOp::Ge))")
+                    .infix(r.sequence((r.parse("ws"), r.lit("<"))), 4, Assoc::Left, "|l, r, _| Ok(binary_expr(l, r, BinOp::Lt))")
+                    .infix(r.sequence((r.parse("ws"), r.lit(">"))), 4, Assoc::Left, "|l, r, _| Ok(binary_expr(l, r, BinOp::Gt))")
 
-                    // Logical
-                    .infix_kw("and", 3, Assoc::Left, "|l, r, _| Ok(binary_expr(l, r, BinOp::And))")
-                    .infix_kw("or", 2, Assoc::Left, "|l, r, _| Ok(binary_expr(l, r, BinOp::Or))")
+                    // Logical (keyword operators - include ws in pattern)
+                    .infix(r.sequence((r.parse("ws"), r.lit("and"), r.not_followed_by(r.ident_cont()))), 3, Assoc::Left, "|l, r, _| Ok(binary_expr(l, r, BinOp::And))")
+                    .infix(r.sequence((r.parse("ws"), r.lit("or"), r.not_followed_by(r.ident_cont()))), 2, Assoc::Left, "|l, r, _| Ok(binary_expr(l, r, BinOp::Or))")
             })
+        })
+
+        // Unary expressions - prefix operators handled here (not in Pratt)
+        // This allows ws to be consumed before checking for prefix ops
+        .rule("unary", |r| {
+            r.sequence((r.parse("ws"), r.parse("unary_inner"), r.parse("ws")))
+                .ast("|r, _| { if let ParseResult::List(mut items) = r { Ok(items.remove(1)) } else { Ok(r) } }")
+        })
+
+        .rule("unary_inner", |r| {
+            r.choice((
+                r.parse("prefix_not"),
+                r.parse("prefix_neg"),
+                r.parse("prefix_len"),
+                r.parse("primary"),
+            ))
+        })
+
+        .rule("prefix_not", |r| {
+            r.sequence((
+                r.lit("not"),
+                r.not_followed_by(r.ident_cont()),
+                r.parse("unary"),  // recursive - handles ws and more prefixes
+            ))
+            .ast("|r, _| { if let ParseResult::List(items) = r { let e = items.into_iter().last().unwrap_or(ParseResult::None); Ok(unary_expr(e, UnOp::Not)) } else { Ok(r) } }")
+        })
+
+        .rule("prefix_neg", |r| {
+            r.sequence((
+                r.lit("-"),
+                r.not_followed_by(r.lit("-")),  // not a comment
+                r.parse("unary"),
+            ))
+            .ast("|r, _| { if let ParseResult::List(items) = r { let e = items.into_iter().last().unwrap_or(ParseResult::None); Ok(unary_expr(e, UnOp::Neg)) } else { Ok(r) } }")
+        })
+
+        .rule("prefix_len", |r| {
+            r.sequence((
+                r.lit("#"),
+                r.parse("unary"),
+            ))
+            .ast("|r, _| { if let ParseResult::List(items) = r { let e = items.into_iter().last().unwrap_or(ParseResult::None); Ok(unary_expr(e, UnOp::Len)) } else { Ok(r) } }")
         })
 
         // Primary expression

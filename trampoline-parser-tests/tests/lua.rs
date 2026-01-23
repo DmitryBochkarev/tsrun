@@ -552,6 +552,20 @@ fn lua_member() {
 }
 
 #[test]
+fn lua_member_mul() {
+    // Test member access with infix operator
+    let expr = parse_expr("a.x * b.y");
+    assert_eq!(
+        expr,
+        Expr::Binary(
+            Box::new(Expr::Member(Box::new(Expr::Ident("a".into())), "x".into())),
+            BinOp::Mul,
+            Box::new(Expr::Member(Box::new(Expr::Ident("b".into())), "y".into()))
+        )
+    );
+}
+
+#[test]
 fn lua_postfix_chain() {
     // a.b[0].c()
     let expr = parse_expr("a.b[0].c()");
@@ -658,6 +672,42 @@ fn lua_table_trailing_comma() {
 // =============================================================================
 // Statements
 // =============================================================================
+
+#[test]
+fn lua_local_debug() {
+    // Debug test to understand why statement parsing fails
+    use trampoline_parser_tests::lua_parser::{Parser, ParseResult};
+
+    // The issue: "return" should parse to Stmts([Return]) but returns Stmts([])
+    // This means the statement parsing is failing silently in zero_or_more
+
+    // Let's test if we can access intermediate results
+    // We'll use parse_rule if available, otherwise work around it
+
+    let test_inputs = vec![
+        ("return", "just return keyword"),
+        ("return 1", "return with expr"),
+        ("local x", "local without init"),
+        ("local x = 1", "local with init"),
+        ("if true then end", "if statement"),
+    ];
+
+    for (input, desc) in test_inputs {
+        let mut parser = Parser::new(input);
+        let result = parser.parse();
+        match result {
+            Ok(ParseResult::Stmts(stmts)) => {
+                eprintln!("{}: {} statements: {:?}", desc, stmts.len(), stmts);
+            }
+            Ok(other) => {
+                eprintln!("{}: unexpected result type: {:?}", desc, other);
+            }
+            Err(e) => {
+                eprintln!("{}: error: {:?}", desc, e);
+            }
+        }
+    }
+}
 
 #[test]
 fn lua_local_decl() {

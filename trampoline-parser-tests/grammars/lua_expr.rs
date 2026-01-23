@@ -1,7 +1,9 @@
 //! Lua expression parser (for testing expressions independently).
 //!
 //! Whitespace is handled entirely in the grammar - no automatic ws skipping.
-//! - Infix/postfix operators: operand includes trailing ws, so operators match immediately
+//! - Infix operators: use patterns with leading ws rule to handle "a.x * b" patterns
+//!   (after postfix member access, position is right after identifier with leading space)
+//! - Postfix operators: match directly since operand consumes trailing ws
 //! - Prefix operators: handled as grammar rules (not Pratt) so ws is consumed before them
 
 use trampoline_parser::{Assoc, CombinatorExt, CompiledGrammar, Grammar};
@@ -9,6 +11,9 @@ use trampoline_parser::{Assoc, CombinatorExt, CompiledGrammar, Grammar};
 pub fn grammar() -> CompiledGrammar {
     Grammar::new()
         // Main entry: expression with Pratt for infix/postfix only
+        // Infix operators use patterns with leading ws rule to handle "a.x * b" patterns:
+        // After postfix member access, position is right after identifier (e.g., at " * b"),
+        // so infix patterns need to consume leading whitespace before matching the operator.
         .rule("expr", |r| {
             r.pratt(r.parse("unary"), |ops| {
                 ops
@@ -18,33 +23,33 @@ pub fn grammar() -> CompiledGrammar {
                     .postfix_member(".", 18, "|obj, prop, _| Ok(member_expr(obj, prop))")
 
                     // Power (right-associative)
-                    .infix("^", 12, Assoc::Right, "|l, r, _| Ok(binary_expr(l, r, BinOp::Pow))")
+                    .infix(r.sequence((r.parse("ws"), r.lit("^"))), 12, Assoc::Right, "|l, r, _| Ok(binary_expr(l, r, BinOp::Pow))")
 
                     // Multiplicative
-                    .infix("*", 10, Assoc::Left, "|l, r, _| Ok(binary_expr(l, r, BinOp::Mul))")
-                    .infix("//", 10, Assoc::Left, "|l, r, _| Ok(binary_expr(l, r, BinOp::FloorDiv))")
-                    .infix("/", 10, Assoc::Left, "|l, r, _| Ok(binary_expr(l, r, BinOp::Div))")
-                    .infix("%", 10, Assoc::Left, "|l, r, _| Ok(binary_expr(l, r, BinOp::Mod))")
+                    .infix(r.sequence((r.parse("ws"), r.lit("*"))), 10, Assoc::Left, "|l, r, _| Ok(binary_expr(l, r, BinOp::Mul))")
+                    .infix(r.sequence((r.parse("ws"), r.lit("//"))), 10, Assoc::Left, "|l, r, _| Ok(binary_expr(l, r, BinOp::FloorDiv))")
+                    .infix(r.sequence((r.parse("ws"), r.lit("/"))), 10, Assoc::Left, "|l, r, _| Ok(binary_expr(l, r, BinOp::Div))")
+                    .infix(r.sequence((r.parse("ws"), r.lit("%"))), 10, Assoc::Left, "|l, r, _| Ok(binary_expr(l, r, BinOp::Mod))")
 
                     // Additive
-                    .infix("+", 9, Assoc::Left, "|l, r, _| Ok(binary_expr(l, r, BinOp::Add))")
+                    .infix(r.sequence((r.parse("ws"), r.lit("+"))), 9, Assoc::Left, "|l, r, _| Ok(binary_expr(l, r, BinOp::Add))")
                     // Use pattern to ensure "-" isn't followed by "-" (which would be a comment)
-                    .infix(r.sequence((r.lit("-"), r.not_followed_by(r.lit("-")))), 9, Assoc::Left, "|l, r, _| Ok(binary_expr(l, r, BinOp::Sub))")
+                    .infix(r.sequence((r.parse("ws"), r.lit("-"), r.not_followed_by(r.lit("-")))), 9, Assoc::Left, "|l, r, _| Ok(binary_expr(l, r, BinOp::Sub))")
 
                     // String concatenation (right-associative)
-                    .infix("..", 8, Assoc::Right, "|l, r, _| Ok(binary_expr(l, r, BinOp::Concat))")
+                    .infix(r.sequence((r.parse("ws"), r.lit(".."))), 8, Assoc::Right, "|l, r, _| Ok(binary_expr(l, r, BinOp::Concat))")
 
                     // Comparison
-                    .infix("==", 4, Assoc::Left, "|l, r, _| Ok(binary_expr(l, r, BinOp::Eq))")
-                    .infix("~=", 4, Assoc::Left, "|l, r, _| Ok(binary_expr(l, r, BinOp::NotEq))")
-                    .infix("<=", 4, Assoc::Left, "|l, r, _| Ok(binary_expr(l, r, BinOp::Le))")
-                    .infix(">=", 4, Assoc::Left, "|l, r, _| Ok(binary_expr(l, r, BinOp::Ge))")
-                    .infix("<", 4, Assoc::Left, "|l, r, _| Ok(binary_expr(l, r, BinOp::Lt))")
-                    .infix(">", 4, Assoc::Left, "|l, r, _| Ok(binary_expr(l, r, BinOp::Gt))")
+                    .infix(r.sequence((r.parse("ws"), r.lit("=="))), 4, Assoc::Left, "|l, r, _| Ok(binary_expr(l, r, BinOp::Eq))")
+                    .infix(r.sequence((r.parse("ws"), r.lit("~="))), 4, Assoc::Left, "|l, r, _| Ok(binary_expr(l, r, BinOp::NotEq))")
+                    .infix(r.sequence((r.parse("ws"), r.lit("<="))), 4, Assoc::Left, "|l, r, _| Ok(binary_expr(l, r, BinOp::Le))")
+                    .infix(r.sequence((r.parse("ws"), r.lit(">="))), 4, Assoc::Left, "|l, r, _| Ok(binary_expr(l, r, BinOp::Ge))")
+                    .infix(r.sequence((r.parse("ws"), r.lit("<"))), 4, Assoc::Left, "|l, r, _| Ok(binary_expr(l, r, BinOp::Lt))")
+                    .infix(r.sequence((r.parse("ws"), r.lit(">"))), 4, Assoc::Left, "|l, r, _| Ok(binary_expr(l, r, BinOp::Gt))")
 
-                    // Logical
-                    .infix_kw("and", 3, Assoc::Left, "|l, r, _| Ok(binary_expr(l, r, BinOp::And))")
-                    .infix_kw("or", 2, Assoc::Left, "|l, r, _| Ok(binary_expr(l, r, BinOp::Or))")
+                    // Logical (keyword operators - include ws in pattern)
+                    .infix(r.sequence((r.parse("ws"), r.lit("and"), r.not_followed_by(r.ident_cont()))), 3, Assoc::Left, "|l, r, _| Ok(binary_expr(l, r, BinOp::And))")
+                    .infix(r.sequence((r.parse("ws"), r.lit("or"), r.not_followed_by(r.ident_cont()))), 2, Assoc::Left, "|l, r, _| Ok(binary_expr(l, r, BinOp::Or))")
             })
         })
 

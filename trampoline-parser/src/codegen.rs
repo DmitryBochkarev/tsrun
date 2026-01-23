@@ -254,7 +254,7 @@ impl<'a> CodeGenerator<'a> {
             Combinator::ZeroOrMore(inner) => {
                 self.line(&format!("{}Start {{ result_base: usize }},", prefix));
                 self.line(&format!(
-                    "{}Loop {{ result_base: usize, loop_base: usize, checkpoint: usize }},",
+                    "{}Loop {{ result_base: usize, loop_base: usize, iter_base: usize, checkpoint: usize }},",
                     prefix
                 ));
                 self.line(&format!(
@@ -366,6 +366,17 @@ impl<'a> CodeGenerator<'a> {
                 self.line(&format!("{}AfterOperand {{ result_base: usize, min_prec: u8, start_pos: usize, start_line: u32, start_column: u32 }},", prefix));
                 self.line(&format!("{}AfterInfix {{ result_base: usize, min_prec: u8, op_idx: usize, start_pos: usize, start_line: u32, start_column: u32 }},", prefix));
                 self.line(&format!("{}AfterPrefix {{ result_base: usize, min_prec: u8, op_idx: usize, start_pos: usize, start_line: u32, start_column: u32 }},", prefix));
+
+                // Work variants for infix operators with leading rules (e.g., patterns like Sequence([Rule("ws"), Literal("+")]))
+                // These enable grammar-controlled whitespace handling before operators
+                let has_infix_with_leading = pratt.infix_ops.iter().any(|op| {
+                    let p = extract_operator_pattern_full(op.pattern.as_ref());
+                    p.leading_rule.is_some() && !p.literal.is_empty()
+                });
+                if has_infix_with_leading {
+                    self.line(&format!("{}TryInfixWithRule {{ result_base: usize, min_prec: u8, op_idx: usize, next_prec: u8, checkpoint: usize, start_pos: usize, start_line: u32, start_column: u32 }},", prefix));
+                    self.line(&format!("{}AfterInfixLeadingRule {{ result_base: usize, min_prec: u8, op_idx: usize, next_prec: u8, checkpoint: usize, start_pos: usize, start_line: u32, start_column: u32 }},", prefix));
+                }
 
                 // Postfix work variants
                 if !pratt.postfix_ops.is_empty() {
@@ -954,12 +965,13 @@ impl<'a> CodeGenerator<'a> {
                 let item_prefix = format!("{}Item", prefix);
 
                 // Start - capture loop_base to track where this loop's results start
+                // Also capture iter_base (same as loop_base initially) for the first iteration
                 self.line(&format!("Work::{}Start {{ result_base }} => {{", prefix));
                 self.indent += 1;
                 self.line("let checkpoint = self.pos;");
                 self.line("let loop_base = self.result_stack.len();");
                 self.line(&format!(
-                    "self.work_stack.push(Work::{}Loop {{ result_base, loop_base, checkpoint }});",
+                    "self.work_stack.push(Work::{}Loop {{ result_base, loop_base, iter_base: loop_base, checkpoint }});",
                     prefix
                 ));
                 self.line(&format!(
@@ -969,9 +981,9 @@ impl<'a> CodeGenerator<'a> {
                 self.indent -= 1;
                 self.line("}");
 
-                // Loop - use loop_base for result tracking
+                // Loop - iter_base tracks where THIS iteration started
                 self.line(&format!(
-                    "Work::{}Loop {{ result_base, loop_base, checkpoint }} => {{",
+                    "Work::{}Loop {{ result_base, loop_base, iter_base, checkpoint }} => {{",
                     prefix
                 ));
                 self.indent += 1;
@@ -979,12 +991,8 @@ impl<'a> CodeGenerator<'a> {
                 self.indent += 1;
                 self.line("self.last_error = None;");
                 self.line("self.pos = checkpoint;");
-                // Pop the failed item result if any (use loop_base, not result_base)
-                self.line("if self.result_stack.len() > loop_base {");
-                self.indent += 1;
-                self.line("self.result_stack.pop();");
-                self.indent -= 1;
-                self.line("}");
+                // Truncate to iter_base (start of THIS iteration), not loop_base
+                self.line("self.result_stack.truncate(iter_base);");
                 self.line(&format!(
                     "self.work_stack.push(Work::{}Complete {{ result_base, loop_base }});",
                     prefix
@@ -993,8 +1001,10 @@ impl<'a> CodeGenerator<'a> {
                 self.line("} else {");
                 self.indent += 1;
                 self.line("let checkpoint = self.pos;");
+                // New iteration: iter_base is current stack position (after previous success)
+                self.line("let iter_base = self.result_stack.len();");
                 self.line(&format!(
-                    "self.work_stack.push(Work::{}Loop {{ result_base, loop_base, checkpoint }});",
+                    "self.work_stack.push(Work::{}Loop {{ result_base, loop_base, iter_base, checkpoint }});",
                     prefix
                 ));
                 self.line(&format!(
@@ -1758,80 +1768,110 @@ impl<'a> CodeGenerator<'a> {
                 self.line("if self.last_error.is_some() { return Ok(()); }");
 
                 if !pratt.infix_ops.is_empty() {
-                    // Try each infix operator (sorted by length for correct matching)
-                    let mut sorted_ops: Vec<_> = pratt.infix_ops.iter().enumerate().collect();
-                    sorted_ops.sort_by(|a, b| {
-                        let (lit_a, _, _) = extract_operator_pattern(a.1.pattern.as_ref());
-                        let (lit_b, _, _) = extract_operator_pattern(b.1.pattern.as_ref());
-                        lit_b.len().cmp(&lit_a.len()) // Longer operators first
-                    });
+                    // Separate operators into simple (no leading rule) and complex (with leading rule)
+                    let mut simple_ops: Vec<(usize, &crate::ir::InfixOp, OperatorPattern)> = vec![];
+                    let mut complex_ops: Vec<(usize, &crate::ir::InfixOp, OperatorPattern)> = vec![];
 
-                    // Skip whitespace before checking for infix operators
-                                        self.line("let infix_checkpoint = self.pos;");
-
-                    for (_, (i, infix_op)) in sorted_ops.iter().enumerate() {
-                        let (op_lit, is_keyword, not_followed) = extract_operator_pattern(infix_op.pattern.as_ref());
-                        if !op_lit.is_empty() {
-                            let prec = infix_op.precedence;
-                            let next_prec = if infix_op.assoc == crate::Assoc::Right { prec } else { prec + 1 };
-
-                            // Build condition with not_followed_by checks
-                            if not_followed.is_empty() {
-                                self.line(&format!("if {} >= min_prec && self.pos == infix_checkpoint && self.try_consume(\"{}\") {{", prec, escape_string(&op_lit)));
+                    for (i, infix_op) in pratt.infix_ops.iter().enumerate() {
+                        let pattern = extract_operator_pattern_full(infix_op.pattern.as_ref());
+                        if !pattern.literal.is_empty() {
+                            if pattern.leading_rule.is_some() {
+                                complex_ops.push((i, infix_op, pattern));
                             } else {
-                                // Use starts_with check plus not_followed_by conditions
-                                let mut condition = format!(
-                                    "if {} >= min_prec && self.pos == infix_checkpoint && self.input.get(self.pos..).unwrap_or(\"\").starts_with(\"{}\")",
-                                    prec,
-                                    escape_string(&op_lit)
-                                );
-                                for nf in &not_followed {
-                                    condition.push_str(&format!(
-                                        " && !self.input.get(self.pos..).unwrap_or(\"\").starts_with(\"{}{}\")",
-                                        escape_string(&op_lit),
-                                        escape_string(nf)
-                                    ));
-                                }
-                                condition.push_str(" {");
-                                self.line(&condition);
-                                self.indent += 1;
-                                // Manually consume the operator
-                                self.line(&format!("self.pos += {};", op_lit.len()));
-                                self.line(&format!("self.column += {};", op_lit.len()));
-                                self.indent -= 1;
+                                simple_ops.push((i, infix_op, pattern));
                             }
+                        }
+                    }
+
+                    // Sort simple ops by literal length (longer first)
+                    simple_ops.sort_by(|a, b| b.2.literal.len().cmp(&a.2.literal.len()));
+
+                    self.line("let infix_checkpoint = self.pos;");
+
+                    // First, try simple patterns (no leading rule) - these use try_consume
+                    for (i, infix_op, pattern) in &simple_ops {
+                        let prec = infix_op.precedence;
+                        let next_prec = if infix_op.assoc == crate::Assoc::Right { prec } else { prec + 1 };
+
+                        // Build condition with not_followed_by checks
+                        if pattern.not_followed_by.is_empty() {
+                            self.line(&format!("if {} >= min_prec && self.pos == infix_checkpoint && self.try_consume(\"{}\") {{", prec, escape_string(&pattern.literal)));
+                        } else {
+                            // Use starts_with check plus not_followed_by conditions
+                            let mut condition = format!(
+                                "if {} >= min_prec && self.pos == infix_checkpoint && self.input.get(self.pos..).unwrap_or(\"\").starts_with(\"{}\")",
+                                prec,
+                                escape_string(&pattern.literal)
+                            );
+                            for nf in &pattern.not_followed_by {
+                                condition.push_str(&format!(
+                                    " && !self.input.get(self.pos..).unwrap_or(\"\").starts_with(\"{}{}\")",
+                                    escape_string(&pattern.literal),
+                                    escape_string(nf)
+                                ));
+                            }
+                            condition.push_str(" {");
+                            self.line(&condition);
                             self.indent += 1;
+                            // Manually consume the operator
+                            self.line(&format!("self.pos += {};", pattern.literal.len()));
+                            self.line(&format!("self.column += {};", pattern.literal.len()));
+                            self.indent -= 1;
+                        }
+                        self.indent += 1;
 
-                            // For keyword operators, check that we're not in the middle of an identifier
-                            if is_keyword {
-                                self.line("// Keyword boundary check: must not be followed by identifier char");
-                                self.line("if self.current_char().map_or(true, |c| !(c.is_ascii_alphanumeric() || c == '_' || c == '$')) {");
-                                self.indent += 1;
-                            }
+                        // For keyword operators, check that we're not in the middle of an identifier
+                        if pattern.is_keyword {
+                            self.line("// Keyword boundary check: must not be followed by identifier char");
+                            self.line("if self.current_char().map_or(true, |c| !(c.is_ascii_alphanumeric() || c == '_' || c == '$')) {");
+                            self.indent += 1;
+                        }
 
-                                                        self.line(&format!(
-                                "self.work_stack.push(Work::{}AfterInfix {{ result_base, min_prec, op_idx: {}, start_pos, start_line, start_column }});",
-                                prefix, i
-                            ));
-                            // Use current stack length as result_base for right operand to preserve left operand
-                            self.line(&format!(
-                                "self.work_stack.push(Work::{}ParseOperand {{ result_base: self.result_stack.len(), min_prec: {}, start_pos: self.pos, start_line: self.line, start_column: self.column }});",
-                                prefix, next_prec
-                            ));
+                        self.line(&format!(
+                            "self.work_stack.push(Work::{}AfterInfix {{ result_base, min_prec, op_idx: {}, start_pos, start_line, start_column }});",
+                            prefix, i
+                        ));
+                        // Use current stack length as result_base for right operand to preserve left operand
+                        self.line(&format!(
+                            "self.work_stack.push(Work::{}ParseOperand {{ result_base: self.result_stack.len(), min_prec: {}, start_pos: self.pos, start_line: self.line, start_column: self.column }});",
+                            prefix, next_prec
+                        ));
 
-                            if is_keyword {
-                                self.indent -= 1;
-                                self.line("} else {");
-                                self.indent += 1;
-                                self.line("// Keyword followed by ident char - restore and try next");
-                                self.line("self.pos = infix_checkpoint;");
-                                self.indent -= 1;
-                                self.line("}");
-                            }
-
+                        if pattern.is_keyword {
+                            self.indent -= 1;
+                            self.line("} else {");
+                            self.indent += 1;
+                            self.line("// Keyword followed by ident char - restore and try next");
+                            self.line("self.pos = infix_checkpoint;");
                             self.indent -= 1;
                             self.line("}");
                         }
+
+                        self.indent -= 1;
+                        self.line("}");
+                    }
+
+                    // Then, try complex patterns (with leading rule) - these need async handling
+                    // Only push the FIRST complex operator that passes precedence check
+                    // AfterInfixLeadingRule will chain to the next complex op if literal doesn't match
+                    if !complex_ops.is_empty() {
+                        // Find the first complex op that passes precedence (we don't know min_prec at codegen time,
+                        // so we generate code that checks at runtime and pushes the first matching)
+                        self.line("// Try first complex infix operator (others will be chained if this fails)");
+                        let first_op = &complex_ops[0];
+                        let prec = first_op.1.precedence;
+                        let next_prec = if first_op.1.assoc == crate::Assoc::Right { prec } else { prec + 1 };
+                        self.line(&format!(
+                            "if {} >= min_prec && self.pos == infix_checkpoint {{",
+                            prec
+                        ));
+                        self.indent += 1;
+                        self.line(&format!(
+                            "self.work_stack.push(Work::{}TryInfixWithRule {{ result_base, min_prec, op_idx: {}, next_prec: {}, checkpoint: infix_checkpoint, start_pos, start_line, start_column }});",
+                            prefix, first_op.0, next_prec
+                        ));
+                        self.indent -= 1;
+                        self.line("}");
                     }
                 }
                 // No more operators - we're done
@@ -1883,6 +1923,178 @@ impl<'a> CodeGenerator<'a> {
                 self.line("}");
                 self.indent -= 1;
                 self.line("}");
+
+                // Handlers for infix operators with leading rules (grammar-controlled whitespace handling)
+                let has_infix_with_leading = pratt.infix_ops.iter().any(|op| {
+                    let p = extract_operator_pattern_full(op.pattern.as_ref());
+                    p.leading_rule.is_some() && !p.literal.is_empty()
+                });
+                if has_infix_with_leading {
+                    // TryInfixWithRule - save checkpoint and parse the leading rule
+                    self.line(&format!(
+                        "Work::{}TryInfixWithRule {{ result_base, min_prec, op_idx, next_prec, checkpoint, start_pos, start_line, start_column }} => {{",
+                        prefix
+                    ));
+                    self.indent += 1;
+                    self.line("// Parse the leading rule, then check the literal in AfterInfixLeadingRule");
+                    self.line(&format!(
+                        "self.work_stack.push(Work::{}AfterInfixLeadingRule {{ result_base, min_prec, op_idx, next_prec, checkpoint, start_pos, start_line, start_column }});",
+                        prefix
+                    ));
+                    self.line("match op_idx {");
+                    self.indent += 1;
+
+                    for (i, infix_op) in pratt.infix_ops.iter().enumerate() {
+                        let pattern = extract_operator_pattern_full(infix_op.pattern.as_ref());
+                        if let Some(rule_name) = &pattern.leading_rule {
+                            if !pattern.literal.is_empty() {
+                                let rule_prefix = to_pascal_case(rule_name);
+                                self.line(&format!("{} => {{", i));
+                                self.indent += 1;
+                                self.line(&format!(
+                                    "self.work_stack.push(Work::{}Start {{ result_base: self.result_stack.len() }});",
+                                    rule_prefix
+                                ));
+                                self.indent -= 1;
+                                self.line("}");
+                            }
+                        }
+                    }
+
+                    self.line("_ => {}");
+                    self.indent -= 1;
+                    self.line("}");
+                    self.indent -= 1;
+                    self.line("}");
+
+                    // Collect complex operators with their indices for chaining
+                    let complex_ops_indexed: Vec<_> = pratt.infix_ops.iter().enumerate()
+                        .filter_map(|(i, op)| {
+                            let p = extract_operator_pattern_full(op.pattern.as_ref());
+                            if p.leading_rule.is_some() && !p.literal.is_empty() {
+                                Some((i, op, p))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+
+                    // AfterInfixLeadingRule - leading rule completed, check the literal
+                    self.line(&format!(
+                        "Work::{}AfterInfixLeadingRule {{ result_base, min_prec, op_idx, next_prec, checkpoint, start_pos, start_line, start_column }} => {{",
+                        prefix
+                    ));
+                    self.indent += 1;
+                    self.line("// Leading rule result is on stack (often None for skip rules), we ignore it");
+                    self.line("let _ = self.result_stack.pop();");
+                    self.line("// Clear any error from the leading rule (skip rules might fail on EOF, that's ok)");
+                    self.line("self.last_error = None;");
+                    self.line("");
+                    self.line("// Now check if the operator literal matches");
+                    self.line("match op_idx {");
+                    self.indent += 1;
+
+                    for (complex_idx, (op_idx, _infix_op, pattern)) in complex_ops_indexed.iter().enumerate() {
+                        self.line(&format!("{} => {{", op_idx));
+                        self.indent += 1;
+
+                        // Generate condition based on not_followed_by patterns
+                        if pattern.not_followed_by.is_empty() {
+                            self.line(&format!(
+                                "if self.try_consume(\"{}\") {{",
+                                escape_string(&pattern.literal)
+                            ));
+                        } else {
+                            let mut condition = format!(
+                                "if self.input.get(self.pos..).unwrap_or(\"\").starts_with(\"{}\")",
+                                escape_string(&pattern.literal)
+                            );
+                            for nf in &pattern.not_followed_by {
+                                condition.push_str(&format!(
+                                    " && !self.input.get(self.pos..).unwrap_or(\"\").starts_with(\"{}{}\")",
+                                    escape_string(&pattern.literal),
+                                    escape_string(nf)
+                                ));
+                            }
+                            condition.push_str(" {");
+                            self.line(&condition);
+                            self.indent += 1;
+                            self.line(&format!("self.pos += {};", pattern.literal.len()));
+                            self.line(&format!("self.column += {};", pattern.literal.len()));
+                            self.indent -= 1;
+                        }
+                        self.indent += 1;
+
+                        // Keyword boundary check if needed
+                        if pattern.is_keyword {
+                            self.line("if self.current_char().map_or(true, |c| !(c.is_ascii_alphanumeric() || c == '_' || c == '$')) {");
+                            self.indent += 1;
+                        }
+
+                        // Success - proceed with parsing right operand
+                        self.line(&format!(
+                            "self.work_stack.push(Work::{}AfterInfix {{ result_base, min_prec, op_idx, start_pos, start_line, start_column }});",
+                            prefix
+                        ));
+                        self.line(&format!(
+                            "self.work_stack.push(Work::{}ParseOperand {{ result_base: self.result_stack.len(), min_prec: next_prec, start_pos: self.pos, start_line: self.line, start_column: self.column }});",
+                            prefix
+                        ));
+
+                        if pattern.is_keyword {
+                            self.indent -= 1;
+                            self.line("} else {");
+                            self.indent += 1;
+                            self.line("// Keyword boundary failed - restore and try next");
+                            self.line("self.pos = checkpoint;");
+                            // Try next complex operator if any
+                            if complex_idx + 1 < complex_ops_indexed.len() {
+                                let (next_op_idx, next_infix_op, _) = &complex_ops_indexed[complex_idx + 1];
+                                let next_prec_val = if next_infix_op.assoc == crate::Assoc::Right {
+                                    next_infix_op.precedence
+                                } else {
+                                    next_infix_op.precedence + 1
+                                };
+                                self.line(&format!(
+                                    "if {} >= min_prec {{ self.work_stack.push(Work::{}TryInfixWithRule {{ result_base, min_prec, op_idx: {}, next_prec: {}, checkpoint, start_pos, start_line, start_column }}); }}",
+                                    next_infix_op.precedence, prefix, next_op_idx, next_prec_val
+                                ));
+                            }
+                            self.indent -= 1;
+                            self.line("}");
+                        }
+
+                        self.indent -= 1;
+                        self.line("} else {");
+                        self.indent += 1;
+                        self.line("// Literal didn't match - restore checkpoint and try next complex op");
+                        self.line("self.pos = checkpoint;");
+                        // Try next complex operator if any
+                        if complex_idx + 1 < complex_ops_indexed.len() {
+                            let (next_op_idx, next_infix_op, _) = &complex_ops_indexed[complex_idx + 1];
+                            let next_prec_val = if next_infix_op.assoc == crate::Assoc::Right {
+                                next_infix_op.precedence
+                            } else {
+                                next_infix_op.precedence + 1
+                            };
+                            self.line(&format!(
+                                "if {} >= min_prec {{ self.work_stack.push(Work::{}TryInfixWithRule {{ result_base, min_prec, op_idx: {}, next_prec: {}, checkpoint, start_pos, start_line, start_column }}); }}",
+                                next_infix_op.precedence, prefix, next_op_idx, next_prec_val
+                            ));
+                        }
+                        self.indent -= 1;
+                        self.line("}");
+
+                        self.indent -= 1;
+                        self.line("}");
+                    }
+
+                    self.line("_ => {}");
+                    self.indent -= 1;
+                    self.line("}");
+                    self.indent -= 1;
+                    self.line("}");
+                }
 
                 // Postfix handlers
                 if !pratt.postfix_ops.is_empty() {
@@ -2276,44 +2488,76 @@ fn escape_string(s: &str) -> String {
         .collect()
 }
 
-/// Check if a pattern is a keyword pattern (Literal followed by NotFollowedBy(IdentCont))
-/// Returns (literal, is_keyword, not_followed_by_literals)
-/// not_followed_by_literals contains any literal strings that must NOT follow the operator
-fn extract_operator_pattern(pattern: &Combinator) -> (String, bool, Vec<String>) {
-    match pattern {
-        Combinator::Literal(s) => (s.clone(), false, vec![]),
-        Combinator::Sequence(parts) if parts.len() >= 2 => {
-            if let Combinator::Literal(s) = &parts[0] {
-                // Check if second part is NotFollowedBy(CharClass(IdentCont)) - keyword pattern
-                let is_keyword = matches!(
-                    &parts[1],
-                    Combinator::NotFollowedBy(inner) if matches!(inner.as_ref(), Combinator::CharClass(CharClass::IdentCont))
-                );
+/// Extracted information about an operator pattern.
+/// This allows the grammar to specify complex patterns for operators,
+/// keeping all whitespace/parsing logic in the grammar rather than hardcoded.
+#[derive(Debug, Clone, Default)]
+struct OperatorPattern {
+    /// The operator literal (required for matching)
+    literal: String,
+    /// Whether this is a keyword requiring boundary check
+    is_keyword: bool,
+    /// Literals that must not follow this operator
+    not_followed_by: Vec<String>,
+    /// Optional rule to parse before the literal (e.g., "ws")
+    /// This enables patterns like Sequence([Rule("ws"), Literal("+")])
+    leading_rule: Option<String>,
+}
 
-                // Collect any NotFollowedBy(Literal) conditions
-                let mut not_followed: Vec<String> = vec![];
-                for part in &parts[1..] {
-                    if let Combinator::NotFollowedBy(inner) = part {
-                        if let Combinator::Literal(nf_lit) = inner.as_ref() {
-                            not_followed.push(nf_lit.clone());
+/// Extract operator pattern information from a combinator.
+/// Supports:
+/// - Literal("+")
+/// - Sequence([Literal("+"), NotFollowedBy(...)])
+/// - Sequence([Rule("ws"), Literal("+")])
+/// - Sequence([Rule("ws"), Literal("+"), NotFollowedBy(...)])
+fn extract_operator_pattern_full(pattern: &Combinator) -> OperatorPattern {
+    match pattern {
+        Combinator::Literal(s) => OperatorPattern {
+            literal: s.clone(),
+            ..Default::default()
+        },
+        Combinator::Sequence(parts) if !parts.is_empty() => {
+            let mut result = OperatorPattern::default();
+            let mut start_idx = 0;
+
+            // Check for leading Rule reference (e.g., Rule("ws"))
+            if let Combinator::Rule(rule_name) = &parts[0] {
+                result.leading_rule = Some(rule_name.clone());
+                start_idx = 1;
+            }
+
+            // Find the literal
+            if start_idx < parts.len() {
+                if let Combinator::Literal(s) = &parts[start_idx] {
+                    result.literal = s.clone();
+
+                    // Check remaining parts for keyword/not_followed patterns
+                    for part in &parts[start_idx + 1..] {
+                        if let Combinator::NotFollowedBy(inner) = part {
+                            match inner.as_ref() {
+                                Combinator::CharClass(CharClass::IdentCont) => {
+                                    result.is_keyword = true;
+                                }
+                                Combinator::Literal(nf_lit) => {
+                                    result.not_followed_by.push(nf_lit.clone());
+                                }
+                                _ => {}
+                            }
                         }
                     }
                 }
+            }
 
-                (s.clone(), is_keyword, not_followed)
-            } else {
-                (String::new(), false, vec![])
-            }
+            result
         }
-        Combinator::Sequence(parts) if parts.len() == 1 => {
-            if let Combinator::Literal(s) = &parts[0] {
-                (s.clone(), false, vec![])
-            } else {
-                (String::new(), false, vec![])
-            }
-        }
-        _ => (String::new(), false, vec![]),
+        _ => OperatorPattern::default(),
     }
+}
+
+/// Legacy wrapper for existing code - returns (literal, is_keyword, not_followed_by_literals)
+fn extract_operator_pattern(pattern: &Combinator) -> (String, bool, Vec<String>) {
+    let p = extract_operator_pattern_full(pattern);
+    (p.literal, p.is_keyword, p.not_followed_by)
 }
 
 #[cfg(test)]

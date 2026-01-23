@@ -105,6 +105,19 @@ impl CharClass {
 
 /// Pratt parsing definition for expression parsing
 #[derive(Debug, Clone, Default)]
+/// Pratt expression parser definition.
+///
+/// IMPORTANT: The parser generator does NOT handle whitespace automatically.
+/// All whitespace handling must be done explicitly in the grammar DSL.
+/// This includes whitespace between operators and operands.
+///
+/// For expressions with postfix operators followed by infix operators (e.g., "a.x * b"),
+/// the grammar must ensure whitespace is consumed. Common patterns:
+/// 1. Have the operand rule consume surrounding whitespace
+/// 2. Use pattern-based operators that include whitespace in their patterns
+/// 3. Structure the grammar so postfix chains are parsed as complete units
+///
+/// DO NOT add automatic/hardcoded whitespace handling to the parser generator.
 pub struct PrattDef {
     /// The operand parser (primary expressions)
     pub operand: Box<Option<Combinator>>,

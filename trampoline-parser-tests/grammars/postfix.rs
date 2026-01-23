@@ -4,8 +4,13 @@ use trampoline_parser::{Assoc, CombinatorExt, CompiledGrammar, Grammar};
 
 pub fn grammar() -> CompiledGrammar {
     Grammar::new()
+        // This grammar demonstrates grammar-controlled whitespace handling.
+        // The operand rule wraps primary with whitespace to handle "a.x * b" patterns:
+        // - Leading ws handles whitespace before operand
+        // - Trailing ws handles whitespace after operand (before postfix or infix ops)
+        // Infix operators also consume leading ws for whitespace between postfix and infix.
         .rule("expr", |r| {
-            r.pratt(r.parse("primary"), |ops| {
+            r.pratt(r.parse("operand"), |ops| {
                 ops
                     // Postfix operators (highest precedence for binding)
                     .postfix_call("(", ")", ",", 18, "|callee, args, _| Ok(call(callee, args))")
@@ -13,10 +18,16 @@ pub fn grammar() -> CompiledGrammar {
                     .postfix_member(".", 18, "|obj, prop, _| Ok(member(obj, prop))")
                     .postfix("++", 17, "|e, _| Ok(postinc(e))")
                     .postfix("--", 17, "|e, _| Ok(postdec(e))")
-                    // Binary operators (for completeness)
-                    .infix("+", 1, Assoc::Left, "|l, r, _| Ok(binary(l, r, BinOp::Add))")
-                    .infix("*", 2, Assoc::Left, "|l, r, _| Ok(binary(l, r, BinOp::Mul))")
+                    // Binary operators - use patterns with leading ws rule
+                    // This enables "a.x * b" to work: after ".x" postfix, ws consumes " " before "*"
+                    .infix(r.sequence((r.parse("ws"), r.lit("+"))), 1, Assoc::Left, "|l, r, _| Ok(binary(l, r, BinOp::Add))")
+                    .infix(r.sequence((r.parse("ws"), r.lit("*"))), 2, Assoc::Left, "|l, r, _| Ok(binary(l, r, BinOp::Mul))")
             })
+        })
+        // Operand wraps primary with whitespace
+        .rule("operand", |r| {
+            r.sequence((r.parse("ws"), r.parse("primary"), r.parse("ws")))
+                .ast("|r, _| { if let ParseResult::List(mut items) = r { Ok(items.remove(1)) } else { Ok(r) } }")
         })
         .rule("primary", |r| {
             r.choice((
