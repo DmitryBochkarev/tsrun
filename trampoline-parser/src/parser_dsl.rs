@@ -72,16 +72,6 @@ impl RuleBuilder {
         Combinator::Skip(Box::new(inner))
     }
 
-    /// Positive lookahead (peek without consuming)
-    pub fn lookahead(&self, inner: Combinator) -> Combinator {
-        Combinator::Lookahead(Box::new(inner))
-    }
-
-    /// Negative lookahead (fail if matches)
-    pub fn negative_lookahead(&self, inner: Combinator) -> Combinator {
-        Combinator::NegativeLookahead(Box::new(inner))
-    }
-
     /// Separated list: item (sep item)*
     pub fn separated_by(&self, item: Combinator, separator: Combinator) -> Combinator {
         Combinator::SeparatedBy {
@@ -358,10 +348,18 @@ impl PrattBuilder {
     }
 
     /// Define a call expression postfix: callee(args)
-    pub fn postfix_call(mut self, open: &str, close: &str, precedence: u8, mapping: &str) -> Self {
+    pub fn postfix_call(
+        mut self,
+        open: &str,
+        close: &str,
+        separator: &str,
+        precedence: u8,
+        mapping: &str,
+    ) -> Self {
         self.postfix_ops.push(PostfixOp::Call {
             open: open.to_string(),
             close: close.to_string(),
+            separator: separator.to_string(),
             precedence,
             mapping: mapping.to_string(),
         });

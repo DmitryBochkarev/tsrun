@@ -3,7 +3,7 @@
 //! This module defines the bytecode format used by the VM.
 //! We use a register-based design with up to 256 virtual registers.
 
-use crate::lexer::Span;
+use crate::parser::Span;
 use crate::prelude::*;
 use crate::value::{JsString, JsValue};
 

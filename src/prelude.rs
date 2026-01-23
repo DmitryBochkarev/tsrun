@@ -11,10 +11,8 @@ pub use core::{
     cell::{Cell, Ref, RefCell, RefMut},
     fmt,
     hash::{Hash, Hasher},
-    iter::Peekable,
     mem,
     ptr::NonNull,
-    str::CharIndices,
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════

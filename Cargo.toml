@@ -1,3 +1,6 @@
+[workspace]
+members = [".", "trampoline-parser", "grammar"]
+
 [package]
 name = "tsrun"
 version = "0.1.17"
@@ -66,10 +69,6 @@ dlmalloc = { version = "0.2", optional = true, features = ["global"] }
 criterion = { version = "0.5", features = ["html_reports"] }
 
 [[bench]]
-name = "lexer"
-harness = false
-
-[[bench]]
 name = "parser"
 harness = false
 
@@ -94,3 +93,6 @@ panic = "abort"
 inherits = "release"
 debug = true
 strip = false
+
+[build-dependencies]
+tsrun-grammar = { path = "grammar" }

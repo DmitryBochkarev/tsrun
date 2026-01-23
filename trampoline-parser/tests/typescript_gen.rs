@@ -2919,6 +2919,7 @@ fn test_combined_span_generated() {
 #[test]
 fn test_span_propagation_compile_check() {
     // Test that generated code with span propagation compiles correctly
+    // Note: The closure receives (ParseResult, Span) and should return something that can be boxed
     let grammar = Grammar::new()
         .ast_config(|c| c.apply_mappings())
         .lexer(|l| {
@@ -2930,8 +2931,9 @@ fn test_span_propagation_compile_check() {
                 .skip("whitespace")
         })
         .rule("expr", |r| {
+            // Use a simple closure that returns a tuple - no external types needed
             r.sequence((r.token("NUMBER"), r.token("PLUS"), r.token("NUMBER")))
-                .ast("|(a, op, b)| Expr::Binary { left: a, op, right: b }")
+                .ast("|result, span| (\"binary_expr\", span)")
         });
 
     let compiled = grammar.build();
@@ -3030,4 +3032,156 @@ fn test_span_merge_handles_empty_spans() {
         code.contains("if self.start == 0 && self.end == 0 {"),
         "merge() should check for empty self span"
     );
+}
+
+#[test]
+fn test_typescript_grammar_parses_let() {
+    use trampoline_parser::grammars::typescript_grammar;
+
+    // Build the full TypeScript grammar
+    let grammar = typescript_grammar();
+    let compiled = grammar.build();
+    let mut code = compiled.generate();
+
+    // Remove the external crate imports and add type stubs for standalone compilation
+    code = code.replace("use crate::value::JsString;", "type JsString = std::rc::Rc<str>;");
+    code = code.replace("use crate::prelude::Rc;", "use std::rc::Rc;");
+    code = code.replace(
+        "use crate::string_dict::StringDict;",
+        r#"
+struct StringDict {
+    strings: std::collections::HashMap<String, JsString>,
+}
+impl StringDict {
+    fn new() -> Self { Self { strings: std::collections::HashMap::new() } }
+    fn get_or_insert(&mut self, s: &str) -> JsString {
+        if let Some(rc) = self.strings.get(s) {
+            return rc.clone();
+        }
+        let rc: JsString = s.into();
+        self.strings.insert(s.to_string(), rc.clone());
+        rc
+    }
+}
+"#,
+    );
+
+    // Add a main function that parses "let x = 1;"
+    code.push_str(
+        r#"
+fn main() {
+    let mut dict = StringDict::new();
+    let mut parser = Parser::new("let x = 1;", &mut dict);
+
+    // Start parsing by pushing initial work item
+    parser.work_stack.push(Work::Program_Start);
+
+    // Add timeout protection
+    use std::time::{Duration, Instant};
+    let start = Instant::now();
+    let timeout = Duration::from_secs(5);
+
+    // Check work_stack size periodically
+    let mut iterations = 0u64;
+    let mut last_work: Option<String> = None;
+    while let Some(work) = parser.work_stack.pop() {
+        iterations += 1;
+        let work_name = format!("{:?}", work);
+        if iterations % 10000 == 0 {
+            if start.elapsed() > timeout {
+                println!("TIMEOUT after {} iterations", iterations);
+                println!("work_stack len: {}", parser.work_stack.len());
+                println!("result_stack len: {}", parser.result_stack.len());
+                println!("last_work: {:?}", last_work);
+                println!("current_work: {}", &work_name[..work_name.len().min(100)]);
+                // Print the top 5 work items
+                println!("work_stack top 5:");
+                let work_items: Vec<_> = parser.work_stack.iter().rev().take(5).collect();
+                for (i, w) in work_items.iter().enumerate() {
+                    let s = format!("{:?}", w);
+                    println!("  {}: {}", i, &s[..s.len().min(80)]);
+                }
+                return;
+            }
+        }
+        last_work = Some(work_name.clone());
+        if let Err(e) = parser.execute_work(work) {
+            parser.last_error = Some(e);
+        }
+    }
+
+    println!("Finished after {} iterations", iterations);
+    println!("work_stack len: {}", parser.work_stack.len());
+    println!("result_stack len: {}", parser.result_stack.len());
+
+    // Check final result
+    if let Some(e) = parser.last_error.take() {
+        println!("last_error: {}", e);
+        if parser.result_stack.is_empty() {
+            println!("ERROR: {}", e);
+            return;
+        }
+    }
+
+    match parser.result_stack.pop() {
+        Some(result) => {
+            println!("SUCCESS: Parsed in {} iterations", iterations);
+            println!("Result type: {:?}", std::mem::discriminant(&result));
+        }
+        None => println!("NO_RESULT"),
+    }
+}
+"#,
+    );
+
+    // Write, compile, and run
+    let temp_file = "/tmp/test_ts_let.rs";
+    let temp_bin = "/tmp/test_ts_let";
+    fs::write(temp_file, &code).expect("Failed to write temp file");
+
+    match Command::new("rustc")
+        .args(["--edition", "2021", "-o", temp_bin, temp_file])
+        .output()
+    {
+        Ok(output) => {
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                // Don't print entire generated code, it's too long
+                println!("\nCompiler error:\n{}", stderr);
+                panic!("TypeScript grammar failed to compile!");
+            }
+
+            // Run the binary with timeout
+            let run_output = Command::new(temp_bin)
+                .output()
+                .expect("Failed to run parser");
+            let stdout = String::from_utf8_lossy(&run_output.stdout);
+            let stderr = String::from_utf8_lossy(&run_output.stderr);
+
+            println!("Parser stdout:\n{}", stdout);
+            if !stderr.is_empty() {
+                println!("Parser stderr:\n{}", stderr);
+            }
+
+            if stdout.contains("TIMEOUT") {
+                panic!("Parser timed out! Possible infinite loop.");
+            }
+
+            if !stdout.contains("SUCCESS") {
+                panic!("Parser did not produce expected output!");
+            }
+
+            println!("TypeScript grammar test passed");
+        }
+        Err(e) => {
+            println!(
+                "Warning: Could not run rustc: {}. Skipping TypeScript grammar test.",
+                e
+            );
+        }
+    }
+
+    // Cleanup
+    let _ = fs::remove_file(temp_file);
+    let _ = fs::remove_file(temp_bin);
 }

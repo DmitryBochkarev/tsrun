@@ -1,6 +1,6 @@
 //! Abstract Syntax Tree types for TypeScript
 
-use crate::lexer::Span;
+use crate::parser::Span;
 use crate::prelude::*;
 use crate::value::JsString;
 

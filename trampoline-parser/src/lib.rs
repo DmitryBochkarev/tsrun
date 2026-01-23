@@ -28,11 +28,13 @@ pub mod grammars;
 mod ir;
 mod lexer_dsl;
 mod parser_dsl;
+mod validation;
 
 pub use codegen::*;
 pub use ir::*;
 pub use lexer_dsl::*;
 pub use parser_dsl::*;
+pub use validation::{validate_grammar, ValidationError};
 
 /// Builder for AST configuration
 ///
@@ -123,6 +125,57 @@ impl AstConfigBuilder {
         self
     }
 
+    /// Add helper code (functions, constants) to be included in the generated parser
+    pub fn helper(mut self, code: &str) -> Self {
+        self.config.helper_code.push(code.to_string());
+        self
+    }
+
+    /// Add a custom ParseResult variant for typed AST nodes
+    ///
+    /// This generates a variant in the ParseResult enum that holds
+    /// a specific AST type, along with conversion methods.
+    ///
+    /// # Arguments
+    /// * `name` - Variant name (e.g., "Expr")
+    /// * `rust_type` - The Rust type it holds (e.g., "Expression")
+    ///
+    /// # Example
+    /// ```ignore
+    /// .ast_config(|c| c
+    ///     .result_variant("Expr", "Expression")
+    ///     .result_variant("Stmt", "Statement")
+    /// )
+    /// ```
+    pub fn result_variant(mut self, name: &str, rust_type: &str) -> Self {
+        self.config.result_variants.push(ir::ResultVariant {
+            name: name.to_string(),
+            rust_type: rust_type.to_string(),
+            span_expr: None,
+        });
+        self
+    }
+
+    /// Add a custom ParseResult variant with custom span extraction
+    ///
+    /// # Arguments
+    /// * `name` - Variant name (e.g., "Ident")
+    /// * `rust_type` - The Rust type it holds (e.g., "Identifier")
+    /// * `span_expr` - Expression to extract span where `v` is the value (e.g., "v.span")
+    ///
+    /// # Example
+    /// ```ignore
+    /// .result_variant_with_span("Ident", "Identifier", "v.span")
+    /// ```
+    pub fn result_variant_with_span(mut self, name: &str, rust_type: &str, span_expr: &str) -> Self {
+        self.config.result_variants.push(ir::ResultVariant {
+            name: name.to_string(),
+            rust_type: rust_type.to_string(),
+            span_expr: Some(span_expr.to_string()),
+        });
+        self
+    }
+
     /// Build the final AstConfig
     pub fn build(self) -> AstConfig {
         self.config
@@ -202,8 +255,12 @@ impl Grammar {
 
     /// Finalize and validate the grammar
     pub fn build(self) -> CompiledGrammar {
-        // TODO: Validate that all referenced rules exist
-        // TODO: Validate that all referenced tokens exist
+        // Run grammar validation
+        let errors = validation::validate_grammar(&self.rules);
+        for error in &errors {
+            eprintln!("Grammar warning: {}", error);
+        }
+
         CompiledGrammar {
             lexer: self.lexer,
             rules: self.rules,

@@ -7,7 +7,7 @@ use super::bytecode::{
     BytecodeChunk, Constant, ConstantIndex, FunctionInfo, JumpTarget, Op, Register, SourceMapEntry,
 };
 use crate::error::JsError;
-use crate::lexer::Span;
+use crate::parser::Span;
 use crate::prelude::*;
 use crate::value::JsString;
 

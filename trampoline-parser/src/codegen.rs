@@ -45,6 +45,13 @@ impl<'a> CodeGenerator<'a> {
         self.line("#![allow(dead_code)]");
         self.line("#![allow(unused_variables)]");
         self.line("#![allow(non_camel_case_types)]");
+        self.line("#![allow(clippy::collapsible_match)]");
+        self.line("#![allow(clippy::should_implement_trait)]");
+        self.line("#![allow(clippy::string_slice)]");
+        self.line("#![allow(clippy::match_like_matches_macro)]");
+        self.line("#![allow(clippy::collapsible_if)]");
+        self.line("#![allow(clippy::clone_on_copy)]");
+        self.line("#![allow(clippy::get_first)]");
         self.line("");
 
         // Emit configured imports
@@ -52,6 +59,14 @@ impl<'a> CodeGenerator<'a> {
             self.line(&format!("use {};", import));
         }
         if !self.grammar.ast_config.imports.is_empty() {
+            self.line("");
+        }
+
+        // Emit helper code (functions, constants, etc.)
+        for helper in &self.grammar.ast_config.helper_code {
+            for line in helper.lines() {
+                self.line(line);
+            }
             self.line("");
         }
     }
@@ -137,8 +152,8 @@ impl<'a> CodeGenerator<'a> {
             self.indent += 1;
             self.line("pub start: usize,");
             self.line("pub end: usize,");
-            self.line("pub line: usize,");
-            self.line("pub column: usize,");
+            self.line("pub line: u32,");
+            self.line("pub column: u32,");
             self.indent -= 1;
             self.line("}");
             self.line("");
@@ -168,7 +183,9 @@ impl<'a> CodeGenerator<'a> {
                 self.line("start: self.start.min(other.start),");
                 self.line("end: self.end.max(other.end),");
                 self.line("line: self.line.min(other.line),");
-                self.line("column: if self.start <= other.start { self.column } else { other.column },");
+                self.line(
+                    "column: if self.start <= other.start { self.column } else { other.column },",
+                );
                 self.indent -= 1;
                 self.line("}");
                 self.indent -= 1;
@@ -195,8 +212,8 @@ impl<'a> CodeGenerator<'a> {
         self.indent += 1;
         self.line("input: &'a str,");
         self.line("pos: usize,");
-        self.line("line: usize,");
-        self.line("column: usize,");
+        self.line("line: u32,");
+        self.line("column: u32,");
         self.line("peeked: Option<Token>,");
         if has_string_dict {
             self.line(&format!("string_dict: &'a mut {},", string_dict_type));
@@ -243,7 +260,13 @@ impl<'a> CodeGenerator<'a> {
         self.line("self.peeked = Some(self.next_token()?);");
         self.indent -= 1;
         self.line("}");
-        self.line("Ok(self.peeked.as_ref().unwrap())");
+        self.line("self.peeked.as_ref().ok_or_else(|| ParseError {");
+        self.indent += 1;
+        self.line("span: Span::default(),");
+        self.line("expected: vec![],");
+        self.line("found: \"internal error: peek failed\".to_string(),");
+        self.indent -= 1;
+        self.line("})");
         self.indent -= 1;
         self.line("}");
         self.line("");
@@ -286,6 +309,15 @@ impl<'a> CodeGenerator<'a> {
         self.line("}");
         self.line("");
 
+        // Helper to safely get char at position
+        self.line("#[inline]");
+        self.line("fn char_at(&self, pos: usize) -> Option<char> {");
+        self.indent += 1;
+        self.line("self.input.get(pos..)?.chars().next()");
+        self.indent -= 1;
+        self.line("}");
+        self.line("");
+
         // span
         self.line("pub fn span(&self) -> Span {");
         self.indent += 1;
@@ -316,8 +348,8 @@ impl<'a> CodeGenerator<'a> {
         self.line("pub struct LexerCheckpoint {");
         self.indent += 1;
         self.line("pos: usize,");
-        self.line("line: usize,");
-        self.line("column: usize,");
+        self.line("line: u32,");
+        self.line("column: u32,");
         self.line("peeked: Option<Token>,");
         self.indent -= 1;
         self.line("}");
@@ -437,7 +469,7 @@ impl<'a> CodeGenerator<'a> {
             self.indent += 1;
             self.line(&format!("let len = {};", kw.literal.len()));
             self.line("self.pos += len;");
-            self.line("self.column += len;");
+            self.line("self.column += len as u32;");
             self.line("return Ok(Token {");
             self.indent += 1;
             self.line(&format!("kind: TokenKind::{},", kw.name));
@@ -480,7 +512,7 @@ impl<'a> CodeGenerator<'a> {
             self.indent += 1;
             self.line(&format!("let len = {};", literal.len()));
             self.line("self.pos += len;");
-            self.line("self.column += len;");
+            self.line("self.column += len as u32;");
             self.line("return Ok(Token {");
             self.indent += 1;
             self.line(&format!("kind: TokenKind::{},", token.name));
@@ -511,7 +543,19 @@ impl<'a> CodeGenerator<'a> {
         }
 
         self.line("// Check pattern-based tokens");
-        self.line("let c = remaining.chars().next().unwrap();");
+        self.line("let Some(c) = remaining.chars().next() else {");
+        self.indent += 1;
+        self.line("// Already checked EOF above, this should be unreachable");
+        let empty_text = self.emit_empty_string();
+        self.line("return Ok(Token {");
+        self.indent += 1;
+        self.line("kind: TokenKind::EOF,");
+        self.line(&format!("text: {},", empty_text));
+        self.line("span: Span { start, end: start, line: start_line, column: start_column },");
+        self.indent -= 1;
+        self.line("});");
+        self.indent -= 1;
+        self.line("};");
         self.line("");
 
         for token in patterns {
@@ -525,27 +569,31 @@ impl<'a> CodeGenerator<'a> {
         // Generate start condition check
         if let Some(ref start) = pattern.start {
             let start_cond = self.condition_to_rust(start, "c");
+            let start_cond = Self::strip_outer_parens(&start_cond);
             self.line(&format!("if {} {{", start_cond));
             self.indent += 1;
 
-            self.line("let mut end = self.pos + c.len_utf8();");
-
-            // Generate continuation loop
-            if let Some(ref cont) = pattern.continuation {
-                let cont_cond = self.condition_to_rust(cont, "next_c");
-                self.line(&format!(
-                    "while end < self.input.len() && {{ let next_c = self.input[end..].chars().next().unwrap(); {} }} {{",
-                    cont_cond
-                ));
-                self.indent += 1;
-                self.line("end += self.input[end..].chars().next().unwrap().len_utf8();");
-                self.indent -= 1;
-                self.line("}");
-            }
-
-            // Handle special scanning modes
+            // Handle special scanning modes first (they set their own end)
+            // or initialize end for continuation/simple patterns
             if let Some(ref special) = pattern.special {
+                // Special scans initialize end themselves
+                self.line("let mut end;");
                 self.emit_special_scan(special);
+            } else if pattern.continuation.is_some() {
+                self.line("let mut end = self.pos + c.len_utf8();");
+                // Generate continuation loop
+                if let Some(ref cont) = pattern.continuation {
+                    let cont_cond = self.condition_to_rust(cont, "next_c");
+                    let cont_cond_stripped = Self::strip_outer_parens(&cont_cond);
+                    self.line("while let Some(next_c) = self.char_at(end) {");
+                    self.indent += 1;
+                    self.line(&format!("if !({}) {{ break; }}", cont_cond_stripped));
+                    self.line("end += next_c.len_utf8();");
+                    self.indent -= 1;
+                    self.line("}");
+                }
+            } else {
+                self.line("let end = self.pos + c.len_utf8();");
             }
 
             self.line("");
@@ -553,7 +601,7 @@ impl<'a> CodeGenerator<'a> {
             self.line(&format!("let text = {};", text_code));
             self.line("let len = end - self.pos;");
             self.line("self.pos = end;");
-            self.line("self.column += len;");
+            self.line("self.column += len as u32;");
             self.line("return Ok(Token {");
             self.indent += 1;
             self.line(&format!("kind: TokenKind::{},", token.name));
@@ -576,9 +624,8 @@ impl<'a> CodeGenerator<'a> {
                 self.line("// Scan until matching quote");
                 self.line("let quote = c;");
                 self.line("end = self.pos + 1;");
-                self.line("while end < self.input.len() {");
+                self.line("while let Some(ch) = self.char_at(end) {");
                 self.indent += 1;
-                self.line("let ch = self.input[end..].chars().next().unwrap();");
                 self.line("if ch == '\\\\' {");
                 self.indent += 1;
                 self.line("end += 2; // Skip escape");
@@ -597,15 +644,100 @@ impl<'a> CodeGenerator<'a> {
                 self.line("}");
             }
             SpecialScan::TemplateHead => {
-                self.line("// TODO: Scan template head");
+                // Scan template head: `...${
+                self.line("end = self.pos + 1;");
+                self.line("while let Some(ch) = self.char_at(end) {");
+                self.indent += 1;
+                self.line("if ch == '\\\\' {");
+                self.indent += 1;
+                self.line("end += 2;");
+                self.indent -= 1;
+                self.line("} else if ch == '$' && self.char_at(end + 1) == Some('{') {");
+                self.indent += 1;
+                self.line("end += 2; // Include ${");
+                self.line("break;");
+                self.indent -= 1;
+                self.line("} else {");
+                self.indent += 1;
+                self.line("end += ch.len_utf8();");
+                self.indent -= 1;
+                self.line("}");
+                self.indent -= 1;
+                self.line("}");
             }
             SpecialScan::TemplateMiddle => {
-                self.line("// TODO: Scan template middle");
+                // Scan template middle: }...${
+                self.line("end = self.pos + 1;");
+                self.line("while let Some(ch) = self.char_at(end) {");
+                self.indent += 1;
+                self.line("if ch == '\\\\' {");
+                self.indent += 1;
+                self.line("end += 2;");
+                self.indent -= 1;
+                self.line("} else if ch == '$' && self.char_at(end + 1) == Some('{') {");
+                self.indent += 1;
+                self.line("end += 2; // Include ${");
+                self.line("break;");
+                self.indent -= 1;
+                self.line("} else {");
+                self.indent += 1;
+                self.line("end += ch.len_utf8();");
+                self.indent -= 1;
+                self.line("}");
+                self.indent -= 1;
+                self.line("}");
             }
             SpecialScan::TemplateTail => {
-                self.line("// TODO: Scan template tail");
+                // Scan template tail: }...`
+                self.line("end = self.pos + 1;");
+                self.line("while let Some(ch) = self.char_at(end) {");
+                self.indent += 1;
+                self.line("if ch == '\\\\' {");
+                self.indent += 1;
+                self.line("end += 2;");
+                self.indent -= 1;
+                self.line("} else if ch == '`' {");
+                self.indent += 1;
+                self.line("end += 1; // Include closing `");
+                self.line("break;");
+                self.indent -= 1;
+                self.line("} else {");
+                self.indent += 1;
+                self.line("end += ch.len_utf8();");
+                self.indent -= 1;
+                self.line("}");
+                self.indent -= 1;
+                self.line("}");
             }
         }
+    }
+
+    /// Strip outer parentheses from a condition for use in if statements
+    fn strip_outer_parens(s: &str) -> &str {
+        let s = s.trim();
+        if s.starts_with('(') && s.ends_with(')') {
+            // Check if the parens are balanced (entire string is wrapped)
+            let inner = &s[1..s.len() - 1];
+            let mut depth = 0;
+            let mut all_balanced = true;
+            for c in inner.chars() {
+                match c {
+                    '(' => depth += 1,
+                    ')' => {
+                        if depth == 0 {
+                            all_balanced = false;
+                            break;
+                        }
+                        depth -= 1;
+                    }
+                    _ => {}
+                }
+            }
+            if all_balanced && depth == 0 {
+                return inner;
+            }
+        }
+        s
     }
 
     fn condition_to_rust(&self, cond: &crate::ir::CharCondition, var: &str) -> String {
@@ -654,9 +786,8 @@ impl<'a> CodeGenerator<'a> {
     fn emit_skip_whitespace(&mut self) {
         self.line("fn skip_whitespace(&mut self) {");
         self.indent += 1;
-        self.line("while self.pos < self.input.len() {");
+        self.line("while let Some(c) = self.char_at(self.pos) {");
         self.indent += 1;
-        self.line("let c = self.input[self.pos..].chars().next().unwrap();");
         self.line("if c == ' ' || c == '\\t' || c == '\\r' {");
         self.indent += 1;
         self.line("self.pos += 1;");
@@ -693,6 +824,76 @@ impl<'a> CodeGenerator<'a> {
         self.indent -= 1;
         self.line("}");
         self.line("");
+
+        // Add is_check_continuation method
+        self.emit_work_impl();
+    }
+
+    fn emit_work_impl(&mut self) {
+        self.line("impl Work {");
+        self.indent += 1;
+        self.line("/// Returns true if this is a check continuation that handles errors");
+        self.line("fn is_check_continuation(&self) -> bool {");
+        self.indent += 1;
+        self.line("match self {");
+        self.indent += 1;
+
+        // Generate match arms for all check variants
+        for rule in &self.grammar.rules {
+            let name = to_pascal_case(&rule.name);
+            self.emit_check_match_arms(&name, &rule.combinator);
+        }
+
+        self.line("_ => false,");
+        self.indent -= 1;
+        self.line("}");
+        self.indent -= 1;
+        self.line("}");
+        self.indent -= 1;
+        self.line("}");
+        self.line("");
+    }
+
+    fn emit_check_match_arms(&mut self, prefix: &str, comb: &Combinator) {
+        match comb {
+            Combinator::Choice(items) => {
+                for i in 0..items.len() {
+                    self.line(&format!(
+                        "Work::{}_Choice_Check{} {{ .. }} => true,",
+                        prefix, i
+                    ));
+                }
+                for (i, item) in items.iter().enumerate() {
+                    let nested_prefix = format!("{}_Choice{}", prefix, i);
+                    self.emit_check_match_arms(&nested_prefix, item);
+                }
+            }
+            Combinator::ZeroOrMore(inner) | Combinator::OneOrMore(inner) => {
+                self.line(&format!("Work::{}_Repeat_Check {{ .. }} => true,", prefix));
+                let nested_prefix = format!("{}_Item", prefix);
+                self.emit_check_match_arms(&nested_prefix, inner);
+            }
+            Combinator::Optional(inner) => {
+                self.line(&format!("Work::{}_Opt_Check {{ .. }} => true,", prefix));
+                let nested_prefix = format!("{}_OptInner", prefix);
+                self.emit_check_match_arms(&nested_prefix, inner);
+            }
+            Combinator::Sequence(items) => {
+                for (i, item) in items.iter().enumerate() {
+                    let nested_prefix = format!("{}_Seq{}", prefix, i);
+                    self.emit_check_match_arms(&nested_prefix, item);
+                }
+            }
+            Combinator::Mapped { inner, .. } => {
+                // Use the same prefix pattern as other parts of codegen
+                let inner_prefix = format!("{}_MappedInner", prefix);
+                self.emit_check_match_arms(&inner_prefix, inner);
+            }
+            Combinator::SeparatedBy { .. } => {
+                // SeparatedBy uses AfterItem which checks result stack directly, not a Check variant
+            }
+            _ => {}
+        }
     }
 
     fn emit_work_variants_for_rule(&mut self, rule: &RuleDef) {
@@ -735,6 +936,10 @@ impl<'a> CodeGenerator<'a> {
                         "{}_Choice_Try{} {{ checkpoint: LexerCheckpoint, result_base: usize }},",
                         prefix, i
                     ));
+                    self.line(&format!(
+                        "{}_Choice_Check{} {{ checkpoint: LexerCheckpoint, result_base: usize }},",
+                        prefix, i
+                    ));
                     // Recursively generate variants for nested complex combinators
                     let nested_prefix = format!("{}_Choice{}", prefix, i);
                     self.emit_work_variants_for_combinator(&nested_prefix, item, depth + 1);
@@ -745,6 +950,10 @@ impl<'a> CodeGenerator<'a> {
                     "{}_Repeat_Collect {{ result_base: usize, count: usize }},",
                     prefix
                 ));
+                self.line(&format!(
+                    "{}_Repeat_Check {{ checkpoint: LexerCheckpoint, result_base: usize, count: usize }},",
+                    prefix
+                ));
                 // Recursively generate variants for the inner combinator
                 let nested_prefix = format!("{}_Item", prefix);
                 self.emit_work_variants_for_combinator(&nested_prefix, inner, depth + 1);
@@ -752,6 +961,10 @@ impl<'a> CodeGenerator<'a> {
             Combinator::Optional(inner) => {
                 self.line(&format!(
                     "{}_Opt_Try {{ checkpoint: LexerCheckpoint, result_base: usize }},",
+                    prefix
+                ));
+                self.line(&format!(
+                    "{}_Opt_Check {{ checkpoint: LexerCheckpoint, result_base: usize }},",
                     prefix
                 ));
                 // Recursively generate variants for the inner combinator
@@ -769,35 +982,39 @@ impl<'a> CodeGenerator<'a> {
                     prefix
                 ));
                 self.line(&format!(
-                    "{}_Pratt_AfterPrefix {{ op_token: Token }},",
+                    "{}_Pratt_AfterPrefix {{ op_token: Token, min_prec: u8 }},",
                     prefix
                 ));
-                // Complex postfix variants
-                for op in &pratt_def.postfix_ops {
-                    match op {
-                        crate::ir::PostfixOp::Call { precedence, .. } => {
-                            self.line(&format!(
-                                "{}_Pratt_AfterCallArgs {{ min_prec: u8, prec: u8, result_base: usize }},",
-                                prefix
-                            ));
-                            let _ = precedence;
-                        }
-                        crate::ir::PostfixOp::Index { precedence, .. } => {
-                            self.line(&format!(
-                                "{}_Pratt_AfterIndex {{ min_prec: u8, prec: u8 }},",
-                                prefix
-                            ));
-                            let _ = precedence;
-                        }
-                        crate::ir::PostfixOp::Member { precedence, .. } => {
-                            self.line(&format!(
-                                "{}_Pratt_AfterMember {{ min_prec: u8, prec: u8, dot_token: Token }},",
-                                prefix
-                            ));
-                            let _ = precedence;
-                        }
-                        crate::ir::PostfixOp::Simple { .. } => {} // Already handled
-                    }
+                // Complex postfix variants - only emit each type once
+                let has_call = pratt_def
+                    .postfix_ops
+                    .iter()
+                    .any(|op| matches!(op, crate::ir::PostfixOp::Call { .. }));
+                let has_index = pratt_def
+                    .postfix_ops
+                    .iter()
+                    .any(|op| matches!(op, crate::ir::PostfixOp::Index { .. }));
+                let has_member = pratt_def
+                    .postfix_ops
+                    .iter()
+                    .any(|op| matches!(op, crate::ir::PostfixOp::Member { .. }));
+                if has_call {
+                    self.line(&format!(
+                        "{}_Pratt_AfterCallArgs {{ min_prec: u8, prec: u8, result_base: usize }},",
+                        prefix
+                    ));
+                }
+                if has_index {
+                    self.line(&format!(
+                        "{}_Pratt_AfterIndex {{ min_prec: u8, prec: u8 }},",
+                        prefix
+                    ));
+                }
+                if has_member {
+                    self.line(&format!(
+                        "{}_Pratt_AfterMember {{ min_prec: u8, prec: u8, dot_token: Token }},",
+                        prefix
+                    ));
                 }
                 // Ternary operator variants
                 if pratt_def.ternary.is_some() {
@@ -811,18 +1028,28 @@ impl<'a> CodeGenerator<'a> {
                     ));
                 }
             }
-            Combinator::Mapped { inner, .. } => {
-                self.emit_work_variants_for_combinator(prefix, inner, depth);
+            Combinator::Mapped { inner, mapping } => {
+                // When apply_mappings is enabled, generate a completion variant for this mapping
+                if self.grammar.ast_config.apply_mappings {
+                    self.line(&format!(
+                        "{}_Mapped_Complete {{ mapping_id: usize, result_base: usize }},",
+                        prefix
+                    ));
+                }
+                // Also generate variants for the inner combinator
+                let inner_prefix = format!("{}_MappedInner", prefix);
+                self.emit_work_variants_for_combinator(&inner_prefix, inner, depth + 1);
+                let _ = mapping; // Mapping string used later in handler generation
             }
             Combinator::SeparatedBy {
                 item, separator, ..
             } => {
                 self.line(&format!(
-                    "{}_Sep_Collect {{ result_base: usize, count: usize }},",
+                    "{}_Sep_Collect {{ result_base: usize, count: usize, item_checkpoint: LexerCheckpoint }},",
                     prefix
                 ));
                 self.line(&format!(
-                    "{}_Sep_AfterItem {{ result_base: usize, count: usize }},",
+                    "{}_Sep_AfterItem {{ result_base: usize, count: usize, item_checkpoint: LexerCheckpoint }},",
                     prefix
                 ));
                 self.line(&format!(
@@ -839,14 +1066,6 @@ impl<'a> CodeGenerator<'a> {
                 let skip_prefix = format!("{}_Skip", prefix);
                 self.emit_work_variants_for_combinator(&skip_prefix, inner, depth + 1);
             }
-            Combinator::Lookahead(inner) => {
-                let lookahead_prefix = format!("{}_Lookahead", prefix);
-                self.emit_work_variants_for_combinator(&lookahead_prefix, inner, depth + 1);
-            }
-            Combinator::NegativeLookahead(inner) => {
-                let neg_lookahead_prefix = format!("{}_NegLookahead", prefix);
-                self.emit_work_variants_for_combinator(&neg_lookahead_prefix, inner, depth + 1);
-            }
             _ => {}
         }
         let _ = depth; // Silence unused warning for now
@@ -859,17 +1078,34 @@ impl<'a> CodeGenerator<'a> {
         }
 
         self.line("/// Intermediate parse results");
-        self.line("#[derive(Debug, Clone)]");
+        self.line("#[derive(Debug)]");
         self.line("pub enum ParseResult {");
         self.indent += 1;
         self.line("Token(Token),");
         self.line("None, // For optional that didn't match");
         self.line("List(Vec<ParseResult>), // For sequences, repetitions");
 
-        // One variant per rule
+        // Collect typed variant names to skip conflicting rule wrappers
+        let typed_variant_names: std::collections::HashSet<_> = self
+            .grammar
+            .ast_config
+            .result_variants
+            .iter()
+            .map(|v| v.name.as_str())
+            .collect();
+
+        // One variant per rule (skip if there's a typed variant with same name)
         for rule in &self.grammar.rules {
             let name = to_pascal_case(&rule.name);
-            self.line(&format!("{}(Box<ParseResult>),", name));
+            if !typed_variant_names.contains(name.as_str()) {
+                self.line(&format!("{}(Box<ParseResult>),", name));
+            }
+        }
+
+        // Add user-defined typed AST variants
+        for variant in &self.grammar.ast_config.result_variants {
+            self.line(&format!("/// {} AST node", variant.rust_type));
+            self.line(&format!("{}({}),", variant.name, variant.rust_type));
         }
 
         self.indent -= 1;
@@ -884,18 +1120,59 @@ impl<'a> CodeGenerator<'a> {
 
     /// Generate helper methods for ParseResult extraction
     fn emit_parse_result_helpers(&mut self) {
+        // Helper for creating internal errors
+        self.line("fn internal_error(msg: &str) -> ParseError {");
+        self.indent += 1;
+        self.line("ParseError {");
+        self.indent += 1;
+        self.line("span: Span::default(),");
+        self.line("expected: vec![],");
+        self.line("found: msg.to_string(),");
+        self.indent -= 1;
+        self.line("}");
+        self.indent -= 1;
+        self.line("}");
+        self.line("");
+
+        // Helper trait for iterator operations that return Result
+        self.line("/// Extension trait for iterators to get next item as Result");
+        self.line("trait IteratorExt<T> {");
+        self.indent += 1;
+        self.line("fn next_or_err(&mut self, msg: &str) -> Result<T, ParseError>;");
+        self.line("fn nth_or_err(&mut self, n: usize, msg: &str) -> Result<T, ParseError>;");
+        self.indent -= 1;
+        self.line("}");
+        self.line("");
+
+        self.line("impl<I, T> IteratorExt<T> for I where I: Iterator<Item = T> {");
+        self.indent += 1;
+        self.line("fn next_or_err(&mut self, msg: &str) -> Result<T, ParseError> {");
+        self.indent += 1;
+        self.line("self.next().ok_or_else(|| internal_error(msg))");
+        self.indent -= 1;
+        self.line("}");
+        self.line("");
+        self.line("fn nth_or_err(&mut self, n: usize, msg: &str) -> Result<T, ParseError> {");
+        self.indent += 1;
+        self.line("self.nth(n).ok_or_else(|| internal_error(msg))");
+        self.indent -= 1;
+        self.line("}");
+        self.indent -= 1;
+        self.line("}");
+        self.line("");
+
         self.line("impl ParseResult {");
         self.indent += 1;
 
         // into_token()
         self.line("/// Extract the Token from a ParseResult::Token variant");
         self.line("#[allow(dead_code)]");
-        self.line("pub fn into_token(self) -> Token {");
+        self.line("pub fn into_token(self) -> Result<Token, ParseError> {");
         self.indent += 1;
         self.line("match self {");
         self.indent += 1;
-        self.line("ParseResult::Token(t) => t,");
-        self.line("_ => panic!(\"Expected Token, got {:?}\", self),");
+        self.line("ParseResult::Token(t) => Ok(t),");
+        self.line("other => Err(internal_error(&format!(\"expected Token, got {:?}\", other))),");
         self.indent -= 1;
         self.line("}");
         self.indent -= 1;
@@ -905,12 +1182,12 @@ impl<'a> CodeGenerator<'a> {
         // as_token()
         self.line("/// Get a reference to the Token from a ParseResult::Token variant");
         self.line("#[allow(dead_code)]");
-        self.line("pub fn as_token(&self) -> &Token {");
+        self.line("pub fn as_token(&self) -> Option<&Token> {");
         self.indent += 1;
         self.line("match self {");
         self.indent += 1;
-        self.line("ParseResult::Token(t) => t,");
-        self.line("_ => panic!(\"Expected Token, got {:?}\", self),");
+        self.line("ParseResult::Token(t) => Some(t),");
+        self.line("_ => None,");
         self.indent -= 1;
         self.line("}");
         self.indent -= 1;
@@ -920,12 +1197,12 @@ impl<'a> CodeGenerator<'a> {
         // into_list()
         self.line("/// Extract the Vec from a ParseResult::List variant");
         self.line("#[allow(dead_code)]");
-        self.line("pub fn into_list(self) -> Vec<ParseResult> {");
+        self.line("pub fn into_list(self) -> Result<Vec<ParseResult>, ParseError> {");
         self.indent += 1;
         self.line("match self {");
         self.indent += 1;
-        self.line("ParseResult::List(v) => v,");
-        self.line("_ => panic!(\"Expected List, got {:?}\", self),");
+        self.line("ParseResult::List(v) => Ok(v),");
+        self.line("other => Err(internal_error(&format!(\"expected List, got {:?}\", other))),");
         self.indent -= 1;
         self.line("}");
         self.indent -= 1;
@@ -935,12 +1212,12 @@ impl<'a> CodeGenerator<'a> {
         // as_list()
         self.line("/// Get a reference to the Vec from a ParseResult::List variant");
         self.line("#[allow(dead_code)]");
-        self.line("pub fn as_list(&self) -> &Vec<ParseResult> {");
+        self.line("pub fn as_list(&self) -> Option<&[ParseResult]> {");
         self.indent += 1;
         self.line("match self {");
         self.indent += 1;
-        self.line("ParseResult::List(v) => v,");
-        self.line("_ => panic!(\"Expected List, got {:?}\", self),");
+        self.line("ParseResult::List(v) => Some(v),");
+        self.line("_ => None,");
         self.indent -= 1;
         self.line("}");
         self.indent -= 1;
@@ -984,10 +1261,34 @@ impl<'a> CodeGenerator<'a> {
             "ParseResult::List(items) => items.first().map(|i| i.span()).unwrap_or_default(),",
         );
         self.line("ParseResult::None => Span::default(),");
-        // Handle rule variants
+        // Collect typed variant names to skip conflicting rule match arms
+        let typed_variant_names: std::collections::HashSet<_> = self
+            .grammar
+            .ast_config
+            .result_variants
+            .iter()
+            .map(|v| v.name.as_str())
+            .collect();
+        // Handle rule variants (skip if there's a typed variant with same name)
         for rule in &self.grammar.rules {
             let name = to_pascal_case(&rule.name);
-            self.line(&format!("ParseResult::{}(inner) => inner.span(),", name));
+            if !typed_variant_names.contains(name.as_str()) {
+                self.line(&format!("ParseResult::{}(inner) => inner.span(),", name));
+            }
+        }
+        // Handle user-defined typed AST variants
+        for variant in &self.grammar.ast_config.result_variants {
+            if let Some(span_expr) = &variant.span_expr {
+                self.line(&format!(
+                    "ParseResult::{}(v) => {},",
+                    variant.name, span_expr
+                ));
+            } else {
+                self.line(&format!(
+                    "ParseResult::{}(_) => Span::default(),",
+                    variant.name
+                ));
+            }
         }
         self.indent -= 1;
         self.line("}");
@@ -1016,18 +1317,69 @@ impl<'a> CodeGenerator<'a> {
         self.indent -= 1;
         self.line("}");
         self.line("ParseResult::None => Span::default(),");
-        // Handle rule variants
+        // Collect typed variant names to skip conflicting rule match arms
+        let typed_variant_names: std::collections::HashSet<_> = self
+            .grammar
+            .ast_config
+            .result_variants
+            .iter()
+            .map(|v| v.name.as_str())
+            .collect();
+        // Handle rule variants (skip if there's a typed variant with same name)
         for rule in &self.grammar.rules {
             let name = to_pascal_case(&rule.name);
-            self.line(&format!(
-                "ParseResult::{}(inner) => inner.combined_span(),",
-                name
-            ));
+            if !typed_variant_names.contains(name.as_str()) {
+                self.line(&format!(
+                    "ParseResult::{}(inner) => inner.combined_span(),",
+                    name
+                ));
+            }
+        }
+        // Handle user-defined typed AST variants
+        for variant in &self.grammar.ast_config.result_variants {
+            if let Some(span_expr) = &variant.span_expr {
+                self.line(&format!(
+                    "ParseResult::{}(v) => {},",
+                    variant.name, span_expr
+                ));
+            } else {
+                self.line(&format!(
+                    "ParseResult::{}(_) => Span::default(),",
+                    variant.name
+                ));
+            }
         }
         self.indent -= 1;
         self.line("}");
         self.indent -= 1;
         self.line("}");
+
+        // Add typed extraction methods for each result_variant
+        for variant in &self.grammar.ast_config.result_variants {
+            let method_name = to_snake_case(&variant.name);
+            self.line("");
+            self.line(&format!(
+                "/// Extract {} from ParseResult::{}",
+                variant.rust_type, variant.name
+            ));
+            self.line("#[allow(dead_code)]");
+            self.line(&format!(
+                "pub fn into_{}(self) -> Result<{}, ParseError> {{",
+                method_name, variant.rust_type
+            ));
+            self.indent += 1;
+            self.line("match self {");
+            self.indent += 1;
+            self.line(&format!("ParseResult::{}(v) => Ok(v),", variant.name));
+            self.line(&format!(
+                "other => Err(internal_error(&format!(\"expected {}, got {{:?}}\", other))),",
+                variant.name
+            ));
+            self.indent -= 1;
+            self.line("}");
+            self.indent -= 1;
+            self.line("}");
+        }
 
         self.indent -= 1;
         self.line("}");
@@ -1141,9 +1493,70 @@ impl<'a> CodeGenerator<'a> {
         }
 
         self.line("");
+        // Add safeguards against infinite loops
+        self.line("// Safeguards against infinite loops");
+        self.line("const MAX_ITERATIONS: usize = 1_000_000;");
+        self.line("const STALL_LIMIT: usize = 10_000;");
+        self.line("let mut iterations: usize = 0;");
+        self.line("let mut stall_count: usize = 0;");
+        self.line("let mut last_pos: usize = self.lexer.pos;");
+        self.line("");
         self.line("while let Some(work) = self.work_stack.pop() {");
         self.indent += 1;
-        self.line("self.execute_work(work)?;");
+        // Check iteration limit
+        self.line("iterations += 1;");
+        self.line("if iterations > MAX_ITERATIONS {");
+        self.indent += 1;
+        self.line("return Err(ParseError {");
+        self.indent += 1;
+        self.line("span: self.lexer.span(),");
+        self.line("expected: vec![],");
+        self.line("found: format!(\"Parser exceeded {} iterations (possible infinite loop)\", MAX_ITERATIONS),");
+        self.indent -= 1;
+        self.line("});");
+        self.indent -= 1;
+        self.line("}");
+        self.line("");
+        // Check for stall (stuck at same position)
+        self.line("// Detect stall: stuck at same position for too long");
+        self.line("if self.lexer.pos == last_pos {");
+        self.indent += 1;
+        self.line("stall_count += 1;");
+        self.line("if stall_count > STALL_LIMIT {");
+        self.indent += 1;
+        self.line("return Err(ParseError {");
+        self.indent += 1;
+        self.line("span: self.lexer.span(),");
+        self.line("expected: vec![],");
+        self.line("found: format!(\"Parser stalled at position {} for {} iterations\", last_pos, stall_count),");
+        self.indent -= 1;
+        self.line("});");
+        self.indent -= 1;
+        self.line("}");
+        self.indent -= 1;
+        self.line("} else {");
+        self.indent += 1;
+        self.line("last_pos = self.lexer.pos;");
+        self.line("stall_count = 0;");
+        self.indent -= 1;
+        self.line("}");
+        self.line("");
+        self.line("if let Err(e) = self.execute_work(work) {");
+        self.indent += 1;
+        self.line("self.last_error = Some(e);");
+        self.indent -= 1;
+        self.line("}");
+        self.indent -= 1;
+        self.line("}");
+        self.line("");
+        self.line("// Return error if one occurred and no result was produced");
+        self.line("if let Some(e) = self.last_error.take() {");
+        self.indent += 1;
+        self.line("if self.result_stack.is_empty() {");
+        self.indent += 1;
+        self.line("return Err(e);");
+        self.indent -= 1;
+        self.line("}");
         self.indent -= 1;
         self.line("}");
         self.line("");
@@ -1183,7 +1596,7 @@ impl<'a> CodeGenerator<'a> {
         // Start variant - begin parsing this rule
         self.line(&format!("Work::{}_Start => {{", name));
         self.indent += 1;
-        self.emit_combinator_start(&name, &rule.combinator);
+        self.emit_combinator(&name, &rule.combinator);
         self.line("Ok(())");
         self.indent -= 1;
         self.line("}");
@@ -1192,237 +1605,20 @@ impl<'a> CodeGenerator<'a> {
         self.emit_combinator_execution(&name, &rule.combinator);
     }
 
-    fn emit_combinator_start(&mut self, prefix: &str, comb: &Combinator) {
+    /// Emit code for a combinator. This is the unified function for both start and inline emission.
+    fn emit_combinator(&mut self, prefix: &str, comb: &Combinator) {
         match comb {
             Combinator::Token(token_name) => {
+                // Use try pattern - if token fails, set last_error (check continuation will handle it)
                 self.line(&format!(
-                    "let token = self.expect_token(TokenKind::{})?;",
+                    "match self.expect_token(TokenKind::{}) {{",
                     token_name
                 ));
-                self.line("self.result_stack.push(ParseResult::Token(token));");
-            }
-            Combinator::Rule(rule_name) => {
-                let rule_pascal = to_pascal_case(rule_name);
-                self.line(&format!(
-                    "self.work_stack.push(Work::{}_Start);",
-                    rule_pascal
-                ));
-            }
-            Combinator::Sequence(items) => {
-                if items.is_empty() {
-                    self.line("self.result_stack.push(ParseResult::List(vec![]));");
-                } else {
-                    self.line("let result_base = self.result_stack.len();");
-                    // Push completion work first (will be executed last)
-                    self.line(&format!(
-                        "self.work_stack.push(Work::{}_Seq_Complete {{ result_base, count: {} }});",
-                        prefix,
-                        items.len()
-                    ));
-                    // Push steps in reverse order
-                    for i in (1..items.len()).rev() {
-                        self.line(&format!(
-                            "self.work_stack.push(Work::{}_Seq_Step{} {{ result_base }});",
-                            prefix, i
-                        ));
-                    }
-                    // Execute first item immediately
-                    let first_prefix = format!("{}_Seq0", prefix);
-                    self.emit_combinator_inline(&items[0], &first_prefix);
-                }
-            }
-            Combinator::Choice(items) => {
-                if items.is_empty() {
-                    self.line("return Err(ParseError {");
-                    self.indent += 1;
-                    self.line("span: self.lexer.span(),");
-                    self.line("expected: vec![],");
-                    self.line("found: \"empty choice\".to_string(),");
-                    self.indent -= 1;
-                    self.line("});");
-                } else {
-                    self.line("let checkpoint = self.lexer.checkpoint();");
-                    self.line("let result_base = self.result_stack.len();");
-                    // Push first alternative, which will try others on failure
-                    self.line(&format!(
-                        "self.work_stack.push(Work::{}_Choice_Try0 {{ checkpoint, result_base }});",
-                        prefix
-                    ));
-                }
-            }
-            Combinator::ZeroOrMore(inner) => {
-                self.line("let result_base = self.result_stack.len();");
-                self.line(&format!(
-                    "self.work_stack.push(Work::{}_Repeat_Collect {{ result_base, count: 0 }});",
-                    prefix
-                ));
-                let _ = inner;
-            }
-            Combinator::OneOrMore(inner) => {
-                self.line("let result_base = self.result_stack.len();");
-                // For one_or_more, we first parse one item, then switch to repeat mode
-                self.line(&format!(
-                    "self.work_stack.push(Work::{}_Repeat_Collect {{ result_base, count: 0 }});",
-                    prefix
-                ));
-                let _ = inner;
-            }
-            Combinator::Optional(inner) => {
-                self.line("let checkpoint = self.lexer.checkpoint();");
-                self.line("let result_base = self.result_stack.len();");
-                self.line(&format!(
-                    "self.work_stack.push(Work::{}_Opt_Try {{ checkpoint, result_base }});",
-                    prefix
-                ));
-                let _ = inner;
-            }
-            Combinator::Pratt(pratt_def) => {
-                // Check for prefix operators before parsing operand
-                if !pratt_def.prefix_ops.is_empty() {
-                    self.line("// Check for prefix operators");
-                    self.line("let peek_token = self.lexer.peek()?;");
-                    self.line(
-                        "let (is_prefix, maybe_op_token, prefix_prec) = match peek_token.kind {",
-                    );
-                    self.indent += 1;
-                    for op in &pratt_def.prefix_ops {
-                        self.line(&format!(
-                            "TokenKind::{} => (true, Some(self.lexer.next()?), {}u8),",
-                            op.token, op.precedence
-                        ));
-                    }
-                    self.line("_ => (false, None, 0u8),");
-                    self.indent -= 1;
-                    self.line("};");
-                    self.line("");
-                    self.line("if let Some(op_token) = maybe_op_token {");
-                    self.indent += 1;
-                    self.line(&format!(
-                        "self.work_stack.push(Work::{}_Pratt_AfterPrefix {{ op_token }});",
-                        prefix
-                    ));
-                    self.indent -= 1;
-                    self.line("}");
-                    self.line(&format!(
-                        "self.work_stack.push(Work::{}_Pratt_AfterOperand {{ min_prec: if is_prefix {{ prefix_prec }} else {{ 0 }} }});",
-                        prefix
-                    ));
-                } else {
-                    // No prefix operators - simple case
-                    self.line(&format!(
-                        "self.work_stack.push(Work::{}_Pratt_AfterOperand {{ min_prec: 0 }});",
-                        prefix
-                    ));
-                }
-                // Parse operand
-                if let Some(ref operand) = *pratt_def.operand {
-                    let operand_prefix = format!("{}_Pratt_Operand", prefix);
-                    self.emit_combinator_inline(operand, &operand_prefix);
-                }
-            }
-            Combinator::Mapped { inner, mapping } => {
-                // Parse the inner combinator first
-                self.emit_combinator_start(prefix, inner);
-                // When apply_mappings is enabled, generate mapping application code
-                if self.grammar.ast_config.apply_mappings {
-                    self.line(&format!("// AST Mapping: {}", mapping));
-                    self.line("// The mapping closure above transforms the parsed result.");
-                    self.line("// Use result_stack.pop() and apply the closure to get typed AST.");
-                }
-            }
-            Combinator::Skip(inner) => {
-                // Parse but discard
-                let skip_prefix = format!("{}_Skip", prefix);
-                self.emit_combinator_inline(inner, &skip_prefix);
-                self.line("// Skip: result will be discarded");
-            }
-            Combinator::Lookahead(inner) => {
-                // Positive lookahead: succeed if inner matches, but don't consume input
-                self.line("let checkpoint = self.lexer.checkpoint();");
-                self.line("let result_base = self.result_stack.len();");
-                self.line("let try_result = (|| -> Result<(), ParseError> {");
                 self.indent += 1;
-                let lookahead_prefix = format!("{}_Lookahead", prefix);
-                self.emit_combinator_inline(inner, &lookahead_prefix);
-                self.line("Ok(())");
-                self.indent -= 1;
-                self.line("})();");
-                self.line("// Always restore position");
-                self.line("self.lexer.restore(checkpoint);");
-                self.line("// Discard any results from the lookahead");
-                self.line("while self.result_stack.len() > result_base {");
-                self.indent += 1;
-                self.line("self.result_stack.pop();");
+                self.line("Ok(token) => self.result_stack.push(ParseResult::Token(token)),");
+                self.line("Err(e) => self.last_error = Some(e),");
                 self.indent -= 1;
                 self.line("}");
-                self.line("// Propagate error or push None (lookahead produces no value)");
-                self.line("try_result?;");
-                self.line("self.result_stack.push(ParseResult::None);");
-            }
-            Combinator::NegativeLookahead(inner) => {
-                // Negative lookahead: succeed if inner does NOT match
-                self.line("let checkpoint = self.lexer.checkpoint();");
-                self.line("let result_base = self.result_stack.len();");
-                self.line("let try_result = (|| -> Result<(), ParseError> {");
-                self.indent += 1;
-                let lookahead_prefix = format!("{}_NegLookahead", prefix);
-                self.emit_combinator_inline(inner, &lookahead_prefix);
-                self.line("Ok(())");
-                self.indent -= 1;
-                self.line("})();");
-                self.line("// Always restore position");
-                self.line("self.lexer.restore(checkpoint);");
-                self.line("// Discard any results from the lookahead");
-                self.line("while self.result_stack.len() > result_base {");
-                self.indent += 1;
-                self.line("self.result_stack.pop();");
-                self.indent -= 1;
-                self.line("}");
-                self.line("// For negative lookahead: succeed if inner failed");
-                self.line("match try_result {");
-                self.indent += 1;
-                self.line("Ok(()) => {");
-                self.indent += 1;
-                self.line("// Inner succeeded, so negative lookahead fails");
-                self.line("return Err(ParseError {");
-                self.indent += 1;
-                self.line(
-                    "span: self.lexer.peek().map(|t| t.span).unwrap_or(Span { start: 0, end: 0 }),",
-                );
-                self.line("expected: vec![],");
-                self.line("found: \"negative lookahead matched\".to_string(),");
-                self.indent -= 1;
-                self.line("});");
-                self.indent -= 1;
-                self.line("}");
-                self.line("Err(_) => {");
-                self.indent += 1;
-                self.line("// Inner failed, so negative lookahead succeeds");
-                self.line("self.result_stack.push(ParseResult::None);");
-                self.indent -= 1;
-                self.line("}");
-                self.indent -= 1;
-                self.line("}");
-            }
-            Combinator::SeparatedBy { item, .. } => {
-                self.line("let result_base = self.result_stack.len();");
-                self.line(&format!(
-                    "self.work_stack.push(Work::{}_Sep_Collect {{ result_base, count: 0 }});",
-                    prefix
-                ));
-                let _ = item;
-            }
-        }
-    }
-
-    fn emit_combinator_inline(&mut self, comb: &Combinator, prefix: &str) {
-        match comb {
-            Combinator::Token(token_name) => {
-                self.line(&format!(
-                    "let token = self.expect_token(TokenKind::{})?;",
-                    token_name
-                ));
-                self.line("self.result_stack.push(ParseResult::Token(token));");
             }
             Combinator::Rule(rule_name) => {
                 let rule_pascal = to_pascal_case(rule_name);
@@ -1432,11 +1628,18 @@ impl<'a> CodeGenerator<'a> {
                 ));
             }
             Combinator::Mapped { inner, mapping } => {
-                self.emit_combinator_inline(inner, prefix);
-                // When apply_mappings is enabled, generate mapping application code
+                // When apply_mappings is enabled, push completion handler first
                 if self.grammar.ast_config.apply_mappings {
-                    self.line(&format!("// AST Mapping: {}", mapping));
+                    self.line("let result_base = self.result_stack.len();");
+                    self.line(&format!(
+                        "self.work_stack.push(Work::{}_Mapped_Complete {{ mapping_id: 0, result_base }});",
+                        prefix
+                    ));
                 }
+                // Emit the inner combinator
+                let inner_prefix = format!("{}_MappedInner", prefix);
+                self.emit_combinator(&inner_prefix, inner);
+                let _ = mapping; // Used in execution handler
             }
             Combinator::Optional(_) => {
                 self.line("let checkpoint = self.lexer.checkpoint();");
@@ -1478,90 +1681,25 @@ impl<'a> CodeGenerator<'a> {
                         ));
                     }
                     let first_prefix = format!("{}_Seq0", prefix);
-                    self.emit_combinator_inline(&items[0], &first_prefix);
+                    self.emit_combinator(&first_prefix, &items[0]);
                 }
             }
             Combinator::SeparatedBy { .. } => {
                 self.line("let result_base = self.result_stack.len();");
+                self.line("let item_checkpoint = self.lexer.checkpoint();");
                 self.line(&format!(
-                    "self.work_stack.push(Work::{}_Sep_Collect {{ result_base, count: 0 }});",
+                    "self.work_stack.push(Work::{}_Sep_Collect {{ result_base, count: 0, item_checkpoint }});",
                     prefix
                 ));
             }
             Combinator::Skip(inner) => {
                 // Parse but discard the result
                 let skip_prefix = format!("{}_Skip", prefix);
-                self.emit_combinator_inline(inner, &skip_prefix);
+                self.emit_combinator(&skip_prefix, inner);
                 self.line("// Skip: result will be discarded");
             }
-            Combinator::Lookahead(inner) => {
-                // Positive lookahead: succeed if inner matches, but don't consume input
-                self.line("let checkpoint = self.lexer.checkpoint();");
-                self.line("let result_base = self.result_stack.len();");
-                self.line("let try_result = (|| -> Result<(), ParseError> {");
-                self.indent += 1;
-                let lookahead_prefix = format!("{}_Lookahead", prefix);
-                self.emit_combinator_inline(inner, &lookahead_prefix);
-                self.line("Ok(())");
-                self.indent -= 1;
-                self.line("})();");
-                self.line("// Always restore position");
-                self.line("self.lexer.restore(checkpoint);");
-                self.line("// Discard any results from the lookahead");
-                self.line("while self.result_stack.len() > result_base {");
-                self.indent += 1;
-                self.line("self.result_stack.pop();");
-                self.indent -= 1;
-                self.line("}");
-                self.line("// Propagate error or push None (lookahead produces no value)");
-                self.line("try_result?;");
-                self.line("self.result_stack.push(ParseResult::None);");
-            }
-            Combinator::NegativeLookahead(inner) => {
-                // Negative lookahead: succeed if inner does NOT match
-                self.line("let checkpoint = self.lexer.checkpoint();");
-                self.line("let result_base = self.result_stack.len();");
-                self.line("let try_result = (|| -> Result<(), ParseError> {");
-                self.indent += 1;
-                let neg_lookahead_prefix = format!("{}_NegLookahead", prefix);
-                self.emit_combinator_inline(inner, &neg_lookahead_prefix);
-                self.line("Ok(())");
-                self.indent -= 1;
-                self.line("})();");
-                self.line("// Always restore position");
-                self.line("self.lexer.restore(checkpoint);");
-                self.line("// Discard any results from the lookahead");
-                self.line("while self.result_stack.len() > result_base {");
-                self.indent += 1;
-                self.line("self.result_stack.pop();");
-                self.indent -= 1;
-                self.line("}");
-                self.line("// For negative lookahead: succeed if inner failed");
-                self.line("match try_result {");
-                self.indent += 1;
-                self.line("Ok(()) => {");
-                self.indent += 1;
-                self.line("// Inner succeeded, so negative lookahead fails");
-                self.line("return Err(ParseError {");
-                self.indent += 1;
-                self.line("span: self.lexer.peek().map(|t| t.span).unwrap_or(Span { start: 0, end: 0, line: 0, column: 0 }),");
-                self.line("expected: vec![],");
-                self.line("found: \"negative lookahead matched\".to_string(),");
-                self.indent -= 1;
-                self.line("});");
-                self.indent -= 1;
-                self.line("}");
-                self.line("Err(_) => {");
-                self.indent += 1;
-                self.line("// Inner failed, so negative lookahead succeeds");
-                self.line("self.result_stack.push(ParseResult::None);");
-                self.indent -= 1;
-                self.line("}");
-                self.indent -= 1;
-                self.line("}");
-            }
             Combinator::Pratt(pratt_def) => {
-                // Start Pratt parsing - same as emit_combinator_start
+                // Start Pratt parsing
                 if !pratt_def.prefix_ops.is_empty() {
                     self.line("// Check for prefix operators");
                     self.line("let peek_token = self.lexer.peek()?;");
@@ -1582,7 +1720,7 @@ impl<'a> CodeGenerator<'a> {
                     self.line("if let Some(op_token) = maybe_op_token {");
                     self.indent += 1;
                     self.line(&format!(
-                        "self.work_stack.push(Work::{}_Pratt_AfterPrefix {{ op_token }});",
+                        "self.work_stack.push(Work::{}_Pratt_AfterPrefix {{ op_token, min_prec: 0 }});",
                         prefix
                     ));
                     self.indent -= 1;
@@ -1599,7 +1737,7 @@ impl<'a> CodeGenerator<'a> {
                 }
                 if let Some(ref operand) = *pratt_def.operand {
                     let operand_prefix = format!("{}_Pratt_Operand", prefix);
-                    self.emit_combinator_inline(operand, &operand_prefix);
+                    self.emit_combinator(&operand_prefix, operand);
                 }
             }
         }
@@ -1615,8 +1753,10 @@ impl<'a> CodeGenerator<'a> {
                         prefix, i
                     ));
                     self.indent += 1;
+                    // Skip this step if a previous step failed
+                    self.line("if self.last_error.is_some() { return Ok(()); }");
                     let step_prefix = format!("{}_Seq{}", prefix, i);
-                    self.emit_combinator_inline(item, &step_prefix);
+                    self.emit_combinator(&step_prefix, item);
                     self.line("Ok(())");
                     self.indent -= 1;
                     self.line("}");
@@ -1634,48 +1774,65 @@ impl<'a> CodeGenerator<'a> {
                     prefix
                 ));
                 self.indent += 1;
+                // Only push result if no error occurred
+                self.line("if self.last_error.is_none() {");
+                self.indent += 1;
                 self.line(
                     "let results: Vec<_> = self.result_stack.drain(result_base..).collect();",
                 );
                 self.line("self.result_stack.push(ParseResult::List(results));");
+                self.indent -= 1;
+                self.line("} else {");
+                self.indent += 1;
+                // Clean up any partial results pushed by optionals/repeats before the error
+                self.line("self.result_stack.truncate(result_base);");
+                self.indent -= 1;
+                self.line("}");
                 self.line("Ok(())");
                 self.indent -= 1;
                 self.line("}");
             }
             Combinator::Choice(items) => {
                 for (i, item) in items.iter().enumerate() {
+                    let alt_prefix = format!("{}_Choice{}", prefix, i);
+
+                    // Try handler - push check continuation then try alternative
                     self.line(&format!(
                         "Work::{}_Choice_Try{} {{ checkpoint, result_base }} => {{",
                         prefix, i
                     ));
                     self.indent += 1;
-                    let alt_prefix = format!("{}_Choice{}", prefix, i);
+                    self.line("// Push check continuation first (will execute after alternative)");
+                    self.line(&format!(
+                        "self.work_stack.push(Work::{}_Choice_Check{} {{ checkpoint, result_base }});",
+                        prefix, i
+                    ));
+                    self.line("// Then push alternative work");
+                    self.emit_combinator(&alt_prefix, item);
+                    self.line("Ok(())");
+                    self.indent -= 1;
+                    self.line("}");
 
-                    // Try this alternative
-                    self.line("let try_result = (|| -> Result<(), ParseError> {");
+                    // Check handler - examine result after alternative completes
+                    self.line(&format!(
+                        "Work::{}_Choice_Check{} {{ checkpoint, result_base }} => {{",
+                        prefix, i
+                    ));
                     self.indent += 1;
-                    self.emit_combinator_inline(item, &alt_prefix);
+                    self.line("// Check if alternative succeeded by examining result stack");
+                    self.line("if self.result_stack.len() > result_base {");
+                    self.indent += 1;
+                    self.line("// Success - result is on stack, clear any error and we're done");
+                    self.line("self.last_error = None;");
                     self.line("Ok(())");
                     self.indent -= 1;
-                    self.line("})();");
-                    self.line("");
-                    self.line("match try_result {");
+                    self.line("} else {");
                     self.indent += 1;
-                    self.line("Ok(()) => {");
-                    self.indent += 1;
-                    self.line("// Success - result is on stack");
-                    self.line("Ok(())");
-                    self.indent -= 1;
-                    self.line("}");
-                    self.line("Err(e) => {");
-                    self.indent += 1;
-                    self.line("// Restore and try next alternative");
+                    self.line("// Failed - restore lexer and try next alternative");
                     self.line("self.lexer.restore(checkpoint.clone());");
-                    self.line("while self.result_stack.len() > result_base {");
-                    self.indent += 1;
-                    self.line("self.result_stack.pop();");
-                    self.indent -= 1;
-                    self.line("}");
+                    self.line(
+                        "self.last_error = None; // Clear error, we'll try another alternative",
+                    );
 
                     if i + 1 < items.len() {
                         self.line(&format!(
@@ -1685,14 +1842,17 @@ impl<'a> CodeGenerator<'a> {
                         ));
                         self.line("Ok(())");
                     } else {
-                        self.line("Err(e) // No more alternatives");
+                        self.line("Err(ParseError {");
+                        self.indent += 1;
+                        self.line("span: self.lexer.span(),");
+                        self.line("expected: vec![],");
+                        self.line("found: \"no matching alternative\".to_string(),");
+                        self.indent -= 1;
+                        self.line("})");
                     }
 
                     self.indent -= 1;
                     self.line("}");
-                    self.indent -= 1;
-                    self.line("}");
-
                     self.indent -= 1;
                     self.line("}");
                 }
@@ -1704,47 +1864,65 @@ impl<'a> CodeGenerator<'a> {
             }
             Combinator::ZeroOrMore(inner) | Combinator::OneOrMore(inner) => {
                 let item_prefix = format!("{}_Item", prefix);
-                // Collect handler - try to parse another item (with error catching)
+                // Collect handler - push check continuation then try to parse an item
                 self.line(&format!(
                     "Work::{}_Repeat_Collect {{ result_base, count }} => {{",
                     prefix
                 ));
                 self.indent += 1;
                 self.line("let checkpoint = self.lexer.checkpoint();");
-                self.line("let try_result = (|| -> Result<(), ParseError> {");
-                self.indent += 1;
-                self.emit_combinator_inline(inner, &item_prefix);
+                self.line("// Push check continuation first (will execute after inner parser)");
+                self.line(&format!(
+                    "self.work_stack.push(Work::{}_Repeat_Check {{ checkpoint, result_base, count }});",
+                    prefix
+                ));
+                self.line("// Then push inner parser work");
+                self.emit_combinator(&item_prefix, inner);
                 self.line("Ok(())");
                 self.indent -= 1;
-                self.line("})();");
-                self.line("");
-                self.line("match try_result {");
+                self.line("}");
+
+                // Check handler - examine result after inner parser completes
+                self.line(&format!(
+                    "Work::{}_Repeat_Check {{ checkpoint, result_base, count }} => {{",
+                    prefix
+                ));
                 self.indent += 1;
-                self.line("Ok(()) => {");
+                self.line("// Check if inner parser succeeded by examining result stack");
+                self.line("if self.result_stack.len() > result_base + count {");
                 self.indent += 1;
-                self.line("// Item parsed, try for more");
+                self.line("// Success - item was parsed");
+                self.line("// PROGRESS CHECK: Ensure we consumed at least one token to prevent infinite loops");
+                self.line("if self.lexer.pos == checkpoint.pos {");
+                self.indent += 1;
+                self.line("// No progress made - inner parser matched empty input");
+                self.line("// Stop here to prevent infinite loop");
+                self.line("self.last_error = None;");
+                self.line(
+                    "let results: Vec<_> = self.result_stack.drain(result_base..).collect();",
+                );
+                self.line("self.result_stack.push(ParseResult::List(results));");
+                self.indent -= 1;
+                self.line("} else {");
+                self.indent += 1;
+                self.line("// Made progress - clear error and try for more");
+                self.line("self.last_error = None;");
                 self.line(&format!(
                     "self.work_stack.push(Work::{}_Repeat_Collect {{ result_base, count: count + 1 }});",
                     prefix
                 ));
                 self.indent -= 1;
                 self.line("}");
-                self.line("Err(_) => {");
-                self.indent += 1;
-                self.line("// Failed - restore lexer and collect successful items");
-                self.line("self.lexer.restore(checkpoint);");
-                self.line("// Discard any partial results from failed attempt (result_base + count are the successful ones)");
-                self.line("while self.result_stack.len() > result_base + count {");
-                self.indent += 1;
-                self.line("self.result_stack.pop();");
                 self.indent -= 1;
-                self.line("}");
+                self.line("} else {");
+                self.indent += 1;
+                self.line("// Failed - restore lexer, clear error, and collect successful items");
+                self.line("self.lexer.restore(checkpoint);");
+                self.line("self.last_error = None;");
                 self.line(
                     "let results: Vec<_> = self.result_stack.drain(result_base..).collect();",
                 );
                 self.line("self.result_stack.push(ParseResult::List(results));");
-                self.indent -= 1;
-                self.line("}");
                 self.indent -= 1;
                 self.line("}");
                 self.line("Ok(())");
@@ -1755,33 +1933,43 @@ impl<'a> CodeGenerator<'a> {
             }
             Combinator::Optional(inner) => {
                 let opt_inner_prefix = format!("{}_OptInner", prefix);
+                // Try handler - push check continuation then try inner
                 self.line(&format!(
                     "Work::{}_Opt_Try {{ checkpoint, result_base }} => {{",
                     prefix
                 ));
                 self.indent += 1;
-                self.line("let try_result = (|| -> Result<(), ParseError> {");
-                self.indent += 1;
-                self.emit_combinator_inline(inner, &opt_inner_prefix);
+                self.line("// Push check continuation first (will execute after inner parser)");
+                self.line(&format!(
+                    "self.work_stack.push(Work::{}_Opt_Check {{ checkpoint, result_base }});",
+                    prefix
+                ));
+                self.line("// Then push inner parser work");
+                self.emit_combinator(&opt_inner_prefix, inner);
                 self.line("Ok(())");
                 self.indent -= 1;
-                self.line("})();");
-                self.line("");
-                self.line("match try_result {");
-                self.indent += 1;
-                self.line("Ok(()) => Ok(()), // Result is on stack");
-                self.line("Err(_) => {");
-                self.indent += 1;
-                self.line("self.lexer.restore(checkpoint);");
-                self.line("while self.result_stack.len() > result_base {");
-                self.indent += 1;
-                self.line("self.result_stack.pop();");
-                self.indent -= 1;
                 self.line("}");
+
+                // Check handler - examine result after inner parser completes
+                self.line(&format!(
+                    "Work::{}_Opt_Check {{ checkpoint, result_base }} => {{",
+                    prefix
+                ));
+                self.indent += 1;
+                self.line("// Check if inner parser succeeded by examining result stack");
+                self.line("if self.result_stack.len() > result_base {");
+                self.indent += 1;
+                self.line("// Success - result is on stack, clear any error");
+                self.line("self.last_error = None;");
+                self.line("Ok(())");
+                self.indent -= 1;
+                self.line("} else {");
+                self.indent += 1;
+                self.line("// Failed - restore lexer, clear error, and push None");
+                self.line("self.lexer.restore(checkpoint);");
+                self.line("self.last_error = None;");
                 self.line("self.result_stack.push(ParseResult::None);");
                 self.line("Ok(())");
-                self.indent -= 1;
-                self.line("}");
                 self.indent -= 1;
                 self.line("}");
                 self.indent -= 1;
@@ -1793,11 +1981,32 @@ impl<'a> CodeGenerator<'a> {
                 self.emit_pratt_execution(prefix, pratt_def);
             }
             Combinator::Mapped { inner, mapping } => {
-                self.emit_combinator_execution(prefix, inner);
-                // Note: mapping is applied after inner combinator completes
+                // Generate handler for the _Mapped_Complete work item
                 if self.grammar.ast_config.apply_mappings {
-                    let _ = mapping; // Mapping string is available for code generation
+                    self.line(&format!(
+                        "Work::{}_Mapped_Complete {{ mapping_id: _, result_base }} => {{",
+                        prefix
+                    ));
+                    self.indent += 1;
+                    // Only apply mapping if inner combinator succeeded (pushed a result)
+                    self.line("if self.result_stack.len() > result_base {");
+                    self.indent += 1;
+                    // Pop the inner result
+                    self.line("let inner_result = self.pop_result()?;");
+                    self.line("let span = inner_result.combined_span();");
+                    // Apply the closure - it returns Result<ParseResult, ParseError>
+                    self.line(&format!("let closure = {};", mapping));
+                    self.line("let result = closure(inner_result, span)?;");
+                    self.line("self.result_stack.push(result);");
+                    self.indent -= 1;
+                    self.line("}");
+                    self.line("Ok(())");
+                    self.indent -= 1;
+                    self.line("}");
                 }
+                // Generate execution handlers for the inner combinator
+                let inner_prefix = format!("{}_MappedInner", prefix);
+                self.emit_combinator_execution(&inner_prefix, inner);
             }
             Combinator::SeparatedBy {
                 item,
@@ -1817,10 +2026,12 @@ impl<'a> CodeGenerator<'a> {
             .iter()
             .filter_map(|op| {
                 if let crate::ir::PostfixOp::Simple {
-                    token, precedence, ..
+                    token,
+                    precedence,
+                    mapping,
                 } = op
                 {
-                    Some((token.clone(), *precedence))
+                    Some((token.clone(), *precedence, mapping.clone()))
                 } else {
                     None
                 }
@@ -1834,11 +2045,18 @@ impl<'a> CodeGenerator<'a> {
                 if let crate::ir::PostfixOp::Call {
                     open,
                     close,
+                    separator,
                     precedence,
-                    ..
+                    mapping,
                 } = op
                 {
-                    Some((open.clone(), close.clone(), *precedence))
+                    Some((
+                        open.clone(),
+                        close.clone(),
+                        separator.clone(),
+                        *precedence,
+                        mapping.clone(),
+                    ))
                 } else {
                     None
                 }
@@ -1853,10 +2071,10 @@ impl<'a> CodeGenerator<'a> {
                     open,
                     close,
                     precedence,
-                    ..
+                    mapping,
                 } = op
                 {
-                    Some((open.clone(), close.clone(), *precedence))
+                    Some((open.clone(), close.clone(), *precedence, mapping.clone()))
                 } else {
                     None
                 }
@@ -1868,10 +2086,12 @@ impl<'a> CodeGenerator<'a> {
             .iter()
             .filter_map(|op| {
                 if let crate::ir::PostfixOp::Member {
-                    token, precedence, ..
+                    token,
+                    precedence,
+                    mapping,
                 } = op
                 {
-                    Some((token.clone(), *precedence))
+                    Some((token.clone(), *precedence, mapping.clone()))
                 } else {
                     None
                 }
@@ -1905,22 +2125,22 @@ impl<'a> CodeGenerator<'a> {
         }
 
         // Simple postfix operators (type 2)
-        for (token, prec) in &simple_postfix_ops {
+        for (token, prec, _) in &simple_postfix_ops {
             self.line(&format!("TokenKind::{} => ({}, false, 2u8),", token, prec));
         }
 
         // Call postfix operators (type 3)
-        for (open, _, prec) in &call_ops {
+        for (open, _, _, prec, _) in &call_ops {
             self.line(&format!("TokenKind::{} => ({}, false, 3u8),", open, prec));
         }
 
         // Index postfix operators (type 4)
-        for (open, _, prec) in &index_ops {
+        for (open, _, prec, _) in &index_ops {
             self.line(&format!("TokenKind::{} => ({}, false, 4u8),", open, prec));
         }
 
         // Member postfix operators (type 5)
-        for (token, prec) in &member_ops {
+        for (token, prec, _) in &member_ops {
             self.line(&format!("TokenKind::{} => ({}, false, 5u8),", token, prec));
         }
 
@@ -1960,7 +2180,7 @@ impl<'a> CodeGenerator<'a> {
         // Parse RHS operand
         if let Some(ref operand) = *pratt_def.operand {
             let operand_prefix = format!("{}_Pratt_Operand", prefix);
-            self.emit_combinator_inline(operand, &operand_prefix);
+            self.emit_combinator(&operand_prefix, operand);
         }
         self.indent -= 1;
         self.line("}");
@@ -1969,10 +2189,31 @@ impl<'a> CodeGenerator<'a> {
         self.line("2 => {");
         self.indent += 1;
         self.line("// Simple postfix operator");
-        self.line("let operand = self.result_stack.pop().unwrap();");
-        self.line(
-            "self.result_stack.push(ParseResult::List(vec![operand, ParseResult::Token(_op_token)]));",
-        );
+        self.line("let operand = self.pop_result()?;");
+
+        // Apply the mapping closure when apply_mappings is enabled
+        if self.grammar.ast_config.apply_mappings && !simple_postfix_ops.is_empty() {
+            self.line("let span = operand.span().merge(_op_token.span);");
+            self.line("let result = match _op_token.kind {");
+            self.indent += 1;
+            for (token, _, mapping) in &simple_postfix_ops {
+                self.line(&format!("TokenKind::{} => {{", token));
+                self.indent += 1;
+                self.line(&format!("let closure = {};", mapping));
+                self.line("closure(operand, span)?");
+                self.indent -= 1;
+                self.line("}");
+            }
+            self.line("_ => ParseResult::List(vec![operand, ParseResult::Token(_op_token)]),");
+            self.indent -= 1;
+            self.line("};");
+            self.line("self.result_stack.push(result);");
+        } else {
+            self.line(
+                "self.result_stack.push(ParseResult::List(vec![operand, ParseResult::Token(_op_token)]));",
+            );
+        }
+
         self.line(&format!(
             "self.work_stack.push(Work::{}_Pratt_AfterOperand {{ min_prec }});",
             prefix
@@ -1992,7 +2233,7 @@ impl<'a> CodeGenerator<'a> {
             ));
             // Parse first argument (or nothing if empty)
             self.line("// Check if immediately closing");
-            if let Some((_, close, _)) = call_ops.first() {
+            if let Some((_, close, _, _, _)) = call_ops.first() {
                 self.line(&format!(
                     "if self.lexer.peek()?.kind != TokenKind::{} {{",
                     close
@@ -2054,7 +2295,7 @@ impl<'a> CodeGenerator<'a> {
             ));
             if let Some(ref operand) = *pratt_def.operand {
                 let operand_prefix = format!("{}_Pratt_Operand", prefix);
-                self.emit_combinator_inline(operand, &operand_prefix);
+                self.emit_combinator(&operand_prefix, operand);
             }
             self.indent -= 1;
             self.line("}");
@@ -2080,11 +2321,32 @@ impl<'a> CodeGenerator<'a> {
         ));
         self.indent += 1;
         self.line("// Combine: left op right");
-        self.line("let right = self.result_stack.pop().unwrap();");
-        self.line("let left = self.result_stack.pop().unwrap();");
-        self.line(
-            "self.result_stack.push(ParseResult::List(vec![left, ParseResult::Token(op_token), right]));",
-        );
+        self.line("let right = self.pop_result()?;");
+        self.line("let left = self.pop_result()?;");
+
+        // Apply operator mapping if enabled
+        if self.grammar.ast_config.apply_mappings {
+            self.line("let span = left.combined_span().merge(right.combined_span());");
+            self.line("let result = match op_token.kind {");
+            self.indent += 1;
+            for op in &pratt_def.infix_ops {
+                self.line(&format!("TokenKind::{} => {{", op.token));
+                self.indent += 1;
+                self.line(&format!("let closure = {};", op.mapping));
+                self.line("closure(left, right, span)?");
+                self.indent -= 1;
+                self.line("}");
+            }
+            self.line("_ => ParseResult::List(vec![left, ParseResult::Token(op_token), right]),");
+            self.indent -= 1;
+            self.line("};");
+            self.line("self.result_stack.push(result);");
+        } else {
+            self.line(
+                "self.result_stack.push(ParseResult::List(vec![left, ParseResult::Token(op_token), right]));",
+            );
+        }
+
         self.line("// Continue looking for more operators");
         self.line(&format!(
             "self.work_stack.push(Work::{}_Pratt_AfterOperand {{ min_prec }});",
@@ -2094,17 +2356,43 @@ impl<'a> CodeGenerator<'a> {
         self.indent -= 1;
         self.line("}");
 
-        // AfterPrefix - combine prefix operator with operand
+        // AfterPrefix - combine prefix operator with operand, then continue parsing
         self.line(&format!(
-            "Work::{}_Pratt_AfterPrefix {{ op_token }} => {{",
+            "Work::{}_Pratt_AfterPrefix {{ op_token, min_prec }} => {{",
             prefix
         ));
         self.indent += 1;
         self.line("// Combine: prefix_op operand");
-        self.line("let operand = self.result_stack.pop().unwrap();");
-        self.line(
-            "self.result_stack.push(ParseResult::List(vec![ParseResult::Token(op_token), operand]));",
-        );
+        self.line("let operand = self.pop_result()?;");
+
+        if self.grammar.ast_config.apply_mappings && !pratt_def.prefix_ops.is_empty() {
+            self.line("let span = op_token.span.merge(operand.combined_span());");
+            self.line("let result = match op_token.kind {");
+            self.indent += 1;
+            for op in &pratt_def.prefix_ops {
+                self.line(&format!("TokenKind::{} => {{", op.token));
+                self.indent += 1;
+                self.line(&format!("let closure = {};", op.mapping));
+                self.line("closure(operand, span)?");
+                self.indent -= 1;
+                self.line("}");
+            }
+            self.line("_ => ParseResult::List(vec![ParseResult::Token(op_token), operand]),");
+            self.indent -= 1;
+            self.line("};");
+            self.line("self.result_stack.push(result);");
+        } else {
+            self.line(
+                "self.result_stack.push(ParseResult::List(vec![ParseResult::Token(op_token), operand]));",
+            );
+        }
+
+        // Continue parsing at the original precedence level
+        self.line("// Continue looking for operators at the original precedence level");
+        self.line(&format!(
+            "self.work_stack.push(Work::{}_Pratt_AfterOperand {{ min_prec }});",
+            prefix
+        ));
         self.line("Ok(())");
         self.indent -= 1;
         self.line("}");
@@ -2119,25 +2407,37 @@ impl<'a> CodeGenerator<'a> {
             self.line("let _ = prec;");
             self.line("// Check for closing paren or comma");
             self.line("let token = self.lexer.peek()?;");
-            if let Some((_, close, _)) = call_ops.first() {
+            if let Some((_, close, separator, _, _)) = call_ops.first() {
                 self.line(&format!("if token.kind == TokenKind::{} {{", close));
                 self.indent += 1;
                 self.line("// Closing paren - collect args");
                 self.line("self.lexer.next()?; // consume close");
                 self.line("let args: Vec<_> = self.result_stack.drain(result_base..).collect();");
-                self.line("let callee = self.result_stack.pop().unwrap();");
-                self.line(
-                    "self.result_stack.push(ParseResult::List(vec![callee, ParseResult::List(args)]));",
-                );
+                self.line("let callee = self.pop_result()?;");
+
+                // Apply the mapping closure when apply_mappings is enabled
+                if self.grammar.ast_config.apply_mappings {
+                    if let Some((_, _, _, _, mapping)) = call_ops.first() {
+                        self.line("let span = callee.span();");
+                        self.line(&format!("let closure = {};", mapping));
+                        self.line("let result = closure(callee, args, span)?;");
+                        self.line("self.result_stack.push(result);");
+                    }
+                } else {
+                    self.line(
+                        "self.result_stack.push(ParseResult::List(vec![callee, ParseResult::List(args)]));",
+                    );
+                }
+
                 self.line(&format!(
                     "self.work_stack.push(Work::{}_Pratt_AfterOperand {{ min_prec }});",
                     prefix
                 ));
                 self.indent -= 1;
-                self.line("} else if token.kind == TokenKind::COMMA {");
+                self.line(&format!("}} else if token.kind == TokenKind::{} {{", separator));
                 self.indent += 1;
                 self.line("// More args");
-                self.line("self.lexer.next()?; // consume comma");
+                self.line("self.lexer.next()?; // consume separator");
                 self.line(&format!(
                     "self.work_stack.push(Work::{}_Pratt_AfterCallArgs {{ min_prec, prec, result_base }});",
                     prefix
@@ -2168,12 +2468,30 @@ impl<'a> CodeGenerator<'a> {
             self.indent += 1;
             self.line("let _ = prec;");
             self.line("// Expect closing bracket");
-            if let Some((_, close, _)) = index_ops.first() {
-                self.line(&format!("self.expect_token(TokenKind::{})?;", close));
+            if let Some((_, close, _, _)) = index_ops.first() {
+                self.line(&format!("match self.expect_token(TokenKind::{}) {{", close));
+                self.line("Ok(_) => {}");
+                self.line("Err(e) => {");
+                self.line("    self.last_error = Some(e);");
+                self.line("    return Ok(());");
+                self.line("}");
+                self.line("}");
             }
-            self.line("let index = self.result_stack.pop().unwrap();");
-            self.line("let obj = self.result_stack.pop().unwrap();");
-            self.line("self.result_stack.push(ParseResult::List(vec![obj, index]));");
+            self.line("let index = self.pop_result()?;");
+            self.line("let obj = self.pop_result()?;");
+
+            // Apply the mapping closure when apply_mappings is enabled
+            if self.grammar.ast_config.apply_mappings {
+                if let Some((_, _, _, mapping)) = index_ops.first() {
+                    self.line("let span = obj.span().merge(index.span());");
+                    self.line(&format!("let closure = {};", mapping));
+                    self.line("let result = closure(obj, index, span)?;");
+                    self.line("self.result_stack.push(result);");
+                }
+            } else {
+                self.line("self.result_stack.push(ParseResult::List(vec![obj, index]));");
+            }
+
             self.line(&format!(
                 "self.work_stack.push(Work::{}_Pratt_AfterOperand {{ min_prec }});",
                 prefix
@@ -2191,11 +2509,25 @@ impl<'a> CodeGenerator<'a> {
             ));
             self.indent += 1;
             self.line("let _ = prec;");
-            self.line("let prop = self.result_stack.pop().unwrap();");
-            self.line("let obj = self.result_stack.pop().unwrap();");
-            self.line(
-                "self.result_stack.push(ParseResult::List(vec![obj, ParseResult::Token(dot_token), prop]));",
-            );
+            self.line("let prop = self.pop_result()?;");
+            self.line("let obj = self.pop_result()?;");
+
+            // Apply the mapping closure when apply_mappings is enabled
+            if self.grammar.ast_config.apply_mappings && !member_ops.is_empty() {
+                // Get the mapping from the first (and typically only) member op
+                let mapping = &member_ops[0].2;
+                self.line("// Pass the property token to the mapping closure");
+                self.line("let prop_token = prop.into_token()?;");
+                self.line("let span = obj.span().merge(prop_token.span);");
+                self.line(&format!("let closure = {};", mapping));
+                self.line("let result = closure(obj, prop_token, span)?;");
+                self.line("self.result_stack.push(result);");
+            } else {
+                self.line(
+                    "self.result_stack.push(ParseResult::List(vec![obj, ParseResult::Token(dot_token), prop]));",
+                );
+            }
+
             self.line(&format!(
                 "self.work_stack.push(Work::{}_Pratt_AfterOperand {{ min_prec }});",
                 prefix
@@ -2214,9 +2546,15 @@ impl<'a> CodeGenerator<'a> {
             self.indent += 1;
             self.line("// Expect colon");
             self.line(&format!(
-                "let colon_token = self.expect_token(TokenKind::{})?;",
+                "let colon_token = match self.expect_token(TokenKind::{}) {{",
                 ternary.second_token
             ));
+            self.line("Ok(token) => token,");
+            self.line("Err(e) => {");
+            self.line("    self.last_error = Some(e);");
+            self.line("    return Ok(());");
+            self.line("}");
+            self.line("};");
             self.line(&format!(
                 "self.work_stack.push(Work::{}_Pratt_AfterTernaryElse {{ min_prec, question_token, colon_token }});",
                 prefix
@@ -2228,7 +2566,7 @@ impl<'a> CodeGenerator<'a> {
             ));
             if let Some(ref operand) = *pratt_def.operand {
                 let operand_prefix = format!("{}_Pratt_Operand", prefix);
-                self.emit_combinator_inline(operand, &operand_prefix);
+                self.emit_combinator(&operand_prefix, operand);
             }
             self.line("Ok(())");
             self.indent -= 1;
@@ -2241,18 +2579,29 @@ impl<'a> CodeGenerator<'a> {
             ));
             self.indent += 1;
             self.line("// Combine: cond ? then : else");
-            self.line("let else_expr = self.result_stack.pop().unwrap();");
-            self.line("let then_expr = self.result_stack.pop().unwrap();");
-            self.line("let cond_expr = self.result_stack.pop().unwrap();");
-            self.line("self.result_stack.push(ParseResult::List(vec![");
-            self.indent += 1;
-            self.line("cond_expr,");
-            self.line("ParseResult::Token(question_token),");
-            self.line("then_expr,");
-            self.line("ParseResult::Token(colon_token),");
-            self.line("else_expr,");
-            self.indent -= 1;
-            self.line("]));");
+            self.line("let else_expr = self.pop_result()?;");
+            self.line("let then_expr = self.pop_result()?;");
+            self.line("let cond_expr = self.pop_result()?;");
+
+            if self.grammar.ast_config.apply_mappings {
+                // Apply mapping closure: |cond, then, else, span| -> result
+                let mapping = &ternary.mapping;
+                self.line("let span = cond_expr.span().merge(else_expr.span());");
+                self.line(&format!("let closure = {};", mapping));
+                self.line("let result = closure(cond_expr, then_expr, else_expr, span)?;");
+                self.line("self.result_stack.push(result);");
+            } else {
+                self.line("self.result_stack.push(ParseResult::List(vec![");
+                self.indent += 1;
+                self.line("cond_expr,");
+                self.line("ParseResult::Token(question_token),");
+                self.line("then_expr,");
+                self.line("ParseResult::Token(colon_token),");
+                self.line("else_expr,");
+                self.indent -= 1;
+                self.line("]));");
+            }
+
             self.line(&format!(
                 "self.work_stack.push(Work::{}_Pratt_AfterOperand {{ min_prec }});",
                 prefix
@@ -2275,34 +2624,47 @@ impl<'a> CodeGenerator<'a> {
 
         // Collect - try to parse first/next item
         self.line(&format!(
-            "Work::{}_Sep_Collect {{ result_base, count }} => {{",
+            "Work::{}_Sep_Collect {{ result_base, count, item_checkpoint }} => {{",
             prefix
         ));
         self.indent += 1;
         self.line(&format!(
-            "self.work_stack.push(Work::{}_Sep_AfterItem {{ result_base, count }});",
+            "self.work_stack.push(Work::{}_Sep_AfterItem {{ result_base, count, item_checkpoint }});",
             prefix
         ));
-        self.emit_combinator_inline(item, &item_prefix);
+        self.emit_combinator(&item_prefix, item);
         self.line("Ok(())");
         self.indent -= 1;
         self.line("}");
 
         // AfterItem - check if item succeeded, then look for separator
         self.line(&format!(
-            "Work::{}_Sep_AfterItem {{ result_base, count }} => {{",
+            "Work::{}_Sep_AfterItem {{ result_base, count, item_checkpoint }} => {{",
             prefix
         ));
         self.indent += 1;
         self.line("if self.result_stack.len() > result_base + count {");
         self.indent += 1;
-        self.line("// Item succeeded, look for separator");
+        self.line("// Item succeeded");
+        self.line("// PROGRESS CHECK: Ensure we consumed at least one token to prevent infinite loops");
+        self.line("if self.lexer.pos == item_checkpoint.pos {");
+        self.indent += 1;
+        self.line("// No progress made - item matched empty input");
+        self.line("// Stop here to prevent infinite loop");
+        self.line("let results: Vec<_> = self.result_stack.drain(result_base..).collect();");
+        self.line("self.result_stack.push(ParseResult::List(results));");
+        self.indent -= 1;
+        self.line("} else {");
+        self.indent += 1;
+        self.line("// Made progress, look for separator");
         self.line("let checkpoint = self.lexer.checkpoint();");
         self.line(&format!(
             "self.work_stack.push(Work::{}_Sep_AfterSep {{ result_base, count: count + 1, checkpoint }});",
             prefix
         ));
-        self.emit_combinator_inline(separator, &sep_prefix);
+        self.emit_combinator(&sep_prefix, separator);
+        self.indent -= 1;
+        self.line("}");
         self.indent -= 1;
         self.line("} else {");
         self.indent += 1;
@@ -2315,20 +2677,31 @@ impl<'a> CodeGenerator<'a> {
         self.indent -= 1;
         self.line("}");
 
-        // AfterSep - separator found, parse next item
+        // AfterSep - check if separator matched, then parse next item or finish
         self.line(&format!(
             "Work::{}_Sep_AfterSep {{ result_base, count, checkpoint }} => {{",
             prefix
         ));
         self.indent += 1;
-        self.line("// Separator matched, try next item");
-        self.line("// Pop separator result (we don't keep it)");
+        self.line("if self.last_error.is_none() {");
+        self.indent += 1;
+        self.line("// Separator matched, pop it and try next item");
         self.line("self.result_stack.pop();");
+        self.line("let item_checkpoint = self.lexer.checkpoint();");
         self.line(&format!(
-            "self.work_stack.push(Work::{}_Sep_Collect {{ result_base, count }});",
+            "self.work_stack.push(Work::{}_Sep_Collect {{ result_base, count, item_checkpoint }});",
             prefix
         ));
-        self.line("let _ = checkpoint; // TODO: handle trailing separator");
+        self.indent -= 1;
+        self.line("} else {");
+        self.indent += 1;
+        self.line("// Separator failed, restore and collect results");
+        self.line("self.lexer.restore(checkpoint);");
+        self.line("self.last_error = None;");
+        self.line("let results: Vec<_> = self.result_stack.drain(result_base..).collect();");
+        self.line("self.result_stack.push(ParseResult::List(results));");
+        self.indent -= 1;
+        self.line("}");
         self.line("Ok(())");
         self.indent -= 1;
         self.line("}");
@@ -2359,6 +2732,21 @@ impl<'a> CodeGenerator<'a> {
         self.line("}");
         self.indent -= 1;
         self.line("}");
+        self.line("");
+
+        // Helper to safely pop from result stack
+        self.line("#[inline]");
+        self.line("fn pop_result(&mut self) -> Result<ParseResult, ParseError> {");
+        self.indent += 1;
+        self.line("self.result_stack.pop().ok_or_else(|| ParseError {");
+        self.indent += 1;
+        self.line("span: self.lexer.span(),");
+        self.line("expected: vec![],");
+        self.line("found: \"internal error: empty result stack\".to_string(),");
+        self.indent -= 1;
+        self.line("})");
+        self.indent -= 1;
+        self.line("}");
     }
 
     fn line(&mut self, text: &str) {
@@ -2380,6 +2768,21 @@ fn to_pascal_case(s: &str) -> String {
             }
         })
         .collect()
+}
+
+fn to_snake_case(s: &str) -> String {
+    let mut result = String::new();
+    for (i, c) in s.chars().enumerate() {
+        if c.is_uppercase() {
+            if i > 0 {
+                result.push('_');
+            }
+            result.push(c.to_lowercase().next().unwrap_or(c));
+        } else {
+            result.push(c);
+        }
+    }
+    result
 }
 
 fn escape_char(c: char) -> String {

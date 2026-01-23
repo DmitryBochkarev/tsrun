@@ -325,3 +325,17 @@ impl JsError {
         }
     }
 }
+
+impl From<crate::parser::ParseError> for JsError {
+    fn from(err: crate::parser::ParseError) -> Self {
+        JsError::SyntaxError {
+            message: err.to_string(),
+            location: SourceLocation {
+                file: None,
+                line: err.span.line,
+                column: err.span.column,
+                length: (err.span.end - err.span.start) as u32,
+            },
+        }
+    }
+}

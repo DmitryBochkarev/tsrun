@@ -83,7 +83,7 @@ impl CharCondition {
         CharCondition::And(Box::new(self), Box::new(other))
     }
 
-    pub fn not(self) -> CharCondition {
+    pub fn negated(self) -> CharCondition {
         CharCondition::Not(Box::new(self))
     }
 }
@@ -121,10 +121,6 @@ pub enum Combinator {
     Optional(Box<Combinator>),
     /// Parse but discard result
     Skip(Box<Combinator>),
-    /// Positive lookahead (peek without consuming)
-    Lookahead(Box<Combinator>),
-    /// Negative lookahead (fail if matches)
-    NegativeLookahead(Box<Combinator>),
     /// Separated list: item (sep item)*
     SeparatedBy {
         item: Box<Combinator>,
@@ -185,6 +181,7 @@ pub enum PostfixOp {
     Call {
         open: String,
         close: String,
+        separator: String,
         precedence: u8,
         mapping: String,
     },
@@ -244,6 +241,25 @@ pub struct AstConfig {
     pub string_dict_type: Option<String>,
     /// Method to call on string dict to intern a string (default: "get_or_insert")
     pub string_dict_method: Option<String>,
+    /// Helper functions to include in generated code
+    pub helper_code: Vec<String>,
+    /// Custom ParseResult variants for typed AST nodes
+    /// Each entry is (variant_name, rust_type, span_expr)
+    /// e.g., ("Expr", "Expression", None) generates `Expr(Expression)` variant
+    /// span_expr is how to extract span, e.g., Some("_.span") or None for default
+    pub result_variants: Vec<ResultVariant>,
+}
+
+/// A custom ParseResult variant for typed AST nodes
+#[derive(Debug, Clone)]
+pub struct ResultVariant {
+    /// Name of the variant (e.g., "Expr")
+    pub name: String,
+    /// Rust type it holds (e.g., "Expression")
+    pub rust_type: String,
+    /// Expression to get span, where _ is the value (e.g., "_.span")
+    /// If None, uses Span::default()
+    pub span_expr: Option<String>,
 }
 
 impl Default for AstConfig {
@@ -260,6 +276,8 @@ impl Default for AstConfig {
             apply_mappings: false,
             string_dict_type: None,
             string_dict_method: None,
+            helper_code: Vec::new(),
+            result_variants: Vec::new(),
         }
     }
 }

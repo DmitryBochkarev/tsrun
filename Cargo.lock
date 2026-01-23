@@ -527,6 +527,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "trampoline-parser"
+version = "0.1.0"
+
+[[package]]
 name = "tsrun"
 version = "0.1.17"
 dependencies = [
@@ -539,6 +543,14 @@ dependencies = [
  "rustc-hash",
  "serde",
  "serde_json",
+ "tsrun-grammar",
+]
+
+[[package]]
+name = "tsrun-grammar"
+version = "0.1.0"
+dependencies = [
+ "trampoline-parser",
 ]
 
 [[package]]

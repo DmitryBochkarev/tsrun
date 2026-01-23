@@ -287,7 +287,7 @@ impl CharMatcherBuilder {
     }
 
     /// Negate the current condition
-    pub fn not(mut self) -> Self {
+    pub fn negated(mut self) -> Self {
         if let Some(cond) = self.condition.take() {
             self.condition = Some(CharCondition::Not(Box::new(cond)));
         }

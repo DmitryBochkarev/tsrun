@@ -462,7 +462,6 @@ pub mod compiler;
 pub mod error;
 pub mod gc;
 pub(crate) mod interpreter;
-pub mod lexer;
 pub mod parser;
 pub mod platform;
 pub mod string_dict;

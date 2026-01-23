@@ -577,7 +577,10 @@ fn test_register_usage_array_of_objects() {
     );
 
     // Register count should be reasonable, not exploding
-    println!("Array of 5 objects register count: {}", chunk.register_count);
+    println!(
+        "Array of 5 objects register count: {}",
+        chunk.register_count
+    );
     assert!(
         chunk.register_count < 50,
         "Register count {} is unexpectedly high for array of 5 objects",
@@ -602,7 +605,10 @@ fn test_register_usage_large_array_of_objects() {
     "#,
     );
 
-    println!("Array of 20 objects register count: {}", chunk.register_count);
+    println!(
+        "Array of 20 objects register count: {}",
+        chunk.register_count
+    );
     // If registers are freed properly, count should still be low
     // If there's a leak, this would approach 20*3 = 60+ registers
     assert!(
@@ -628,7 +634,10 @@ fn test_register_reuse_in_array_elements() {
     let result = std::panic::catch_unwind(|| compile(&code));
     match result {
         Ok(chunk) => {
-            println!("Array of 100 objects register count: {}", chunk.register_count);
+            println!(
+                "Array of 100 objects register count: {}",
+                chunk.register_count
+            );
             // With proper register reuse, we should need far fewer than 100 registers
             assert!(
                 chunk.register_count < 50,

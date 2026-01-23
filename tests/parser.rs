@@ -52,6 +52,41 @@ fn test_array_literal() {
 }
 
 #[test]
+fn test_arrow_function_single_param_no_parens() {
+    // Arrow function with single unparenthesized parameter at statement level
+    let prog = parse("const f = x => x;");
+    assert_eq!(prog.body.len(), 1);
+    // Verify it's actually parsed as arrow function, not just identifier
+    if let Statement::VariableDeclaration(decl) = &prog.body[0] {
+        if let Some(init) = &decl.declarations[0].init {
+            assert!(
+                matches!(init.as_ref(), Expression::ArrowFunction(_)),
+                "Expected ArrowFunction but got {:?}",
+                init
+            );
+        } else {
+            panic!("Expected initializer");
+        }
+    } else {
+        panic!("Expected VariableDeclaration");
+    }
+}
+
+#[test]
+fn test_arrow_function_parenthesized_as_arg() {
+    // Arrow function with parenthesized parameter as function argument - works
+    let prog = parse("[].map((x) => x);");
+    assert_eq!(prog.body.len(), 1);
+}
+
+#[test]
+fn test_arrow_function_single_param_as_arg() {
+    // Arrow function with single unparenthesized parameter as function argument
+    let prog = parse("[].map(x => x);");
+    assert_eq!(prog.body.len(), 1);
+}
+
+#[test]
 fn test_function_type_expression() {
     let prog = parse("const add: (a: number, b: number) => number = (a, b) => a + b;");
     assert_eq!(prog.body.len(), 1);
@@ -826,6 +861,48 @@ fn test_parse_union_type_generic_and_undefined() {
     let prog = parse("const neighbors: Set<T> | undefined = graph.nodes.get(from);");
     assert_eq!(prog.body.len(), 1);
 }
+
+#[test]
+fn test_contextual_keyword_from_as_identifier() {
+    // 'from' is a contextual keyword that should work as identifier
+    let prog = parse("const x = from;");
+    assert_eq!(prog.body.len(), 1);
+    let prog = parse("const x = get(from);");
+    assert_eq!(prog.body.len(), 1);
+    let prog = parse("const x = graph.nodes.get(from);");
+    assert_eq!(prog.body.len(), 1);
+}
+
+#[test]
+fn test_contextual_keyword_as_as_identifier() {
+    // 'as' is a contextual keyword that should work as identifier
+    let prog = parse("const as = 1;");
+    assert_eq!(prog.body.len(), 1);
+}
+
+#[test]
+fn test_contextual_keyword_of_as_identifier() {
+    // 'of' is a contextual keyword that should work as identifier
+    let prog = parse("const of = 1;");
+    assert_eq!(prog.body.len(), 1);
+}
+
+#[test]
+fn test_contextual_keyword_get_set_as_identifier() {
+    // 'get' and 'set' are contextual keywords that should work as identifiers
+    let prog = parse("const get = 1;");
+    assert_eq!(prog.body.len(), 1);
+    let prog = parse("const set = 1;");
+    assert_eq!(prog.body.len(), 1);
+}
+
+#[test]
+fn test_function_with_default_params() {
+    // Function with default parameters - tests for infinite loop
+    let prog = parse("function sum(a, b, acc = 0, n = 10) { return acc; }");
+    assert_eq!(prog.body.len(), 1);
+}
+
 
 #[test]
 fn test_parse_graph_hasedge_function() {
@@ -2291,4 +2368,41 @@ fn test_fuzz_crash_deeply_nested_block_statements() {
         "Expected depth error, got: {}",
         err
     );
+}
+
+#[test]
+fn test_unary_minus() {
+    let prog = parse("-1");
+    assert_eq!(prog.body.len(), 1);
+    match &prog.body[0] {
+        Statement::Expression(expr_stmt) => match expr_stmt.expression.as_ref() {
+            Expression::Unary(unary) => {
+                assert_eq!(unary.operator, tsrun::ast::UnaryOp::Minus);
+            }
+            other => panic!("Expected Unary expression, got: {:?}", other),
+        },
+        other => panic!("Expected Expression statement, got: {:?}", other),
+    }
+}
+
+#[test]
+fn test_unary_minus_with_binary() {
+    let prog = parse("-1 + 2");
+    assert_eq!(prog.body.len(), 1);
+    match &prog.body[0] {
+        Statement::Expression(expr_stmt) => match expr_stmt.expression.as_ref() {
+            Expression::Binary(binary) => {
+                assert_eq!(binary.operator, tsrun::ast::BinaryOp::Add);
+                // Left should be unary minus
+                match binary.left.as_ref() {
+                    Expression::Unary(unary) => {
+                        assert_eq!(unary.operator, tsrun::ast::UnaryOp::Minus);
+                    }
+                    other => panic!("Expected Unary expression on left, got: {:?}", other),
+                }
+            }
+            other => panic!("Expected Binary expression, got: {:?}", other),
+        },
+        other => panic!("Expected Expression statement, got: {:?}", other),
+    }
 }
