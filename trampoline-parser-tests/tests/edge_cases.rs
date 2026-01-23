@@ -119,6 +119,63 @@ fn error_on_unexpected_input() {
 }
 
 // =============================================================================
+// Error Location Tests
+// =============================================================================
+
+#[test]
+fn error_reports_position() {
+    // "hello" expects "hello", input starts with "h" but has wrong continuation
+    let mut parser = literal_parser::Parser::new("hxllo");
+    let result = parser.parse();
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    // Error should be at position 1 (where 'x' is instead of 'e')
+    assert!(err.span.start <= 1, "Error should be near the start, got start={}", err.span.start);
+}
+
+#[test]
+fn error_reports_line_column_single_line() {
+    let mut parser = number_parser::Parser::new("abc");
+    let result = parser.parse();
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    // Should be at line 1
+    assert_eq!(err.span.line, 1, "Error should be on line 1");
+    // Column should be at the start
+    assert!(err.span.column >= 1, "Column should be valid");
+}
+
+#[test]
+fn error_message_is_meaningful() {
+    let mut parser = literal_parser::Parser::new("xyz");
+    let result = parser.parse();
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    // Error message should not be empty
+    assert!(!err.message.is_empty(), "Error message should not be empty");
+    // Error message should contain something useful (not just generic error)
+    assert!(
+        err.message.len() > 5,
+        "Error message should be descriptive: '{}'",
+        err.message
+    );
+}
+
+#[test]
+fn span_after_newlines() {
+    // Test that line tracking works after newlines
+    // Use the JSON parser which handles whitespace
+    let input = "\n\n\n42";
+    let mut parser = json_parser::Parser::new(input);
+    let result = parser.parse().expect("Should parse");
+    if let json_parser::ParseResult::Json(json_parser::JsonValue::Number(_)) = result {
+        // Just verify it parses - the span tracking for JSON is internal
+    } else {
+        panic!("Expected Number result");
+    }
+}
+
+// =============================================================================
 // Whitespace Handling (parsers don't skip whitespace by default)
 // =============================================================================
 

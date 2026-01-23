@@ -1467,22 +1467,23 @@ impl<'a> CodeGenerator<'a> {
 
                 // Try each prefix operator
                 if !pratt.prefix_ops.is_empty() {
-                    self.line("let checkpoint = self.pos;");
+                    self.line("let prefix_checkpoint = self.pos;");
+                    self.line("let mut prefix_matched = false;");
+
                     for (i, prefix_op) in pratt.prefix_ops.iter().enumerate() {
-                        let op_lit = match prefix_op.pattern.as_ref() {
-                            Combinator::Literal(s) => s.clone(),
-                            Combinator::Sequence(parts) if parts.len() >= 1 => {
-                                if let Combinator::Literal(s) = &parts[0] { s.clone() } else { String::new() }
-                            }
-                            _ => String::new(),
-                        };
+                        let (op_lit, is_keyword) = extract_operator_pattern(prefix_op.pattern.as_ref());
                         if !op_lit.is_empty() {
-                            if i == 0 {
-                                self.line(&format!("if self.try_consume(\"{}\") {{", escape_string(&op_lit)));
-                            } else {
-                                self.line(&format!("}} else if self.try_consume(\"{}\") {{", escape_string(&op_lit)));
-                            }
+                            self.line(&format!("if !prefix_matched && self.try_consume(\"{}\") {{", escape_string(&op_lit)));
                             self.indent += 1;
+
+                            // For keyword operators, check that we're not in the middle of an identifier
+                            if is_keyword {
+                                self.line("// Keyword boundary check: must not be followed by identifier char");
+                                self.line("if self.current_char().map_or(true, |c| !(c.is_ascii_alphanumeric() || c == '_' || c == '$')) {");
+                                self.indent += 1;
+                            }
+
+                            self.line("prefix_matched = true;");
                             self.line("self.skip_ws();");
                             self.line(&format!(
                                 "self.work_stack.push(Work::{}AfterPrefix {{ result_base, min_prec, op_idx: {}, start_pos, start_line, start_column }});",
@@ -1493,14 +1494,27 @@ impl<'a> CodeGenerator<'a> {
                                 "self.work_stack.push(Work::{}ParseOperand {{ result_base: self.result_stack.len(), min_prec: {}, start_pos: self.pos, start_line: self.line, start_column: self.column }});",
                                 prefix, prefix_op.precedence
                             ));
+
+                            if is_keyword {
+                                self.indent -= 1;
+                                self.line("} else {");
+                                self.indent += 1;
+                                self.line("// Keyword followed by ident char - restore and try next");
+                                self.line("self.pos = prefix_checkpoint;");
+                                self.indent -= 1;
+                                self.line("}");
+                            }
+
                             self.indent -= 1;
+                            self.line("}");
                         }
                     }
-                    self.line("} else {");
+
+                    // No prefix matched - parse operand directly
+                    self.line("if !prefix_matched {");
                     self.indent += 1;
                 }
 
-                // No prefix matched - parse operand directly
                 self.line(&format!(
                     "self.work_stack.push(Work::{}AfterOperand {{ result_base, min_prec, start_pos, start_line, start_column }});",
                     prefix
@@ -1568,35 +1582,31 @@ impl<'a> CodeGenerator<'a> {
                     // Try each infix operator (sorted by length for correct matching)
                     let mut sorted_ops: Vec<_> = pratt.infix_ops.iter().enumerate().collect();
                     sorted_ops.sort_by(|a, b| {
-                        let len_a = match a.1.pattern.as_ref() {
-                            Combinator::Literal(s) => s.len(),
-                            _ => 0,
-                        };
-                        let len_b = match b.1.pattern.as_ref() {
-                            Combinator::Literal(s) => s.len(),
-                            _ => 0,
-                        };
-                        len_b.cmp(&len_a) // Longer operators first
+                        let (lit_a, _) = extract_operator_pattern(a.1.pattern.as_ref());
+                        let (lit_b, _) = extract_operator_pattern(b.1.pattern.as_ref());
+                        lit_b.len().cmp(&lit_a.len()) // Longer operators first
                     });
 
-                    for (idx, (i, infix_op)) in sorted_ops.iter().enumerate() {
-                        let op_lit = match infix_op.pattern.as_ref() {
-                            Combinator::Literal(s) => s.clone(),
-                            Combinator::Sequence(parts) if !parts.is_empty() => {
-                                if let Combinator::Literal(s) = &parts[0] { s.clone() } else { String::new() }
-                            }
-                            _ => String::new(),
-                        };
+                    // Skip whitespace before checking for infix operators
+                    self.line("self.skip_ws();");
+                    self.line("let infix_checkpoint = self.pos;");
+
+                    for (_, (i, infix_op)) in sorted_ops.iter().enumerate() {
+                        let (op_lit, is_keyword) = extract_operator_pattern(infix_op.pattern.as_ref());
                         if !op_lit.is_empty() {
                             let prec = infix_op.precedence;
                             let next_prec = if infix_op.assoc == crate::Assoc::Right { prec } else { prec + 1 };
 
-                            if idx == 0 {
-                                self.line(&format!("if {} >= min_prec && self.try_consume(\"{}\") {{", prec, escape_string(&op_lit)));
-                            } else {
-                                self.line(&format!("}} else if {} >= min_prec && self.try_consume(\"{}\") {{", prec, escape_string(&op_lit)));
-                            }
+                            self.line(&format!("if {} >= min_prec && self.pos == infix_checkpoint && self.try_consume(\"{}\") {{", prec, escape_string(&op_lit)));
                             self.indent += 1;
+
+                            // For keyword operators, check that we're not in the middle of an identifier
+                            if is_keyword {
+                                self.line("// Keyword boundary check: must not be followed by identifier char");
+                                self.line("if self.current_char().map_or(true, |c| !(c.is_ascii_alphanumeric() || c == '_' || c == '$')) {");
+                                self.indent += 1;
+                            }
+
                             self.line("self.skip_ws();");
                             self.line(&format!(
                                 "self.work_stack.push(Work::{}AfterInfix {{ result_base, min_prec, op_idx: {}, start_pos, start_line, start_column }});",
@@ -1607,10 +1617,21 @@ impl<'a> CodeGenerator<'a> {
                                 "self.work_stack.push(Work::{}ParseOperand {{ result_base: self.result_stack.len(), min_prec: {}, start_pos: self.pos, start_line: self.line, start_column: self.column }});",
                                 prefix, next_prec
                             ));
+
+                            if is_keyword {
+                                self.indent -= 1;
+                                self.line("} else {");
+                                self.indent += 1;
+                                self.line("// Keyword followed by ident char - restore and try next");
+                                self.line("self.pos = infix_checkpoint;");
+                                self.indent -= 1;
+                                self.line("}");
+                            }
+
                             self.indent -= 1;
+                            self.line("}");
                         }
                     }
-                    self.line("}");
                 }
                 // No more operators - we're done
                 self.indent -= 1;
@@ -1771,6 +1792,34 @@ fn escape_string(s: &str) -> String {
             c => c.to_string(),
         })
         .collect()
+}
+
+/// Check if a pattern is a keyword pattern (Literal followed by NotFollowedBy(IdentCont))
+/// Returns (literal, is_keyword)
+fn extract_operator_pattern(pattern: &Combinator) -> (String, bool) {
+    match pattern {
+        Combinator::Literal(s) => (s.clone(), false),
+        Combinator::Sequence(parts) if parts.len() >= 2 => {
+            if let Combinator::Literal(s) = &parts[0] {
+                // Check if second part is NotFollowedBy(CharClass(IdentCont))
+                let is_keyword = matches!(
+                    &parts[1],
+                    Combinator::NotFollowedBy(inner) if matches!(inner.as_ref(), Combinator::CharClass(CharClass::IdentCont))
+                );
+                (s.clone(), is_keyword)
+            } else {
+                (String::new(), false)
+            }
+        }
+        Combinator::Sequence(parts) if parts.len() == 1 => {
+            if let Combinator::Literal(s) = &parts[0] {
+                (s.clone(), false)
+            } else {
+                (String::new(), false)
+            }
+        }
+        _ => (String::new(), false),
+    }
 }
 
 #[cfg(test)]

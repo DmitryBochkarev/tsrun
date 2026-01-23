@@ -71,3 +71,53 @@ pub mod nested_parser {
 pub mod json_parser {
     include!(concat!(env!("OUT_DIR"), "/json_parser.rs"));
 }
+
+#[allow(dead_code, unused_variables, clippy::all)]
+pub mod right_assoc_parser {
+    include!(concat!(env!("OUT_DIR"), "/right_assoc_parser.rs"));
+}
+
+#[allow(dead_code, unused_variables, clippy::all)]
+pub mod hex_parser {
+    include!(concat!(env!("OUT_DIR"), "/hex_parser.rs"));
+}
+
+#[allow(dead_code, unused_variables, clippy::all)]
+pub mod alphanum_parser {
+    include!(concat!(env!("OUT_DIR"), "/alphanum_parser.rs"));
+}
+
+#[allow(dead_code, unused_variables, clippy::all)]
+pub mod ident_parser {
+    include!(concat!(env!("OUT_DIR"), "/ident_parser.rs"));
+}
+
+#[allow(dead_code, unused_variables, clippy::all)]
+pub mod lowercase_parser {
+    include!(concat!(env!("OUT_DIR"), "/lowercase_parser.rs"));
+}
+
+#[allow(dead_code, unused_variables, clippy::all)]
+pub mod uppercase_parser {
+    include!(concat!(env!("OUT_DIR"), "/uppercase_parser.rs"));
+}
+
+#[allow(dead_code, unused_variables, clippy::all)]
+pub mod custom_range_parser {
+    include!(concat!(env!("OUT_DIR"), "/custom_range_parser.rs"));
+}
+
+#[allow(dead_code, unused_variables, clippy::all)]
+pub mod optional_parser {
+    include!(concat!(env!("OUT_DIR"), "/optional_parser.rs"));
+}
+
+#[allow(dead_code, unused_variables, clippy::all)]
+pub mod skip_parser {
+    include!(concat!(env!("OUT_DIR"), "/skip_parser.rs"));
+}
+
+#[allow(dead_code, unused_variables, clippy::all)]
+pub mod keywords_parser {
+    include!(concat!(env!("OUT_DIR"), "/keywords_parser.rs"));
+}

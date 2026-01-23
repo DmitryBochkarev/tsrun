@@ -47,6 +47,52 @@ fn main() {
     );
     write_parser(out_path, "nested_parser", &grammars::nested().generate());
     write_parser(out_path, "json_parser", &grammars::json().generate());
+    write_parser(
+        out_path,
+        "right_assoc_parser",
+        &grammars::right_assoc().generate(),
+    );
+    write_parser(
+        out_path,
+        "hex_parser",
+        &grammars::char_classes_hex().generate(),
+    );
+    write_parser(
+        out_path,
+        "alphanum_parser",
+        &grammars::char_classes_alphanum().generate(),
+    );
+    write_parser(
+        out_path,
+        "ident_parser",
+        &grammars::char_classes_ident().generate(),
+    );
+    write_parser(
+        out_path,
+        "lowercase_parser",
+        &grammars::char_classes_lowercase().generate(),
+    );
+    write_parser(
+        out_path,
+        "uppercase_parser",
+        &grammars::char_classes_uppercase().generate(),
+    );
+    write_parser(
+        out_path,
+        "custom_range_parser",
+        &grammars::char_classes_custom_range().generate(),
+    );
+    write_parser(
+        out_path,
+        "optional_parser",
+        &grammars::optional_test().generate(),
+    );
+    write_parser(out_path, "skip_parser", &grammars::skip_test().generate());
+    write_parser(
+        out_path,
+        "keywords_parser",
+        &grammars::keywords().generate(),
+    );
 
     // Tell Cargo to rerun if trampoline-parser or grammars change
     println!("cargo:rerun-if-changed=../trampoline-parser/src");
