@@ -1,6 +1,6 @@
 //! Trampoline Parser Generator
 //!
-//! A DSL for generating fully trampoline-based lexers and parsers.
+//! A DSL for generating fully trampoline-based scannerless parsers.
 //!
 //! # Example
 //!
@@ -8,15 +8,15 @@
 //! use trampoline_parser::Grammar;
 //!
 //! let grammar = Grammar::new()
-//!     .lexer(|l| {
-//!         l.token("PLUS", "+")
-//!          .token("NUMBER", "")
-//!              .start_with(|c| c.match_class("digit"))
-//!              .continue_with(|c| c.match_class("digit"))
-//!              .build()
+//!     .rule("number", |r| {
+//!         r.capture(r.one_or_more(r.digit()))
 //!     })
 //!     .rule("expr", |r| {
-//!         r.token("NUMBER")
+//!         r.sequence((
+//!             r.parse("number"),
+//!             r.lit("+"),
+//!             r.parse("number"),
+//!         ))
 //!     })
 //!     .build();
 //!
@@ -26,27 +26,21 @@
 mod codegen;
 pub mod grammars;
 mod ir;
-mod lexer_dsl;
 mod parser_dsl;
 mod validation;
 
 pub use codegen::*;
 pub use ir::*;
-pub use lexer_dsl::*;
 pub use parser_dsl::*;
 pub use validation::{validate_grammar, ValidationError};
 
 /// Builder for AST configuration
-///
-/// Provides a fluent API for configuring how the generated parser
-/// integrates with external AST types.
 #[derive(Debug, Default)]
 pub struct AstConfigBuilder {
     config: AstConfig,
 }
 
 impl AstConfigBuilder {
-    /// Create a new AstConfigBuilder
     pub fn new() -> Self {
         Self::default()
     }
@@ -90,30 +84,12 @@ impl AstConfigBuilder {
     }
 
     /// Enable AST mapping application
-    ///
-    /// When enabled, mapping closures defined with `.ast()` are embedded
-    /// in the generated code and called inline during parsing.
     pub fn apply_mappings(mut self) -> Self {
         self.config.apply_mappings = true;
         self
     }
 
     /// Enable string dictionary integration for string interning
-    ///
-    /// When enabled:
-    /// - Parser struct accepts `&'a mut StringDict` parameter
-    /// - Token text is created via `string_dict.get_or_insert(slice)`
-    /// - Requires `string_type` to be set (e.g., "JsString")
-    ///
-    /// # Example
-    /// ```ignore
-    /// .ast_config(|c| c
-    ///     .import("crate::string_dict::StringDict")
-    ///     .import("crate::value::JsString")
-    ///     .string_type("JsString")
-    ///     .string_dict("StringDict")
-    /// )
-    /// ```
     pub fn string_dict(mut self, dict_type: &str) -> Self {
         self.config.string_dict_type = Some(dict_type.to_string());
         self
@@ -132,21 +108,6 @@ impl AstConfigBuilder {
     }
 
     /// Add a custom ParseResult variant for typed AST nodes
-    ///
-    /// This generates a variant in the ParseResult enum that holds
-    /// a specific AST type, along with conversion methods.
-    ///
-    /// # Arguments
-    /// * `name` - Variant name (e.g., "Expr")
-    /// * `rust_type` - The Rust type it holds (e.g., "Expression")
-    ///
-    /// # Example
-    /// ```ignore
-    /// .ast_config(|c| c
-    ///     .result_variant("Expr", "Expression")
-    ///     .result_variant("Stmt", "Statement")
-    /// )
-    /// ```
     pub fn result_variant(mut self, name: &str, rust_type: &str) -> Self {
         self.config.result_variants.push(ir::ResultVariant {
             name: name.to_string(),
@@ -157,16 +118,6 @@ impl AstConfigBuilder {
     }
 
     /// Add a custom ParseResult variant with custom span extraction
-    ///
-    /// # Arguments
-    /// * `name` - Variant name (e.g., "Ident")
-    /// * `rust_type` - The Rust type it holds (e.g., "Identifier")
-    /// * `span_expr` - Expression to extract span where `v` is the value (e.g., "v.span")
-    ///
-    /// # Example
-    /// ```ignore
-    /// .result_variant_with_span("Ident", "Identifier", "v.span")
-    /// ```
     pub fn result_variant_with_span(mut self, name: &str, rust_type: &str, span_expr: &str) -> Self {
         self.config.result_variants.push(ir::ResultVariant {
             name: name.to_string(),
@@ -192,7 +143,6 @@ pub enum Assoc {
 /// Main grammar builder
 #[derive(Debug, Default)]
 pub struct Grammar {
-    pub lexer: LexerDef,
     pub rules: Vec<RuleDef>,
     pub ast_config: AstConfig,
 }
@@ -203,21 +153,6 @@ impl Grammar {
     }
 
     /// Configure AST integration settings
-    ///
-    /// # Example
-    /// ```ignore
-    /// let grammar = Grammar::new()
-    ///     .ast_config(|c| c
-    ///         .import("crate::ast::*")
-    ///         .import("crate::lexer::Span")
-    ///         .span_type("Span")
-    ///         .string_type("JsString")
-    ///         .error_type("JsError")
-    ///     )
-    ///     .lexer(...)
-    ///     .rule(...)
-    ///     .build();
-    /// ```
     pub fn ast_config<F>(mut self, f: F) -> Self
     where
         F: FnOnce(AstConfigBuilder) -> AstConfigBuilder,
@@ -225,17 +160,6 @@ impl Grammar {
         let builder = AstConfigBuilder::new();
         let builder = f(builder);
         self.ast_config = builder.build();
-        self
-    }
-
-    /// Define lexer tokens
-    pub fn lexer<F>(mut self, f: F) -> Self
-    where
-        F: FnOnce(LexerBuilder) -> LexerBuilder,
-    {
-        let builder = LexerBuilder::new();
-        let builder = f(builder);
-        self.lexer = builder.build_def();
         self
     }
 
@@ -255,14 +179,12 @@ impl Grammar {
 
     /// Finalize and validate the grammar
     pub fn build(self) -> CompiledGrammar {
-        // Run grammar validation
         let errors = validation::validate_grammar(&self.rules);
         for error in &errors {
             eprintln!("Grammar warning: {}", error);
         }
 
         CompiledGrammar {
-            lexer: self.lexer,
             rules: self.rules,
             ast_config: self.ast_config,
         }
@@ -272,7 +194,6 @@ impl Grammar {
 /// Compiled grammar ready for code generation
 #[derive(Debug)]
 pub struct CompiledGrammar {
-    pub lexer: LexerDef,
     pub rules: Vec<RuleDef>,
     pub ast_config: AstConfig,
 }
@@ -291,16 +212,14 @@ mod tests {
     #[test]
     fn test_basic_grammar() {
         let grammar = Grammar::new()
-            .lexer(|l| {
-                l.token("PLUS", "+").token("STAR", "*").token("NUMBER", "") // pattern-based, empty literal
-            })
+            .rule("number", |r| r.capture(r.one_or_more(r.digit())))
             .rule("expr", |r| {
-                r.sequence((r.token("NUMBER"), r.token("PLUS"), r.token("NUMBER")))
+                r.sequence((r.parse("number"), r.lit("+"), r.parse("number")))
             })
             .build();
 
-        assert_eq!(grammar.lexer.tokens.len(), 3);
-        assert_eq!(grammar.rules.len(), 1);
-        assert_eq!(grammar.rules[0].name, "expr");
+        assert_eq!(grammar.rules.len(), 2);
+        assert_eq!(grammar.rules[0].name, "number");
+        assert_eq!(grammar.rules[1].name, "expr");
     }
 }

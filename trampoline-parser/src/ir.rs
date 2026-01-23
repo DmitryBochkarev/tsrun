@@ -1,99 +1,9 @@
 //! Intermediate Representation for the grammar
 //!
 //! These types represent the grammar after DSL processing but before code generation.
+//! This is a scannerless (lexerless) parser - no separate tokenization phase.
 
-/// Complete lexer definition
-#[derive(Debug, Default, Clone)]
-pub struct LexerDef {
-    pub tokens: Vec<TokenDef>,
-    pub keywords: Vec<KeywordDef>,
-    pub skip_patterns: Vec<String>,
-}
-
-/// A token definition
-#[derive(Debug, Clone)]
-pub struct TokenDef {
-    pub name: String,
-    pub kind: TokenKind,
-}
-
-/// How a token is recognized
-#[derive(Debug, Clone)]
-pub enum TokenKind {
-    /// Fixed string literal ("+", "=>", "===")
-    Literal(String),
-    /// Pattern-based (NUMBER, IDENTIFIER, STRING)
-    Pattern(TokenPattern),
-}
-
-/// Pattern for complex tokens (state machine)
-#[derive(Debug, Clone, Default)]
-pub struct TokenPattern {
-    pub start: Option<CharCondition>,
-    pub continuation: Option<CharCondition>,
-    pub until: Option<CharCondition>,
-    /// Special scanning modes
-    pub special: Option<SpecialScan>,
-    /// Can this token be rescanned as another?
-    pub rescan_as: Option<String>,
-    /// Is this token significant (not skipped even if matches skip pattern)?
-    pub significant: bool,
-}
-
-/// Special scanning modes for complex tokens
-#[derive(Debug, Clone)]
-pub enum SpecialScan {
-    /// Scan string until matching quote (handles escapes)
-    UntilMatchingQuote,
-    /// Scan template literal head (`...${)
-    TemplateHead,
-    /// Scan template literal middle (}...${)
-    TemplateMiddle,
-    /// Scan template literal tail (}...`)
-    TemplateTail,
-}
-
-/// Condition for matching characters
-#[derive(Debug, Clone)]
-pub enum CharCondition {
-    /// Match a character class by name ("digit", "alpha", etc.)
-    Class(String),
-    /// Match a single character
-    Char(char),
-    /// Match a character range
-    Range(char, char),
-    /// Match any character
-    Any,
-    /// Match end of input
-    Eof,
-    /// Logical OR of conditions
-    Or(Box<CharCondition>, Box<CharCondition>),
-    /// Logical AND of conditions
-    And(Box<CharCondition>, Box<CharCondition>),
-    /// Logical NOT of condition
-    Not(Box<CharCondition>),
-}
-
-impl CharCondition {
-    pub fn or(self, other: CharCondition) -> CharCondition {
-        CharCondition::Or(Box::new(self), Box::new(other))
-    }
-
-    pub fn and(self, other: CharCondition) -> CharCondition {
-        CharCondition::And(Box::new(self), Box::new(other))
-    }
-
-    pub fn negated(self) -> CharCondition {
-        CharCondition::Not(Box::new(self))
-    }
-}
-
-/// Keyword definition (higher priority than identifiers)
-#[derive(Debug, Clone)]
-pub struct KeywordDef {
-    pub name: String,
-    pub literal: String,
-}
+use crate::Assoc;
 
 /// A parser rule definition
 #[derive(Debug, Clone)]
@@ -102,11 +12,9 @@ pub struct RuleDef {
     pub combinator: Combinator,
 }
 
-/// Parser combinators
+/// Parser combinators for scannerless parsing
 #[derive(Debug, Clone)]
 pub enum Combinator {
-    /// Match a token by name
-    Token(String),
     /// Reference another rule by name
     Rule(String),
     /// Sequence of combinators
@@ -134,6 +42,58 @@ pub enum Combinator {
         inner: Box<Combinator>,
         mapping: String,
     },
+
+    // === Character-level primitives ===
+    /// Match a literal string exactly (e.g., "if", "===", "+")
+    Literal(String),
+    /// Match a single character
+    Char(char),
+    /// Match a character class (digit, alpha, etc.)
+    CharClass(CharClass),
+    /// Match a character range (e.g., 'a'..='z')
+    CharRange(char, char),
+    /// Match any single character
+    AnyChar,
+    /// Negative lookahead (match if inner does NOT match, consume nothing)
+    NotFollowedBy(Box<Combinator>),
+    /// Positive lookahead (match if inner matches, consume nothing)
+    FollowedBy(Box<Combinator>),
+    /// Capture the matched text as a string
+    Capture(Box<Combinator>),
+}
+
+/// Built-in character classes
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CharClass {
+    /// Decimal digit: 0-9
+    Digit,
+    /// Hexadecimal digit: 0-9, a-f, A-F
+    HexDigit,
+    /// Alphabetic: a-z, A-Z
+    Alpha,
+    /// Alphanumeric: a-z, A-Z, 0-9
+    AlphaNumeric,
+    /// Whitespace: space, tab, newline, carriage return
+    Whitespace,
+    /// Identifier start: a-z, A-Z, _, $
+    IdentStart,
+    /// Identifier continue: a-z, A-Z, 0-9, _, $
+    IdentCont,
+}
+
+impl CharClass {
+    /// Check if a character matches this class
+    pub fn matches(self, c: char) -> bool {
+        match self {
+            CharClass::Digit => c.is_ascii_digit(),
+            CharClass::HexDigit => c.is_ascii_hexdigit(),
+            CharClass::Alpha => c.is_ascii_alphabetic(),
+            CharClass::AlphaNumeric => c.is_ascii_alphanumeric(),
+            CharClass::Whitespace => c.is_ascii_whitespace(),
+            CharClass::IdentStart => c.is_ascii_alphabetic() || c == '_' || c == '$',
+            CharClass::IdentCont => c.is_ascii_alphanumeric() || c == '_' || c == '$',
+        }
+    }
 }
 
 /// Pratt parsing definition for expression parsing
@@ -154,7 +114,8 @@ pub struct PrattDef {
 /// Prefix operator definition
 #[derive(Debug, Clone)]
 pub struct PrefixOp {
-    pub token: String,
+    /// The operator pattern (e.g., Literal("!"), Literal("++"))
+    pub pattern: Box<Combinator>,
     pub precedence: u8,
     pub mapping: String,
 }
@@ -162,7 +123,8 @@ pub struct PrefixOp {
 /// Infix operator definition
 #[derive(Debug, Clone)]
 pub struct InfixOp {
-    pub token: String,
+    /// The operator pattern (e.g., Literal("+"), Literal("==="))
+    pub pattern: Box<Combinator>,
     pub precedence: u8,
     pub assoc: Assoc,
     pub mapping: String,
@@ -173,28 +135,35 @@ pub struct InfixOp {
 pub enum PostfixOp {
     /// Simple postfix (++, --)
     Simple {
-        token: String,
+        /// The operator pattern (e.g., Literal("++"))
+        pattern: Box<Combinator>,
         precedence: u8,
         mapping: String,
     },
     /// Call expression: callee(args)
     Call {
-        open: String,
-        close: String,
-        separator: String,
+        /// Open delimiter (e.g., Literal("("))
+        open: Box<Combinator>,
+        /// Close delimiter (e.g., Literal(")"))
+        close: Box<Combinator>,
+        /// Argument separator (e.g., Literal(","))
+        separator: Box<Combinator>,
         precedence: u8,
         mapping: String,
     },
     /// Index expression: obj[index]
     Index {
-        open: String,
-        close: String,
+        /// Open delimiter (e.g., Literal("["))
+        open: Box<Combinator>,
+        /// Close delimiter (e.g., Literal("]"))
+        close: Box<Combinator>,
         precedence: u8,
         mapping: String,
     },
     /// Member access: obj.prop
     Member {
-        token: String,
+        /// The dot/accessor pattern (e.g., Literal("."), Literal("?."))
+        pattern: Box<Combinator>,
         precedence: u8,
         mapping: String,
     },
@@ -203,23 +172,20 @@ pub enum PostfixOp {
 /// Ternary operator definition
 #[derive(Debug, Clone)]
 pub struct TernaryOp {
-    pub first_token: String,
-    pub second_token: String,
+    /// First operator (e.g., Literal("?"))
+    pub first: Box<Combinator>,
+    /// Second operator (e.g., Literal(":"))
+    pub second: Box<Combinator>,
     pub precedence: u8,
     pub mapping: String,
 }
 
-use crate::Assoc;
-
 /// Configuration for AST integration
-///
-/// Controls how the generated parser integrates with external AST types,
-/// imports, and type mappings.
 #[derive(Debug, Clone)]
 pub struct AstConfig {
-    /// External modules to import (e.g., "crate::ast::*", "crate::lexer::Span")
+    /// External modules to import (e.g., "crate::ast::*")
     pub imports: Vec<String>,
-    /// Return type of the parse() function (e.g., "Result<Program, JsError>")
+    /// Return type of the parse() function
     pub result_type: Option<String>,
     /// External span type to use instead of generated Span
     pub span_type: Option<String>,
@@ -234,19 +200,14 @@ pub struct AstConfig {
     /// Whether to generate the internal ParseError struct (default: true)
     pub generate_parse_error: bool,
     /// Whether to apply AST mappings during parsing (default: false)
-    /// When true, mapping closures are embedded in generated code
     pub apply_mappings: bool,
     /// String dictionary type for string interning (e.g., "StringDict")
-    /// When set, Parser accepts a mutable reference to this type
     pub string_dict_type: Option<String>,
     /// Method to call on string dict to intern a string (default: "get_or_insert")
     pub string_dict_method: Option<String>,
     /// Helper functions to include in generated code
     pub helper_code: Vec<String>,
     /// Custom ParseResult variants for typed AST nodes
-    /// Each entry is (variant_name, rust_type, span_expr)
-    /// e.g., ("Expr", "Expression", None) generates `Expr(Expression)` variant
-    /// span_expr is how to extract span, e.g., Some("_.span") or None for default
     pub result_variants: Vec<ResultVariant>,
 }
 
@@ -258,7 +219,6 @@ pub struct ResultVariant {
     /// Rust type it holds (e.g., "Expression")
     pub rust_type: String,
     /// Expression to get span, where _ is the value (e.g., "_.span")
-    /// If None, uses Span::default()
     pub span_expr: Option<String>,
 }
 
@@ -283,7 +243,6 @@ impl Default for AstConfig {
 }
 
 impl AstConfig {
-    /// Create a new AstConfig with default values
     pub fn new() -> Self {
         Self::default()
     }

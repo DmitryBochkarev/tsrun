@@ -1,5 +1,3 @@
-//! Grammar definitions for various languages
-
-pub mod typescript;
-
-pub use typescript::typescript_grammar;
+//! Grammar definitions
+//!
+//! This module will contain grammar definitions that use the scannerless parser DSL.

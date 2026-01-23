@@ -1,21 +1,24 @@
-//! Parser DSL for defining grammar rules
+//! Parser DSL for defining grammar rules (scannerless parsing)
 //!
 //! # Example
 //!
 //! ```rust
-//! use trampoline_parser::{Grammar, RuleBuilder};
+//! use trampoline_parser::Grammar;
 //!
 //! let grammar = Grammar::new()
+//!     .rule("number", |r| {
+//!         r.capture(r.one_or_more(r.digit()))
+//!     })
 //!     .rule("expr", |r| {
 //!         r.sequence((
-//!             r.token("NUMBER"),
-//!             r.token("PLUS"),
-//!             r.token("NUMBER"),
+//!             r.parse("number"),
+//!             r.lit("+"),
+//!             r.parse("number"),
 //!         ))
 //!     });
 //! ```
 
-use crate::ir::{Combinator, InfixOp, PostfixOp, PrattDef, PrefixOp, TernaryOp};
+use crate::ir::{CharClass, Combinator, InfixOp, PostfixOp, PrattDef, PrefixOp, TernaryOp};
 use crate::Assoc;
 
 /// Builder for parser rules
@@ -32,14 +35,81 @@ impl RuleBuilder {
         }
     }
 
-    /// Match a token by name
-    pub fn token(&self, name: &str) -> Combinator {
-        Combinator::Token(name.to_string())
-    }
-
     /// Reference another rule by name
     pub fn parse(&self, rule_name: &str) -> Combinator {
         Combinator::Rule(rule_name.to_string())
+    }
+
+    // === Character-level primitives (scannerless parsing) ===
+
+    /// Match a literal string exactly (e.g., "if", "===", "+")
+    pub fn lit(&self, s: &str) -> Combinator {
+        Combinator::Literal(s.to_string())
+    }
+
+    /// Match a single specific character
+    pub fn char(&self, c: char) -> Combinator {
+        Combinator::Char(c)
+    }
+
+    /// Match any decimal digit (0-9)
+    pub fn digit(&self) -> Combinator {
+        Combinator::CharClass(CharClass::Digit)
+    }
+
+    /// Match any hexadecimal digit (0-9, a-f, A-F)
+    pub fn hex_digit(&self) -> Combinator {
+        Combinator::CharClass(CharClass::HexDigit)
+    }
+
+    /// Match any alphabetic character (a-z, A-Z)
+    pub fn alpha(&self) -> Combinator {
+        Combinator::CharClass(CharClass::Alpha)
+    }
+
+    /// Match any alphanumeric character (a-z, A-Z, 0-9)
+    pub fn alpha_num(&self) -> Combinator {
+        Combinator::CharClass(CharClass::AlphaNumeric)
+    }
+
+    /// Match any whitespace character (space, tab, newline, etc.)
+    pub fn ws(&self) -> Combinator {
+        Combinator::CharClass(CharClass::Whitespace)
+    }
+
+    /// Match identifier start character (a-z, A-Z, _, $)
+    pub fn ident_start(&self) -> Combinator {
+        Combinator::CharClass(CharClass::IdentStart)
+    }
+
+    /// Match identifier continue character (a-z, A-Z, 0-9, _, $)
+    pub fn ident_cont(&self) -> Combinator {
+        Combinator::CharClass(CharClass::IdentCont)
+    }
+
+    /// Match any single character
+    pub fn any_char(&self) -> Combinator {
+        Combinator::AnyChar
+    }
+
+    /// Match a character in the given range (inclusive)
+    pub fn range(&self, from: char, to: char) -> Combinator {
+        Combinator::CharRange(from, to)
+    }
+
+    /// Negative lookahead: succeed if inner does NOT match, consume nothing
+    pub fn not_followed_by(&self, inner: Combinator) -> Combinator {
+        Combinator::NotFollowedBy(Box::new(inner))
+    }
+
+    /// Positive lookahead: succeed if inner matches, consume nothing
+    pub fn followed_by(&self, inner: Combinator) -> Combinator {
+        Combinator::FollowedBy(Box::new(inner))
+    }
+
+    /// Capture the matched text as a string token
+    pub fn capture(&self, inner: Combinator) -> Combinator {
+        Combinator::Capture(Box::new(inner))
     }
 
     /// Sequence of combinators
@@ -316,20 +386,22 @@ impl PrattBuilder {
         }
     }
 
-    /// Define a prefix operator
-    pub fn prefix(mut self, token: &str, precedence: u8, mapping: &str) -> Self {
+    /// Define a prefix operator with a literal pattern
+    /// Example: `ops.prefix("+", 16, "|e| unary(e, Plus)")`
+    pub fn prefix(mut self, literal: &str, precedence: u8, mapping: &str) -> Self {
         self.prefix_ops.push(PrefixOp {
-            token: token.to_string(),
+            pattern: Box::new(Combinator::Literal(literal.to_string())),
             precedence,
             mapping: mapping.to_string(),
         });
         self
     }
 
-    /// Define an infix operator
-    pub fn infix(mut self, token: &str, precedence: u8, assoc: Assoc, mapping: &str) -> Self {
+    /// Define an infix operator with a literal pattern
+    /// Example: `ops.infix("+", 13, Assoc::Left, "|l, r| binary(l, r, Add)")`
+    pub fn infix(mut self, literal: &str, precedence: u8, assoc: Assoc, mapping: &str) -> Self {
         self.infix_ops.push(InfixOp {
-            token: token.to_string(),
+            pattern: Box::new(Combinator::Literal(literal.to_string())),
             precedence,
             assoc,
             mapping: mapping.to_string(),
@@ -337,10 +409,11 @@ impl PrattBuilder {
         self
     }
 
-    /// Define a simple postfix operator (++, --)
-    pub fn postfix(mut self, token: &str, precedence: u8, mapping: &str) -> Self {
+    /// Define a simple postfix operator with a literal pattern (++, --)
+    /// Example: `ops.postfix("++", 17, "|e| update(e, Increment, false)")`
+    pub fn postfix(mut self, literal: &str, precedence: u8, mapping: &str) -> Self {
         self.postfix_ops.push(PostfixOp::Simple {
-            token: token.to_string(),
+            pattern: Box::new(Combinator::Literal(literal.to_string())),
             precedence,
             mapping: mapping.to_string(),
         });
@@ -348,6 +421,7 @@ impl PrattBuilder {
     }
 
     /// Define a call expression postfix: callee(args)
+    /// Example: `ops.postfix_call("(", ")", ",", 18, "|callee, args| call(callee, args)")`
     pub fn postfix_call(
         mut self,
         open: &str,
@@ -357,9 +431,9 @@ impl PrattBuilder {
         mapping: &str,
     ) -> Self {
         self.postfix_ops.push(PostfixOp::Call {
-            open: open.to_string(),
-            close: close.to_string(),
-            separator: separator.to_string(),
+            open: Box::new(Combinator::Literal(open.to_string())),
+            close: Box::new(Combinator::Literal(close.to_string())),
+            separator: Box::new(Combinator::Literal(separator.to_string())),
             precedence,
             mapping: mapping.to_string(),
         });
@@ -367,10 +441,11 @@ impl PrattBuilder {
     }
 
     /// Define an index expression postfix: obj[index]
+    /// Example: `ops.postfix_index("[", "]", 18, "|obj, prop| member_computed(obj, prop)")`
     pub fn postfix_index(mut self, open: &str, close: &str, precedence: u8, mapping: &str) -> Self {
         self.postfix_ops.push(PostfixOp::Index {
-            open: open.to_string(),
-            close: close.to_string(),
+            open: Box::new(Combinator::Literal(open.to_string())),
+            close: Box::new(Combinator::Literal(close.to_string())),
             precedence,
             mapping: mapping.to_string(),
         });
@@ -378,9 +453,10 @@ impl PrattBuilder {
     }
 
     /// Define a member access postfix: obj.prop
-    pub fn postfix_member(mut self, token: &str, precedence: u8, mapping: &str) -> Self {
+    /// Example: `ops.postfix_member(".", 18, "|obj, prop| member(obj, prop)")`
+    pub fn postfix_member(mut self, literal: &str, precedence: u8, mapping: &str) -> Self {
         self.postfix_ops.push(PostfixOp::Member {
-            token: token.to_string(),
+            pattern: Box::new(Combinator::Literal(literal.to_string())),
             precedence,
             mapping: mapping.to_string(),
         });
@@ -388,16 +464,11 @@ impl PrattBuilder {
     }
 
     /// Define a ternary operator: cond ? then : else
-    pub fn ternary(
-        mut self,
-        first_token: &str,
-        second_token: &str,
-        precedence: u8,
-        mapping: &str,
-    ) -> Self {
+    /// Example: `ops.ternary("?", ":", 3, "|c, t, f| conditional(c, t, f)")`
+    pub fn ternary(mut self, first: &str, second: &str, precedence: u8, mapping: &str) -> Self {
         self.ternary = Some(TernaryOp {
-            first_token: first_token.to_string(),
-            second_token: second_token.to_string(),
+            first: Box::new(Combinator::Literal(first.to_string())),
+            second: Box::new(Combinator::Literal(second.to_string())),
             precedence,
             mapping: mapping.to_string(),
         });
@@ -423,11 +494,51 @@ mod tests {
     fn test_basic_combinators() {
         let builder = RuleBuilder::new("test");
 
-        let seq = builder.sequence((builder.token("A"), builder.token("B")));
+        let seq = builder.sequence((builder.lit("a"), builder.lit("b")));
         assert!(matches!(seq, Combinator::Sequence(_)));
 
-        let choice = builder.choice((builder.token("A"), builder.token("B")));
+        let choice = builder.choice((builder.lit("a"), builder.lit("b")));
         assert!(matches!(choice, Combinator::Choice(_)));
+    }
+
+    #[test]
+    fn test_char_level_primitives() {
+        let builder = RuleBuilder::new("test");
+
+        // Test literal
+        assert!(matches!(builder.lit("hello"), Combinator::Literal(_)));
+
+        // Test char
+        assert!(matches!(builder.char('x'), Combinator::Char('x')));
+
+        // Test character classes
+        assert!(matches!(
+            builder.digit(),
+            Combinator::CharClass(CharClass::Digit)
+        ));
+        assert!(matches!(
+            builder.alpha(),
+            Combinator::CharClass(CharClass::Alpha)
+        ));
+        assert!(matches!(
+            builder.ident_start(),
+            Combinator::CharClass(CharClass::IdentStart)
+        ));
+
+        // Test range
+        assert!(matches!(builder.range('a', 'z'), Combinator::CharRange('a', 'z')));
+
+        // Test any_char
+        assert!(matches!(builder.any_char(), Combinator::AnyChar));
+
+        // Test capture
+        assert!(matches!(builder.capture(builder.digit()), Combinator::Capture(_)));
+
+        // Test lookahead
+        assert!(matches!(
+            builder.not_followed_by(builder.digit()),
+            Combinator::NotFollowedBy(_)
+        ));
     }
 
     #[test]
@@ -435,9 +546,9 @@ mod tests {
         let builder = RuleBuilder::new("expr");
 
         let pratt = builder.pratt(builder.parse("primary"), |ops| {
-            ops.prefix("MINUS", 10, "|e| Expr::Neg(e)")
-                .infix("PLUS", 5, Assoc::Left, "|l, r| Expr::Add(l, r)")
-                .postfix("PLUS_PLUS", 15, "|e| Expr::PostInc(e)")
+            ops.prefix("-", 10, "|e| Expr::Neg(e)")
+                .infix("+", 5, Assoc::Left, "|l, r| Expr::Add(l, r)")
+                .postfix("++", 15, "|e| Expr::PostInc(e)")
         });
 
         assert!(matches!(pratt, Combinator::Pratt(_)));
@@ -448,7 +559,7 @@ mod tests {
         let builder = RuleBuilder::new("test");
 
         let mapped = builder
-            .sequence((builder.token("A"), builder.token("B")))
+            .sequence((builder.lit("a"), builder.lit("b")))
             .ast("|(a, b)| Node { a, b }");
 
         assert!(matches!(mapped, Combinator::Mapped { .. }));
