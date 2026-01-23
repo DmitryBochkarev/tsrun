@@ -121,3 +121,18 @@ pub mod skip_parser {
 pub mod keywords_parser {
     include!(concat!(env!("OUT_DIR"), "/keywords_parser.rs"));
 }
+
+#[allow(dead_code, unused_variables, clippy::all)]
+pub mod postfix_parser {
+    include!(concat!(env!("OUT_DIR"), "/postfix_parser.rs"));
+}
+
+#[allow(dead_code, unused_variables, clippy::all)]
+pub mod lua_parser {
+    include!(concat!(env!("OUT_DIR"), "/lua_parser.rs"));
+}
+
+#[allow(dead_code, unused_variables, clippy::all)]
+pub mod lua_expr_parser {
+    include!(concat!(env!("OUT_DIR"), "/lua_expr_parser.rs"));
+}

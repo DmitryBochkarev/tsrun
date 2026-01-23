@@ -2,23 +2,46 @@
 //!
 //! Note: This tests the keyword boundary checking - prefix_kw and infix_kw
 //! should only match when the keyword is followed by a non-identifier character.
+//!
+//! Whitespace is handled entirely by the grammar - no automatic ws skipping.
+//! Prefix operators are handled as grammar rules for proper ws handling.
 
-use trampoline_parser::{Assoc, CompiledGrammar, Grammar};
+use trampoline_parser::{Assoc, CombinatorExt, CompiledGrammar, Grammar};
 
 pub fn grammar() -> CompiledGrammar {
     Grammar::new()
         .rule("expr", |r| {
-            r.pratt(r.parse("atom"), |ops| {
-                ops.prefix_kw("not", 3, "|e, _| Ok(unary(\"not\", e))")
-                    .infix_kw("and", 2, Assoc::Left, "|l, r, _| Ok(binary(\"and\", l, r))")
+            r.pratt(r.parse("unary"), |ops| {
+                // Only infix operators in Pratt - prefix handled in grammar
+                ops.infix_kw("and", 2, Assoc::Left, "|l, r, _| Ok(binary(\"and\", l, r))")
                     .infix_kw("or", 1, Assoc::Left, "|l, r, _| Ok(binary(\"or\", l, r))")
             })
         })
-        .rule("atom", |r| {
+        // Unary handles prefix 'not' with proper ws handling
+        .rule("unary", |r| {
             r.sequence((
                 r.skip(r.zero_or_more(r.ws())),
-                r.choice((r.lit("true"), r.lit("false"), r.parse("ident"))),
+                r.parse("unary_inner"),
+                r.skip(r.zero_or_more(r.ws())),
             ))
+            .ast("|r, _| { if let ParseResult::List(mut items) = r { Ok(items.remove(1)) } else { Ok(r) } }")
+        })
+        .rule("unary_inner", |r| {
+            r.choice((
+                r.parse("prefix_not"),
+                r.parse("atom"),
+            ))
+        })
+        .rule("prefix_not", |r| {
+            r.sequence((
+                r.lit("not"),
+                r.not_followed_by(r.ident_cont()),
+                r.parse("unary"),
+            ))
+            .ast("|r, _| { if let ParseResult::List(items) = r { let e = items.into_iter().last().unwrap_or(ParseResult::None); Ok(unary(\"not\", e)) } else { Ok(r) } }")
+        })
+        .rule("atom", |r| {
+            r.choice((r.lit("true"), r.lit("false"), r.parse("ident")))
         })
         .rule("ident", |r| {
             r.capture(r.sequence((r.ident_start(), r.zero_or_more(r.ident_cont()))))

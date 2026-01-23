@@ -62,6 +62,13 @@ pub enum Combinator {
     Capture(Box<Combinator>),
 }
 
+/// Allow string literals to be used as Combinator::Literal
+impl From<&str> for Combinator {
+    fn from(s: &str) -> Self {
+        Combinator::Literal(s.to_string())
+    }
+}
+
 /// Built-in character classes
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CharClass {

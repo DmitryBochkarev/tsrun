@@ -367,6 +367,17 @@ impl<'a> CodeGenerator<'a> {
                 self.line(&format!("{}AfterInfix {{ result_base: usize, min_prec: u8, op_idx: usize, start_pos: usize, start_line: u32, start_column: u32 }},", prefix));
                 self.line(&format!("{}AfterPrefix {{ result_base: usize, min_prec: u8, op_idx: usize, start_pos: usize, start_line: u32, start_column: u32 }},", prefix));
 
+                // Postfix work variants
+                if !pratt.postfix_ops.is_empty() {
+                    self.line(&format!("{}CheckPostfix {{ result_base: usize, min_prec: u8, start_pos: usize, start_line: u32, start_column: u32 }},", prefix));
+                    self.line(&format!("{}AfterPostfixSimple {{ result_base: usize, min_prec: u8, op_idx: usize, start_pos: usize, start_line: u32, start_column: u32 }},", prefix));
+                    self.line(&format!("{}PostfixCallArg {{ result_base: usize, min_prec: u8, op_idx: usize, args_base: usize, start_pos: usize, start_line: u32, start_column: u32 }},", prefix));
+                    self.line(&format!("{}PostfixCallSep {{ result_base: usize, min_prec: u8, op_idx: usize, args_base: usize, start_pos: usize, start_line: u32, start_column: u32 }},", prefix));
+                    self.line(&format!("{}AfterPostfixCall {{ result_base: usize, min_prec: u8, op_idx: usize, args_base: usize, start_pos: usize, start_line: u32, start_column: u32 }},", prefix));
+                    self.line(&format!("{}AfterPostfixIndex {{ result_base: usize, min_prec: u8, op_idx: usize, start_pos: usize, start_line: u32, start_column: u32 }},", prefix));
+                    self.line(&format!("{}AfterPostfixMember {{ result_base: usize, min_prec: u8, op_idx: usize, start_pos: usize, start_line: u32, start_column: u32 }},", prefix));
+                }
+
                 // Emit operand parser variants
                 if let Some(operand) = pratt.operand.as_ref() {
                     let operand_prefix = format!("{}Operand", prefix);
@@ -374,7 +385,7 @@ impl<'a> CodeGenerator<'a> {
                 }
             }
             Combinator::Mapped { inner, .. } => {
-                let inner_prefix = format!("{}Inner", prefix);
+                let inner_prefix = format!("{}Mapped", prefix);
                 self.emit_work_variants(&inner_prefix, inner);
                 // Add our own Start and Map variants
                 self.line(&format!(
@@ -654,33 +665,6 @@ impl<'a> CodeGenerator<'a> {
         self.line("}");
         self.blank();
 
-        // Skip whitespace (for Pratt parsing)
-        self.line("fn skip_ws(&mut self) {");
-        self.indent += 1;
-        self.line("while self.pos < self.input.len() {");
-        self.indent += 1;
-        self.line("let c = self.input[self.pos..].chars().next().unwrap_or('\\0');");
-        self.line("if c == ' ' || c == '\\t' || c == '\\r' {");
-        self.indent += 1;
-        self.line("self.pos += 1;");
-        self.line("self.column += 1;");
-        self.indent -= 1;
-        self.line("} else if c == '\\n' {");
-        self.indent += 1;
-        self.line("self.pos += 1;");
-        self.line("self.line += 1;");
-        self.line("self.column = 1;");
-        self.indent -= 1;
-        self.line("} else {");
-        self.indent += 1;
-        self.line("break;");
-        self.indent -= 1;
-        self.line("}");
-        self.indent -= 1;
-        self.line("}");
-        self.indent -= 1;
-        self.line("}");
-        self.blank();
     }
 
     fn emit_trampoline_loop(&mut self) {
@@ -1349,10 +1333,22 @@ impl<'a> CodeGenerator<'a> {
                 self.indent += 1;
                 self.line("if self.last_error.is_some() {");
                 self.indent += 1;
-                self.line("// First item failed - return empty list");
+                self.line("// Item failed - check if we already have items");
                 self.line("self.last_error = None;");
                 self.line("self.pos = checkpoint;");
-                self.line("self.result_stack.truncate(list_base);");
+                self.line("let count = self.result_stack.len() - list_base;");
+                self.line("if count == 0 {");
+                self.indent += 1;
+                self.line("// First item failed - return empty list");
+                self.indent -= 1;
+                self.line("} else if count % 2 == 0 {");
+                self.indent += 1;
+                self.line("// We have items followed by a separator (trailing case)");
+                self.line("// Pop the trailing separator result");
+                self.line("self.result_stack.pop();");
+                self.indent -= 1;
+                self.line("}");
+                self.line("// If count is odd, we have items without trailing sep, nothing to pop");
                 self.line(&format!(
                     "self.work_stack.push(Work::{}Complete {{ result_base, list_base }});",
                     prefix
@@ -1471,9 +1467,32 @@ impl<'a> CodeGenerator<'a> {
                     self.line("let mut prefix_matched = false;");
 
                     for (i, prefix_op) in pratt.prefix_ops.iter().enumerate() {
-                        let (op_lit, is_keyword) = extract_operator_pattern(prefix_op.pattern.as_ref());
+                        let (op_lit, is_keyword, not_followed) = extract_operator_pattern(prefix_op.pattern.as_ref());
                         if !op_lit.is_empty() {
-                            self.line(&format!("if !prefix_matched && self.try_consume(\"{}\") {{", escape_string(&op_lit)));
+                            // Build condition with not_followed_by checks
+                            if not_followed.is_empty() {
+                                self.line(&format!("if !prefix_matched && self.try_consume(\"{}\") {{", escape_string(&op_lit)));
+                            } else {
+                                // Use starts_with check plus not_followed_by conditions
+                                let mut condition = format!(
+                                    "if !prefix_matched && self.input.get(self.pos..).unwrap_or(\"\").starts_with(\"{}\")",
+                                    escape_string(&op_lit)
+                                );
+                                for nf in &not_followed {
+                                    condition.push_str(&format!(
+                                        " && !self.input.get(self.pos..).unwrap_or(\"\").starts_with(\"{}{}\")",
+                                        escape_string(&op_lit),
+                                        escape_string(nf)
+                                    ));
+                                }
+                                condition.push_str(" {");
+                                self.line(&condition);
+                                self.indent += 1;
+                                // Manually consume the operator
+                                self.line(&format!("self.pos += {};", op_lit.len()));
+                                self.line(&format!("self.column += {};", op_lit.len()));
+                                self.indent -= 1;
+                            }
                             self.indent += 1;
 
                             // For keyword operators, check that we're not in the middle of an identifier
@@ -1484,8 +1503,7 @@ impl<'a> CodeGenerator<'a> {
                             }
 
                             self.line("prefix_matched = true;");
-                            self.line("self.skip_ws();");
-                            self.line(&format!(
+                                                        self.line(&format!(
                                 "self.work_stack.push(Work::{}AfterPrefix {{ result_base, min_prec, op_idx: {}, start_pos, start_line, start_column }});",
                                 prefix, i
                             ));
@@ -1515,10 +1533,18 @@ impl<'a> CodeGenerator<'a> {
                     self.indent += 1;
                 }
 
-                self.line(&format!(
-                    "self.work_stack.push(Work::{}AfterOperand {{ result_base, min_prec, start_pos, start_line, start_column }});",
-                    prefix
-                ));
+                // After parsing operand, go to CheckPostfix (if postfix ops exist) or AfterOperand
+                if !pratt.postfix_ops.is_empty() {
+                    self.line(&format!(
+                        "self.work_stack.push(Work::{}CheckPostfix {{ result_base, min_prec, start_pos, start_line, start_column }});",
+                        prefix
+                    ));
+                } else {
+                    self.line(&format!(
+                        "self.work_stack.push(Work::{}AfterOperand {{ result_base, min_prec, start_pos, start_line, start_column }});",
+                        prefix
+                    ));
+                }
                 self.line(&format!(
                     "self.work_stack.push(Work::{}Start {{ result_base }});",
                     operand_prefix
@@ -1560,15 +1586,168 @@ impl<'a> CodeGenerator<'a> {
                 self.line("_ => {}");
                 self.indent -= 1;
                 self.line("}");
-                // Continue with infix loop
-                self.line(&format!(
-                    "self.work_stack.push(Work::{}AfterOperand {{ result_base, min_prec, start_pos, start_line, start_column }});",
-                    prefix
-                ));
+                // Continue with postfix/infix loop
+                if !pratt.postfix_ops.is_empty() {
+                    self.line(&format!(
+                        "self.work_stack.push(Work::{}CheckPostfix {{ result_base, min_prec, start_pos, start_line, start_column }});",
+                        prefix
+                    ));
+                } else {
+                    self.line(&format!(
+                        "self.work_stack.push(Work::{}AfterOperand {{ result_base, min_prec, start_pos, start_line, start_column }});",
+                        prefix
+                    ));
+                }
                 self.indent -= 1;
                 self.line("}");
                 self.indent -= 1;
                 self.line("}");
+
+                // CheckPostfix - check for postfix operators (if any)
+                if !pratt.postfix_ops.is_empty() {
+                    self.line(&format!(
+                        "Work::{}CheckPostfix {{ result_base, min_prec, start_pos, start_line, start_column }} => {{",
+                        prefix
+                    ));
+                    self.indent += 1;
+                    self.line("if self.last_error.is_some() { return Ok(()); }");
+                                        self.line("let postfix_checkpoint = self.pos;");
+                    self.line("let mut postfix_matched = false;");
+
+                    for (i, postfix_op) in pratt.postfix_ops.iter().enumerate() {
+                        match postfix_op {
+                            crate::ir::PostfixOp::Simple { pattern, precedence, .. } => {
+                                let (op_lit, _, _) = extract_operator_pattern(pattern.as_ref());
+                                if !op_lit.is_empty() {
+                                    self.line(&format!(
+                                        "if !postfix_matched && {} >= min_prec && self.try_consume(\"{}\") {{",
+                                        precedence,
+                                        escape_string(&op_lit)
+                                    ));
+                                    self.indent += 1;
+                                    self.line("postfix_matched = true;");
+                                    self.line(&format!(
+                                        "self.work_stack.push(Work::{}AfterPostfixSimple {{ result_base, min_prec, op_idx: {}, start_pos, start_line, start_column }});",
+                                        prefix, i
+                                    ));
+                                    self.indent -= 1;
+                                    self.line("}");
+                                }
+                            }
+                            crate::ir::PostfixOp::Call { open, precedence, .. } => {
+                                let (op_lit, _, _) = extract_operator_pattern(open.as_ref());
+                                if !op_lit.is_empty() {
+                                    self.line(&format!(
+                                        "if !postfix_matched && {} >= min_prec && self.try_consume(\"{}\") {{",
+                                        precedence,
+                                        escape_string(&op_lit)
+                                    ));
+                                    self.indent += 1;
+                                    self.line("postfix_matched = true;");
+                                                                        self.line("let args_base = self.result_stack.len();");
+                                    self.line(&format!(
+                                        "self.work_stack.push(Work::{}PostfixCallArg {{ result_base, min_prec, op_idx: {}, args_base, start_pos, start_line, start_column }});",
+                                        prefix, i
+                                    ));
+                                    self.indent -= 1;
+                                    self.line("}");
+                                }
+                            }
+                            crate::ir::PostfixOp::Index { open, precedence, .. } => {
+                                let (op_lit, _, _) = extract_operator_pattern(open.as_ref());
+                                if !op_lit.is_empty() {
+                                    self.line(&format!(
+                                        "if !postfix_matched && {} >= min_prec && self.try_consume(\"{}\") {{",
+                                        precedence,
+                                        escape_string(&op_lit)
+                                    ));
+                                    self.indent += 1;
+                                    self.line("postfix_matched = true;");
+                                                                        self.line(&format!(
+                                        "self.work_stack.push(Work::{}AfterPostfixIndex {{ result_base, min_prec, op_idx: {}, start_pos, start_line, start_column }});",
+                                        prefix, i
+                                    ));
+                                    // Parse the index expression with min_prec 0
+                                    self.line(&format!(
+                                        "self.work_stack.push(Work::{}ParseOperand {{ result_base: self.result_stack.len(), min_prec: 0, start_pos: self.pos, start_line: self.line, start_column: self.column }});",
+                                        prefix
+                                    ));
+                                    self.indent -= 1;
+                                    self.line("}");
+                                }
+                            }
+                            crate::ir::PostfixOp::Member { pattern, precedence, .. } => {
+                                let (op_lit, _, _) = extract_operator_pattern(pattern.as_ref());
+                                if !op_lit.is_empty() {
+                                    // Collect infix operators that start with this member operator
+                                    // to avoid matching member "." when input is ".." (infix concat)
+                                    let conflicting_infixes: Vec<String> = pratt
+                                        .infix_ops
+                                        .iter()
+                                        .filter_map(|infix| {
+                                            let (infix_lit, _, _) = extract_operator_pattern(infix.pattern.as_ref());
+                                            if infix_lit.starts_with(&op_lit) && infix_lit.len() > op_lit.len() {
+                                                Some(infix_lit)
+                                            } else {
+                                                None
+                                            }
+                                        })
+                                        .collect();
+
+                                    if conflicting_infixes.is_empty() {
+                                        // No conflicts, use simple try_consume
+                                        self.line(&format!(
+                                            "if !postfix_matched && {} >= min_prec && self.try_consume(\"{}\") {{",
+                                            precedence,
+                                            escape_string(&op_lit)
+                                        ));
+                                    } else {
+                                        // Generate check that excludes conflicting infix operators
+                                        let mut condition = format!(
+                                            "if !postfix_matched && {} >= min_prec && self.input.get(self.pos..).unwrap_or(\"\").starts_with(\"{}\")",
+                                            precedence,
+                                            escape_string(&op_lit)
+                                        );
+                                        for infix_lit in &conflicting_infixes {
+                                            condition.push_str(&format!(
+                                                " && !self.input.get(self.pos..).unwrap_or(\"\").starts_with(\"{}\")",
+                                                escape_string(infix_lit)
+                                            ));
+                                        }
+                                        condition.push_str(" {");
+                                        self.line(&condition);
+                                        self.indent += 1;
+                                        // Consume the member operator and update column
+                                        self.line(&format!("self.pos += {};", op_lit.len()));
+                                        self.line(&format!("self.column += {};", op_lit.len()));
+                                        self.indent -= 1;
+                                    }
+                                    self.indent += 1;
+                                    self.line("postfix_matched = true;");
+                                                                        self.line(&format!(
+                                        "self.work_stack.push(Work::{}AfterPostfixMember {{ result_base, min_prec, op_idx: {}, start_pos, start_line, start_column }});",
+                                        prefix, i
+                                    ));
+                                    self.indent -= 1;
+                                    self.line("}");
+                                }
+                            }
+                        }
+                    }
+
+                    // If no postfix matched, continue to infix checking
+                    self.line("if !postfix_matched {");
+                    self.indent += 1;
+                    self.line("self.pos = postfix_checkpoint;");
+                    self.line(&format!(
+                        "self.work_stack.push(Work::{}AfterOperand {{ result_base, min_prec, start_pos, start_line, start_column }});",
+                        prefix
+                    ));
+                    self.indent -= 1;
+                    self.line("}");
+                    self.indent -= 1;
+                    self.line("}");
+                }
 
                 // AfterOperand - check for infix operators
                 self.line(&format!(
@@ -1582,22 +1761,45 @@ impl<'a> CodeGenerator<'a> {
                     // Try each infix operator (sorted by length for correct matching)
                     let mut sorted_ops: Vec<_> = pratt.infix_ops.iter().enumerate().collect();
                     sorted_ops.sort_by(|a, b| {
-                        let (lit_a, _) = extract_operator_pattern(a.1.pattern.as_ref());
-                        let (lit_b, _) = extract_operator_pattern(b.1.pattern.as_ref());
+                        let (lit_a, _, _) = extract_operator_pattern(a.1.pattern.as_ref());
+                        let (lit_b, _, _) = extract_operator_pattern(b.1.pattern.as_ref());
                         lit_b.len().cmp(&lit_a.len()) // Longer operators first
                     });
 
                     // Skip whitespace before checking for infix operators
-                    self.line("self.skip_ws();");
-                    self.line("let infix_checkpoint = self.pos;");
+                                        self.line("let infix_checkpoint = self.pos;");
 
                     for (_, (i, infix_op)) in sorted_ops.iter().enumerate() {
-                        let (op_lit, is_keyword) = extract_operator_pattern(infix_op.pattern.as_ref());
+                        let (op_lit, is_keyword, not_followed) = extract_operator_pattern(infix_op.pattern.as_ref());
                         if !op_lit.is_empty() {
                             let prec = infix_op.precedence;
                             let next_prec = if infix_op.assoc == crate::Assoc::Right { prec } else { prec + 1 };
 
-                            self.line(&format!("if {} >= min_prec && self.pos == infix_checkpoint && self.try_consume(\"{}\") {{", prec, escape_string(&op_lit)));
+                            // Build condition with not_followed_by checks
+                            if not_followed.is_empty() {
+                                self.line(&format!("if {} >= min_prec && self.pos == infix_checkpoint && self.try_consume(\"{}\") {{", prec, escape_string(&op_lit)));
+                            } else {
+                                // Use starts_with check plus not_followed_by conditions
+                                let mut condition = format!(
+                                    "if {} >= min_prec && self.pos == infix_checkpoint && self.input.get(self.pos..).unwrap_or(\"\").starts_with(\"{}\")",
+                                    prec,
+                                    escape_string(&op_lit)
+                                );
+                                for nf in &not_followed {
+                                    condition.push_str(&format!(
+                                        " && !self.input.get(self.pos..).unwrap_or(\"\").starts_with(\"{}{}\")",
+                                        escape_string(&op_lit),
+                                        escape_string(nf)
+                                    ));
+                                }
+                                condition.push_str(" {");
+                                self.line(&condition);
+                                self.indent += 1;
+                                // Manually consume the operator
+                                self.line(&format!("self.pos += {};", op_lit.len()));
+                                self.line(&format!("self.column += {};", op_lit.len()));
+                                self.indent -= 1;
+                            }
                             self.indent += 1;
 
                             // For keyword operators, check that we're not in the middle of an identifier
@@ -1607,8 +1809,7 @@ impl<'a> CodeGenerator<'a> {
                                 self.indent += 1;
                             }
 
-                            self.line("self.skip_ws();");
-                            self.line(&format!(
+                                                        self.line(&format!(
                                 "self.work_stack.push(Work::{}AfterInfix {{ result_base, min_prec, op_idx: {}, start_pos, start_line, start_column }});",
                                 prefix, i
                             ));
@@ -1666,15 +1867,296 @@ impl<'a> CodeGenerator<'a> {
                 self.line("_ => {}");
                 self.indent -= 1;
                 self.line("}");
-                // Continue infix loop
-                self.line(&format!(
-                    "self.work_stack.push(Work::{}AfterOperand {{ result_base, min_prec, start_pos, start_line, start_column }});",
-                    prefix
-                ));
+                // Continue with postfix/infix loop
+                if !pratt.postfix_ops.is_empty() {
+                    self.line(&format!(
+                        "self.work_stack.push(Work::{}CheckPostfix {{ result_base, min_prec, start_pos, start_line, start_column }});",
+                        prefix
+                    ));
+                } else {
+                    self.line(&format!(
+                        "self.work_stack.push(Work::{}AfterOperand {{ result_base, min_prec, start_pos, start_line, start_column }});",
+                        prefix
+                    ));
+                }
                 self.indent -= 1;
                 self.line("}");
                 self.indent -= 1;
                 self.line("}");
+
+                // Postfix handlers
+                if !pratt.postfix_ops.is_empty() {
+                    // AfterPostfixSimple - apply simple postfix mapping
+                    self.line(&format!(
+                        "Work::{}AfterPostfixSimple {{ result_base, min_prec, op_idx, start_pos, start_line, start_column }} => {{",
+                        prefix
+                    ));
+                    self.indent += 1;
+                    self.line("let operand = self.result_stack.pop().unwrap_or(ParseResult::None);");
+                    self.line("let span = Span { start: start_pos, end: self.pos, line: start_line, column: start_column };");
+                    self.line("match op_idx {");
+                    self.indent += 1;
+                    for (i, postfix_op) in pratt.postfix_ops.iter().enumerate() {
+                        if let crate::ir::PostfixOp::Simple { mapping, .. } = postfix_op {
+                            self.line(&format!("{} => {{", i));
+                            self.indent += 1;
+                            self.line(&format!("let mapping_fn = {};", mapping));
+                            self.line("match mapping_fn(operand, span) {");
+                            self.indent += 1;
+                            self.line("Ok(mapped) => self.result_stack.push(mapped),");
+                            self.line("Err(e) => self.last_error = Some(e),");
+                            self.indent -= 1;
+                            self.line("}");
+                            self.indent -= 1;
+                            self.line("}");
+                        }
+                    }
+                    self.line("_ => { self.result_stack.push(operand); }");
+                    self.indent -= 1;
+                    self.line("}");
+                    // Loop back to check for more postfix
+                    self.line(&format!(
+                        "self.work_stack.push(Work::{}CheckPostfix {{ result_base, min_prec, start_pos, start_line, start_column }});",
+                        prefix
+                    ));
+                    self.indent -= 1;
+                    self.line("}");
+
+                    // PostfixCallArg - check for first arg or close paren
+                    self.line(&format!(
+                        "Work::{}PostfixCallArg {{ result_base, min_prec, op_idx, args_base, start_pos, start_line, start_column }} => {{",
+                        prefix
+                    ));
+                    self.indent += 1;
+                    // Check for close paren (empty args)
+                    self.line("let close_checkpoint = self.pos;");
+                    // Get the close delimiter from the first Call op found
+                    let mut close_lit = ")".to_string();
+                    for postfix_op in pratt.postfix_ops.iter() {
+                        if let crate::ir::PostfixOp::Call { close, .. } = postfix_op {
+                            let (lit, _, _) = extract_operator_pattern(close.as_ref());
+                            if !lit.is_empty() {
+                                close_lit = lit;
+                                break;
+                            }
+                        }
+                    }
+                    self.line(&format!("if self.try_consume(\"{}\") {{", escape_string(&close_lit)));
+                    self.indent += 1;
+                    // Empty args - apply mapping
+                    self.line(&format!(
+                        "self.work_stack.push(Work::{}AfterPostfixCall {{ result_base, min_prec, op_idx, args_base, start_pos, start_line, start_column }});",
+                        prefix
+                    ));
+                    self.indent -= 1;
+                    self.line("} else {");
+                    self.indent += 1;
+                    // Parse first argument
+                    self.line(&format!(
+                        "self.work_stack.push(Work::{}PostfixCallSep {{ result_base, min_prec, op_idx, args_base, start_pos, start_line, start_column }});",
+                        prefix
+                    ));
+                    self.line(&format!(
+                        "self.work_stack.push(Work::{}ParseOperand {{ result_base: self.result_stack.len(), min_prec: 0, start_pos: self.pos, start_line: self.line, start_column: self.column }});",
+                        prefix
+                    ));
+                    self.indent -= 1;
+                    self.line("}");
+                    self.indent -= 1;
+                    self.line("}");
+
+                    // PostfixCallSep - after parsing arg, check for separator or close
+                    self.line(&format!(
+                        "Work::{}PostfixCallSep {{ result_base, min_prec, op_idx, args_base, start_pos, start_line, start_column }} => {{",
+                        prefix
+                    ));
+                    self.indent += 1;
+                    self.line("if self.last_error.is_some() { return Ok(()); }");
+                                        // Get separator from first Call op
+                    let mut sep_lit = ",".to_string();
+                    for postfix_op in pratt.postfix_ops.iter() {
+                        if let crate::ir::PostfixOp::Call { separator, .. } = postfix_op {
+                            let (lit, _, _) = extract_operator_pattern(separator.as_ref());
+                            if !lit.is_empty() {
+                                sep_lit = lit;
+                                break;
+                            }
+                        }
+                    }
+                    self.line(&format!("if self.try_consume(\"{}\") {{", escape_string(&sep_lit)));
+                    self.indent += 1;
+                                        // More arguments
+                    self.line(&format!(
+                        "self.work_stack.push(Work::{}PostfixCallSep {{ result_base, min_prec, op_idx, args_base, start_pos, start_line, start_column }});",
+                        prefix
+                    ));
+                    self.line(&format!(
+                        "self.work_stack.push(Work::{}ParseOperand {{ result_base: self.result_stack.len(), min_prec: 0, start_pos: self.pos, start_line: self.line, start_column: self.column }});",
+                        prefix
+                    ));
+                    self.indent -= 1;
+                    self.line(&format!("}} else if self.try_consume(\"{}\") {{", escape_string(&close_lit)));
+                    self.indent += 1;
+                    // Done with args
+                    self.line(&format!(
+                        "self.work_stack.push(Work::{}AfterPostfixCall {{ result_base, min_prec, op_idx, args_base, start_pos, start_line, start_column }});",
+                        prefix
+                    ));
+                    self.indent -= 1;
+                    self.line("} else {");
+                    self.indent += 1;
+                    self.line(&format!("self.last_error = Some(self.make_error(\"expected '{}' or '{}'\"));", escape_string(&sep_lit), escape_string(&close_lit)));
+                    self.indent -= 1;
+                    self.line("}");
+                    self.indent -= 1;
+                    self.line("}");
+
+                    // AfterPostfixCall - collect args and apply mapping
+                    self.line(&format!(
+                        "Work::{}AfterPostfixCall {{ result_base, min_prec, op_idx, args_base, start_pos, start_line, start_column }} => {{",
+                        prefix
+                    ));
+                    self.indent += 1;
+                    self.line("if self.last_error.is_some() { return Ok(()); }");
+                    self.line("let args: Vec<ParseResult> = self.result_stack.drain(args_base..).collect();");
+                    self.line("let callee = self.result_stack.pop().unwrap_or(ParseResult::None);");
+                    self.line("let span = Span { start: start_pos, end: self.pos, line: start_line, column: start_column };");
+                    self.line("match op_idx {");
+                    self.indent += 1;
+                    for (i, postfix_op) in pratt.postfix_ops.iter().enumerate() {
+                        if let crate::ir::PostfixOp::Call { mapping, .. } = postfix_op {
+                            self.line(&format!("{} => {{", i));
+                            self.indent += 1;
+                            self.line(&format!("let mapping_fn = {};", mapping));
+                            self.line("match mapping_fn(callee, args, span) {");
+                            self.indent += 1;
+                            self.line("Ok(mapped) => self.result_stack.push(mapped),");
+                            self.line("Err(e) => self.last_error = Some(e),");
+                            self.indent -= 1;
+                            self.line("}");
+                            self.indent -= 1;
+                            self.line("}");
+                        }
+                    }
+                    self.line("_ => { self.result_stack.push(callee); }");
+                    self.indent -= 1;
+                    self.line("}");
+                    // Loop back to check for more postfix
+                    self.line(&format!(
+                        "self.work_stack.push(Work::{}CheckPostfix {{ result_base, min_prec, start_pos, start_line, start_column }});",
+                        prefix
+                    ));
+                    self.indent -= 1;
+                    self.line("}");
+
+                    // AfterPostfixIndex - match close bracket and apply mapping
+                    self.line(&format!(
+                        "Work::{}AfterPostfixIndex {{ result_base, min_prec, op_idx, start_pos, start_line, start_column }} => {{",
+                        prefix
+                    ));
+                    self.indent += 1;
+                    self.line("if self.last_error.is_some() { return Ok(()); }");
+                                        // Get close delimiter from first Index op
+                    let mut index_close_lit = "]".to_string();
+                    for postfix_op in pratt.postfix_ops.iter() {
+                        if let crate::ir::PostfixOp::Index { close, .. } = postfix_op {
+                            let (lit, _, _) = extract_operator_pattern(close.as_ref());
+                            if !lit.is_empty() {
+                                index_close_lit = lit;
+                                break;
+                            }
+                        }
+                    }
+                    self.line(&format!("if !self.try_consume(\"{}\") {{", escape_string(&index_close_lit)));
+                    self.indent += 1;
+                    self.line(&format!("self.last_error = Some(self.make_error(\"expected '{}'\"));", escape_string(&index_close_lit)));
+                    self.line("return Ok(());");
+                    self.indent -= 1;
+                    self.line("}");
+                    self.line("let index_expr = self.result_stack.pop().unwrap_or(ParseResult::None);");
+                    self.line("let obj = self.result_stack.pop().unwrap_or(ParseResult::None);");
+                    self.line("let span = Span { start: start_pos, end: self.pos, line: start_line, column: start_column };");
+                    self.line("match op_idx {");
+                    self.indent += 1;
+                    for (i, postfix_op) in pratt.postfix_ops.iter().enumerate() {
+                        if let crate::ir::PostfixOp::Index { mapping, .. } = postfix_op {
+                            self.line(&format!("{} => {{", i));
+                            self.indent += 1;
+                            self.line(&format!("let mapping_fn = {};", mapping));
+                            self.line("match mapping_fn(obj, index_expr, span) {");
+                            self.indent += 1;
+                            self.line("Ok(mapped) => self.result_stack.push(mapped),");
+                            self.line("Err(e) => self.last_error = Some(e),");
+                            self.indent -= 1;
+                            self.line("}");
+                            self.indent -= 1;
+                            self.line("}");
+                        }
+                    }
+                    self.line("_ => { self.result_stack.push(obj); }");
+                    self.indent -= 1;
+                    self.line("}");
+                    // Loop back to check for more postfix
+                    self.line(&format!(
+                        "self.work_stack.push(Work::{}CheckPostfix {{ result_base, min_prec, start_pos, start_line, start_column }});",
+                        prefix
+                    ));
+                    self.indent -= 1;
+                    self.line("}");
+
+                    // AfterPostfixMember - capture identifier and apply mapping
+                    self.line(&format!(
+                        "Work::{}AfterPostfixMember {{ result_base, min_prec, op_idx, start_pos, start_line, start_column }} => {{",
+                        prefix
+                    ));
+                    self.indent += 1;
+                    // Capture identifier
+                    self.line("let ident_start = self.pos;");
+                    self.line("if self.current_char().map_or(false, |c| c.is_ascii_alphabetic() || c == '_' || c == '$') {");
+                    self.indent += 1;
+                    self.line("self.advance();");
+                    self.line("while self.current_char().map_or(false, |c| c.is_ascii_alphanumeric() || c == '_' || c == '$') {");
+                    self.indent += 1;
+                    self.line("self.advance();");
+                    self.indent -= 1;
+                    self.line("}");
+                    self.line("let prop_name = self.text_result(ident_start, self.pos);");
+                    self.line("let obj = self.result_stack.pop().unwrap_or(ParseResult::None);");
+                    self.line("let span = Span { start: start_pos, end: self.pos, line: start_line, column: start_column };");
+                    self.line("match op_idx {");
+                    self.indent += 1;
+                    for (i, postfix_op) in pratt.postfix_ops.iter().enumerate() {
+                        if let crate::ir::PostfixOp::Member { mapping, .. } = postfix_op {
+                            self.line(&format!("{} => {{", i));
+                            self.indent += 1;
+                            self.line(&format!("let mapping_fn = {};", mapping));
+                            self.line("match mapping_fn(obj, prop_name, span) {");
+                            self.indent += 1;
+                            self.line("Ok(mapped) => self.result_stack.push(mapped),");
+                            self.line("Err(e) => self.last_error = Some(e),");
+                            self.indent -= 1;
+                            self.line("}");
+                            self.indent -= 1;
+                            self.line("}");
+                        }
+                    }
+                    self.line("_ => { self.result_stack.push(obj); }");
+                    self.indent -= 1;
+                    self.line("}");
+                    // Loop back to check for more postfix
+                    self.line(&format!(
+                        "self.work_stack.push(Work::{}CheckPostfix {{ result_base, min_prec, start_pos, start_line, start_column }});",
+                        prefix
+                    ));
+                    self.indent -= 1;
+                    self.line("} else {");
+                    self.indent += 1;
+                    self.line("self.last_error = Some(self.make_error(\"expected identifier after '.'\"));");
+                    self.indent -= 1;
+                    self.line("}");
+                    self.indent -= 1;
+                    self.line("}");
+                }
 
                 // Emit operand parser handlers
                 if let Some(operand) = pratt.operand.as_ref() {
@@ -1682,7 +2164,7 @@ impl<'a> CodeGenerator<'a> {
                 }
             }
             Combinator::Mapped { inner, mapping } => {
-                let inner_prefix = format!("{}Inner", prefix);
+                let inner_prefix = format!("{}Mapped", prefix);
 
                 // Start handler - records position, pushes Map completion, then inner Start
                 self.line(&format!(
@@ -1795,30 +2277,42 @@ fn escape_string(s: &str) -> String {
 }
 
 /// Check if a pattern is a keyword pattern (Literal followed by NotFollowedBy(IdentCont))
-/// Returns (literal, is_keyword)
-fn extract_operator_pattern(pattern: &Combinator) -> (String, bool) {
+/// Returns (literal, is_keyword, not_followed_by_literals)
+/// not_followed_by_literals contains any literal strings that must NOT follow the operator
+fn extract_operator_pattern(pattern: &Combinator) -> (String, bool, Vec<String>) {
     match pattern {
-        Combinator::Literal(s) => (s.clone(), false),
+        Combinator::Literal(s) => (s.clone(), false, vec![]),
         Combinator::Sequence(parts) if parts.len() >= 2 => {
             if let Combinator::Literal(s) = &parts[0] {
-                // Check if second part is NotFollowedBy(CharClass(IdentCont))
+                // Check if second part is NotFollowedBy(CharClass(IdentCont)) - keyword pattern
                 let is_keyword = matches!(
                     &parts[1],
                     Combinator::NotFollowedBy(inner) if matches!(inner.as_ref(), Combinator::CharClass(CharClass::IdentCont))
                 );
-                (s.clone(), is_keyword)
+
+                // Collect any NotFollowedBy(Literal) conditions
+                let mut not_followed: Vec<String> = vec![];
+                for part in &parts[1..] {
+                    if let Combinator::NotFollowedBy(inner) = part {
+                        if let Combinator::Literal(nf_lit) = inner.as_ref() {
+                            not_followed.push(nf_lit.clone());
+                        }
+                    }
+                }
+
+                (s.clone(), is_keyword, not_followed)
             } else {
-                (String::new(), false)
+                (String::new(), false, vec![])
             }
         }
         Combinator::Sequence(parts) if parts.len() == 1 => {
             if let Combinator::Literal(s) = &parts[0] {
-                (s.clone(), false)
+                (s.clone(), false, vec![])
             } else {
-                (String::new(), false)
+                (String::new(), false, vec![])
             }
         }
-        _ => (String::new(), false),
+        _ => (String::new(), false, vec![]),
     }
 }
 

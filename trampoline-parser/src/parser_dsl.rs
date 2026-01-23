@@ -386,11 +386,12 @@ impl PrattBuilder {
         }
     }
 
-    /// Define a prefix operator with a literal pattern
-    /// Example: `ops.prefix("+", 16, "|e| unary(e, Plus)")`
-    pub fn prefix(mut self, literal: &str, precedence: u8, mapping: &str) -> Self {
+    /// Define a prefix operator with a pattern
+    /// Example: `ops.prefix("-", 16, "|e| unary(e, Neg)")`
+    /// Example: `ops.prefix(r.sequence((r.lit("-"), r.not_followed_by(r.lit("-")))), 16, "...")`
+    pub fn prefix(mut self, pattern: impl Into<Combinator>, precedence: u8, mapping: &str) -> Self {
         self.prefix_ops.push(PrefixOp {
-            pattern: Box::new(Combinator::Literal(literal.to_string())),
+            pattern: Box::new(pattern.into()),
             precedence,
             mapping: mapping.to_string(),
         });
@@ -411,11 +412,12 @@ impl PrattBuilder {
         self
     }
 
-    /// Define an infix operator with a literal pattern
+    /// Define an infix operator with a pattern
     /// Example: `ops.infix("+", 13, Assoc::Left, "|l, r| binary(l, r, Add)")`
-    pub fn infix(mut self, literal: &str, precedence: u8, assoc: Assoc, mapping: &str) -> Self {
+    /// Example: `ops.infix(r.sequence((r.lit("-"), r.not_followed_by(r.lit("-")))), 9, Left, "...")`
+    pub fn infix(mut self, pattern: impl Into<Combinator>, precedence: u8, assoc: Assoc, mapping: &str) -> Self {
         self.infix_ops.push(InfixOp {
-            pattern: Box::new(Combinator::Literal(literal.to_string())),
+            pattern: Box::new(pattern.into()),
             precedence,
             assoc,
             mapping: mapping.to_string(),
@@ -438,11 +440,11 @@ impl PrattBuilder {
         self
     }
 
-    /// Define a simple postfix operator with a literal pattern (++, --)
+    /// Define a simple postfix operator with a pattern (++, --)
     /// Example: `ops.postfix("++", 17, "|e| update(e, Increment, false)")`
-    pub fn postfix(mut self, literal: &str, precedence: u8, mapping: &str) -> Self {
+    pub fn postfix(mut self, pattern: impl Into<Combinator>, precedence: u8, mapping: &str) -> Self {
         self.postfix_ops.push(PostfixOp::Simple {
-            pattern: Box::new(Combinator::Literal(literal.to_string())),
+            pattern: Box::new(pattern.into()),
             precedence,
             mapping: mapping.to_string(),
         });

@@ -93,6 +93,17 @@ fn main() {
         "keywords_parser",
         &grammars::keywords().generate(),
     );
+    write_parser(
+        out_path,
+        "postfix_parser",
+        &grammars::postfix().generate(),
+    );
+    write_parser(out_path, "lua_parser", &grammars::lua().generate());
+    write_parser(
+        out_path,
+        "lua_expr_parser",
+        &grammars::lua_expr().generate(),
+    );
 
     // Tell Cargo to rerun if trampoline-parser or grammars change
     println!("cargo:rerun-if-changed=../trampoline-parser/src");
