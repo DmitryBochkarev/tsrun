@@ -25,11 +25,19 @@ pub enum ValidationError {
 impl std::fmt::Display for ValidationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ValidationError::NullableLoop { rule_name, description } => {
+            ValidationError::NullableLoop {
+                rule_name,
+                description,
+            } => {
                 write!(f, "Nullable loop in rule '{}': {}", rule_name, description)
             }
             ValidationError::LeftRecursion { rule_name, path } => {
-                write!(f, "Left recursion in rule '{}': {}", rule_name, path.join(" -> "))
+                write!(
+                    f,
+                    "Left recursion in rule '{}': {}",
+                    rule_name,
+                    path.join(" -> ")
+                )
             }
         }
     }
@@ -58,7 +66,11 @@ pub fn validate_grammar(rules: &[RuleDef]) -> Vec<ValidationError> {
 }
 
 /// Check if a combinator can match empty input (is nullable)
-pub fn is_nullable(comb: &Combinator, rule_map: &HashMap<&str, &Combinator>, visited: &mut HashSet<String>) -> bool {
+pub fn is_nullable(
+    comb: &Combinator,
+    rule_map: &HashMap<&str, &Combinator>,
+    visited: &mut HashSet<String>,
+) -> bool {
     match comb {
         // Character-level primitives - never nullable (always consume input)
         Combinator::Literal(s) => s.is_empty(), // Empty string is nullable
@@ -88,12 +100,12 @@ pub fn is_nullable(comb: &Combinator, rule_map: &HashMap<&str, &Combinator>, vis
         }
 
         // Combinators
-        Combinator::Sequence(items) => {
-            items.iter().all(|item| is_nullable(item, rule_map, visited))
-        }
-        Combinator::Choice(items) => {
-            items.iter().any(|item| is_nullable(item, rule_map, visited))
-        }
+        Combinator::Sequence(items) => items
+            .iter()
+            .all(|item| is_nullable(item, rule_map, visited)),
+        Combinator::Choice(items) => items
+            .iter()
+            .any(|item| is_nullable(item, rule_map, visited)),
         Combinator::ZeroOrMore(_) => true,
         Combinator::OneOrMore(inner) => is_nullable(inner, rule_map, visited),
         Combinator::Optional(_) => true,
@@ -128,7 +140,9 @@ fn check_nullable_loops(
             }
             check_nullable_loops(rule_name, inner, rule_map, errors);
         }
-        Combinator::SeparatedBy { item, separator, .. } => {
+        Combinator::SeparatedBy {
+            item, separator, ..
+        } => {
             let mut visited = HashSet::new();
             if is_nullable(item, rule_map, &mut visited) {
                 errors.push(ValidationError::NullableLoop {
@@ -285,10 +299,18 @@ mod tests {
     fn test_nullable_literal() {
         let rule_map = HashMap::new();
         let mut visited = HashSet::new();
-        assert!(!is_nullable(&Combinator::Literal("foo".to_string()), &rule_map, &mut visited));
+        assert!(!is_nullable(
+            &Combinator::Literal("foo".to_string()),
+            &rule_map,
+            &mut visited
+        ));
 
         visited.clear();
-        assert!(is_nullable(&Combinator::Literal("".to_string()), &rule_map, &mut visited));
+        assert!(is_nullable(
+            &Combinator::Literal("".to_string()),
+            &rule_map,
+            &mut visited
+        ));
     }
 
     #[test]

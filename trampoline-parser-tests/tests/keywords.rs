@@ -4,7 +4,9 @@ use trampoline_parser_tests::keywords_parser::{Expr, ParseResult, Parser};
 
 fn parse_expr(input: &str) -> Expr {
     let mut parser = Parser::new(input);
-    let result = parser.parse().expect(&format!("Parse failed for: {}", input));
+    let result = parser
+        .parse()
+        .expect(&format!("Parse failed for: {}", input));
     result_to_expr(result)
 }
 

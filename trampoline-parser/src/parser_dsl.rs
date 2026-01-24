@@ -415,7 +415,13 @@ impl PrattBuilder {
     /// Define an infix operator with a pattern
     /// Example: `ops.infix("+", 13, Assoc::Left, "|l, r| binary(l, r, Add)")`
     /// Example: `ops.infix(r.sequence((r.lit("-"), r.not_followed_by(r.lit("-")))), 9, Left, "...")`
-    pub fn infix(mut self, pattern: impl Into<Combinator>, precedence: u8, assoc: Assoc, mapping: &str) -> Self {
+    pub fn infix(
+        mut self,
+        pattern: impl Into<Combinator>,
+        precedence: u8,
+        assoc: Assoc,
+        mapping: &str,
+    ) -> Self {
         self.infix_ops.push(InfixOp {
             pattern: Box::new(pattern.into()),
             precedence,
@@ -442,7 +448,12 @@ impl PrattBuilder {
 
     /// Define a simple postfix operator with a pattern (++, --)
     /// Example: `ops.postfix("++", 17, "|e| update(e, Increment, false)")`
-    pub fn postfix(mut self, pattern: impl Into<Combinator>, precedence: u8, mapping: &str) -> Self {
+    pub fn postfix(
+        mut self,
+        pattern: impl Into<Combinator>,
+        precedence: u8,
+        mapping: &str,
+    ) -> Self {
         self.postfix_ops.push(PostfixOp::Simple {
             pattern: Box::new(pattern.into()),
             precedence,
@@ -557,13 +568,19 @@ mod tests {
         ));
 
         // Test range
-        assert!(matches!(builder.range('a', 'z'), Combinator::CharRange('a', 'z')));
+        assert!(matches!(
+            builder.range('a', 'z'),
+            Combinator::CharRange('a', 'z')
+        ));
 
         // Test any_char
         assert!(matches!(builder.any_char(), Combinator::AnyChar));
 
         // Test capture
-        assert!(matches!(builder.capture(builder.digit()), Combinator::Capture(_)));
+        assert!(matches!(
+            builder.capture(builder.digit()),
+            Combinator::Capture(_)
+        ));
 
         // Test lookahead
         assert!(matches!(

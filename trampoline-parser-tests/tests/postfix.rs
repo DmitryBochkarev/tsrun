@@ -55,10 +55,7 @@ fn postfix_double_increment() {
 #[test]
 fn postfix_call_no_args() {
     let expr = parse_expr("f()");
-    assert_eq!(
-        expr,
-        Expr::Call(Box::new(Expr::Ident("f".into())), vec![])
-    );
+    assert_eq!(expr, Expr::Call(Box::new(Expr::Ident("f".into())), vec![]));
 }
 
 #[test]
@@ -168,10 +165,7 @@ fn postfix_member_chained() {
     assert_eq!(
         expr,
         Expr::Member(
-            Box::new(Expr::Member(
-                Box::new(Expr::Ident("a".into())),
-                "b".into()
-            )),
+            Box::new(Expr::Member(Box::new(Expr::Ident("a".into())), "b".into())),
             "c".into()
         )
     );
@@ -184,10 +178,7 @@ fn postfix_member_long_chain() {
     let expected = Expr::Member(
         Box::new(Expr::Member(
             Box::new(Expr::Member(
-                Box::new(Expr::Member(
-                    Box::new(Expr::Ident("a".into())),
-                    "b".into(),
-                )),
+                Box::new(Expr::Member(Box::new(Expr::Ident("a".into())), "b".into())),
                 "c".into(),
             )),
             "d".into(),
@@ -208,10 +199,7 @@ fn postfix_mixed_member_call() {
     assert_eq!(
         expr,
         Expr::Call(
-            Box::new(Expr::Member(
-                Box::new(Expr::Ident("a".into())),
-                "b".into()
-            )),
+            Box::new(Expr::Member(Box::new(Expr::Ident("a".into())), "b".into())),
             vec![]
         )
     );
@@ -253,10 +241,7 @@ fn postfix_mixed_member_index() {
     assert_eq!(
         expr,
         Expr::Index(
-            Box::new(Expr::Member(
-                Box::new(Expr::Ident("a".into())),
-                "b".into()
-            )),
+            Box::new(Expr::Member(Box::new(Expr::Ident("a".into())), "b".into())),
             Box::new(Expr::Num(0))
         )
     );
@@ -270,10 +255,7 @@ fn postfix_complex_chain() {
         Box::new(Expr::Call(
             Box::new(Expr::Member(
                 Box::new(Expr::Index(
-                    Box::new(Expr::Member(
-                        Box::new(Expr::Ident("a".into())),
-                        "b".into(),
-                    )),
+                    Box::new(Expr::Member(Box::new(Expr::Ident("a".into())), "b".into())),
                     Box::new(Expr::Num(0)),
                 )),
                 "c".into(),
@@ -293,10 +275,7 @@ fn postfix_call_with_member_arg() {
         expr,
         Expr::Call(
             Box::new(Expr::Ident("f".into())),
-            vec![Expr::Member(
-                Box::new(Expr::Ident("a".into())),
-                "b".into()
-            )]
+            vec![Expr::Member(Box::new(Expr::Ident("a".into())), "b".into())]
         )
     );
 }
@@ -342,15 +321,9 @@ fn postfix_member_in_multiplication() {
     assert_eq!(
         expr,
         Expr::Binary(
-            Box::new(Expr::Member(
-                Box::new(Expr::Ident("a".into())),
-                "x".into()
-            )),
+            Box::new(Expr::Member(Box::new(Expr::Ident("a".into())), "x".into())),
             trampoline_parser_tests::postfix_parser::BinOp::Mul,
-            Box::new(Expr::Member(
-                Box::new(Expr::Ident("b".into())),
-                "y".into()
-            ))
+            Box::new(Expr::Member(Box::new(Expr::Ident("b".into())), "y".into()))
         )
     );
 }

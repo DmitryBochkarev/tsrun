@@ -120,7 +120,12 @@ impl AstConfigBuilder {
     }
 
     /// Add a custom ParseResult variant with custom span extraction
-    pub fn result_variant_with_span(mut self, name: &str, rust_type: &str, span_expr: &str) -> Self {
+    pub fn result_variant_with_span(
+        mut self,
+        name: &str,
+        rust_type: &str,
+        span_expr: &str,
+    ) -> Self {
         self.config.result_variants.push(ir::ResultVariant {
             name: name.to_string(),
             rust_type: rust_type.to_string(),

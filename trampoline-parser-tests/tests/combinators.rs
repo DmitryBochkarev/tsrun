@@ -209,7 +209,10 @@ fn not_followed_by_success() {
     // "a" not followed by "b" should succeed for "ac"
     let mut parser = not_followed_parser::Parser::new("ac");
     let result = parser.parse();
-    assert!(result.is_ok(), "Should succeed when 'a' not followed by 'b'");
+    assert!(
+        result.is_ok(),
+        "Should succeed when 'a' not followed by 'b'"
+    );
 }
 
 #[test]
@@ -233,7 +236,10 @@ fn followed_by_fails_without_target() {
     // "a" followed by "b" should fail for just "a"
     let mut parser = followed_by_parser::Parser::new("a");
     let result = parser.parse();
-    assert!(result.is_err(), "Should fail when 'b' not present after 'a'");
+    assert!(
+        result.is_err(),
+        "Should fail when 'b' not present after 'a'"
+    );
 }
 
 // =============================================================================

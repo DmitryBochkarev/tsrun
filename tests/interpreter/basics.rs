@@ -74,7 +74,6 @@ fn test_arithmetic() {
     assert_eq!(eval("(2 as number) ** (3 as number)"), JsValue::Number(8.0));
 }
 
-
 #[test]
 fn test_precedence() {
     assert_eq!(

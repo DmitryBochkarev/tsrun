@@ -150,7 +150,10 @@ fn test_compare_bad_vs_good() {
 
     let speedup = time_bad.as_secs_f64() / time_good.as_secs_f64().max(0.0001);
 
-    println!("Depth {}: bad={:?}, good={:?}, speedup={:.1}x", depth, time_bad, time_good, speedup);
+    println!(
+        "Depth {}: bad={:?}, good={:?}, speedup={:.1}x",
+        depth, time_bad, time_good, speedup
+    );
 
     // The good grammar should be significantly faster
     assert!(
@@ -196,7 +199,10 @@ fn test_pattern_description() {
         })
     "#;
 
-    println!("Bad pattern (causes exponential backtracking):\n{}", bad_pattern);
+    println!(
+        "Bad pattern (causes exponential backtracking):\n{}",
+        bad_pattern
+    );
     println!("Good pattern (linear time):\n{}", good_pattern);
 }
 
@@ -219,18 +225,11 @@ fn create_simple_bad_grammar() -> trampoline_parser::CompiledGrammar {
                     r.parse("datum"),
                     r.char(')'),
                 )),
-                r.sequence((
-                    r.char('('),
-                    r.one_or_more(r.parse("datum")),
-                    r.char(')'),
-                )),
+                r.sequence((r.char('('), r.one_or_more(r.parse("datum")), r.char(')'))),
             ))
         })
         .rule("datum", |r| {
-            r.choice((
-                r.parse("expr"),
-                r.capture(r.one_or_more(r.alpha())),
-            ))
+            r.choice((r.parse("expr"), r.capture(r.one_or_more(r.alpha()))))
         })
         .build()
 }
@@ -244,11 +243,16 @@ fn test_detection_finds_exponential_patterns() {
 
     println!("Simple grammar warnings:");
     for w in &warnings {
-        println!("  - {}: {} (severity: {:?})", w.rule_name, w.description, w.severity);
+        println!(
+            "  - {}: {} (severity: {:?})",
+            w.rule_name, w.description, w.severity
+        );
     }
 
     assert!(
-        warnings.iter().any(|w| w.severity == BacktrackingSeverity::Exponential),
+        warnings
+            .iter()
+            .any(|w| w.severity == BacktrackingSeverity::Exponential),
         "Expected to detect exponential backtracking in simple grammar"
     );
 }
@@ -266,9 +270,9 @@ fn test_detection_expands_rule_references() {
     let grammar = Grammar::new()
         .rule("list", |r| {
             r.choice((
-                r.parse("dotted_list"),  // '(' datum+ '.' datum ')'
-                r.parse("proper_list"),  // '(' datum+ ')'
-                // Note: no empty_list - all alternatives share prefix
+                r.parse("dotted_list"), // '(' datum+ '.' datum ')'
+                r.parse("proper_list"), // '(' datum+ ')'
+                                        // Note: no empty_list - all alternatives share prefix
             ))
         })
         .rule("dotted_list", |r| {
@@ -291,31 +295,27 @@ fn test_detection_expands_rule_references() {
                 r.char(')'),
             ))
         })
-        .rule("datum", |r| {
-            r.choice((
-                r.parse("list"),
-                r.parse("symbol"),
-            ))
-        })
-        .rule("symbol", |r| {
-            r.capture(r.one_or_more(r.alpha()))
-        })
-        .rule("ws", |r| {
-            r.skip(r.zero_or_more(r.ws()))
-        })
+        .rule("datum", |r| r.choice((r.parse("list"), r.parse("symbol"))))
+        .rule("symbol", |r| r.capture(r.one_or_more(r.alpha())))
+        .rule("ws", |r| r.skip(r.zero_or_more(r.ws())))
         .build();
 
     let warnings = grammar.analyze_backtracking();
 
     println!("Grammar with rule references warnings:");
     for w in &warnings {
-        println!("  - {}: {} (severity: {:?})", w.rule_name, w.description, w.severity);
+        println!(
+            "  - {}: {} (severity: {:?})",
+            w.rule_name, w.description, w.severity
+        );
     }
 
     // The 'list' rule has choice between dotted_list and proper_list
     // which share a prefix when expanded
     assert!(
-        warnings.iter().any(|w| w.severity == BacktrackingSeverity::Exponential),
+        warnings
+            .iter()
+            .any(|w| w.severity == BacktrackingSeverity::Exponential),
         "Expected to detect exponential backtracking through rule references"
     );
 }
@@ -328,7 +328,9 @@ fn test_optimization_improves_performance() {
     // Analyze before optimization
     let warnings_before = simple_grammar.analyze_backtracking();
     assert!(
-        warnings_before.iter().any(|w| w.severity == BacktrackingSeverity::Exponential),
+        warnings_before
+            .iter()
+            .any(|w| w.severity == BacktrackingSeverity::Exponential),
         "Pre-condition: grammar should have exponential backtracking"
     );
 
@@ -339,11 +341,16 @@ fn test_optimization_improves_performance() {
     let warnings_after = optimized.analyze_backtracking();
     println!("Warnings after optimization:");
     for w in &warnings_after {
-        println!("  - {}: {} (severity: {:?})", w.rule_name, w.description, w.severity);
+        println!(
+            "  - {}: {} (severity: {:?})",
+            w.rule_name, w.description, w.severity
+        );
     }
 
     assert!(
-        !warnings_after.iter().any(|w| w.severity == BacktrackingSeverity::Exponential),
+        !warnings_after
+            .iter()
+            .any(|w| w.severity == BacktrackingSeverity::Exponential),
         "After optimization, should have no exponential backtracking"
     );
 }

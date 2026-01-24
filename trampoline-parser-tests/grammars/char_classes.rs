@@ -42,6 +42,8 @@ pub fn uppercase() -> CompiledGrammar {
 /// Test range() combinator with custom range (0-5)
 pub fn custom_range() -> CompiledGrammar {
     Grammar::new()
-        .rule("custom_range", |r| r.capture(r.one_or_more(r.range('0', '5'))))
+        .rule("custom_range", |r| {
+            r.capture(r.one_or_more(r.range('0', '5')))
+        })
         .build()
 }

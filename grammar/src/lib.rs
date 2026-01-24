@@ -83,6 +83,7 @@ pub fn typescript_grammar() -> Grammar {
         .rule("namespace_declaration", rule_namespace_declaration)
         // Expressions
         .rule("expression", rule_expression)
+        .rule("assignment_expression", rule_assignment_expression)
         .rule("primary", rule_primary)
         .rule("primary_inner", rule_primary_inner)
         .rule("literal", rule_literal)
@@ -293,6 +294,24 @@ fn logical(left: ParseResult, right: ParseResult, op: LogicalOp, span: Span) -> 
         operator: op,
         left: Rc::new(to_expr(left)?),
         right: Rc::new(to_expr(right)?),
+        span,
+    })))
+}
+
+/// Create sequence expression (comma operator), flattening nested sequences
+fn sequence_expr(left: ParseResult, right: ParseResult, span: Span) -> Result<ParseResult, ParseError> {
+    let left_expr = to_expr(left)?;
+    let right_expr = to_expr(right)?;
+
+    // Flatten: if left is already a sequence, extend it
+    let mut expressions = match left_expr {
+        Expression::Sequence(seq) => seq.expressions,
+        other => vec![other],
+    };
+    expressions.push(right_expr);
+
+    Ok(ParseResult::Expr(Expression::Sequence(SequenceExpression {
+        expressions,
         span,
     })))
 }
@@ -1527,20 +1546,14 @@ fn rule_ws(r: &RuleBuilder) -> Combinator {
 fn rule_line_comment(r: &RuleBuilder) -> Combinator {
     r.sequence((
         r.lit("//"),
-        r.zero_or_more(r.sequence((
-            r.not_followed_by(r.char('\n')),
-            r.any_char(),
-        ))),
+        r.zero_or_more(r.sequence((r.not_followed_by(r.char('\n')), r.any_char()))),
     ))
 }
 
 fn rule_block_comment(r: &RuleBuilder) -> Combinator {
     r.sequence((
         r.lit("/*"),
-        r.zero_or_more(r.sequence((
-            r.not_followed_by(r.lit("*/")),
-            r.any_char(),
-        ))),
+        r.zero_or_more(r.sequence((r.not_followed_by(r.lit("*/")), r.any_char()))),
         r.lit("*/"),
     ))
 }
@@ -1633,13 +1646,17 @@ fn rule_regexp_literal(r: &RuleBuilder) -> Combinator {
         // Pattern: any char except unescaped / or newline, or escaped char
         r.one_or_more(r.choice((
             r.sequence((r.char('\\'), r.any_char())), // Escape sequence
-            r.sequence((r.char('['), r.zero_or_more(r.choice((
-                r.sequence((r.char('\\'), r.any_char())), // Escape in char class
-                r.sequence((
-                    r.not_followed_by(r.choice((r.char(']'), r.char('\\'), r.char('\n')))),
-                    r.any_char(),
-                )),
-            ))), r.char(']'))), // Character class
+            r.sequence((
+                r.char('['),
+                r.zero_or_more(r.choice((
+                    r.sequence((r.char('\\'), r.any_char())), // Escape in char class
+                    r.sequence((
+                        r.not_followed_by(r.choice((r.char(']'), r.char('\\'), r.char('\n')))),
+                        r.any_char(),
+                    )),
+                ))),
+                r.char(']'),
+            )), // Character class
             r.sequence((
                 r.not_followed_by(r.choice((r.char('/'), r.char('\\'), r.char('\n'), r.char('[')))),
                 r.any_char(),
@@ -1742,10 +1759,11 @@ fn ws_infix(r: &RuleBuilder, operator: &str) -> Combinator {
 
 fn rule_program(r: &RuleBuilder) -> Combinator {
     r.sequence((
-        r.parse("ws"),  // Consume leading whitespace
+        r.parse("ws"), // Consume leading whitespace
         r.zero_or_more(r.parse("statement")),
     ))
-        .ast("|result: ParseResult, _span: Span| -> Result<ParseResult, ParseError> {
+    .ast(
+        "|result: ParseResult, _span: Span| -> Result<ParseResult, ParseError> {
             // result is [ws, statements]
             let parts = result.into_list();
             let stmts_result = parts.into_iter().nth(1).unwrap_or(ParseResult::None);
@@ -1758,7 +1776,8 @@ fn rule_program(r: &RuleBuilder) -> Combinator {
                 body: Rc::from(statements),
                 source_type: SourceType::Module,
             }))
-        }")
+        }",
+    )
 }
 
 fn rule_statement(r: &RuleBuilder) -> Combinator {
@@ -1849,7 +1868,8 @@ fn rule_variable_declarator(r: &RuleBuilder) -> Combinator {
     r.sequence((
         r.parse("pattern"),
         r.optional(r.parse("type_annotation")),
-        r.optional(r.sequence((op(r, "="), r.parse("expression")))),
+        // Use assignment_expression (not expression) to avoid comma being consumed
+        r.optional(r.sequence((op(r, "="), r.parse("assignment_expression")))),
     ))
 }
 
@@ -1911,7 +1931,9 @@ fn rule_function_declaration(r: &RuleBuilder) -> Combinator {
         op(r, ")"),
         r.optional(r.parse("type_annotation")),
         r.parse("block_statement"),
-    )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    ))
+    .ast(
+        "|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
         // [async?, function, *?, name?, type_params?, (, params?, ), return_type?, body]
         if let ParseResult::List(parts) = result {
             let mut iter = parts.into_iter();
@@ -1929,7 +1951,8 @@ fn rule_function_declaration(r: &RuleBuilder) -> Combinator {
         } else {
             Err(ParseError::new(\"Expected function declaration parts\".to_string(), 0, 0))
         }
-    }")
+    }",
+    )
 }
 
 fn rule_class_declaration(r: &RuleBuilder) -> Combinator {
@@ -1945,7 +1968,9 @@ fn rule_class_declaration(r: &RuleBuilder) -> Combinator {
             r.separated_by(r.parse("type_reference"), op(r, ",")),
         ))),
         r.parse("class_body"),
-    )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    ))
+    .ast(
+        "|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
         // [decorators, abstract?, class, name?, type_params?, extends?, implements?, body]
         if let ParseResult::List(parts) = result {
             let mut iter = parts.into_iter();
@@ -1962,7 +1987,8 @@ fn rule_class_declaration(r: &RuleBuilder) -> Combinator {
         } else {
             Err(ParseError::new(\"Expected class declaration parts\".to_string(), 0, 0))
         }
-    }")
+    }",
+    )
 }
 
 fn rule_class_body(r: &RuleBuilder) -> Combinator {
@@ -1970,7 +1996,9 @@ fn rule_class_body(r: &RuleBuilder) -> Combinator {
         op(r, "{"),
         r.zero_or_more(r.parse("class_member")),
         op(r, "}"),
-    )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    ))
+    .ast(
+        "|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
         // [{, members*, }]
         if let ParseResult::List(parts) = result {
             let mut iter = parts.into_iter();
@@ -1982,7 +2010,8 @@ fn rule_class_body(r: &RuleBuilder) -> Combinator {
         } else {
             Err(ParseError::new(\"Expected class body parts\".to_string(), 0, 0))
         }
-    }")
+    }",
+    )
 }
 
 fn rule_class_member(r: &RuleBuilder) -> Combinator {
@@ -2002,7 +2031,9 @@ fn rule_class_constructor(r: &RuleBuilder) -> Combinator {
         r.optional(r.parse("parameter_list")),
         op(r, ")"),
         r.parse("block_statement"),
-    )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    ))
+    .ast(
+        "|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
         // [accessibility?, constructor, (, params?, ), body]
         if let ParseResult::List(parts) = result {
             let mut iter = parts.into_iter();
@@ -2017,7 +2048,8 @@ fn rule_class_constructor(r: &RuleBuilder) -> Combinator {
         } else {
             Err(ParseError::new(\"Expected constructor parts\".to_string(), 0, 0))
         }
-    }")
+    }",
+    )
 }
 
 fn rule_class_method(r: &RuleBuilder) -> Combinator {
@@ -2081,7 +2113,8 @@ fn rule_class_property(r: &RuleBuilder) -> Combinator {
         r.parse("property_key"),
         r.optional(op(r, "?")),
         r.optional(r.parse("type_annotation")),
-        r.optional(r.sequence((op(r, "="), r.parse("expression")))),
+        // Use assignment_expression to avoid comma being consumed
+        r.optional(r.sequence((op(r, "="), r.parse("assignment_expression")))),
         r.parse("semicolon"),
     )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
         // [decorators, accessibility?, static?, readonly?, accessor?, key, ?, type_ann?, init?, ;]
@@ -2106,7 +2139,9 @@ fn rule_class_property(r: &RuleBuilder) -> Combinator {
 }
 
 fn rule_static_block(r: &RuleBuilder) -> Combinator {
-    r.sequence((kw(r, "static"), r.parse("block_statement"))).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    r.sequence((kw(r, "static"), r.parse("block_statement")))
+        .ast(
+            "|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
         // [static, block]
         if let ParseResult::List(parts) = result {
             let mut iter = parts.into_iter();
@@ -2122,7 +2157,8 @@ fn rule_static_block(r: &RuleBuilder) -> Combinator {
         } else {
             Err(ParseError::new(\"Expected static block parts\".to_string(), 0, 0))
         }
-    }")
+    }",
+        )
 }
 
 fn rule_if_statement(r: &RuleBuilder) -> Combinator {
@@ -2133,7 +2169,9 @@ fn rule_if_statement(r: &RuleBuilder) -> Combinator {
         op(r, ")"),
         r.parse("statement"),
         r.optional(r.sequence((kw(r, "else"), r.parse("statement")))),
-    )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    ))
+    .ast(
+        "|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
         // [if, (, test, ), consequent, else_clause?]
         if let ParseResult::List(parts) = result {
             let mut iter = parts.into_iter();
@@ -2171,7 +2209,8 @@ fn rule_if_statement(r: &RuleBuilder) -> Combinator {
         } else {
             Err(ParseError::new(\"Expected if statement parts\".to_string(), 0, 0))
         }
-    }")
+    }",
+    )
 }
 
 fn rule_for_statement(r: &RuleBuilder) -> Combinator {
@@ -2349,7 +2388,9 @@ fn rule_while_statement(r: &RuleBuilder) -> Combinator {
         r.parse("expression"),
         op(r, ")"),
         r.parse("statement"),
-    )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    ))
+    .ast(
+        "|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
         // [while, (, test, ), body]
         if let ParseResult::List(parts) = result {
             let mut iter = parts.into_iter();
@@ -2372,7 +2413,8 @@ fn rule_while_statement(r: &RuleBuilder) -> Combinator {
         } else {
             Err(ParseError::new(\"Expected while statement parts\".to_string(), 0, 0))
         }
-    }")
+    }",
+    )
 }
 
 fn rule_do_while_statement(r: &RuleBuilder) -> Combinator {
@@ -2384,7 +2426,9 @@ fn rule_do_while_statement(r: &RuleBuilder) -> Combinator {
         r.parse("expression"),
         op(r, ")"),
         r.parse("semicolon"),
-    )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    ))
+    .ast(
+        "|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
         // [do, body, while, (, test, ), ;]
         if let ParseResult::List(parts) = result {
             let mut iter = parts.into_iter();
@@ -2407,7 +2451,8 @@ fn rule_do_while_statement(r: &RuleBuilder) -> Combinator {
         } else {
             Err(ParseError::new(\"Expected do-while statement parts\".to_string(), 0, 0))
         }
-    }")
+    }",
+    )
 }
 
 fn rule_switch_statement(r: &RuleBuilder) -> Combinator {
@@ -2419,7 +2464,9 @@ fn rule_switch_statement(r: &RuleBuilder) -> Combinator {
         op(r, "{"),
         r.zero_or_more(r.parse("switch_case")),
         op(r, "}"),
-    )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    ))
+    .ast(
+        "|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
         // [switch, (, discriminant, ), {, cases, }]
         if let ParseResult::List(parts) = result {
             let mut iter = parts.into_iter();
@@ -2453,7 +2500,8 @@ fn rule_switch_statement(r: &RuleBuilder) -> Combinator {
         } else {
             Err(ParseError::new(\"Expected switch statement parts\".to_string(), 0, 0))
         }
-    }")
+    }",
+    )
 }
 
 fn rule_switch_case(r: &RuleBuilder) -> Combinator {
@@ -2463,7 +2511,9 @@ fn rule_switch_case(r: &RuleBuilder) -> Combinator {
             r.parse("expression"),
             op(r, ":"),
             r.zero_or_more(r.parse("statement")),
-        )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+        ))
+        .ast(
+            "|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
             // [case, test, :, consequent]
             if let ParseResult::List(parts) = result {
                 let mut iter = parts.into_iter();
@@ -2490,12 +2540,15 @@ fn rule_switch_case(r: &RuleBuilder) -> Combinator {
             } else {
                 Err(ParseError::new(\"Expected case parts\".to_string(), 0, 0))
             }
-        }"),
+        }",
+        ),
         r.sequence((
             kw(r, "default"),
             op(r, ":"),
             r.zero_or_more(r.parse("statement")),
-        )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+        ))
+        .ast(
+            "|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
             // [default, :, consequent]
             if let ParseResult::List(parts) = result {
                 let mut iter = parts.into_iter();
@@ -2521,7 +2574,8 @@ fn rule_switch_case(r: &RuleBuilder) -> Combinator {
             } else {
                 Err(ParseError::new(\"Expected default case parts\".to_string(), 0, 0))
             }
-        }"),
+        }",
+        ),
     ))
 }
 
@@ -2531,7 +2585,9 @@ fn rule_try_statement(r: &RuleBuilder) -> Combinator {
         r.parse("block_statement"),
         r.optional(r.parse("catch_clause")),
         r.optional(r.sequence((kw(r, "finally"), r.parse("block_statement")))),
-    )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    ))
+    .ast(
+        "|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
         // [try, block, catch_clause?, finally_clause?]
         if let ParseResult::List(parts) = result {
             let mut iter = parts.into_iter();
@@ -2602,7 +2658,8 @@ fn rule_try_statement(r: &RuleBuilder) -> Combinator {
         } else {
             Err(ParseError::new(\"Expected try statement parts\".to_string(), 0, 0))
         }
-    }")
+    }",
+    )
 }
 
 fn rule_catch_clause(r: &RuleBuilder) -> Combinator {
@@ -2614,13 +2671,12 @@ fn rule_catch_clause(r: &RuleBuilder) -> Combinator {
 }
 
 fn rule_block_statement(r: &RuleBuilder) -> Combinator {
-    r.sequence((
-        op(r, "{"),
-        r.zero_or_more(r.parse("statement")),
-        op(r, "}"),
-    )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    r.sequence((op(r, "{"), r.zero_or_more(r.parse("statement")), op(r, "}")))
+        .ast(
+            "|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
         create_block_stmt(result, span)
-    }")
+    }",
+        )
 }
 
 fn rule_return_statement(r: &RuleBuilder) -> Combinator {
@@ -2628,7 +2684,9 @@ fn rule_return_statement(r: &RuleBuilder) -> Combinator {
         kw(r, "return"),
         r.optional(r.parse("expression")),
         r.parse("semicolon"),
-    )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    ))
+    .ast(
+        "|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
         if let ParseResult::List(parts) = result {
             let mut iter = parts.into_iter();
             let _return_kw = iter.next(); // skip 'return'
@@ -2641,7 +2699,8 @@ fn rule_return_statement(r: &RuleBuilder) -> Combinator {
         } else {
             Err(ParseError::new(\"Expected return statement parts\".to_string(), 0, 0))
         }
-    }")
+    }",
+    )
 }
 
 fn rule_break_statement(r: &RuleBuilder) -> Combinator {
@@ -2649,7 +2708,9 @@ fn rule_break_statement(r: &RuleBuilder) -> Combinator {
         kw(r, "break"),
         r.optional(r.parse("identifier")),
         r.parse("semicolon"),
-    )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    ))
+    .ast(
+        "|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
         if let ParseResult::List(parts) = result {
             let mut iter = parts.into_iter();
             let _break_kw = iter.next();
@@ -2661,7 +2722,8 @@ fn rule_break_statement(r: &RuleBuilder) -> Combinator {
         } else {
             Err(ParseError::new(\"Expected break statement parts\".to_string(), 0, 0))
         }
-    }")
+    }",
+    )
 }
 
 fn rule_continue_statement(r: &RuleBuilder) -> Combinator {
@@ -2669,7 +2731,9 @@ fn rule_continue_statement(r: &RuleBuilder) -> Combinator {
         kw(r, "continue"),
         r.optional(r.parse("identifier")),
         r.parse("semicolon"),
-    )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    ))
+    .ast(
+        "|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
         if let ParseResult::List(parts) = result {
             let mut iter = parts.into_iter();
             let _continue_kw = iter.next();
@@ -2681,15 +2745,14 @@ fn rule_continue_statement(r: &RuleBuilder) -> Combinator {
         } else {
             Err(ParseError::new(\"Expected continue statement parts\".to_string(), 0, 0))
         }
-    }")
+    }",
+    )
 }
 
 fn rule_throw_statement(r: &RuleBuilder) -> Combinator {
-    r.sequence((
-        kw(r, "throw"),
-        r.parse("expression"),
-        r.parse("semicolon"),
-    )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    r.sequence((kw(r, "throw"), r.parse("expression"), r.parse("semicolon")))
+        .ast(
+            "|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
         if let ParseResult::List(parts) = result {
             let mut iter = parts.into_iter();
             let _throw_kw = iter.next();
@@ -2701,22 +2764,22 @@ fn rule_throw_statement(r: &RuleBuilder) -> Combinator {
         } else {
             Err(ParseError::new(\"Expected throw statement parts\".to_string(), 0, 0))
         }
-    }")
+    }",
+        )
 }
 
 fn rule_debugger_statement(r: &RuleBuilder) -> Combinator {
-    r.sequence((kw(r, "debugger"), r.parse("semicolon")))
-        .ast("|_result: ParseResult, _span: Span| -> Result<ParseResult, ParseError> {
+    r.sequence((kw(r, "debugger"), r.parse("semicolon"))).ast(
+        "|_result: ParseResult, _span: Span| -> Result<ParseResult, ParseError> {
             Ok(ParseResult::Stmt(Statement::Debugger))
-        }")
+        }",
+    )
 }
 
 fn rule_labeled_statement(r: &RuleBuilder) -> Combinator {
-    r.sequence((
-        r.parse("identifier"),
-        op(r, ":"),
-        r.parse("statement"),
-    )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    r.sequence((r.parse("identifier"), op(r, ":"), r.parse("statement")))
+        .ast(
+            "|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
         // [label, :, body]
         if let ParseResult::List(parts) = result {
             let mut iter = parts.into_iter();
@@ -2738,7 +2801,8 @@ fn rule_labeled_statement(r: &RuleBuilder) -> Combinator {
         } else {
             Err(ParseError::new(\"Expected labeled statement parts\".to_string(), 0, 0))
         }
-    }")
+    }",
+        )
 }
 
 fn rule_expression_statement(r: &RuleBuilder) -> Combinator {
@@ -2796,7 +2860,9 @@ fn rule_declare_function(r: &RuleBuilder) -> Combinator {
         op(r, ")"),
         r.optional(r.parse("type_annotation")),
         r.parse("semicolon"),
-    )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    ))
+    .ast(
+        "|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
         // [async?, function, *?, name?, type_params?, (, params?, ), return_type?, ;]
         if let ParseResult::List(parts) = result {
             let mut iter = parts.into_iter();
@@ -2818,7 +2884,8 @@ fn rule_declare_function(r: &RuleBuilder) -> Combinator {
         } else {
             Err(ParseError::new(\"Expected ambient function declaration parts\".to_string(), 0, 0))
         }
-    }")
+    }",
+    )
 }
 
 fn rule_declare_module(r: &RuleBuilder) -> Combinator {
@@ -2830,7 +2897,9 @@ fn rule_declare_module(r: &RuleBuilder) -> Combinator {
         op(r, "{"),
         r.zero_or_more(r.parse("statement")),
         op(r, "}"),
-    )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    ))
+    .ast(
+        "|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
         // Parse as a namespace declaration with the string name as identifier
         let mut items = result.into_list().into_iter();
         let _ = items.next(); // skip 'module' keyword
@@ -2857,7 +2926,8 @@ fn rule_declare_module(r: &RuleBuilder) -> Combinator {
             body: Rc::from(body),
             span,
         }))))
-    }")
+    }",
+    )
 }
 
 // Import/Export
@@ -2871,7 +2941,9 @@ fn rule_import_declaration(r: &RuleBuilder) -> Combinator {
         r.parse("string_literal"),
         r.parse("ws"),
         r.parse("semicolon"),
-    )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    ))
+    .ast(
+        "|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
         // [import, type?, import_clause, from, string, ws, semicolon]
         if let ParseResult::List(parts) = result {
             let mut iter = parts.into_iter();
@@ -2903,7 +2975,8 @@ fn rule_import_declaration(r: &RuleBuilder) -> Combinator {
         } else {
             Err(ParseError::new(\"Expected import declaration parts\".to_string(), 0, 0))
         }
-    }")
+    }",
+    )
 }
 
 fn rule_import_clause(r: &RuleBuilder) -> Combinator {
@@ -3178,7 +3251,9 @@ fn rule_type_alias_declaration(r: &RuleBuilder) -> Combinator {
         op(r, "="),
         r.parse("type"),
         r.parse("semicolon"),
-    )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    ))
+    .ast(
+        "|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
         // [type, id, type_params?, =, type, ;]
         if let ParseResult::List(parts) = result {
             let mut iter = parts.into_iter();
@@ -3202,7 +3277,8 @@ fn rule_type_alias_declaration(r: &RuleBuilder) -> Combinator {
         } else {
             Err(ParseError::new(\"Expected type alias declaration parts\".to_string(), 0, 0))
         }
-    }")
+    }",
+    )
 }
 
 fn rule_interface_declaration(r: &RuleBuilder) -> Combinator {
@@ -3215,7 +3291,9 @@ fn rule_interface_declaration(r: &RuleBuilder) -> Combinator {
             r.separated_by(r.parse("type_reference"), op(r, ",")),
         ))),
         r.parse("object_type"),
-    )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    ))
+    .ast(
+        "|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
         // [interface, id, type_params?, extends?, body]
         if let ParseResult::List(parts) = result {
             let mut iter = parts.into_iter();
@@ -3238,7 +3316,8 @@ fn rule_interface_declaration(r: &RuleBuilder) -> Combinator {
         } else {
             Err(ParseError::new(\"Expected interface declaration parts\".to_string(), 0, 0))
         }
-    }")
+    }",
+    )
 }
 
 fn rule_enum_declaration(r: &RuleBuilder) -> Combinator {
@@ -3249,7 +3328,9 @@ fn rule_enum_declaration(r: &RuleBuilder) -> Combinator {
         op(r, "{"),
         r.optional(r.separated_by_trailing(r.parse("enum_member"), op(r, ","))),
         op(r, "}"),
-    )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    ))
+    .ast(
+        "|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
         // [const?, enum, name, {, members?, }]
         if let ParseResult::List(parts) = result {
             let mut iter = parts.into_iter();
@@ -3263,13 +3344,15 @@ fn rule_enum_declaration(r: &RuleBuilder) -> Combinator {
         } else {
             Err(ParseError::new(\"Expected enum declaration parts\".to_string(), 0, 0))
         }
-    }")
+    }",
+    )
 }
 
 fn rule_enum_member(r: &RuleBuilder) -> Combinator {
     r.sequence((
         r.parse("identifier"),
-        r.optional(r.sequence((op(r, "="), r.parse("expression")))),
+        // Use assignment_expression to avoid comma being consumed
+        r.optional(r.sequence((op(r, "="), r.parse("assignment_expression")))),
     ))
 }
 
@@ -3278,7 +3361,9 @@ fn rule_namespace_declaration(r: &RuleBuilder) -> Combinator {
         kw(r, "namespace"),
         r.parse("identifier"),
         r.parse("block_statement"),
-    )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    ))
+    .ast(
+        "|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
         // [namespace, id, body]
         if let ParseResult::List(parts) = result {
             let mut iter = parts.into_iter();
@@ -3300,74 +3385,331 @@ fn rule_namespace_declaration(r: &RuleBuilder) -> Combinator {
         } else {
             Err(ParseError::new(\"Expected namespace declaration parts\".to_string(), 0, 0))
         }
-    }")
+    }",
+    )
 }
 
 // Expressions
 
+/// Full expression including comma operator (sequence expression)
 fn rule_expression(r: &RuleBuilder) -> Combinator {
+    // expression = assignment_expression (, assignment_expression)*
+    r.sequence((
+        r.parse("assignment_expression"),
+        r.zero_or_more(r.sequence((op(r, ","), r.parse("assignment_expression")))),
+    ))
+    .ast(
+        "|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+        let items = result.into_list();
+        let mut iter = items.into_iter();
+        let first = iter.next().unwrap_or(ParseResult::None);
+        let rest = iter.next();
+
+        // If there are comma-separated items, create a sequence expression
+        if let Some(ParseResult::List(comma_items)) = rest {
+            if comma_items.is_empty() {
+                return Ok(first);
+            }
+            let mut expressions = vec![to_expr(first)?];
+            for item in comma_items {
+                // Each item is [comma, expr]
+                if let ParseResult::List(parts) = item {
+                    if let Some(expr_result) = parts.into_iter().nth(1) {
+                        expressions.push(to_expr(expr_result)?);
+                    }
+                }
+            }
+            if expressions.len() == 1 {
+                return Ok(ParseResult::Expr(expressions.remove(0)));
+            }
+            Ok(ParseResult::Expr(Expression::Sequence(SequenceExpression {
+                expressions,
+                span,
+            })))
+        } else {
+            Ok(first)
+        }
+    }",
+    )
+}
+
+/// Assignment expression (everything except comma operator)
+fn rule_assignment_expression(r: &RuleBuilder) -> Combinator {
     // Pratt parsing for expressions, followed by optional `as Type` suffixes
     // Infix operators use leading ws pattern: after operand consumes trailing ws,
     // we need to consume any ws before the operator before parsing right operand
     r.sequence((
         r.pratt(r.parse("primary"), |ops| {
             ops
-                // === Assignment operators (lowest precedence, right-associative) ===
-                .infix(ws_infix(r, ">>>="), 2, Assoc::Right, "|l, r, s| assign(l, r, AssignmentOp::URShiftAssign, s)")
-                .infix(ws_infix(r, "**="), 2, Assoc::Right, "|l, r, s| assign(l, r, AssignmentOp::ExpAssign, s)")
-                .infix(ws_infix(r, "<<="), 2, Assoc::Right, "|l, r, s| assign(l, r, AssignmentOp::LShiftAssign, s)")
-                .infix(ws_infix(r, ">>="), 2, Assoc::Right, "|l, r, s| assign(l, r, AssignmentOp::RShiftAssign, s)")
-                .infix(ws_infix(r, "&&="), 2, Assoc::Right, "|l, r, s| assign(l, r, AssignmentOp::AndAssign, s)")
-                .infix(ws_infix(r, "||="), 2, Assoc::Right, "|l, r, s| assign(l, r, AssignmentOp::OrAssign, s)")
-                .infix(ws_infix(r, "??="), 2, Assoc::Right, "|l, r, s| assign(l, r, AssignmentOp::NullishAssign, s)")
-                .infix(ws_infix(r, "+="), 2, Assoc::Right, "|l, r, s| assign(l, r, AssignmentOp::AddAssign, s)")
-                .infix(ws_infix(r, "-="), 2, Assoc::Right, "|l, r, s| assign(l, r, AssignmentOp::SubAssign, s)")
-                .infix(ws_infix(r, "*="), 2, Assoc::Right, "|l, r, s| assign(l, r, AssignmentOp::MulAssign, s)")
-                .infix(ws_infix(r, "/="), 2, Assoc::Right, "|l, r, s| assign(l, r, AssignmentOp::DivAssign, s)")
-                .infix(ws_infix(r, "%="), 2, Assoc::Right, "|l, r, s| assign(l, r, AssignmentOp::ModAssign, s)")
-                .infix(ws_infix(r, "&="), 2, Assoc::Right, "|l, r, s| assign(l, r, AssignmentOp::BitAndAssign, s)")
-                .infix(ws_infix(r, "|="), 2, Assoc::Right, "|l, r, s| assign(l, r, AssignmentOp::BitOrAssign, s)")
-                .infix(ws_infix(r, "^="), 2, Assoc::Right, "|l, r, s| assign(l, r, AssignmentOp::BitXorAssign, s)")
-                .infix(ws_infix(r, "="), 2, Assoc::Right, "|l, r, s| assign(l, r, AssignmentOp::Assign, s)")
+                // === Assignment operators (right-associative) ===
+                .infix(
+                    ws_infix(r, ">>>="),
+                    2,
+                    Assoc::Right,
+                    "|l, r, s| assign(l, r, AssignmentOp::URShiftAssign, s)",
+                )
+                .infix(
+                    ws_infix(r, "**="),
+                    2,
+                    Assoc::Right,
+                    "|l, r, s| assign(l, r, AssignmentOp::ExpAssign, s)",
+                )
+                .infix(
+                    ws_infix(r, "<<="),
+                    2,
+                    Assoc::Right,
+                    "|l, r, s| assign(l, r, AssignmentOp::LShiftAssign, s)",
+                )
+                .infix(
+                    ws_infix(r, ">>="),
+                    2,
+                    Assoc::Right,
+                    "|l, r, s| assign(l, r, AssignmentOp::RShiftAssign, s)",
+                )
+                .infix(
+                    ws_infix(r, "&&="),
+                    2,
+                    Assoc::Right,
+                    "|l, r, s| assign(l, r, AssignmentOp::AndAssign, s)",
+                )
+                .infix(
+                    ws_infix(r, "||="),
+                    2,
+                    Assoc::Right,
+                    "|l, r, s| assign(l, r, AssignmentOp::OrAssign, s)",
+                )
+                .infix(
+                    ws_infix(r, "??="),
+                    2,
+                    Assoc::Right,
+                    "|l, r, s| assign(l, r, AssignmentOp::NullishAssign, s)",
+                )
+                .infix(
+                    ws_infix(r, "+="),
+                    2,
+                    Assoc::Right,
+                    "|l, r, s| assign(l, r, AssignmentOp::AddAssign, s)",
+                )
+                .infix(
+                    ws_infix(r, "-="),
+                    2,
+                    Assoc::Right,
+                    "|l, r, s| assign(l, r, AssignmentOp::SubAssign, s)",
+                )
+                .infix(
+                    ws_infix(r, "*="),
+                    2,
+                    Assoc::Right,
+                    "|l, r, s| assign(l, r, AssignmentOp::MulAssign, s)",
+                )
+                .infix(
+                    ws_infix(r, "/="),
+                    2,
+                    Assoc::Right,
+                    "|l, r, s| assign(l, r, AssignmentOp::DivAssign, s)",
+                )
+                .infix(
+                    ws_infix(r, "%="),
+                    2,
+                    Assoc::Right,
+                    "|l, r, s| assign(l, r, AssignmentOp::ModAssign, s)",
+                )
+                .infix(
+                    ws_infix(r, "&="),
+                    2,
+                    Assoc::Right,
+                    "|l, r, s| assign(l, r, AssignmentOp::BitAndAssign, s)",
+                )
+                .infix(
+                    ws_infix(r, "|="),
+                    2,
+                    Assoc::Right,
+                    "|l, r, s| assign(l, r, AssignmentOp::BitOrAssign, s)",
+                )
+                .infix(
+                    ws_infix(r, "^="),
+                    2,
+                    Assoc::Right,
+                    "|l, r, s| assign(l, r, AssignmentOp::BitXorAssign, s)",
+                )
+                .infix(
+                    ws_infix(r, "="),
+                    2,
+                    Assoc::Right,
+                    "|l, r, s| assign(l, r, AssignmentOp::Assign, s)",
+                )
                 // === Ternary operator ===
                 .ternary("?", ":", 3, "|c, t, e, s| conditional(c, t, e, s)")
                 // === Nullish coalescing ===
-                .infix(ws_infix(r, "??"), 4, Assoc::Left, "|l, r, s| logical(l, r, LogicalOp::NullishCoalescing, s)")
+                .infix(
+                    ws_infix(r, "??"),
+                    4,
+                    Assoc::Left,
+                    "|l, r, s| logical(l, r, LogicalOp::NullishCoalescing, s)",
+                )
                 // === Logical OR ===
-                .infix(ws_infix(r, "||"), 5, Assoc::Left, "|l, r, s| logical(l, r, LogicalOp::Or, s)")
+                .infix(
+                    ws_infix(r, "||"),
+                    5,
+                    Assoc::Left,
+                    "|l, r, s| logical(l, r, LogicalOp::Or, s)",
+                )
                 // === Logical AND ===
-                .infix(ws_infix(r, "&&"), 6, Assoc::Left, "|l, r, s| logical(l, r, LogicalOp::And, s)")
+                .infix(
+                    ws_infix(r, "&&"),
+                    6,
+                    Assoc::Left,
+                    "|l, r, s| logical(l, r, LogicalOp::And, s)",
+                )
                 // === Bitwise OR ===
-                .infix(ws_infix(r, "|"), 7, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::BitOr, s)")
+                .infix(
+                    ws_infix(r, "|"),
+                    7,
+                    Assoc::Left,
+                    "|l, r, s| binary(l, r, BinaryOp::BitOr, s)",
+                )
                 // === Bitwise XOR ===
-                .infix(ws_infix(r, "^"), 8, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::BitXor, s)")
+                .infix(
+                    ws_infix(r, "^"),
+                    8,
+                    Assoc::Left,
+                    "|l, r, s| binary(l, r, BinaryOp::BitXor, s)",
+                )
                 // === Bitwise AND ===
-                .infix(ws_infix(r, "&"), 9, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::BitAnd, s)")
+                .infix(
+                    ws_infix(r, "&"),
+                    9,
+                    Assoc::Left,
+                    "|l, r, s| binary(l, r, BinaryOp::BitAnd, s)",
+                )
                 // === Equality ===
-                .infix(ws_infix(r, "==="), 10, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::StrictEq, s)")
-                .infix(ws_infix(r, "!=="), 10, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::StrictNotEq, s)")
-                .infix(ws_infix(r, "=="), 10, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::Eq, s)")
-                .infix(ws_infix(r, "!="), 10, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::NotEq, s)")
+                .infix(
+                    ws_infix(r, "==="),
+                    10,
+                    Assoc::Left,
+                    "|l, r, s| binary(l, r, BinaryOp::StrictEq, s)",
+                )
+                .infix(
+                    ws_infix(r, "!=="),
+                    10,
+                    Assoc::Left,
+                    "|l, r, s| binary(l, r, BinaryOp::StrictNotEq, s)",
+                )
+                .infix(
+                    ws_infix(r, "=="),
+                    10,
+                    Assoc::Left,
+                    "|l, r, s| binary(l, r, BinaryOp::Eq, s)",
+                )
+                .infix(
+                    ws_infix(r, "!="),
+                    10,
+                    Assoc::Left,
+                    "|l, r, s| binary(l, r, BinaryOp::NotEq, s)",
+                )
                 // === Relational ===
-                .infix(ws_infix(r, "<="), 11, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::LtEq, s)")
-                .infix(ws_infix(r, ">="), 11, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::GtEq, s)")
-                .infix(ws_infix(r, "<"), 11, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::Lt, s)")
-                .infix(ws_infix(r, ">"), 11, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::Gt, s)")
+                .infix(
+                    ws_infix(r, "<="),
+                    11,
+                    Assoc::Left,
+                    "|l, r, s| binary(l, r, BinaryOp::LtEq, s)",
+                )
+                .infix(
+                    ws_infix(r, ">="),
+                    11,
+                    Assoc::Left,
+                    "|l, r, s| binary(l, r, BinaryOp::GtEq, s)",
+                )
+                .infix(
+                    ws_infix(r, "<"),
+                    11,
+                    Assoc::Left,
+                    "|l, r, s| binary(l, r, BinaryOp::Lt, s)",
+                )
+                .infix(
+                    ws_infix(r, ">"),
+                    11,
+                    Assoc::Left,
+                    "|l, r, s| binary(l, r, BinaryOp::Gt, s)",
+                )
                 // Keyword operators with ws + keyword + not_followed_by(ident_cont)
-                .infix(r.sequence((r.parse("ws"), r.lit("in"), r.not_followed_by(r.ident_cont()))), 11, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::In, s)")
-                .infix(r.sequence((r.parse("ws"), r.lit("instanceof"), r.not_followed_by(r.ident_cont()))), 11, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::Instanceof, s)")
+                .infix(
+                    r.sequence((
+                        r.parse("ws"),
+                        r.lit("in"),
+                        r.not_followed_by(r.ident_cont()),
+                    )),
+                    11,
+                    Assoc::Left,
+                    "|l, r, s| binary(l, r, BinaryOp::In, s)",
+                )
+                .infix(
+                    r.sequence((
+                        r.parse("ws"),
+                        r.lit("instanceof"),
+                        r.not_followed_by(r.ident_cont()),
+                    )),
+                    11,
+                    Assoc::Left,
+                    "|l, r, s| binary(l, r, BinaryOp::Instanceof, s)",
+                )
                 // === Shift ===
-                .infix(ws_infix(r, ">>>"), 12, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::URShift, s)")
-                .infix(ws_infix(r, "<<"), 12, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::LShift, s)")
-                .infix(ws_infix(r, ">>"), 12, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::RShift, s)")
+                .infix(
+                    ws_infix(r, ">>>"),
+                    12,
+                    Assoc::Left,
+                    "|l, r, s| binary(l, r, BinaryOp::URShift, s)",
+                )
+                .infix(
+                    ws_infix(r, "<<"),
+                    12,
+                    Assoc::Left,
+                    "|l, r, s| binary(l, r, BinaryOp::LShift, s)",
+                )
+                .infix(
+                    ws_infix(r, ">>"),
+                    12,
+                    Assoc::Left,
+                    "|l, r, s| binary(l, r, BinaryOp::RShift, s)",
+                )
                 // === Additive ===
-                .infix(ws_infix(r, "+"), 13, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::Add, s)")
-                .infix(ws_infix(r, "-"), 13, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::Sub, s)")
+                .infix(
+                    ws_infix(r, "+"),
+                    13,
+                    Assoc::Left,
+                    "|l, r, s| binary(l, r, BinaryOp::Add, s)",
+                )
+                .infix(
+                    ws_infix(r, "-"),
+                    13,
+                    Assoc::Left,
+                    "|l, r, s| binary(l, r, BinaryOp::Sub, s)",
+                )
                 // === Multiplicative (** must come before * so longer operator matches first) ===
-                .infix(ws_infix(r, "**"), 15, Assoc::Right, "|l, r, s| binary(l, r, BinaryOp::Exp, s)")
-                .infix(ws_infix(r, "*"), 14, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::Mul, s)")
-                .infix(ws_infix(r, "/"), 14, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::Div, s)")
-                .infix(ws_infix(r, "%"), 14, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::Mod, s)")
+                .infix(
+                    ws_infix(r, "**"),
+                    15,
+                    Assoc::Right,
+                    "|l, r, s| binary(l, r, BinaryOp::Exp, s)",
+                )
+                .infix(
+                    ws_infix(r, "*"),
+                    14,
+                    Assoc::Left,
+                    "|l, r, s| binary(l, r, BinaryOp::Mul, s)",
+                )
+                .infix(
+                    ws_infix(r, "/"),
+                    14,
+                    Assoc::Left,
+                    "|l, r, s| binary(l, r, BinaryOp::Div, s)",
+                )
+                .infix(
+                    ws_infix(r, "%"),
+                    14,
+                    Assoc::Left,
+                    "|l, r, s| binary(l, r, BinaryOp::Mod, s)",
+                )
                 // === Prefix operators ===
                 .prefix("++", 16, "|e, s| update(e, UpdateOp::Increment, true, s)")
                 .prefix("--", 16, "|e, s| update(e, UpdateOp::Decrement, true, s)")
@@ -3383,7 +3725,11 @@ fn rule_expression(r: &RuleBuilder) -> Combinator {
                 .postfix("++", 17, "|e, s| update(e, UpdateOp::Increment, false, s)")
                 .postfix("--", 17, "|e, s| update(e, UpdateOp::Decrement, false, s)")
                 // TypeScript non-null assertion: x! (must not be followed by = to avoid conflict with !=)
-                .postfix(r.sequence((r.lit("!"), r.not_followed_by(r.lit("=")))), 17, "|e, s| non_null(e, s)")
+                .postfix(
+                    r.sequence((r.lit("!"), r.not_followed_by(r.lit("=")))),
+                    17,
+                    "|e, s| non_null(e, s)",
+                )
                 // Call expressions (optional chaining first to match longer pattern)
                 .postfix_call("?.(", ")", ",", 18, "|c, a, s| call(c, a, true, s)")
                 .postfix_call("(", ")", ",", 18, "|c, a, s| call(c, a, false, s)")
@@ -3402,7 +3748,9 @@ fn rule_expression(r: &RuleBuilder) -> Combinator {
             r.parse("ws"),
             r.parse("type"),
         ))),
-    )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    ))
+    .ast(
+        "|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
         // Extract the expression and as-clause count
         if let ParseResult::List(items) = result {
             let mut iter = items.into_iter();
@@ -3426,22 +3774,22 @@ fn rule_expression(r: &RuleBuilder) -> Combinator {
         } else {
             Ok(result)
         }
-    }")
+    }",
+    )
 }
 
 fn rule_primary(r: &RuleBuilder) -> Combinator {
     // Start with ws to handle whitespace after infix operators
-    r.sequence((
-        r.parse("ws"),
-        r.parse("primary_inner"),
-    )).ast("|result: ParseResult, _span: Span| -> Result<ParseResult, ParseError> {
+    r.sequence((r.parse("ws"), r.parse("primary_inner"))).ast(
+        "|result: ParseResult, _span: Span| -> Result<ParseResult, ParseError> {
         // Return the second element (primary_inner), skip the ws
         if let ParseResult::List(mut items) = result {
             Ok(items.pop().unwrap_or(ParseResult::None))
         } else {
             Ok(result)
         }
-    }")
+    }",
+    )
 }
 
 fn rule_primary_inner(r: &RuleBuilder) -> Combinator {
@@ -3461,10 +3809,12 @@ fn rule_primary_inner(r: &RuleBuilder) -> Combinator {
         r.parse("arrow_function"),
         r.parse("parenthesized"),
         // identifier last since it matches most things
-        r.parse("identifier").ast("|result: ParseResult, _span: Span| -> Result<ParseResult, ParseError> {
+        r.parse("identifier").ast(
+            "|result: ParseResult, _span: Span| -> Result<ParseResult, ParseError> {
             let ident = to_ident(result)?;
             Ok(ParseResult::Expr(Expression::Identifier(ident)))
-        }"),
+        }",
+        ),
     ])
 }
 
@@ -3504,15 +3854,19 @@ fn rule_identifier(r: &RuleBuilder) -> Combinator {
 }
 
 fn rule_this_expression(r: &RuleBuilder) -> Combinator {
-    kw(r, "this").ast("|_result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    kw(r, "this").ast(
+        "|_result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
         Ok(ParseResult::Expr(Expression::This(span)))
-    }")
+    }",
+    )
 }
 
 fn rule_super_expression(r: &RuleBuilder) -> Combinator {
-    kw(r, "super").ast("|_result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    kw(r, "super").ast(
+        "|_result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
         Ok(ParseResult::Expr(Expression::Super(span)))
-    }")
+    }",
+    )
 }
 
 fn rule_array_expression(r: &RuleBuilder) -> Combinator {
@@ -3528,13 +3882,17 @@ fn rule_array_expression(r: &RuleBuilder) -> Combinator {
             ))),
         ))),
         op(r, "]"),
-    )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    ))
+    .ast(
+        "|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
         create_array_expr(result, span)
-    }")
+    }",
+    )
 }
 
 fn rule_array_element(r: &RuleBuilder) -> Combinator {
-    r.choice((r.parse("spread_element"), r.parse("expression")))
+    // Use assignment_expression to avoid comma being consumed
+    r.choice((r.parse("spread_element"), r.parse("assignment_expression")))
 }
 
 fn rule_object_expression(r: &RuleBuilder) -> Combinator {
@@ -3542,9 +3900,12 @@ fn rule_object_expression(r: &RuleBuilder) -> Combinator {
         op(r, "{"),
         r.optional(r.separated_by_trailing(r.parse("object_property"), op(r, ","))),
         op(r, "}"),
-    )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    ))
+    .ast(
+        "|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
         create_object_expr(result, span)
-    }")
+    }",
+    )
 }
 
 fn rule_object_property(r: &RuleBuilder) -> Combinator {
@@ -3562,7 +3923,8 @@ fn rule_key_value_property(r: &RuleBuilder) -> Combinator {
     r.sequence((
         r.parse("property_key"),
         op(r, ":"),
-        r.parse("expression"),
+        // Use assignment_expression (not expression) to avoid comma being consumed
+        r.parse("assignment_expression"),
     ))
 }
 
@@ -3609,24 +3971,17 @@ fn rule_property_key(r: &RuleBuilder) -> Combinator {
         r.parse("identifier"),
         r.sequence((r.parse("string_literal"), r.parse("ws"))),
         r.sequence((r.parse("number_literal"), r.parse("ws"))),
-        r.sequence((
-            op(r, "["),
-            r.parse("expression"),
-            op(r, "]"),
-        )),
+        r.sequence((op(r, "["), r.parse("expression"), op(r, "]"))),
     ))
 }
 
 fn rule_private_name(r: &RuleBuilder) -> Combinator {
-    r.capture(r.sequence((
-        r.lit("#"),
-        r.ident_start(),
-        r.zero_or_more(r.ident_cont()),
-    )))
+    r.capture(r.sequence((r.lit("#"), r.ident_start(), r.zero_or_more(r.ident_cont()))))
 }
 
 fn rule_spread_element(r: &RuleBuilder) -> Combinator {
-    r.sequence((op(r, "..."), r.parse("expression")))
+    // Use assignment_expression to avoid comma being consumed
+    r.sequence((op(r, "..."), r.parse("assignment_expression")))
 }
 
 fn rule_function_expression(r: &RuleBuilder) -> Combinator {
@@ -3641,7 +3996,9 @@ fn rule_function_expression(r: &RuleBuilder) -> Combinator {
         op(r, ")"),
         r.optional(r.parse("type_annotation")),
         r.parse("block_statement"),
-    )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    ))
+    .ast(
+        "|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
         // [async?, function, *, name?, type_params?, (, params?, ), type_ann?, body]
         if let ParseResult::List(parts) = result {
             let mut iter = parts.into_iter();
@@ -3681,7 +4038,8 @@ fn rule_function_expression(r: &RuleBuilder) -> Combinator {
         } else {
             Err(ParseError::new(\"Expected function expression parts\".to_string(), 0, 0))
         }
-    }")
+    }",
+    )
 }
 
 fn rule_arrow_function(r: &RuleBuilder) -> Combinator {
@@ -3696,7 +4054,9 @@ fn rule_arrow_function(r: &RuleBuilder) -> Combinator {
             r.optional(r.parse("type_annotation")),
             op(r, "=>"),
             r.parse("arrow_body"),
-        )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+        ))
+        .ast(
+            "|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
             // [async?, type_params?, (, params?, ), return_type?, =>, body]
             if let ParseResult::List(items) = result {
                 let mut iter = items.into_iter();
@@ -3712,14 +4072,17 @@ fn rule_arrow_function(r: &RuleBuilder) -> Combinator {
             } else {
                 Err(ParseError::new(\"Expected arrow function parts\".to_string(), 0, 0))
             }
-        }"),
+        }",
+        ),
         // Single unparenthesized param: x => body
         r.sequence((
             r.optional(kw(r, "async")),
             r.parse("identifier"),
             op(r, "=>"),
             r.parse("arrow_body"),
-        )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+        ))
+        .ast(
+            "|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
             // [async?, identifier, =>, body]
             if let ParseResult::List(items) = result {
                 let mut iter = items.into_iter();
@@ -3731,12 +4094,14 @@ fn rule_arrow_function(r: &RuleBuilder) -> Combinator {
             } else {
                 Err(ParseError::new(\"Expected arrow function parts\".to_string(), 0, 0))
             }
-        }"),
+        }",
+        ),
     ))
 }
 
 fn rule_arrow_body(r: &RuleBuilder) -> Combinator {
-    r.choice((r.parse("block_statement"), r.parse("expression")))
+    // Arrow body uses assignment_expression: () => a, b parses as ((() => a), b)
+    r.choice((r.parse("block_statement"), r.parse("assignment_expression")))
 }
 
 fn rule_class_expression(r: &RuleBuilder) -> Combinator {
@@ -3760,7 +4125,11 @@ fn rule_template_literal(r: &RuleBuilder) -> Combinator {
             r.parse("template_head"),
             r.parse("ws"),
             r.parse("expression"),
-            r.zero_or_more(r.sequence((r.parse("template_middle"), r.parse("ws"), r.parse("expression")))),
+            r.zero_or_more(r.sequence((
+                r.parse("template_middle"),
+                r.parse("ws"),
+                r.parse("expression"),
+            ))),
             r.parse("template_tail"),
             r.parse("ws"),
         )),
@@ -3770,14 +4139,12 @@ fn rule_template_literal(r: &RuleBuilder) -> Combinator {
 fn rule_new_expression(r: &RuleBuilder) -> Combinator {
     r.sequence((
         kw(r, "new"),
-        r.parse("primary"),  // Use primary instead of expression to avoid consuming too much
-        r.optional(r.parse("type_arguments")),  // Type arguments like <void> or <string, number>
-        r.optional(r.sequence((
-            op(r, "("),
-            r.optional(r.parse("argument_list")),
-            op(r, ")"),
-        ))),
-    )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+        r.parse("primary"), // Use primary instead of expression to avoid consuming too much
+        r.optional(r.parse("type_arguments")), // Type arguments like <void> or <string, number>
+        r.optional(r.sequence((op(r, "("), r.optional(r.parse("argument_list")), op(r, ")")))),
+    ))
+    .ast(
+        "|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
         // [new, callee, type_args?, args?]
         if let ParseResult::List(parts) = result {
             let mut iter = parts.into_iter();
@@ -3825,7 +4192,8 @@ fn rule_new_expression(r: &RuleBuilder) -> Combinator {
         } else {
             Err(ParseError::new(\"Expected new expression parts\".to_string(), 0, 0))
         }
-    }")
+    }",
+    )
 }
 
 fn rule_yield_expression(r: &RuleBuilder) -> Combinator {
@@ -3833,7 +4201,9 @@ fn rule_yield_expression(r: &RuleBuilder) -> Combinator {
         kw(r, "yield"),
         r.optional(op(r, "*")),
         r.optional(r.parse("expression")),
-    )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    ))
+    .ast(
+        "|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
         // [yield, optional *, optional expression]
         if let ParseResult::List(parts) = result {
             let mut iter = parts.into_iter();
@@ -3855,19 +4225,22 @@ fn rule_yield_expression(r: &RuleBuilder) -> Combinator {
         } else {
             Err(ParseError::new(\"Expected yield expression parts\".to_string(), 0, 0))
         }
-    }")
+    }",
+    )
 }
 
 fn rule_parenthesized(r: &RuleBuilder) -> Combinator {
     r.sequence((op(r, "("), r.parse("expression"), op(r, ")")))
-        .ast("|result: ParseResult, _span: Span| -> Result<ParseResult, ParseError> {
+        .ast(
+            "|result: ParseResult, _span: Span| -> Result<ParseResult, ParseError> {
             // Extract expression from sequence [open_paren, expr, close_paren]
             if let ParseResult::List(mut items) = result {
                 Ok(items.remove(1))
             } else {
                 Ok(result)
             }
-        }")
+        }",
+        )
 }
 
 fn rule_argument_list(r: &RuleBuilder) -> Combinator {
@@ -3875,7 +4248,8 @@ fn rule_argument_list(r: &RuleBuilder) -> Combinator {
 }
 
 fn rule_argument(r: &RuleBuilder) -> Combinator {
-    r.choice((r.parse("spread_element"), r.parse("expression")))
+    // Use assignment_expression to avoid comma being consumed
+    r.choice((r.parse("spread_element"), r.parse("assignment_expression")))
 }
 
 // Parameters
@@ -3892,7 +4266,8 @@ fn rule_parameter(r: &RuleBuilder) -> Combinator {
         r.parse("pattern"),
         r.optional(op(r, "?")),
         r.optional(r.parse("type_annotation")),
-        r.optional(r.sequence((op(r, "="), r.parse("expression")))),
+        // Use assignment_expression to avoid comma being consumed
+        r.optional(r.sequence((op(r, "="), r.parse("assignment_expression")))),
     ))
 }
 
@@ -3901,7 +4276,8 @@ fn rule_accessibility_modifier(r: &RuleBuilder) -> Combinator {
 }
 
 fn rule_decorator(r: &RuleBuilder) -> Combinator {
-    r.sequence((op(r, "@"), r.parse("expression"), r.parse("ws")))
+    // Use assignment_expression to avoid comma being consumed
+    r.sequence((op(r, "@"), r.parse("assignment_expression"), r.parse("ws")))
 }
 
 // Patterns
@@ -3916,10 +4292,12 @@ fn rule_pattern(r: &RuleBuilder) -> Combinator {
 }
 
 fn rule_identifier_pattern(r: &RuleBuilder) -> Combinator {
-    r.parse("identifier").ast("|result: ParseResult, _span: Span| -> Result<ParseResult, ParseError> {
+    r.parse("identifier").ast(
+        "|result: ParseResult, _span: Span| -> Result<ParseResult, ParseError> {
         let id = to_ident(result)?;
         Ok(ParseResult::Pat(Pattern::Identifier(id)))
-    }")
+    }",
+    )
 }
 
 fn rule_object_pattern(r: &RuleBuilder) -> Combinator {
@@ -3927,7 +4305,79 @@ fn rule_object_pattern(r: &RuleBuilder) -> Combinator {
         op(r, "{"),
         r.optional(r.separated_by_trailing(r.parse("object_pattern_property"), op(r, ","))),
         op(r, "}"),
-    ))
+    )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+        // [{, properties?, }]
+        if let ParseResult::List(parts) = result {
+            let mut iter = parts.into_iter();
+            let _open_brace = iter.next();
+            let properties_result = iter.next().unwrap_or(ParseResult::None);
+            let _close_brace = iter.next();
+
+            let properties: Vec<ObjectPatternProperty> = match properties_result {
+                ParseResult::List(items) => {
+                    items.into_iter().filter_map(|item| {
+                        match item {
+                            ParseResult::Pat(Pattern::Rest(r)) => Some(ObjectPatternProperty::Rest(r)),
+                            ParseResult::List(prop_parts) => {
+                                // [key, colon_pattern?, default?]
+                                let mut prop_iter = prop_parts.into_iter();
+                                let key_result = prop_iter.next()?;
+                                let colon_pattern = prop_iter.next();
+                                let _default = prop_iter.next();
+
+                                // Determine key and value
+                                let key = match &key_result {
+                                    ParseResult::Ident(id) => ObjectPropertyKey::Identifier(id.clone()),
+                                    ParseResult::Expr(Expression::Literal(lit)) => {
+                                        match &lit.value {
+                                            LiteralValue::String(s) => ObjectPropertyKey::String(StringLiteral {
+                                                value: s.clone(),
+                                                span: lit.span.clone(),
+                                            }),
+                                            LiteralValue::Number(_) => ObjectPropertyKey::Number(*lit.clone()),
+                                            _ => return None,
+                                        }
+                                    }
+                                    _ => return None,
+                                };
+
+                                // Check if shorthand (no : pattern)
+                                let (value, shorthand) = match colon_pattern {
+                                    Some(ParseResult::List(colon_parts)) => {
+                                        // [colon, pattern]
+                                        let pattern = colon_parts.into_iter().nth(1).and_then(|p| to_pattern(p).ok())?;
+                                        (pattern, false)
+                                    }
+                                    _ => {
+                                        // Shorthand: { x } means { x: x }
+                                        if let ParseResult::Ident(id) = key_result {
+                                            (Pattern::Identifier(id.clone()), true)
+                                        } else {
+                                            return None;
+                                        }
+                                    }
+                                };
+
+                                Some(ObjectPatternProperty::KeyValue {
+                                    key,
+                                    value,
+                                    shorthand,
+                                    span: span.clone(),
+                                })
+                            }
+                            _ => None,
+                        }
+                    }).collect()
+                }
+                ParseResult::None => vec![],
+                _ => vec![],
+            };
+
+            Ok(ParseResult::Pat(Pattern::Object(ObjectPattern { properties, type_annotation: None, span })))
+        } else {
+            Err(ParseError::new(\"Expected object pattern parts\".to_string(), 0, 0))
+        }
+    }")
 }
 
 fn rule_object_pattern_property(r: &RuleBuilder) -> Combinator {
@@ -3936,7 +4386,8 @@ fn rule_object_pattern_property(r: &RuleBuilder) -> Combinator {
         r.sequence((
             r.parse("property_key"),
             r.optional(r.sequence((op(r, ":"), r.parse("pattern")))),
-            r.optional(r.sequence((op(r, "="), r.parse("expression")))),
+            // Use assignment_expression to avoid comma being consumed
+            r.optional(r.sequence((op(r, "="), r.parse("assignment_expression")))),
         )),
     ))
 }
@@ -3986,12 +4437,14 @@ fn rule_array_pattern(r: &RuleBuilder) -> Combinator {
 fn rule_array_pattern_element(r: &RuleBuilder) -> Combinator {
     r.sequence((
         r.parse("pattern"),
-        r.optional(r.sequence((op(r, "="), r.parse("expression")))),
+        // Use assignment_expression to avoid comma being consumed
+        r.optional(r.sequence((op(r, "="), r.parse("assignment_expression")))),
     ))
 }
 
 fn rule_rest_pattern(r: &RuleBuilder) -> Combinator {
-    r.sequence((op(r, "..."), r.parse("pattern"))).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+    r.sequence((op(r, "..."), r.parse("pattern"))).ast(
+        "|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
         // [..., pattern]
         if let ParseResult::List(parts) = result {
             let mut iter = parts.into_iter();
@@ -4007,7 +4460,8 @@ fn rule_rest_pattern(r: &RuleBuilder) -> Combinator {
         } else {
             Err(ParseError::new(\"Expected rest pattern parts\".to_string(), 0, 0))
         }
-    }")
+    }",
+    )
 }
 
 // Type Annotations
@@ -4027,24 +4481,31 @@ fn rule_type(r: &RuleBuilder) -> Combinator {
 }
 
 fn rule_primary_type(r: &RuleBuilder) -> Combinator {
-    // base_type followed by optional array suffixes []
-    // This avoids left recursion (array_type was calling primary_type first)
+    // base_type followed by optional type suffixes:
+    // - [] for array types
+    // - [type] for indexed access types (e.g., Order["status"])
     r.sequence((
         r.parse("base_type"),
-        r.zero_or_more(r.sequence((op(r, "["), op(r, "]")))),
+        r.zero_or_more(r.sequence((
+            op(r, "["),
+            r.optional(r.parse("type")), // empty for array, has type for indexed access
+            op(r, "]"),
+        ))),
     ))
 }
 
 fn rule_base_type(r: &RuleBuilder) -> Combinator {
     r.choice((
         r.parse("keyword_type"),
+        // typeof, keyof, infer must come before type_reference
+        // because type_reference matches any identifier
+        r.parse("typeof_type"),
+        r.parse("keyof_type"),
+        r.parse("infer_type"),
         r.parse("type_reference"),
         r.parse("literal_type"),
         r.parse("object_type"),
         r.parse("tuple_type"),
-        r.parse("typeof_type"),
-        r.parse("keyof_type"),
-        r.parse("infer_type"),
         r.parse("mapped_type"),
         r.parse("parenthesized_type"),
     ))

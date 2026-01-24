@@ -302,12 +302,18 @@ fn test_single_element_list() {
 
 #[test]
 fn test_simple_list() {
-    assert_eq!(parse("(a b c)"), Ok(list(vec![sym("a"), sym("b"), sym("c")])));
+    assert_eq!(
+        parse("(a b c)"),
+        Ok(list(vec![sym("a"), sym("b"), sym("c")]))
+    );
 }
 
 #[test]
 fn test_list_with_numbers() {
-    assert_eq!(parse("(1 2 3)"), Ok(list(vec![num(1.0), num(2.0), num(3.0)])));
+    assert_eq!(
+        parse("(1 2 3)"),
+        Ok(list(vec![num(1.0), num(2.0), num(3.0)]))
+    );
 }
 
 #[test]
@@ -429,10 +435,7 @@ fn test_quote_number() {
 
 #[test]
 fn test_quote_list() {
-    assert_eq!(
-        parse("'(a b)"),
-        Ok(quote(list(vec![sym("a"), sym("b")])))
-    );
+    assert_eq!(parse("'(a b)"), Ok(quote(list(vec![sym("a"), sym("b")]))));
 }
 
 #[test]
@@ -493,11 +496,7 @@ fn test_quasiquote_with_unquote() {
 #[test]
 fn test_quasiquote_with_unquote_splicing() {
     // `(a ,@b c) = (quasiquote (a (unquote-splicing b) c))
-    let expected = quasiquote(list(vec![
-        sym("a"),
-        unquote_splicing(sym("b")),
-        sym("c"),
-    ]));
+    let expected = quasiquote(list(vec![sym("a"), unquote_splicing(sym("b")), sym("c")]));
     assert_eq!(parse("`(a ,@b c)"), Ok(expected));
 }
 
@@ -505,7 +504,11 @@ fn test_quasiquote_with_unquote_splicing() {
 fn test_quote_vector() {
     assert_eq!(
         parse("'#(1 2 3)"),
-        Ok(quote(SchemeValue::Vector(vec![num(1.0), num(2.0), num(3.0)])))
+        Ok(quote(SchemeValue::Vector(vec![
+            num(1.0),
+            num(2.0),
+            num(3.0)
+        ])))
     );
 }
 
@@ -529,10 +532,7 @@ fn test_comment_in_list() {
 
 #[test]
 fn test_multiple_comments() {
-    assert_eq!(
-        parse("; line 1\n; line 2\n42"),
-        Ok(num(42.0))
-    );
+    assert_eq!(parse("; line 1\n; line 2\n42"), Ok(num(42.0)));
 }
 
 // === Whitespace ===
@@ -746,8 +746,14 @@ fn test_cond_expression() {
     // (cond ((= x 0) 'zero) ((> x 0) 'positive) (else 'negative))
     let expected = list(vec![
         sym("cond"),
-        list(vec![list(vec![sym("="), sym("x"), num(0.0)]), quote(sym("zero"))]),
-        list(vec![list(vec![sym(">"), sym("x"), num(0.0)]), quote(sym("positive"))]),
+        list(vec![
+            list(vec![sym("="), sym("x"), num(0.0)]),
+            quote(sym("zero")),
+        ]),
+        list(vec![
+            list(vec![sym(">"), sym("x"), num(0.0)]),
+            quote(sym("positive")),
+        ]),
         list(vec![sym("else"), quote(sym("negative"))]),
     ]);
     assert_eq!(

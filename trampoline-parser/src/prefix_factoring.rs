@@ -22,9 +22,7 @@
 //! ])
 //! ```
 
-use crate::ir::{
-    Combinator, InfixOp, PostfixOp, PrattDef, PrefixOp, RuleDef, TernaryOp,
-};
+use crate::ir::{Combinator, InfixOp, PostfixOp, PrattDef, PrefixOp, RuleDef, TernaryOp};
 use crate::validation;
 use std::collections::{HashMap, HashSet};
 
@@ -436,7 +434,10 @@ pub fn find_common_prefix(
         .collect();
 
     // Normalize to sequence views
-    let views: Vec<SequenceView> = expanded.iter().map(|c| SequenceView::from_combinator(c)).collect();
+    let views: Vec<SequenceView> = expanded
+        .iter()
+        .map(|c| SequenceView::from_combinator(c))
+        .collect();
 
     // Find the minimum length across all alternatives
     let min_len = views.iter().map(|v| v.len()).min().unwrap_or(0);
@@ -482,8 +483,9 @@ pub fn find_common_prefix(
     let suffixes: Vec<Suffix> = views
         .iter()
         .map(|v| {
-            let remaining: Vec<Combinator> =
-                (prefix_len..v.len()).filter_map(|i| v.get(i).cloned()).collect();
+            let remaining: Vec<Combinator> = (prefix_len..v.len())
+                .filter_map(|i| v.get(i).cloned())
+                .collect();
             match remaining.len() {
                 0 => Suffix::Empty,
                 1 => Suffix::Single(remaining.into_iter().next().unwrap_or_else(|| {
@@ -593,10 +595,7 @@ pub fn factor_common_prefix(analysis: &PrefixAnalysis) -> Option<Combinator> {
 /// Recursively optimize all Choice nodes in a combinator tree.
 ///
 /// Only transforms choices with `Exponential` severity.
-pub fn optimize_combinator(
-    comb: &Combinator,
-    rule_map: &HashMap<&str, &Combinator>,
-) -> Combinator {
+pub fn optimize_combinator(comb: &Combinator, rule_map: &HashMap<&str, &Combinator>) -> Combinator {
     match comb {
         Combinator::Choice(alternatives) => {
             // First optimize children
@@ -631,9 +630,7 @@ pub fn optimize_combinator(
         Combinator::Optional(inner) => {
             Combinator::Optional(Box::new(optimize_combinator(inner, rule_map)))
         }
-        Combinator::Skip(inner) => {
-            Combinator::Skip(Box::new(optimize_combinator(inner, rule_map)))
-        }
+        Combinator::Skip(inner) => Combinator::Skip(Box::new(optimize_combinator(inner, rule_map))),
         Combinator::Capture(inner) => {
             Combinator::Capture(Box::new(optimize_combinator(inner, rule_map)))
         }

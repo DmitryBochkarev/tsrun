@@ -110,12 +110,17 @@ pub fn grammar() -> CompiledGrammar {
         })
         // Integer part
         .rule("int", |r| {
-            r.choice((r.lit("0"), r.sequence((r.parse("digit19"), r.zero_or_more(r.digit())))))
+            r.choice((
+                r.lit("0"),
+                r.sequence((r.parse("digit19"), r.zero_or_more(r.digit()))),
+            ))
         })
         // Non-zero digit
         .rule("digit19", |r| r.range('1', '9'))
         // Fraction
-        .rule("frac", |r| r.sequence((r.lit("."), r.one_or_more(r.digit()))))
+        .rule("frac", |r| {
+            r.sequence((r.lit("."), r.one_or_more(r.digit())))
+        })
         // Exponent
         .rule("exp", |r| {
             r.sequence((
@@ -125,19 +130,21 @@ pub fn grammar() -> CompiledGrammar {
             ))
         })
         // Literals
-        .rule("true", |r| r.lit("true").ast("|_, _| Ok(ParseResult::Json(JsonValue::Bool(true)))"))
-        .rule("false", |r| {
-            r.lit("false").ast("|_, _| Ok(ParseResult::Json(JsonValue::Bool(false)))")
+        .rule("true", |r| {
+            r.lit("true")
+                .ast("|_, _| Ok(ParseResult::Json(JsonValue::Bool(true)))")
         })
-        .rule("null", |r| r.lit("null").ast("|_, _| Ok(ParseResult::Json(JsonValue::Null))"))
+        .rule("false", |r| {
+            r.lit("false")
+                .ast("|_, _| Ok(ParseResult::Json(JsonValue::Bool(false)))")
+        })
+        .rule("null", |r| {
+            r.lit("null")
+                .ast("|_, _| Ok(ParseResult::Json(JsonValue::Null))")
+        })
         // Whitespace
         .rule("ws", |r| {
-            r.skip(r.zero_or_more(r.choice((
-                r.lit(" "),
-                r.lit("\t"),
-                r.lit("\n"),
-                r.lit("\r"),
-            ))))
+            r.skip(r.zero_or_more(r.choice((r.lit(" "), r.lit("\t"), r.lit("\n"), r.lit("\r")))))
         })
         .ast_config(|c| {
             c.helper(HELPER_CODE)

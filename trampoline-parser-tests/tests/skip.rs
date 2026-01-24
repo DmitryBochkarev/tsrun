@@ -66,10 +66,7 @@ fn skip_newlines() {
 
 #[test]
 fn skip_mixed_whitespace() {
-    assert_eq!(
-        parse_trimmed(" \t\n  123  \n\t "),
-        Some("123".to_string())
-    );
+    assert_eq!(parse_trimmed(" \t\n  123  \n\t "), Some("123".to_string()));
 }
 
 #[test]

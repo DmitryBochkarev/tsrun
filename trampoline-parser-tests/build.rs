@@ -12,7 +12,11 @@ fn main() {
     write_parser(out_path, "literal_parser", &grammars::literal().generate());
     write_parser(out_path, "digit_parser", &grammars::digit().generate());
     write_parser(out_path, "number_parser", &grammars::number().generate());
-    write_parser(out_path, "sequence_parser", &grammars::sequence().generate());
+    write_parser(
+        out_path,
+        "sequence_parser",
+        &grammars::sequence().generate(),
+    );
     write_parser(out_path, "choice_parser", &grammars::choice().generate());
     write_parser(
         out_path,
@@ -93,22 +97,14 @@ fn main() {
         "keywords_parser",
         &grammars::keywords().generate(),
     );
-    write_parser(
-        out_path,
-        "postfix_parser",
-        &grammars::postfix().generate(),
-    );
+    write_parser(out_path, "postfix_parser", &grammars::postfix().generate());
     write_parser(out_path, "lua_parser", &grammars::lua().generate());
     write_parser(
         out_path,
         "lua_expr_parser",
         &grammars::lua_expr().generate(),
     );
-    write_parser(
-        out_path,
-        "scheme_parser",
-        &grammars::scheme().generate(),
-    );
+    write_parser(out_path, "scheme_parser", &grammars::scheme().generate());
     write_parser(
         out_path,
         "backtracking_bad_parser",

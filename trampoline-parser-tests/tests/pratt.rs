@@ -22,7 +22,13 @@ fn eval(expr: &Expr) -> i64 {
                 Op::Add => l + r,
                 Op::Sub => l - r,
                 Op::Mul => l * r,
-                Op::Div => if r != 0 { l / r } else { 0 },
+                Op::Div => {
+                    if r != 0 {
+                        l / r
+                    } else {
+                        0
+                    }
+                }
                 _ => 0,
             }
         }

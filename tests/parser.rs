@@ -69,7 +69,11 @@ fn test_comparison_expression() {
 
     // Comparison with as type assertions
     let prog = parse("(1 as number) < (2 as number);");
-    assert_eq!(prog.body.len(), 1, "comparison with as should parse as 1 statement");
+    assert_eq!(
+        prog.body.len(),
+        1,
+        "comparison with as should parse as 1 statement"
+    );
 }
 
 #[test]
@@ -127,7 +131,11 @@ fn test_generator_function_declaration() {
 
     // Generator with type annotation
     let prog = parse("function* gen(): Generator<number> { yield 1; }");
-    assert_eq!(prog.body.len(), 1, "generator with type annotation should parse");
+    assert_eq!(
+        prog.body.len(),
+        1,
+        "generator with type annotation should parse"
+    );
     if let Statement::FunctionDeclaration(f) = &prog.body[0] {
         assert!(f.generator);
     } else {
@@ -413,9 +421,7 @@ fn test_do_while_loop() {
 #[test]
 fn test_switch_statement() {
     // Test simple switch without type assertion
-    let prog = parse(
-        "switch (x) { case 1: break; case 2: return; default: throw new Error(); }",
-    );
+    let prog = parse("switch (x) { case 1: break; case 2: return; default: throw new Error(); }");
     assert_eq!(prog.body.len(), 1);
 }
 
@@ -423,6 +429,20 @@ fn test_switch_statement() {
 fn test_try_catch_finally() {
     let prog =
         parse("try { riskyOperation(); } catch (e) { console.error(e); } finally { cleanup(); }");
+    assert_eq!(prog.body.len(), 1);
+}
+
+// Regression: object spread in object literal
+#[test]
+fn test_object_spread_in_literal() {
+    let prog = parse("const obj = { ...a, ...b };");
+    assert_eq!(prog.body.len(), 1);
+}
+
+// Regression: object destructuring in const declaration
+#[test]
+fn test_object_destructuring_simple() {
+    let prog = parse("const { x, y } = point;");
     assert_eq!(prog.body.len(), 1);
 }
 
@@ -578,8 +598,6 @@ fn test_ternary_expression() {
     assert_eq!(prog.body.len(), 1);
 }
 
-
-
 #[test]
 fn test_computed_property() {
     // Index signature types not yet fully implemented
@@ -605,7 +623,6 @@ fn test_regexp_literal_basic() {
     let prog = parse("const re: RegExp = /abc/;");
     assert_eq!(prog.body.len(), 1);
 }
-
 
 #[test]
 fn test_regexp_literal_with_flags() {
@@ -1032,7 +1049,6 @@ fn test_function_with_default_params() {
     let prog = parse("function sum(a, b, acc = 0, n = 10) { return acc; }");
     assert_eq!(prog.body.len(), 1);
 }
-
 
 #[test]
 fn test_parse_graph_hasedge_function() {
@@ -2371,6 +2387,37 @@ fn test_for_in_with_predeclared_var() {
     let prog = parse("let x; let obj = {}; for (x in obj) { }");
     assert_eq!(prog.body.len(), 3);
     assert!(matches!(prog.body[2], Statement::ForIn(_)));
+}
+
+// Regression: sequence expression (comma operator)
+#[test]
+fn test_sequence_expression() {
+    let prog = parse("(1, 2, 3);");
+    assert_eq!(prog.body.len(), 1);
+    if let Statement::Expression(expr_stmt) = &prog.body[0] {
+        assert!(matches!(
+            expr_stmt.expression.as_ref(),
+            Expression::Sequence(_)
+        ));
+    } else {
+        panic!("Expected expression statement");
+    }
+}
+
+// Regression: sequence expression in for loop update
+#[test]
+fn test_for_with_sequence_update() {
+    let prog = parse("for (let i = 0; i < 10; i++, i++) { }");
+    assert_eq!(prog.body.len(), 1);
+    if let Statement::For(for_stmt) = &prog.body[0] {
+        if let Some(update) = &for_stmt.update {
+            assert!(matches!(update.as_ref(), Expression::Sequence(_)));
+        } else {
+            panic!("Expected update expression");
+        }
+    } else {
+        panic!("Expected for statement");
+    }
 }
 
 #[test]

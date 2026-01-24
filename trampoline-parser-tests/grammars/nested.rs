@@ -9,7 +9,9 @@ pub fn grammar() -> CompiledGrammar {
                 ops.infix("+", 1, Assoc::Left, "|l, r, _| Ok(binary(l, r))")
             })
         })
-        .rule("primary", |r| r.choice((r.parse("paren"), r.parse("number"))))
+        .rule("primary", |r| {
+            r.choice((r.parse("paren"), r.parse("number")))
+        })
         .rule("paren", |r| {
             r.sequence((r.lit("("), r.parse("expr"), r.lit(")")))
         })

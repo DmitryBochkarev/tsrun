@@ -302,19 +302,13 @@ impl<'a> CodeGenerator<'a> {
                 self.line(&format!("{}Start {{ result_base: usize }},", prefix));
             }
             Combinator::Capture(inner) => {
-                self.line(&format!(
-                    "{}Start {{ result_base: usize }},",
-                    prefix
-                ));
+                self.line(&format!("{}Start {{ result_base: usize }},", prefix));
                 self.line(&format!("{}Complete {{ result_base: usize, capture_base: usize, start_pos: usize, start_line: u32, start_column: u32 }},", prefix));
                 let child_prefix = format!("{}Inner", prefix);
                 self.emit_work_variants(&child_prefix, inner);
             }
             Combinator::NotFollowedBy(inner) => {
-                self.line(&format!(
-                    "{}Start {{ result_base: usize }},",
-                    prefix
-                ));
+                self.line(&format!("{}Start {{ result_base: usize }},", prefix));
                 self.line(&format!(
                     "{}Check {{ result_base: usize, nfb_base: usize, checkpoint: usize }},",
                     prefix
@@ -323,10 +317,7 @@ impl<'a> CodeGenerator<'a> {
                 self.emit_work_variants(&child_prefix, inner);
             }
             Combinator::FollowedBy(inner) => {
-                self.line(&format!(
-                    "{}Start {{ result_base: usize }},",
-                    prefix
-                ));
+                self.line(&format!("{}Start {{ result_base: usize }},", prefix));
                 self.line(&format!(
                     "{}Check {{ result_base: usize, fb_base: usize, checkpoint: usize }},",
                     prefix
@@ -343,7 +334,9 @@ impl<'a> CodeGenerator<'a> {
                 let child_prefix = format!("{}Inner", prefix);
                 self.emit_work_variants(&child_prefix, inner);
             }
-            Combinator::SeparatedBy { item, separator, .. } => {
+            Combinator::SeparatedBy {
+                item, separator, ..
+            } => {
                 self.line(&format!("{}Start {{ result_base: usize }},", prefix));
                 self.line(&format!(
                     "{}Sep {{ result_base: usize, list_base: usize, checkpoint: usize }},",
@@ -353,7 +346,10 @@ impl<'a> CodeGenerator<'a> {
                     "{}Item {{ result_base: usize, list_base: usize, checkpoint: usize }},",
                     prefix
                 ));
-                self.line(&format!("{}Complete {{ result_base: usize, list_base: usize }},", prefix));
+                self.line(&format!(
+                    "{}Complete {{ result_base: usize, list_base: usize }},",
+                    prefix
+                ));
                 let item_prefix = format!("{}ItemRule", prefix);
                 self.emit_work_variants(&item_prefix, item);
                 let sep_prefix = format!("{}SepRule", prefix);
@@ -405,10 +401,7 @@ impl<'a> CodeGenerator<'a> {
                 let inner_prefix = format!("{}Mapped", prefix);
                 self.emit_work_variants(&inner_prefix, inner);
                 // Add our own Start and Map variants
-                self.line(&format!(
-                    "{}Start {{ result_base: usize }},",
-                    prefix
-                ));
+                self.line(&format!("{}Start {{ result_base: usize }},", prefix));
                 self.line(&format!(
                     "{}Map {{ result_base: usize, map_base: usize, start_pos: usize, start_line: u32, start_column: u32 }},",
                     prefix
@@ -496,7 +489,9 @@ impl<'a> CodeGenerator<'a> {
             self.line("self.result_stack.pop().ok_or_else(|| ParseError {");
             self.indent += 1;
             self.line("message: \"No result\".to_string(),");
-            self.line("span: Span { start: 0, end: self.pos, line: self.line, column: self.column },");
+            self.line(
+                "span: Span { start: 0, end: self.pos, line: self.line, column: self.column },",
+            );
             self.indent -= 1;
             self.line("})");
             self.indent -= 1;
@@ -629,10 +624,7 @@ impl<'a> CodeGenerator<'a> {
             self.line("self.input[start..end].to_string()");
         } else {
             // For custom string types like JsString, assume From<&str>
-            self.line(&format!(
-                "{}::from(&self.input[start..end])",
-                string_type
-            ));
+            self.line(&format!("{}::from(&self.input[start..end])", string_type));
         }
         self.indent -= 1;
         self.line("}");
@@ -644,7 +636,9 @@ impl<'a> CodeGenerator<'a> {
         self.line("ParseError {");
         self.indent += 1;
         self.line("message: msg.to_string(),");
-        self.line("span: Span { start: self.pos, end: self.pos, line: self.line, column: self.column },");
+        self.line(
+            "span: Span { start: self.pos, end: self.pos, line: self.line, column: self.column },",
+        );
         self.indent -= 1;
         self.line("}");
         self.indent -= 1;
@@ -681,7 +675,6 @@ impl<'a> CodeGenerator<'a> {
         self.indent -= 1;
         self.line("}");
         self.blank();
-
     }
 
     fn emit_trampoline_loop(&mut self) {
@@ -755,10 +748,7 @@ impl<'a> CodeGenerator<'a> {
             Combinator::Char(c) => {
                 self.line(&format!("Work::{}Start {{ result_base }} => {{", prefix));
                 self.indent += 1;
-                self.line(&format!(
-                    "if self.current_char() == Some({:?}) {{",
-                    c
-                ));
+                self.line(&format!("if self.current_char() == Some({:?}) {{", c));
                 self.indent += 1;
                 self.line("self.advance();");
                 self.line("self.result_stack.push(ParseResult::None);");
@@ -952,7 +942,9 @@ impl<'a> CodeGenerator<'a> {
                         ));
                     } else {
                         // No more alternatives
-                        self.line("self.last_error = Some(self.make_error(\"no alternative matched\"));");
+                        self.line(
+                            "self.last_error = Some(self.make_error(\"no alternative matched\"));",
+                        );
                     }
                     self.indent -= 1;
                     self.line("}");
@@ -1152,10 +1144,7 @@ impl<'a> CodeGenerator<'a> {
                 let inner_prefix = format!("{}Inner", prefix);
 
                 // Start - capture base for truncation
-                self.line(&format!(
-                    "Work::{}Start {{ result_base }} => {{",
-                    prefix
-                ));
+                self.line(&format!("Work::{}Start {{ result_base }} => {{", prefix));
                 self.indent += 1;
                 self.line("let start_pos = self.pos;");
                 self.line("let start_line = self.line;");
@@ -1197,10 +1186,7 @@ impl<'a> CodeGenerator<'a> {
                 let inner_prefix = format!("{}Inner", prefix);
 
                 // Start - capture nfb_base for truncation
-                self.line(&format!(
-                    "Work::{}Start {{ result_base }} => {{",
-                    prefix
-                ));
+                self.line(&format!("Work::{}Start {{ result_base }} => {{", prefix));
                 self.indent += 1;
                 self.line("let checkpoint = self.pos;");
                 self.line("let nfb_base = self.result_stack.len();");
@@ -1245,10 +1231,7 @@ impl<'a> CodeGenerator<'a> {
                 let inner_prefix = format!("{}Inner", prefix);
 
                 // Start - capture fb_base for truncation
-                self.line(&format!(
-                    "Work::{}Start {{ result_base }} => {{",
-                    prefix
-                ));
+                self.line(&format!("Work::{}Start {{ result_base }} => {{", prefix));
                 self.indent += 1;
                 self.line("let checkpoint = self.pos;");
                 self.line("let fb_base = self.result_stack.len();");
@@ -1318,7 +1301,11 @@ impl<'a> CodeGenerator<'a> {
                 // Recurse
                 self.emit_work_handlers(&inner_prefix, inner);
             }
-            Combinator::SeparatedBy { item, separator, trailing } => {
+            Combinator::SeparatedBy {
+                item,
+                separator,
+                trailing,
+            } => {
                 let item_prefix = format!("{}ItemRule", prefix);
                 let sep_prefix = format!("{}SepRule", prefix);
 
@@ -1391,7 +1378,9 @@ impl<'a> CodeGenerator<'a> {
                 self.indent += 1;
                 self.line("if self.last_error.is_some() {");
                 self.indent += 1;
-                self.line("// Separator failed - done (no need to pop, failed combinator doesn't push)");
+                self.line(
+                    "// Separator failed - done (no need to pop, failed combinator doesn't push)",
+                );
                 self.line("self.last_error = None;");
                 self.line("self.pos = checkpoint;");
                 self.line(&format!(
@@ -1480,11 +1469,15 @@ impl<'a> CodeGenerator<'a> {
                     self.line("let mut prefix_matched = false;");
 
                     for (i, prefix_op) in pratt.prefix_ops.iter().enumerate() {
-                        let (op_lit, is_keyword, not_followed) = extract_operator_pattern(prefix_op.pattern.as_ref());
+                        let (op_lit, is_keyword, not_followed) =
+                            extract_operator_pattern(prefix_op.pattern.as_ref());
                         if !op_lit.is_empty() {
                             // Build condition with not_followed_by checks
                             if not_followed.is_empty() {
-                                self.line(&format!("if !prefix_matched && self.try_consume(\"{}\") {{", escape_string(&op_lit)));
+                                self.line(&format!(
+                                    "if !prefix_matched && self.try_consume(\"{}\") {{",
+                                    escape_string(&op_lit)
+                                ));
                             } else {
                                 // Use starts_with check plus not_followed_by conditions
                                 let mut condition = format!(
@@ -1516,7 +1509,7 @@ impl<'a> CodeGenerator<'a> {
                             }
 
                             self.line("prefix_matched = true;");
-                                                        self.line(&format!(
+                            self.line(&format!(
                                 "self.work_stack.push(Work::{}AfterPrefix {{ result_base, min_prec, op_idx: {}, start_pos, start_line, start_column }});",
                                 prefix, i
                             ));
@@ -1530,7 +1523,9 @@ impl<'a> CodeGenerator<'a> {
                                 self.indent -= 1;
                                 self.line("} else {");
                                 self.indent += 1;
-                                self.line("// Keyword followed by ident char - restore and try next");
+                                self.line(
+                                    "// Keyword followed by ident char - restore and try next",
+                                );
                                 self.line("self.pos = prefix_checkpoint;");
                                 self.indent -= 1;
                                 self.line("}");
@@ -1624,13 +1619,18 @@ impl<'a> CodeGenerator<'a> {
                     ));
                     self.indent += 1;
                     self.line("if self.last_error.is_some() { return Ok(()); }");
-                                        self.line("let postfix_checkpoint = self.pos;");
+                    self.line("let postfix_checkpoint = self.pos;");
                     self.line("let mut postfix_matched = false;");
 
                     for (i, postfix_op) in pratt.postfix_ops.iter().enumerate() {
                         match postfix_op {
-                            crate::ir::PostfixOp::Simple { pattern, precedence, .. } => {
-                                let (op_lit, _, not_followed_by) = extract_operator_pattern(pattern.as_ref());
+                            crate::ir::PostfixOp::Simple {
+                                pattern,
+                                precedence,
+                                ..
+                            } => {
+                                let (op_lit, _, not_followed_by) =
+                                    extract_operator_pattern(pattern.as_ref());
                                 if !op_lit.is_empty() {
                                     // Build condition with not_followed_by checks if present
                                     if not_followed_by.is_empty() {
@@ -1671,7 +1671,9 @@ impl<'a> CodeGenerator<'a> {
                                     self.line("}");
                                 }
                             }
-                            crate::ir::PostfixOp::Call { open, precedence, .. } => {
+                            crate::ir::PostfixOp::Call {
+                                open, precedence, ..
+                            } => {
                                 let (op_lit, _, _) = extract_operator_pattern(open.as_ref());
                                 if !op_lit.is_empty() {
                                     self.line(&format!(
@@ -1681,7 +1683,7 @@ impl<'a> CodeGenerator<'a> {
                                     ));
                                     self.indent += 1;
                                     self.line("postfix_matched = true;");
-                                                                        self.line("let args_base = self.result_stack.len();");
+                                    self.line("let args_base = self.result_stack.len();");
                                     self.line(&format!(
                                         "self.work_stack.push(Work::{}PostfixCallArg {{ result_base, min_prec, op_idx: {}, args_base, start_pos, start_line, start_column }});",
                                         prefix, i
@@ -1690,7 +1692,9 @@ impl<'a> CodeGenerator<'a> {
                                     self.line("}");
                                 }
                             }
-                            crate::ir::PostfixOp::Index { open, precedence, .. } => {
+                            crate::ir::PostfixOp::Index {
+                                open, precedence, ..
+                            } => {
                                 let (op_lit, _, _) = extract_operator_pattern(open.as_ref());
                                 if !op_lit.is_empty() {
                                     self.line(&format!(
@@ -1700,7 +1704,7 @@ impl<'a> CodeGenerator<'a> {
                                     ));
                                     self.indent += 1;
                                     self.line("postfix_matched = true;");
-                                                                        self.line(&format!(
+                                    self.line(&format!(
                                         "self.work_stack.push(Work::{}AfterPostfixIndex {{ result_base, min_prec, op_idx: {}, start_pos, start_line, start_column }});",
                                         prefix, i
                                     ));
@@ -1713,7 +1717,11 @@ impl<'a> CodeGenerator<'a> {
                                     self.line("}");
                                 }
                             }
-                            crate::ir::PostfixOp::Member { pattern, precedence, .. } => {
+                            crate::ir::PostfixOp::Member {
+                                pattern,
+                                precedence,
+                                ..
+                            } => {
                                 let (op_lit, _, _) = extract_operator_pattern(pattern.as_ref());
                                 if !op_lit.is_empty() {
                                     // Collect infix operators that start with this member operator
@@ -1722,8 +1730,11 @@ impl<'a> CodeGenerator<'a> {
                                         .infix_ops
                                         .iter()
                                         .filter_map(|infix| {
-                                            let (infix_lit, _, _) = extract_operator_pattern(infix.pattern.as_ref());
-                                            if infix_lit.starts_with(&op_lit) && infix_lit.len() > op_lit.len() {
+                                            let (infix_lit, _, _) =
+                                                extract_operator_pattern(infix.pattern.as_ref());
+                                            if infix_lit.starts_with(&op_lit)
+                                                && infix_lit.len() > op_lit.len()
+                                            {
                                                 Some(infix_lit)
                                             } else {
                                                 None
@@ -1761,7 +1772,7 @@ impl<'a> CodeGenerator<'a> {
                                     }
                                     self.indent += 1;
                                     self.line("postfix_matched = true;");
-                                                                        self.line(&format!(
+                                    self.line(&format!(
                                         "self.work_stack.push(Work::{}AfterPostfixMember {{ result_base, min_prec, op_idx: {}, start_pos, start_line, start_column }});",
                                         prefix, i
                                     ));
@@ -1797,7 +1808,8 @@ impl<'a> CodeGenerator<'a> {
                 if !pratt.infix_ops.is_empty() {
                     // Separate operators into simple (no leading rule) and complex (with leading rule)
                     let mut simple_ops: Vec<(usize, &crate::ir::InfixOp, OperatorPattern)> = vec![];
-                    let mut complex_ops: Vec<(usize, &crate::ir::InfixOp, OperatorPattern)> = vec![];
+                    let mut complex_ops: Vec<(usize, &crate::ir::InfixOp, OperatorPattern)> =
+                        vec![];
 
                     for (i, infix_op) in pratt.infix_ops.iter().enumerate() {
                         let pattern = extract_operator_pattern_full(infix_op.pattern.as_ref());
@@ -1818,7 +1830,11 @@ impl<'a> CodeGenerator<'a> {
                     // First, try simple patterns (no leading rule) - these use try_consume
                     for (i, infix_op, pattern) in &simple_ops {
                         let prec = infix_op.precedence;
-                        let next_prec = if infix_op.assoc == crate::Assoc::Right { prec } else { prec + 1 };
+                        let next_prec = if infix_op.assoc == crate::Assoc::Right {
+                            prec
+                        } else {
+                            prec + 1
+                        };
 
                         // Build condition with not_followed_by checks
                         if pattern.not_followed_by.is_empty() {
@@ -1913,7 +1929,11 @@ impl<'a> CodeGenerator<'a> {
                                 self.line("// Try first complex infix operator (others will be chained if this fails)");
                                 let first_op = &complex_ops[0];
                                 let prec = first_op.1.precedence;
-                                let next_prec = if first_op.1.assoc == crate::Assoc::Right { prec } else { prec + 1 };
+                                let next_prec = if first_op.1.assoc == crate::Assoc::Right {
+                                    prec
+                                } else {
+                                    prec + 1
+                                };
                                 self.line(&format!(
                                     "if {} >= min_prec && self.pos == infix_checkpoint {{",
                                     prec
@@ -1934,7 +1954,11 @@ impl<'a> CodeGenerator<'a> {
                         self.line("// Try first complex infix operator (others will be chained if this fails)");
                         let first_op = &complex_ops[0];
                         let prec = first_op.1.precedence;
-                        let next_prec = if first_op.1.assoc == crate::Assoc::Right { prec } else { prec + 1 };
+                        let next_prec = if first_op.1.assoc == crate::Assoc::Right {
+                            prec
+                        } else {
+                            prec + 1
+                        };
                         self.line(&format!(
                             "if {} >= min_prec && self.pos == infix_checkpoint {{",
                             prec
@@ -2039,7 +2063,10 @@ impl<'a> CodeGenerator<'a> {
                     self.line("if self.last_error.is_some() { return Ok(()); }");
                     // Skip whitespace before ':'
                     self.line("while self.current_char().map_or(false, |c| c.is_whitespace()) { self.advance(); }");
-                    self.line(&format!("if self.try_consume(\"{}\") {{", escape_string(&second_lit)));
+                    self.line(&format!(
+                        "if self.try_consume(\"{}\") {{",
+                        escape_string(&second_lit)
+                    ));
                     self.indent += 1;
                     self.line(&format!(
                         "self.work_stack.push(Work::{}AfterTernarySecond {{ result_base, min_prec, start_pos, start_line, start_column }});",
@@ -2067,8 +2094,12 @@ impl<'a> CodeGenerator<'a> {
                     self.indent += 1;
                     self.line("if self.last_error.is_none() {");
                     self.indent += 1;
-                    self.line("let alternate = self.result_stack.pop().unwrap_or(ParseResult::None);");
-                    self.line("let consequent = self.result_stack.pop().unwrap_or(ParseResult::None);");
+                    self.line(
+                        "let alternate = self.result_stack.pop().unwrap_or(ParseResult::None);",
+                    );
+                    self.line(
+                        "let consequent = self.result_stack.pop().unwrap_or(ParseResult::None);",
+                    );
                     self.line("let test = self.result_stack.pop().unwrap_or(ParseResult::None);");
                     self.line("let span = Span { start: start_pos, end: self.pos, line: start_line, column: start_column };");
                     self.line(&format!("let mapping_fn = {};", ternary.mapping));
@@ -2140,7 +2171,10 @@ impl<'a> CodeGenerator<'a> {
                     self.line("}");
 
                     // Collect complex operators with their indices for chaining
-                    let complex_ops_indexed: Vec<_> = pratt.infix_ops.iter().enumerate()
+                    let complex_ops_indexed: Vec<_> = pratt
+                        .infix_ops
+                        .iter()
+                        .enumerate()
                         .filter_map(|(i, op)| {
                             let p = extract_operator_pattern_full(op.pattern.as_ref());
                             if p.leading_rule.is_some() && !p.literal.is_empty() {
@@ -2166,7 +2200,9 @@ impl<'a> CodeGenerator<'a> {
                     self.line("match op_idx {");
                     self.indent += 1;
 
-                    for (complex_idx, (op_idx, _infix_op, pattern)) in complex_ops_indexed.iter().enumerate() {
+                    for (complex_idx, (op_idx, _infix_op, pattern)) in
+                        complex_ops_indexed.iter().enumerate()
+                    {
                         self.line(&format!("{} => {{", op_idx));
                         self.indent += 1;
 
@@ -2221,7 +2257,8 @@ impl<'a> CodeGenerator<'a> {
                             self.line("self.pos = checkpoint;");
                             // Try next complex operator if any
                             if complex_idx + 1 < complex_ops_indexed.len() {
-                                let (next_op_idx, next_infix_op, _) = &complex_ops_indexed[complex_idx + 1];
+                                let (next_op_idx, next_infix_op, _) =
+                                    &complex_ops_indexed[complex_idx + 1];
                                 let next_prec_val = if next_infix_op.assoc == crate::Assoc::Right {
                                     next_infix_op.precedence
                                 } else {
@@ -2239,11 +2276,14 @@ impl<'a> CodeGenerator<'a> {
                         self.indent -= 1;
                         self.line("} else {");
                         self.indent += 1;
-                        self.line("// Literal didn't match - restore checkpoint and try next complex op");
+                        self.line(
+                            "// Literal didn't match - restore checkpoint and try next complex op",
+                        );
                         self.line("self.pos = checkpoint;");
                         // Try next complex operator if any
                         if complex_idx + 1 < complex_ops_indexed.len() {
-                            let (next_op_idx, next_infix_op, _) = &complex_ops_indexed[complex_idx + 1];
+                            let (next_op_idx, next_infix_op, _) =
+                                &complex_ops_indexed[complex_idx + 1];
                             let next_prec_val = if next_infix_op.assoc == crate::Assoc::Right {
                                 next_infix_op.precedence
                             } else {
@@ -2276,7 +2316,9 @@ impl<'a> CodeGenerator<'a> {
                         prefix
                     ));
                     self.indent += 1;
-                    self.line("let operand = self.result_stack.pop().unwrap_or(ParseResult::None);");
+                    self.line(
+                        "let operand = self.result_stack.pop().unwrap_or(ParseResult::None);",
+                    );
                     self.line("let span = Span { start: start_pos, end: self.pos, line: start_line, column: start_column };");
                     self.line("match op_idx {");
                     self.indent += 1;
@@ -2325,7 +2367,10 @@ impl<'a> CodeGenerator<'a> {
                             }
                         }
                     }
-                    self.line(&format!("if self.try_consume(\"{}\") {{", escape_string(&close_lit)));
+                    self.line(&format!(
+                        "if self.try_consume(\"{}\") {{",
+                        escape_string(&close_lit)
+                    ));
                     self.indent += 1;
                     // Empty args - apply mapping
                     self.line(&format!(
@@ -2356,7 +2401,7 @@ impl<'a> CodeGenerator<'a> {
                     ));
                     self.indent += 1;
                     self.line("if self.last_error.is_some() { return Ok(()); }");
-                                        // Get separator from first Call op
+                    // Get separator from first Call op
                     let mut sep_lit = ",".to_string();
                     for postfix_op in pratt.postfix_ops.iter() {
                         if let crate::ir::PostfixOp::Call { separator, .. } = postfix_op {
@@ -2367,9 +2412,12 @@ impl<'a> CodeGenerator<'a> {
                             }
                         }
                     }
-                    self.line(&format!("if self.try_consume(\"{}\") {{", escape_string(&sep_lit)));
+                    self.line(&format!(
+                        "if self.try_consume(\"{}\") {{",
+                        escape_string(&sep_lit)
+                    ));
                     self.indent += 1;
-                                        // More arguments
+                    // More arguments
                     self.line(&format!(
                         "self.work_stack.push(Work::{}PostfixCallSep {{ result_base, min_prec, op_idx, args_base, start_pos, start_line, start_column }});",
                         prefix
@@ -2379,7 +2427,10 @@ impl<'a> CodeGenerator<'a> {
                         prefix
                     ));
                     self.indent -= 1;
-                    self.line(&format!("}} else if self.try_consume(\"{}\") {{", escape_string(&close_lit)));
+                    self.line(&format!(
+                        "}} else if self.try_consume(\"{}\") {{",
+                        escape_string(&close_lit)
+                    ));
                     self.indent += 1;
                     // Done with args
                     self.line(&format!(
@@ -2389,7 +2440,11 @@ impl<'a> CodeGenerator<'a> {
                     self.indent -= 1;
                     self.line("} else {");
                     self.indent += 1;
-                    self.line(&format!("self.last_error = Some(self.make_error(\"expected '{}' or '{}'\"));", escape_string(&sep_lit), escape_string(&close_lit)));
+                    self.line(&format!(
+                        "self.last_error = Some(self.make_error(\"expected '{}' or '{}'\"));",
+                        escape_string(&sep_lit),
+                        escape_string(&close_lit)
+                    ));
                     self.indent -= 1;
                     self.line("}");
                     self.indent -= 1;
@@ -2440,7 +2495,7 @@ impl<'a> CodeGenerator<'a> {
                     ));
                     self.indent += 1;
                     self.line("if self.last_error.is_some() { return Ok(()); }");
-                                        // Get close delimiter from first Index op
+                    // Get close delimiter from first Index op
                     let mut index_close_lit = "]".to_string();
                     for postfix_op in pratt.postfix_ops.iter() {
                         if let crate::ir::PostfixOp::Index { close, .. } = postfix_op {
@@ -2451,13 +2506,21 @@ impl<'a> CodeGenerator<'a> {
                             }
                         }
                     }
-                    self.line(&format!("if !self.try_consume(\"{}\") {{", escape_string(&index_close_lit)));
+                    self.line(&format!(
+                        "if !self.try_consume(\"{}\") {{",
+                        escape_string(&index_close_lit)
+                    ));
                     self.indent += 1;
-                    self.line(&format!("self.last_error = Some(self.make_error(\"expected '{}'\"));", escape_string(&index_close_lit)));
+                    self.line(&format!(
+                        "self.last_error = Some(self.make_error(\"expected '{}'\"));",
+                        escape_string(&index_close_lit)
+                    ));
                     self.line("return Ok(());");
                     self.indent -= 1;
                     self.line("}");
-                    self.line("let index_expr = self.result_stack.pop().unwrap_or(ParseResult::None);");
+                    self.line(
+                        "let index_expr = self.result_stack.pop().unwrap_or(ParseResult::None);",
+                    );
                     self.line("let obj = self.result_stack.pop().unwrap_or(ParseResult::None);");
                     self.line("let span = Span { start: start_pos, end: self.pos, line: start_line, column: start_column };");
                     self.line("match op_idx {");
@@ -2551,10 +2614,7 @@ impl<'a> CodeGenerator<'a> {
                 let inner_prefix = format!("{}Mapped", prefix);
 
                 // Start handler - records position, pushes Map completion, then inner Start
-                self.line(&format!(
-                    "Work::{}Start {{ result_base }} => {{",
-                    prefix
-                ));
+                self.line(&format!("Work::{}Start {{ result_base }} => {{", prefix));
                 self.indent += 1;
                 self.line("let start_pos = self.pos;");
                 self.line("let start_line = self.line;");
@@ -2738,9 +2798,7 @@ mod tests {
 
     #[test]
     fn test_simple_grammar_generates() {
-        let grammar = Grammar::new()
-            .rule("digit", |r| r.digit())
-            .build();
+        let grammar = Grammar::new().rule("digit", |r| r.digit()).build();
 
         let code = grammar.generate();
         assert!(code.contains("pub struct Parser"));

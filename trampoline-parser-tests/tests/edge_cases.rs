@@ -53,7 +53,11 @@ fn nested_parens_simple() {
     // Simple nested expression: ((1))
     let mut parser = nested_parser::Parser::new("((1))");
     let result = parser.parse();
-    assert!(result.is_ok(), "Should parse simple nested parens: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "Should parse simple nested parens: {:?}",
+        result
+    );
 }
 
 #[test]
@@ -130,7 +134,11 @@ fn error_reports_position() {
     assert!(result.is_err());
     let err = result.unwrap_err();
     // Error should be at position 1 (where 'x' is instead of 'e')
-    assert!(err.span.start <= 1, "Error should be near the start, got start={}", err.span.start);
+    assert!(
+        err.span.start <= 1,
+        "Error should be near the start, got start={}",
+        err.span.start
+    );
 }
 
 #[test]
@@ -183,8 +191,5 @@ fn span_after_newlines() {
 fn no_implicit_whitespace_skip() {
     let mut parser = literal_parser::Parser::new(" hello");
     let result = parser.parse();
-    assert!(
-        result.is_err(),
-        "Parser should not skip leading whitespace"
-    );
+    assert!(result.is_err(), "Parser should not skip leading whitespace");
 }

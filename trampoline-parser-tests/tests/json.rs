@@ -311,7 +311,10 @@ fn json_complex_nested() {
 
     // Verify it's an object with the right keys
     if let JsonValue::Object(obj) = result {
-        assert_eq!(obj.get("name"), Some(&JsonValue::String("test".to_string())));
+        assert_eq!(
+            obj.get("name"),
+            Some(&JsonValue::String("test".to_string()))
+        );
         assert_eq!(obj.get("version"), Some(&JsonValue::Number(1.0)));
         assert_eq!(obj.get("enabled"), Some(&JsonValue::Bool(true)));
 
@@ -349,7 +352,10 @@ fn json_array_of_objects() {
 
         if let JsonValue::Object(first) = &arr[0] {
             assert_eq!(first.get("id"), Some(&JsonValue::Number(1.0)));
-            assert_eq!(first.get("name"), Some(&JsonValue::String("first".to_string())));
+            assert_eq!(
+                first.get("name"),
+                Some(&JsonValue::String("first".to_string()))
+            );
         } else {
             panic!("Expected first element to be object");
         }
@@ -408,10 +414,12 @@ fn json_error_trailing_comma_array() {
     // Note: Standard JSON doesn't allow trailing commas
     // Our parser should reject this
     let result = std::panic::catch_unwind(|| parse_json("[1, 2, ]"));
-    assert!(result.is_err() || {
-        // If it doesn't panic, check for empty last element or error
-        true
-    });
+    assert!(
+        result.is_err() || {
+            // If it doesn't panic, check for empty last element or error
+            true
+        }
+    );
 }
 
 #[test]

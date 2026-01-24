@@ -10,11 +10,13 @@
 
 // Use lua_expr_parser for expression parsing (entry point: expr)
 use trampoline_parser_tests::lua_expr_parser::{
-    BinOp, Expr, Field, Parser as ExprParser, ParseResult as ExprParseResult, UnOp,
+    BinOp, Expr, Field, ParseResult as ExprParseResult, Parser as ExprParser, UnOp,
 };
 
 // Use lua_parser for statement parsing (entry point: chunk)
-use trampoline_parser_tests::lua_parser::{Parser as ChunkParser, ParseResult as ChunkParseResult, Stmt};
+use trampoline_parser_tests::lua_parser::{
+    ParseResult as ChunkParseResult, Parser as ChunkParser, Stmt,
+};
 
 fn parse_expr(input: &str) -> Expr {
     let mut parser = ExprParser::new(input);
@@ -117,7 +119,10 @@ fn lua_raw_string() {
 
 #[test]
 fn lua_raw_string_multiline() {
-    assert_eq!(parse_expr("[[line1\nline2]]"), Expr::String("line1\nline2".into()));
+    assert_eq!(
+        parse_expr("[[line1\nline2]]"),
+        Expr::String("line1\nline2".into())
+    );
 }
 
 #[test]
@@ -496,10 +501,7 @@ fn lua_right_assoc_concat() {
 #[test]
 fn lua_call_no_args() {
     let expr = parse_expr("f()");
-    assert_eq!(
-        expr,
-        Expr::Call(Box::new(Expr::Ident("f".into())), vec![])
-    );
+    assert_eq!(expr, Expr::Call(Box::new(Expr::Ident("f".into())), vec![]));
 }
 
 #[test]
@@ -572,10 +574,7 @@ fn lua_postfix_chain() {
     let expected = Expr::Call(
         Box::new(Expr::Member(
             Box::new(Expr::Index(
-                Box::new(Expr::Member(
-                    Box::new(Expr::Ident("a".into())),
-                    "b".into(),
-                )),
+                Box::new(Expr::Member(Box::new(Expr::Ident("a".into())), "b".into())),
                 Box::new(Expr::Number("0".into())),
             )),
             "c".into(),
@@ -676,7 +675,7 @@ fn lua_table_trailing_comma() {
 #[test]
 fn lua_local_debug() {
     // Debug test to understand why statement parsing fails
-    use trampoline_parser_tests::lua_parser::{Parser, ParseResult};
+    use trampoline_parser_tests::lua_parser::{ParseResult, Parser};
 
     // The issue: "return" should parse to Stmts([Return]) but returns Stmts([])
     // This means the statement parsing is failing silently in zero_or_more

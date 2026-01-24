@@ -54,10 +54,7 @@ pub fn grammar() -> CompiledGrammar {
         // === Lists ===
         // Factor out common prefix to avoid exponential backtracking
         .rule("list", |r| {
-            r.choice((
-                r.parse("empty_list"),
-                r.parse("non_empty_list"),
-            ))
+            r.choice((r.parse("empty_list"), r.parse("non_empty_list")))
         })
         .rule("empty_list", |r| {
             r.sequence((r.char('('), r.parse("ws"), r.char(')')))
@@ -107,8 +104,10 @@ pub fn grammar() -> CompiledGrammar {
         // Boolean: #t or #f
         .rule("boolean", |r| {
             r.choice((
-                r.lit("#t").ast("|_, _| Ok(ParseResult::Scheme(SchemeValue::Boolean(true)))"),
-                r.lit("#f").ast("|_, _| Ok(ParseResult::Scheme(SchemeValue::Boolean(false)))"),
+                r.lit("#t")
+                    .ast("|_, _| Ok(ParseResult::Scheme(SchemeValue::Boolean(true)))"),
+                r.lit("#f")
+                    .ast("|_, _| Ok(ParseResult::Scheme(SchemeValue::Boolean(false)))"),
             ))
         })
         // Character: #\x, #\newline, #\space, #\tab
@@ -117,12 +116,7 @@ pub fn grammar() -> CompiledGrammar {
                 .ast("|r, _| Ok(build_character(r))")
         })
         .rule("char_value", |r| {
-            r.capture(r.choice((
-                r.lit("newline"),
-                r.lit("space"),
-                r.lit("tab"),
-                r.any_char(),
-            )))
+            r.capture(r.choice((r.lit("newline"), r.lit("space"), r.lit("tab"), r.any_char())))
         })
         // Number: integers, floats, scientific notation
         .rule("number", |r| {
@@ -144,10 +138,7 @@ pub fn grammar() -> CompiledGrammar {
             ))
         })
         .rule("int_number", |r| {
-            r.sequence((
-                r.one_or_more(r.digit()),
-                r.optional(r.parse("exponent")),
-            ))
+            r.sequence((r.one_or_more(r.digit()), r.optional(r.parse("exponent"))))
         })
         .rule("exponent", |r| {
             r.sequence((
@@ -174,7 +165,7 @@ pub fn grammar() -> CompiledGrammar {
         // Scheme symbols can include many special characters
         .rule("symbol", |r| {
             r.choice((
-                r.parse("normal_identifier"),  // Try normal first (handles ->, +x, etc.)
+                r.parse("normal_identifier"), // Try normal first (handles ->, +x, etc.)
                 r.parse("peculiar_identifier"), // Then standalone +, -, ...
             ))
             .ast("|r, _| Ok(build_symbol(r))")
@@ -192,10 +183,7 @@ pub fn grammar() -> CompiledGrammar {
         })
         // Normal identifiers: start with letter or special, continue with alphanum or special
         .rule("normal_identifier", |r| {
-            r.capture(r.sequence((
-                r.parse("initial"),
-                r.zero_or_more(r.parse("subsequent")),
-            )))
+            r.capture(r.sequence((r.parse("initial"), r.zero_or_more(r.parse("subsequent")))))
         })
         // Initial: letter or special initial character
         .rule("initial", |r| {
@@ -224,11 +212,7 @@ pub fn grammar() -> CompiledGrammar {
         })
         // Subsequent: initial or digit or special subsequent
         .rule("subsequent", |r| {
-            r.choice((
-                r.parse("initial"),
-                r.digit(),
-                r.parse("special_subsequent"),
-            ))
+            r.choice((r.parse("initial"), r.digit(), r.parse("special_subsequent")))
         })
         // Special subsequent characters
         .rule("special_subsequent", |r| {
@@ -244,10 +228,7 @@ pub fn grammar() -> CompiledGrammar {
         .rule("comment", |r| {
             r.sequence((
                 r.char(';'),
-                r.zero_or_more(r.sequence((
-                    r.not_followed_by(r.char('\n')),
-                    r.any_char(),
-                ))),
+                r.zero_or_more(r.sequence((r.not_followed_by(r.char('\n')), r.any_char()))),
             ))
         })
         .ast_config(|c| {
