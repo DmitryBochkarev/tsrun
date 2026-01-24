@@ -99,6 +99,7 @@ pub fn typescript_grammar() -> Grammar {
         .rule("getter_property", rule_getter_property)
         .rule("setter_property", rule_setter_property)
         .rule("property_key", rule_property_key)
+        .rule("private_name", rule_private_name)
         .rule("spread_element", rule_spread_element)
         .rule("function_expression", rule_function_expression)
         .rule("arrow_function", rule_arrow_function)
@@ -332,7 +333,12 @@ fn call(callee: ParseResult, args: Vec<ParseResult>, optional: bool, span: Span)
 
 /// Create member expression (property is JsString from postfix_member)
 fn member(obj: ParseResult, prop: JsString, optional: bool, span: Span) -> Result<ParseResult, ParseError> {
-    let property = MemberProperty::Identifier(Identifier { name: prop, span: span.clone() });
+    // Check if this is a private name (starts with #)
+    let property = if prop.as_str().starts_with('#') {
+        MemberProperty::PrivateIdentifier(Identifier { name: prop, span: span.clone() })
+    } else {
+        MemberProperty::Identifier(Identifier { name: prop, span: span.clone() })
+    };
     Ok(ParseResult::Expr(Expression::Member(Box::new(MemberExpression {
         object: Rc::new(to_expr(obj)?),
         property,
@@ -452,7 +458,7 @@ fn extract_param_pattern(item: ParseResult, default_span: &Span) -> Option<Funct
         // Parameter sequence: [decorators, accessibility?, readonly?, pattern, optional?, type_annotation?, default?]
         ParseResult::List(parts) => {
             let mut iter = parts.into_iter();
-            let _decorators = iter.next(); // Skip decorators
+            let decorators_result = iter.next().unwrap_or(ParseResult::None);
             let _accessibility = iter.next(); // Skip accessibility
             let _readonly = iter.next(); // Skip readonly
             let pattern_result = iter.next()?; // Get pattern
@@ -464,11 +470,14 @@ fn extract_param_pattern(item: ParseResult, default_span: &Span) -> Option<Funct
                 _ => return None,
             };
 
+            // Parse decorators
+            let decorators = parse_decorators(decorators_result, default_span.clone());
+
             Some(FunctionParam {
                 pattern,
                 type_annotation: None,
                 optional: false,
-                decorators: vec![],
+                decorators,
                 accessibility: None,
                 readonly: false,
                 span: default_span.clone(),
@@ -1162,34 +1171,7 @@ fn parse_function_params(result: ParseResult) -> Vec<FunctionParam> {
         ParseResult::None => vec![],
         ParseResult::List(items) => {
             items.into_iter().filter_map(|item| {
-                // Each param could be an Ident, Pattern, or complex structure
-                match item {
-                    ParseResult::Ident(id) => {
-                        let span = id.span.clone();
-                        Some(FunctionParam {
-                            pattern: Pattern::Identifier(id),
-                            type_annotation: None,
-                            optional: false,
-                            decorators: vec![],
-                            accessibility: None,
-                            readonly: false,
-                            span,
-                        })
-                    }
-                    ParseResult::Pat(p) => {
-                        let span = p.span();
-                        Some(FunctionParam {
-                            pattern: p,
-                            type_annotation: None,
-                            optional: false,
-                            decorators: vec![],
-                            accessibility: None,
-                            readonly: false,
-                            span,
-                        })
-                    }
-                    _ => None,
-                }
+                extract_param_pattern(item, &default_span)
             }).collect()
         }
         ParseResult::Pat(p) => {
@@ -1331,6 +1313,19 @@ fn create_class_method(
                 _ => MethodKind::Method,
             }
         }
+        ParseResult::List(parts) => {
+            // captured_kw produces [Text("get"|"set", span), None, None]
+            match parts.into_iter().next() {
+                Some(ParseResult::Text(s, _)) => {
+                    match s.as_ref() {
+                        "get" => MethodKind::Get,
+                        "set" => MethodKind::Set,
+                        _ => MethodKind::Method,
+                    }
+                }
+                _ => MethodKind::Method,
+            }
+        }
         _ => MethodKind::Method,
     };
 
@@ -1369,6 +1364,7 @@ fn create_class_method(
 
 /// Create class property
 fn create_class_property(
+    decorators: ParseResult,
     static_kw: ParseResult,
     readonly: ParseResult,
     accessor: ParseResult,
@@ -1392,6 +1388,8 @@ fn create_class_property(
         _ => None,
     };
 
+    let parsed_decorators = parse_decorators(decorators, span.clone());
+
     Ok(ParseResult::ClassMember(ClassMember::Property(Box::new(ClassProperty {
         key: prop_key,
         value,
@@ -1402,7 +1400,7 @@ fn create_class_property(
         optional: is_optional,
         accessor: is_accessor,
         accessibility: None,
-        decorators: vec![],
+        decorators: parsed_decorators,
         span,
     }))))
 }
@@ -1411,7 +1409,14 @@ fn create_class_property(
 fn result_to_prop_key(result: ParseResult, span: &Span) -> ObjectPropertyKey {
     match result {
         ParseResult::Ident(id) => ObjectPropertyKey::Identifier(id),
-        ParseResult::Text(s, sp) => ObjectPropertyKey::Identifier(Identifier { name: s, span: sp }),
+        ParseResult::Text(s, sp) => {
+            // Check if this is a private name (starts with #)
+            if s.as_str().starts_with('#') {
+                ObjectPropertyKey::PrivateIdentifier(Identifier { name: s, span: sp })
+            } else {
+                ObjectPropertyKey::Identifier(Identifier { name: s, span: sp })
+            }
+        }
         ParseResult::Expr(Expression::Literal(lit)) => {
             match lit.value {
                 LiteralValue::String(s) => ObjectPropertyKey::String(StringLiteral { value: s, span: lit.span }),
@@ -1623,6 +1628,15 @@ fn rule_template_tail(r: &RuleBuilder) -> Combinator {
 fn kw(r: &RuleBuilder, keyword: &str) -> Combinator {
     r.sequence((
         r.lit(keyword),
+        r.not_followed_by(r.ident_cont()),
+        r.parse("ws"),
+    ))
+}
+
+/// Keyword that captures the matched text (for distinguishing get/set)
+fn captured_kw(r: &RuleBuilder, keyword: &str) -> Combinator {
+    r.sequence((
+        r.capture(r.lit(keyword)),
         r.not_followed_by(r.ident_cont()),
         r.parse("ws"),
     ))
@@ -1927,7 +1941,7 @@ fn rule_class_method(r: &RuleBuilder) -> Combinator {
         r.optional(kw(r, "static")),
         r.optional(kw(r, "async")),
         r.optional(op(r, "*")),
-        r.optional(r.choice((kw(r, "get"), kw(r, "set")))),
+        r.optional(r.choice((captured_kw(r, "get"), captured_kw(r, "set")))),
         r.parse("property_key"),
         r.optional(r.parse("type_parameters")),
         r.sequence((
@@ -1987,7 +2001,7 @@ fn rule_class_property(r: &RuleBuilder) -> Combinator {
         // [decorators, accessibility?, static?, readonly?, accessor?, key, ?, type_ann?, init?, ;]
         if let ParseResult::List(parts) = result {
             let mut iter = parts.into_iter();
-            let _decorators = iter.next();
+            let decorators = iter.next().unwrap_or(ParseResult::None);
             let _accessibility = iter.next();
             let static_kw = iter.next().unwrap_or(ParseResult::None);
             let readonly = iter.next().unwrap_or(ParseResult::None);
@@ -1998,7 +2012,7 @@ fn rule_class_property(r: &RuleBuilder) -> Combinator {
             let initializer = iter.next().unwrap_or(ParseResult::None);
             let _semi = iter.next();
 
-            create_class_property(static_kw, readonly, accessor, key, optional, initializer, span)
+            create_class_property(decorators, static_kw, readonly, accessor, key, optional, initializer, span)
         } else {
             Err(ParseError::new(\"Expected class property parts\".to_string(), 0, 0))
         }
@@ -3505,6 +3519,7 @@ fn rule_setter_property(r: &RuleBuilder) -> Combinator {
 
 fn rule_property_key(r: &RuleBuilder) -> Combinator {
     r.choice((
+        r.parse("private_name"),
         r.parse("identifier"),
         r.sequence((r.parse("string_literal"), r.parse("ws"))),
         r.sequence((r.parse("number_literal"), r.parse("ws"))),
@@ -3514,6 +3529,14 @@ fn rule_property_key(r: &RuleBuilder) -> Combinator {
             op(r, "]"),
         )),
     ))
+}
+
+fn rule_private_name(r: &RuleBuilder) -> Combinator {
+    r.capture(r.sequence((
+        r.lit("#"),
+        r.ident_start(),
+        r.zero_or_more(r.ident_cont()),
+    )))
 }
 
 fn rule_spread_element(r: &RuleBuilder) -> Combinator {

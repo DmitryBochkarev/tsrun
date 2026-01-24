@@ -2496,7 +2496,7 @@ impl<'a> CodeGenerator<'a> {
                     self.indent += 1;
                     // Capture identifier
                     self.line("let ident_start = self.pos;");
-                    self.line("if self.current_char().map_or(false, |c| c.is_ascii_alphabetic() || c == '_' || c == '$') {");
+                    self.line("if self.current_char().map_or(false, |c| c.is_ascii_alphabetic() || c == '_' || c == '$' || c == '#') {");
                     self.indent += 1;
                     self.line("self.advance();");
                     self.line("while self.current_char().map_or(false, |c| c.is_ascii_alphanumeric() || c == '_' || c == '$') {");
