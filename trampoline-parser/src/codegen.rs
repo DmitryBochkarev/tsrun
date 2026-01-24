@@ -389,6 +389,12 @@ impl<'a> CodeGenerator<'a> {
                     self.line(&format!("{}AfterPostfixMember {{ result_base: usize, min_prec: u8, op_idx: usize, start_pos: usize, start_line: u32, start_column: u32 }},", prefix));
                 }
 
+                // Ternary work variants
+                if pratt.ternary.is_some() {
+                    self.line(&format!("{}AfterTernaryFirst {{ result_base: usize, min_prec: u8, start_pos: usize, start_line: u32, start_column: u32 }},", prefix));
+                    self.line(&format!("{}AfterTernarySecond {{ result_base: usize, min_prec: u8, start_pos: usize, start_line: u32, start_column: u32 }},", prefix));
+                }
+
                 // Emit operand parser variants
                 if let Some(operand) = pratt.operand.as_ref() {
                     let operand_prefix = format!("{}Operand", prefix);
@@ -1871,6 +1877,37 @@ impl<'a> CodeGenerator<'a> {
                         self.line("}");
                     }
                 }
+
+                // Try ternary operator if defined
+                if let Some(ternary) = &pratt.ternary {
+                    let (first_lit, _, _) = extract_operator_pattern(ternary.first.as_ref());
+                    if !first_lit.is_empty() {
+                        // Need to declare infix_checkpoint if we don't have infix ops
+                        if pratt.infix_ops.is_empty() {
+                            self.line("let infix_checkpoint = self.pos;");
+                        }
+                        // Check ternary operator - must not be followed by . (optional chaining)
+                        self.line(&format!(
+                            "if {} >= min_prec && self.pos == infix_checkpoint && self.input.get(self.pos..).unwrap_or(\"\").starts_with(\"{}\") && !self.input.get(self.pos..).unwrap_or(\"\").starts_with(\"?.\") {{",
+                            ternary.precedence,
+                            escape_string(&first_lit)
+                        ));
+                        self.indent += 1;
+                        self.line(&format!("self.pos += {};", first_lit.len()));
+                        self.line(&format!("self.column += {};", first_lit.len()));
+                        self.line(&format!(
+                            "self.work_stack.push(Work::{}AfterTernaryFirst {{ result_base, min_prec, start_pos, start_line, start_column }});",
+                            prefix
+                        ));
+                        // Parse the consequent expression with min_prec 0 (full expression)
+                        self.line(&format!(
+                            "self.work_stack.push(Work::{}ParseOperand {{ result_base: self.result_stack.len(), min_prec: 0, start_pos: self.pos, start_line: self.line, start_column: self.column }});",
+                            prefix
+                        ));
+                        self.indent -= 1;
+                        self.line("}");
+                    }
+                }
                 // No more operators - we're done
                 self.indent -= 1;
                 self.line("}");
@@ -1920,6 +1957,74 @@ impl<'a> CodeGenerator<'a> {
                 self.line("}");
                 self.indent -= 1;
                 self.line("}");
+
+                // AfterTernaryFirst - after parsing consequent, check for ':' and parse alternate
+                if let Some(ternary) = &pratt.ternary {
+                    let (second_lit, _, _) = extract_operator_pattern(ternary.second.as_ref());
+                    self.line(&format!(
+                        "Work::{}AfterTernaryFirst {{ result_base, min_prec, start_pos, start_line, start_column }} => {{",
+                        prefix
+                    ));
+                    self.indent += 1;
+                    self.line("if self.last_error.is_some() { return Ok(()); }");
+                    // Skip whitespace before ':'
+                    self.line("while self.current_char().map_or(false, |c| c.is_whitespace()) { self.advance(); }");
+                    self.line(&format!("if self.try_consume(\"{}\") {{", escape_string(&second_lit)));
+                    self.indent += 1;
+                    self.line(&format!(
+                        "self.work_stack.push(Work::{}AfterTernarySecond {{ result_base, min_prec, start_pos, start_line, start_column }});",
+                        prefix
+                    ));
+                    // Parse the alternate expression with min_prec equal to ternary precedence (right-associative)
+                    self.line(&format!(
+                        "self.work_stack.push(Work::{}ParseOperand {{ result_base: self.result_stack.len(), min_prec: {}, start_pos: self.pos, start_line: self.line, start_column: self.column }});",
+                        prefix, ternary.precedence
+                    ));
+                    self.indent -= 1;
+                    self.line("} else {");
+                    self.indent += 1;
+                    self.line(&format!("self.last_error = Some(ParseError::new(\"Expected '{}' in ternary expression\".to_string(), self.line, self.column));", escape_string(&second_lit)));
+                    self.indent -= 1;
+                    self.line("}");
+                    self.indent -= 1;
+                    self.line("}");
+
+                    // AfterTernarySecond - apply ternary mapping and continue loop
+                    self.line(&format!(
+                        "Work::{}AfterTernarySecond {{ result_base, min_prec, start_pos, start_line, start_column }} => {{",
+                        prefix
+                    ));
+                    self.indent += 1;
+                    self.line("if self.last_error.is_none() {");
+                    self.indent += 1;
+                    self.line("let alternate = self.result_stack.pop().unwrap_or(ParseResult::None);");
+                    self.line("let consequent = self.result_stack.pop().unwrap_or(ParseResult::None);");
+                    self.line("let test = self.result_stack.pop().unwrap_or(ParseResult::None);");
+                    self.line("let span = Span { start: start_pos, end: self.pos, line: start_line, column: start_column };");
+                    self.line(&format!("let mapping_fn = {};", ternary.mapping));
+                    self.line("match mapping_fn(test, consequent, alternate, span) {");
+                    self.indent += 1;
+                    self.line("Ok(mapped) => self.result_stack.push(mapped),");
+                    self.line("Err(e) => self.last_error = Some(e),");
+                    self.indent -= 1;
+                    self.line("}");
+                    // Continue with postfix/infix loop
+                    if !pratt.postfix_ops.is_empty() {
+                        self.line(&format!(
+                            "self.work_stack.push(Work::{}CheckPostfix {{ result_base, min_prec, start_pos, start_line, start_column }});",
+                            prefix
+                        ));
+                    } else {
+                        self.line(&format!(
+                            "self.work_stack.push(Work::{}AfterOperand {{ result_base, min_prec, start_pos, start_line, start_column }});",
+                            prefix
+                        ));
+                    }
+                    self.indent -= 1;
+                    self.line("}");
+                    self.indent -= 1;
+                    self.line("}");
+                }
 
                 // Handlers for infix operators with leading rules (grammar-controlled whitespace handling)
                 let has_infix_with_leading = pratt.infix_ops.iter().any(|op| {

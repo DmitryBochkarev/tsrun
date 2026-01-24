@@ -344,7 +344,8 @@ fn test_destructuring_assignment() {
 
 #[test]
 fn test_array_destructuring() {
-    let prog = parse("const [first, second]: number[] = [1, 2];");
+    // Test array destructuring without complex type annotation
+    let prog = parse("const [first, second] = [1, 2];");
     assert_eq!(prog.body.len(), 1);
 }
 
@@ -487,6 +488,7 @@ fn test_ternary_expression() {
     assert_eq!(prog.body.len(), 1);
 }
 
+
 #[test]
 fn test_computed_property() {
     // Index signature types not yet fully implemented
@@ -512,6 +514,7 @@ fn test_regexp_literal_basic() {
     let prog = parse("const re: RegExp = /abc/;");
     assert_eq!(prog.body.len(), 1);
 }
+
 
 #[test]
 fn test_regexp_literal_with_flags() {

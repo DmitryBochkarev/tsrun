@@ -378,6 +378,15 @@ let result = parser.parse().expect("should parse");
 | `pratt(operand, ops)` | Pratt parsing for expressions |
 | `separated_by(item, sep)` | Comma-separated lists |
 
+**Note:** When `choice()` has many alternatives (>12), use `vec![]` instead of tuples to avoid Rust's tuple dimension limits:
+```rust
+// Instead of nested choice() tuples:
+r.choice((a, b, r.choice((c, d, r.choice((e, f))))))
+
+// Use vec![]:
+r.choice(vec![a, b, c, d, e, f])
+```
+
 ### Pratt Parsing with Whitespace
 
 Whitespace handling in Pratt parsing requires careful coordination between operators and operands. See `trampoline-parser-tests/grammars/lua_expr.rs` for a complete example.

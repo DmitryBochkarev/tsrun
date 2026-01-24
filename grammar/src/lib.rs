@@ -18,6 +18,7 @@ pub fn typescript_grammar() -> Grammar {
         // Literals
         .rule("number_literal", rule_number_literal)
         .rule("string_literal", rule_string_literal)
+        .rule("regexp_literal", rule_regexp_literal)
         .rule("template_string", rule_template_string)
         .rule("template_head", rule_template_head)
         .rule("template_middle", rule_template_middle)
@@ -200,6 +201,33 @@ fn parse_string_literal(text: &JsString) -> JsString {
     let inner = &s[1..s.len()-1];
     // TODO: Handle escape sequences properly
     JsString::from(inner)
+}
+
+/// Parse a regexp literal: /pattern/flags
+fn parse_regexp_literal(text: &JsString) -> (String, String) {
+    let s = text.as_ref();
+    // Format: /pattern/flags
+    if !s.starts_with('/') {
+        return (String::new(), String::new());
+    }
+    // Find the closing / (account for escapes and character classes)
+    let mut i = 1;
+    let bytes = s.as_bytes();
+    while i < bytes.len() {
+        if bytes[i] == b'\\' && i + 1 < bytes.len() {
+            i += 2; // Skip escaped char
+        } else if bytes[i] == b'/' {
+            break;
+        } else {
+            i += 1;
+        }
+    }
+    if i >= bytes.len() {
+        return (String::new(), String::new());
+    }
+    let pattern = s[1..i].to_string();
+    let flags = s[i + 1..].to_string();
+    (pattern, flags)
 }
 
 /// Extract Expression from ParseResult
@@ -990,6 +1018,31 @@ fn rule_string_literal(r: &RuleBuilder) -> Combinator {
     )))
 }
 
+// Regexp literal: /pattern/flags
+fn rule_regexp_literal(r: &RuleBuilder) -> Combinator {
+    r.capture(r.sequence((
+        r.char('/'),
+        // Pattern: any char except unescaped / or newline, or escaped char
+        r.one_or_more(r.choice((
+            r.sequence((r.char('\\'), r.any_char())), // Escape sequence
+            r.sequence((r.char('['), r.zero_or_more(r.choice((
+                r.sequence((r.char('\\'), r.any_char())), // Escape in char class
+                r.sequence((
+                    r.not_followed_by(r.choice((r.char(']'), r.char('\\'), r.char('\n')))),
+                    r.any_char(),
+                )),
+            ))), r.char(']'))), // Character class
+            r.sequence((
+                r.not_followed_by(r.choice((r.char('/'), r.char('\\'), r.char('\n'), r.char('[')))),
+                r.any_char(),
+            )),
+        ))),
+        r.char('/'),
+        // Optional flags
+        r.zero_or_more(r.alpha()),
+    )))
+}
+
 // Template strings
 fn rule_template_string(r: &RuleBuilder) -> Combinator {
     r.capture(r.sequence((
@@ -1093,7 +1146,8 @@ fn rule_program(r: &RuleBuilder) -> Combinator {
 
 fn rule_statement(r: &RuleBuilder) -> Combinator {
     // Each sub-rule should return ParseResult::Stmt, so we just pass through
-    r.choice((
+    // Use vec![] instead of nested choice() tuples to avoid tuple dimension limits
+    r.choice(vec![
         r.parse("variable_declaration"),
         r.parse("function_declaration"),
         r.parse("class_declaration"),
@@ -1105,26 +1159,22 @@ fn rule_statement(r: &RuleBuilder) -> Combinator {
         r.parse("do_while_statement"),
         r.parse("switch_statement"),
         r.parse("try_statement"),
-        r.choice((
-            r.parse("block_statement"),
-            r.parse("return_statement"),
-            r.parse("break_statement"),
-            r.parse("continue_statement"),
-            r.parse("throw_statement"),
-            r.parse("debugger_statement"),
-            r.parse("import_declaration"),
-            r.parse("export_declaration"),
-            r.parse("type_alias_declaration"),
-            r.parse("interface_declaration"),
-            r.parse("enum_declaration"),
-            r.choice((
-                r.parse("namespace_declaration"),
-                r.parse("labeled_statement"),
-                r.parse("expression_statement"),
-                r.parse("empty_statement"),
-            )),
-        )),
-    ))
+        r.parse("block_statement"),
+        r.parse("return_statement"),
+        r.parse("break_statement"),
+        r.parse("continue_statement"),
+        r.parse("throw_statement"),
+        r.parse("debugger_statement"),
+        r.parse("import_declaration"),
+        r.parse("export_declaration"),
+        r.parse("type_alias_declaration"),
+        r.parse("interface_declaration"),
+        r.parse("enum_declaration"),
+        r.parse("namespace_declaration"),
+        r.parse("labeled_statement"),
+        r.parse("expression_statement"),
+        r.parse("empty_statement"),
+    ])
 }
 
 fn rule_variable_declaration(r: &RuleBuilder) -> Combinator {
@@ -2492,6 +2542,11 @@ fn rule_literal(r: &RuleBuilder) -> Combinator {
             let value = parse_string_literal(&text);
             Ok(ParseResult::Expr(Expression::Literal(Box::new(Literal { value: LiteralValue::String(value), span }))))
         }"),
+        r.sequence((r.parse("regexp_literal"), r.parse("ws"))).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+            let text = result.into_text();
+            let (pattern, flags) = parse_regexp_literal(&text);
+            Ok(ParseResult::Expr(Expression::Literal(Box::new(Literal { value: LiteralValue::RegExp { pattern, flags }, span }))))
+        }"),
         kw(r, "true").ast("|_: ParseResult, span: Span| -> Result<ParseResult, ParseError> { Ok(ParseResult::Expr(Expression::Literal(Box::new(Literal { value: LiteralValue::Boolean(true), span })))) }"),
         kw(r, "false").ast("|_: ParseResult, span: Span| -> Result<ParseResult, ParseError> { Ok(ParseResult::Expr(Expression::Literal(Box::new(Literal { value: LiteralValue::Boolean(false), span })))) }"),
         kw(r, "null").ast("|_: ParseResult, span: Span| -> Result<ParseResult, ParseError> { Ok(ParseResult::Expr(Expression::Literal(Box::new(Literal { value: LiteralValue::Null, span })))) }"),
@@ -2885,7 +2940,10 @@ fn rule_pattern(r: &RuleBuilder) -> Combinator {
 }
 
 fn rule_identifier_pattern(r: &RuleBuilder) -> Combinator {
-    r.parse("identifier")
+    r.parse("identifier").ast("|result: ParseResult, _span: Span| -> Result<ParseResult, ParseError> {
+        let id = to_ident(result)?;
+        Ok(ParseResult::Pat(Pattern::Identifier(id)))
+    }")
 }
 
 fn rule_object_pattern(r: &RuleBuilder) -> Combinator {
@@ -2915,7 +2973,38 @@ fn rule_array_pattern(r: &RuleBuilder) -> Combinator {
             op(r, ","),
         )),
         op(r, "]"),
-    ))
+    )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+        // [[, elements?, ]]
+        if let ParseResult::List(parts) = result {
+            let mut iter = parts.into_iter();
+            let _open_bracket = iter.next();
+            let elements_result = iter.next().unwrap_or(ParseResult::None);
+            let _close_bracket = iter.next();
+
+            let elements: Vec<Option<Pattern>> = match elements_result {
+                ParseResult::List(items) => {
+                    items.into_iter().map(|item| {
+                        match item {
+                            ParseResult::Pat(p) => Some(p),
+                            ParseResult::List(elem_parts) => {
+                                // [pattern, default?] - for now ignore default, just get pattern
+                                let mut elem_iter = elem_parts.into_iter();
+                                elem_iter.next().and_then(|p| to_pattern(p).ok())
+                            }
+                            ParseResult::None => None,
+                            _ => None,
+                        }
+                    }).collect()
+                }
+                ParseResult::None => vec![],
+                _ => vec![],
+            };
+
+            Ok(ParseResult::Pat(Pattern::Array(ArrayPattern { elements, type_annotation: None, span })))
+        } else {
+            Err(ParseError::new(\"Expected array pattern parts\".to_string(), 0, 0))
+        }
+    }")
 }
 
 fn rule_array_pattern_element(r: &RuleBuilder) -> Combinator {
@@ -2926,7 +3015,23 @@ fn rule_array_pattern_element(r: &RuleBuilder) -> Combinator {
 }
 
 fn rule_rest_pattern(r: &RuleBuilder) -> Combinator {
-    r.sequence((op(r, "..."), r.parse("pattern")))
+    r.sequence((op(r, "..."), r.parse("pattern"))).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+        // [..., pattern]
+        if let ParseResult::List(parts) = result {
+            let mut iter = parts.into_iter();
+            let _spread = iter.next();
+            let pattern = iter.next().unwrap_or(ParseResult::None);
+
+            let inner = to_pattern(pattern)?;
+            Ok(ParseResult::Pat(Pattern::Rest(RestElement {
+                argument: Box::new(inner),
+                type_annotation: None,
+                span,
+            })))
+        } else {
+            Err(ParseError::new(\"Expected rest pattern parts\".to_string(), 0, 0))
+        }
+    }")
 }
 
 // Type Annotations
