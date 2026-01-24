@@ -3,10 +3,11 @@
 //! These tests document problematic grammar patterns that cause O(2^n) parsing time
 //! due to repeated re-parsing of shared prefixes during backtracking.
 //!
-//! The goal is to later implement:
-//! 1. Automatic detection of such patterns during grammar compilation
-//! 2. Automatic factoring of common prefixes to avoid the issue
+//! Also tests the automatic detection and optimization features:
+//! - `analyze_backtracking()`: Detects problematic patterns
+//! - `optimize_backtracking()`: Rewrites grammars to eliminate the issue
 
+use trampoline_parser::BacktrackingSeverity;
 use trampoline_parser_tests::backtracking_bad_parser as bad;
 use trampoline_parser_tests::backtracking_good_parser as good;
 
@@ -197,6 +198,152 @@ fn test_pattern_description() {
 
     println!("Bad pattern (causes exponential backtracking):\n{}", bad_pattern);
     println!("Good pattern (linear time):\n{}", good_pattern);
+}
 
-    // Future: Grammar::new().detect_backtracking_issues() -> Vec<Warning>
+// ============================================================================
+// Tests for automatic detection and optimization
+// ============================================================================
+
+use trampoline_parser::Grammar;
+
+/// Helper to create a simple grammar with inline shared prefix (easier to detect)
+fn create_simple_bad_grammar() -> trampoline_parser::CompiledGrammar {
+    Grammar::new()
+        .rule("expr", |r| {
+            r.choice((
+                // Both alternatives share '(' datum+ prefix
+                r.sequence((
+                    r.char('('),
+                    r.one_or_more(r.parse("datum")),
+                    r.char('.'),
+                    r.parse("datum"),
+                    r.char(')'),
+                )),
+                r.sequence((
+                    r.char('('),
+                    r.one_or_more(r.parse("datum")),
+                    r.char(')'),
+                )),
+            ))
+        })
+        .rule("datum", |r| {
+            r.choice((
+                r.parse("expr"),
+                r.capture(r.one_or_more(r.alpha())),
+            ))
+        })
+        .build()
+}
+
+/// Test that analyze_backtracking detects exponential patterns
+#[test]
+fn test_detection_finds_exponential_patterns() {
+    // Test with simple inline grammar (direct shared prefix)
+    let simple_grammar = create_simple_bad_grammar();
+    let warnings = simple_grammar.analyze_backtracking();
+
+    println!("Simple grammar warnings:");
+    for w in &warnings {
+        println!("  - {}: {} (severity: {:?})", w.rule_name, w.description, w.severity);
+    }
+
+    assert!(
+        warnings.iter().any(|w| w.severity == BacktrackingSeverity::Exponential),
+        "Expected to detect exponential backtracking in simple grammar"
+    );
+}
+
+/// Test that analyze_backtracking detects patterns through rule references
+/// when only SOME alternatives share a prefix.
+///
+/// Currently, the algorithm only detects shared prefixes when ALL alternatives
+/// in a choice share the same prefix. This is a known limitation.
+///
+/// TODO: Enhance to detect pairwise shared prefixes among subsets of alternatives.
+#[test]
+fn test_detection_expands_rule_references() {
+    // Create a grammar where ALL choice alternatives share a prefix when expanded
+    let grammar = Grammar::new()
+        .rule("list", |r| {
+            r.choice((
+                r.parse("dotted_list"),  // '(' datum+ '.' datum ')'
+                r.parse("proper_list"),  // '(' datum+ ')'
+                // Note: no empty_list - all alternatives share prefix
+            ))
+        })
+        .rule("dotted_list", |r| {
+            r.sequence((
+                r.char('('),
+                r.parse("ws"),
+                r.one_or_more(r.sequence((r.parse("datum"), r.parse("ws")))),
+                r.char('.'),
+                r.parse("ws"),
+                r.parse("datum"),
+                r.parse("ws"),
+                r.char(')'),
+            ))
+        })
+        .rule("proper_list", |r| {
+            r.sequence((
+                r.char('('),
+                r.parse("ws"),
+                r.one_or_more(r.sequence((r.parse("datum"), r.parse("ws")))),
+                r.char(')'),
+            ))
+        })
+        .rule("datum", |r| {
+            r.choice((
+                r.parse("list"),
+                r.parse("symbol"),
+            ))
+        })
+        .rule("symbol", |r| {
+            r.capture(r.one_or_more(r.alpha()))
+        })
+        .rule("ws", |r| {
+            r.skip(r.zero_or_more(r.ws()))
+        })
+        .build();
+
+    let warnings = grammar.analyze_backtracking();
+
+    println!("Grammar with rule references warnings:");
+    for w in &warnings {
+        println!("  - {}: {} (severity: {:?})", w.rule_name, w.description, w.severity);
+    }
+
+    // The 'list' rule has choice between dotted_list and proper_list
+    // which share a prefix when expanded
+    assert!(
+        warnings.iter().any(|w| w.severity == BacktrackingSeverity::Exponential),
+        "Expected to detect exponential backtracking through rule references"
+    );
+}
+
+/// Test that optimize_backtracking produces a grammar with better performance
+#[test]
+fn test_optimization_improves_performance() {
+    let simple_grammar = create_simple_bad_grammar();
+
+    // Analyze before optimization
+    let warnings_before = simple_grammar.analyze_backtracking();
+    assert!(
+        warnings_before.iter().any(|w| w.severity == BacktrackingSeverity::Exponential),
+        "Pre-condition: grammar should have exponential backtracking"
+    );
+
+    // Optimize
+    let optimized = simple_grammar.optimize_backtracking();
+
+    // Analyze after optimization
+    let warnings_after = optimized.analyze_backtracking();
+    println!("Warnings after optimization:");
+    for w in &warnings_after {
+        println!("  - {}: {} (severity: {:?})", w.rule_name, w.description, w.severity);
+    }
+
+    assert!(
+        !warnings_after.iter().any(|w| w.severity == BacktrackingSeverity::Exponential),
+        "After optimization, should have no exponential backtracking"
+    );
 }

@@ -58,7 +58,7 @@ pub fn validate_grammar(rules: &[RuleDef]) -> Vec<ValidationError> {
 }
 
 /// Check if a combinator can match empty input (is nullable)
-fn is_nullable(comb: &Combinator, rule_map: &HashMap<&str, &Combinator>, visited: &mut HashSet<String>) -> bool {
+pub fn is_nullable(comb: &Combinator, rule_map: &HashMap<&str, &Combinator>, visited: &mut HashSet<String>) -> bool {
     match comb {
         // Character-level primitives - never nullable (always consume input)
         Combinator::Literal(s) => s.is_empty(), // Empty string is nullable

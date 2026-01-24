@@ -27,11 +27,13 @@ mod codegen;
 pub mod grammars;
 mod ir;
 mod parser_dsl;
+pub mod prefix_factoring;
 mod validation;
 
 pub use codegen::*;
 pub use ir::*;
 pub use parser_dsl::*;
+pub use prefix_factoring::{BacktrackingSeverity, BacktrackingWarning};
 pub use validation::{validate_grammar, ValidationError};
 
 /// Builder for AST configuration
@@ -189,6 +191,15 @@ impl Grammar {
             ast_config: self.ast_config,
         }
     }
+
+    /// Build with automatic backtracking optimization
+    ///
+    /// This is equivalent to calling `.build().optimize_backtracking()`.
+    /// It detects Choice nodes with shared prefixes containing recursive rules
+    /// and rewrites them to factor out the common prefix.
+    pub fn build_optimized(self) -> CompiledGrammar {
+        self.build().optimize_backtracking()
+    }
 }
 
 /// Compiled grammar ready for code generation
@@ -202,6 +213,53 @@ impl CompiledGrammar {
     /// Generate Rust source code for the parser
     pub fn generate(&self) -> String {
         CodeGenerator::new(self).generate()
+    }
+
+    /// Analyze the grammar for backtracking issues.
+    ///
+    /// Returns warnings for each Choice node that has alternatives sharing
+    /// a common prefix containing recursive rules (causing O(2^n) parsing).
+    pub fn analyze_backtracking(&self) -> Vec<BacktrackingWarning> {
+        prefix_factoring::analyze_grammar(&self.rules)
+    }
+
+    /// Optimize the grammar by factoring out common prefixes in Choice nodes.
+    ///
+    /// This transforms patterns like:
+    /// ```text
+    /// Choice([Seq([A, B, C]), Seq([A, B, D])])
+    /// ```
+    /// Into:
+    /// ```text
+    /// Seq([A, B, Choice([C, D])])
+    /// ```
+    ///
+    /// Only transforms choices with `Exponential` severity (shared prefix
+    /// containing recursive rules).
+    pub fn optimize_backtracking(self) -> Self {
+        use std::collections::HashMap;
+
+        // Build rule map from references before consuming self
+        let rule_map: HashMap<&str, &Combinator> = self
+            .rules
+            .iter()
+            .map(|r| (r.name.as_str(), &r.combinator))
+            .collect();
+
+        // Optimize each rule's combinator
+        let optimized_rules: Vec<RuleDef> = self
+            .rules
+            .iter()
+            .map(|rule| RuleDef {
+                name: rule.name.clone(),
+                combinator: prefix_factoring::optimize_combinator(&rule.combinator, &rule_map),
+            })
+            .collect();
+
+        CompiledGrammar {
+            rules: optimized_rules,
+            ast_config: self.ast_config,
+        }
     }
 }
 

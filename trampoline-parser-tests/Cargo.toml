@@ -8,3 +8,4 @@ publish = false
 trampoline-parser = { path = "../trampoline-parser" }
 
 [dev-dependencies]
+trampoline-parser = { path = "../trampoline-parser" }
