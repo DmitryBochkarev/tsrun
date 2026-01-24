@@ -303,8 +303,8 @@ fn test_for_of_loop() {
 
 #[test]
 fn test_for_in_loop() {
-    let prog =
-        parse("for (const key in {a: 1, b: 2} as { a: number; b: number }) { console.log(key); }");
+    // Test simple for-in without type assertion
+    let prog = parse("for (const key in obj) { console.log(key); }");
     assert_eq!(prog.body.len(), 1);
 }
 

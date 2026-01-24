@@ -2228,7 +2228,30 @@ fn rule_interface_declaration(r: &RuleBuilder) -> Combinator {
             r.separated_by(r.parse("type_reference"), op(r, ",")),
         ))),
         r.parse("object_type"),
-    ))
+    )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+        // [interface, id, type_params?, extends?, body]
+        if let ParseResult::List(parts) = result {
+            let mut iter = parts.into_iter();
+            let _interface_kw = iter.next();
+            let id = iter.next().unwrap_or(ParseResult::None);
+            let _type_params = iter.next();
+            let _extends = iter.next();
+            let _body = iter.next();
+
+            let identifier = to_ident(id)?;
+
+            // Types are stripped at runtime, so we use empty body
+            Ok(ParseResult::Stmt(Statement::InterfaceDeclaration(Box::new(InterfaceDeclaration {
+                id: identifier,
+                type_parameters: None,
+                extends: vec![],
+                body: vec![],
+                span,
+            }))))
+        } else {
+            Err(ParseError::new(\"Expected interface declaration parts\".to_string(), 0, 0))
+        }
+    }")
 }
 
 fn rule_enum_declaration(r: &RuleBuilder) -> Combinator {
@@ -2268,7 +2291,29 @@ fn rule_namespace_declaration(r: &RuleBuilder) -> Combinator {
         kw(r, "namespace"),
         r.parse("identifier"),
         r.parse("block_statement"),
-    ))
+    )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+        // [namespace, id, body]
+        if let ParseResult::List(parts) = result {
+            let mut iter = parts.into_iter();
+            let _namespace_kw = iter.next();
+            let id = iter.next().unwrap_or(ParseResult::None);
+            let body = iter.next().unwrap_or(ParseResult::None);
+
+            let identifier = to_ident(id)?;
+            let body_stmts: Vec<Statement> = match body {
+                ParseResult::Stmt(Statement::Block(b)) => b.body.iter().cloned().collect(),
+                _ => vec![],
+            };
+
+            Ok(ParseResult::Stmt(Statement::NamespaceDeclaration(Box::new(NamespaceDeclaration {
+                id: identifier,
+                body: Rc::from(body_stmts),
+                span,
+            }))))
+        } else {
+            Err(ParseError::new(\"Expected namespace declaration parts\".to_string(), 0, 0))
+        }
+    }")
 }
 
 // Expressions
