@@ -42,6 +42,37 @@ fn test_exponentiation() {
 }
 
 #[test]
+fn test_simple_call_expression() {
+    // Simple call expression: func()
+    let prog = parse("foo();");
+    assert_eq!(prog.body.len(), 1);
+
+    // Call with string argument
+    let prog = parse("tag('hello');");
+    assert_eq!(prog.body.len(), 1);
+    if let Statement::Expression(stmt) = &prog.body[0] {
+        assert!(matches!(stmt.expression.as_ref(), Expression::Call(_)));
+    } else {
+        panic!("Expected expression statement");
+    }
+}
+
+#[test]
+fn test_comparison_expression() {
+    // Simple comparison without type assertions
+    let prog = parse("1 < 2;");
+    assert_eq!(prog.body.len(), 1, "1 < 2 should parse as 1 statement");
+
+    // Comparison with parentheses
+    let prog = parse("(1) < (2);");
+    assert_eq!(prog.body.len(), 1, "(1) < (2) should parse as 1 statement");
+
+    // Comparison with as type assertions
+    let prog = parse("(1 as number) < (2 as number);");
+    assert_eq!(prog.body.len(), 1, "comparison with as should parse as 1 statement");
+}
+
+#[test]
 fn test_nested_object_literal() {
     // Test object in variable
     let prog = parse("const x = { name: 'Bob' };");

@@ -3783,7 +3783,7 @@ fn rule_accessibility_modifier(r: &RuleBuilder) -> Combinator {
 }
 
 fn rule_decorator(r: &RuleBuilder) -> Combinator {
-    r.sequence((op(r, "@"), r.parse("expression")))
+    r.sequence((op(r, "@"), r.parse("expression"), r.parse("ws")))
 }
 
 // Patterns
