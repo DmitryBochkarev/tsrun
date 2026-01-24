@@ -925,6 +925,92 @@ fn parse_decorators(decorators: ParseResult, span: Span) -> Vec<Decorator> {
     result
 }
 
+/// Parse type arguments from ParseResult (e.g., <string, number>)
+/// Returns Some(TypeArguments) if present, None otherwise
+fn parse_type_arguments(result: ParseResult) -> Option<TypeArguments> {
+    match result {
+        ParseResult::None => None,
+        ParseResult::List(parts) => {
+            // Structure: [<, type_list, >]
+            let mut iter = parts.into_iter();
+            let _open = iter.next(); // <
+            let types_result = iter.next().unwrap_or(ParseResult::None);
+            let _close = iter.next(); // >
+
+            let params = match types_result {
+                ParseResult::List(type_items) => {
+                    type_items.into_iter().filter_map(|t| {
+                        parse_result_to_type_annotation(t)
+                    }).collect()
+                }
+                other => {
+                    if let Some(t) = parse_result_to_type_annotation(other) {
+                        vec![t]
+                    } else {
+                        vec![]
+                    }
+                }
+            };
+
+            if params.is_empty() {
+                None
+            } else {
+                Some(TypeArguments {
+                    params,
+                    span: Span { start: 0, end: 0, line: 0, column: 0 },
+                })
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Convert ParseResult to TypeAnnotation
+fn parse_result_to_type_annotation(result: ParseResult) -> Option<TypeAnnotation> {
+    let default_span = Span { start: 0, end: 0, line: 0, column: 0 };
+    match result {
+        ParseResult::Ident(id) => {
+            // Simple type like "string", "number", "void"
+            let span = id.span.clone();
+            Some(TypeAnnotation::Reference(TypeReference {
+                name: id,
+                type_arguments: None,
+                span,
+            }))
+        }
+        ParseResult::Text(s, sp) => {
+            // Captured text like "void"
+            Some(TypeAnnotation::Reference(TypeReference {
+                name: Identifier { name: s, span: sp.clone() },
+                type_arguments: None,
+                span: sp,
+            }))
+        }
+        ParseResult::List(parts) => {
+            // Could be various structures:
+            // - primary_type: [base_type, array_suffixes*]
+            // - type_reference: [identifier, type_arguments?]
+            // Try to extract the first meaningful part
+            let mut iter = parts.into_iter();
+            if let Some(first) = iter.next() {
+                // Recursively try to convert the first part
+                parse_result_to_type_annotation(first)
+            } else {
+                None
+            }
+        }
+        ParseResult::None => {
+            // For empty/None results, create a placeholder
+            Some(TypeAnnotation::Reference(TypeReference {
+                name: Identifier { name: JsString::from("unknown"), span: default_span.clone() },
+                type_arguments: None,
+                span: default_span,
+            }))
+        }
+        _ => None,
+    }
+}
+
 /// Convert ParseResult to ObjectProperty
 fn parse_result_to_object_property(result: ParseResult, span: Span) -> Option<ObjectProperty> {
     match result {
@@ -3685,18 +3771,23 @@ fn rule_new_expression(r: &RuleBuilder) -> Combinator {
     r.sequence((
         kw(r, "new"),
         r.parse("primary"),  // Use primary instead of expression to avoid consuming too much
+        r.optional(r.parse("type_arguments")),  // Type arguments like <void> or <string, number>
         r.optional(r.sequence((
             op(r, "("),
             r.optional(r.parse("argument_list")),
             op(r, ")"),
         ))),
     )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
-        // [new, callee, args?]
+        // [new, callee, type_args?, args?]
         if let ParseResult::List(parts) = result {
             let mut iter = parts.into_iter();
             let _new_kw = iter.next();
             let callee = iter.next().unwrap_or(ParseResult::None);
+            let type_args_result = iter.next().unwrap_or(ParseResult::None);
             let args_result = iter.next().unwrap_or(ParseResult::None);
+
+            // Parse type arguments
+            let type_arguments = parse_type_arguments(type_args_result);
 
             let arguments: Vec<Argument> = match args_result {
                 ParseResult::List(arg_parts) => {
@@ -3728,7 +3819,7 @@ fn rule_new_expression(r: &RuleBuilder) -> Combinator {
             Ok(ParseResult::Expr(Expression::New(Box::new(NewExpression {
                 callee: Rc::new(to_expr(callee)?),
                 arguments,
-                type_arguments: None,
+                type_arguments,
                 span,
             }))))
         } else {
