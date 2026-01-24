@@ -109,6 +109,16 @@ fn main() {
         "scheme_parser",
         &grammars::scheme().generate(),
     );
+    write_parser(
+        out_path,
+        "backtracking_bad_parser",
+        &grammars::backtracking_bad().generate(),
+    );
+    write_parser(
+        out_path,
+        "backtracking_good_parser",
+        &grammars::backtracking_good().generate(),
+    );
 
     // Tell Cargo to rerun if trampoline-parser or grammars change
     println!("cargo:rerun-if-changed=../trampoline-parser/src");

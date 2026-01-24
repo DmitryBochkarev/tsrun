@@ -3,6 +3,7 @@
 //! Each module defines a grammar that gets compiled at build time.
 
 mod arithmetic;
+mod backtracking;
 mod char_classes;
 mod choice;
 mod digit;
@@ -12,21 +13,23 @@ mod keywords;
 mod list;
 mod list_trailing;
 mod literal;
+mod lua;
+mod lua_expr;
 mod nested;
 mod not_followed;
 mod number;
 mod one_or_more;
 mod optional_test;
-mod lua;
-mod lua_expr;
-mod scheme;
 mod postfix;
 mod right_assoc;
+mod scheme;
 mod sequence;
 mod skip_test;
 mod zero_or_more;
 
 pub use arithmetic::grammar as arithmetic;
+pub use backtracking::bad_grammar as backtracking_bad;
+pub use backtracking::good_grammar as backtracking_good;
 pub use char_classes::alphanum as char_classes_alphanum;
 pub use char_classes::custom_range as char_classes_custom_range;
 pub use char_classes::hex as char_classes_hex;

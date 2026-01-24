@@ -141,3 +141,13 @@ pub mod lua_expr_parser {
 pub mod scheme_parser {
     include!(concat!(env!("OUT_DIR"), "/scheme_parser.rs"));
 }
+
+#[allow(dead_code, unused_variables, clippy::all)]
+pub mod backtracking_bad_parser {
+    include!(concat!(env!("OUT_DIR"), "/backtracking_bad_parser.rs"));
+}
+
+#[allow(dead_code, unused_variables, clippy::all)]
+pub mod backtracking_good_parser {
+    include!(concat!(env!("OUT_DIR"), "/backtracking_good_parser.rs"));
+}
