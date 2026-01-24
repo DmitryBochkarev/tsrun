@@ -342,6 +342,278 @@ fn assign(left: ParseResult, right: ParseResult, op: AssignmentOp, span: Span) -
         span,
     }))))
 }
+
+/// Create type assertion expression (x as T)
+/// Types are stripped at runtime, so we use a placeholder TypeAnnotation
+fn type_assertion(expr: ParseResult, span: Span) -> Result<ParseResult, ParseError> {
+    Ok(ParseResult::Expr(Expression::TypeAssertion(TypeAssertionExpression {
+        expression: Rc::new(to_expr(expr)?),
+        type_annotation: Box::new(TypeAnnotation::Keyword(TypeKeyword {
+            keyword: TypeKeywordKind::Any,
+            span: span.clone(),
+        })),
+        span,
+    })))
+}
+
+/// Convert ParseResult to ArrowFunctionBody
+fn to_arrow_body(result: ParseResult) -> Result<Box<ArrowFunctionBody>, ParseError> {
+    match result {
+        ParseResult::Stmt(Statement::Block(block)) => {
+            Ok(Box::new(ArrowFunctionBody::Block(Rc::new(block))))
+        }
+        ParseResult::Expr(e) => Ok(Box::new(ArrowFunctionBody::Expression(Rc::new(e)))),
+        other => {
+            // Try to extract expression
+            if let Ok(e) = to_expr(other) {
+                Ok(Box::new(ArrowFunctionBody::Expression(Rc::new(e))))
+            } else {
+                Err(ParseError::new("Expected arrow function body".to_string(), 0, 0))
+            }
+        }
+    }
+}
+
+/// Extract pattern from parameter (a sequence of [decorators, accessibility?, readonly?, pattern, ...])
+fn extract_param_pattern(item: ParseResult, default_span: &Span) -> Option<FunctionParam> {
+    match item {
+        // Direct identifier (simplified case)
+        ParseResult::Ident(id) => Some(FunctionParam {
+            pattern: Pattern::Identifier(id.clone()),
+            type_annotation: None,
+            optional: false,
+            decorators: vec![],
+            accessibility: None,
+            readonly: false,
+            span: id.span,
+        }),
+        // Direct pattern
+        ParseResult::Pat(p) => Some(FunctionParam {
+            pattern: p.clone(),
+            type_annotation: None,
+            optional: false,
+            decorators: vec![],
+            accessibility: None,
+            readonly: false,
+            span: default_span.clone(),
+        }),
+        // Parameter sequence: [decorators, accessibility?, readonly?, pattern, optional?, type_annotation?, default?]
+        ParseResult::List(parts) => {
+            let mut iter = parts.into_iter();
+            let _decorators = iter.next(); // Skip decorators
+            let _accessibility = iter.next(); // Skip accessibility
+            let _readonly = iter.next(); // Skip readonly
+            let pattern_result = iter.next()?; // Get pattern
+
+            // Try to convert pattern_result to a Pattern
+            let pattern = match pattern_result {
+                ParseResult::Pat(p) => p,
+                ParseResult::Ident(id) => Pattern::Identifier(id),
+                _ => return None,
+            };
+
+            Some(FunctionParam {
+                pattern,
+                type_annotation: None,
+                optional: false,
+                decorators: vec![],
+                accessibility: None,
+                readonly: false,
+                span: default_span.clone(),
+            })
+        }
+        _ => None,
+    }
+}
+
+/// Create arrow function with parenthesized params
+fn arrow_function_parens(async_kw: ParseResult, params: ParseResult, body: ParseResult, span: Span) -> Result<ParseResult, ParseError> {
+    let is_async = !matches!(async_kw, ParseResult::None);
+    let params_vec: Vec<FunctionParam> = match params {
+        ParseResult::List(items) => {
+            items.into_iter().filter_map(|item| {
+                extract_param_pattern(item, &span)
+            }).collect()
+        }
+        ParseResult::None => vec![],
+        _ => vec![],
+    };
+    Ok(ParseResult::Expr(Expression::ArrowFunction(Box::new(ArrowFunctionExpression {
+        params: Rc::from(params_vec),
+        return_type: None,
+        type_parameters: None,
+        body: to_arrow_body(body)?,
+        async_: is_async,
+        span,
+    }))))
+}
+
+/// Create arrow function with single identifier param
+fn arrow_function_single(async_kw: ParseResult, param: ParseResult, body: ParseResult, span: Span) -> Result<ParseResult, ParseError> {
+    let is_async = !matches!(async_kw, ParseResult::None);
+    let id = to_ident(param)?;
+    let params = vec![FunctionParam {
+        pattern: Pattern::Identifier(id.clone()),
+        type_annotation: None,
+        optional: false,
+        decorators: vec![],
+        accessibility: None,
+        readonly: false,
+        span: id.span,
+    }];
+    Ok(ParseResult::Expr(Expression::ArrowFunction(Box::new(ArrowFunctionExpression {
+        params: Rc::from(params),
+        return_type: None,
+        type_parameters: None,
+        body: to_arrow_body(body)?,
+        async_: is_async,
+        span,
+    }))))
+}
+
+/// Convert params list to FunctionParam vector
+fn params_to_vec(params: ParseResult, span: &Span) -> Vec<FunctionParam> {
+    match params {
+        ParseResult::List(items) => {
+            items.into_iter().filter_map(|item| {
+                extract_param_pattern(item, span)
+            }).collect()
+        }
+        ParseResult::None => vec![],
+        _ => vec![],
+    }
+}
+
+/// Extract BlockStatement from ParseResult
+fn to_block(result: ParseResult) -> Result<Rc<BlockStatement>, ParseError> {
+    match result {
+        ParseResult::Stmt(Statement::Block(b)) => Ok(Rc::new(b)),
+        _ => Err(ParseError::new("Expected block statement".to_string(), 0, 0)),
+    }
+}
+
+/// Create block statement from list of statements
+fn create_block_stmt(result: ParseResult, span: Span) -> Result<ParseResult, ParseError> {
+    // result is [{, statements*, }]
+    if let ParseResult::List(parts) = result {
+        let mut iter = parts.into_iter();
+        let _open_brace = iter.next(); // skip {
+        let stmts_result = iter.next().unwrap_or(ParseResult::None);
+        let _close_brace = iter.next(); // skip }
+
+        let statements: Vec<Statement> = match stmts_result {
+            ParseResult::List(items) => {
+                items.into_iter().filter_map(|item| {
+                    match item {
+                        ParseResult::Stmt(s) => Some(s),
+                        _ => None,
+                    }
+                }).collect()
+            }
+            ParseResult::Stmt(s) => vec![s],
+            ParseResult::None => vec![],
+            _ => vec![],
+        };
+
+        Ok(ParseResult::Stmt(Statement::Block(BlockStatement {
+            body: Rc::from(statements),
+            span,
+        })))
+    } else {
+        Err(ParseError::new("Expected block parts".to_string(), 0, 0))
+    }
+}
+
+/// Create function declaration
+fn create_function_decl(async_kw: ParseResult, generator: ParseResult, name: ParseResult, params: ParseResult, body: ParseResult, span: Span) -> Result<ParseResult, ParseError> {
+    let is_async = !matches!(async_kw, ParseResult::None);
+    let is_generator = !matches!(generator, ParseResult::None);
+    let id = match name {
+        ParseResult::Ident(id) => Some(id),
+        ParseResult::None => None,
+        _ => None,
+    };
+    let params_vec = params_to_vec(params, &span);
+
+    Ok(ParseResult::Stmt(Statement::FunctionDeclaration(Box::new(FunctionDeclaration {
+        id,
+        params: Rc::from(params_vec),
+        return_type: None,
+        type_parameters: None,
+        body: to_block(body)?,
+        generator: is_generator,
+        async_: is_async,
+        span,
+    }))))
+}
+
+/// Create array expression from parsed elements
+fn create_array_expr(elements_result: ParseResult, span: Span) -> Result<ParseResult, ParseError> {
+    // elements_result is [open_bracket, optional([first_elem?, [(comma, elem?)*]]), close_bracket]
+    let mut elements: Vec<Option<ArrayElement>> = Vec::new();
+
+    if let ParseResult::List(parts) = elements_result {
+        // parts = [open_bracket, optional_content, close_bracket]
+        if let Some(content) = parts.into_iter().nth(1) {
+            // content might be ParseResult::None (empty array) or List
+            if let ParseResult::List(content_parts) = content {
+                // content_parts = [first_elem?, rest_list]
+                let mut iter = content_parts.into_iter();
+
+                // First element (optional)
+                if let Some(first) = iter.next() {
+                    let elem = parse_result_to_array_element(first);
+                    elements.push(elem);
+                }
+
+                // Rest: [(comma, elem?)*]
+                if let Some(ParseResult::List(rest)) = iter.next() {
+                    for item in rest {
+                        // item = [comma, elem?]
+                        if let ParseResult::List(pair) = item {
+                            let elem = pair.into_iter().nth(1).and_then(parse_result_to_array_element);
+                            elements.push(elem);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(ParseResult::Expr(Expression::Array(ArrayExpression {
+        elements,
+        span,
+    })))
+}
+
+/// Convert ParseResult to ArrayElement (None for holes/elisions)
+fn parse_result_to_array_element(result: ParseResult) -> Option<ArrayElement> {
+    match result {
+        ParseResult::None => None,
+        ParseResult::Expr(e) => Some(ArrayElement::Expression(e)),
+        // For spread, check if it's wrapped
+        ParseResult::List(items) if items.len() == 2 => {
+            // Could be spread: [spread_op, expr]
+            if let Some(e) = items.into_iter().last() {
+                if let Ok(expr) = to_expr(e) {
+                    return Some(ArrayElement::Spread(SpreadElement {
+                        argument: Rc::new(expr),
+                        span: Span { start: 0, end: 0, line: 0, column: 0 },
+                    }));
+                }
+            }
+            None
+        }
+        other => {
+            // Try to convert to expression
+            if let Ok(e) = to_expr(other) {
+                Some(ArrayElement::Expression(e))
+            } else {
+                None
+            }
+        }
+    }
+}
 "#;
 
 // === Whitespace and Comments ===
@@ -664,7 +936,25 @@ fn rule_function_declaration(r: &RuleBuilder) -> Combinator {
         op(r, ")"),
         r.optional(r.parse("type_annotation")),
         r.parse("block_statement"),
-    ))
+    )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+        // [async?, function, *?, name?, type_params?, (, params?, ), return_type?, body]
+        if let ParseResult::List(parts) = result {
+            let mut iter = parts.into_iter();
+            let async_kw = iter.next().unwrap_or(ParseResult::None);
+            let _function_kw = iter.next(); // skip 'function'
+            let generator = iter.next().unwrap_or(ParseResult::None);
+            let name = iter.next().unwrap_or(ParseResult::None);
+            let _type_params = iter.next(); // skip type params
+            let _open_paren = iter.next(); // skip (
+            let params = iter.next().unwrap_or(ParseResult::None);
+            let _close_paren = iter.next(); // skip )
+            let _return_type = iter.next(); // skip return type
+            let body = iter.next().unwrap_or(ParseResult::None);
+            create_function_decl(async_kw, generator, name, params, body, span)
+        } else {
+            Err(ParseError::new(\"Expected function declaration parts\".to_string(), 0, 0))
+        }
+    }")
 }
 
 fn rule_class_declaration(r: &RuleBuilder) -> Combinator {
@@ -883,7 +1173,9 @@ fn rule_block_statement(r: &RuleBuilder) -> Combinator {
         op(r, "{"),
         r.zero_or_more(r.parse("statement")),
         op(r, "}"),
-    ))
+    )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+        create_block_stmt(result, span)
+    }")
 }
 
 fn rule_return_statement(r: &RuleBuilder) -> Combinator {
@@ -1117,92 +1409,126 @@ fn rule_namespace_declaration(r: &RuleBuilder) -> Combinator {
 // Expressions
 
 fn rule_expression(r: &RuleBuilder) -> Combinator {
-    // Pratt parsing for expressions
+    // Pratt parsing for expressions, followed by optional `as Type` suffixes
     // Infix operators use leading ws pattern: after operand consumes trailing ws,
     // we need to consume any ws before the operator before parsing right operand
-    r.pratt(r.parse("primary"), |ops| {
-        ops
-            // === Assignment operators (lowest precedence, right-associative) ===
-            .infix(ws_infix(r, ">>>="), 2, Assoc::Right, "|l, r, s| assign(l, r, AssignmentOp::URShiftAssign, s)")
-            .infix(ws_infix(r, "**="), 2, Assoc::Right, "|l, r, s| assign(l, r, AssignmentOp::ExpAssign, s)")
-            .infix(ws_infix(r, "<<="), 2, Assoc::Right, "|l, r, s| assign(l, r, AssignmentOp::LShiftAssign, s)")
-            .infix(ws_infix(r, ">>="), 2, Assoc::Right, "|l, r, s| assign(l, r, AssignmentOp::RShiftAssign, s)")
-            .infix(ws_infix(r, "&&="), 2, Assoc::Right, "|l, r, s| assign(l, r, AssignmentOp::AndAssign, s)")
-            .infix(ws_infix(r, "||="), 2, Assoc::Right, "|l, r, s| assign(l, r, AssignmentOp::OrAssign, s)")
-            .infix(ws_infix(r, "??="), 2, Assoc::Right, "|l, r, s| assign(l, r, AssignmentOp::NullishAssign, s)")
-            .infix(ws_infix(r, "+="), 2, Assoc::Right, "|l, r, s| assign(l, r, AssignmentOp::AddAssign, s)")
-            .infix(ws_infix(r, "-="), 2, Assoc::Right, "|l, r, s| assign(l, r, AssignmentOp::SubAssign, s)")
-            .infix(ws_infix(r, "*="), 2, Assoc::Right, "|l, r, s| assign(l, r, AssignmentOp::MulAssign, s)")
-            .infix(ws_infix(r, "/="), 2, Assoc::Right, "|l, r, s| assign(l, r, AssignmentOp::DivAssign, s)")
-            .infix(ws_infix(r, "%="), 2, Assoc::Right, "|l, r, s| assign(l, r, AssignmentOp::ModAssign, s)")
-            .infix(ws_infix(r, "&="), 2, Assoc::Right, "|l, r, s| assign(l, r, AssignmentOp::BitAndAssign, s)")
-            .infix(ws_infix(r, "|="), 2, Assoc::Right, "|l, r, s| assign(l, r, AssignmentOp::BitOrAssign, s)")
-            .infix(ws_infix(r, "^="), 2, Assoc::Right, "|l, r, s| assign(l, r, AssignmentOp::BitXorAssign, s)")
-            .infix(ws_infix(r, "="), 2, Assoc::Right, "|l, r, s| assign(l, r, AssignmentOp::Assign, s)")
-            // === Ternary operator ===
-            .ternary("?", ":", 3, "|c, t, e, s| conditional(c, t, e, s)")
-            // === Nullish coalescing ===
-            .infix(ws_infix(r, "??"), 4, Assoc::Left, "|l, r, s| logical(l, r, LogicalOp::NullishCoalescing, s)")
-            // === Logical OR ===
-            .infix(ws_infix(r, "||"), 5, Assoc::Left, "|l, r, s| logical(l, r, LogicalOp::Or, s)")
-            // === Logical AND ===
-            .infix(ws_infix(r, "&&"), 6, Assoc::Left, "|l, r, s| logical(l, r, LogicalOp::And, s)")
-            // === Bitwise OR ===
-            .infix(ws_infix(r, "|"), 7, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::BitOr, s)")
-            // === Bitwise XOR ===
-            .infix(ws_infix(r, "^"), 8, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::BitXor, s)")
-            // === Bitwise AND ===
-            .infix(ws_infix(r, "&"), 9, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::BitAnd, s)")
-            // === Equality ===
-            .infix(ws_infix(r, "==="), 10, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::StrictEq, s)")
-            .infix(ws_infix(r, "!=="), 10, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::StrictNotEq, s)")
-            .infix(ws_infix(r, "=="), 10, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::Eq, s)")
-            .infix(ws_infix(r, "!="), 10, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::NotEq, s)")
-            // === Relational ===
-            .infix(ws_infix(r, "<="), 11, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::LtEq, s)")
-            .infix(ws_infix(r, ">="), 11, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::GtEq, s)")
-            .infix(ws_infix(r, "<"), 11, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::Lt, s)")
-            .infix(ws_infix(r, ">"), 11, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::Gt, s)")
-            // Keyword operators with ws + keyword + not_followed_by(ident_cont)
-            .infix(r.sequence((r.parse("ws"), r.lit("in"), r.not_followed_by(r.ident_cont()))), 11, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::In, s)")
-            .infix(r.sequence((r.parse("ws"), r.lit("instanceof"), r.not_followed_by(r.ident_cont()))), 11, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::Instanceof, s)")
-            // === Shift ===
-            .infix(ws_infix(r, ">>>"), 12, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::URShift, s)")
-            .infix(ws_infix(r, "<<"), 12, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::LShift, s)")
-            .infix(ws_infix(r, ">>"), 12, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::RShift, s)")
-            // === Additive ===
-            .infix(ws_infix(r, "+"), 13, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::Add, s)")
-            .infix(ws_infix(r, "-"), 13, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::Sub, s)")
-            // === Multiplicative ===
-            .infix(ws_infix(r, "*"), 14, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::Mul, s)")
-            .infix(ws_infix(r, "/"), 14, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::Div, s)")
-            .infix(ws_infix(r, "%"), 14, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::Mod, s)")
-            // === Exponentiation (right-to-left) ===
-            .infix(ws_infix(r, "**"), 15, Assoc::Right, "|l, r, s| binary(l, r, BinaryOp::Exp, s)")
-            // === Prefix operators ===
-            .prefix("++", 16, "|e, s| update(e, UpdateOp::Increment, true, s)")
-            .prefix("--", 16, "|e, s| update(e, UpdateOp::Decrement, true, s)")
-            .prefix("-", 16, "|e, s| unary(e, UnaryOp::Minus, s)")
-            .prefix("+", 16, "|e, s| unary(e, UnaryOp::Plus, s)")
-            .prefix("!", 16, "|e, s| unary(e, UnaryOp::Not, s)")
-            .prefix("~", 16, "|e, s| unary(e, UnaryOp::BitNot, s)")
-            .prefix_kw("typeof", 16, "|e, s| unary(e, UnaryOp::Typeof, s)")
-            .prefix_kw("void", 16, "|e, s| unary(e, UnaryOp::Void, s)")
-            .prefix_kw("delete", 16, "|e, s| unary(e, UnaryOp::Delete, s)")
-            .prefix_kw("await", 16, "|e, s| await_expr(e, s)")
-            // === Postfix operators (highest precedence) ===
-            .postfix("++", 17, "|e, s| update(e, UpdateOp::Increment, false, s)")
-            .postfix("--", 17, "|e, s| update(e, UpdateOp::Decrement, false, s)")
-            // Call expressions (optional chaining first to match longer pattern)
-            .postfix_call("?.(", ")", ",", 18, "|c, a, s| call(c, a, true, s)")
-            .postfix_call("(", ")", ",", 18, "|c, a, s| call(c, a, false, s)")
-            // Member access (optional chaining first to match longer pattern)
-            .postfix_member("?.", 18, "|o, p, s| member(o, p, true, s)")
-            .postfix_member(".", 18, "|o, p, s| member(o, p, false, s)")
-            // Computed member (optional chaining first to match longer pattern)
-            .postfix_index("?.[", "]", 18, "|o, e, s| member_computed(o, e, true, s)")
-            .postfix_index("[", "]", 18, "|o, e, s| member_computed(o, e, false, s)")
-    })
+    r.sequence((
+        r.pratt(r.parse("primary"), |ops| {
+            ops
+                // === Assignment operators (lowest precedence, right-associative) ===
+                .infix(ws_infix(r, ">>>="), 2, Assoc::Right, "|l, r, s| assign(l, r, AssignmentOp::URShiftAssign, s)")
+                .infix(ws_infix(r, "**="), 2, Assoc::Right, "|l, r, s| assign(l, r, AssignmentOp::ExpAssign, s)")
+                .infix(ws_infix(r, "<<="), 2, Assoc::Right, "|l, r, s| assign(l, r, AssignmentOp::LShiftAssign, s)")
+                .infix(ws_infix(r, ">>="), 2, Assoc::Right, "|l, r, s| assign(l, r, AssignmentOp::RShiftAssign, s)")
+                .infix(ws_infix(r, "&&="), 2, Assoc::Right, "|l, r, s| assign(l, r, AssignmentOp::AndAssign, s)")
+                .infix(ws_infix(r, "||="), 2, Assoc::Right, "|l, r, s| assign(l, r, AssignmentOp::OrAssign, s)")
+                .infix(ws_infix(r, "??="), 2, Assoc::Right, "|l, r, s| assign(l, r, AssignmentOp::NullishAssign, s)")
+                .infix(ws_infix(r, "+="), 2, Assoc::Right, "|l, r, s| assign(l, r, AssignmentOp::AddAssign, s)")
+                .infix(ws_infix(r, "-="), 2, Assoc::Right, "|l, r, s| assign(l, r, AssignmentOp::SubAssign, s)")
+                .infix(ws_infix(r, "*="), 2, Assoc::Right, "|l, r, s| assign(l, r, AssignmentOp::MulAssign, s)")
+                .infix(ws_infix(r, "/="), 2, Assoc::Right, "|l, r, s| assign(l, r, AssignmentOp::DivAssign, s)")
+                .infix(ws_infix(r, "%="), 2, Assoc::Right, "|l, r, s| assign(l, r, AssignmentOp::ModAssign, s)")
+                .infix(ws_infix(r, "&="), 2, Assoc::Right, "|l, r, s| assign(l, r, AssignmentOp::BitAndAssign, s)")
+                .infix(ws_infix(r, "|="), 2, Assoc::Right, "|l, r, s| assign(l, r, AssignmentOp::BitOrAssign, s)")
+                .infix(ws_infix(r, "^="), 2, Assoc::Right, "|l, r, s| assign(l, r, AssignmentOp::BitXorAssign, s)")
+                .infix(ws_infix(r, "="), 2, Assoc::Right, "|l, r, s| assign(l, r, AssignmentOp::Assign, s)")
+                // === Ternary operator ===
+                .ternary("?", ":", 3, "|c, t, e, s| conditional(c, t, e, s)")
+                // === Nullish coalescing ===
+                .infix(ws_infix(r, "??"), 4, Assoc::Left, "|l, r, s| logical(l, r, LogicalOp::NullishCoalescing, s)")
+                // === Logical OR ===
+                .infix(ws_infix(r, "||"), 5, Assoc::Left, "|l, r, s| logical(l, r, LogicalOp::Or, s)")
+                // === Logical AND ===
+                .infix(ws_infix(r, "&&"), 6, Assoc::Left, "|l, r, s| logical(l, r, LogicalOp::And, s)")
+                // === Bitwise OR ===
+                .infix(ws_infix(r, "|"), 7, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::BitOr, s)")
+                // === Bitwise XOR ===
+                .infix(ws_infix(r, "^"), 8, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::BitXor, s)")
+                // === Bitwise AND ===
+                .infix(ws_infix(r, "&"), 9, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::BitAnd, s)")
+                // === Equality ===
+                .infix(ws_infix(r, "==="), 10, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::StrictEq, s)")
+                .infix(ws_infix(r, "!=="), 10, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::StrictNotEq, s)")
+                .infix(ws_infix(r, "=="), 10, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::Eq, s)")
+                .infix(ws_infix(r, "!="), 10, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::NotEq, s)")
+                // === Relational ===
+                .infix(ws_infix(r, "<="), 11, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::LtEq, s)")
+                .infix(ws_infix(r, ">="), 11, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::GtEq, s)")
+                .infix(ws_infix(r, "<"), 11, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::Lt, s)")
+                .infix(ws_infix(r, ">"), 11, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::Gt, s)")
+                // Keyword operators with ws + keyword + not_followed_by(ident_cont)
+                .infix(r.sequence((r.parse("ws"), r.lit("in"), r.not_followed_by(r.ident_cont()))), 11, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::In, s)")
+                .infix(r.sequence((r.parse("ws"), r.lit("instanceof"), r.not_followed_by(r.ident_cont()))), 11, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::Instanceof, s)")
+                // === Shift ===
+                .infix(ws_infix(r, ">>>"), 12, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::URShift, s)")
+                .infix(ws_infix(r, "<<"), 12, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::LShift, s)")
+                .infix(ws_infix(r, ">>"), 12, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::RShift, s)")
+                // === Additive ===
+                .infix(ws_infix(r, "+"), 13, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::Add, s)")
+                .infix(ws_infix(r, "-"), 13, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::Sub, s)")
+                // === Multiplicative ===
+                .infix(ws_infix(r, "*"), 14, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::Mul, s)")
+                .infix(ws_infix(r, "/"), 14, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::Div, s)")
+                .infix(ws_infix(r, "%"), 14, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::Mod, s)")
+                // === Exponentiation (right-to-left) ===
+                .infix(ws_infix(r, "**"), 15, Assoc::Right, "|l, r, s| binary(l, r, BinaryOp::Exp, s)")
+                // === Prefix operators ===
+                .prefix("++", 16, "|e, s| update(e, UpdateOp::Increment, true, s)")
+                .prefix("--", 16, "|e, s| update(e, UpdateOp::Decrement, true, s)")
+                .prefix("-", 16, "|e, s| unary(e, UnaryOp::Minus, s)")
+                .prefix("+", 16, "|e, s| unary(e, UnaryOp::Plus, s)")
+                .prefix("!", 16, "|e, s| unary(e, UnaryOp::Not, s)")
+                .prefix("~", 16, "|e, s| unary(e, UnaryOp::BitNot, s)")
+                .prefix_kw("typeof", 16, "|e, s| unary(e, UnaryOp::Typeof, s)")
+                .prefix_kw("void", 16, "|e, s| unary(e, UnaryOp::Void, s)")
+                .prefix_kw("delete", 16, "|e, s| unary(e, UnaryOp::Delete, s)")
+                .prefix_kw("await", 16, "|e, s| await_expr(e, s)")
+                // === Postfix operators (highest precedence) ===
+                .postfix("++", 17, "|e, s| update(e, UpdateOp::Increment, false, s)")
+                .postfix("--", 17, "|e, s| update(e, UpdateOp::Decrement, false, s)")
+                // Call expressions (optional chaining first to match longer pattern)
+                .postfix_call("?.(", ")", ",", 18, "|c, a, s| call(c, a, true, s)")
+                .postfix_call("(", ")", ",", 18, "|c, a, s| call(c, a, false, s)")
+                // Member access (optional chaining first to match longer pattern)
+                .postfix_member("?.", 18, "|o, p, s| member(o, p, true, s)")
+                .postfix_member(".", 18, "|o, p, s| member(o, p, false, s)")
+                // Computed member (optional chaining first to match longer pattern)
+                .postfix_index("?.[", "]", 18, "|o, e, s| member_computed(o, e, true, s)")
+                .postfix_index("[", "]", 18, "|o, e, s| member_computed(o, e, false, s)")
+        }),
+        // Optional `as Type` suffixes (TypeScript type assertions)
+        r.zero_or_more(r.sequence((
+            r.parse("ws"),
+            r.lit("as"),
+            r.not_followed_by(r.ident_cont()),
+            r.parse("ws"),
+            r.parse("type"),
+        ))),
+    )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+        // Extract the expression and as-clause count
+        if let ParseResult::List(items) = result {
+            let mut iter = items.into_iter();
+            let expr = iter.next().unwrap_or(ParseResult::None);
+            let as_clauses = iter.next();
+
+            // If there are as clauses, wrap in TypeAssertion(s)
+            if let Some(ParseResult::List(clauses)) = as_clauses {
+                if clauses.is_empty() {
+                    return Ok(expr);
+                }
+                // Wrap expression in TypeAssertion for each as clause
+                let mut current = expr;
+                for _ in clauses {
+                    current = type_assertion(current, span.clone())?;
+                }
+                Ok(current)
+            } else {
+                Ok(expr)
+            }
+        } else {
+            Ok(result)
+        }
+    }")
 }
 
 fn rule_primary(r: &RuleBuilder) -> Combinator {
@@ -1221,26 +1547,27 @@ fn rule_primary(r: &RuleBuilder) -> Combinator {
 }
 
 fn rule_primary_inner(r: &RuleBuilder) -> Combinator {
-    r.choice((
+    r.choice(vec![
         r.parse("literal"),
-        r.parse("identifier").ast("|result: ParseResult, _span: Span| -> Result<ParseResult, ParseError> {
-            let ident = to_ident(result)?;
-            Ok(ParseResult::Expr(Expression::Identifier(ident)))
-        }"),
         r.parse("this_expression"),
         r.parse("super_expression"),
         r.parse("array_expression"),
         r.parse("object_expression"),
         r.parse("function_expression"),
-        r.parse("arrow_function"),
         r.parse("class_expression"),
         r.parse("template_literal"),
-        r.choice((
-            r.parse("new_expression"),
-            r.parse("yield_expression"),
-            r.parse("parenthesized"),
-        )),
-    ))
+        r.parse("new_expression"),
+        r.parse("yield_expression"),
+        // arrow_function before parenthesized - both start with ( but arrow needs => lookahead
+        // Arrow function will fail if no => follows, then parenthesized will match
+        r.parse("arrow_function"),
+        r.parse("parenthesized"),
+        // identifier last since it matches most things
+        r.parse("identifier").ast("|result: ParseResult, _span: Span| -> Result<ParseResult, ParseError> {
+            let ident = to_ident(result)?;
+            Ok(ParseResult::Expr(Expression::Identifier(ident)))
+        }"),
+    ])
 }
 
 fn rule_literal(r: &RuleBuilder) -> Combinator {
@@ -1294,7 +1621,9 @@ fn rule_array_expression(r: &RuleBuilder) -> Combinator {
             ))),
         ))),
         op(r, "]"),
-    ))
+    )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+        create_array_expr(result, span)
+    }")
 }
 
 fn rule_array_element(r: &RuleBuilder) -> Combinator {
@@ -1399,6 +1728,7 @@ fn rule_function_expression(r: &RuleBuilder) -> Combinator {
 
 fn rule_arrow_function(r: &RuleBuilder) -> Combinator {
     r.choice((
+        // Parenthesized params: (a, b) => body
         r.sequence((
             r.optional(kw(r, "async")),
             r.optional(r.parse("type_parameters")),
@@ -1408,13 +1738,42 @@ fn rule_arrow_function(r: &RuleBuilder) -> Combinator {
             r.optional(r.parse("type_annotation")),
             op(r, "=>"),
             r.parse("arrow_body"),
-        )),
+        )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+            // [async?, type_params?, (, params?, ), return_type?, =>, body]
+            if let ParseResult::List(items) = result {
+                let mut iter = items.into_iter();
+                let async_kw = iter.next().unwrap_or(ParseResult::None);
+                let _type_params = iter.next(); // skip type params
+                let _open_paren = iter.next();  // skip (
+                let params = iter.next().unwrap_or(ParseResult::None);
+                let _close_paren = iter.next(); // skip )
+                let _return_type = iter.next(); // skip return type
+                let _arrow = iter.next();       // skip =>
+                let body = iter.next().unwrap_or(ParseResult::None);
+                arrow_function_parens(async_kw, params, body, span)
+            } else {
+                Err(ParseError::new(\"Expected arrow function parts\".to_string(), 0, 0))
+            }
+        }"),
+        // Single unparenthesized param: x => body
         r.sequence((
             r.optional(kw(r, "async")),
             r.parse("identifier"),
             op(r, "=>"),
             r.parse("arrow_body"),
-        )),
+        )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+            // [async?, identifier, =>, body]
+            if let ParseResult::List(items) = result {
+                let mut iter = items.into_iter();
+                let async_kw = iter.next().unwrap_or(ParseResult::None);
+                let param = iter.next().unwrap_or(ParseResult::None);
+                let _arrow = iter.next(); // skip =>
+                let body = iter.next().unwrap_or(ParseResult::None);
+                arrow_function_single(async_kw, param, body, span)
+            } else {
+                Err(ParseError::new(\"Expected arrow function parts\".to_string(), 0, 0))
+            }
+        }"),
     ))
 }
 
@@ -1472,6 +1831,14 @@ fn rule_yield_expression(r: &RuleBuilder) -> Combinator {
 
 fn rule_parenthesized(r: &RuleBuilder) -> Combinator {
     r.sequence((op(r, "("), r.parse("expression"), op(r, ")")))
+        .ast("|result: ParseResult, _span: Span| -> Result<ParseResult, ParseError> {
+            // Extract expression from sequence [open_paren, expr, close_paren]
+            if let ParseResult::List(mut items) = result {
+                Ok(items.remove(1))
+            } else {
+                Ok(result)
+            }
+        }")
 }
 
 fn rule_argument_list(r: &RuleBuilder) -> Combinator {

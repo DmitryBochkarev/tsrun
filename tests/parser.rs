@@ -35,6 +35,26 @@ fn test_binary_expression_simple() {
     assert_eq!(prog.body.len(), 1);
 }
 
+// Regression: parenthesized expression
+#[test]
+fn test_parenthesized_expression() {
+    let prog = parse("(1);");
+    for (i, stmt) in prog.body.iter().enumerate() {
+        println!("Statement {}: {:?}", i, stmt);
+    }
+    assert_eq!(prog.body.len(), 1);
+}
+
+// Regression: as type assertion
+#[test]
+fn test_as_expression() {
+    let prog = parse("1 as number;");
+    for (i, stmt) in prog.body.iter().enumerate() {
+        println!("Statement {}: {:?}", i, stmt);
+    }
+    assert_eq!(prog.body.len(), 1);
+}
+
 #[test]
 fn test_binary_expression() {
     let prog = parse("(1 as number) + (2 as number) * (3 as number);");
@@ -86,9 +106,9 @@ fn test_arrow_function_single_param_no_parens() {
     }
 }
 
+// Regression: parenthesized arrow function as argument
 #[test]
 fn test_arrow_function_parenthesized_as_arg() {
-    // Arrow function with parenthesized parameter as function argument - works
     let prog = parse("[].map((x) => x);");
     assert_eq!(prog.body.len(), 1);
 }
