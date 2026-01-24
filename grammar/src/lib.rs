@@ -1217,7 +1217,41 @@ fn rule_for_in_statement(r: &RuleBuilder) -> Combinator {
         r.parse("expression"),
         op(r, ")"),
         r.parse("statement"),
-    ))
+    )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+        // [for, (, left, in, right, ), body]
+        if let ParseResult::List(parts) = result {
+            let mut iter = parts.into_iter();
+            let _for_kw = iter.next();
+            let _open_paren = iter.next();
+            let left_result = iter.next().unwrap_or(ParseResult::None);
+            let _in_kw = iter.next();
+            let right = iter.next().unwrap_or(ParseResult::None);
+            let _close_paren = iter.next();
+            let body = iter.next().unwrap_or(ParseResult::None);
+
+            let left = match left_result {
+                ParseResult::Stmt(Statement::VariableDeclaration(decl)) => ForInOfLeft::Variable(decl),
+                ParseResult::Pat(p) => ForInOfLeft::Pattern(p),
+                ParseResult::Ident(id) => ForInOfLeft::Pattern(Pattern::Identifier(id)),
+                ParseResult::Expr(Expression::Identifier(id)) => ForInOfLeft::Pattern(Pattern::Identifier(id)),
+                _ => return Err(ParseError::new(\"Invalid for-in left side\".to_string(), 0, 0)),
+            };
+
+            let body_stmt = match body {
+                ParseResult::Stmt(s) => Rc::new(s),
+                _ => return Err(ParseError::new(\"Expected statement\".to_string(), 0, 0)),
+            };
+
+            Ok(ParseResult::Stmt(Statement::ForIn(Box::new(ForInStatement {
+                left,
+                right: Rc::new(to_expr(right)?),
+                body: body_stmt,
+                span,
+            }))))
+        } else {
+            Err(ParseError::new(\"Expected for-in statement parts\".to_string(), 0, 0))
+        }
+    }")
 }
 
 fn rule_for_of_statement(r: &RuleBuilder) -> Combinator {
@@ -1230,7 +1264,45 @@ fn rule_for_of_statement(r: &RuleBuilder) -> Combinator {
         r.parse("expression"),
         op(r, ")"),
         r.parse("statement"),
-    ))
+    )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+        // [for, await?, (, left, of, right, ), body]
+        if let ParseResult::List(parts) = result {
+            let mut iter = parts.into_iter();
+            let _for_kw = iter.next();
+            let await_result = iter.next().unwrap_or(ParseResult::None);
+            let _open_paren = iter.next();
+            let left_result = iter.next().unwrap_or(ParseResult::None);
+            let _of_kw = iter.next();
+            let right = iter.next().unwrap_or(ParseResult::None);
+            let _close_paren = iter.next();
+            let body = iter.next().unwrap_or(ParseResult::None);
+
+            let await_ = !matches!(await_result, ParseResult::None);
+
+            let left = match left_result {
+                ParseResult::Stmt(Statement::VariableDeclaration(decl)) => ForInOfLeft::Variable(decl),
+                ParseResult::Pat(p) => ForInOfLeft::Pattern(p),
+                ParseResult::Ident(id) => ForInOfLeft::Pattern(Pattern::Identifier(id)),
+                ParseResult::Expr(Expression::Identifier(id)) => ForInOfLeft::Pattern(Pattern::Identifier(id)),
+                _ => return Err(ParseError::new(\"Invalid for-of left side\".to_string(), 0, 0)),
+            };
+
+            let body_stmt = match body {
+                ParseResult::Stmt(s) => Rc::new(s),
+                _ => return Err(ParseError::new(\"Expected statement\".to_string(), 0, 0)),
+            };
+
+            Ok(ParseResult::Stmt(Statement::ForOf(Box::new(ForOfStatement {
+                left,
+                right: Rc::new(to_expr(right)?),
+                body: body_stmt,
+                await_,
+                span,
+            }))))
+        } else {
+            Err(ParseError::new(\"Expected for-of statement parts\".to_string(), 0, 0))
+        }
+    }")
 }
 
 fn rule_for_in_of_left(r: &RuleBuilder) -> Combinator {
