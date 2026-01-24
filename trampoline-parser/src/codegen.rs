@@ -1063,13 +1063,10 @@ impl<'a> CodeGenerator<'a> {
                 self.line("return Ok(());");
                 self.indent -= 1;
                 self.line("}");
+                self.line("// Subsequent iteration failed - keep all previous successful results");
+                self.line("// (no pop needed: the failed iteration didn't add to result_stack)");
                 self.line("self.last_error = None;");
                 self.line("self.pos = checkpoint;");
-                self.line("if self.result_stack.len() > loop_base {");
-                self.indent += 1;
-                self.line("self.result_stack.pop();");
-                self.indent -= 1;
-                self.line("}");
                 self.line(&format!(
                     "self.work_stack.push(Work::{}Complete {{ result_base, loop_base }});",
                     prefix

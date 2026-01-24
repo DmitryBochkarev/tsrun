@@ -136,3 +136,8 @@ pub mod lua_parser {
 pub mod lua_expr_parser {
     include!(concat!(env!("OUT_DIR"), "/lua_expr_parser.rs"));
 }
+
+#[allow(dead_code, unused_variables, clippy::all)]
+pub mod scheme_parser {
+    include!(concat!(env!("OUT_DIR"), "/scheme_parser.rs"));
+}

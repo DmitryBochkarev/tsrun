@@ -104,6 +104,11 @@ fn main() {
         "lua_expr_parser",
         &grammars::lua_expr().generate(),
     );
+    write_parser(
+        out_path,
+        "scheme_parser",
+        &grammars::scheme().generate(),
+    );
 
     // Tell Cargo to rerun if trampoline-parser or grammars change
     println!("cargo:rerun-if-changed=../trampoline-parser/src");
