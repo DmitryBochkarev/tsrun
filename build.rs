@@ -46,7 +46,8 @@ impl ParseResult {
             ParseResult::None => JsString::from(""),
             // AST variants don't contain text
             ParseResult::Expr(_) | ParseResult::Stmt(_) | ParseResult::Ident(_)
-            | ParseResult::Pat(_) | ParseResult::Prog(_) => JsString::from(""),
+            | ParseResult::Pat(_) | ParseResult::Prog(_)
+            | ParseResult::ClassBody(_) | ParseResult::ClassMember(_) => JsString::from(""),
         }
     }
 

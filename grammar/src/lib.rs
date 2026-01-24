@@ -166,6 +166,8 @@ fn ast_config(c: AstConfigBuilder) -> AstConfigBuilder {
         .result_variant("Ident", "Identifier")
         .result_variant("Pat", "Pattern")
         .result_variant("Prog", "Program")
+        .result_variant("ClassBody", "ClassBody")
+        .result_variant("ClassMember", "ClassMember")
         .helper(HELPER_FUNCTIONS)
 }
 
@@ -666,6 +668,213 @@ fn parse_result_to_array_element(result: ParseResult) -> Option<ArrayElement> {
         }
     }
 }
+
+/// Create class declaration
+fn create_class_decl(
+    decorators: ParseResult,
+    abstract_kw: ParseResult,
+    name: ParseResult,
+    extends_clause: ParseResult,
+    body: ParseResult,
+    span: Span
+) -> Result<ParseResult, ParseError> {
+    let is_abstract = !matches!(abstract_kw, ParseResult::None);
+    let id = match name {
+        ParseResult::Ident(id) => Some(id),
+        _ => None,
+    };
+
+    // Extract super class from extends clause
+    let super_class = match extends_clause {
+        ParseResult::List(parts) => {
+            // [extends, expr]
+            parts.into_iter().nth(1).and_then(|e| to_expr(e).ok()).map(Rc::new)
+        }
+        _ => None,
+    };
+
+    // Extract class body
+    let class_body = match body {
+        ParseResult::ClassBody(b) => b,
+        _ => ClassBody { members: vec![], span: span.clone() },
+    };
+
+    Ok(ParseResult::Stmt(Statement::ClassDeclaration(Box::new(ClassDeclaration {
+        id,
+        type_parameters: None,
+        super_class,
+        implements: vec![],
+        body: class_body,
+        decorators: vec![],
+        abstract_: is_abstract,
+        span,
+    }))))
+}
+
+/// Create class body from members list
+fn create_class_body(members: ParseResult, span: Span) -> Result<ParseResult, ParseError> {
+    let members_vec: Vec<ClassMember> = match members {
+        ParseResult::List(items) => {
+            items.into_iter().filter_map(|item| {
+                match item {
+                    ParseResult::ClassMember(m) => Some(m),
+                    _ => None,
+                }
+            }).collect()
+        }
+        ParseResult::None => vec![],
+        _ => vec![],
+    };
+
+    Ok(ParseResult::ClassBody(ClassBody {
+        members: members_vec,
+        span,
+    }))
+}
+
+/// Create class constructor
+fn create_constructor(
+    accessibility: ParseResult,
+    params: ParseResult,
+    body: ParseResult,
+    span: Span
+) -> Result<ParseResult, ParseError> {
+    let acc = match accessibility {
+        ParseResult::Text(s, _) => {
+            match s.as_ref() {
+                "public" => Some(Accessibility::Public),
+                "private" => Some(Accessibility::Private),
+                "protected" => Some(Accessibility::Protected),
+                _ => None,
+            }
+        }
+        _ => None,
+    };
+
+    let params_vec = params_to_vec(params, &span);
+    let body_block = match body {
+        ParseResult::Stmt(Statement::Block(b)) => b,
+        _ => BlockStatement { body: Rc::from(vec![]), span: span.clone() },
+    };
+
+    Ok(ParseResult::ClassMember(ClassMember::Constructor(Box::new(ClassConstructor {
+        params: params_vec,
+        body: body_block,
+        accessibility: acc,
+        span,
+    }))))
+}
+
+/// Create class method
+fn create_class_method(
+    static_kw: ParseResult,
+    async_kw: ParseResult,
+    generator: ParseResult,
+    accessor: ParseResult,
+    key: ParseResult,
+    params: ParseResult,
+    body: ParseResult,
+    span: Span
+) -> Result<ParseResult, ParseError> {
+    let is_static = !matches!(static_kw, ParseResult::None);
+    let is_async = !matches!(async_kw, ParseResult::None);
+    let is_generator = !matches!(generator, ParseResult::None);
+
+    let kind = match accessor {
+        ParseResult::Text(s, _) => {
+            match s.as_ref() {
+                "get" => MethodKind::Get,
+                "set" => MethodKind::Set,
+                _ => MethodKind::Method,
+            }
+        }
+        _ => MethodKind::Method,
+    };
+
+    let prop_key = result_to_prop_key(key, &span);
+    let params_vec = params_to_vec(params, &span);
+    let body_block = match body {
+        ParseResult::Stmt(Statement::Block(b)) => Rc::new(b),
+        _ => Rc::new(BlockStatement { body: Rc::from(vec![]), span: span.clone() }),
+    };
+
+    let func_expr = FunctionExpression {
+        id: None,
+        params: Rc::from(params_vec),
+        return_type: None,
+        type_parameters: None,
+        body: body_block,
+        generator: is_generator,
+        async_: is_async,
+        span: span.clone(),
+    };
+
+    Ok(ParseResult::ClassMember(ClassMember::Method(Box::new(ClassMethod {
+        key: prop_key,
+        value: func_expr,
+        kind,
+        computed: false,
+        static_: is_static,
+        accessibility: None,
+        decorators: vec![],
+        span,
+    }))))
+}
+
+/// Create class property
+fn create_class_property(
+    static_kw: ParseResult,
+    readonly: ParseResult,
+    accessor: ParseResult,
+    key: ParseResult,
+    optional: ParseResult,
+    initializer: ParseResult,
+    span: Span
+) -> Result<ParseResult, ParseError> {
+    let is_static = !matches!(static_kw, ParseResult::None);
+    let is_readonly = !matches!(readonly, ParseResult::None);
+    let is_accessor = !matches!(accessor, ParseResult::None);
+    let is_optional = !matches!(optional, ParseResult::None);
+
+    let prop_key = result_to_prop_key(key, &span);
+
+    let value = match initializer {
+        ParseResult::List(parts) => {
+            // [=, expr]
+            parts.into_iter().nth(1).and_then(|e| to_expr(e).ok()).map(Box::new)
+        }
+        _ => None,
+    };
+
+    Ok(ParseResult::ClassMember(ClassMember::Property(Box::new(ClassProperty {
+        key: prop_key,
+        value,
+        type_annotation: None,
+        computed: false,
+        static_: is_static,
+        readonly: is_readonly,
+        optional: is_optional,
+        accessor: is_accessor,
+        accessibility: None,
+        decorators: vec![],
+        span,
+    }))))
+}
+
+/// Convert ParseResult to ObjectPropertyKey
+fn result_to_prop_key(result: ParseResult, span: &Span) -> ObjectPropertyKey {
+    match result {
+        ParseResult::Ident(id) => ObjectPropertyKey::Identifier(id),
+        ParseResult::Text(s, sp) => ObjectPropertyKey::Identifier(Identifier { name: s, span: sp }),
+        ParseResult::Expr(Expression::Literal(lit)) => {
+            match lit.value {
+                LiteralValue::String(s) => ObjectPropertyKey::String(StringLiteral { value: s, span: lit.span }),
+                _ => ObjectPropertyKey::Number(*lit),
+            }
+        }
+        _ => ObjectPropertyKey::Identifier(Identifier { name: JsString::from(""), span: span.clone() }),
+    }
+}
 "#;
 
 // === Whitespace and Comments ===
@@ -861,9 +1070,15 @@ fn ws_infix(r: &RuleBuilder, operator: &str) -> Combinator {
 // === Rule Functions ===
 
 fn rule_program(r: &RuleBuilder) -> Combinator {
-    r.zero_or_more(r.parse("statement"))
+    r.sequence((
+        r.parse("ws"),  // Consume leading whitespace
+        r.zero_or_more(r.parse("statement")),
+    ))
         .ast("|result: ParseResult, _span: Span| -> Result<ParseResult, ParseError> {
-            let items = result.into_list();
+            // result is [ws, statements]
+            let parts = result.into_list();
+            let stmts_result = parts.into_iter().nth(1).unwrap_or(ParseResult::None);
+            let items = stmts_result.into_list();
             let mut statements = Vec::new();
             for item in items {
                 statements.push(to_stmt(item)?);
@@ -971,9 +1186,48 @@ fn rule_variable_declarator(r: &RuleBuilder) -> Combinator {
 
 fn rule_variable_declaration_no_semi(r: &RuleBuilder) -> Combinator {
     r.sequence((
-        r.choice((kw(r, "let"), kw(r, "const"), kw(r, "var"))),
+        r.capture(r.choice((kw(r, "let"), kw(r, "const"), kw(r, "var")))),
         r.separated_by(r.parse("variable_declarator"), op(r, ",")),
-    ))
+    )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+        let mut items = result.into_list().into_iter();
+        let kind_text = items.next().ok_or_else(|| ParseError::new(\"Expected variable kind\".to_string(), 0, 0))?.into_text();
+        let kind = match kind_text.as_ref() {
+            \"let\" => VariableKind::Let,
+            \"const\" => VariableKind::Const,
+            \"var\" => VariableKind::Var,
+            _ => VariableKind::Let,
+        };
+        // Get declarators from the separated_by result
+        let decl_list = items.next().ok_or_else(|| ParseError::new(\"Expected declarators\".to_string(), 0, 0))?;
+        let decl_items = decl_list.into_list();
+        let mut declarations = Vec::new();
+        for item in decl_items {
+            if let ParseResult::List(parts) = item {
+                let mut parts_iter = parts.into_iter();
+                let pattern = to_pattern(parts_iter.next().unwrap_or(ParseResult::None))?;
+                let _type_ann_result = parts_iter.next();
+                let init = parts_iter.next().and_then(|r| {
+                    match r {
+                        ParseResult::List(init_parts) => {
+                            init_parts.into_iter().nth(1).and_then(|e| to_expr(e).ok()).map(Rc::new)
+                        }
+                        _ => None,
+                    }
+                });
+                declarations.push(VariableDeclarator {
+                    id: pattern,
+                    type_annotation: None,
+                    init,
+                    span: span.clone(),
+                });
+            }
+        }
+        Ok(ParseResult::Stmt(Statement::VariableDeclaration(VariableDeclaration {
+            kind,
+            declarations: Rc::from(declarations),
+            span,
+        })))
+    }")
 }
 
 fn rule_function_declaration(r: &RuleBuilder) -> Combinator {
@@ -1022,7 +1276,24 @@ fn rule_class_declaration(r: &RuleBuilder) -> Combinator {
             r.separated_by(r.parse("type_reference"), op(r, ",")),
         ))),
         r.parse("class_body"),
-    ))
+    )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+        // [decorators, abstract?, class, name?, type_params?, extends?, implements?, body]
+        if let ParseResult::List(parts) = result {
+            let mut iter = parts.into_iter();
+            let decorators = iter.next().unwrap_or(ParseResult::None);
+            let abstract_kw = iter.next().unwrap_or(ParseResult::None);
+            let _class_kw = iter.next();
+            let name = iter.next().unwrap_or(ParseResult::None);
+            let _type_params = iter.next();
+            let extends_clause = iter.next().unwrap_or(ParseResult::None);
+            let _implements = iter.next();
+            let body = iter.next().unwrap_or(ParseResult::None);
+
+            create_class_decl(decorators, abstract_kw, name, extends_clause, body, span)
+        } else {
+            Err(ParseError::new(\"Expected class declaration parts\".to_string(), 0, 0))
+        }
+    }")
 }
 
 fn rule_class_body(r: &RuleBuilder) -> Combinator {
@@ -1030,7 +1301,19 @@ fn rule_class_body(r: &RuleBuilder) -> Combinator {
         op(r, "{"),
         r.zero_or_more(r.parse("class_member")),
         op(r, "}"),
-    ))
+    )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+        // [{, members*, }]
+        if let ParseResult::List(parts) = result {
+            let mut iter = parts.into_iter();
+            let _open_brace = iter.next();
+            let members = iter.next().unwrap_or(ParseResult::None);
+            let _close_brace = iter.next();
+
+            create_class_body(members, span)
+        } else {
+            Err(ParseError::new(\"Expected class body parts\".to_string(), 0, 0))
+        }
+    }")
 }
 
 fn rule_class_member(r: &RuleBuilder) -> Combinator {
@@ -1050,7 +1333,22 @@ fn rule_class_constructor(r: &RuleBuilder) -> Combinator {
         r.optional(r.parse("parameter_list")),
         op(r, ")"),
         r.parse("block_statement"),
-    ))
+    )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+        // [accessibility?, constructor, (, params?, ), body]
+        if let ParseResult::List(parts) = result {
+            let mut iter = parts.into_iter();
+            let accessibility = iter.next().unwrap_or(ParseResult::None);
+            let _constructor_kw = iter.next();
+            let _open_paren = iter.next();
+            let params = iter.next().unwrap_or(ParseResult::None);
+            let _close_paren = iter.next();
+            let body = iter.next().unwrap_or(ParseResult::None);
+
+            create_constructor(accessibility, params, body, span)
+        } else {
+            Err(ParseError::new(\"Expected constructor parts\".to_string(), 0, 0))
+        }
+    }")
 }
 
 fn rule_class_method(r: &RuleBuilder) -> Combinator {
@@ -1070,7 +1368,38 @@ fn rule_class_method(r: &RuleBuilder) -> Combinator {
             r.optional(r.parse("type_annotation")),
             r.parse("block_statement"),
         )),
-    ))
+    )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+        // [decorators, accessibility?, static?, async?, *, get/set?, key, type_params?, method_sig]
+        if let ParseResult::List(parts) = result {
+            let mut iter = parts.into_iter();
+            let _decorators = iter.next();
+            let _accessibility = iter.next();
+            let static_kw = iter.next().unwrap_or(ParseResult::None);
+            let async_kw = iter.next().unwrap_or(ParseResult::None);
+            let generator = iter.next().unwrap_or(ParseResult::None);
+            let accessor = iter.next().unwrap_or(ParseResult::None);
+            let key = iter.next().unwrap_or(ParseResult::None);
+            let _type_params = iter.next();
+            let method_sig = iter.next().unwrap_or(ParseResult::None);
+
+            // method_sig = [(, params?, ), type_ann?, body]
+            let (params, body) = if let ParseResult::List(sig_parts) = method_sig {
+                let mut sig_iter = sig_parts.into_iter();
+                let _open_paren = sig_iter.next();
+                let params = sig_iter.next().unwrap_or(ParseResult::None);
+                let _close_paren = sig_iter.next();
+                let _type_ann = sig_iter.next();
+                let body = sig_iter.next().unwrap_or(ParseResult::None);
+                (params, body)
+            } else {
+                (ParseResult::None, ParseResult::None)
+            };
+
+            create_class_method(static_kw, async_kw, generator, accessor, key, params, body, span)
+        } else {
+            Err(ParseError::new(\"Expected class method parts\".to_string(), 0, 0))
+        }
+    }")
 }
 
 fn rule_class_property(r: &RuleBuilder) -> Combinator {
@@ -1085,11 +1414,46 @@ fn rule_class_property(r: &RuleBuilder) -> Combinator {
         r.optional(r.parse("type_annotation")),
         r.optional(r.sequence((op(r, "="), r.parse("expression")))),
         r.parse("semicolon"),
-    ))
+    )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+        // [decorators, accessibility?, static?, readonly?, accessor?, key, ?, type_ann?, init?, ;]
+        if let ParseResult::List(parts) = result {
+            let mut iter = parts.into_iter();
+            let _decorators = iter.next();
+            let _accessibility = iter.next();
+            let static_kw = iter.next().unwrap_or(ParseResult::None);
+            let readonly = iter.next().unwrap_or(ParseResult::None);
+            let accessor = iter.next().unwrap_or(ParseResult::None);
+            let key = iter.next().unwrap_or(ParseResult::None);
+            let optional = iter.next().unwrap_or(ParseResult::None);
+            let _type_ann = iter.next();
+            let initializer = iter.next().unwrap_or(ParseResult::None);
+            let _semi = iter.next();
+
+            create_class_property(static_kw, readonly, accessor, key, optional, initializer, span)
+        } else {
+            Err(ParseError::new(\"Expected class property parts\".to_string(), 0, 0))
+        }
+    }")
 }
 
 fn rule_static_block(r: &RuleBuilder) -> Combinator {
-    r.sequence((kw(r, "static"), r.parse("block_statement")))
+    r.sequence((kw(r, "static"), r.parse("block_statement"))).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+        // [static, block]
+        if let ParseResult::List(parts) = result {
+            let mut iter = parts.into_iter();
+            let _static_kw = iter.next();
+            let block = iter.next().unwrap_or(ParseResult::None);
+
+            let block_stmt = match block {
+                ParseResult::Stmt(Statement::Block(b)) => b,
+                _ => BlockStatement { body: Rc::from(vec![]), span: span.clone() },
+            };
+
+            Ok(ParseResult::ClassMember(ClassMember::StaticBlock(block_stmt)))
+        } else {
+            Err(ParseError::new(\"Expected static block parts\".to_string(), 0, 0))
+        }
+    }")
 }
 
 fn rule_if_statement(r: &RuleBuilder) -> Combinator {
@@ -1992,11 +2356,15 @@ fn rule_identifier(r: &RuleBuilder) -> Combinator {
 }
 
 fn rule_this_expression(r: &RuleBuilder) -> Combinator {
-    kw(r, "this")
+    kw(r, "this").ast("|_result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+        Ok(ParseResult::Expr(Expression::This(span)))
+    }")
 }
 
 fn rule_super_expression(r: &RuleBuilder) -> Combinator {
-    kw(r, "super")
+    kw(r, "super").ast("|_result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+        Ok(ParseResult::Expr(Expression::Super(span)))
+    }")
 }
 
 fn rule_array_expression(r: &RuleBuilder) -> Combinator {
@@ -2114,7 +2482,47 @@ fn rule_function_expression(r: &RuleBuilder) -> Combinator {
         op(r, ")"),
         r.optional(r.parse("type_annotation")),
         r.parse("block_statement"),
-    ))
+    )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+        // [async?, function, *, name?, type_params?, (, params?, ), type_ann?, body]
+        if let ParseResult::List(parts) = result {
+            let mut iter = parts.into_iter();
+            let async_kw = iter.next().unwrap_or(ParseResult::None);
+            let _function_kw = iter.next();
+            let generator = iter.next().unwrap_or(ParseResult::None);
+            let name = iter.next().unwrap_or(ParseResult::None);
+            let _type_params = iter.next();
+            let _open_paren = iter.next();
+            let params = iter.next().unwrap_or(ParseResult::None);
+            let _close_paren = iter.next();
+            let _type_ann = iter.next();
+            let body = iter.next().unwrap_or(ParseResult::None);
+
+            let is_async = !matches!(async_kw, ParseResult::None);
+            let is_generator = !matches!(generator, ParseResult::None);
+            let id = match name {
+                ParseResult::Ident(id) => Some(id),
+                _ => None,
+            };
+            let params_vec = params_to_vec(params, &span);
+            let body_block = match body {
+                ParseResult::Stmt(Statement::Block(b)) => Rc::new(b),
+                _ => Rc::new(BlockStatement { body: Rc::from(vec![]), span: span.clone() }),
+            };
+
+            Ok(ParseResult::Expr(Expression::Function(Box::new(FunctionExpression {
+                id,
+                params: Rc::from(params_vec),
+                return_type: None,
+                type_parameters: None,
+                body: body_block,
+                generator: is_generator,
+                async_: is_async,
+                span,
+            }))))
+        } else {
+            Err(ParseError::new(\"Expected function expression parts\".to_string(), 0, 0))
+        }
+    }")
 }
 
 fn rule_arrow_function(r: &RuleBuilder) -> Combinator {
