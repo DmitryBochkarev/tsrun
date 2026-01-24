@@ -1152,7 +1152,53 @@ fn rule_for_statement(r: &RuleBuilder) -> Combinator {
         r.optional(r.parse("expression")),
         op(r, ")"),
         r.parse("statement"),
-    ))
+    )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+        // [for, (, init?, ;, test?, ;, update?, ), body]
+        if let ParseResult::List(parts) = result {
+            let mut iter = parts.into_iter();
+            let _for_kw = iter.next();
+            let _open_paren = iter.next();
+            let init_result = iter.next().unwrap_or(ParseResult::None);
+            let _semi1 = iter.next();
+            let test = iter.next().unwrap_or(ParseResult::None);
+            let _semi2 = iter.next();
+            let update = iter.next().unwrap_or(ParseResult::None);
+            let _close_paren = iter.next();
+            let body = iter.next().unwrap_or(ParseResult::None);
+
+            let init = match init_result {
+                ParseResult::None => None,
+                ParseResult::Stmt(Statement::VariableDeclaration(decl)) => Some(ForInit::Variable(decl)),
+                ParseResult::Expr(e) => Some(ForInit::Expression(Rc::new(e))),
+                other => to_expr(other).ok().map(|e| ForInit::Expression(Rc::new(e))),
+            };
+
+            let test_expr = match test {
+                ParseResult::None => None,
+                other => Some(Rc::new(to_expr(other)?)),
+            };
+
+            let update_expr = match update {
+                ParseResult::None => None,
+                other => Some(Rc::new(to_expr(other)?)),
+            };
+
+            let body_stmt = match body {
+                ParseResult::Stmt(s) => Rc::new(s),
+                _ => return Err(ParseError::new(\"Expected statement\".to_string(), 0, 0)),
+            };
+
+            Ok(ParseResult::Stmt(Statement::For(Box::new(ForStatement {
+                init,
+                test: test_expr,
+                update: update_expr,
+                body: body_stmt,
+                span,
+            }))))
+        } else {
+            Err(ParseError::new(\"Expected for statement parts\".to_string(), 0, 0))
+        }
+    }")
 }
 
 fn rule_for_init(r: &RuleBuilder) -> Combinator {
@@ -1293,7 +1339,78 @@ fn rule_try_statement(r: &RuleBuilder) -> Combinator {
         r.parse("block_statement"),
         r.optional(r.parse("catch_clause")),
         r.optional(r.sequence((kw(r, "finally"), r.parse("block_statement")))),
-    ))
+    )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+        // [try, block, catch_clause?, finally_clause?]
+        if let ParseResult::List(parts) = result {
+            let mut iter = parts.into_iter();
+            let _try_kw = iter.next();
+            let block_result = iter.next().unwrap_or(ParseResult::None);
+            let catch_result = iter.next().unwrap_or(ParseResult::None);
+            let finally_result = iter.next().unwrap_or(ParseResult::None);
+
+            let block = match block_result {
+                ParseResult::Stmt(Statement::Block(b)) => b,
+                _ => return Err(ParseError::new(\"Expected block\".to_string(), 0, 0)),
+            };
+
+            // catch_clause returns a CatchClause-like structure
+            let handler = match catch_result {
+                ParseResult::List(parts) => {
+                    // [catch, param_clause?, body]
+                    let mut iter = parts.into_iter();
+                    let _catch_kw = iter.next();
+                    let param_result = iter.next();
+                    let body_result = iter.next().unwrap_or(ParseResult::None);
+
+                    // Extract param from optional (paren, pattern, paren)
+                    let param = match param_result {
+                        Some(ParseResult::List(param_parts)) => {
+                            param_parts.into_iter().nth(1).and_then(|p| {
+                                match p {
+                                    ParseResult::Pat(pat) => Some(pat),
+                                    ParseResult::Ident(id) => Some(Pattern::Identifier(id)),
+                                    _ => None,
+                                }
+                            })
+                        }
+                        _ => None,
+                    };
+
+                    let body = match body_result {
+                        ParseResult::Stmt(Statement::Block(b)) => b,
+                        _ => return Err(ParseError::new(\"Expected catch body\".to_string(), 0, 0)),
+                    };
+
+                    Some(CatchClause { param, body, span: span.clone() })
+                }
+                ParseResult::None => None,
+                _ => None,
+            };
+
+            // finally clause is [finally, block]
+            let finalizer = match finally_result {
+                ParseResult::List(finally_parts) => {
+                    finally_parts.into_iter().nth(1).and_then(|b| {
+                        match b {
+                            ParseResult::Stmt(Statement::Block(block)) => Some(block),
+                            _ => None,
+                        }
+                    })
+                }
+                ParseResult::None => None,
+                _ => None,
+            };
+
+            Ok(ParseResult::Stmt(Statement::Try(Box::new(TryStatement {
+                block,
+                handler,
+                finalizer,
+                span,
+            }))))
+        } else {
+            Err(ParseError::new(\"Expected try statement parts\".to_string(), 0, 0))
+        }
+    }")
 }
 
 fn rule_catch_clause(r: &RuleBuilder) -> Combinator {
