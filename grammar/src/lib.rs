@@ -61,6 +61,9 @@ pub fn typescript_grammar() -> Grammar {
         .rule("expression_statement", rule_expression_statement)
         .rule("empty_statement", rule_empty_statement)
         .rule("semicolon", rule_semicolon)
+        .rule("declare_statement", rule_declare_statement)
+        .rule("declare_function", rule_declare_function)
+        .rule("declare_module", rule_declare_module)
         // Import/Export
         .rule("import_declaration", rule_import_declaration)
         .rule("import_clause", rule_import_clause)
@@ -347,6 +350,14 @@ fn update(arg: ParseResult, op: UpdateOp, prefix: bool, span: Span) -> Result<Pa
         operator: op,
         argument: Rc::new(to_expr(arg)?),
         prefix,
+        span,
+    })))
+}
+
+/// Create non-null assertion expression (TypeScript)
+fn non_null(expr: ParseResult, span: Span) -> Result<ParseResult, ParseError> {
+    Ok(ParseResult::Expr(Expression::NonNull(NonNullExpression {
+        expression: Rc::new(to_expr(expr)?),
         span,
     })))
 }
@@ -1149,6 +1160,7 @@ fn rule_statement(r: &RuleBuilder) -> Combinator {
     // Each sub-rule should return ParseResult::Stmt, so we just pass through
     // Use vec![] instead of nested choice() tuples to avoid tuple dimension limits
     r.choice(vec![
+        r.parse("declare_statement"),
         r.parse("variable_declaration"),
         r.parse("function_declaration"),
         r.parse("class_declaration"),
@@ -2144,6 +2156,105 @@ fn rule_semicolon(r: &RuleBuilder) -> Combinator {
     op(r, ";")
 }
 
+// Declare statements (TypeScript ambient declarations)
+
+fn rule_declare_statement(r: &RuleBuilder) -> Combinator {
+    // TypeScript `declare` keyword for ambient declarations
+    // These have no runtime effect - the declaration is parsed and passed through
+    r.sequence((kw(r, "declare"), r.choice((
+        r.parse("declare_module"),
+        r.parse("declare_function"),
+        r.parse("variable_declaration"),
+        r.parse("class_declaration"),
+        r.parse("enum_declaration"),
+        r.parse("namespace_declaration"),
+        r.parse("interface_declaration"),
+        r.parse("type_alias_declaration"),
+    )))).ast("|result: ParseResult, _span: Span| -> Result<ParseResult, ParseError> {
+        // Just return the inner declaration, stripping the 'declare' keyword
+        let items = result.into_list();
+        // The second item is the actual declaration
+        items.into_iter().nth(1).ok_or_else(|| ParseError::new(\"Expected declaration after declare\".to_string(), 0, 0))
+    }")
+}
+
+fn rule_declare_function(r: &RuleBuilder) -> Combinator {
+    // `declare function foo(x: T): R;` - ambient function declaration (no body)
+    r.sequence((
+        r.optional(kw(r, "async")),
+        kw(r, "function"),
+        r.optional(op(r, "*")),
+        r.optional(r.parse("identifier")),
+        r.optional(r.parse("type_parameters")),
+        op(r, "("),
+        r.optional(r.parse("parameter_list")),
+        op(r, ")"),
+        r.optional(r.parse("type_annotation")),
+        r.parse("semicolon"),
+    )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+        // [async?, function, *?, name?, type_params?, (, params?, ), return_type?, ;]
+        if let ParseResult::List(parts) = result {
+            let mut iter = parts.into_iter();
+            let async_kw = iter.next().unwrap_or(ParseResult::None);
+            let _function_kw = iter.next(); // skip 'function'
+            let generator = iter.next().unwrap_or(ParseResult::None);
+            let name = iter.next().unwrap_or(ParseResult::None);
+            let _type_params = iter.next(); // skip type params
+            let _open_paren = iter.next(); // skip (
+            let params = iter.next().unwrap_or(ParseResult::None);
+            let _close_paren = iter.next(); // skip )
+            let _return_type = iter.next(); // skip return type
+            // No body for ambient functions - use empty block
+            let body = ParseResult::Stmt(Statement::Block(BlockStatement {
+                body: Rc::from(vec![]),
+                span,
+            }));
+            create_function_decl(async_kw, generator, name, params, body, span)
+        } else {
+            Err(ParseError::new(\"Expected ambient function declaration parts\".to_string(), 0, 0))
+        }
+    }")
+}
+
+fn rule_declare_module(r: &RuleBuilder) -> Combinator {
+    // `declare module "name" { ... }` - ambient module declaration
+    // Use sequence with explicit whitespace after string_literal since it doesn't consume ws
+    r.sequence((
+        kw(r, "module"),
+        r.sequence((r.parse("string_literal"), r.parse("ws"))),
+        op(r, "{"),
+        r.zero_or_more(r.parse("statement")),
+        op(r, "}"),
+    )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+        // Parse as a namespace declaration with the string name as identifier
+        let mut items = result.into_list().into_iter();
+        let _ = items.next(); // skip 'module' keyword
+        let name_result = items.next().unwrap_or(ParseResult::None);
+        let name_str = match name_result {
+            ParseResult::Expr(Expression::Literal(lit)) => {
+                match lit.value {
+                    LiteralValue::String(s) => s.to_string(),
+                    _ => String::new(),
+                }
+            }
+            _ => String::new(),
+        };
+        let _ = items.next(); // skip '{'
+        let body_list = items.next().unwrap_or(ParseResult::List(vec![]));
+        let mut body = Vec::new();
+        for item in body_list.into_list() {
+            if let ParseResult::Stmt(stmt) = item {
+                body.push(stmt);
+            }
+        }
+        Ok(ParseResult::Stmt(Statement::NamespaceDeclaration(Box::new(NamespaceDeclaration {
+            id: Identifier { name: JsString::from(name_str), span },
+            body: Rc::from(body),
+            span,
+        }))))
+    }")
+}
+
 // Import/Export
 
 fn rule_import_declaration(r: &RuleBuilder) -> Combinator {
@@ -2266,7 +2377,31 @@ fn rule_type_alias_declaration(r: &RuleBuilder) -> Combinator {
         op(r, "="),
         r.parse("type"),
         r.parse("semicolon"),
-    ))
+    )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+        // [type, id, type_params?, =, type, ;]
+        if let ParseResult::List(parts) = result {
+            let mut iter = parts.into_iter();
+            let _type_kw = iter.next();
+            let id = iter.next().unwrap_or(ParseResult::None);
+            let _type_params = iter.next();
+            let _eq = iter.next();
+            let _type_annotation = iter.next();
+            // TypeAlias is a no-op at runtime, so we create a placeholder type
+            let identifier = to_ident(id)?;
+            Ok(ParseResult::Stmt(Statement::TypeAlias(Box::new(TypeAliasDeclaration {
+                id: identifier,
+                type_parameters: None,
+                // Placeholder: any type since we don't type-check at runtime
+                type_annotation: Box::new(TypeAnnotation::Keyword(TypeKeyword {
+                    keyword: TypeKeywordKind::Any,
+                    span,
+                })),
+                span,
+            }))))
+        } else {
+            Err(ParseError::new(\"Expected type alias declaration parts\".to_string(), 0, 0))
+        }
+    }")
 }
 
 fn rule_interface_declaration(r: &RuleBuilder) -> Combinator {
@@ -2427,12 +2562,11 @@ fn rule_expression(r: &RuleBuilder) -> Combinator {
                 // === Additive ===
                 .infix(ws_infix(r, "+"), 13, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::Add, s)")
                 .infix(ws_infix(r, "-"), 13, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::Sub, s)")
-                // === Multiplicative ===
+                // === Multiplicative (** must come before * so longer operator matches first) ===
+                .infix(ws_infix(r, "**"), 15, Assoc::Right, "|l, r, s| binary(l, r, BinaryOp::Exp, s)")
                 .infix(ws_infix(r, "*"), 14, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::Mul, s)")
                 .infix(ws_infix(r, "/"), 14, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::Div, s)")
                 .infix(ws_infix(r, "%"), 14, Assoc::Left, "|l, r, s| binary(l, r, BinaryOp::Mod, s)")
-                // === Exponentiation (right-to-left) ===
-                .infix(ws_infix(r, "**"), 15, Assoc::Right, "|l, r, s| binary(l, r, BinaryOp::Exp, s)")
                 // === Prefix operators ===
                 .prefix("++", 16, "|e, s| update(e, UpdateOp::Increment, true, s)")
                 .prefix("--", 16, "|e, s| update(e, UpdateOp::Decrement, true, s)")
@@ -2447,6 +2581,8 @@ fn rule_expression(r: &RuleBuilder) -> Combinator {
                 // === Postfix operators (highest precedence) ===
                 .postfix("++", 17, "|e, s| update(e, UpdateOp::Increment, false, s)")
                 .postfix("--", 17, "|e, s| update(e, UpdateOp::Decrement, false, s)")
+                // TypeScript non-null assertion: x! (must not be followed by = to avoid conflict with !=)
+                .postfix(r.sequence((r.lit("!"), r.not_followed_by(r.lit("=")))), 17, "|e, s| non_null(e, s)")
                 // Call expressions (optional chaining first to match longer pattern)
                 .postfix_call("?.(", ")", ",", 18, "|c, a, s| call(c, a, true, s)")
                 .postfix_call("(", ")", ",", 18, "|c, a, s| call(c, a, false, s)")

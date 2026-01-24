@@ -35,6 +35,12 @@ fn test_binary_expression_simple() {
     assert_eq!(prog.body.len(), 1);
 }
 
+#[test]
+fn test_exponentiation() {
+    let prog = parse("2 ** 3;");
+    assert_eq!(prog.body.len(), 1);
+}
+
 // Regression: parenthesized expression
 #[test]
 fn test_parenthesized_expression() {

@@ -1630,13 +1630,37 @@ impl<'a> CodeGenerator<'a> {
                     for (i, postfix_op) in pratt.postfix_ops.iter().enumerate() {
                         match postfix_op {
                             crate::ir::PostfixOp::Simple { pattern, precedence, .. } => {
-                                let (op_lit, _, _) = extract_operator_pattern(pattern.as_ref());
+                                let (op_lit, _, not_followed_by) = extract_operator_pattern(pattern.as_ref());
                                 if !op_lit.is_empty() {
-                                    self.line(&format!(
-                                        "if !postfix_matched && {} >= min_prec && self.try_consume(\"{}\") {{",
-                                        precedence,
-                                        escape_string(&op_lit)
-                                    ));
+                                    // Build condition with not_followed_by checks if present
+                                    if not_followed_by.is_empty() {
+                                        self.line(&format!(
+                                            "if !postfix_matched && {} >= min_prec && self.try_consume(\"{}\") {{",
+                                            precedence,
+                                            escape_string(&op_lit)
+                                        ));
+                                    } else {
+                                        // Use starts_with check plus not_followed_by conditions
+                                        let mut condition = format!(
+                                            "if !postfix_matched && {} >= min_prec && self.input.get(self.pos..).unwrap_or(\"\").starts_with(\"{}\")",
+                                            precedence,
+                                            escape_string(&op_lit)
+                                        );
+                                        for nf in &not_followed_by {
+                                            condition.push_str(&format!(
+                                                " && !self.input.get(self.pos..).unwrap_or(\"\").starts_with(\"{}{}\")",
+                                                escape_string(&op_lit),
+                                                escape_string(nf)
+                                            ));
+                                        }
+                                        condition.push_str(" {");
+                                        self.line(&condition);
+                                        self.indent += 1;
+                                        // Manually consume the operator
+                                        self.line(&format!("self.pos += {};", op_lit.len()));
+                                        self.line(&format!("self.column += {};", op_lit.len()));
+                                        self.indent -= 1;
+                                    }
                                     self.indent += 1;
                                     self.line("postfix_matched = true;");
                                     self.line(&format!(
@@ -1854,12 +1878,59 @@ impl<'a> CodeGenerator<'a> {
                         self.line("}");
                     }
 
-                    // Then, try complex patterns (with leading rule) - these need async handling
+                    // Then, try complex patterns (with leading rule) OR ternary operator
+                    // These are mutually exclusive - ternary has specific literal so check it first
                     // Only push the FIRST complex operator that passes precedence check
                     // AfterInfixLeadingRule will chain to the next complex op if literal doesn't match
-                    if !complex_ops.is_empty() {
-                        // Find the first complex op that passes precedence (we don't know min_prec at codegen time,
-                        // so we generate code that checks at runtime and pushes the first matching)
+
+                    // Check for ternary first if defined (it has specific literal)
+                    if let Some(ternary) = &pratt.ternary {
+                        let (first_lit, _, _) = extract_operator_pattern(ternary.first.as_ref());
+                        if !first_lit.is_empty() {
+                            // Check ternary operator - must not be followed by . (optional chaining) or ? (nullish coalescing)
+                            self.line(&format!(
+                                "if {} >= min_prec && self.pos == infix_checkpoint && self.input.get(self.pos..).unwrap_or(\"\").starts_with(\"{}\") && !self.input.get(self.pos..).unwrap_or(\"\").starts_with(\"?.\") && !self.input.get(self.pos..).unwrap_or(\"\").starts_with(\"??\") {{",
+                                ternary.precedence,
+                                escape_string(&first_lit)
+                            ));
+                            self.indent += 1;
+                            self.line(&format!("self.pos += {};", first_lit.len()));
+                            self.line(&format!("self.column += {};", first_lit.len()));
+                            self.line(&format!(
+                                "self.work_stack.push(Work::{}AfterTernaryFirst {{ result_base, min_prec, start_pos, start_line, start_column }});",
+                                prefix
+                            ));
+                            // Parse the consequent expression with min_prec 0 (full expression)
+                            self.line(&format!(
+                                "self.work_stack.push(Work::{}ParseOperand {{ result_base: self.result_stack.len(), min_prec: 0, start_pos: self.pos, start_line: self.line, start_column: self.column }});",
+                                prefix
+                            ));
+                            self.indent -= 1;
+                            // Complex infix ops go in else branch
+                            if !complex_ops.is_empty() {
+                                self.line("} else {");
+                                self.indent += 1;
+                                self.line("// Try first complex infix operator (others will be chained if this fails)");
+                                let first_op = &complex_ops[0];
+                                let prec = first_op.1.precedence;
+                                let next_prec = if first_op.1.assoc == crate::Assoc::Right { prec } else { prec + 1 };
+                                self.line(&format!(
+                                    "if {} >= min_prec && self.pos == infix_checkpoint {{",
+                                    prec
+                                ));
+                                self.indent += 1;
+                                self.line(&format!(
+                                    "self.work_stack.push(Work::{}TryInfixWithRule {{ result_base, min_prec, op_idx: {}, next_prec: {}, checkpoint: infix_checkpoint, start_pos, start_line, start_column }});",
+                                    prefix, first_op.0, next_prec
+                                ));
+                                self.indent -= 1;
+                                self.line("}");
+                                self.indent -= 1;
+                            }
+                            self.line("}");
+                        }
+                    } else if !complex_ops.is_empty() {
+                        // No ternary, just complex infix ops
                         self.line("// Try first complex infix operator (others will be chained if this fails)");
                         let first_op = &complex_ops[0];
                         let prec = first_op.1.precedence;
@@ -1878,34 +1949,33 @@ impl<'a> CodeGenerator<'a> {
                     }
                 }
 
-                // Try ternary operator if defined
-                if let Some(ternary) = &pratt.ternary {
-                    let (first_lit, _, _) = extract_operator_pattern(ternary.first.as_ref());
-                    if !first_lit.is_empty() {
-                        // Need to declare infix_checkpoint if we don't have infix ops
-                        if pratt.infix_ops.is_empty() {
+                // Ternary check for grammars without infix ops
+                if pratt.infix_ops.is_empty() {
+                    if let Some(ternary) = &pratt.ternary {
+                        let (first_lit, _, _) = extract_operator_pattern(ternary.first.as_ref());
+                        if !first_lit.is_empty() {
                             self.line("let infix_checkpoint = self.pos;");
+                            // Check ternary operator - must not be followed by . (optional chaining) or ? (nullish coalescing)
+                            self.line(&format!(
+                                "if {} >= min_prec && self.pos == infix_checkpoint && self.input.get(self.pos..).unwrap_or(\"\").starts_with(\"{}\") && !self.input.get(self.pos..).unwrap_or(\"\").starts_with(\"?.\") && !self.input.get(self.pos..).unwrap_or(\"\").starts_with(\"??\") {{",
+                                ternary.precedence,
+                                escape_string(&first_lit)
+                            ));
+                            self.indent += 1;
+                            self.line(&format!("self.pos += {};", first_lit.len()));
+                            self.line(&format!("self.column += {};", first_lit.len()));
+                            self.line(&format!(
+                                "self.work_stack.push(Work::{}AfterTernaryFirst {{ result_base, min_prec, start_pos, start_line, start_column }});",
+                                prefix
+                            ));
+                            // Parse the consequent expression with min_prec 0 (full expression)
+                            self.line(&format!(
+                                "self.work_stack.push(Work::{}ParseOperand {{ result_base: self.result_stack.len(), min_prec: 0, start_pos: self.pos, start_line: self.line, start_column: self.column }});",
+                                prefix
+                            ));
+                            self.indent -= 1;
+                            self.line("}");
                         }
-                        // Check ternary operator - must not be followed by . (optional chaining)
-                        self.line(&format!(
-                            "if {} >= min_prec && self.pos == infix_checkpoint && self.input.get(self.pos..).unwrap_or(\"\").starts_with(\"{}\") && !self.input.get(self.pos..).unwrap_or(\"\").starts_with(\"?.\") {{",
-                            ternary.precedence,
-                            escape_string(&first_lit)
-                        ));
-                        self.indent += 1;
-                        self.line(&format!("self.pos += {};", first_lit.len()));
-                        self.line(&format!("self.column += {};", first_lit.len()));
-                        self.line(&format!(
-                            "self.work_stack.push(Work::{}AfterTernaryFirst {{ result_base, min_prec, start_pos, start_line, start_column }});",
-                            prefix
-                        ));
-                        // Parse the consequent expression with min_prec 0 (full expression)
-                        self.line(&format!(
-                            "self.work_stack.push(Work::{}ParseOperand {{ result_base: self.result_stack.len(), min_prec: 0, start_pos: self.pos, start_line: self.line, start_column: self.column }});",
-                            prefix
-                        ));
-                        self.indent -= 1;
-                        self.line("}");
                     }
                 }
                 // No more operators - we're done

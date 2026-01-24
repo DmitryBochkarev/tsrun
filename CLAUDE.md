@@ -83,7 +83,7 @@ Common causes of infinite loops in trampoline-parser:
 - **Keep regression tests** - when debugging reveals a bug, add a minimal test case that reproduces it (prefix with `// Regression:` comment). Never delete these tests even after fixing - they catch future regressions
 - **Fix pre-existing bugs** - write a test, fix it, then continue with your feature
 - **Proper fixes over workarounds** - make architectural changes if needed
-- **Debug via tests** - use `cargo test test_name -- --nocapture` with `console.log()`, not ad-hoc scripts
+- **Debug via tests** - use `cargo test test_name -- --nocapture` with `console.log()`, not ad-hoc scripts. Note: tsrun CLI does not support stdin or -e argument - always write proper tests for debugging
 - **Log unexpected findings** - if something doesn't match expectations during implementation, add a note to `my/observations.md` and continue working on the task
 
 ### TDD Workflow
