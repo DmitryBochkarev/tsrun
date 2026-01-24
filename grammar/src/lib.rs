@@ -524,6 +524,58 @@ fn create_block_stmt(result: ParseResult, span: Span) -> Result<ParseResult, Par
     }
 }
 
+/// Create enum declaration
+fn create_enum_decl(const_kw: ParseResult, name: ParseResult, members: ParseResult, span: Span) -> Result<ParseResult, ParseError> {
+    let is_const = !matches!(const_kw, ParseResult::None);
+    let id = to_ident(name)?;
+
+    let members_vec: Vec<EnumMember> = match members {
+        ParseResult::List(items) => {
+            items.into_iter().filter_map(|item| {
+                // Each member is [identifier, optional([=, expr])]
+                if let ParseResult::List(parts) = item {
+                    let mut iter = parts.into_iter();
+                    let id_result = iter.next()?;
+                    let id = to_ident(id_result).ok()?;
+                    let init_result = iter.next();
+
+                    let initializer = match init_result {
+                        Some(ParseResult::List(init_parts)) => {
+                            // [=, expr]
+                            init_parts.into_iter().nth(1).and_then(|e| to_expr(e).ok())
+                        }
+                        _ => None,
+                    };
+
+                    Some(EnumMember {
+                        id: id.clone(),
+                        initializer,
+                        span: id.span,
+                    })
+                } else if let ParseResult::Ident(id) = item {
+                    // Simple identifier member without initializer
+                    Some(EnumMember {
+                        id: id.clone(),
+                        initializer: None,
+                        span: id.span,
+                    })
+                } else {
+                    None
+                }
+            }).collect()
+        }
+        ParseResult::None => vec![],
+        _ => vec![],
+    };
+
+    Ok(ParseResult::Stmt(Statement::EnumDeclaration(Box::new(EnumDeclaration {
+        id,
+        members: members_vec,
+        const_: is_const,
+        span,
+    }))))
+}
+
 /// Create function declaration
 fn create_function_decl(async_kw: ParseResult, generator: ParseResult, name: ParseResult, params: ParseResult, body: ParseResult, span: Span) -> Result<ParseResult, ParseError> {
     let is_async = !matches!(async_kw, ParseResult::None);
@@ -1048,7 +1100,45 @@ fn rule_if_statement(r: &RuleBuilder) -> Combinator {
         op(r, ")"),
         r.parse("statement"),
         r.optional(r.sequence((kw(r, "else"), r.parse("statement")))),
-    ))
+    )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+        // [if, (, test, ), consequent, else_clause?]
+        if let ParseResult::List(parts) = result {
+            let mut iter = parts.into_iter();
+            let _if_kw = iter.next();
+            let _open_paren = iter.next();
+            let test = iter.next().unwrap_or(ParseResult::None);
+            let _close_paren = iter.next();
+            let consequent = iter.next().unwrap_or(ParseResult::None);
+            let else_clause = iter.next();
+
+            let alternate = match else_clause {
+                Some(ParseResult::List(else_parts)) => {
+                    // [else, statement]
+                    else_parts.into_iter().nth(1).map(|s| {
+                        match s {
+                            ParseResult::Stmt(stmt) => Rc::new(stmt),
+                            _ => Rc::new(Statement::Empty),
+                        }
+                    })
+                }
+                _ => None,
+            };
+
+            let consequent_stmt = match consequent {
+                ParseResult::Stmt(s) => Rc::new(s),
+                _ => return Err(ParseError::new(\"Expected statement\".to_string(), 0, 0)),
+            };
+
+            Ok(ParseResult::Stmt(Statement::If(IfStatement {
+                test: Rc::new(to_expr(test)?),
+                consequent: consequent_stmt,
+                alternate,
+                span,
+            })))
+        } else {
+            Err(ParseError::new(\"Expected if statement parts\".to_string(), 0, 0))
+        }
+    }")
 }
 
 fn rule_for_statement(r: &RuleBuilder) -> Combinator {
@@ -1108,7 +1198,30 @@ fn rule_while_statement(r: &RuleBuilder) -> Combinator {
         r.parse("expression"),
         op(r, ")"),
         r.parse("statement"),
-    ))
+    )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+        // [while, (, test, ), body]
+        if let ParseResult::List(parts) = result {
+            let mut iter = parts.into_iter();
+            let _while_kw = iter.next();
+            let _open_paren = iter.next();
+            let test = iter.next().unwrap_or(ParseResult::None);
+            let _close_paren = iter.next();
+            let body = iter.next().unwrap_or(ParseResult::None);
+
+            let body_stmt = match body {
+                ParseResult::Stmt(s) => Rc::new(s),
+                _ => return Err(ParseError::new(\"Expected statement\".to_string(), 0, 0)),
+            };
+
+            Ok(ParseResult::Stmt(Statement::While(WhileStatement {
+                test: Rc::new(to_expr(test)?),
+                body: body_stmt,
+                span,
+            })))
+        } else {
+            Err(ParseError::new(\"Expected while statement parts\".to_string(), 0, 0))
+        }
+    }")
 }
 
 fn rule_do_while_statement(r: &RuleBuilder) -> Combinator {
@@ -1120,7 +1233,30 @@ fn rule_do_while_statement(r: &RuleBuilder) -> Combinator {
         r.parse("expression"),
         op(r, ")"),
         r.parse("semicolon"),
-    ))
+    )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+        // [do, body, while, (, test, ), ;]
+        if let ParseResult::List(parts) = result {
+            let mut iter = parts.into_iter();
+            let _do_kw = iter.next();
+            let body = iter.next().unwrap_or(ParseResult::None);
+            let _while_kw = iter.next();
+            let _open_paren = iter.next();
+            let test = iter.next().unwrap_or(ParseResult::None);
+
+            let body_stmt = match body {
+                ParseResult::Stmt(s) => Rc::new(s),
+                _ => return Err(ParseError::new(\"Expected statement\".to_string(), 0, 0)),
+            };
+
+            Ok(ParseResult::Stmt(Statement::DoWhile(DoWhileStatement {
+                body: body_stmt,
+                test: Rc::new(to_expr(test)?),
+                span,
+            })))
+        } else {
+            Err(ParseError::new(\"Expected do-while statement parts\".to_string(), 0, 0))
+        }
+    }")
 }
 
 fn rule_switch_statement(r: &RuleBuilder) -> Combinator {
@@ -1183,7 +1319,20 @@ fn rule_return_statement(r: &RuleBuilder) -> Combinator {
         kw(r, "return"),
         r.optional(r.parse("expression")),
         r.parse("semicolon"),
-    ))
+    )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+        if let ParseResult::List(parts) = result {
+            let mut iter = parts.into_iter();
+            let _return_kw = iter.next(); // skip 'return'
+            let expr = iter.next().unwrap_or(ParseResult::None);
+            let argument = match expr {
+                ParseResult::None => None,
+                other => Some(Rc::new(to_expr(other)?)),
+            };
+            Ok(ParseResult::Stmt(Statement::Return(ReturnStatement { argument, span })))
+        } else {
+            Err(ParseError::new(\"Expected return statement parts\".to_string(), 0, 0))
+        }
+    }")
 }
 
 fn rule_break_statement(r: &RuleBuilder) -> Combinator {
@@ -1191,7 +1340,19 @@ fn rule_break_statement(r: &RuleBuilder) -> Combinator {
         kw(r, "break"),
         r.optional(r.parse("identifier")),
         r.parse("semicolon"),
-    ))
+    )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+        if let ParseResult::List(parts) = result {
+            let mut iter = parts.into_iter();
+            let _break_kw = iter.next();
+            let label = iter.next().and_then(|l| match l {
+                ParseResult::Ident(id) => Some(id),
+                _ => None,
+            });
+            Ok(ParseResult::Stmt(Statement::Break(BreakStatement { label, span })))
+        } else {
+            Err(ParseError::new(\"Expected break statement parts\".to_string(), 0, 0))
+        }
+    }")
 }
 
 fn rule_continue_statement(r: &RuleBuilder) -> Combinator {
@@ -1199,7 +1360,19 @@ fn rule_continue_statement(r: &RuleBuilder) -> Combinator {
         kw(r, "continue"),
         r.optional(r.parse("identifier")),
         r.parse("semicolon"),
-    ))
+    )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+        if let ParseResult::List(parts) = result {
+            let mut iter = parts.into_iter();
+            let _continue_kw = iter.next();
+            let label = iter.next().and_then(|l| match l {
+                ParseResult::Ident(id) => Some(id),
+                _ => None,
+            });
+            Ok(ParseResult::Stmt(Statement::Continue(ContinueStatement { label, span })))
+        } else {
+            Err(ParseError::new(\"Expected continue statement parts\".to_string(), 0, 0))
+        }
+    }")
 }
 
 fn rule_throw_statement(r: &RuleBuilder) -> Combinator {
@@ -1207,11 +1380,26 @@ fn rule_throw_statement(r: &RuleBuilder) -> Combinator {
         kw(r, "throw"),
         r.parse("expression"),
         r.parse("semicolon"),
-    ))
+    )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+        if let ParseResult::List(parts) = result {
+            let mut iter = parts.into_iter();
+            let _throw_kw = iter.next();
+            let argument = iter.next().unwrap_or(ParseResult::None);
+            Ok(ParseResult::Stmt(Statement::Throw(ThrowStatement {
+                argument: Rc::new(to_expr(argument)?),
+                span,
+            })))
+        } else {
+            Err(ParseError::new(\"Expected throw statement parts\".to_string(), 0, 0))
+        }
+    }")
 }
 
 fn rule_debugger_statement(r: &RuleBuilder) -> Combinator {
     r.sequence((kw(r, "debugger"), r.parse("semicolon")))
+        .ast("|_result: ParseResult, _span: Span| -> Result<ParseResult, ParseError> {
+            Ok(ParseResult::Stmt(Statement::Debugger))
+        }")
 }
 
 fn rule_labeled_statement(r: &RuleBuilder) -> Combinator {
@@ -1388,7 +1576,21 @@ fn rule_enum_declaration(r: &RuleBuilder) -> Combinator {
         op(r, "{"),
         r.optional(r.separated_by_trailing(r.parse("enum_member"), op(r, ","))),
         op(r, "}"),
-    ))
+    )).ast("|result: ParseResult, span: Span| -> Result<ParseResult, ParseError> {
+        // [const?, enum, name, {, members?, }]
+        if let ParseResult::List(parts) = result {
+            let mut iter = parts.into_iter();
+            let const_kw = iter.next().unwrap_or(ParseResult::None);
+            let _enum_kw = iter.next(); // skip 'enum'
+            let name = iter.next().unwrap_or(ParseResult::None);
+            let _open_brace = iter.next(); // skip {
+            let members = iter.next().unwrap_or(ParseResult::None);
+            let _close_brace = iter.next(); // skip }
+            create_enum_decl(const_kw, name, members, span)
+        } else {
+            Err(ParseError::new(\"Expected enum declaration parts\".to_string(), 0, 0))
+        }
+    }")
 }
 
 fn rule_enum_member(r: &RuleBuilder) -> Combinator {
