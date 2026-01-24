@@ -363,6 +363,15 @@ impl<'a> CodeGenerator<'a> {
                 self.line(&format!("{}AfterInfix {{ result_base: usize, min_prec: u8, op_idx: usize, start_pos: usize, start_line: u32, start_column: u32 }},", prefix));
                 self.line(&format!("{}AfterPrefix {{ result_base: usize, min_prec: u8, op_idx: usize, start_pos: usize, start_line: u32, start_column: u32 }},", prefix));
 
+                // Work variants for prefix operators with leading rules (e.g., patterns like Sequence([Rule("ws"), Literal("-")]))
+                let has_prefix_with_leading = pratt.prefix_ops.iter().any(|op| {
+                    let p = extract_operator_pattern_full(op.pattern.as_ref());
+                    p.leading_rule.is_some() && !p.literal.is_empty()
+                });
+                if has_prefix_with_leading {
+                    self.line(&format!("{}AfterPrefixLeadingRule {{ result_base: usize, min_prec: u8, checkpoint: usize, checkpoint_line: u32, checkpoint_column: u32, start_pos: usize, start_line: u32, start_column: u32 }},", prefix));
+                }
+
                 // Work variants for infix operators with leading rules (e.g., patterns like Sequence([Rule("ws"), Literal("+")]))
                 // These enable grammar-controlled whitespace handling before operators
                 let has_infix_with_leading = pratt.infix_ops.iter().any(|op| {
@@ -1465,29 +1474,44 @@ impl<'a> CodeGenerator<'a> {
 
                 // Try each prefix operator
                 if !pratt.prefix_ops.is_empty() {
+                    // Check if any prefix operators have leading rules
+                    let has_prefix_with_leading = pratt.prefix_ops.iter().any(|op| {
+                        let p = extract_operator_pattern_full(op.pattern.as_ref());
+                        p.leading_rule.is_some() && !p.literal.is_empty()
+                    });
+
                     self.line("let prefix_checkpoint = self.pos;");
+                    self.line("let prefix_checkpoint_line = self.line;");
+                    self.line("let prefix_checkpoint_column = self.column;");
                     self.line("let mut prefix_matched = false;");
 
+                    // First try prefix operators WITHOUT leading rules (simple literals)
                     for (i, prefix_op) in pratt.prefix_ops.iter().enumerate() {
-                        let (op_lit, is_keyword, not_followed) =
-                            extract_operator_pattern(prefix_op.pattern.as_ref());
+                        let pattern = extract_operator_pattern_full(prefix_op.pattern.as_ref());
+                        // Skip operators with leading rules - they'll be tried after parsing the leading rule
+                        if pattern.leading_rule.is_some() {
+                            continue;
+                        }
+                        let op_lit = &pattern.literal;
+                        let is_keyword = pattern.is_keyword;
+                        let not_followed = &pattern.not_followed_by;
                         if !op_lit.is_empty() {
                             // Build condition with not_followed_by checks
                             if not_followed.is_empty() {
                                 self.line(&format!(
                                     "if !prefix_matched && self.try_consume(\"{}\") {{",
-                                    escape_string(&op_lit)
+                                    escape_string(op_lit)
                                 ));
                             } else {
                                 // Use starts_with check plus not_followed_by conditions
                                 let mut condition = format!(
                                     "if !prefix_matched && self.input.get(self.pos..).unwrap_or(\"\").starts_with(\"{}\")",
-                                    escape_string(&op_lit)
+                                    escape_string(op_lit)
                                 );
-                                for nf in &not_followed {
+                                for nf in not_followed {
                                     condition.push_str(&format!(
                                         " && !self.input.get(self.pos..).unwrap_or(\"\").starts_with(\"{}{}\")",
-                                        escape_string(&op_lit),
+                                        escape_string(op_lit),
                                         escape_string(nf)
                                     ));
                                 }
@@ -1527,6 +1551,8 @@ impl<'a> CodeGenerator<'a> {
                                     "// Keyword followed by ident char - restore and try next",
                                 );
                                 self.line("self.pos = prefix_checkpoint;");
+                                self.line("self.line = prefix_checkpoint_line;");
+                                self.line("self.column = prefix_checkpoint_column;");
                                 self.indent -= 1;
                                 self.line("}");
                             }
@@ -1536,31 +1562,74 @@ impl<'a> CodeGenerator<'a> {
                         }
                     }
 
-                    // No prefix matched - parse operand directly
-                    self.line("if !prefix_matched {");
-                    self.indent += 1;
-                }
+                    // If there are prefix operators with leading rules, try them next
+                    if has_prefix_with_leading {
+                        self.line("// Try prefix operators with leading rules (e.g., whitespace)");
+                        self.line("if !prefix_matched {");
+                        self.indent += 1;
 
-                // After parsing operand, go to CheckPostfix (if postfix ops exist) or AfterOperand
-                if !pratt.postfix_ops.is_empty() {
-                    self.line(&format!(
-                        "self.work_stack.push(Work::{}CheckPostfix {{ result_base, min_prec, start_pos, start_line, start_column }});",
-                        prefix
-                    ));
+                        // Find the leading rule name (assume all use the same one, typically "ws")
+                        let leading_rule_name = pratt.prefix_ops.iter()
+                            .find_map(|op| extract_operator_pattern_full(op.pattern.as_ref()).leading_rule)
+                            .unwrap_or_else(|| "ws".to_string());
+                        let rule_prefix = to_pascal_case(&leading_rule_name);
+
+                        self.line(&format!(
+                            "self.work_stack.push(Work::{}AfterPrefixLeadingRule {{ result_base, min_prec, checkpoint: prefix_checkpoint, checkpoint_line: prefix_checkpoint_line, checkpoint_column: prefix_checkpoint_column, start_pos, start_line, start_column }});",
+                            prefix
+                        ));
+                        self.line(&format!(
+                            "self.work_stack.push(Work::{}Start {{ result_base: self.result_stack.len() }});",
+                            rule_prefix
+                        ));
+                        self.indent -= 1;
+                        self.line("}");
+                        // When has_prefix_with_leading, we either matched a simple prefix (and pushed work items)
+                        // or we're trying the leading rule path (and pushed work items). Either way, don't
+                        // fall through to operand parsing here.
+                    } else {
+                        // No leading rules - parse operand directly if no prefix matched
+                        self.line("if !prefix_matched {");
+                        self.indent += 1;
+
+                        // After parsing operand, go to CheckPostfix (if postfix ops exist) or AfterOperand
+                        if !pratt.postfix_ops.is_empty() {
+                            self.line(&format!(
+                                "self.work_stack.push(Work::{}CheckPostfix {{ result_base, min_prec, start_pos, start_line, start_column }});",
+                                prefix
+                            ));
+                        } else {
+                            self.line(&format!(
+                                "self.work_stack.push(Work::{}AfterOperand {{ result_base, min_prec, start_pos, start_line, start_column }});",
+                                prefix
+                            ));
+                        }
+                        self.line(&format!(
+                            "self.work_stack.push(Work::{}Start {{ result_base }});",
+                            operand_prefix
+                        ));
+
+                        self.indent -= 1;
+                        self.line("}");
+                    }
                 } else {
+                    // No prefix operators - parse operand directly
+                    // After parsing operand, go to CheckPostfix (if postfix ops exist) or AfterOperand
+                    if !pratt.postfix_ops.is_empty() {
+                        self.line(&format!(
+                            "self.work_stack.push(Work::{}CheckPostfix {{ result_base, min_prec, start_pos, start_line, start_column }});",
+                            prefix
+                        ));
+                    } else {
+                        self.line(&format!(
+                            "self.work_stack.push(Work::{}AfterOperand {{ result_base, min_prec, start_pos, start_line, start_column }});",
+                            prefix
+                        ));
+                    }
                     self.line(&format!(
-                        "self.work_stack.push(Work::{}AfterOperand {{ result_base, min_prec, start_pos, start_line, start_column }});",
-                        prefix
+                        "self.work_stack.push(Work::{}Start {{ result_base }});",
+                        operand_prefix
                     ));
-                }
-                self.line(&format!(
-                    "self.work_stack.push(Work::{}Start {{ result_base }});",
-                    operand_prefix
-                ));
-
-                if !pratt.prefix_ops.is_empty() {
-                    self.indent -= 1;
-                    self.line("}");
                 }
 
                 self.indent -= 1;
@@ -1610,6 +1679,119 @@ impl<'a> CodeGenerator<'a> {
                 self.line("}");
                 self.indent -= 1;
                 self.line("}");
+
+                // AfterPrefixLeadingRule - leading rule completed, try to match prefix literals
+                let has_prefix_with_leading = pratt.prefix_ops.iter().any(|op| {
+                    let p = extract_operator_pattern_full(op.pattern.as_ref());
+                    p.leading_rule.is_some() && !p.literal.is_empty()
+                });
+                if has_prefix_with_leading {
+                    self.line(&format!(
+                        "Work::{}AfterPrefixLeadingRule {{ result_base, min_prec, checkpoint, checkpoint_line, checkpoint_column, start_pos, start_line, start_column }} => {{",
+                        prefix
+                    ));
+                    self.indent += 1;
+                    self.line("// Leading rule result is on stack, we ignore it (it's usually None for skip rules)");
+                    self.line("let _ = self.result_stack.pop();");
+                    self.line("self.last_error = None; // Clear any error from the leading rule");
+                    self.line("");
+                    self.line("let mut prefix_matched = false;");
+
+                    // Try each prefix operator that has a leading rule
+                    for (i, prefix_op) in pratt.prefix_ops.iter().enumerate() {
+                        let pattern = extract_operator_pattern_full(prefix_op.pattern.as_ref());
+                        if pattern.leading_rule.is_none() {
+                            continue; // Skip operators without leading rules
+                        }
+                        let op_lit = &pattern.literal;
+                        let is_keyword = pattern.is_keyword;
+                        let not_followed = &pattern.not_followed_by;
+                        if !op_lit.is_empty() {
+                            if not_followed.is_empty() {
+                                self.line(&format!(
+                                    "if !prefix_matched && self.try_consume(\"{}\") {{",
+                                    escape_string(op_lit)
+                                ));
+                            } else {
+                                let mut condition = format!(
+                                    "if !prefix_matched && self.input.get(self.pos..).unwrap_or(\"\").starts_with(\"{}\")",
+                                    escape_string(op_lit)
+                                );
+                                for nf in not_followed {
+                                    condition.push_str(&format!(
+                                        " && !self.input.get(self.pos..).unwrap_or(\"\").starts_with(\"{}{}\")",
+                                        escape_string(op_lit),
+                                        escape_string(nf)
+                                    ));
+                                }
+                                condition.push_str(" {");
+                                self.line(&condition);
+                                self.indent += 1;
+                                self.line(&format!("self.pos += {};", op_lit.len()));
+                                self.line(&format!("self.column += {};", op_lit.len()));
+                                self.indent -= 1;
+                            }
+                            self.indent += 1;
+
+                            if is_keyword {
+                                self.line("if self.current_char().map_or(true, |c| !(c.is_ascii_alphanumeric() || c == '_' || c == '$')) {");
+                                self.indent += 1;
+                            }
+
+                            self.line("prefix_matched = true;");
+                            self.line(&format!(
+                                "self.work_stack.push(Work::{}AfterPrefix {{ result_base, min_prec, op_idx: {}, start_pos, start_line, start_column }});",
+                                prefix, i
+                            ));
+                            self.line(&format!(
+                                "self.work_stack.push(Work::{}ParseOperand {{ result_base: self.result_stack.len(), min_prec: {}, start_pos: self.pos, start_line: self.line, start_column: self.column }});",
+                                prefix, prefix_op.precedence
+                            ));
+
+                            if is_keyword {
+                                self.indent -= 1;
+                                self.line("} else {");
+                                self.indent += 1;
+                                self.line("self.pos = checkpoint;");
+                                self.line("self.line = checkpoint_line;");
+                                self.line("self.column = checkpoint_column;");
+                                self.indent -= 1;
+                                self.line("}");
+                            }
+
+                            self.indent -= 1;
+                            self.line("}");
+                        }
+                    }
+
+                    // No prefix matched after leading rule - restore position and parse operand directly
+                    self.line("if !prefix_matched {");
+                    self.indent += 1;
+                    self.line("// No prefix operator matched - restore to before leading rule and parse operand");
+                    self.line("self.pos = checkpoint;");
+                    self.line("self.line = checkpoint_line;");
+                    self.line("self.column = checkpoint_column;");
+                    if !pratt.postfix_ops.is_empty() {
+                        self.line(&format!(
+                            "self.work_stack.push(Work::{}CheckPostfix {{ result_base, min_prec, start_pos, start_line, start_column }});",
+                            prefix
+                        ));
+                    } else {
+                        self.line(&format!(
+                            "self.work_stack.push(Work::{}AfterOperand {{ result_base, min_prec, start_pos, start_line, start_column }});",
+                            prefix
+                        ));
+                    }
+                    self.line(&format!(
+                        "self.work_stack.push(Work::{}Start {{ result_base }});",
+                        operand_prefix
+                    ));
+                    self.indent -= 1;
+                    self.line("}");
+
+                    self.indent -= 1;
+                    self.line("}");
+                }
 
                 // CheckPostfix - check for postfix operators (if any)
                 if !pratt.postfix_ops.is_empty() {

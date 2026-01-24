@@ -404,12 +404,95 @@ fn await_expr(arg: ParseResult, span: Span) -> Result<ParseResult, ParseError> {
     })))
 }
 
+/// Convert an expression to a pattern for destructuring assignment
+fn expr_to_pattern(expr: Expression) -> Result<Pattern, ParseError> {
+    match expr {
+        Expression::Identifier(id) => Ok(Pattern::Identifier(id)),
+        Expression::Array(arr) => {
+            // Convert array expression to array pattern
+            let elements: Vec<Option<Pattern>> = arr.elements.into_iter().map(|elem| {
+                match elem {
+                    Some(ArrayElement::Expression(e)) => expr_to_pattern(e).ok(),
+                    Some(ArrayElement::Spread(s)) => {
+                        // Convert spread to rest pattern
+                        expr_to_pattern((*s.argument).clone()).ok().map(|p| {
+                            Pattern::Rest(RestElement {
+                                argument: Box::new(p),
+                                type_annotation: None,
+                                span: s.span,
+                            })
+                        })
+                    }
+                    None => None,
+                }
+            }).collect();
+            Ok(Pattern::Array(ArrayPattern {
+                elements,
+                type_annotation: None,
+                span: arr.span,
+            }))
+        }
+        Expression::Object(obj) => {
+            // Convert object expression to object pattern
+            let properties: Vec<ObjectPatternProperty> = obj.properties.into_iter().filter_map(|prop| {
+                match prop {
+                    ObjectProperty::Property(p) => {
+                        let pattern = expr_to_pattern(p.value.clone()).ok()?;
+                        Some(ObjectPatternProperty::KeyValue {
+                            key: p.key,
+                            value: pattern,
+                            shorthand: p.shorthand,
+                            span: p.span,
+                        })
+                    }
+                    ObjectProperty::Spread(s) => {
+                        expr_to_pattern((*s.argument).clone()).ok().map(|p| {
+                            ObjectPatternProperty::Rest(RestElement {
+                                argument: Box::new(p),
+                                type_annotation: None,
+                                span: s.span,
+                            })
+                        })
+                    }
+                }
+            }).collect();
+            Ok(Pattern::Object(ObjectPattern {
+                properties,
+                type_annotation: None,
+                span: obj.span,
+            }))
+        }
+        Expression::Assignment(assign) => {
+            // Assignment expression in pattern context: `[a = 1]` or `{x = 1}`
+            let left_pattern = match assign.left {
+                AssignmentTarget::Identifier(id) => Pattern::Identifier(id),
+                AssignmentTarget::Pattern(p) => p,
+                AssignmentTarget::Member(_) => return Err(ParseError::new("Invalid pattern".to_string(), 0, 0)),
+            };
+            Ok(Pattern::Assignment(AssignmentPattern {
+                left: Box::new(left_pattern),
+                right: assign.right,
+                span: assign.span,
+            }))
+        }
+        _ => Err(ParseError::new("Cannot convert expression to pattern".to_string(), 0, 0)),
+    }
+}
+
 /// Create assignment expression
 fn assign(left: ParseResult, right: ParseResult, op: AssignmentOp, span: Span) -> Result<ParseResult, ParseError> {
     let target = match left {
         ParseResult::Ident(id) => AssignmentTarget::Identifier(id),
         ParseResult::Expr(Expression::Identifier(id)) => AssignmentTarget::Identifier(id),
         ParseResult::Expr(Expression::Member(m)) => AssignmentTarget::Member(*m),
+        ParseResult::Expr(Expression::Array(arr)) => {
+            // Destructuring assignment: convert array expression to pattern
+            AssignmentTarget::Pattern(expr_to_pattern(Expression::Array(arr))?)
+        }
+        ParseResult::Expr(Expression::Object(obj)) => {
+            // Destructuring assignment: convert object expression to pattern
+            AssignmentTarget::Pattern(expr_to_pattern(Expression::Object(obj))?)
+        }
         _ => return Err(ParseError::new("Invalid assignment target".to_string(), 0, 0)),
     };
     Ok(ParseResult::Expr(Expression::Assignment(Box::new(AssignmentExpression {
@@ -1753,6 +1836,18 @@ fn op(r: &RuleBuilder, operator: &str) -> Combinator {
 /// Used in Pratt parsing: after operand consumes trailing ws, infix needs leading ws
 fn ws_infix(r: &RuleBuilder, operator: &str) -> Combinator {
     r.sequence((r.parse("ws"), r.lit(operator)))
+}
+
+fn ws_prefix(r: &RuleBuilder, operator: &str) -> Combinator {
+    r.sequence((r.parse("ws"), r.lit(operator)))
+}
+
+fn ws_prefix_kw(r: &RuleBuilder, keyword: &str) -> Combinator {
+    r.sequence((
+        r.parse("ws"),
+        r.lit(keyword),
+        r.not_followed_by(r.ident_cont()),
+    ))
 }
 
 // === Rule Functions ===
@@ -3711,16 +3806,17 @@ fn rule_assignment_expression(r: &RuleBuilder) -> Combinator {
                     "|l, r, s| binary(l, r, BinaryOp::Mod, s)",
                 )
                 // === Prefix operators ===
-                .prefix("++", 16, "|e, s| update(e, UpdateOp::Increment, true, s)")
-                .prefix("--", 16, "|e, s| update(e, UpdateOp::Decrement, true, s)")
-                .prefix("-", 16, "|e, s| unary(e, UnaryOp::Minus, s)")
-                .prefix("+", 16, "|e, s| unary(e, UnaryOp::Plus, s)")
-                .prefix("!", 16, "|e, s| unary(e, UnaryOp::Not, s)")
-                .prefix("~", 16, "|e, s| unary(e, UnaryOp::BitNot, s)")
-                .prefix_kw("typeof", 16, "|e, s| unary(e, UnaryOp::Typeof, s)")
-                .prefix_kw("void", 16, "|e, s| unary(e, UnaryOp::Void, s)")
-                .prefix_kw("delete", 16, "|e, s| unary(e, UnaryOp::Delete, s)")
-                .prefix_kw("await", 16, "|e, s| await_expr(e, s)")
+                // Note: prefix operators need leading ws to work as right operand of infix
+                .prefix(ws_prefix(r, "++"), 16, "|e, s| update(e, UpdateOp::Increment, true, s)")
+                .prefix(ws_prefix(r, "--"), 16, "|e, s| update(e, UpdateOp::Decrement, true, s)")
+                .prefix(ws_prefix(r, "-"), 16, "|e, s| unary(e, UnaryOp::Minus, s)")
+                .prefix(ws_prefix(r, "+"), 16, "|e, s| unary(e, UnaryOp::Plus, s)")
+                .prefix(ws_prefix(r, "!"), 16, "|e, s| unary(e, UnaryOp::Not, s)")
+                .prefix(ws_prefix(r, "~"), 16, "|e, s| unary(e, UnaryOp::BitNot, s)")
+                .prefix(ws_prefix_kw(r, "typeof"), 16, "|e, s| unary(e, UnaryOp::Typeof, s)")
+                .prefix(ws_prefix_kw(r, "void"), 16, "|e, s| unary(e, UnaryOp::Void, s)")
+                .prefix(ws_prefix_kw(r, "delete"), 16, "|e, s| unary(e, UnaryOp::Delete, s)")
+                .prefix(ws_prefix_kw(r, "await"), 16, "|e, s| await_expr(e, s)")
                 // === Postfix operators (highest precedence) ===
                 .postfix("++", 17, "|e, s| update(e, UpdateOp::Increment, false, s)")
                 .postfix("--", 17, "|e, s| update(e, UpdateOp::Decrement, false, s)")
