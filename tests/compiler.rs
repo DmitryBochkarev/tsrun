@@ -175,7 +175,7 @@ fn test_compile_unary_operators() {
 
 #[test]
 fn test_compile_variable_declaration() {
-    let chunk = compile("let x = 42");
+    let chunk = compile("let x = 42;");
 
     // Should have DeclareVar
     assert!(
@@ -190,7 +190,7 @@ fn test_compile_variable_declaration() {
 
 #[test]
 fn test_compile_const_declaration() {
-    let chunk = compile("const x = 42");
+    let chunk = compile("const x = 42;");
 
     // Should have DeclareVar with mutable=false
     assert!(
@@ -205,7 +205,7 @@ fn test_compile_const_declaration() {
 
 #[test]
 fn test_compile_var_declaration() {
-    let chunk = compile("var x = 42");
+    let chunk = compile("var x = 42;");
 
     // Should have DeclareVarHoisted
     assert!(

@@ -912,6 +912,28 @@ fn test_var_hoisting_catch_block_debug() {
 }
 
 #[test]
+fn test_empty_array_literal_inline() {
+    // Regression: empty array literal should have length 0
+    assert_eq!(eval(r#"[].length"#), JsValue::Number(0.0));
+}
+
+#[test]
+fn test_array_initialization_simple() {
+    // Regression: array initialization with push should work correctly
+    assert_eq!(
+        eval(
+            r#"
+            let result = [];
+            result.push("a");
+            result.push("b");
+            result.join(", ")
+            "#
+        ),
+        JsValue::String("a, b".into())
+    );
+}
+
+#[test]
 fn test_var_hoisting_catch_block_typeof_before() {
     // var should be hoisted to global scope, making typeof return "undefined" before the catch
     assert_eq!(
