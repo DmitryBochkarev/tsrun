@@ -1309,6 +1309,7 @@ fn create_constructor(
 
 /// Create class method
 fn create_class_method(
+    decorators: ParseResult,
     static_kw: ParseResult,
     async_kw: ParseResult,
     generator: ParseResult,
@@ -1340,6 +1341,9 @@ fn create_class_method(
         _ => Rc::new(BlockStatement { body: Rc::from(vec![]), span: span.clone() }),
     };
 
+    // Parse decorators
+    let parsed_decorators = parse_decorators(decorators, span.clone());
+
     let func_expr = FunctionExpression {
         id: None,
         params: Rc::from(params_vec),
@@ -1358,7 +1362,7 @@ fn create_class_method(
         computed: false,
         static_: is_static,
         accessibility: None,
-        decorators: vec![],
+        decorators: parsed_decorators,
         span,
     }))))
 }
@@ -1937,7 +1941,7 @@ fn rule_class_method(r: &RuleBuilder) -> Combinator {
         // [decorators, accessibility?, static?, async?, *, get/set?, key, type_params?, method_sig]
         if let ParseResult::List(parts) = result {
             let mut iter = parts.into_iter();
-            let _decorators = iter.next();
+            let decorators = iter.next().unwrap_or(ParseResult::None);
             let _accessibility = iter.next();
             let static_kw = iter.next().unwrap_or(ParseResult::None);
             let async_kw = iter.next().unwrap_or(ParseResult::None);
@@ -1960,7 +1964,7 @@ fn rule_class_method(r: &RuleBuilder) -> Combinator {
                 (ParseResult::None, ParseResult::None)
             };
 
-            create_class_method(static_kw, async_kw, generator, accessor, key, params, body, span)
+            create_class_method(decorators, static_kw, async_kw, generator, accessor, key, params, body, span)
         } else {
             Err(ParseError::new(\"Expected class method parts\".to_string(), 0, 0))
         }
