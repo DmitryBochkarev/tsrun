@@ -151,3 +151,23 @@ pub mod backtracking_bad_parser {
 pub mod backtracking_good_parser {
     include!(concat!(env!("OUT_DIR"), "/backtracking_good_parser.rs"));
 }
+
+#[allow(dead_code, unused_variables, clippy::all)]
+pub mod sparse_array_parser {
+    include!(concat!(env!("OUT_DIR"), "/sparse_array_parser.rs"));
+}
+
+#[allow(dead_code, unused_variables, clippy::all)]
+pub mod pratt_in_list_parser {
+    include!(concat!(env!("OUT_DIR"), "/pratt_in_list_parser.rs"));
+}
+
+#[allow(dead_code, unused_variables, clippy::all)]
+pub mod pratt_in_list_postfix_parser {
+    include!(concat!(env!("OUT_DIR"), "/pratt_in_list_postfix_parser.rs"));
+}
+
+#[allow(dead_code, unused_variables, clippy::all)]
+pub mod pratt_in_list_ts_parser {
+    include!(concat!(env!("OUT_DIR"), "/pratt_in_list_ts_parser.rs"));
+}

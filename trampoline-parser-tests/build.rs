@@ -119,6 +119,26 @@ fn main() {
         "backtracking_good_parser",
         &grammars::backtracking_good().generate(),
     );
+    write_parser(
+        out_path,
+        "sparse_array_parser",
+        &grammars::sparse_array().generate(),
+    );
+    write_parser(
+        out_path,
+        "pratt_in_list_parser",
+        &grammars::pratt_in_list().generate(),
+    );
+    write_parser(
+        out_path,
+        "pratt_in_list_postfix_parser",
+        &grammars::pratt_in_list_postfix().generate(),
+    );
+    write_parser(
+        out_path,
+        "pratt_in_list_ts_parser",
+        &grammars::pratt_in_list_ts().generate(),
+    );
 
     // Tell Cargo to rerun if trampoline-parser or grammars change
     println!("cargo:rerun-if-changed=../trampoline-parser/src");

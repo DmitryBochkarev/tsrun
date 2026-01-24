@@ -19,10 +19,10 @@ A minimal TypeScript runtime in Rust designed for embedding in applications. The
 cargo build                              # Build the project
 cargo build --features c-api             # Build with C FFI support
 cargo build --release --features c-api   # Release build with C FFI (creates libtsrun.so)
-timeout 30 cargo test                    # Run all tests (always use timeout!)
-timeout 30 cargo test --test interpreter # Run interpreter integration tests
-timeout 30 cargo test test_name          # Run specific test
-timeout 30 cargo test -- --nocapture     # Show test output
+timeout 20 cargo test                    # Run all tests (always use timeout!)
+timeout 20 cargo test --test interpreter # Run interpreter integration tests
+timeout 20 cargo test test_name          # Run specific test
+timeout 20 cargo test -- --nocapture     # Show test output
 
 # Parser generator tests
 cargo test -p trampoline-parser          # Library tests
@@ -32,6 +32,21 @@ cargo test -p trampoline-parser-tests    # Generated parser integration tests
 wasm-pack test --node --features wasm --no-default-features  # Run native WASM tests
 cd examples/wasm-playground && ./build.sh --test             # Build and run playground e2e tests
 ```
+
+### Test Timeout = Infinite Loop
+
+**If any test takes more than 20 seconds, it indicates an infinite loop in the parser.**
+
+To debug:
+1. Use binary search to find the failing test: `timeout 20 cargo test test_name`
+2. Once found, the issue is likely in the grammar (`grammar/src/lib.rs`)
+3. Add a minimal reproduction test to `trampoline-parser-tests/`
+4. Fix the issue in `trampoline-parser/` with proper loop detection
+
+Common causes of infinite loops in trampoline-parser:
+- Nullable loops: `zero_or_more()` or `one_or_more()` with a body that can match empty input
+- Left recursion: Rule A references itself as its first element without consuming input
+- Postfix operators that don't consume input properly
 
 ### Key Files
 
@@ -65,6 +80,7 @@ cd examples/wasm-playground && ./build.sh --test             # Build and run pla
 - **No tech debt** - fix failing tests immediately, no TODO/FIXME for known bugs
 - **Use TDD** - if a test fails because a feature isn't implemented, implement the feature
 - **Never change failing test cases** - write simpler tests to verify current scope, keep original as goal
+- **Keep regression tests** - when debugging reveals a bug, add a minimal test case that reproduces it (prefix with `// Regression:` comment). Never delete these tests even after fixing - they catch future regressions
 - **Fix pre-existing bugs** - write a test, fix it, then continue with your feature
 - **Proper fixes over workarounds** - make architectural changes if needed
 - **Debug via tests** - use `cargo test test_name -- --nocapture` with `console.log()`, not ad-hoc scripts
@@ -361,6 +377,59 @@ let result = parser.parse().expect("should parse");
 | `parse("rule")` | Reference another rule |
 | `pratt(operand, ops)` | Pratt parsing for expressions |
 | `separated_by(item, sep)` | Comma-separated lists |
+
+### Pratt Parsing with Whitespace
+
+Whitespace handling in Pratt parsing requires careful coordination between operators and operands. See `trampoline-parser-tests/grammars/lua_expr.rs` for a complete example.
+
+**Pattern:**
+1. Infix operators need **leading whitespace** in their patterns
+2. The operand rule needs **leading whitespace** to consume ws after operators
+
+```rust
+// Helper for infix operators with leading ws
+fn ws_infix(r: &RuleBuilder, op: &str) -> Combinator {
+    r.sequence((r.parse("ws"), r.lit(op)))
+}
+
+// Expression rule with Pratt parsing
+.rule("expr", |r| {
+    r.pratt(r.parse("primary"), |ops| {
+        ops.infix(ws_infix(r, "+"), 1, Assoc::Left, "|l, r, _| Ok(binary(l, r))")
+           .infix(ws_infix(r, "*"), 2, Assoc::Left, "|l, r, _| Ok(binary(l, r))")
+    })
+})
+
+// Primary must consume leading ws (for ws between operator and right operand)
+.rule("primary", |r| {
+    r.sequence((r.parse("ws"), r.parse("primary_inner")))
+        .ast("|r, _| { if let ParseResult::List(mut items) = r { Ok(items.pop().unwrap_or(ParseResult::None)) } else { Ok(r) } }")
+})
+```
+
+**Why:** After parsing left operand (which consumes trailing ws), the parser position is at potential operator. Infix pattern `ws + "+"` matches leading ws then operator. Then right operand's `ws` consumes space between operator and right operand.
+
+### Sparse Arrays
+
+Arrays with holes like `[1, , 3]` require custom handling. `separated_by_trailing` doesn't work because it expects non-empty items between separators.
+
+```rust
+// WRONG - fails on [1, , 3]
+r.separated_by_trailing(r.parse("element"), op(r, ","))
+
+// CORRECT - handles elisions
+r.sequence((
+    op(r, "["),
+    r.optional(r.sequence((
+        r.optional(r.parse("element")),  // First element (may be elided)
+        r.zero_or_more(r.sequence((
+            op(r, ","),
+            r.optional(r.parse("element")),  // Subsequent elements (may be elided)
+        ))),
+    ))),
+    op(r, "]"),
+))
+```
 
 ## Implementation Patterns
 

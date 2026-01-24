@@ -5,15 +5,16 @@ use tsrun_grammar::typescript_grammar;
 
 fn main() {
     let grammar = typescript_grammar();
-    let compiled = grammar.build();
+    let compiled = grammar.build_optimized();
     let mut code = compiled.generate();
 
     // Append parse_program() wrapper method
     code.push_str(PARSE_PROGRAM_IMPL);
 
-    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
-    let dest = std::path::Path::new(&manifest_dir).join("src/parser.rs");
-    std::fs::write(&dest, code).expect("Failed to write parser.rs");
+    // Write to OUT_DIR instead of src/ - better for generated code
+    let out_dir = std::env::var("OUT_DIR").unwrap();
+    let dest = std::path::Path::new(&out_dir).join("parser_generated.rs");
+    std::fs::write(&dest, code).expect("Failed to write parser_generated.rs");
 
     println!("cargo:rerun-if-changed=grammar/src/lib.rs");
     println!("cargo:rerun-if-changed=trampoline-parser/src/codegen.rs");
@@ -43,6 +44,9 @@ impl ParseResult {
                 JsString::from(result)
             }
             ParseResult::None => JsString::from(""),
+            // AST variants don't contain text
+            ParseResult::Expr(_) | ParseResult::Stmt(_) | ParseResult::Ident(_)
+            | ParseResult::Pat(_) | ParseResult::Prog(_) => JsString::from(""),
         }
     }
 
@@ -57,17 +61,35 @@ impl ParseResult {
 
 impl<'a> Parser<'a> {
     /// Parse a complete program, returning the AST
-    /// NOTE: AST mapping is not yet implemented in the grammar.
-    /// This currently returns a placeholder empty program.
     pub fn parse_program(&mut self) -> Result<Program, ParseError> {
-        let _result = self.parse()?;
+        let result = self.parse()?;
 
-        // TODO: Once grammar rules have .ast() mappings, convert result to actual AST
-        // For now, return empty program to allow build to succeed
-        Ok(Program {
-            body: Rc::from(vec![]),
-            source_type: SourceType::Module,
-        })
+        // Extract Program from the parse result
+        match result {
+            ParseResult::Prog(program) => Ok(program),
+            ParseResult::List(items) => {
+                // If we got a list, try to convert items to statements
+                let mut statements = Vec::new();
+                for item in items {
+                    match item {
+                        ParseResult::Stmt(stmt) => statements.push(stmt),
+                        ParseResult::Prog(prog) => return Ok(prog),
+                        _ => {} // Skip non-statement items
+                    }
+                }
+                Ok(Program {
+                    body: Rc::from(statements),
+                    source_type: SourceType::Module,
+                })
+            }
+            _ => {
+                // Fallback: return empty program
+                Ok(Program {
+                    body: Rc::from(vec![]),
+                    source_type: SourceType::Module,
+                })
+            }
+        }
     }
 }
 "#;

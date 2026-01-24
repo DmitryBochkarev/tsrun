@@ -21,6 +21,20 @@ fn test_variable_declaration() {
     assert_eq!(prog.body.len(), 1);
 }
 
+// Regression: number literal as expression statement
+#[test]
+fn test_number_literal_statement() {
+    let prog = parse("1;");
+    assert_eq!(prog.body.len(), 1);
+}
+
+// Regression: binary expression with whitespace (requires Pratt ws handling)
+#[test]
+fn test_binary_expression_simple() {
+    let prog = parse("1 + 2;");
+    assert_eq!(prog.body.len(), 1);
+}
+
 #[test]
 fn test_binary_expression() {
     let prog = parse("(1 as number) + (2 as number) * (3 as number);");

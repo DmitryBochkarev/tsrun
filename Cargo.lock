@@ -531,6 +531,13 @@ name = "trampoline-parser"
 version = "0.1.0"
 
 [[package]]
+name = "trampoline-parser-tests"
+version = "0.1.0"
+dependencies = [
+ "trampoline-parser",
+]
+
+[[package]]
 name = "tsrun"
 version = "0.1.17"
 dependencies = [
