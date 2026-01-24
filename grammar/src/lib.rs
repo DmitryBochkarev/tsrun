@@ -363,6 +363,7 @@ fn await_expr(arg: ParseResult, span: Span) -> Result<ParseResult, ParseError> {
 fn assign(left: ParseResult, right: ParseResult, op: AssignmentOp, span: Span) -> Result<ParseResult, ParseError> {
     let target = match left {
         ParseResult::Ident(id) => AssignmentTarget::Identifier(id),
+        ParseResult::Expr(Expression::Identifier(id)) => AssignmentTarget::Identifier(id),
         ParseResult::Expr(Expression::Member(m)) => AssignmentTarget::Member(*m),
         _ => return Err(ParseError::new("Invalid assignment target".to_string(), 0, 0)),
     };

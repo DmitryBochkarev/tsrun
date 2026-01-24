@@ -489,6 +489,7 @@ fn test_ternary_expression() {
 }
 
 
+
 #[test]
 fn test_computed_property() {
     // Index signature types not yet fully implemented
